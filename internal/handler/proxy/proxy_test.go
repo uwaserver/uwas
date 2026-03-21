@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,5 +287,152 @@ func newTestDomain() *config.Domain {
 	return &config.Domain{
 		Host: "test.com",
 		Type: "proxy",
+	}
+}
+
+// --- Additional coverage tests ---
+
+func TestHandlerName(t *testing.T) {
+	log := newTestLogger()
+	h := New(log)
+	if got := h.Name(); got != "proxy" {
+		t.Errorf("Name() = %q, want %q", got, "proxy")
+	}
+}
+
+func TestHandlerDescription(t *testing.T) {
+	log := newTestLogger()
+	h := New(log)
+	if got := h.Description(); got != "Reverse proxy with load balancing" {
+		t.Errorf("Description() = %q, want %q", got, "Reverse proxy with load balancing")
+	}
+}
+
+func TestUpstreamPoolAll(t *testing.T) {
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://localhost:3000", Weight: 1},
+		{Address: "http://localhost:3001", Weight: 2},
+		{Address: "http://localhost:3002", Weight: 3},
+	})
+
+	all := pool.All()
+	if len(all) != 3 {
+		t.Errorf("All() returned %d backends, want 3", len(all))
+	}
+}
+
+func TestUpstreamPoolLen(t *testing.T) {
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://localhost:3000", Weight: 1},
+		{Address: "http://localhost:3001", Weight: 1},
+	})
+
+	if got := pool.Len(); got != 2 {
+		t.Errorf("Len() = %d, want 2", got)
+	}
+}
+
+func TestUpstreamPoolLenEmpty(t *testing.T) {
+	pool := NewUpstreamPool(nil)
+	if got := pool.Len(); got != 0 {
+		t.Errorf("Len() = %d, want 0", got)
+	}
+}
+
+func TestHealthCheckerTransitions(t *testing.T) {
+	// Track request count to alternate between healthy and unhealthy
+	var mu sync.Mutex
+	requestCount := 0
+	failAfter := 0   // start healthy
+	recoverAt := 0
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		n := requestCount
+		mu.Unlock()
+
+		// First few requests succeed, then fail, then recover
+		if n > failAfter && failAfter > 0 && (recoverAt == 0 || n < recoverAt) {
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: ts.URL, Weight: 1},
+	})
+
+	log := newTestLogger()
+	hc := NewHealthChecker(pool, HealthConfig{
+		Path:      "/",
+		Interval:  50 * time.Millisecond,
+		Timeout:   2 * time.Second,
+		Threshold: 2, // 2 failures → unhealthy
+		Rise:      2, // 2 successes → healthy
+	}, log)
+
+	backend := pool.All()[0]
+
+	// Phase 1: healthy checks
+	if !backend.IsHealthy() {
+		t.Fatal("backend should start healthy")
+	}
+
+	// Manually call checkAll to verify it stays healthy
+	hc.checkAll()
+	hc.checkAll()
+	if !backend.IsHealthy() {
+		t.Fatal("backend should remain healthy after successful checks")
+	}
+
+	// Phase 2: make server fail
+	mu.Lock()
+	failAfter = requestCount // all subsequent requests fail
+	recoverAt = 0
+	mu.Unlock()
+
+	hc.checkAll() // failure 1
+	hc.checkAll() // failure 2 → should become unhealthy
+
+	if backend.IsHealthy() {
+		t.Error("backend should be unhealthy after 2 consecutive failures")
+	}
+
+	// Phase 3: make server recover
+	mu.Lock()
+	recoverAt = requestCount + 1 // next request succeeds
+	failAfter = 0
+	mu.Unlock()
+
+	hc.checkAll() // success 1
+	if backend.IsHealthy() {
+		t.Error("backend should still be unhealthy after only 1 success (rise=2)")
+	}
+
+	hc.checkAll() // success 2 → should recover
+
+	if !backend.IsHealthy() {
+		t.Error("backend should have recovered after 2 consecutive successes")
+	}
+}
+
+func TestNewCircuitBreakerDefaults(t *testing.T) {
+	cb := NewCircuitBreaker(0, 0)
+
+	// Should use defaults: threshold=5, timeout=30s
+	// Verify by recording 4 failures (less than default 5) — should stay closed
+	for i := 0; i < 4; i++ {
+		cb.RecordFailure()
+	}
+	if cb.State() != CircuitClosed {
+		t.Error("should still be closed after 4 failures with default threshold=5")
+	}
+
+	cb.RecordFailure() // 5th failure
+	if cb.State() != CircuitOpen {
+		t.Error("should be open after 5 failures with default threshold=5")
 	}
 }

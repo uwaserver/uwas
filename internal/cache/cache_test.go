@@ -375,3 +375,138 @@ func TestShouldBypass(t *testing.T) {
 		t.Error("normal GET should not bypass")
 	}
 }
+
+// --- Engine: PurgeByTag ---
+
+func TestEnginePurgeByTag(t *testing.T) {
+	log := logger.New("error", "text")
+	e := NewEngine(1<<20, "", 0, log)
+
+	r1 := httptest.NewRequest("GET", "/a", nil)
+	e.Set(r1, &CachedResponse{
+		StatusCode: 200, Body: []byte("a"), Created: time.Now(), TTL: time.Minute, Tags: []string{"blog"},
+	})
+	r2 := httptest.NewRequest("GET", "/b", nil)
+	e.Set(r2, &CachedResponse{
+		StatusCode: 200, Body: []byte("b"), Created: time.Now(), TTL: time.Minute, Tags: []string{"shop"},
+	})
+
+	purged := e.PurgeByTag("blog")
+	if purged != 1 {
+		t.Errorf("purged = %d, want 1", purged)
+	}
+
+	// /b should still be there
+	got, status := e.Get(r2)
+	if status != StatusHit || got == nil {
+		t.Errorf("expected /b to remain, status=%q", status)
+	}
+}
+
+// --- Engine: PurgeAll ---
+
+func TestEnginePurgeAll(t *testing.T) {
+	log := logger.New("error", "text")
+	dir := t.TempDir()
+	e := NewEngine(1<<20, dir, 1<<20, log)
+
+	req := httptest.NewRequest("GET", "/page", nil)
+	e.Set(req, &CachedResponse{
+		StatusCode: 200, Body: []byte("hello"), Created: time.Now(), TTL: time.Minute,
+	})
+
+	// Allow async disk write to complete
+	time.Sleep(50 * time.Millisecond)
+
+	e.PurgeAll()
+
+	_, status := e.Get(req)
+	if status != StatusMiss {
+		t.Errorf("status = %q after PurgeAll, want MISS", status)
+	}
+}
+
+// --- Disk: PurgeAll ---
+
+func TestDiskCachePurgeAll(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+
+	resp := &CachedResponse{
+		StatusCode: 200, Body: []byte("disk"), Created: time.Now(), TTL: time.Minute, GraceTTL: time.Minute,
+	}
+	if err := dc.Set("purge-key-1234567890abcdef", resp); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	if err := dc.PurgeAll(); err != nil {
+		t.Fatalf("PurgeAll: %v", err)
+	}
+
+	_, err := dc.Get("purge-key-1234567890abcdef")
+	if err == nil {
+		t.Error("expected error after PurgeAll")
+	}
+}
+
+// --- Entry: Age ---
+
+func TestCachedResponseAge(t *testing.T) {
+	r := &CachedResponse{
+		Created: time.Now().Add(-2 * time.Second),
+	}
+	age := r.Age()
+	if age < time.Second || age > 5*time.Second {
+		t.Errorf("age = %v, expected around 2s", age)
+	}
+}
+
+// --- Entry: IsExpired ---
+
+func TestCachedResponseIsExpired(t *testing.T) {
+	r := &CachedResponse{
+		Created:  time.Now().Add(-5 * time.Second),
+		TTL:      1 * time.Second,
+		GraceTTL: 1 * time.Second,
+	}
+	if !r.IsExpired() {
+		t.Error("should be expired when age >= TTL + GraceTTL")
+	}
+}
+
+// --- Entry: CacheError.Error ---
+
+func TestCacheErrorError(t *testing.T) {
+	e := &CacheError{Message: "something went wrong"}
+	if e.Error() != "something went wrong" {
+		t.Errorf("Error() = %q", e.Error())
+	}
+}
+
+// --- MemoryCache: cleanExpired via short cleanup interval ---
+
+func TestCleanExpiredViaStartCleanup(t *testing.T) {
+	mc := NewMemoryCache(1 << 20)
+
+	// Insert an entry that is already expired
+	mc.Set("expire-me", &CachedResponse{
+		Body:     []byte("old"),
+		Created:  time.Now().Add(-10 * time.Second),
+		TTL:      1 * time.Millisecond,
+		GraceTTL: 1 * time.Millisecond,
+	})
+
+	if mc.Len() != 1 {
+		t.Fatalf("expected 1 entry before cleanup, got %d", mc.Len())
+	}
+
+	// Start cleanup with a very short interval
+	mc.StartCleanup(50 * time.Millisecond)
+
+	// Wait for cleanup to run
+	time.Sleep(200 * time.Millisecond)
+
+	if mc.Len() != 0 {
+		t.Errorf("expected 0 entries after cleanup, got %d", mc.Len())
+	}
+}

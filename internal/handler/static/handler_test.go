@@ -242,3 +242,158 @@ func makeCtxWithHeader(t *testing.T, method, path, hdrKey, hdrVal string) *route
 	w := httptest.NewRecorder()
 	return router.AcquireContext(w, r)
 }
+
+// --- Additional coverage tests ---
+
+func TestHandlerName(t *testing.T) {
+	h := New()
+	if got := h.Name(); got != "static" {
+		t.Errorf("Name() = %q, want %q", got, "static")
+	}
+}
+
+func TestHandlerDescription(t *testing.T) {
+	h := New()
+	if got := h.Description(); got != "Serves static files from disk" {
+		t.Errorf("Description() = %q, want %q", got, "Serves static files from disk")
+	}
+}
+
+func TestCanHandleTrue(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "hello.txt", "hi")
+
+	ctx := makeCtx(t, "GET", "/hello.txt")
+	ctx.ResolvedPath = filepath.Join(dir, "hello.txt")
+
+	h := New()
+	if !h.CanHandle(ctx) {
+		t.Error("CanHandle should return true for an existing file")
+	}
+}
+
+func TestCanHandleFalseEmpty(t *testing.T) {
+	ctx := makeCtx(t, "GET", "/nothing")
+	ctx.ResolvedPath = ""
+
+	h := New()
+	if h.CanHandle(ctx) {
+		t.Error("CanHandle should return false when ResolvedPath is empty")
+	}
+}
+
+func TestCanHandleFalseNoFile(t *testing.T) {
+	ctx := makeCtx(t, "GET", "/missing.txt")
+	ctx.ResolvedPath = filepath.Join(t.TempDir(), "nonexistent.txt")
+
+	h := New()
+	if h.CanHandle(ctx) {
+		t.Error("CanHandle should return false when file does not exist")
+	}
+}
+
+func TestCanHandleFalseDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "subdir")
+	os.MkdirAll(sub, 0755)
+
+	ctx := makeCtx(t, "GET", "/subdir")
+	ctx.ResolvedPath = sub
+
+	h := New()
+	if h.CanHandle(ctx) {
+		t.Error("CanHandle should return false for a directory")
+	}
+}
+
+func TestServeDirListing(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "file1.txt", "content1")
+	writeFile(t, dir, "file2.txt", "content2 is longer")
+	os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
+
+	ctx := makeCtx(t, "GET", "/")
+
+	ServeDirListing(ctx, dir, "/")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	body := rec.Body.String()
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if !strings.Contains(body, "file1.txt") {
+		t.Error("listing should contain file1.txt")
+	}
+	if !strings.Contains(body, "subdir/") {
+		t.Error("listing should contain subdir/")
+	}
+}
+
+func TestServeDirListingNonRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.txt", "aaa")
+
+	ctx := makeCtx(t, "GET", "/somepath/")
+
+	ServeDirListing(ctx, dir, "/somepath/")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "../") {
+		t.Error("non-root listing should contain parent link ../")
+	}
+}
+
+func TestServeDirListingBadDir(t *testing.T) {
+	ctx := makeCtx(t, "GET", "/")
+
+	ServeDirListing(ctx, filepath.Join(t.TempDir(), "nonexistent"), "/")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500 for unreadable dir", rec.Code)
+	}
+}
+
+func TestFormatSizeGB(t *testing.T) {
+	got := formatSize(2 * (1 << 30)) // 2 GB
+	if !strings.HasSuffix(got, "GB") {
+		t.Errorf("formatSize(2GB) = %q, want GB suffix", got)
+	}
+	if got != "2.0 GB" {
+		t.Errorf("formatSize(2GB) = %q, want %q", got, "2.0 GB")
+	}
+}
+
+func TestFormatSizeMB(t *testing.T) {
+	got := formatSize(5 * (1 << 20)) // 5 MB
+	if got != "5.0 MB" {
+		t.Errorf("formatSize(5MB) = %q, want %q", got, "5.0 MB")
+	}
+}
+
+func TestFormatSizeKB(t *testing.T) {
+	got := formatSize(3 * (1 << 10)) // 3 KB
+	if got != "3.0 KB" {
+		t.Errorf("formatSize(3KB) = %q, want %q", got, "3.0 KB")
+	}
+}
+
+func TestFormatSizeBytes(t *testing.T) {
+	got := formatSize(512)
+	if got != "512 B" {
+		t.Errorf("formatSize(512) = %q, want %q", got, "512 B")
+	}
+}
+
+func TestFormatSizeZero(t *testing.T) {
+	got := formatSize(0)
+	if got != "0 B" {
+		t.Errorf("formatSize(0) = %q, want %q", got, "0 B")
+	}
+}

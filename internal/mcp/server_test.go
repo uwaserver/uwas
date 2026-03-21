@@ -2,8 +2,11 @@ package mcp
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -92,5 +95,58 @@ func TestCallToolConfigShow(t *testing.T) {
 	data := result.(map[string]any)
 	if data["domain_count"] != 1 {
 		t.Errorf("domain_count = %v", data["domain_count"])
+	}
+}
+
+func TestSetCache(t *testing.T) {
+	s := testMCPServer()
+	if s.cache != nil {
+		t.Error("cache should be nil initially")
+	}
+
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	if s.cache == nil {
+		t.Error("cache should be set after SetCache")
+	}
+}
+
+func TestCachePurgeWithEngine(t *testing.T) {
+	s := testMCPServer()
+
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	// Insert entries with tags via the engine's memory cache
+	req1 := httptest.NewRequest("GET", "/tagged1", nil)
+	eng.Set(req1, &cache.CachedResponse{
+		StatusCode: 200, Body: []byte("t1"), Created: time.Now(), TTL: time.Minute, Tags: []string{"blog"},
+	})
+	req2 := httptest.NewRequest("GET", "/tagged2", nil)
+	eng.Set(req2, &cache.CachedResponse{
+		StatusCode: 200, Body: []byte("t2"), Created: time.Now(), TTL: time.Minute, Tags: []string{"shop"},
+	})
+
+	// Purge by tag
+	result, err := s.CallTool("cache_purge", json.RawMessage(`{"tag":"blog"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := result.(map[string]any)
+	if data["status"] != "purged" {
+		t.Errorf("status = %v, want purged", data["status"])
+	}
+
+	// Purge all
+	result2, err := s.CallTool("cache_purge", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data2 := result2.(map[string]string)
+	if data2["status"] != "all purged" {
+		t.Errorf("status = %v, want 'all purged'", data2["status"])
 	}
 }

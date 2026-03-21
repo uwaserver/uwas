@@ -74,3 +74,18 @@ func TestMetricsHandler(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/plain", ct)
 	}
 }
+
+func TestRecordRequestEdgeStatusCode(t *testing.T) {
+	c := New()
+	// Status code 600 is outside normal 1xx-5xx range, should go to "other" bucket (index 5)
+	c.RecordRequest(600)
+	c.RecordRequest(0)
+	c.RecordRequest(-1)
+
+	if c.RequestsTotal.Load() != 3 {
+		t.Errorf("total = %d, want 3", c.RequestsTotal.Load())
+	}
+	if c.RequestsByCode[5].Load() != 3 {
+		t.Errorf("other = %d, want 3", c.RequestsByCode[5].Load())
+	}
+}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -186,6 +187,106 @@ func TestInvalidConfig(t *testing.T) {
 	_, err := loadStringConfig(yaml)
 	if err == nil {
 		t.Fatal("expected parse error for invalid YAML")
+	}
+}
+
+func TestByteSizeUnmarshalYAMLRawInt(t *testing.T) {
+	// ByteSize.UnmarshalYAML should handle raw integer values (not strings)
+	cfgYAML := `
+global:
+  cache:
+    memory_limit: 1048576
+    disk_limit: 10737418240
+
+domains:
+  - host: "test.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: off
+`
+	cfg := loadFromString(t, cfgYAML)
+
+	if cfg.Global.Cache.MemoryLimit != ByteSize(1048576) {
+		t.Errorf("MemoryLimit = %d, want 1048576", cfg.Global.Cache.MemoryLimit)
+	}
+	if cfg.Global.Cache.DiskLimit != ByteSize(10737418240) {
+		t.Errorf("DiskLimit = %d, want 10737418240", cfg.Global.Cache.DiskLimit)
+	}
+}
+
+func TestDurationUnmarshalYAMLInteger(t *testing.T) {
+	// Test Duration.UnmarshalYAML directly with an unmarshal function
+	// that fails for string but succeeds for int (simulating non-string YAML node).
+	var d Duration
+	fakeUnmarshal := func(v any) error {
+		switch p := v.(type) {
+		case *string:
+			return fmt.Errorf("not a string")
+		case *int:
+			*p = 45
+			return nil
+		default:
+			return fmt.Errorf("unexpected type")
+		}
+	}
+
+	err := d.UnmarshalYAML(fakeUnmarshal)
+	if err != nil {
+		t.Fatalf("UnmarshalYAML with int returned error: %v", err)
+	}
+	if d.Duration != 45*time.Second {
+		t.Errorf("Duration = %v, want 45s", d.Duration)
+	}
+}
+
+func TestDurationUnmarshalYAMLBothFail(t *testing.T) {
+	// When both string and int unmarshal fail, should return the string error.
+	var d Duration
+	fakeUnmarshal := func(v any) error {
+		return fmt.Errorf("fail for %T", v)
+	}
+
+	err := d.UnmarshalYAML(fakeUnmarshal)
+	if err == nil {
+		t.Fatal("expected error when both unmarshal attempts fail")
+	}
+}
+
+func TestByteSizeUnmarshalYAMLDirect(t *testing.T) {
+	// Test ByteSize.UnmarshalYAML directly with an unmarshal function
+	// that fails for string but succeeds for int64.
+	var b ByteSize
+	fakeUnmarshal := func(v any) error {
+		switch p := v.(type) {
+		case *string:
+			return fmt.Errorf("not a string")
+		case *int64:
+			*p = 2048
+			return nil
+		default:
+			return fmt.Errorf("unexpected type")
+		}
+	}
+
+	err := b.UnmarshalYAML(fakeUnmarshal)
+	if err != nil {
+		t.Fatalf("UnmarshalYAML with int64 returned error: %v", err)
+	}
+	if b != ByteSize(2048) {
+		t.Errorf("ByteSize = %d, want 2048", b)
+	}
+}
+
+func TestByteSizeUnmarshalYAMLBothFail(t *testing.T) {
+	var b ByteSize
+	fakeUnmarshal := func(v any) error {
+		return fmt.Errorf("fail for %T", v)
+	}
+
+	err := b.UnmarshalYAML(fakeUnmarshal)
+	if err == nil {
+		t.Fatal("expected error when both unmarshal attempts fail")
 	}
 }
 

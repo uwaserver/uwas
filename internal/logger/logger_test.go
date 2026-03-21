@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"log/slog"
 	"testing"
 )
 
@@ -57,5 +58,33 @@ func TestParseLevel(t *testing.T) {
 		if got.String() != tt.want {
 			t.Errorf("parseLevel(%q) = %v, want %v", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestWriter(t *testing.T) {
+	log := New("debug", "text")
+	w := log.Writer(slog.LevelError)
+	if w == nil {
+		t.Fatal("Writer returned nil")
+	}
+
+	// Write should return the correct byte count and no error
+	msg := []byte("test error message\n")
+	n, err := w.Write(msg)
+	if err != nil {
+		t.Fatalf("Writer.Write returned error: %v", err)
+	}
+	if n != len(msg) {
+		t.Errorf("Writer.Write returned %d, want %d", n, len(msg))
+	}
+
+	// Also test without trailing newline
+	msg2 := []byte("no newline")
+	n2, err2 := w.Write(msg2)
+	if err2 != nil {
+		t.Fatalf("Writer.Write returned error: %v", err2)
+	}
+	if n2 != len(msg2) {
+		t.Errorf("Writer.Write returned %d, want %d", n2, len(msg2))
 	}
 }

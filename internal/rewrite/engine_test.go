@@ -1,8 +1,10 @@
 package rewrite
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -238,5 +240,218 @@ func TestVariableExpand(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("Expand(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// --- Tests for skipChain, BuildVariables, ConvertConfigRewrites, ResolvedURI ---
+
+func TestSkipChain(t *testing.T) {
+	// Build a chain of rules: rule0[C] -> rule1[C] -> rule2 -> rule3
+	rule0, _ := ParseRule("^/a", "/b", "C")
+	rule1, _ := ParseRule("^/b", "/c", "C")
+	rule2, _ := ParseRule("^/c", "/d", "L")
+	rule3, _ := ParseRule("^/d", "/e", "L")
+
+	engine := NewEngine([]*Rule{rule0, rule1, rule2, rule3})
+
+	// If rule0 condition fails, skipChain(0) should skip past the chain (rules 0,1 chained)
+	// and land on rule2 (index 2)
+	vars := &Variables{RequestURI: "/nomatch"}
+	result := engine.Process("/nomatch", "", vars)
+	// None match, so URI unchanged
+	if result.URI != "/nomatch" {
+		t.Errorf("URI = %q, want /nomatch", result.URI)
+	}
+
+	// Now test that chain skip works by having only the first rule match,
+	// but with a condition that fails. Use a condition-based approach:
+	condRule0, _ := ParseRule("^/x", "/y", "C")
+	condRule1, _ := ParseRule("^/y", "/z", "L")
+	condRule2, _ := ParseRule(".*", "/fallback", "L")
+
+	e2 := NewEngine([]*Rule{condRule0, condRule1, condRule2})
+	vars2 := &Variables{RequestURI: "/other"}
+	result2 := e2.Process("/other", "", vars2)
+	// /other doesn't match ^/x, and ^/x has [C], so condRule1 is skipped.
+	// Then condRule2 (.*) matches /other -> /fallback
+	if result2.URI != "/fallback" {
+		t.Errorf("URI = %q, want /fallback", result2.URI)
+	}
+}
+
+func TestBuildVariables(t *testing.T) {
+	req := httptest.NewRequest("POST", "/path?q=1", nil)
+	req.Host = "example.com:8080"
+	req.Header.Set("Referer", "https://other.com/")
+	req.Header.Set("User-Agent", "TestAgent/1.0")
+
+	vars := BuildVariables(req, "/var/www", "/var/www/path", false)
+
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"RequestURI", vars.RequestURI, "/path"},
+		{"RequestFilename", vars.RequestFilename, "/var/www/path"},
+		{"QueryString", vars.QueryString, "q=1"},
+		{"HTTPHost", vars.HTTPHost, "example.com:8080"},
+		{"HTTPReferer", vars.HTTPReferer, "https://other.com/"},
+		{"HTTPUserAgent", vars.HTTPUserAgent, "TestAgent/1.0"},
+		{"RemoteAddr", vars.RemoteAddr, req.RemoteAddr},
+		{"RequestMethod", vars.RequestMethod, "POST"},
+		{"ServerPort", vars.ServerPort, "80"},
+		{"HTTPS", vars.HTTPS, "off"},
+		{"DocumentRoot", vars.DocumentRoot, "/var/www"},
+		{"ServerName", vars.ServerName, "example.com"},
+	}
+
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Errorf("BuildVariables %s = %q, want %q", tt.name, tt.got, tt.want)
+		}
+	}
+
+	// Verify TheRequest format
+	if !strings.Contains(vars.TheRequest, "POST") || !strings.Contains(vars.TheRequest, "/path") {
+		t.Errorf("TheRequest = %q, expected to contain method and path", vars.TheRequest)
+	}
+
+	// Test HTTPS=on path
+	varsHTTPS := BuildVariables(req, "/var/www", "/var/www/path", true)
+	if varsHTTPS.ServerPort != "443" {
+		t.Errorf("ServerPort with HTTPS = %q, want 443", varsHTTPS.ServerPort)
+	}
+	if varsHTTPS.HTTPS != "on" {
+		t.Errorf("HTTPS = %q, want on", varsHTTPS.HTTPS)
+	}
+}
+
+func TestBuildVariablesNoPort(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "example.com"
+
+	vars := BuildVariables(req, "/root", "/root/test", false)
+	if vars.ServerName != "example.com" {
+		t.Errorf("ServerName = %q, want example.com", vars.ServerName)
+	}
+}
+
+func TestConvertConfigRewrites(t *testing.T) {
+	rewrites := []ConfigRewrite{
+		{
+			Match:  "^/old$",
+			To:     "/new",
+			Flags:  []string{"L"},
+			Status: 0,
+		},
+		{
+			Match:      "^/blog/(.*)$",
+			To:         "/index.php",
+			Conditions: []string{"!is_file", "!is_dir"},
+		},
+		{
+			Match:  "^/redir$",
+			To:     "https://other.com/",
+			Status: 301,
+		},
+	}
+
+	rules := ConvertConfigRewrites(rewrites)
+
+	if len(rules) != 3 {
+		t.Fatalf("got %d rules, want 3", len(rules))
+	}
+
+	// First rule: has [L] flag from Flags, and since not chain & redirect==0, default Last is set
+	if !rules[0].Flags.Last {
+		t.Error("rule[0] should have Last flag")
+	}
+
+	// Second rule: should have 2 conditions (one for !-f and one for !-d)
+	if len(rules[1].Conditions) != 2 {
+		t.Errorf("rule[1] has %d conditions, want 2", len(rules[1].Conditions))
+	}
+
+	// Third rule: redirect with status 301
+	if rules[2].Flags.Redirect != 301 {
+		t.Errorf("rule[2] redirect = %d, want 301", rules[2].Flags.Redirect)
+	}
+	// With redirect set, Last should NOT be forced
+	if rules[2].Flags.Last {
+		t.Error("rule[2] should not have Last flag when redirect is set")
+	}
+}
+
+func TestConvertConfigRewritesInvalidPattern(t *testing.T) {
+	rewrites := []ConfigRewrite{
+		{
+			Match: "[invalid",
+			To:    "/dest",
+		},
+	}
+	rules := ConvertConfigRewrites(rewrites)
+	if len(rules) != 0 {
+		t.Errorf("got %d rules, want 0 for invalid pattern", len(rules))
+	}
+}
+
+func TestConvertConfigRewritesConditionTypes(t *testing.T) {
+	rewrites := []ConfigRewrite{
+		{
+			Match:      ".*",
+			To:         "/index.php",
+			Conditions: []string{"!-f", "-f", "!-d", "-d", "unknown_cond"},
+		},
+	}
+	rules := ConvertConfigRewrites(rewrites)
+	if len(rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(rules))
+	}
+	// "unknown_cond" should be skipped, so only 4 conditions
+	if len(rules[0].Conditions) != 4 {
+		t.Errorf("conditions count = %d, want 4", len(rules[0].Conditions))
+	}
+}
+
+func TestResultResolvedURI(t *testing.T) {
+	tests := []struct {
+		name  string
+		uri   string
+		query string
+	}{
+		{"no query", "/path", ""},
+		{"with query", "/path", "foo=bar"},
+		{"with special chars", "/path", "a=b&c=d"},
+	}
+
+	for _, tt := range tests {
+		r := &Result{URI: tt.uri, Query: tt.query}
+		got := r.ResolvedURI()
+		if tt.query == "" {
+			if got != tt.uri {
+				t.Errorf("ResolvedURI() %s: got %q, want %q", tt.name, got, tt.uri)
+			}
+		} else {
+			// Should contain the URI and a ? separator
+			if !strings.HasPrefix(got, tt.uri+"?") {
+				t.Errorf("ResolvedURI() %s: got %q, should start with %q", tt.name, got, tt.uri+"?")
+			}
+			// Should not be just the bare URI
+			if got == tt.uri {
+				t.Errorf("ResolvedURI() %s: got %q, should include query string", tt.name, got)
+			}
+		}
+	}
+}
+
+func TestGoneFlag(t *testing.T) {
+	rule, _ := ParseRule("^/removed", "-", "G")
+	engine := NewEngine([]*Rule{rule})
+	vars := &Variables{RequestURI: "/removed"}
+
+	result := engine.Process("/removed", "", vars)
+	if !result.Gone {
+		t.Error("should be gone")
 	}
 }
