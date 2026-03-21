@@ -197,7 +197,33 @@ pkg/
 | MCP / AI-native | Yes | No | No | No | No |
 | Open source | Apache 2.0 | BSD | Apache 2.0 | Apache 2.0 | Proprietary |
 
-## Docker
+## Performance
+
+Tested with [hey](https://github.com/rakyll/hey) on AMD Ryzen 9 9950X3D:
+
+| Scenario | Requests/sec | Avg Latency |
+|----------|-------------|-------------|
+| Small static file (14B) | **7,000** | 7.1ms |
+| 4KB static file | **7,100** | 7.0ms |
+| 100K requests @ 200 concurrent | **7,254** | 27ms |
+| 404 error page | **22,000** | 2.2ms |
+| Cache L1 lookup (bench) | **75,000,000** | 31ns |
+| VHost routing (bench) | **70,000,000** | 35ns |
+
+## Deployment
+
+### Systemd
+
+```bash
+sudo cp init/uwas.service /etc/systemd/system/
+sudo systemctl enable uwas
+sudo systemctl start uwas
+
+# Live config reload (zero downtime)
+sudo systemctl reload uwas
+```
+
+### Docker
 
 ```bash
 docker build -t uwas .
