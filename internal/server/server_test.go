@@ -482,7 +482,7 @@ func TestHandleFileRequestPHP(t *testing.T) {
 }
 
 func TestRenderErrorPageUnknownCode(t *testing.T) {
-	// Test with a code not in errorPages map (e.g., 418)
+	// Test with a code not in defaultErrorTitles map (e.g., 418)
 	rec := httptest.NewRecorder()
 	renderErrorPage(rec, http.StatusTeapot)
 	if rec.Code != 418 {
@@ -496,8 +496,8 @@ func TestRenderErrorPageUnknownCode(t *testing.T) {
 }
 
 func TestRenderErrorPageAllKnownCodes(t *testing.T) {
-	// Exhaustively test all codes in errorPages map
-	for code, title := range errorPages {
+	// Exhaustively test all codes in defaultErrorTitles map
+	for code, title := range defaultErrorTitles {
 		rec := httptest.NewRecorder()
 		renderErrorPage(rec, code)
 		if rec.Code != code {
