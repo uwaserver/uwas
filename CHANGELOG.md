@@ -5,6 +5,43 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-22
+
+### Added
+
+- **Configurable listen addresses**: `http_listen` and `https_listen` fields in global config
+- **Trusted proxies**: `trusted_proxies` CIDR list for X-Forwarded-For real IP extraction
+- **.htaccess runtime import**: Parse and apply WordPress/Laravel .htaccess rewrites with proper -f/-d condition checks
+- **Directory listing**: Per-domain `directory_listing: true` toggle with HTML table output
+- **WAF URL decode**: WAF patterns now check both raw and URL-decoded query strings
+- **Admin /health public**: Health endpoint no longer requires authentication
+- **Config hot reload**: Live config reload via `POST /api/v1/reload` with document root change support
+- **Install script**: `curl -fsSL https://uwaserver.com/install.sh | sh` for Linux/macOS
+- **Benchmark suite**: Static file, vhost lookup, middleware chain, cache get/set benchmarks
+- **Comprehensive integration tests**: Cache store/hit, rate limiting, multi-domain routing, backend failover, CORS, config reload
+
+### Fixed
+
+- .gitignore pattern `uwas` was blocking `cmd/uwas/` directory
+- Dockerfile and CI workflows updated from Go 1.23 to Go 1.26
+- GoReleaser docker build removed (binary-only releases)
+- Gzip middleware now skips conditional requests (If-None-Match → 304 works correctly)
+- Rate limiter correctly wired from per-domain security config
+
+### Changed
+
+- Server ports no longer hardcoded to :80/:443 — fully configurable
+- Full middleware chain wired: recovery → request ID → real IP → security headers → gzip → rate limit → WAF → access log
+- All documentation translated to English
+- Logo and banner assets added
+
+### Performance (AMD Ryzen 9 9950X3D)
+
+- VHost routing: 70M ops/sec
+- Cache L1 get: 75M ops/sec
+- Middleware chain: 308K req/sec
+- Static file serve: 10K req/sec
+
 ## [0.1.0] - 2026-03-21
 
 ### Added
@@ -120,4 +157,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dockerfile (multi-stage build, Alpine runtime)
   - Makefile (build, dev, test, lint, clean)
 
+[0.2.0]: https://github.com/uwaserver/uwas/releases/tag/v0.2.0
 [0.1.0]: https://github.com/uwaserver/uwas/releases/tag/v0.1.0

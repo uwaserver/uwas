@@ -1,6 +1,7 @@
 package acme
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,6 +13,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -494,5 +497,301 @@ func TestNoncePoolConcurrentPutGet(t *testing.T) {
 		if !strings.HasPrefix(nonce, "nonce-") {
 			t.Errorf("unexpected nonce: %q", nonce)
 		}
+	}
+}
+
+// --- Additional coverage tests ---
+
+func TestLoadOrCreateAccountKey(t *testing.T) {
+	dir := t.TempDir()
+	log := logger.New("error", "text")
+	c := NewClient("https://acme.example.com/directory", dir, log)
+
+	// First call: should create a new key and write it to disk
+	if err := c.loadOrCreateAccountKey(); err != nil {
+		t.Fatalf("loadOrCreateAccountKey (create): %v", err)
+	}
+	if c.accountKey == nil {
+		t.Fatal("accountKey should be set after create")
+	}
+
+	keyPath := filepath.Join(dir, "account.key")
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatalf("account.key should exist on disk: %v", err)
+	}
+
+	// Save the created key for comparison
+	firstKeyX := c.accountKey.PublicKey.X.Bytes()
+
+	// Second call with a fresh client: should load the existing key from disk
+	c2 := NewClient("https://acme.example.com/directory", dir, log)
+	if err := c2.loadOrCreateAccountKey(); err != nil {
+		t.Fatalf("loadOrCreateAccountKey (load): %v", err)
+	}
+	if c2.accountKey == nil {
+		t.Fatal("accountKey should be set after load")
+	}
+
+	secondKeyX := c2.accountKey.PublicKey.X.Bytes()
+	if !bytes.Equal(firstKeyX, secondKeyX) {
+		t.Error("loaded key should match the originally created key")
+	}
+}
+
+func TestEnsureAccount(t *testing.T) {
+	nonceCount := 0
+	var mockServer *httptest.Server
+	mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/directory":
+			dir := Directory{
+				NewNonce:   mockServer.URL + "/new-nonce",
+				NewAccount: mockServer.URL + "/new-acct",
+				NewOrder:   mockServer.URL + "/new-order",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(dir)
+		case "/new-nonce":
+			nonceCount++
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+		case "/new-acct":
+			w.Header().Set("Location", mockServer.URL+"/acct/12345")
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount+100))
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"status":"valid"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	log := logger.New("error", "text")
+	c := NewClient(mockServer.URL+"/directory", t.TempDir(), log)
+
+	// First, fetch directory
+	if err := c.ensureDirectory(context.Background()); err != nil {
+		t.Fatalf("ensureDirectory: %v", err)
+	}
+
+	// Now ensure account
+	if err := c.ensureAccount(context.Background()); err != nil {
+		t.Fatalf("ensureAccount: %v", err)
+	}
+
+	if c.accountURL != mockServer.URL+"/acct/12345" {
+		t.Errorf("accountURL = %q, want %s/acct/12345", c.accountURL, mockServer.URL)
+	}
+
+	// Calling again should be a no-op (cached)
+	if err := c.ensureAccount(context.Background()); err != nil {
+		t.Fatalf("ensureAccount second call: %v", err)
+	}
+}
+
+func TestNewOrder(t *testing.T) {
+	nonceCount := 0
+	var mockServer *httptest.Server
+	mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/new-nonce":
+			nonceCount++
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+		case "/new-order":
+			w.Header().Set("Location", mockServer.URL+"/order/1")
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("reply-nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusCreated)
+			order := map[string]any{
+				"status": "pending",
+				"identifiers": []map[string]string{
+					{"type": "dns", "value": "example.com"},
+				},
+				"authorizations": []string{mockServer.URL + "/authz/1"},
+				"finalize":       mockServer.URL + "/finalize/1",
+			}
+			json.NewEncoder(w).Encode(order)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	log := logger.New("error", "text")
+	c := NewClient(mockServer.URL, t.TempDir(), log)
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c.accountKey = key
+	c.accountURL = "https://acme.example.com/acct/1"
+	c.directory = &Directory{
+		NewNonce: mockServer.URL + "/new-nonce",
+		NewOrder: mockServer.URL + "/new-order",
+	}
+
+	order, err := c.newOrder(context.Background(), []string{"example.com"})
+	if err != nil {
+		t.Fatalf("newOrder: %v", err)
+	}
+	if order.Status != "pending" {
+		t.Errorf("order.Status = %q, want pending", order.Status)
+	}
+	if order.URL != mockServer.URL+"/order/1" {
+		t.Errorf("order.URL = %q", order.URL)
+	}
+	if len(order.Authorizations) != 1 {
+		t.Errorf("order.Authorizations count = %d, want 1", len(order.Authorizations))
+	}
+	if order.Finalize != mockServer.URL+"/finalize/1" {
+		t.Errorf("order.Finalize = %q", order.Finalize)
+	}
+}
+
+func TestGetAuthorization(t *testing.T) {
+	nonceCount := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/new-nonce":
+			nonceCount++
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+		case "/authz/1":
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("reply-nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+			authz := Authorization{
+				Status:     "pending",
+				Identifier: Identifier{Type: "dns", Value: "example.com"},
+				Challenges: []Challenge{
+					{
+						Type:   "http-01",
+						URL:    "https://acme.example.com/chall/1",
+						Token:  "test-token-abc",
+						Status: "pending",
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(authz)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	log := logger.New("error", "text")
+	c := NewClient(mockServer.URL, t.TempDir(), log)
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c.accountKey = key
+	c.accountURL = "https://acme.example.com/acct/1"
+	c.directory = &Directory{
+		NewNonce: mockServer.URL + "/new-nonce",
+	}
+
+	authz, err := c.getAuthorization(context.Background(), mockServer.URL+"/authz/1")
+	if err != nil {
+		t.Fatalf("getAuthorization: %v", err)
+	}
+	if authz.Status != "pending" {
+		t.Errorf("authz.Status = %q, want pending", authz.Status)
+	}
+	if authz.Identifier.Value != "example.com" {
+		t.Errorf("authz.Identifier.Value = %q, want example.com", authz.Identifier.Value)
+	}
+	if len(authz.Challenges) != 1 {
+		t.Fatalf("authz.Challenges count = %d, want 1", len(authz.Challenges))
+	}
+	if authz.Challenges[0].Type != "http-01" {
+		t.Errorf("challenge type = %q, want http-01", authz.Challenges[0].Type)
+	}
+	if authz.Challenges[0].Token != "test-token-abc" {
+		t.Errorf("challenge token = %q, want test-token-abc", authz.Challenges[0].Token)
+	}
+}
+
+func TestDownloadCert(t *testing.T) {
+	nonceCount := 0
+	pemData := "-----BEGIN CERTIFICATE-----\nMIIBFake...\n-----END CERTIFICATE-----\n"
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/new-nonce":
+			nonceCount++
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+		case "/cert/1":
+			w.Header().Set("Content-Type", "application/pem-certificate-chain")
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("reply-nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(pemData))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	log := logger.New("error", "text")
+	c := NewClient(mockServer.URL, t.TempDir(), log)
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c.accountKey = key
+	c.accountURL = "https://acme.example.com/acct/1"
+	c.directory = &Directory{
+		NewNonce: mockServer.URL + "/new-nonce",
+	}
+
+	certPEM, err := c.downloadCert(context.Background(), mockServer.URL+"/cert/1")
+	if err != nil {
+		t.Fatalf("downloadCert: %v", err)
+	}
+	if string(certPEM) != pemData {
+		t.Errorf("downloaded cert = %q, want %q", string(certPEM), pemData)
+	}
+}
+
+func TestWaitForStatus(t *testing.T) {
+	callCount := 0
+	nonceCount := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/new-nonce":
+			nonceCount++
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+		case "/order/1":
+			callCount++
+			w.Header().Set("Replay-Nonce", fmt.Sprintf("reply-nonce-%d", nonceCount))
+			w.WriteHeader(http.StatusOK)
+			status := "pending"
+			if callCount >= 2 {
+				status = "valid"
+			}
+			order := map[string]any{
+				"status":      status,
+				"certificate": "https://acme.example.com/cert/1",
+			}
+			json.NewEncoder(w).Encode(order)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	log := logger.New("error", "text")
+	c := NewClient(mockServer.URL, t.TempDir(), log)
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c.accountKey = key
+	c.accountURL = "https://acme.example.com/acct/1"
+	c.directory = &Directory{
+		NewNonce: mockServer.URL + "/new-nonce",
+	}
+
+	order, err := c.waitForStatus(context.Background(), mockServer.URL+"/order/1", "valid", 5)
+	if err != nil {
+		t.Fatalf("waitForStatus: %v", err)
+	}
+	if order.Status != "valid" {
+		t.Errorf("order.Status = %q, want valid", order.Status)
+	}
+	if callCount < 2 {
+		t.Errorf("expected at least 2 calls, got %d", callCount)
 	}
 }

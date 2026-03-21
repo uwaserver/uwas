@@ -233,3 +233,149 @@ Header unset X-Powered-By`))
 		t.Errorf("second header = %+v", rules.Headers[1])
 	}
 }
+
+func TestConvertAuthDirectives(t *testing.T) {
+	input := `AuthType Basic
+AuthName "Restricted Area"
+AuthUserFile /etc/apache2/.htpasswd
+Require valid-user`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := Convert(directives)
+
+	if rules.AuthType != "Basic" {
+		t.Errorf("AuthType = %q, want Basic", rules.AuthType)
+	}
+	if rules.AuthName != "Restricted Area" {
+		t.Errorf("AuthName = %q, want 'Restricted Area'", rules.AuthName)
+	}
+	if rules.AuthUserFile != "/etc/apache2/.htpasswd" {
+		t.Errorf("AuthUserFile = %q, want /etc/apache2/.htpasswd", rules.AuthUserFile)
+	}
+	if rules.Require != "valid-user" {
+		t.Errorf("Require = %q, want valid-user", rules.Require)
+	}
+}
+
+func TestConvertExpiresDirectives(t *testing.T) {
+	input := `ExpiresActive On
+ExpiresByType text/html "access plus 1 month"
+ExpiresByType image/jpeg "access plus 1 year"`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := Convert(directives)
+
+	if !rules.ExpiresActive {
+		t.Error("ExpiresActive should be true")
+	}
+	if len(rules.ExpiresByType) != 2 {
+		t.Fatalf("ExpiresByType count = %d, want 2", len(rules.ExpiresByType))
+	}
+	if rules.ExpiresByType["text/html"] != "access plus 1 month" {
+		t.Errorf("text/html expires = %q", rules.ExpiresByType["text/html"])
+	}
+	if rules.ExpiresByType["image/jpeg"] != "access plus 1 year" {
+		t.Errorf("image/jpeg expires = %q", rules.ExpiresByType["image/jpeg"])
+	}
+}
+
+func TestConvertFilesMatchBlock(t *testing.T) {
+	input := `<FilesMatch "\.(jpg|png|gif)$">
+Header set Cache-Control "max-age=31536000"
+</FilesMatch>`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := Convert(directives)
+
+	if len(rules.FilesMatch) != 1 {
+		t.Fatalf("FilesMatch count = %d, want 1", len(rules.FilesMatch))
+	}
+	fm := rules.FilesMatch[0]
+	if fm.Pattern != `\.(jpg|png|gif)$` {
+		t.Errorf("FilesMatch pattern = %q", fm.Pattern)
+	}
+	if len(fm.Directives) != 1 {
+		t.Fatalf("FilesMatch directives = %d, want 1", len(fm.Directives))
+	}
+	if fm.Directives[0].Name != "Header" {
+		t.Errorf("inner directive name = %q, want Header", fm.Directives[0].Name)
+	}
+}
+
+func TestParseEmptyInput(t *testing.T) {
+	directives, err := Parse(strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(directives) != 0 {
+		t.Errorf("directives = %d, want 0 for empty input", len(directives))
+	}
+}
+
+func TestParseNestedIfModuleBlocks(t *testing.T) {
+	input := `<IfModule mod_rewrite.c>
+    RewriteEngine On
+    <IfModule mod_negotiation.c>
+        Options -MultiViews
+    </IfModule>
+    RewriteRule ^(.*)$ /index.php [L]
+</IfModule>`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(directives) != 1 {
+		t.Fatalf("top-level directives = %d, want 1", len(directives))
+	}
+
+	outer := directives[0]
+	if outer.Name != "IfModule" {
+		t.Errorf("outer block name = %q, want IfModule", outer.Name)
+	}
+	if len(outer.Args) == 0 || outer.Args[0] != "mod_rewrite.c" {
+		t.Errorf("outer block args = %v, want [mod_rewrite.c]", outer.Args)
+	}
+
+	// Outer should have: RewriteEngine, nested IfModule, RewriteRule = 3 items
+	if len(outer.Block) != 3 {
+		t.Fatalf("outer inner count = %d, want 3", len(outer.Block))
+	}
+
+	// Check the nested IfModule
+	nested := outer.Block[1]
+	if nested.Name != "IfModule" {
+		t.Errorf("nested block name = %q, want IfModule", nested.Name)
+	}
+	if len(nested.Args) == 0 || nested.Args[0] != "mod_negotiation.c" {
+		t.Errorf("nested block args = %v, want [mod_negotiation.c]", nested.Args)
+	}
+	if len(nested.Block) != 1 {
+		t.Fatalf("nested inner count = %d, want 1", len(nested.Block))
+	}
+	if nested.Block[0].Name != "Options" {
+		t.Errorf("nested inner directive = %q, want Options", nested.Block[0].Name)
+	}
+
+	// Now test Convert with nested IfModule: both should be "flattened"
+	rules := Convert(directives)
+	if !rules.RewriteEnabled {
+		t.Error("RewriteEngine should be on after converting nested IfModule")
+	}
+	if rules.DirectoryListing != nil {
+		// Options -MultiViews doesn't affect DirectoryListing
+	}
+	if len(rules.Rewrites) != 1 {
+		t.Errorf("rewrites = %d, want 1", len(rules.Rewrites))
+	}
+}
