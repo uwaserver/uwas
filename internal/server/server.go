@@ -144,7 +144,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	mws := []middleware.Middleware{
 		middleware.Recovery(s.logger),
 		middleware.RequestID(),
-		middleware.RealIP(nil), // TODO: make trusted proxies configurable
+		middleware.RealIP(s.config.Global.TrustedProxies),
 		middleware.SecurityHeaders(),
 		middleware.Gzip(1024), // compress responses > 1KB
 	}
