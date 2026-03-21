@@ -107,6 +107,22 @@ domains:
         interval: 10s
 ```
 
+## Requirements
+
+| Component | Minimum | Recommended | Notes |
+|-----------|---------|-------------|-------|
+| Go | 1.23+ | 1.26+ | For building from source |
+| PHP | 7.4+ | 8.3+ / 8.4+ | Only needed for PHP sites |
+| PHP-FPM | Any | 8.3-fpm | Linux/macOS: `php-fpm`, Windows: `php-cgi -b` |
+
+**PHP compatibility tested with:** PHP 8.1, 8.2, 8.3, 8.4
+
+**Supported PHP connection modes:**
+- Unix socket: `fpm_address: "unix:/var/run/php/php8.3-fpm.sock"` (Linux/macOS)
+- TCP: `fpm_address: "tcp:127.0.0.1:9000"` (all platforms)
+
+**No PHP needed** for static sites, reverse proxy, or redirect domains.
+
 ## CLI
 
 ```
