@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/build"
@@ -338,13 +339,27 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		ctx.IsHTTPS = true
 	}
 
-	// Metrics tracking
+	// Metrics + log tracking
+	start := time.Now()
 	s.metrics.ActiveConns.Add(1)
 	defer func() {
 		s.metrics.ActiveConns.Add(-1)
 		s.metrics.RequestsTotal.Add(1)
 		s.metrics.RecordRequest(ctx.Response.StatusCode())
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
+
+		// Record to admin log ring buffer
+		if s.admin != nil {
+			s.admin.RecordLog(admin.LogEntry{
+				Time:       start,
+				Host:       r.Host,
+				Method:     r.Method,
+				Path:       r.URL.Path,
+				Status:     ctx.Response.StatusCode(),
+				Duration:   time.Since(start).String(),
+				RemoteAddr: r.RemoteAddr,
+			})
+		}
 	}()
 
 	// Virtual host lookup

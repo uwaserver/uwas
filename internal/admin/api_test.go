@@ -323,3 +323,217 @@ func TestCachePurgeNoCache(t *testing.T) {
 		t.Errorf("error = %q", resp["error"])
 	}
 }
+
+// --- POST /api/v1/domains (add domain) ---
+
+func TestAddDomain(t *testing.T) {
+	s := testServer()
+	initialCount := len(s.config.Domains)
+
+	body := strings.NewReader(`{"host":"new.com","type":"static","root":"/var/www/new","ssl":{"mode":"auto"}}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 201 {
+		t.Errorf("status = %d, want 201", rec.Code)
+	}
+	if len(s.config.Domains) != initialCount+1 {
+		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount+1)
+	}
+	// Verify the response body contains the new host.
+	// config.Domain uses yaml tags only; json encodes with Go field names.
+	var created map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if created["Host"] != "new.com" {
+		t.Errorf("created host = %v, want new.com", created["Host"])
+	}
+}
+
+func TestAddDomainDuplicate(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"host":"example.com","type":"static"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 409 {
+		t.Errorf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestAddDomainMissingHost(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"type":"static"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestAddDomainCallsOnDomainChange(t *testing.T) {
+	s := testServer()
+	called := false
+	s.SetOnDomainChange(func() { called = true })
+
+	body := strings.NewReader(`{"host":"callback.com","type":"static"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 201 {
+		t.Errorf("status = %d, want 201", rec.Code)
+	}
+	if !called {
+		t.Error("onDomainChange callback was not called")
+	}
+}
+
+// --- DELETE /api/v1/domains/{host} ---
+
+func TestDeleteDomain(t *testing.T) {
+	s := testServer()
+	initialCount := len(s.config.Domains)
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/example.com", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if len(s.config.Domains) != initialCount-1 {
+		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount-1)
+	}
+	var body map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["status"] != "deleted" {
+		t.Errorf("status = %q, want deleted", body["status"])
+	}
+}
+
+func TestDeleteDomainNotFound(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/nonexistent.com", nil))
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestDeleteDomainCallsOnDomainChange(t *testing.T) {
+	s := testServer()
+	called := false
+	s.SetOnDomainChange(func() { called = true })
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/example.com", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if !called {
+		t.Error("onDomainChange callback was not called")
+	}
+}
+
+// --- PUT /api/v1/domains/{host} ---
+
+func TestUpdateDomain(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"host":"example.com","type":"proxy","root":"/updated"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/domains/example.com", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	// Verify the domain was updated in config.
+	for _, d := range s.config.Domains {
+		if d.Host == "example.com" {
+			if d.Type != "proxy" {
+				t.Errorf("type = %q, want proxy", d.Type)
+			}
+			if d.Root != "/updated" {
+				t.Errorf("root = %q, want /updated", d.Root)
+			}
+			return
+		}
+	}
+	t.Error("example.com not found in config after update")
+}
+
+func TestUpdateDomainNotFound(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"host":"nope.com","type":"static"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/domains/nope.com", body))
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// --- GET /api/v1/logs ---
+
+func TestLogsEmpty(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/logs", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	var logs []any
+	json.Unmarshal(rec.Body.Bytes(), &logs)
+	if len(logs) != 0 {
+		t.Errorf("logs = %d, want 0", len(logs))
+	}
+}
+
+func TestLogsWithEntries(t *testing.T) {
+	s := testServer()
+
+	// Record a few entries.
+	s.RecordLog(LogEntry{Time: time.Now(), Host: "a.com", Method: "GET", Path: "/", Status: 200, Duration: "1ms", RemoteAddr: "1.2.3.4"})
+	s.RecordLog(LogEntry{Time: time.Now(), Host: "b.com", Method: "POST", Path: "/api", Status: 201, Duration: "5ms", RemoteAddr: "5.6.7.8"})
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/logs", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	var logs []map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &logs)
+	if len(logs) != 2 {
+		t.Errorf("logs = %d, want 2", len(logs))
+	}
+	if logs[0]["host"] != "a.com" {
+		t.Errorf("first log host = %v, want a.com", logs[0]["host"])
+	}
+	if logs[1]["host"] != "b.com" {
+		t.Errorf("second log host = %v, want b.com", logs[1]["host"])
+	}
+}
+
+func TestLogsMaxReturn(t *testing.T) {
+	s := testServer()
+
+	// Record 150 entries; only the last 100 should be returned.
+	for i := 0; i < 150; i++ {
+		s.RecordLog(LogEntry{Time: time.Now(), Host: "x.com", Method: "GET", Path: "/", Status: 200, Duration: "1ms"})
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/logs", nil))
+
+	var logs []map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &logs)
+	if len(logs) != 100 {
+		t.Errorf("logs = %d, want 100", len(logs))
+	}
+}
