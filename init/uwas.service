@@ -1,0 +1,30 @@
+[Unit]
+Description=UWAS - Unified Web Application Server
+Documentation=https://github.com/uwaserver/uwas
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+ExecStart=/usr/local/bin/uwas serve -c /etc/uwas/uwas.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/uwas /var/cache/uwas /var/log/uwas
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=uwas
+
+[Install]
+WantedBy=multi-user.target
