@@ -3,9 +3,13 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
-var errorPages = map[int]string{
+var defaultErrorTitles = map[int]string{
 	400: "Bad Request",
 	403: "Forbidden",
 	404: "Not Found",
@@ -15,8 +19,24 @@ var errorPages = map[int]string{
 	504: "Gateway Timeout",
 }
 
+// renderDomainError serves a custom error page if configured, otherwise the default styled page.
+func renderDomainError(w http.ResponseWriter, code int, domain *config.Domain) {
+	if domain != nil && domain.ErrorPages != nil {
+		if pagePath, ok := domain.ErrorPages[code]; ok && domain.Root != "" {
+			fullPath := filepath.Join(domain.Root, pagePath)
+			if data, err := os.ReadFile(fullPath); err == nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(code)
+				w.Write(data)
+				return
+			}
+		}
+	}
+	renderErrorPage(w, code)
+}
+
 func renderErrorPage(w http.ResponseWriter, code int) {
-	title := errorPages[code]
+	title := defaultErrorTitles[code]
 	if title == "" {
 		title = http.StatusText(code)
 	}

@@ -599,13 +599,25 @@ func (s *Server) handleSignals() {
 	defer s.wg.Done()
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
-	select {
-	case sig := <-sigCh:
-		s.logger.Info("received signal, shutting down", "signal", sig)
-		s.cancel()
-	case <-s.ctx.Done():
+	for {
+		select {
+		case sig := <-sigCh:
+			switch sig {
+			case syscall.SIGHUP:
+				s.logger.Info("received SIGHUP, reloading config")
+				if err := s.reload(); err != nil {
+					s.logger.Error("config reload failed", "error", err)
+				}
+			case syscall.SIGINT, syscall.SIGTERM:
+				s.logger.Info("received signal, shutting down", "signal", sig)
+				s.cancel()
+				return
+			}
+		case <-s.ctx.Done():
+			return
+		}
 	}
 }
 
