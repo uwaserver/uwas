@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["1.23"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 -timeout 120s ./...
+
+      - name: Test race (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race -count=1 -timeout 120s ./...
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build production binary
+        run: |
+          CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X 'github.com/uwaserver/uwas/internal/build.Version=${{ github.ref_name }}' -X 'github.com/uwaserver/uwas/internal/build.Commit=${{ github.sha }}'" \
+            -o uwas ./cmd/uwas
+
+      - name: Verify binary
+        run: ./uwas version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uwas-linux-amd64
+          path: uwas

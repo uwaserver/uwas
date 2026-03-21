@@ -1,0 +1,54 @@
+version: 2
+
+project_name: uwas
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+    - go test ./...
+
+builds:
+  - main: ./cmd/uwas
+    binary: uwas
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/uwaserver/uwas/internal/build.Version={{.Version}}
+      - -X github.com/uwaserver/uwas/internal/build.Commit={{.ShortCommit}}
+      - -X github.com/uwaserver/uwas/internal/build.Date={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+dockers:
+  - image_templates:
+      - "ghcr.io/uwaserver/uwas:{{ .Version }}"
+      - "ghcr.io/uwaserver/uwas:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--build-arg=VERSION={{.Version}}"
+      - "--build-arg=COMMIT={{.ShortCommit}}"
