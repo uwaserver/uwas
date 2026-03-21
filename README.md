@@ -9,7 +9,7 @@ Apache + Nginx + Varnish + Caddy → UWAS
 ---
 
 <p align="center">
-  <img src="assets/logo.jpeg" alt="UWAS Logo" width="200">
+  <img src="assets/banner.jpeg" alt="UWAS Logo" width="100%">
 </p>
 
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)](https://go.dev)
