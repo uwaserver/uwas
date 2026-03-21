@@ -1,6 +1,6 @@
-# Binary
-uwas
-uwas.exe
+# Binary output
+/uwas
+/uwas.exe
 /bin/
 
 # Go
@@ -20,9 +20,8 @@ coverage.txt
 .DS_Store
 Thumbs.db
 
-# Config with secrets
-uwas.yaml
-!uwas.example.yaml
+# Config with secrets (not the example)
+/uwas.yaml
 
 # PID
 *.pid
