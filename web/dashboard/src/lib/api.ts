@@ -1,0 +1,87 @@
+const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
+
+let token = localStorage.getItem('uwas_token') || '';
+
+export function setToken(t: string) {
+  token = t;
+  localStorage.setItem('uwas_token', t);
+}
+
+export function getToken() {
+  return token;
+}
+
+export function clearToken() {
+  token = '';
+  localStorage.removeItem('uwas_token');
+}
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = '/_uwas/dashboard/login';
+    throw new Error('Unauthorized');
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || res.statusText);
+  }
+
+  return res.json();
+}
+
+export interface HealthData {
+  status: string;
+  uptime: string;
+}
+
+export interface StatsData {
+  requests_total: number;
+  cache_hits: number;
+  cache_misses: number;
+  active_conns: number;
+  bytes_sent: number;
+  uptime: string;
+}
+
+export interface DomainData {
+  host: string;
+  aliases: string[] | null;
+  type: string;
+  ssl: string;
+  root: string;
+}
+
+export interface ConfigData {
+  global: {
+    worker_count: string;
+    max_connections: number;
+    log_level: string;
+    log_format: string;
+  };
+  domain_count: number;
+}
+
+export const fetchHealth = () => api<HealthData>('/api/v1/health');
+export const fetchStats = () => api<StatsData>('/api/v1/stats');
+export const fetchDomains = () => api<DomainData[]>('/api/v1/domains');
+export const fetchConfig = () => api<ConfigData>('/api/v1/config');
+export const fetchMetrics = () => fetch(`${BASE}/api/v1/metrics`, {
+  headers: token ? { Authorization: `Bearer ${token}` } : {},
+}).then(r => r.text());
+
+export const triggerReload = () => api<{ status: string }>('/api/v1/reload', { method: 'POST' });
+export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/cache/purge', {
+  method: 'POST',
+  body: JSON.stringify(tag ? { tag } : {}),
+});
