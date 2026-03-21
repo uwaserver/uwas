@@ -20,25 +20,25 @@
 
 ## 1. Vision & Philosophy
 
-UWAS, mevcut web server ekosistemindeki fragmentasyonu ortadan kaldıran, tek binary'de çalışan, sıfır bağımlılık Go web application server'dır.
+UWAS is a zero-dependency Go web application server that runs in a single binary, eliminating the fragmentation in the current web server ecosystem.
 
 ### Problem
 
-Bugün production'da bir PHP sitesi (WordPress, Laravel) çalıştırmak için tipik stack:
+Today, running a PHP site (WordPress, Laravel) in production requires the typical stack:
 
 ```
 Certbot → Nginx → Varnish → PHP-FPM → MySQL
            ↑        ↑         ↑
          config   config    config
-         ayrı     ayrı      ayrı
+       separate  separate  separate
 ```
 
-5 ayrı servis, 5 ayrı config formatı, 5 ayrı log formatı, 5 ayrı restart/reload mekanizması. Monitoring, debugging ve maintenance karmaşıklığı katlanarak artıyor.
+5 separate services, 5 separate config formats, 5 separate log formats, 5 separate restart/reload mechanisms. Monitoring, debugging, and maintenance complexity grows exponentially.
 
-### Çözüm
+### Solution
 
 ```
-UWAS (tek binary)
+UWAS (single binary)
 ├── TLS termination + Auto ACME     (← Caddy)
 ├── HTTP/1.1 + HTTP/2 + HTTP/3      (← Nginx)
 ├── URL rewrite engine               (← Apache mod_rewrite)
@@ -59,14 +59,14 @@ UWAS (tek binary)
 2. **Single static binary** — `go build` produces one executable
 3. **Production-ready defaults** — HTTPS by default, secure headers, sane timeouts
 4. **Apache compatibility layer** — WordPress "just works" without config changes
-5. **Modular architecture** — her feature bağımsız enable/disable edilebilir
-6. **LLM-native** — MCP server ile AI-driven server management
+5. **Modular architecture** — each feature can be independently enabled/disabled
+6. **LLM-native** — AI-driven server management via MCP server
 
 ### 1.1 Dependency Policy
 
-**Felsefe**: Tekerleği yeniden icat etme, ama dependency hell'e de düşme.
+**Philosophy**: Don't reinvent the wheel, but don't fall into dependency hell either.
 
-**Stdlib ile yazılacak** (Go stdlib yeterli):
+**Will be written with stdlib** (Go stdlib is sufficient):
 - HTTP/1.1 + HTTP/2 server (`net/http`)
 - TLS termination + SNI (`crypto/tls`)
 - Reverse proxy core (`net/http/httputil`)
@@ -78,24 +78,24 @@ UWAS (tek binary)
 - Connection pooling (`sync.Pool`, `sync.Mutex`)
 - Signal handling, graceful shutdown (`os/signal`, `context`)
 
-**İzin verilen external dependencies** (proven, stable, well-maintained):
-| Dependency | Neden | Alternatif neden kabul edilmiyor |
+**Allowed external dependencies** (proven, stable, well-maintained):
+| Dependency | Reason | Why the alternative is not acceptable |
 |-----------|-------|-------------------------------|
-| `gopkg.in/yaml.v3` | YAML config parser | Sıfırdan YAML parser 3000+ satır, hata kaynağı |
-| `github.com/andybalholm/brotli` | Brotli compression | Brotli spec 10K+ satır, C binding istemiyoruz |
-| `github.com/klauspost/compress/zstd` | Zstandard compression | Aynı sebep |
-| `github.com/quic-go/quic-go` | HTTP/3 (Phase 2+) | QUIC tek başına bir proje |
+| `gopkg.in/yaml.v3` | YAML config parser | Writing a YAML parser from scratch is 3000+ lines and error-prone |
+| `github.com/andybalholm/brotli` | Brotli compression | Brotli spec is 10K+ lines, we don't want C bindings |
+| `github.com/klauspost/compress/zstd` | Zstandard compression | Same reason |
+| `github.com/quic-go/quic-go` | HTTP/3 (Phase 2+) | QUIC is a project on its own |
 | `golang.org/x/crypto` | OCSP, ACME helper utils | Go extended stdlib, quasi-official |
 | `golang.org/x/net` | HTTP/2 server push, ECH | Go extended stdlib |
 
-**Kesinlikle yasak**:
-- Web framework'leri (gin, echo, fiber vs.)
-- ORM veya database driver
-- Logging framework (zap, logrus vs.) — kendi structured logger
-- Dependency injection framework
-- Herhangi bir "kitchen sink" kütüphane
+**Strictly forbidden**:
+- Web frameworks (gin, echo, fiber, etc.)
+- ORM or database drivers
+- Logging frameworks (zap, logrus, etc.) — custom structured logger
+- Dependency injection frameworks
+- Any "kitchen sink" library
 
-**Hedef**: `go.sum` dosyasında toplam **< 15 direct dependency**, indirect dahil **< 40 total**.
+**Target**: Total **< 15 direct dependencies** in `go.sum`, including indirect **< 40 total**.
 
 ---
 
@@ -124,7 +124,7 @@ UWAS (tek binary)
 └────────┘ └────────┘ └────────┘
 ```
 
-Go'nun goroutine modeli sayesinde her worker process binlerce concurrent connection'ı handle edebilir. SO_REUSEPORT ile kernel-level load distribution.
+Thanks to Go's goroutine model, each worker process can handle thousands of concurrent connections. Kernel-level load distribution via SO_REUSEPORT.
 
 ### 2.2 Request Pipeline
 
@@ -162,7 +162,7 @@ Handler Router
   │
   ▼
 Response Middleware Chain
-  ├── Cache Store (eğer cacheable ise)
+  ├── Cache Store (if cacheable)
   ├── Compression (brotli/gzip/zstd)
   ├── Security Headers (HSTS, CSP, X-Frame, CORS)
   ├── Access Log (structured JSON)
@@ -174,7 +174,7 @@ Client Response
 
 ### 2.3 Module System
 
-Her major feature bir Go interface'i implement eder ve bağımsız enable/disable edilebilir:
+Each major feature implements a Go interface and can be independently enabled/disabled:
 
 ```go
 type Module interface {
@@ -203,7 +203,7 @@ type Handler interface {
 
 ### 3.1 Config Format: YAML
 
-Ana config dosyası: `/etc/uwas/uwas.yaml`
+Main config file: `/etc/uwas/uwas.yaml`
 
 ```yaml
 # /etc/uwas/uwas.yaml
@@ -213,7 +213,7 @@ global:
   pid_file: /var/run/uwas.pid
   log_level: info             # debug, info, warn, error
   log_format: json            # json, clf (Combined Log Format)
-  
+
   timeouts:
     read: 30s
     write: 60s
@@ -236,7 +236,7 @@ global:
     dns_provider: cloudflare       # optional: DNS-01 challenge
     dns_credentials:
       api_token: "${CF_API_TOKEN}"
-    on_demand: false               # true = sertifika runtime'da alınır
+    on_demand: false               # true = certificate is obtained at runtime
     on_demand_ask: "http://localhost:9443/api/v1/domains/verify"
 
   cache:
@@ -245,28 +245,28 @@ global:
     disk_path: /var/cache/uwas
     disk_limit: 10GB
     default_ttl: 3600
-    grace_ttl: 86400              # Varnish grace mode: 24 saat stale serve
+    grace_ttl: 86400              # Varnish grace mode: serve stale for 24 hours
     stale_while_revalidate: true
     purge_key: "${UWAS_PURGE_KEY}"
 
-# Domain Tanımları
+# Domain Definitions
 domains:
   - host: "example.com"
     aliases:
       - "www.example.com"
     root: /var/www/example.com/public
     type: php                     # static | php | proxy | redirect
-    
+
     ssl:
       mode: auto                  # auto | manual | off
       # manual mode:
       # cert: /path/to/cert.pem
       # key: /path/to/key.pem
       min_version: "1.2"
-      
+
     php:
       fpm_address: "unix:/var/run/php/php8.3-fpm.sock"
-      # fpm_address: "tcp://127.0.0.1:9000"   # TCP alternatif
+      # fpm_address: "tcp://127.0.0.1:9000"   # TCP alternative
       index_files:
         - index.php
         - index.html
@@ -274,7 +274,7 @@ domains:
       timeout: 300s
       env:
         APP_ENV: production
-    
+
     cache:
       enabled: true
       ttl: 1800
@@ -288,7 +288,7 @@ domains:
       tags:
         - "site:example"
       esi: true                   # Edge Side Includes
-    
+
     rewrites:
       # WordPress pretty permalinks
       - match: "^/(.+)$"
@@ -300,13 +300,13 @@ domains:
       - match: "^/old-page$"
         to: "/new-page"
         status: 301
-    
+
     htaccess:
       mode: import               # import | convert | off
-      # import: runtime'da parse et, memory'de cache'le
-      # convert: başlangıçta YAML'a çevir, sonra ignore et
-      # off: .htaccess dosyalarını tamamen ignore et
-    
+      # import: parse at runtime, cache in memory
+      # convert: convert to YAML at startup, then ignore
+      # off: completely ignore .htaccess files
+
     security:
       blocked_paths:
         - ".git"
@@ -333,7 +333,7 @@ domains:
           - sql_injection
           - xss
           - path_traversal
-    
+
     headers:
       add:
         X-Content-Type-Options: nosniff
@@ -342,7 +342,7 @@ domains:
       remove:
         - X-Powered-By
         - Server
-    
+
     compression:
       enabled: true
       algorithms:
@@ -356,7 +356,7 @@ domains:
         - application/javascript
         - application/json
         - image/svg+xml
-    
+
     access_log:
       path: /var/log/uwas/example.com.access.log
       format: json               # json | clf | custom
@@ -365,7 +365,7 @@ domains:
         max_size: 100MB
         max_age: 30d
         max_backups: 10
-    
+
     error_pages:
       404: /errors/404.html
       500: /errors/500.html
@@ -386,15 +386,15 @@ domains:
         path: /health
         interval: 10s
         timeout: 5s
-        threshold: 3             # kaç fail sonra unhealthy
-        rise: 2                  # kaç success sonra healthy
+        threshold: 3             # how many failures before unhealthy
+        rise: 2                  # how many successes before healthy
       sticky:
         type: cookie             # cookie | header | ip
         cookie_name: "UWAS_UPSTREAM"
         ttl: 3600
       circuit_breaker:
-        threshold: 5             # kaç hata sonra open
-        timeout: 30s             # open → half-open bekleme
+        threshold: 5             # how many errors before open
+        timeout: 30s             # wait time from open → half-open
       websocket: true
       timeouts:
         connect: 5s
@@ -413,54 +413,54 @@ domains:
 
 ### 3.2 .htaccess Compatibility
 
-Desteklenen .htaccess direktifleri (Apache uyumlu):
+Supported .htaccess directives (Apache compatible):
 
-| Directive | Destek | Notlar |
-|-----------|--------|--------|
+| Directive | Support | Notes |
+|-----------|---------|-------|
 | `RewriteEngine On/Off` | ✅ Full | |
 | `RewriteRule` | ✅ Full | PCRE regex, backreferences, flags [L,R,QSA,NC] |
-| `RewriteCond` | ✅ Full | %{REQUEST_URI}, %{HTTP_HOST}, %{QUERY_STRING}, vs. |
+| `RewriteCond` | ✅ Full | %{REQUEST_URI}, %{HTTP_HOST}, %{QUERY_STRING}, etc. |
 | `Redirect` / `RedirectMatch` | ✅ Full | 301, 302, 307, 308 |
-| `ErrorDocument` | ✅ Full | Local path veya URL |
-| `DirectoryIndex` | ✅ Full | Birden fazla index dosyası |
+| `ErrorDocument` | ✅ Full | Local path or URL |
+| `DirectoryIndex` | ✅ Full | Multiple index files |
 | `Header set/unset/append` | ✅ Full | Response header manipulation |
 | `ExpiresActive` / `ExpiresByType` | ✅ Full | Cache-Control header generation |
-| `Options -Indexes` | ✅ Full | Directory listing kontrolü |
-| `Options -FollowSymLinks` | ✅ Full | Symlink takip kontrolü |
-| `AuthType Basic` | ✅ Full | .htpasswd ile basic auth |
-| `Deny/Allow/Order` | ✅ Full | IP bazlı erişim kontrolü (legacy syntax) |
+| `Options -Indexes` | ✅ Full | Directory listing control |
+| `Options -FollowSymLinks` | ✅ Full | Symlink follow control |
+| `AuthType Basic` | ✅ Full | Basic auth with .htpasswd |
+| `Deny/Allow/Order` | ✅ Full | IP-based access control (legacy syntax) |
 | `Require` | ✅ Full | Apache 2.4+ syntax |
-| `SetEnvIf` | ⚠️ Partial | Temel kullanımlar |
-| `FilesMatch` / `Files` | ✅ Full | Dosya pattern matching |
-| `<IfModule>` | ✅ Full | Modül varlık kontrolü (her zaman true döner) |
-| `php_value` / `php_flag` | ⚠️ Ignored | PHP-FPM pool config'den yönetilir |
+| `SetEnvIf` | ⚠️ Partial | Basic use cases |
+| `FilesMatch` / `Files` | ✅ Full | File pattern matching |
+| `<IfModule>` | ✅ Full | Module existence check (always returns true) |
+| `php_value` / `php_flag` | ⚠️ Ignored | Managed via PHP-FPM pool config |
 
-**Desteklenmeyen** (ve desteklenmeyecek):
-- `mod_php` directives (php_admin_value vs.) — FPM pool config ile yönetilir
-- `SSLRequireSSL` — UWAS zaten default HTTPS
-- `mod_proxy` directives — UWAS native proxy config ile yönetilir
+**Unsupported** (and will not be supported):
+- `mod_php` directives (php_admin_value, etc.) — managed via FPM pool config
+- `SSLRequireSSL` — UWAS already defaults to HTTPS
+- `mod_proxy` directives — managed via UWAS native proxy config
 
-### 3.3 .htaccess Import Stratejisi
+### 3.3 .htaccess Import Strategy
 
 ```
-.htaccess dosyası bulunduğunda:
+When an .htaccess file is found:
   │
   ├── mode: import
-  │     ├── Parse et
-  │     ├── Desteklenen directive'leri in-memory rule'lara çevir
-  │     ├── inotify/fswatch ile değişiklikleri izle
-  │     ├── Değişiklikte otomatik re-parse
-  │     └── Runtime'da aktif (performans: ilk parse sonrası O(1) lookup)
+  │     ├── Parse it
+  │     ├── Convert supported directives to in-memory rules
+  │     ├── Watch for changes via inotify/fswatch
+  │     ├── Automatically re-parse on changes
+  │     └── Active at runtime (performance: O(1) lookup after initial parse)
   │
   ├── mode: convert
-  │     ├── Parse et
-  │     ├── uwas.yaml snippet'ine çevir
-  │     ├── stdout'a yaz veya config'e merge et
-  │     ├── .htaccess'i .htaccess.bak olarak rename et
-  │     └── Artık sadece YAML config'den çalış
+  │     ├── Parse it
+  │     ├── Convert to uwas.yaml snippet
+  │     ├── Write to stdout or merge into config
+  │     ├── Rename .htaccess to .htaccess.bak
+  │     └── From now on, only run from YAML config
   │
   └── mode: off
-        └── .htaccess dosyalarını tamamen ignore et
+        └── Completely ignore .htaccess files
 ```
 
 ### 3.4 Config Hot Reload
@@ -468,16 +468,16 @@ Desteklenen .htaccess direktifleri (Apache uyumlu):
 ```
 SIGHUP → Master Process
   │
-  ├── Yeni config dosyasını parse et
+  ├── Parse the new config file
   ├── Validation (syntax + semantic)
-  ├── Hata varsa → log'a yaz, eski config'le devam et
+  ├── If error → write to log, continue with old config
   │
-  ├── Başarılı →
-  │   ├── Yeni listener'lar oluştur (yeni domain eklenmiş olabilir)
-  │   ├── Worker'lara graceful reload sinyali gönder
-  │   ├── Eski worker'lar mevcut connection'ları drain eder
-  │   ├── Yeni worker'lar yeni config ile başlar
-  │   └── Eski worker'lar drain tamamlanınca kapanır
+  ├── If successful →
+  │   ├── Create new listeners (a new domain may have been added)
+  │   ├── Send graceful reload signal to workers
+  │   ├── Old workers drain existing connections
+  │   ├── New workers start with the new config
+  │   └── Old workers shut down once draining is complete
   │
   └── Zero-downtime ✅
 ```
@@ -489,54 +489,54 @@ SIGHUP → Master Process
 ### 4.1 Certificate Lifecycle
 
 ```
-Domain config eklendi
+Domain config added
   │
   ├── ssl.mode: auto
   │   │
-  │   ├── Disk cache'te valid cert var mı?
-  │   │   ├── Evet → Yükle, renewal timer kur
-  │   │   └── Hayır → ACME flow başlat
+  │   ├── Is there a valid cert in the disk cache?
+  │   │   ├── Yes → Load it, set up renewal timer
+  │   │   └── No → Start ACME flow
   │   │
   │   ├── ACME Flow:
-  │   │   ├── Account key oluştur/yükle
-  │   │   ├── Order oluştur
-  │   │   ├── Challenge seç (HTTP-01 veya DNS-01)
-  │   │   │   ├── HTTP-01: /.well-known/acme-challenge/ handler'ı kur
-  │   │   │   └── DNS-01: TXT record oluştur (provider API ile)
-  │   │   ├── Challenge'ı karşıla
-  │   │   ├── CSR oluştur (ECDSA P-256 default)
-  │   │   ├── Certificate al
-  │   │   ├── Disk'e kaydet
-  │   │   └── tls.Config.GetCertificate callback'ini güncelle
+  │   │   ├── Create/load account key
+  │   │   ├── Create order
+  │   │   ├── Choose challenge (HTTP-01 or DNS-01)
+  │   │   │   ├── HTTP-01: Set up /.well-known/acme-challenge/ handler
+  │   │   │   └── DNS-01: Create TXT record (via provider API)
+  │   │   ├── Fulfill the challenge
+  │   │   ├── Create CSR (ECDSA P-256 default)
+  │   │   ├── Obtain certificate
+  │   │   ├── Save to disk
+  │   │   └── Update tls.Config.GetCertificate callback
   │   │
   │   └── Renewal:
-  │       ├── Cert expiry - 30 gün kala otomatik yenile
-  │       ├── Başarısız → retry with exponential backoff
-  │       ├── 3 gün kala hâlâ başarısız → alert (log + metrics)
-  │       └── Yenileme sırasında mevcut cert kullanılmaya devam eder
+  │       ├── Auto-renew 30 days before cert expiry
+  │       ├── On failure → retry with exponential backoff
+  │       ├── If still failing 3 days before expiry → alert (log + metrics)
+  │       └── Current cert continues to be used during renewal
   │
   ├── ssl.mode: manual
-  │   └── Verilen cert/key dosyalarını yükle, fswatch ile izle
+  │   └── Load the provided cert/key files, watch with fswatch
   │
   └── ssl.mode: off
-      └── Plain HTTP (redirect yoksa)
+      └── Plain HTTP (if no redirect)
 ```
 
 ### 4.2 On-Demand TLS
 
 ```
-Bilinmeyen domain için TLS handshake geldi
+TLS handshake received for an unknown domain
   │
   ├── on_demand: false → TLS alert, connection reject
   │
   └── on_demand: true
-      ├── on_demand_ask URL'ine HTTP GET → 200 OK?
-      │   ├── Hayır → reject
-      │   └── Evet → ACME flow başlat
-      │       ├── Handshake bekletilir (client timeout'a dikkat)
-      │       ├── Cert alınır, cache'lenir
-      │       └── Handshake tamamlanır
-      └── Rate limiting: max 10 cert/dakika, max 50 pending
+      ├── HTTP GET to on_demand_ask URL → 200 OK?
+      │   ├── No → reject
+      │   └── Yes → Start ACME flow
+      │       ├── Handshake is held (watch for client timeout)
+      │       ├── Cert is obtained and cached
+      │       └── Handshake completes
+      └── Rate limiting: max 10 certs/minute, max 50 pending
 ```
 
 ### 4.3 TLS Configuration
@@ -547,22 +547,22 @@ tls.Config{
     GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
         // 1. Exact match: hello.ServerName → cert cache
         // 2. Wildcard match: *.example.com
-        // 3. On-demand TLS (eğer enabled)
+        // 3. On-demand TLS (if enabled)
         // 4. Default/fallback cert
     },
     MinVersion: tls.VersionTLS12,
     CipherSuites: modernCipherSuites,
     NextProtos: []string{"h2", "http/1.1"},    // ALPN
-    // HTTP/3: ayrı QUIC listener, aynı cert
+    // HTTP/3: separate QUIC listener, same cert
 }
 ```
 
 ### 4.4 OCSP Stapling
 
-- Her cert için periyodik OCSP response fetch
-- Stapled response tls.Config'e attach
-- OCSP responder hata verirse → cached response kullan (grace period)
-- Must-Staple cert'ler için daha agresif retry
+- Periodic OCSP response fetch for each cert
+- Stapled response attached to tls.Config
+- If the OCSP responder errors → use cached response (grace period)
+- More aggressive retry for Must-Staple certs
 
 ---
 
@@ -570,12 +570,12 @@ tls.Config{
 
 ### 5.1 Protocol Support
 
-| Protocol | Destek | Notlar |
-|----------|--------|--------|
-| HTTP/1.0 | ✅ | Legacy uyumluluk |
+| Protocol | Support | Notes |
+|----------|---------|-------|
+| HTTP/1.0 | ✅ | Legacy compatibility |
 | HTTP/1.1 | ✅ | Keep-alive, pipelining, chunked transfer |
-| HTTP/2 | ✅ | Full h2 over TLS, h2c (cleartext) opsiyonel |
-| HTTP/3 | 🗓️ Phase 2 | QUIC over UDP (Go'nun quic paketi gelişiyor) |
+| HTTP/2 | ✅ | Full h2 over TLS, h2c (cleartext) optional |
+| HTTP/3 | 🗓️ Phase 2 | QUIC over UDP (Go's quic package is evolving) |
 
 ### 5.2 Virtual Host Router
 
@@ -591,20 +591,20 @@ type VirtualHost struct {
 // 1. Exact host match
 // 2. Alias match
 // 3. Wildcard match (longest first: "*.sub.example.com" > "*.example.com")
-// 4. Default host (ilk tanımlanan domain)
+// 4. Default host (first defined domain)
 ```
 
 ### 5.3 try_files Logic
 
-Nginx'in en çok kullanılan pattern'i, first-class citizen:
+Nginx's most commonly used pattern, as a first-class citizen:
 
 ```yaml
 # Config
 try_files:
-  - "$uri"                    # /about → /var/www/about dosyası var mı?
-  - "$uri/"                   # /about/ → /var/www/about/ dizini var mı?
-  - "$uri/index.html"         # /about/ → /var/www/about/index.html var mı?
-  - "$uri/index.php"          # /about/ → /var/www/about/index.php var mı?
+  - "$uri"                    # /about → does the file /var/www/about exist?
+  - "$uri/"                   # /about/ → does the directory /var/www/about/ exist?
+  - "$uri/index.html"         # /about/ → does /var/www/about/index.html exist?
+  - "$uri/index.php"          # /about/ → does /var/www/about/index.php exist?
   - "/index.php"              # Fallback → WordPress entry point
 ```
 
@@ -613,23 +613,23 @@ func tryFiles(ctx *RequestContext, candidates []string) (string, bool) {
     for _, candidate := range candidates {
         resolved := expandVariables(candidate, ctx)
         fullPath := filepath.Join(ctx.DocumentRoot, resolved)
-        
-        // Security: path traversal koruması
+
+        // Security: path traversal protection
         if !isInsideRoot(fullPath, ctx.DocumentRoot) {
             continue
         }
-        
+
         stat, err := os.Stat(fullPath)
         if err != nil {
             continue
         }
-        
+
         if stat.IsDir() {
-            // Dizinse → index dosyası ara
+            // If directory → look for index file
             continue
         }
-        
-        // Dosya bulundu
+
+        // File found
         return resolved, true
     }
     return "", false
@@ -642,7 +642,7 @@ func tryFiles(ctx *RequestContext, candidates []string) (string, bool) {
 
 ### 6.1 Rule Processing
 
-Apache mod_rewrite uyumlu regex-based rewrite engine:
+Apache mod_rewrite compatible regex-based rewrite engine:
 
 ```go
 type RewriteRule struct {
@@ -653,29 +653,29 @@ type RewriteRule struct {
 }
 
 type RewriteCondition struct {
-    TestString string            // %{REQUEST_URI}, %{HTTP_HOST}, vs.
+    TestString string            // %{REQUEST_URI}, %{HTTP_HOST}, etc.
     Pattern    *regexp.Regexp
-    Negate     bool              // [!F] — CondPattern'i negate et
+    Negate     bool              // [!F] — negate the CondPattern
     Type       string            // "regex" | "is_file" | "is_dir" | "is_symlink"
 }
 
 type RewriteFlags struct {
-    Last       bool    // [L] — rule match ederse dur
+    Last       bool    // [L] — stop if rule matches
     Redirect   int     // [R=301] — HTTP redirect
-    QSAppend   bool    // [QSA] — query string'i koru
+    QSAppend   bool    // [QSA] — preserve query string
     NoCase     bool    // [NC] — case-insensitive
-    Chain      bool    // [C] — sonraki rule ile chain
-    Skip       int     // [S=N] — N rule atla
-    PassThrough bool   // [PT] — rewrite sonrası handler'a devam
-    Forbidden  bool    // [F] — 403 döndür
-    Gone       bool    // [G] — 410 döndür
+    Chain      bool    // [C] — chain with next rule
+    Skip       int     // [S=N] — skip N rules
+    PassThrough bool   // [PT] — continue to handler after rewrite
+    Forbidden  bool    // [F] — return 403
+    Gone       bool    // [G] — return 410
 }
 ```
 
 ### 6.2 Server Variables
 
 ```go
-// Rewrite condition'larda kullanılabilir değişkenler
+// Variables available in rewrite conditions
 var serverVariables = map[string]func(*RequestContext) string{
     "REQUEST_URI":      func(ctx) string { return ctx.Request.URL.Path },
     "REQUEST_FILENAME": func(ctx) string { return ctx.ResolvedPath },
@@ -716,7 +716,7 @@ Request → Cache Key Generate → Lookup
                Freshness     Freshness       │
                 Check         Check          ▼
                     │            │      Cache Store
-                    ▼            ▼     (eğer cacheable)
+                    ▼            ▼     (if cacheable)
                Serve/Reval  Serve/Reval
 ```
 
@@ -728,12 +728,12 @@ type CacheKey struct {
     Path         string
     QueryString  string    // configurable: include/exclude/specific params
     Method       string    // GET only (default), HEAD
-    Vary         []string  // Vary header'daki field'lar
+    Vary         []string  // fields from the Vary header
     // Custom key fragments (cookie, header, etc.)
 }
 
 func (k CacheKey) Hash() string {
-    h := xxhash.New()  // stdlib'de yok — basit FNV-1a kullan
+    h := xxhash.New()  // not in stdlib — use simple FNV-1a
     h.Write([]byte(k.Host))
     h.Write([]byte(k.Path))
     // ...
@@ -745,7 +745,7 @@ func (k CacheKey) Hash() string {
 
 ```go
 type MemoryCache struct {
-    shards    [256]*CacheShard    // Sharded mutex map (lock contention azaltır)
+    shards    [256]*CacheShard    // Sharded mutex map (reduces lock contention)
     maxMemory int64
     usedMem   atomic.Int64
     lru       *ShardedLRU
@@ -760,7 +760,7 @@ type CacheEntry struct {
     Key         string
     StatusCode  int
     Headers     http.Header
-    Body        []byte          // < 1MB → memory, > 1MB → disk'e referans
+    Body        []byte          // < 1MB → memory, > 1MB → reference to disk
     Created     time.Time
     TTL         time.Duration
     GraceTTL    time.Duration   // Varnish grace mode
@@ -768,7 +768,7 @@ type CacheEntry struct {
     ETag        string
     LastMod     time.Time
     HitCount    atomic.Int64
-    LastAccess  atomic.Int64    // Unix timestamp, LRU eviction için
+    LastAccess  atomic.Int64    // Unix timestamp, for LRU eviction
 }
 ```
 
@@ -776,8 +776,8 @@ type CacheEntry struct {
 
 ```
 /var/cache/uwas/
-├── ab/                         # İlk 2 karakter hash
-│   └── cd/                     # Sonraki 2 karakter
+├── ab/                         # First 2 hash characters
+│   └── cd/                     # Next 2 characters
 │       └── abcdef1234.cache    # Full hash
 └── _meta/
     └── tags/
@@ -785,31 +785,31 @@ type CacheEntry struct {
         └── page:home.idx
 ```
 
-### 7.5 Grace Mode (Varnish'ten)
+### 7.5 Grace Mode (from Varnish)
 
 ```
-Request geldi, cache entry expired
+Request received, cache entry expired
   │
-  ├── grace_ttl içinde mi?
-  │   ├── Evet → Stale content serve et
-  │   │          Arka planda async revalidation başlat
-  │   │          (bir goroutine backend'e istek atar)
-  │   │          Client beklemez → düşük latency
+  ├── Within grace_ttl?
+  │   ├── Yes → Serve stale content
+  │   │          Start async revalidation in the background
+  │   │          (a goroutine sends a request to the backend)
+  │   │          Client does not wait → low latency
   │   │
-  │   └── Hayır → Backend'e normal istek
+  │   └── No → Normal request to backend
   │
-  └── Backend down mı?
-      ├── Evet ve grace'te → stale serve et
-      ├── Evet ve grace dışı → 503 (veya custom error page)
-      └── Hayır → normal flow
+  └── Is the backend down?
+      ├── Yes and within grace → serve stale
+      ├── Yes and outside grace → 503 (or custom error page)
+      └── No → normal flow
 ```
 
 ### 7.6 Edge Side Includes (ESI)
 
-HTML içinde cacheable parçaları ayrı cache'leme:
+Caching individual fragments within HTML separately:
 
 ```html
-<!-- Ana sayfa: TTL=60s -->
+<!-- Main page: TTL=60s -->
 <html>
 <body>
   <header>
@@ -825,12 +825,12 @@ HTML içinde cacheable parçaları ayrı cache'leme:
 </html>
 ```
 
-Her `<esi:include>` ayrı cache key'e sahip, ayrı TTL ile cache'lenir. Ana sayfa expired olsa bile nav ve footer cache'ten serve edilebilir.
+Each `<esi:include>` has its own cache key and is cached with its own TTL. Even if the main page is expired, nav and footer can still be served from cache.
 
 ### 7.7 Cache Invalidation
 
 ```yaml
-# Tag-based purge (en güçlü yöntem)
+# Tag-based purge (the most powerful method)
 # POST /api/v1/cache/purge
 # { "tags": ["site:example", "type:post"] }
 
@@ -853,12 +853,12 @@ Her `<esi:include>` ayrı cache key'e sahip, ayrı TTL ile cache'lenir. Ana sayf
 
 ### 8.1 FastCGI Protocol Implementation
 
-Go stdlib'de FastCGI server (accept) var ama client (connect) yok. Client implementasyonu:
+Go stdlib has a FastCGI server (accept) but no client (connect). Client implementation:
 
 ```go
 type FastCGIClient struct {
     pool       *ConnectionPool
-    address    string          // Unix socket veya TCP
+    address    string          // Unix socket or TCP
     maxConns   int
     timeout    time.Duration
 }
@@ -886,7 +886,7 @@ const (
 ### 8.2 CGI Environment Variables
 
 ```go
-// PHP-FPM'e gönderilecek environment variables
+// Environment variables to be sent to PHP-FPM
 func buildFCGIEnv(ctx *RequestContext) map[string]string {
     return map[string]string{
         "SCRIPT_FILENAME":  ctx.ScriptFilename,   // /var/www/site/index.php
@@ -906,14 +906,14 @@ func buildFCGIEnv(ctx *RequestContext) map[string]string {
         "REMOTE_PORT":      ctx.RemotePort,
         "HTTPS":            ctx.IsHTTPS(),
         "HTTP_HOST":        ctx.Request.Host,
-        // Tüm HTTP_* headers forwarded
+        // All HTTP_* headers forwarded
     }
 }
 ```
 
 ### 8.3 SCRIPT_NAME / PATH_INFO Split
 
-PHP framework'leri için kritik:
+Critical for PHP frameworks:
 
 ```
 Request: /blog/index.php/posts/123?page=2
@@ -927,24 +927,24 @@ QUERY_STRING    = page=2
 ### 8.4 Upload Handling
 
 ```go
-// Büyük upload'larda memory kullanmamak için:
-// 1. Request body'yi temp dosyaya stream et
-// 2. Temp dosyayı PHP-FPM'e stdin olarak gönder
-// 3. İşlem bitince temp dosyayı sil
+// To avoid memory usage on large uploads:
+// 1. Stream the request body to a temp file
+// 2. Send the temp file as stdin to PHP-FPM
+// 3. Delete the temp file when done
 
 func handleUpload(ctx *RequestContext) error {
     if ctx.Request.ContentLength > ctx.MaxUploadSize {
         return ErrRequestEntityTooLarge
     }
-    
-    // Stream to temp file (memory'de tutma)
+
+    // Stream to temp file (do not hold in memory)
     tmpFile, _ := os.CreateTemp(ctx.TempDir, "uwas-upload-*")
     defer os.Remove(tmpFile.Name())
-    
+
     written, _ := io.Copy(tmpFile, io.LimitReader(ctx.Request.Body, ctx.MaxUploadSize))
     tmpFile.Seek(0, 0)
-    
-    // FastCGI stdin olarak gönder
+
+    // Send as FastCGI stdin
     return ctx.FCGIClient.SendRequest(ctx.FCGIEnv, tmpFile)
 }
 ```
@@ -978,14 +978,14 @@ type Backend struct {
 
 ### 9.2 Load Balancing Algorithms
 
-| Algorithm | Açıklama | Use Case |
-|-----------|----------|----------|
-| `round_robin` | Sırayla dağıt, weight'e göre | Genel amaç |
-| `least_conn` | En az aktif bağlantıya gönder | Uzun süreli request'ler |
-| `ip_hash` | Client IP hash ile sabit backend | Session affinity |
-| `uri_hash` | URI hash ile sabit backend | Cache-friendly |
-| `random` | Rastgele seç, power of 2 choices | Basit, düşük overhead |
-| `weighted_round_robin` | Smooth weighted round robin | Farklı kapasiteli backend'ler |
+| Algorithm | Description | Use Case |
+|-----------|-------------|----------|
+| `round_robin` | Distribute in order, based on weight | General purpose |
+| `least_conn` | Send to the backend with fewest active connections | Long-lived requests |
+| `ip_hash` | Fixed backend via client IP hash | Session affinity |
+| `uri_hash` | Fixed backend via URI hash | Cache-friendly |
+| `random` | Random selection, power of 2 choices | Simple, low overhead |
+| `weighted_round_robin` | Smooth weighted round robin | Backends with different capacities |
 
 ### 9.3 Health Check
 
@@ -996,7 +996,7 @@ type HealthChecker struct {
     Timeout    time.Duration  // 5s
     Threshold  int            // 3 consecutive failures → unhealthy
     Rise       int            // 2 consecutive successes → healthy
-    
+
     // Advanced
     Method     string         // GET (default) | HEAD | TCP
     ExpectCode int            // 200 (default)
@@ -1004,38 +1004,38 @@ type HealthChecker struct {
 }
 ```
 
-### 9.4 Circuit Breaker (HAProxy'den)
+### 9.4 Circuit Breaker (from HAProxy)
 
 ```
 State: CLOSED (normal)
   │
-  ├── Hata sayısı threshold'u aştı
+  ├── Error count exceeded threshold
   ▼
-State: OPEN (tüm istekler reject)
+State: OPEN (all requests rejected)
   │
-  ├── timeout süresi geçti
+  ├── Timeout period elapsed
   ▼
-State: HALF-OPEN (bir istek geç, test et)
+State: HALF-OPEN (let one request through, test it)
   │
-  ├── Başarılı → CLOSED
-  └── Başarısız → OPEN (timer reset)
+  ├── Successful → CLOSED
+  └── Failed → OPEN (timer reset)
 ```
 
 ### 9.5 WebSocket Proxy
 
 ```go
 func proxyWebSocket(ctx *RequestContext, backend *Backend) error {
-    // 1. Backend'e TCP connection aç
-    // 2. HTTP Upgrade handshake'i forward et
+    // 1. Open TCP connection to backend
+    // 2. Forward HTTP Upgrade handshake
     // 3. Bidirectional byte copy (goroutine pair)
-    // 4. Bir taraf kapanınca diğerini de kapat
-    
+    // 4. When one side closes, close the other
+
     backendConn, _ := net.DialTimeout("tcp", backend.Address, 5*time.Second)
-    
+
     // Hijack client connection
     hijacker := ctx.ResponseWriter.(http.Hijacker)
     clientConn, _, _ := hijacker.Hijack()
-    
+
     // Bidirectional copy
     go io.Copy(backendConn, clientConn)
     io.Copy(clientConn, backendConn)
@@ -1048,23 +1048,23 @@ func proxyWebSocket(ctx *RequestContext, backend *Backend) error {
 
 ### 10.1 Built-in Middlewares
 
-| Middleware | Sıra | Açıklama |
-|-----------|------|----------|
-| `RequestID` | 1 | Unique request ID ata (UUID v7) |
-| `RealIP` | 2 | X-Forwarded-For / X-Real-IP parse |
+| Middleware | Order | Description |
+|-----------|-------|-------------|
+| `RequestID` | 1 | Assign unique request ID (UUID v7) |
+| `RealIP` | 2 | Parse X-Forwarded-For / X-Real-IP |
 | `RateLimit` | 3 | Token bucket per-IP |
 | `SecurityGuard` | 4 | Blocked paths, WAF rules |
 | `AccessControl` | 5 | IP whitelist/blacklist, basic auth |
 | `RewriteEngine` | 6 | URL transform |
-| `CacheLookup` | 7 | Cache hit kontrolü |
+| `CacheLookup` | 7 | Cache hit check |
 | `Compression` | 8 | Brotli/Gzip/Zstd response compress |
 | `SecurityHeaders` | 9 | HSTS, CSP, X-Frame, CORS |
 | `AccessLog` | 10 | Structured JSON log |
 | `Metrics` | 11 | Prometheus metrics collection |
 
-### 10.2 WAF Rules (Temel)
+### 10.2 WAF Rules (Basic)
 
-Phase 1'de temel koruma kuralları:
+Basic protection rules in Phase 1:
 
 ```go
 type WAFRule struct {
@@ -1110,20 +1110,20 @@ type StaticHandler struct {
 func serveFile(w http.ResponseWriter, r *http.Request, path string) {
     f, _ := os.Open(path)
     stat, _ := f.Stat()
-    
+
     // ETag check → 304 Not Modified
     etag := generateETag(stat)
     if r.Header.Get("If-None-Match") == etag {
         w.WriteHeader(304)
         return
     }
-    
-    // Range request desteği (video streaming)
-    // Go'nun http.ServeContent bunu handle ediyor
+
+    // Range request support (video streaming)
+    // Go's http.ServeContent handles this
     w.Header().Set("ETag", etag)
     w.Header().Set("Accept-Ranges", "bytes")
-    
-    // Pre-compressed dosya varsa onu serve et
+
+    // If a pre-compressed file exists, serve that instead
     if acceptsBrotli(r) {
         if brFile, err := os.Open(path + ".br"); err == nil {
             w.Header().Set("Content-Encoding", "br")
@@ -1131,15 +1131,15 @@ func serveFile(w http.ResponseWriter, r *http.Request, path string) {
             return
         }
     }
-    
+
     http.ServeContent(w, r, stat.Name(), stat.ModTime(), f)
-    // Go'nun ServeContent'i dahili olarak sendfile syscall kullanır
+    // Go's ServeContent internally uses the sendfile syscall
 }
 ```
 
 ### 11.3 MIME Type Registry
 
-Extensible MIME type mapping, modern formatlar dahil:
+Extensible MIME type mapping, including modern formats:
 
 ```go
 var defaultMIMETypes = map[string]string{
@@ -1156,7 +1156,7 @@ var defaultMIMETypes = map[string]string{
     ".mjs":   "application/javascript",
     ".webm":  "video/webm",
     ".mp4":   "video/mp4",
-    // ... 100+ daha
+    // ... 100+ more
 }
 ```
 
@@ -1221,7 +1221,7 @@ uwas_tls_certificates_expiry{host="example.com"} 1740000000
 
 ### 12.3 Built-in Dashboard
 
-`/_uwas/dashboard` endpoint'inde minimal HTML dashboard:
+Minimal HTML dashboard at the `/_uwas/dashboard` endpoint:
 
 - Real-time request rate, error rate, latency percentiles
 - Cache hit ratio (memory vs disk vs miss)
@@ -1242,35 +1242,35 @@ uwas_tls_certificates_expiry{host="example.com"} 1740000000
 Base: https://127.0.0.1:9443/api/v1
 
 # Domain Management
-GET    /domains                    # Tüm domain'leri listele
-POST   /domains                    # Yeni domain ekle
-GET    /domains/{host}             # Domain detay
-PUT    /domains/{host}             # Domain güncelle
-DELETE /domains/{host}             # Domain sil
+GET    /domains                    # List all domains
+POST   /domains                    # Add new domain
+GET    /domains/{host}             # Domain details
+PUT    /domains/{host}             # Update domain
+DELETE /domains/{host}             # Delete domain
 
 # Cache Management
-POST   /cache/purge                # Tag/path/domain bazlı purge
-GET    /cache/stats                # Cache istatistikleri
-DELETE /cache                      # Tüm cache'i temizle
+POST   /cache/purge                # Purge by tag/path/domain
+GET    /cache/stats                # Cache statistics
+DELETE /cache                      # Clear all cache
 
 # Certificate Management
-GET    /certs                      # Tüm sertifikaları listele
-POST   /certs/{host}/renew         # Manuel yenileme tetikle
-GET    /certs/{host}               # Cert detay (expiry, issuer vs.)
+GET    /certs                      # List all certificates
+POST   /certs/{host}/renew         # Trigger manual renewal
+GET    /certs/{host}               # Cert details (expiry, issuer, etc.)
 
 # Upstream Management
-GET    /upstreams                  # Upstream pool'ları listele
-PUT    /upstreams/{name}/backends  # Backend ekle/çıkar
-POST   /upstreams/{name}/drain/{backend}  # Backend drain
+GET    /upstreams                  # List upstream pools
+PUT    /upstreams/{name}/backends  # Add/remove backends
+POST   /upstreams/{name}/drain/{backend}  # Drain backend
 
 # Server Management
-POST   /reload                     # Config reload tetikle
+POST   /reload                     # Trigger config reload
 GET    /health                     # Server health check
-GET    /stats                      # Genel istatistikler
+GET    /stats                      # General statistics
 GET    /metrics                    # Prometheus format
 
 # Config
-GET    /config                     # Mevcut config (sanitized)
+GET    /config                     # Current config (sanitized)
 PATCH  /config                     # Partial config update
 ```
 
@@ -1278,9 +1278,9 @@ PATCH  /config                     # Partial config update
 
 ```yaml
 admin:
-  listen: "127.0.0.1:9443"     # Sadece localhost
+  listen: "127.0.0.1:9443"     # Localhost only
   api_key: "${UWAS_ADMIN_KEY}" # Bearer token auth
-  # veya
+  # or
   mutual_tls:
     ca: /path/to/ca.pem        # Client cert auth
 ```
@@ -1292,38 +1292,38 @@ admin:
 ### 14.1 Tools
 
 ```
-uwas_domain_list          # Domain'leri listele
-uwas_domain_add           # Yeni domain ekle
-uwas_domain_remove        # Domain sil
-uwas_domain_update        # Domain config güncelle
+uwas_domain_list          # List domains
+uwas_domain_add           # Add new domain
+uwas_domain_remove        # Remove domain
+uwas_domain_update        # Update domain config
 
-uwas_cache_purge          # Cache temizle (tag/path/domain)
-uwas_cache_stats          # Cache istatistikleri
+uwas_cache_purge          # Clear cache (tag/path/domain)
+uwas_cache_stats          # Cache statistics
 
-uwas_cert_list            # Sertifikaları listele
-uwas_cert_renew           # Manuel yenileme
+uwas_cert_list            # List certificates
+uwas_cert_renew           # Manual renewal
 
-uwas_upstream_list        # Upstream'leri listele
-uwas_upstream_health      # Backend sağlık durumu
+uwas_upstream_list        # List upstreams
+uwas_upstream_health      # Backend health status
 
-uwas_stats                # Genel sunucu istatistikleri
-uwas_logs_search          # Access log'larda arama
+uwas_stats                # General server statistics
+uwas_logs_search          # Search access logs
 
-uwas_config_show          # Mevcut config göster
+uwas_config_show          # Show current config
 uwas_config_reload        # Config reload
 
-uwas_waf_toggle           # WAF kurallarını aç/kapat
-uwas_rate_limit_adjust    # Rate limit ayarla
+uwas_waf_toggle           # Enable/disable WAF rules
+uwas_rate_limit_adjust    # Adjust rate limit
 ```
 
 ### 14.2 Resources
 
 ```
-uwas://config              # Mevcut config
+uwas://config              # Current config
 uwas://stats               # Real-time stats
-uwas://domains/{host}      # Domain detayları
-uwas://certs/{host}        # Cert bilgileri
-uwas://logs/recent         # Son 100 log entry
+uwas://domains/{host}      # Domain details
+uwas://certs/{host}        # Cert information
+uwas://logs/recent         # Last 100 log entries
 ```
 
 ---
@@ -1332,12 +1332,12 @@ uwas://logs/recent         # Son 100 log entry
 
 ```bash
 # Server Management
-uwas serve                          # Foreground'da başlat
+uwas serve                          # Start in foreground
 uwas serve -c /path/to/uwas.yaml   # Custom config
 uwas serve -d                       # Daemon mode
-uwas reload                         # SIGHUP gönder
+uwas reload                         # Send SIGHUP
 uwas stop                           # Graceful shutdown
-uwas status                         # Durum bilgisi
+uwas status                         # Status information
 
 # Domain Management
 uwas domain list
@@ -1363,12 +1363,12 @@ uwas htaccess test /var/www/site/.htaccess -u "/test/path"  # Rule test
 # Config Tools
 uwas config validate                # Config syntax check
 uwas config test                    # Config + connectivity test
-uwas config diff                    # Mevcut vs yeni config farkı
+uwas config diff                    # Diff between current and new config
 
 # Benchmarking / Debug
-uwas bench example.com              # Basit benchmark
+uwas bench example.com              # Simple benchmark
 uwas trace example.com/path         # Request lifecycle trace
-uwas version                        # Versiyon bilgisi
+uwas version                        # Version information
 ```
 
 ---
@@ -1393,25 +1393,25 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 .svn/
 .env
 .htpasswd
-.htaccess          # serve etme, sadece parse et
-wp-config.php      # PHP execute et ama direct download engelle
+.htaccess          # do not serve, only parse
+wp-config.php      # execute via PHP but block direct download
 composer.json
 composer.lock
 package.json
 node_modules/
-vendor/            # PHP vendor dir'e direct access engelle
+vendor/            # block direct access to PHP vendor dir
 ```
 
 ### 16.3 PHP Source Protection
 
-`.php` dosyalarına direct erişim → FastCGI üzerinden execute et, asla download olarak serve etme. `.php.bak`, `.php.old`, `.php~`, `.phps` dosyalarına erişimi engelle.
+Direct access to `.php` files → execute via FastCGI, never serve as a download. Block access to `.php.bak`, `.php.old`, `.php~`, `.phps` files.
 
 ---
 
 ## 17. Performance Targets
 
-| Metric | Hedef | Karşılaştırma |
-|--------|-------|---------------|
+| Metric | Target | Comparison |
+|--------|--------|------------|
 | Static file serving | 100K+ rps | Nginx ~95K rps |
 | Cache hit response | < 1ms TTFB | Varnish ~0.5ms |
 | PHP (FastCGI) | < 5ms overhead | Nginx ~3ms, Apache ~8ms |
@@ -1454,7 +1454,7 @@ vendor/            # PHP vendor dir'e direct access engelle
 
 ### Phase 3: Proxy & Load Balancer
 - Reverse proxy handler
-- Load balancing (6 algoritma)
+- Load balancing (6 algorithms)
 - Health checking
 - Circuit breaker
 - WebSocket proxy
@@ -1574,7 +1574,7 @@ uwas/
 │       ├── cache.go             # cache subcommands
 │       └── htaccess.go          # htaccess subcommands
 ├── go.mod
-├── go.sum                        # Boş (zero deps)
+├── go.sum                        # Empty (zero deps)
 ├── Makefile
 ├── Dockerfile
 ├── uwas.example.yaml

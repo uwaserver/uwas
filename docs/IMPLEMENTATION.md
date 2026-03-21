@@ -1,8 +1,7 @@
 # UWAS — Implementation Guide
 
-> Bu döküman SPECIFICATION.md'deki tasarımın Go'da nasıl implement edileceğini,
-> hangi sırayla, hangi pattern'lerle, ve hangi stdlib/external paketlerle 
-> build edileceğini tanımlar.
+> This document defines how the design in SPECIFICATION.md will be implemented in Go,
+> in what order, with which patterns, and using which stdlib/external packages.
 
 ---
 
@@ -30,7 +29,7 @@ CGO_ENABLED=0 go build -ldflags="-s -w \
   -o uwas ./cmd/uwas
 ```
 
-**Binary size target**: < 25MB (stripped). Go'nun `net/http` + `crypto/tls` tek başına ~10MB, geri kalan business logic.
+**Binary size target**: < 25MB (stripped). Go's `net/http` + `crypto/tls` alone is ~10MB, the rest is business logic.
 
 ### 1.2 External Dependencies
 
@@ -73,8 +72,8 @@ pkg/
   fastcgi/                 → FastCGI protocol (public, reusable)
 ```
 
-`internal/` Go convention: dışarıdan import edilemez.
-`pkg/` reusable paketler: htaccess parser ve fastcgi client ayrı projeler olarak da kullanılabilir.
+`internal/` Go convention: cannot be imported from outside.
+`pkg/` reusable packages: the htaccess parser and fastcgi client can also be used as standalone projects.
 
 ---
 
@@ -82,7 +81,7 @@ pkg/
 
 ### 2.1 Request Context
 
-Her request boyunca taşınan, her katmanın okuduğu/yazdığı context:
+Context carried throughout each request, read/written by every layer:
 
 ```go
 // internal/router/context.go
@@ -91,30 +90,30 @@ type RequestContext struct {
     // Identity
     ID          string          // UUID v7 (sortable, timestamp-embedded)
     StartTime   time.Time
-    
+
     // HTTP
     Request     *http.Request
     Response    *ResponseWriter // wrapped http.ResponseWriter
-    
+
     // Routing
     VHost       *config.Domain  // matched virtual host config
     RemoteIP    string          // real client IP (after X-Forwarded-For)
     RemotePort  string
     ServerPort  string
     IsHTTPS     bool
-    
+
     // Path Resolution
-    OriginalURI string          // rewrite öncesi URI
-    RewrittenURI string         // rewrite sonrası URI
+    OriginalURI string          // URI before rewrite
+    RewrittenURI string         // URI after rewrite
     DocumentRoot string
-    ResolvedPath string         // filesystem'deki tam yol
+    ResolvedPath string         // full path on the filesystem
     ScriptName   string         // PHP: /index.php
     PathInfo     string         // PHP: /controller/action
-    
+
     // State
     CacheStatus string          // "HIT", "MISS", "BYPASS", "STALE"
-    Upstream    string          // proxy: hangi backend'e gitti
-    
+    Upstream    string          // proxy: which backend the request was sent to
+
     // Metrics
     BytesSent   int64
     Duration    time.Duration
@@ -155,7 +154,7 @@ func (w *ResponseWriter) Write(b []byte) (int, error) {
     return n, err
 }
 
-// Hijack support (WebSocket proxy için)
+// Hijack support (for WebSocket proxy)
 func (w *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
     if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
         return hj.Hijack()
@@ -218,10 +217,10 @@ func Chain(middlewares ...Middleware) Middleware {
 }
 ```
 
-Neden `http.Handler` yerine custom interface:
-- `RequestContext` her middleware'in ihtiyaç duyduğu state'i taşır
-- Cache, rewrite, logging gibi cross-cutting concern'ler context'e yazar
-- Error handling centralized: handler `error` döner, top-level error handler yakalar
+Why a custom interface instead of `http.Handler`:
+- `RequestContext` carries the state that every middleware needs
+- Cross-cutting concerns like cache, rewrite, and logging write to the context
+- Centralized error handling: the handler returns an `error`, and a top-level error handler catches it
 
 ### 2.5 Handler Interface
 
@@ -233,7 +232,7 @@ type BackendHandler interface {
     // CanHandle checks if this handler should process the request.
     // Called after rewrite + try_files resolution.
     CanHandle(ctx *router.RequestContext) bool
-    
+
     // Handle processes the request and writes the response.
     Handle(ctx *router.RequestContext) error
 }
@@ -261,7 +260,7 @@ func main() {
 }
 ```
 
-CLI framework: kendi yazdığımız minimal CLI parser (~200 satır). Flag parsing için `flag` stdlib, subcommand routing için custom dispatcher.
+CLI framework: our own minimal CLI parser (~200 lines). Uses `flag` stdlib for flag parsing, custom dispatcher for subcommand routing.
 
 ```go
 // internal/cli/root.go
@@ -306,7 +305,7 @@ type Server struct {
     mcp        *mcp.Server
     logger     *logger.Logger
     metrics    *metrics.Collector
-    
+
     // Lifecycle
     ctx        context.Context
     cancel     context.CancelFunc
@@ -316,23 +315,23 @@ type Server struct {
 func (s *Server) Start() error {
     // 1. Parse & validate config
     cfg, err := config.Load(s.configPath)
-    
+
     // 2. Initialize logger
     s.logger = logger.New(cfg.Global.LogLevel, cfg.Global.LogFormat)
-    
+
     // 3. Initialize metrics collector
     s.metrics = metrics.New()
-    
+
     // 4. Initialize TLS manager (cert loading, ACME setup)
     s.tlsMgr = tls.NewManager(cfg.Global.ACME, s.logger)
     s.tlsMgr.LoadExistingCerts()
-    
+
     // 5. Initialize cache engine
     s.cache = cache.NewEngine(cfg.Global.Cache, s.logger)
-    
+
     // 6. Build virtual host router
     s.vhosts = router.NewVHostRouter(cfg.Domains)
-    
+
     // 7. Initialize handlers
     s.handlers = []handler.BackendHandler{
         redirect.New(),
@@ -340,7 +339,7 @@ func (s *Server) Start() error {
         fastcgi.New(cfg),
         proxy.New(cfg),
     }
-    
+
     // 8. Build middleware chain (order matters!)
     s.middleware = middleware.Chain(
         middleware.Recovery(s.logger),       // panic recovery (always first)
@@ -356,30 +355,30 @@ func (s *Server) Start() error {
         middleware.Compression(cfg),        // gzip/brotli/zstd
         middleware.Cache(s.cache),          // cache lookup/store
     )(s.dispatch)
-    
+
     // 9. Start TCP listeners
     s.startListeners(cfg)
-    
+
     // 10. Start ACME renewal goroutine
     s.tlsMgr.StartRenewal(s.ctx)
-    
+
     // 11. Start admin API server
     s.admin = admin.New(cfg, s)
     go s.admin.Start()
-    
+
     // 12. Start MCP server
     s.mcp = mcp.New(cfg, s)
     go s.mcp.Start()
-    
+
     // 13. Signal handling
     s.handleSignals()
-    
+
     s.logger.Info("UWAS started",
         "version", Version,
         "domains", len(cfg.Domains),
         "listeners", s.listenerAddrs(),
     )
-    
+
     // Block until shutdown
     <-s.ctx.Done()
     return s.shutdown()
@@ -398,19 +397,19 @@ func (s *Server) dispatch(ctx *router.RequestContext) error {
     if ctx.VHost == nil {
         return ctx.Response.Error(http.StatusNotFound, "no matching virtual host")
     }
-    
+
     // try_files resolution
     if err := s.resolvePath(ctx); err != nil {
         return err
     }
-    
+
     // Find matching handler
     for _, h := range s.handlers {
         if h.CanHandle(ctx) {
             return h.Handle(ctx)
         }
     }
-    
+
     // No handler matched
     return ctx.Response.Error(http.StatusNotFound, "not found")
 }
@@ -429,21 +428,21 @@ func (s *Server) resolvePath(ctx *router.RequestContext) error {
             candidates = []string{"$uri"}
         }
     }
-    
+
     for _, candidate := range candidates {
         resolved := expandTryFileVar(candidate, ctx)
         fullPath := filepath.Join(ctx.DocumentRoot, filepath.Clean("/"+resolved))
-        
+
         // Security: ensure path stays within document root
         if !strings.HasPrefix(fullPath, ctx.DocumentRoot) {
             continue
         }
-        
+
         stat, err := os.Stat(fullPath)
         if err != nil {
             continue
         }
-        
+
         if stat.IsDir() {
             // Try index files within directory
             for _, idx := range ctx.VHost.IndexFiles() {
@@ -456,12 +455,12 @@ func (s *Server) resolvePath(ctx *router.RequestContext) error {
             }
             continue
         }
-        
+
         ctx.ResolvedPath = fullPath
         ctx.RewrittenURI = resolved
         return nil
     }
-    
+
     // Last candidate might be a named route (e.g., /index.php)
     // that doesn't exist as a file but should be handled by FastCGI
     last := candidates[len(candidates)-1]
@@ -470,7 +469,7 @@ func (s *Server) resolvePath(ctx *router.RequestContext) error {
         ctx.RewrittenURI = last
         return nil
     }
-    
+
     return nil // handlers will check ResolvedPath
 }
 ```
@@ -496,7 +495,7 @@ func (s *Server) startListeners(cfg *config.Config) {
         defer s.wg.Done()
         httpSrv.Serve(httpLn)
     }()
-    
+
     // HTTPS listener (:443)
     tlsConfig := &tls.Config{
         GetCertificate: s.tlsMgr.GetCertificate,
@@ -504,7 +503,7 @@ func (s *Server) startListeners(cfg *config.Config) {
         NextProtos:     []string{"h2", "http/1.1"},
         CipherSuites:   preferredCiphers(),
     }
-    
+
     httpsLn, _ := tls.Listen("tcp", ":443", tlsConfig)
     httpsSrv := &http.Server{
         Handler:      s.httpsHandler(), // main handler
@@ -544,7 +543,7 @@ func (s *Server) httpHandler() http.Handler {
 func (s *Server) handleSignals() {
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
-    
+
     go func() {
         for sig := range sigCh {
             switch sig {
@@ -566,25 +565,25 @@ func (s *Server) reload() {
         s.logger.Error("config reload failed", "error", err)
         return
     }
-    
+
     // 2. Validate
     if err := newCfg.Validate(); err != nil {
         s.logger.Error("config validation failed", "error", err)
         return
     }
-    
+
     // 3. Update virtual hosts
     s.vhosts.Update(newCfg.Domains)
-    
+
     // 4. Update TLS (new domains may need certs)
     s.tlsMgr.UpdateDomains(newCfg.Domains)
-    
+
     // 5. Update cache config
     s.cache.UpdateConfig(newCfg.Global.Cache)
-    
+
     // 6. Rebuild middleware chain if needed
     // (rate limits, security rules may have changed)
-    
+
     s.logger.Info("config reloaded successfully",
         "domains", len(newCfg.Domains),
     )
@@ -594,19 +593,19 @@ func (s *Server) shutdown() error {
     s.logger.Info("shutting down gracefully",
         "grace_period", s.config.Global.Timeouts.ShutdownGrace,
     )
-    
+
     ctx, cancel := context.WithTimeout(
         context.Background(),
         s.config.Global.Timeouts.ShutdownGrace,
     )
     defer cancel()
-    
+
     // Stop accepting new connections
     // Drain existing connections
     // Stop background goroutines (ACME renewal, health checks)
     // Flush logs and metrics
     // Close cache cleanly
-    
+
     s.wg.Wait()
     s.logger.Info("shutdown complete")
     return nil
@@ -625,15 +624,15 @@ func (s *Server) shutdown() error {
 type Manager struct {
     // Certificate storage: host → *tls.Certificate
     certs    sync.Map
-    
+
     // ACME client
     acme     *acme.Client
-    
+
     // Config
     config   config.ACMEConfig
     storage  *CertStorage       // disk persistence
     logger   *logger.Logger
-    
+
     // Challenge handlers
     httpTokens sync.Map         // token → key authorization
 }
@@ -642,12 +641,12 @@ type Manager struct {
 // This is the SNI routing heart.
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
     name := strings.ToLower(hello.ServerName)
-    
+
     // 1. Exact match
     if cert, ok := m.certs.Load(name); ok {
         return cert.(*tls.Certificate), nil
     }
-    
+
     // 2. Wildcard match: hello for "sub.example.com" → check "*.example.com"
     if parts := strings.SplitN(name, ".", 2); len(parts) == 2 {
         wildcard := "*." + parts[1]
@@ -655,24 +654,24 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
             return cert.(*tls.Certificate), nil
         }
     }
-    
+
     // 3. On-demand TLS (if enabled)
     if m.config.OnDemand {
         return m.obtainOnDemand(hello)
     }
-    
+
     // 4. Default cert (first loaded)
     if cert, ok := m.certs.Load("_default"); ok {
         return cert.(*tls.Certificate), nil
     }
-    
+
     return nil, fmt.Errorf("no certificate for %s", name)
 }
 ```
 
 ### 4.2 ACME Client
 
-ACME protokolü (RFC 8555) implementasyonu. Go'nun `crypto` paketi tüm primitives'leri sağlıyor:
+ACME protocol (RFC 8555) implementation. Go's `crypto` package provides all the required primitives:
 
 ```go
 // internal/tls/acme/client.go
@@ -701,18 +700,18 @@ func (c *Client) ObtainCertificate(ctx context.Context, domains []string) (*tls.
     if err := c.ensureDirectory(ctx); err != nil {
         return nil, fmt.Errorf("directory fetch: %w", err)
     }
-    
+
     // 2. Create/fetch account
     if err := c.ensureAccount(ctx); err != nil {
         return nil, fmt.Errorf("account: %w", err)
     }
-    
+
     // 3. Create order
     order, err := c.newOrder(ctx, domains)
     if err != nil {
         return nil, fmt.Errorf("new order: %w", err)
     }
-    
+
     // 4. Solve authorizations (challenges)
     for _, authzURL := range order.Authorizations {
         authz, _ := c.getAuthorization(ctx, authzURL)
@@ -723,13 +722,13 @@ func (c *Client) ObtainCertificate(ctx context.Context, domains []string) (*tls.
             return nil, fmt.Errorf("challenge for %s: %w", authz.Identifier.Value, err)
         }
     }
-    
+
     // 5. Wait for order to be ready
     order, err = c.waitForOrder(ctx, order.URL)
     if err != nil {
         return nil, fmt.Errorf("order ready: %w", err)
     }
-    
+
     // 6. Generate CSR (ECDSA P-256 key)
     certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
     if err != nil {
@@ -741,31 +740,31 @@ func (c *Client) ObtainCertificate(ctx context.Context, domains []string) (*tls.
     if err != nil {
         return nil, err
     }
-    
+
     // 7. Finalize order (submit CSR)
     order, err = c.finalizeOrder(ctx, order.Finalize, csr)
     if err != nil {
         return nil, fmt.Errorf("finalize: %w", err)
     }
-    
+
     // 8. Download certificate
     certPEM, err := c.downloadCert(ctx, order.Certificate)
     if err != nil {
         return nil, fmt.Errorf("download cert: %w", err)
     }
-    
+
     // 9. Build tls.Certificate
     keyPEM := encodeECDSAKey(certKey)
     cert, err := tls.X509KeyPair(certPEM, keyPEM)
     if err != nil {
         return nil, err
     }
-    
+
     return &cert, nil
 }
 ```
 
-**JWS Signing** (ACME'nin tüm POST'ları JWS ile imzalanır):
+**JWS Signing** (all ACME POSTs are signed with JWS):
 
 ```go
 // internal/tls/acme/jws.go
@@ -773,7 +772,7 @@ func (c *Client) ObtainCertificate(ctx context.Context, domains []string) (*tls.
 func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*http.Response, error) {
     // 1. Get fresh nonce
     nonce, _ := c.nonces.Get(ctx)
-    
+
     // 2. Build JWS protected header
     protected := map[string]any{
         "alg":   "ES256",
@@ -786,38 +785,38 @@ func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*h
     } else {
         protected["jwk"] = ecdsaJWK(c.accountKey)
     }
-    
+
     // 3. Encode payload (empty string for POST-as-GET)
     var payloadB64 string
     if payload != nil {
         payloadJSON, _ := json.Marshal(payload)
         payloadB64 = base64url(payloadJSON)
     }
-    
+
     // 4. Sign: ECDSA-SHA256(protected_b64 + "." + payload_b64)
     protectedB64 := base64url(mustJSON(protected))
     sigInput := protectedB64 + "." + payloadB64
     hash := sha256.Sum256([]byte(sigInput))
     r, s, _ := ecdsa.Sign(rand.Reader, c.accountKey, hash[:])
     sig := append(padTo32(r.Bytes()), padTo32(s.Bytes())...)
-    
+
     // 5. Build JWS body
     body := map[string]string{
         "protected": protectedB64,
         "payload":   payloadB64,
         "signature": base64url(sig),
     }
-    
+
     // 6. POST to ACME server
     req, _ := http.NewRequestWithContext(ctx, "POST", url, jsonReader(body))
     req.Header.Set("Content-Type", "application/jose+json")
     resp, err := c.httpClient.Do(req)
-    
+
     // 7. Save nonce from response
     if n := resp.Header.Get("Replay-Nonce"); n != "" {
         c.nonces.Put(n)
     }
-    
+
     return resp, err
 }
 ```
@@ -831,7 +830,7 @@ func (m *Manager) StartRenewal(ctx context.Context) {
     go func() {
         ticker := time.NewTicker(12 * time.Hour) // check twice daily
         defer ticker.Stop()
-        
+
         for {
             select {
             case <-ctx.Done():
@@ -847,22 +846,22 @@ func (m *Manager) checkRenewals(ctx context.Context) {
     m.certs.Range(func(key, value any) bool {
         host := key.(string)
         cert := value.(*tls.Certificate)
-        
+
         leaf := cert.Leaf
         if leaf == nil {
             // Parse leaf cert for expiry info
             leaf, _ = x509.ParseCertificate(cert.Certificate[0])
         }
-        
+
         remaining := time.Until(leaf.NotAfter)
-        
+
         // Renew if < 30 days remaining
         if remaining < 30*24*time.Hour {
             m.logger.Info("renewing certificate",
                 "host", host,
                 "expires_in", remaining.Round(time.Hour),
             )
-            
+
             newCert, err := m.acme.ObtainCertificate(ctx, leaf.DNSNames)
             if err != nil {
                 m.logger.Error("renewal failed",
@@ -872,14 +871,14 @@ func (m *Manager) checkRenewals(ctx context.Context) {
                 // Will retry on next ticker
                 return true
             }
-            
+
             // Hot-swap certificate
             m.certs.Store(host, newCert)
             m.storage.Save(host, newCert)
-            
+
             m.logger.Info("certificate renewed", "host", host)
         }
-        
+
         return true
     })
 }
@@ -992,12 +991,12 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) {
         return c, nil
     default:
     }
-    
+
     // 2. Create new if under limit
     if int(p.active.Load()) < p.maxOpen {
         return p.create(ctx)
     }
-    
+
     // 3. Wait for idle connection
     select {
     case c := <-p.idle:
@@ -1031,15 +1030,15 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
         return nil, err
     }
     defer c.pool.Put(conn)
-    
+
     requestID := uint16(1) // single request per connection (simpler)
-    
+
     // 1. Send FCGI_BEGIN_REQUEST
     beginBody := make([]byte, 8)
     binary.BigEndian.PutUint16(beginBody[0:2], roleResponder)
     beginBody[2] = 1 // FCGI_KEEP_CONN
     conn.writeRecord(typeBeginRequest, requestID, beginBody)
-    
+
     // 2. Send FCGI_PARAMS
     var paramsBuf bytes.Buffer
     for k, v := range env {
@@ -1047,7 +1046,7 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
     }
     conn.writeRecord(typeParams, requestID, paramsBuf.Bytes())
     conn.writeRecord(typeParams, requestID, nil) // empty params = end
-    
+
     // 3. Send FCGI_STDIN (request body)
     if stdin != nil {
         buf := make([]byte, 65535) // max record payload
@@ -1065,7 +1064,7 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
         }
     }
     conn.writeRecord(typeStdin, requestID, nil) // empty stdin = end
-    
+
     // 4. Read response (FCGI_STDOUT + FCGI_STDERR + FCGI_END_REQUEST)
     resp := &Response{}
     for {
@@ -1073,7 +1072,7 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
         if err != nil {
             return nil, err
         }
-        
+
         switch rec.Type {
         case typeStdout:
             resp.stdout.Write(rec.Content)
@@ -1091,10 +1090,10 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Reader) {
     reader := bufio.NewReader(&r.stdout)
     tp := textproto.NewReader(reader)
-    
+
     mimeHeader, _ := tp.ReadMIMEHeader()
     headers = http.Header(mimeHeader)
-    
+
     // Status header → status code
     if status := headers.Get("Status"); status != "" {
         code, _ := strconv.Atoi(status[:3])
@@ -1103,7 +1102,7 @@ func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Rea
     } else {
         statusCode = 200
     }
-    
+
     body = reader // remaining bytes = body
     return
 }
@@ -1134,21 +1133,21 @@ func Parse(reader io.Reader) ([]Directive, error) {
     scanner := bufio.NewScanner(reader)
     var directives []Directive
     var blockStack []*Directive
-    
+
     for scanner.Scan() {
         line := strings.TrimSpace(scanner.Text())
-        
+
         // Skip comments and empty lines
         if line == "" || strings.HasPrefix(line, "#") {
             continue
         }
-        
+
         // Handle line continuation (\)
         for strings.HasSuffix(line, "\\") {
             scanner.Scan()
             line = line[:len(line)-1] + " " + strings.TrimSpace(scanner.Text())
         }
-        
+
         // Block open: <IfModule mod_rewrite.c>
         if strings.HasPrefix(line, "<") && !strings.HasPrefix(line, "</") {
             blockName, args := parseBlockOpen(line)
@@ -1156,7 +1155,7 @@ func Parse(reader io.Reader) ([]Directive, error) {
             blockStack = append(blockStack, block)
             continue
         }
-        
+
         // Block close: </IfModule>
         if strings.HasPrefix(line, "</") {
             if len(blockStack) > 0 {
@@ -1171,7 +1170,7 @@ func Parse(reader io.Reader) ([]Directive, error) {
             }
             continue
         }
-        
+
         // Normal directive
         d := parseDirective(line)
         if len(blockStack) > 0 {
@@ -1181,7 +1180,7 @@ func Parse(reader io.Reader) ([]Directive, error) {
             directives = append(directives, d)
         }
     }
-    
+
     return directives, nil
 }
 ```
@@ -1193,22 +1192,22 @@ func Parse(reader io.Reader) ([]Directive, error) {
 
 func Convert(directives []Directive) (*RuleSet, error) {
     rules := &RuleSet{}
-    
+
     var pendingConds []RewriteCondition
-    
+
     for _, d := range directives {
         switch strings.ToLower(d.Name) {
-        
+
         case "rewriteengine":
             rules.RewriteEnabled = strings.EqualFold(d.Args[0], "on")
-            
+
         case "rewritecond":
             cond, err := parseRewriteCond(d.Args)
             if err != nil {
                 return nil, fmt.Errorf("line %d: %w", d.LineNum, err)
             }
             pendingConds = append(pendingConds, cond)
-            
+
         case "rewriterule":
             rule, err := parseRewriteRule(d.Args)
             if err != nil {
@@ -1217,26 +1216,26 @@ func Convert(directives []Directive) (*RuleSet, error) {
             rule.Conditions = pendingConds
             pendingConds = nil // reset
             rules.Rewrites = append(rules.Rewrites, rule)
-            
+
         case "redirect", "redirectmatch":
             rules.Redirects = append(rules.Redirects, parseRedirect(d))
-            
+
         case "errordocument":
             code, _ := strconv.Atoi(d.Args[0])
             rules.ErrorDocuments[code] = d.Args[1]
-            
+
         case "directoryindex":
             rules.DirectoryIndex = d.Args
-            
+
         case "header":
             rules.Headers = append(rules.Headers, parseHeaderDirective(d))
-            
+
         case "expiresactive":
             rules.ExpiresActive = strings.EqualFold(d.Args[0], "on")
-            
+
         case "expiresbytype":
             rules.ExpiresByType[d.Args[0]] = d.Args[1]
-            
+
         case "options":
             for _, opt := range d.Args {
                 switch strings.ToLower(opt) {
@@ -1248,25 +1247,25 @@ func Convert(directives []Directive) (*RuleSet, error) {
                     rules.FollowSymlinks = false
                 }
             }
-            
+
         case "authtype":
             rules.AuthType = d.Args[0]
-            
+
         case "authname":
             rules.AuthName = strings.Trim(d.Args[0], `"`)
-            
+
         case "authuserfile":
             rules.AuthUserFile = d.Args[0]
-            
+
         case "require":
             rules.Require = strings.Join(d.Args, " ")
-            
+
         case "<ifmodule>", "ifmodule":
             // Recursively convert block contents
             // IfModule always evaluates to true in UWAS
             blockRules, _ := Convert(d.Block)
             rules.Merge(blockRules)
-            
+
         case "<filesmatch>", "filesmatch":
             rules.FilesMatch = append(rules.FilesMatch, FilesMatchRule{
                 Pattern: d.Args[0],
@@ -1274,7 +1273,7 @@ func Convert(directives []Directive) (*RuleSet, error) {
             })
         }
     }
-    
+
     return rules, nil
 }
 ```
@@ -1320,16 +1319,16 @@ func (mc *MemoryCache) Get(key string) (*CachedResponse, CacheStatus) {
     s.mu.RLock()
     e, ok := s.items[key]
     s.mu.RUnlock()
-    
+
     if !ok {
         mc.stats.Misses.Add(1)
         return nil, CacheMiss
     }
-    
+
     e.hits.Add(1)
     now := time.Now()
     age := now.Sub(e.created)
-    
+
     // Fresh hit
     if age < e.ttl {
         s.mu.Lock()
@@ -1338,13 +1337,13 @@ func (mc *MemoryCache) Get(key string) (*CachedResponse, CacheStatus) {
         mc.stats.Hits.Add(1)
         return e.value, CacheHit
     }
-    
+
     // Stale but within grace period
     if age < e.ttl+e.graceTTL {
         mc.stats.StaleHits.Add(1)
         return e.value, CacheStale // caller should async-revalidate
     }
-    
+
     // Expired beyond grace
     mc.stats.Misses.Add(1)
     return nil, CacheExpired
@@ -1352,16 +1351,16 @@ func (mc *MemoryCache) Get(key string) (*CachedResponse, CacheStatus) {
 
 func (mc *MemoryCache) Set(key string, resp *CachedResponse, ttl, graceTTL time.Duration, tags []string) {
     size := resp.Size()
-    
+
     s := &mc.shards[shardIndex(key)]
     s.mu.Lock()
     defer s.mu.Unlock()
-    
+
     // Evict if over memory limit
     for mc.usedBytes.Load()+size > mc.maxBytes {
         mc.evictLRU(s)
     }
-    
+
     e := &entry{
         key:      key,
         value:    resp,
@@ -1417,49 +1416,49 @@ func Cache(engine *cache.Engine) Middleware {
                 ctx.CacheStatus = "BYPASS"
                 return next(ctx)
             }
-            
+
             // Check bypass rules
             if engine.ShouldBypass(ctx) {
                 ctx.CacheStatus = "BYPASS"
                 return next(ctx)
             }
-            
+
             // Generate cache key
             key := engine.Key(ctx)
-            
+
             // Lookup
             cached, status := engine.Get(key)
-            
+
             switch status {
             case cache.CacheHit:
                 ctx.CacheStatus = "HIT"
                 return writeCachedResponse(ctx, cached)
-                
+
             case cache.CacheStale:
                 ctx.CacheStatus = "STALE"
                 // Serve stale immediately
                 go engine.AsyncRevalidate(key, ctx.Clone(), next)
                 return writeCachedResponse(ctx, cached)
-                
+
             default:
                 ctx.CacheStatus = "MISS"
             }
-            
+
             // Cache miss: execute handler with response capture
             capture := newResponseCapture(ctx.Response)
             ctx.Response = capture
-            
+
             if err := next(ctx); err != nil {
                 return err
             }
-            
+
             // Store in cache if response is cacheable
             if engine.IsCacheable(capture) {
                 ttl, graceTTL := engine.TTLFor(ctx)
                 tags := engine.TagsFor(ctx)
                 engine.Set(key, capture.ToCachedResponse(), ttl, graceTTL, tags)
             }
-            
+
             return nil
         }
     }
@@ -1479,32 +1478,32 @@ type ProxyHandler struct {
 
 func (h *ProxyHandler) Handle(ctx *router.RequestContext) error {
     pool := h.pools[ctx.VHost.Host]
-    
+
     // Select backend
     backend, err := pool.Select(ctx)
     if err != nil {
         return ctx.Response.Error(503, "no healthy upstream")
     }
-    
+
     ctx.Upstream = backend.Address
-    
+
     // Build upstream request
     upReq := ctx.Request.Clone(ctx.Request.Context())
     upReq.URL.Scheme = backend.Scheme()
     upReq.URL.Host = backend.HostPort()
     upReq.Host = ctx.Request.Host // preserve original Host
-    
+
     // Add proxy headers
     upReq.Header.Set("X-Real-IP", ctx.RemoteIP)
     upReq.Header.Set("X-Forwarded-For", ctx.RemoteIP)
     upReq.Header.Set("X-Forwarded-Proto", ctx.Proto())
     upReq.Header.Set("X-Forwarded-Host", ctx.Request.Host)
-    
+
     // WebSocket upgrade?
     if isWebSocketUpgrade(ctx.Request) {
         return h.proxyWebSocket(ctx, backend)
     }
-    
+
     // Execute proxy request
     start := time.Now()
     resp, err := backend.Transport.RoundTrip(upReq)
@@ -1517,19 +1516,19 @@ func (h *ProxyHandler) Handle(ctx *router.RequestContext) error {
         return ctx.Response.Error(502, "bad gateway")
     }
     defer resp.Body.Close()
-    
+
     pool.RecordSuccess(backend, time.Since(start))
-    
+
     // Copy response headers
     for k, vv := range resp.Header {
         for _, v := range vv {
             ctx.Response.Header().Add(k, v)
         }
     }
-    
+
     ctx.Response.WriteHeader(resp.StatusCode)
     io.Copy(ctx.Response, resp.Body)
-    
+
     return nil
 }
 ```
@@ -1552,14 +1551,14 @@ type WeightedRR struct {
 func (wrr *WeightedRR) Select(backends []*Backend, ctx *router.RequestContext) *Backend {
     wrr.mu.Lock()
     defer wrr.mu.Unlock()
-    
+
     if len(wrr.current) != len(backends) {
         wrr.current = make([]int, len(backends))
     }
-    
+
     totalWeight := 0
     best := -1
-    
+
     for i, b := range backends {
         if b.State.Load() != stateHealthy {
             continue
@@ -1570,11 +1569,11 @@ func (wrr *WeightedRR) Select(backends []*Backend, ctx *router.RequestContext) *
             best = i
         }
     }
-    
+
     if best == -1 {
         return nil
     }
-    
+
     wrr.current[best] -= totalWeight
     return backends[best]
 }
@@ -1585,7 +1584,7 @@ type LeastConn struct{}
 func (lc *LeastConn) Select(backends []*Backend, ctx *router.RequestContext) *Backend {
     var best *Backend
     minConns := int32(math.MaxInt32)
-    
+
     for _, b := range backends {
         if b.State.Load() != stateHealthy {
             continue
@@ -1618,7 +1617,7 @@ func (ih *IPHash) Select(backends []*Backend, ctx *router.RequestContext) *Backe
 
 ## 9. Structured Logger
 
-Go 1.21+'ın `log/slog` paketini wrap ediyoruz — external dependency yok:
+We wrap Go 1.21+'s `log/slog` package — no external dependency:
 
 ```go
 // internal/logger/logger.go
@@ -1631,18 +1630,18 @@ type Logger struct {
 
 func New(level, format string) *Logger {
     var handler slog.Handler
-    
+
     opts := &slog.HandlerOptions{
         Level: parseLevel(level),
     }
-    
+
     switch format {
     case "json":
         handler = slog.NewJSONHandler(os.Stdout, opts)
     default:
         handler = slog.NewTextHandler(os.Stdout, opts)
     }
-    
+
     return &Logger{
         slog: slog.New(handler),
     }
@@ -1688,37 +1687,37 @@ type AdminServer struct {
 
 func New(cfg *config.Config, srv *server.Server) *AdminServer {
     a := &AdminServer{config: cfg, server: srv}
-    
+
     mux := http.NewServeMux()
-    
+
     // All routes require API key auth
     auth := a.authMiddleware
-    
+
     // Domain management
     mux.HandleFunc("GET /api/v1/domains", auth(a.listDomains))
     mux.HandleFunc("POST /api/v1/domains", auth(a.addDomain))
     mux.HandleFunc("GET /api/v1/domains/{host}", auth(a.getDomain))
     mux.HandleFunc("PUT /api/v1/domains/{host}", auth(a.updateDomain))
     mux.HandleFunc("DELETE /api/v1/domains/{host}", auth(a.deleteDomain))
-    
+
     // Cache management
     mux.HandleFunc("POST /api/v1/cache/purge", auth(a.purgeCache))
     mux.HandleFunc("GET /api/v1/cache/stats", auth(a.cacheStats))
     mux.HandleFunc("DELETE /api/v1/cache", auth(a.clearCache))
-    
+
     // Certificate management
     mux.HandleFunc("GET /api/v1/certs", auth(a.listCerts))
     mux.HandleFunc("POST /api/v1/certs/{host}/renew", auth(a.renewCert))
-    
+
     // Server management
     mux.HandleFunc("POST /api/v1/reload", auth(a.reload))
     mux.HandleFunc("GET /api/v1/health", a.health) // no auth needed
     mux.HandleFunc("GET /api/v1/stats", auth(a.stats))
     mux.HandleFunc("GET /api/v1/metrics", auth(a.metrics))
-    
+
     // Dashboard (embedded HTML)
     mux.HandleFunc("GET /_uwas/dashboard", a.dashboard)
-    
+
     a.router = mux
     return a
 }
@@ -1839,94 +1838,94 @@ CMD ["serve"]
 
 ## 12. Implementation Order (Build Sequence)
 
-Kesin build sırası — her adım bir öncekine bağımlı:
+Definitive build order — each step depends on the previous one:
 
-### Sprint 1: Skeleton (3 gün)
+### Sprint 1: Skeleton (3 days)
 1. `cmd/uwas/main.go` — CLI skeleton
 2. `internal/config/` — YAML config parser + validation
 3. `internal/logger/` — structured logger (slog wrapper)
 4. `internal/server/server.go` — basic HTTP server start/stop
-5. **Çıktı**: `uwas serve` çalışır, port 80'de "Hello UWAS" döner
+5. **Output**: `uwas serve` runs and returns "Hello UWAS" on port 80
 
-### Sprint 2: Static Serving (3 gün)
+### Sprint 2: Static Serving (3 days)
 6. `internal/router/context.go` — RequestContext
 7. `internal/router/vhost.go` — virtual host router
 8. `internal/handler/static/` — file serving (ServeContent, ETag, MIME)
 9. `internal/server/dispatch.go` — try_files logic
-10. **Çıktı**: Multi-domain static file serving çalışır
+10. **Output**: Multi-domain static file serving works
 
-### Sprint 3: TLS (4 gün)
+### Sprint 3: TLS (4 days)
 11. `internal/tls/manager.go` — cert manager + SNI routing
 12. `internal/tls/acme/client.go` — ACME protocol (directory, account, nonce)
 13. `internal/tls/acme/jws.go` — JWS signing
 14. `internal/tls/acme/challenge.go` — HTTP-01 solver
 15. `internal/tls/storage.go` — cert disk persistence
 16. `internal/tls/renewal.go` — auto-renewal goroutine
-17. **Çıktı**: Auto HTTPS çalışır (Let's Encrypt staging'de test)
+17. **Output**: Auto HTTPS works (tested on Let's Encrypt staging)
 
-### Sprint 4: FastCGI / PHP (4 gün)
+### Sprint 4: FastCGI / PHP (4 days)
 18. `pkg/fastcgi/protocol.go` — binary protocol
 19. `pkg/fastcgi/client.go` — request execution
 20. `pkg/fastcgi/pool.go` — connection pool
 21. `internal/handler/fastcgi/handler.go` — PHP handler
 22. `internal/handler/fastcgi/env.go` — CGI env builder
-23. **Çıktı**: WordPress çalışır (pretty permalinks hariç)
+23. **Output**: WordPress works (except pretty permalinks)
 
-### Sprint 5: Rewrite Engine (4 gün)
+### Sprint 5: Rewrite Engine (4 days)
 24. `internal/rewrite/rule.go` — RewriteRule types
 25. `internal/rewrite/condition.go` — RewriteCond evaluation
 26. `internal/rewrite/engine.go` — rule processor
 27. `internal/rewrite/variables.go` — server variable resolver
 28. `pkg/htaccess/parser.go` — .htaccess parser
 29. `pkg/htaccess/converter.go` — directive → internal rules
-30. **Çıktı**: WordPress pretty permalinks çalışır, .htaccess supported
+30. **Output**: WordPress pretty permalinks work, .htaccess supported
 
-### Sprint 6: Middleware (3 gün)
+### Sprint 6: Middleware (3 days)
 31. `internal/middleware/chain.go` — chain builder
 32. `internal/middleware/requestid.go`
 33. `internal/middleware/realip.go`
-34. `internal/middleware/compress.go` — gzip (brotli Phase 2)
+34. `internal/middleware/compress.go` — gzip (brotli in Phase 2)
 35. `internal/middleware/headers.go` — security headers
 36. `internal/middleware/ratelimit.go` — token bucket
 37. `internal/middleware/security.go` — blocked paths, basic WAF
-38. **Çıktı**: Production-ready middleware stack
+38. **Output**: Production-ready middleware stack
 
-### Sprint 7: Cache (5 gün)
+### Sprint 7: Cache (5 days)
 39. `internal/cache/memory.go` — sharded LRU
 40. `internal/cache/disk.go` — L2 disk cache
 41. `internal/cache/key.go` — key generation
 42. `internal/cache/grace.go` — grace mode + async revalidation
 43. `internal/cache/purge.go` — tag/path purge
 44. `internal/middleware/cache.go` — cache middleware
-45. **Çıktı**: Full caching layer (Varnish-like grace mode dahil)
+45. **Output**: Full caching layer (including Varnish-like grace mode)
 
-### Sprint 8: Reverse Proxy (4 gün)
+### Sprint 8: Reverse Proxy (4 days)
 46. `internal/handler/proxy/handler.go` — proxy handler
 47. `internal/handler/proxy/balancer.go` — LB algorithms
 48. `internal/handler/proxy/upstream.go` — upstream pool
 49. `internal/handler/proxy/health.go` — health checker
 50. `internal/handler/proxy/circuit.go` — circuit breaker
 51. `internal/handler/proxy/websocket.go` — WS proxy
-52. **Çıktı**: Full reverse proxy + load balancer
+52. **Output**: Full reverse proxy + load balancer
 
-### Sprint 9: Admin & MCP (3 gün)
+### Sprint 9: Admin & MCP (3 days)
 53. `internal/admin/api.go` — REST API
 54. `internal/admin/dashboard.go` — embedded HTML
 55. `internal/metrics/collector.go` — Prometheus metrics
 56. `internal/mcp/server.go` — MCP protocol
 57. `internal/mcp/tools.go` — tool implementations
-58. **Çıktı**: Full management layer
+58. **Output**: Full management layer
 
-### Sprint 10: Polish (3 gün)
+### Sprint 10: Polish (3 days)
 59. CLI subcommands (domain, cert, cache, htaccess, config)
 60. Error pages, graceful shutdown refinement
 61. Integration tests, benchmark suite
 62. Documentation, README, examples
 63. Docker image, Makefile
-64. **Çıktı**: v0.1.0 release ready
+64. **Output**: v0.1.0 release ready
 
-**Toplam: ~36 gün (~7 hafta, tamponsuz)**
-**Gerçekçi (+ buffer + testing): 8-10 hafta**
+**Total: ~36 days (~7 weeks, without buffer)**
+**Realistic (+ buffer + testing): 8-10 weeks**
 
 ---
 
@@ -1954,5 +1953,5 @@ Kesin build sırası — her adım bir öncekine bağımlı:
                       Sprint 10: Polish
 ```
 
-Sprint 3 (TLS) ve Sprint 4 (FastCGI) paralel çalışılabilir.
-Sprint 7 (Cache) ve Sprint 8 (Proxy) paralel çalışılabilir.
+Sprint 3 (TLS) and Sprint 4 (FastCGI) can be worked on in parallel.
+Sprint 7 (Cache) and Sprint 8 (Proxy) can be worked on in parallel.

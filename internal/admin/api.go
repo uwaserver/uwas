@@ -6,18 +6,24 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
 )
 
+// ReloadFunc is called when a config reload is requested.
+type ReloadFunc func() error
+
 // Server is the admin REST API server.
 type Server struct {
-	config  *config.Config
-	logger  *logger.Logger
-	metrics *metrics.Collector
-	mux     *http.ServeMux
-	httpSrv *http.Server
+	config   *config.Config
+	logger   *logger.Logger
+	metrics  *metrics.Collector
+	cache    *cache.Engine
+	reloadFn ReloadFunc
+	mux      *http.ServeMux
+	httpSrv  *http.Server
 }
 
 func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
@@ -132,14 +138,42 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SetCache sets the cache engine for purge operations.
+func (s *Server) SetCache(c *cache.Engine) { s.cache = c }
+
+// SetReloadFunc sets the callback for config reload.
+func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
+
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
-	// TODO: trigger config reload via callback
-	jsonResponse(w, map[string]string{"status": "reload requested"})
+	if s.reloadFn == nil {
+		jsonError(w, "reload not supported", http.StatusNotImplemented)
+		return
+	}
+	if err := s.reloadFn(); err != nil {
+		jsonError(w, "reload failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "reloaded"})
 }
 
 func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
-	// TODO: wire to cache engine
-	jsonResponse(w, map[string]string{"status": "purge requested"})
+	if s.cache == nil {
+		jsonError(w, "cache not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	var req struct {
+		Tag string `json:"tag"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	if req.Tag != "" {
+		count := s.cache.PurgeByTag(req.Tag)
+		jsonResponse(w, map[string]any{"status": "purged", "tag": req.Tag, "count": count})
+	} else {
+		s.cache.PurgeAll()
+		jsonResponse(w, map[string]string{"status": "all purged"})
+	}
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {

@@ -28,7 +28,7 @@
 ## 2. Visual Identity
 
 ### Logo Concept
-Minimal geometric mark: **dört katmanın birleştiği tek yapı**.
+Minimal geometric mark: **a single structure where four layers converge**.
 
 - Primary symbol: Stacked horizontal layers merging into one unified block
 - Layers represent: TLS, HTTP, Cache, Handler — merging into one
