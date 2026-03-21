@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -54,14 +55,16 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, wafEnabled bool) M
 				}
 			}
 
-			// WAF checks on path + query
+			// WAF checks on path + query (both raw and decoded)
 			if wafEnabled {
 				fullURI := path
 				if r.URL.RawQuery != "" {
 					fullURI += "?" + r.URL.RawQuery
 				}
+				// Also check URL-decoded version to catch encoded attacks
+				decodedURI, _ := url.QueryUnescape(fullURI)
 				for _, pattern := range wafPatterns {
-					if pattern.MatchString(fullURI) {
+					if pattern.MatchString(fullURI) || (decodedURI != fullURI && pattern.MatchString(decodedURI)) {
 						log.Warn("WAF blocked request",
 							"path", path,
 							"pattern", pattern.String(),

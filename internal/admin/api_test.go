@@ -100,16 +100,16 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 	s := New(cfg, logger.New("error", "text"), metrics.New())
 
-	// No auth → 401
+	// No auth → 401 (use /stats, not /health which is public)
 	rec := httptest.NewRecorder()
-	s.authMiddleware(s.mux).ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/health", nil))
+	s.authMiddleware(s.mux).ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/stats", nil))
 	if rec.Code != 401 {
 		t.Errorf("no auth: status = %d, want 401", rec.Code)
 	}
 
 	// Wrong auth → 401
 	rec2 := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
 	s.authMiddleware(s.mux).ServeHTTP(rec2, req)
 	if rec2.Code != 401 {
@@ -118,7 +118,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 	// Correct auth → 200
 	rec3 := httptest.NewRecorder()
-	req2 := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req2 := httptest.NewRequest("GET", "/api/v1/stats", nil)
 	req2.Header.Set("Authorization", "Bearer secret123")
 	s.authMiddleware(s.mux).ServeHTTP(rec3, req2)
 	if rec3.Code != 200 {
