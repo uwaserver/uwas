@@ -52,6 +52,8 @@ UWAS uses a single YAML file. See [`uwas.example.yaml`](uwas.example.yaml) for a
 
 ```yaml
 global:
+  http_listen: ":80"
+  https_listen: ":443"
   acme:
     email: you@example.com
 

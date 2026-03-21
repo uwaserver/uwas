@@ -9,12 +9,22 @@ global:
   # Maximum concurrent connections
   max_connections: 65536
 
+  # Listen addresses
+  http_listen: ":80"      # HTTP listener (also handles ACME + HTTPS redirect)
+  https_listen: ":443"    # HTTPS listener (TLS termination)
+
   # PID file location
   pid_file: /var/run/uwas.pid
 
   # Logging
   log_level: info       # debug | info | warn | error
   log_format: json      # json | text | clf
+
+  # Trusted proxy CIDRs (for X-Forwarded-For real IP extraction)
+  # trusted_proxies:
+  #   - 10.0.0.0/8
+  #   - 172.16.0.0/12
+  #   - 192.168.0.0/16
 
   # Connection timeouts
   timeouts:
@@ -157,3 +167,37 @@ domains:
     access_log:
       path: /var/log/uwas/blog.access.log
       format: json
+
+  # ── Example 3: Reverse Proxy with Load Balancing ──
+  - host: "api.example.com"
+    type: proxy
+    ssl:
+      mode: auto
+    proxy:
+      upstreams:
+        - address: "http://127.0.0.1:3000"
+          weight: 3
+        - address: "http://127.0.0.1:3001"
+          weight: 1
+      algorithm: least_conn   # round_robin | least_conn | ip_hash | uri_hash | random
+      health_check:
+        path: /health
+        interval: 10s
+        timeout: 5s
+        threshold: 3
+        rise: 2
+      websocket: true
+      timeouts:
+        connect: 5s
+        read: 60s
+        write: 60s
+
+  # ── Example 4: Domain Redirect ──
+  - host: "old.example.com"
+    type: redirect
+    ssl:
+      mode: auto
+    redirect:
+      target: "https://example.com"
+      status: 301
+      preserve_path: true

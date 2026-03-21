@@ -15,6 +15,7 @@ type GlobalConfig struct {
 	PIDFile        string         `yaml:"pid_file"`
 	LogLevel       string         `yaml:"log_level"`
 	LogFormat      string         `yaml:"log_format"`
+	TrustedProxies []string       `yaml:"trusted_proxies"`
 	Timeouts       TimeoutConfig  `yaml:"timeouts"`
 	Admin          AdminConfig    `yaml:"admin"`
 	MCP            MCPConfig      `yaml:"mcp"`
