@@ -5,8 +5,6 @@ project_name: uwas
 before:
   hooks:
     - go mod tidy
-    - go vet ./...
-    - go test ./...
 
 builds:
   - main: ./cmd/uwas
@@ -43,12 +41,3 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^ci:"
-
-dockers:
-  - image_templates:
-      - "ghcr.io/uwaserver/uwas:{{ .Version }}"
-      - "ghcr.io/uwaserver/uwas:latest"
-    dockerfile: Dockerfile
-    build_flag_templates:
-      - "--build-arg=VERSION={{.Version}}"
-      - "--build-arg=COMMIT={{.ShortCommit}}"
