@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -14,8 +15,12 @@ type Server struct {
 	config  *config.Config
 	logger  *logger.Logger
 	metrics *metrics.Collector
+	cache   *cache.Engine
 	tools   map[string]Tool
 }
+
+// SetCache sets the cache engine for purge operations.
+func (s *Server) SetCache(c *cache.Engine) { s.cache = c }
 
 // Tool is an MCP tool that can be invoked.
 type Tool struct {
@@ -106,8 +111,15 @@ func (s *Server) registerTools() {
 				Tag string `json:"tag"`
 			}
 			json.Unmarshal(input, &params)
-			// TODO: wire to cache engine
-			return map[string]string{"status": "purged", "tag": params.Tag}, nil
+			if s.cache == nil {
+				return map[string]string{"status": "cache not enabled"}, nil
+			}
+			if params.Tag != "" {
+				count := s.cache.PurgeByTag(params.Tag)
+				return map[string]any{"status": "purged", "tag": params.Tag, "count": count}, nil
+			}
+			s.cache.PurgeAll()
+			return map[string]string{"status": "all purged"}, nil
 		},
 	}
 }

@@ -1,0 +1,38 @@
+services:
+  uwas:
+    build: .
+    ports:
+      - "80:80"
+      - "443:443"
+      - "9443:9443"
+    volumes:
+      - ./uwas.example.yaml:/etc/uwas/uwas.yaml:ro
+      - ./data/www:/var/www
+      - certs:/var/lib/uwas/certs
+      - cache:/var/cache/uwas
+    depends_on:
+      - php
+      - db
+    restart: unless-stopped
+
+  php:
+    image: php:8.3-fpm-alpine
+    volumes:
+      - ./data/www:/var/www
+    restart: unless-stopped
+
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-uwas_root}
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${DB_PASSWORD:-uwas_wp}
+    volumes:
+      - db_data:/var/lib/mysql
+    restart: unless-stopped
+
+volumes:
+  certs:
+  cache:
+  db_data:

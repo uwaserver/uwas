@@ -91,11 +91,17 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	// Initialize admin API
 	if cfg.Global.Admin.Enabled {
 		s.admin = admin.New(cfg, log, m)
+		if cacheEngine != nil {
+			s.admin.SetCache(cacheEngine)
+		}
 	}
 
 	// Initialize MCP server
 	if cfg.Global.MCP.Enabled {
 		s.mcp = mcp.New(cfg, log, m)
+		if cacheEngine != nil {
+			s.mcp.SetCache(cacheEngine)
+		}
 	}
 
 	// Initialize proxy pools for proxy-type domains
