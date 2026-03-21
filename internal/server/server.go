@@ -29,6 +29,7 @@ import (
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/router"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
+	"github.com/uwaserver/uwas/pkg/htaccess"
 )
 
 // Server is the main UWAS server that orchestrates all modules.
@@ -363,7 +364,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Rewrite engine
+	// .htaccess import (runtime parse)
+	if domain.Htaccess.Mode == "import" && domain.Root != "" {
+		s.applyHtaccess(ctx, domain)
+	}
+
+	// Rewrite engine (from YAML config)
 	if len(domain.Rewrites) > 0 {
 		if s.applyRewrites(ctx, domain) {
 			return
@@ -405,6 +411,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Domain) {
+	// Check if the raw path points to a directory (for directory listing)
+	if domain.DirectoryListing && domain.Root != "" {
+		rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
+		if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
+			static.ServeDirListing(ctx, rawPath, ctx.Request.URL.Path)
+			return
+		}
+	}
+
 	if !static.ResolveRequest(ctx, domain) {
 		renderErrorPage(ctx.Response, http.StatusNotFound)
 		return
@@ -496,6 +511,64 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 		ctx.RewrittenURI = result.URI
 	}
 	return false
+}
+
+// applyHtaccess reads and applies .htaccess rewrite rules from the document root.
+func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) {
+	htPath := filepath.Join(domain.Root, ".htaccess")
+	f, err := os.Open(htPath)
+	if err != nil {
+		return // no .htaccess file, skip silently
+	}
+	defer f.Close()
+
+	directives, err := htaccess.Parse(f)
+	if err != nil {
+		s.logger.Warn("htaccess parse error", "path", htPath, "error", err)
+		return
+	}
+
+	ruleSet := htaccess.Convert(directives)
+	if !ruleSet.RewriteEnabled || len(ruleSet.Rewrites) == 0 {
+		return
+	}
+
+	// Convert htaccess rewrites to engine rules
+	var rules []*rewrite.Rule
+	for _, rw := range ruleSet.Rewrites {
+		rule, err := rewrite.ParseRule(rw.Pattern, rw.Target, rw.Flags)
+		if err != nil {
+			continue
+		}
+		// Convert conditions
+		for _, cond := range rw.Conditions {
+			c, err := rewrite.ParseCondition(cond.Variable, cond.Pattern, cond.Flags)
+			if err != nil {
+				continue
+			}
+			rule.Conditions = append(rule.Conditions, *c)
+		}
+		rule.Flags.Last = true
+		rules = append(rules, rule)
+	}
+
+	if len(rules) == 0 {
+		return
+	}
+
+	engine := rewrite.NewEngine(rules)
+	// Construct filesystem path for -f/-d condition checks
+	requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
+	vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
+	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
+
+	if result.Modified {
+		ctx.Request.URL.Path = result.URI
+		if result.Query != "" {
+			ctx.Request.URL.RawQuery = result.Query
+		}
+		ctx.RewrittenURI = result.URI
+	}
 }
 
 // reload re-reads and applies the config file.

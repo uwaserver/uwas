@@ -79,9 +79,10 @@ type Domain struct {
 	ErrorPages  map[int]string   `yaml:"error_pages"`
 	Proxy       ProxyConfig      `yaml:"proxy"`
 	Redirect    RedirectConfig   `yaml:"redirect"`
-	TryFiles    []string         `yaml:"try_files"`
-	SPAMode     bool             `yaml:"spa_mode"`
-	IndexFiles  []string         `yaml:"index_files"`
+	TryFiles         []string         `yaml:"try_files"`
+	SPAMode          bool             `yaml:"spa_mode"`
+	IndexFiles       []string         `yaml:"index_files"`
+	DirectoryListing bool             `yaml:"directory_listing"`
 }
 
 type SSLConfig struct {
