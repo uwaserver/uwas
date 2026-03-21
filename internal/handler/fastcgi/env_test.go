@@ -187,3 +187,93 @@ func TestCanHandleHTML(t *testing.T) {
 		t.Error("CanHandle should return false for .html files")
 	}
 }
+
+func TestBuildEnvRemoteIPOverride(t *testing.T) {
+	r := httptest.NewRequest("GET", "/index.php", nil)
+	r.RemoteAddr = "192.168.1.50:12345"
+	w := httptest.NewRecorder()
+	ctx := router.AcquireContext(w, r)
+	defer router.ReleaseContext(ctx)
+
+	ctx.DocumentRoot = "/var/www"
+	ctx.RemoteIP = "10.0.0.1" // override from trusted proxy header
+
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+
+	if env["REMOTE_ADDR"] != "10.0.0.1" {
+		t.Errorf("REMOTE_ADDR = %q, want 10.0.0.1", env["REMOTE_ADDR"])
+	}
+}
+
+func TestSplitScriptPathNoIndexFiles(t *testing.T) {
+	// When no index files are provided and URI doesn't contain .php,
+	// SplitScriptPath should return the URI as-is with no pathInfo.
+	tests := []struct {
+		uri        string
+		wantScript string
+		wantPath   string
+	}{
+		{"/about", "/about", ""},
+		{"/", "/", ""},
+		{"/some/page", "/some/page", ""},
+	}
+
+	for _, tt := range tests {
+		script, pathInfo := SplitScriptPath(tt.uri, "/var/www", nil)
+		if script != tt.wantScript {
+			t.Errorf("SplitScriptPath(%q, nil) script = %q, want %q", tt.uri, script, tt.wantScript)
+		}
+		if pathInfo != tt.wantPath {
+			t.Errorf("SplitScriptPath(%q, nil) pathInfo = %q, want %q", tt.uri, pathInfo, tt.wantPath)
+		}
+	}
+}
+
+func TestClientIPMalformed(t *testing.T) {
+	// clientIP with a malformed RemoteAddr (no port) should return the input as-is
+	got := clientIP("not-a-host-port")
+	if got != "not-a-host-port" {
+		t.Errorf("clientIP(malformed) = %q, want %q", got, "not-a-host-port")
+	}
+
+	// clientIP with a valid addr
+	got = clientIP("192.168.1.1:8080")
+	if got != "192.168.1.1" {
+		t.Errorf("clientIP(valid) = %q, want 192.168.1.1", got)
+	}
+}
+
+func TestClientPortMalformed(t *testing.T) {
+	// clientPort with a malformed RemoteAddr should return ""
+	got := clientPort("not-a-host-port")
+	if got != "" {
+		t.Errorf("clientPort(malformed) = %q, want empty string", got)
+	}
+
+	// clientPort with a valid addr
+	got = clientPort("192.168.1.1:9090")
+	if got != "9090" {
+		t.Errorf("clientPort(valid) = %q, want 9090", got)
+	}
+}
+
+func TestBuildEnvMalformedRemoteAddr(t *testing.T) {
+	r := httptest.NewRequest("GET", "/index.php", nil)
+	r.RemoteAddr = "malformed-addr"
+	w := httptest.NewRecorder()
+	ctx := router.AcquireContext(w, r)
+	defer router.ReleaseContext(ctx)
+
+	ctx.DocumentRoot = "/var/www"
+
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+
+	// With malformed addr, REMOTE_ADDR should be the raw string
+	if env["REMOTE_ADDR"] != "malformed-addr" {
+		t.Errorf("REMOTE_ADDR = %q, want malformed-addr", env["REMOTE_ADDR"])
+	}
+	// REMOTE_PORT should be empty (deleted because BuildEnv removes empty values)
+	if _, ok := env["REMOTE_PORT"]; ok {
+		t.Errorf("REMOTE_PORT should not be set for malformed addr, got %q", env["REMOTE_PORT"])
+	}
+}

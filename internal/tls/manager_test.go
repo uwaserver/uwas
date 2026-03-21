@@ -1,6 +1,7 @@
 package uwastls
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -363,5 +364,87 @@ func TestHandleHTTPChallengeWithACMEUnknownToken(t *testing.T) {
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestObtainCertsNoACME(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	domains := []config.Domain{
+		{Host: "test.com", SSL: config.SSLConfig{Mode: "auto"}},
+	}
+	m := NewManager(cfg, domains, log)
+
+	// acme is nil because no email is set; ObtainCerts should return immediately
+	m.ObtainCerts(context.Background())
+
+	// Verify no certs were stored (no panic, no error)
+	hello := &tls.ClientHelloInfo{ServerName: "test.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should not have a cert when acme is nil")
+	}
+}
+
+func TestLoadExistingCertsEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: dir}
+	m := NewManager(cfg, nil, log)
+
+	// Should not panic or error on an empty storage dir
+	m.LoadExistingCerts()
+
+	hello := &tls.ClientHelloInfo{ServerName: "anything.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should have no certs loaded from empty dir")
+	}
+}
+
+func TestLoadExistingCertsWithValidCerts(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	// Save two certs to disk
+	cert1, certPEM1, keyPEM1 := generateTestCert(t, "alpha.com")
+	storage.Save("alpha.com", cert1, keyPEM1, certPEM1)
+
+	cert2, certPEM2, keyPEM2 := generateTestCert(t, "beta.com")
+	storage.Save("beta.com", cert2, keyPEM2, certPEM2)
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: dir}
+	m := NewManager(cfg, nil, log)
+	m.LoadExistingCerts()
+
+	// Verify both certs are retrievable via GetCertificate
+	for _, host := range []string{"alpha.com", "beta.com"} {
+		hello := &tls.ClientHelloInfo{ServerName: host}
+		got, err := m.GetCertificate(hello)
+		if err != nil {
+			t.Fatalf("GetCertificate(%q): %v", host, err)
+		}
+		if got == nil {
+			t.Errorf("expected cert for %q, got nil", host)
+		}
+		if got.Leaf == nil {
+			t.Errorf("expected parsed Leaf for %q", host)
+		} else if got.Leaf.Subject.CommonName != host {
+			t.Errorf("CN = %q, want %q", got.Leaf.Subject.CommonName, host)
+		}
+	}
+}
+
+func TestNewManagerWithoutEmail(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+		// Email is empty
+	}
+	m := NewManager(cfg, nil, log)
+	if m.acme != nil {
+		t.Error("ACME client should be nil when email is empty")
 	}
 }

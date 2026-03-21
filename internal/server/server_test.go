@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -505,5 +507,229 @@ func TestRenderErrorPageAllKnownCodes(t *testing.T) {
 		if !strings.Contains(body, title) {
 			t.Errorf("renderErrorPage(%d) body should contain %q", code, title)
 		}
+	}
+}
+
+func TestBuildMiddlewareChain(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "example.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// The middleware chain is built during New(); verify handler is not nil
+	if s.handler == nil {
+		t.Fatal("handler should not be nil after New()")
+	}
+
+	// Exercise the chain with a request to verify it produces a response
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "example.com"
+	s.handler.ServeHTTP(rec, req)
+
+	if rec.Code == 0 {
+		t.Error("expected a non-zero status code from the middleware chain")
+	}
+}
+
+func TestHandleHTTPNonSSLDomain(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hello"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "plain.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "plain.com"
+	s.handleHTTP(rec, req)
+
+	// Non-SSL domain should serve content, not redirect
+	if rec.Code == 301 {
+		t.Error("non-SSL domain should not redirect to HTTPS")
+	}
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "hello") {
+		t.Errorf("body = %q, want 'hello'", rec.Body.String())
+	}
+}
+
+func TestHandleHTTPACMEChallengePath(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "error",
+			LogFormat: "text",
+			ACME: config.ACMEConfig{
+				Email:   "test@example.com",
+				CAURL:   "https://acme-staging-v02.api.letsencrypt.org/directory",
+				Storage: t.TempDir(),
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "acme.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/.well-known/acme-challenge/test-token", nil)
+	req.Host = "acme.com"
+	s.handleHTTP(rec, req)
+
+	// ACME challenge path should be handled by the TLS manager.
+	// Since no token is registered, the ACME handler returns 404 (challenge not found).
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404 (challenge not found)", rec.Code)
+	}
+}
+
+func TestHandleHTTPSSLDomainRedirect(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "ssl.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "manual"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/page?q=1", nil)
+	req.Host = "ssl.com"
+	s.handleHTTP(rec, req)
+
+	if rec.Code != 301 {
+		t.Errorf("status = %d, want 301", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "https://ssl.com/page?q=1" {
+		t.Errorf("Location = %q, want https://ssl.com/page?q=1", loc)
+	}
+	if rec.Header().Get("Strict-Transport-Security") == "" {
+		t.Error("HSTS header should be set for SSL domain redirect")
+	}
+}
+
+func TestHandleRequestCacheEnabled(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "cached.html"), []byte("cached content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024), // 10MB
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "cached.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// First request: cache miss, serve the file and store in cache
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/cached.html", nil)
+	req1.Host = "cached.com"
+	s.handleRequest(rec1, req1)
+
+	if rec1.Code != 200 {
+		t.Fatalf("first request status = %d, want 200", rec1.Code)
+	}
+
+	// Manually populate the cache with the response so the second request gets a hit.
+	// The static handler does not auto-store in cache, so we store directly.
+	if s.cache != nil {
+		cacheReq := httptest.NewRequest("GET", "/cached.html", nil)
+		cacheReq.Host = "cached.com"
+
+		s.cache.Set(cacheReq, &cache.CachedResponse{
+			StatusCode: 200,
+			Headers:    http.Header{"Content-Type": {"text/html"}},
+			Body:       []byte("cached content"),
+			Created:    time.Now(),
+			TTL:        60 * time.Second,
+		})
+
+		// Second request: should get X-Cache header
+		rec2 := httptest.NewRecorder()
+		req2 := httptest.NewRequest("GET", "/cached.html", nil)
+		req2.Host = "cached.com"
+		s.handleRequest(rec2, req2)
+
+		xcache := rec2.Header().Get("X-Cache")
+		if xcache == "" {
+			t.Error("second request should have X-Cache header set")
+		}
+		if xcache != "HIT" && xcache != "STALE" {
+			t.Errorf("X-Cache = %q, want HIT or STALE", xcache)
+		}
+	}
+}
+
+func TestApplyHtaccess(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a .htaccess file with rewrite rules
+	htContent := `RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(.*)$ /index.php [L]
+`
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(htContent), 0644)
+	os.WriteFile(filepath.Join(dir, "index.php"), []byte("<?php echo 'hi'; ?>"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "htaccess.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Request a path that doesn't exist on disk — .htaccess should rewrite to /index.php
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/some-page", nil)
+	req.Host = "htaccess.local"
+	s.handleRequest(rec, req)
+
+	// The rewrite should have changed the URL path to /index.php.
+	// Since this is a static domain (not php), it will serve the index.php file as static.
+	// Either way, the request should resolve (200) rather than 404.
+	if rec.Code == 404 {
+		t.Error("htaccess rewrite should have prevented a 404")
 	}
 }

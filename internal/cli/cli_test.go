@@ -263,3 +263,54 @@ func TestHelpCommandRunWithCommandWithoutHelper(t *testing.T) {
 		t.Error("should print version command info")
 	}
 }
+
+func TestServeCommandRunNonexistentConfig(t *testing.T) {
+	cmd := &ServeCommand{}
+	err := cmd.Run([]string{"-c", "/nonexistent/path/uwas-does-not-exist.yaml"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent config file")
+	}
+	if !strings.Contains(err.Error(), "load config") {
+		t.Errorf("error = %q, should mention loading config", err.Error())
+	}
+}
+
+func TestCLIRunEmptyArgs(t *testing.T) {
+	app := New()
+	app.Register(&VersionCommand{})
+	app.Register(&ServeCommand{})
+	app.Register(NewHelpCommand(app))
+
+	// CLI.Run with empty args calls printUsage() then os.Exit(0).
+	// We cannot intercept os.Exit directly, but we can test printUsage
+	// by calling the help command with no args which exercises the same code path.
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	helpCmd := NewHelpCommand(app)
+	err := helpCmd.Run(nil)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if !strings.Contains(output, "UWAS") {
+		t.Error("usage output should contain 'UWAS'")
+	}
+	if !strings.Contains(output, "uwas <command>") {
+		t.Error("usage output should contain 'uwas <command>'")
+	}
+	if !strings.Contains(output, "version") {
+		t.Error("usage output should list 'version' command")
+	}
+	if !strings.Contains(output, "serve") {
+		t.Error("usage output should list 'serve' command")
+	}
+}
