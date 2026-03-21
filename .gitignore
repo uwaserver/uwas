@@ -1,0 +1,34 @@
+# Binary
+uwas
+uwas.exe
+/bin/
+
+# Go
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets
+uwas.yaml
+!uwas.example.yaml
+
+# PID
+*.pid
+
+# Cache
+/cache/
+
+# Certs
+/certs/

@@ -1,0 +1,77 @@
+package cache
+
+import (
+	"os"
+	"path/filepath"
+	"sync/atomic"
+)
+
+// DiskCache is a file-based L2 cache with hash-based directory sharding.
+type DiskCache struct {
+	baseDir   string
+	maxBytes  int64
+	usedBytes atomic.Int64
+}
+
+// NewDiskCache creates a disk cache at the given directory.
+func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
+	os.MkdirAll(baseDir, 0755)
+	return &DiskCache{
+		baseDir:  baseDir,
+		maxBytes: maxBytes,
+	}
+}
+
+// Get reads a cached response from disk.
+func (dc *DiskCache) Get(key string) (*CachedResponse, error) {
+	path := dc.path(key)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return Deserialize(data)
+}
+
+// Set writes a cached response to disk.
+func (dc *DiskCache) Set(key string, resp *CachedResponse) error {
+	data := resp.Serialize()
+
+	// Check disk limit
+	if dc.maxBytes > 0 && dc.usedBytes.Load()+int64(len(data)) > dc.maxBytes {
+		return nil // silently skip if over limit
+	}
+
+	path := dc.path(key)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return err
+	}
+
+	dc.usedBytes.Add(int64(len(data)))
+	return nil
+}
+
+// Delete removes a cached file from disk.
+func (dc *DiskCache) Delete(key string) {
+	path := dc.path(key)
+	info, err := os.Stat(path)
+	if err == nil {
+		dc.usedBytes.Add(-info.Size())
+	}
+	os.Remove(path)
+}
+
+// PurgeAll removes all cache files.
+func (dc *DiskCache) PurgeAll() error {
+	dc.usedBytes.Store(0)
+	return os.RemoveAll(dc.baseDir)
+}
+
+func (dc *DiskCache) path(key string) string {
+	d1, d2 := KeyPrefix(key)
+	return filepath.Join(dc.baseDir, d1, d2, key+".cache")
+}

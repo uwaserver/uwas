@@ -1,0 +1,159 @@
+# UWAS — Unified Web Application Server
+# Example Configuration File
+# Docs: https://uwaserver.com/docs/configuration
+
+global:
+  # Worker count: "auto" = number of CPU cores
+  worker_count: auto
+
+  # Maximum concurrent connections
+  max_connections: 65536
+
+  # PID file location
+  pid_file: /var/run/uwas.pid
+
+  # Logging
+  log_level: info       # debug | info | warn | error
+  log_format: json      # json | text | clf
+
+  # Connection timeouts
+  timeouts:
+    read: 30s
+    write: 60s
+    idle: 120s
+    shutdown_grace: 30s
+
+  # Admin REST API
+  admin:
+    enabled: true
+    listen: "127.0.0.1:9443"
+    api_key: "${UWAS_ADMIN_KEY}"
+
+  # MCP Server (AI management)
+  mcp:
+    enabled: true
+    listen: "127.0.0.1:9444"
+
+  # ACME / Let's Encrypt
+  acme:
+    email: "admin@example.com"
+    ca_url: "https://acme-v02.api.letsencrypt.org/directory"
+    storage: /var/lib/uwas/certs
+
+  # Global cache settings
+  cache:
+    enabled: true
+    memory_limit: 512MB
+    disk_path: /var/cache/uwas
+    disk_limit: 10GB
+    default_ttl: 3600
+    grace_ttl: 86400
+    stale_while_revalidate: true
+    purge_key: "${UWAS_PURGE_KEY}"
+
+# ─────────────────────────────────────────────
+# Domain definitions
+# ─────────────────────────────────────────────
+
+domains:
+  # ── Example 1: Static site with auto HTTPS ──
+  - host: "example.com"
+    aliases:
+      - "www.example.com"
+    root: /var/www/example.com/public
+    type: static
+
+    ssl:
+      mode: auto
+
+    compression:
+      enabled: true
+      algorithms:
+        - brotli
+        - gzip
+      min_size: 1024
+      types:
+        - text/html
+        - text/css
+        - application/javascript
+        - application/json
+        - image/svg+xml
+
+    headers:
+      add:
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: SAMEORIGIN
+        Referrer-Policy: strict-origin-when-cross-origin
+      remove:
+        - X-Powered-By
+
+    cache:
+      enabled: true
+      ttl: 3600
+      rules:
+        - match: "^/assets/"
+          ttl: 86400
+
+    security:
+      blocked_paths:
+        - ".git"
+        - ".env"
+
+    access_log:
+      path: /var/log/uwas/example.com.access.log
+      format: json
+
+  # ── Example 2: WordPress / PHP site ──
+  - host: "blog.example.com"
+    root: /var/www/wordpress
+    type: php
+
+    ssl:
+      mode: auto
+
+    php:
+      fpm_address: "unix:/var/run/php/php8.3-fpm.sock"
+      index_files:
+        - index.php
+        - index.html
+      max_upload: 64MB
+      timeout: 300s
+
+    # Import .htaccess for WordPress compatibility
+    htaccess:
+      mode: import
+
+    cache:
+      enabled: true
+      ttl: 1800
+      rules:
+        - match: "^/wp-content/uploads/"
+          ttl: 86400
+        - match: "^/wp-admin/"
+          bypass: true
+        - match: "^/wp-login"
+          bypass: true
+      tags:
+        - "site:blog"
+      esi: true
+
+    security:
+      blocked_paths:
+        - ".git"
+        - ".env"
+        - "wp-config.php"
+        - ".htpasswd"
+      rate_limit:
+        requests: 100
+        window: 60s
+        by: ip
+      waf:
+        enabled: true
+        rules:
+          - sql_injection
+          - xss
+          - path_traversal
+
+    access_log:
+      path: /var/log/uwas/blog.access.log
+      format: json
