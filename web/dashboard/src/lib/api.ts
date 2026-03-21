@@ -72,6 +72,18 @@ export interface ConfigData {
   domain_count: number;
 }
 
+export interface LogEntry {
+  time: string;
+  method: string;
+  host: string;
+  path: string;
+  status: number;
+  bytes: number;
+  duration_ms: number;
+  remote: string;
+  user_agent: string;
+}
+
 export const fetchHealth = () => api<HealthData>('/api/v1/health');
 export const fetchStats = () => api<StatsData>('/api/v1/stats');
 export const fetchDomains = () => api<DomainData[]>('/api/v1/domains');
@@ -85,3 +97,7 @@ export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/c
   method: 'POST',
   body: JSON.stringify(tag ? { tag } : {}),
 });
+
+export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
+export const addDomain = (domain: Partial<DomainData>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
+export const deleteDomain = (host: string) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'DELETE' });

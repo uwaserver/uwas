@@ -7,6 +7,8 @@ import Domains from '@/pages/Domains';
 import Topology from '@/pages/Topology';
 import Cache from '@/pages/Cache';
 import Metrics from '@/pages/Metrics';
+import Logs from '@/pages/Logs';
+import Settings from '@/pages/Settings';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -44,6 +46,8 @@ export default function App() {
         <Route path="/topology" element={<Topology />} />
         <Route path="/cache" element={<Cache />} />
         <Route path="/metrics" element={<Metrics />} />
+        <Route path="/logs" element={<Logs />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
 
       {/* Fallback */}

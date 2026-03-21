@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
@@ -18,15 +19,34 @@ import (
 // ReloadFunc is called when a config reload is requested.
 type ReloadFunc func() error
 
+// LogEntry represents a single access log entry stored in the ring buffer.
+type LogEntry struct {
+	Time       time.Time `json:"time"`
+	Host       string    `json:"host"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Status     int       `json:"status"`
+	Duration   string    `json:"duration"`
+	RemoteAddr string    `json:"remote_addr"`
+}
+
+const maxLogEntries = 1000
+
 // Server is the admin REST API server.
 type Server struct {
-	config   *config.Config
-	logger   *logger.Logger
-	metrics  *metrics.Collector
-	cache    *cache.Engine
-	reloadFn ReloadFunc
-	mux      *http.ServeMux
-	httpSrv  *http.Server
+	config         *config.Config
+	logger         *logger.Logger
+	metrics        *metrics.Collector
+	cache          *cache.Engine
+	reloadFn       ReloadFunc
+	onDomainChange func()
+	mux            *http.ServeMux
+	httpSrv        *http.Server
+
+	logMu      sync.Mutex
+	logEntries []LogEntry
+	logPos     int
+	logFull    bool
 }
 
 func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
@@ -48,6 +68,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/reload", s.handleReload)
 	s.mux.HandleFunc("POST /api/v1/cache/purge", s.handleCachePurge)
 	s.mux.Handle("GET /api/v1/metrics", s.metrics.Handler())
+	s.mux.HandleFunc("POST /api/v1/domains", s.handleAddDomain)
+	s.mux.HandleFunc("DELETE /api/v1/domains/{host}", s.handleDeleteDomain)
+	s.mux.HandleFunc("PUT /api/v1/domains/{host}", s.handleUpdateDomain)
+	s.mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -108,7 +132,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// CORS for dashboard dev mode
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -227,4 +251,131 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// --- Domain CRUD ---
+
+// SetOnDomainChange sets a callback invoked after domain add/update/delete.
+func (s *Server) SetOnDomainChange(fn func()) { s.onDomainChange = fn }
+
+func (s *Server) notifyDomainChange() {
+	if s.onDomainChange != nil {
+		s.onDomainChange()
+	}
+}
+
+func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
+	var d config.Domain
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if d.Host == "" {
+		jsonError(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	// Check for duplicates.
+	for _, existing := range s.config.Domains {
+		if existing.Host == d.Host {
+			jsonError(w, "domain already exists", http.StatusConflict)
+			return
+		}
+	}
+	s.config.Domains = append(s.config.Domains, d)
+	s.notifyDomainChange()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(d)
+}
+
+func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	for i, d := range s.config.Domains {
+		if d.Host == host {
+			s.config.Domains = append(s.config.Domains[:i], s.config.Domains[i+1:]...)
+			s.notifyDomainChange()
+			jsonResponse(w, map[string]string{"status": "deleted"})
+			return
+		}
+	}
+	jsonError(w, "domain not found", http.StatusNotFound)
+}
+
+func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	var d config.Domain
+	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i, existing := range s.config.Domains {
+		if existing.Host == host {
+			// Allow the body to omit host; default to the path param.
+			if d.Host == "" {
+				d.Host = host
+			}
+			s.config.Domains[i] = d
+			s.notifyDomainChange()
+			jsonResponse(w, d)
+			return
+		}
+	}
+	jsonError(w, "domain not found", http.StatusNotFound)
+}
+
+// --- Logs ring buffer ---
+
+// RecordLog appends a log entry to the ring buffer. Safe for concurrent use.
+func (s *Server) RecordLog(e LogEntry) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+
+	if s.logEntries == nil {
+		s.logEntries = make([]LogEntry, maxLogEntries)
+	}
+	s.logEntries[s.logPos] = e
+	s.logPos = (s.logPos + 1) % maxLogEntries
+	if s.logPos == 0 {
+		s.logFull = true
+	}
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+
+	const returnLimit = 100
+
+	var count int
+	if s.logFull {
+		count = maxLogEntries
+	} else {
+		count = s.logPos
+	}
+	if count == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]\n"))
+		return
+	}
+
+	// Collect entries in chronological order (oldest first).
+	var start int
+	if s.logFull {
+		start = s.logPos // oldest entry
+	}
+	// We only return the most recent `returnLimit` entries.
+	skip := 0
+	if count > returnLimit {
+		skip = count - returnLimit
+		count = returnLimit
+	}
+
+	result := make([]LogEntry, 0, count)
+	for i := 0; i < count+skip; i++ {
+		idx := (start + i) % maxLogEntries
+		if i >= skip {
+			result = append(result, s.logEntries[idx])
+		}
+	}
+	jsonResponse(w, result)
 }
