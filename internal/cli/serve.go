@@ -43,5 +43,6 @@ func (s *ServeCommand) Run(args []string) error {
 	log.Info("configuration loaded", "path", *configPath, "domains", len(cfg.Domains))
 
 	srv := server.New(cfg, log)
+	srv.SetConfigPath(*configPath)
 	return srv.Start()
 }
