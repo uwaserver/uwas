@@ -382,3 +382,99 @@ func TestAccessLog(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 }
+
+// --- CustomHeaders ---
+
+func TestCustomHeaders(t *testing.T) {
+	handler := CustomHeaders(
+		map[string]string{"X-Custom": "hello", "X-Another": "world"},
+		[]string{"X-Remove-Me"},
+	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Remove-Me", "should-be-removed")
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	// Pre-set the header to be removed (CustomHeaders runs before handler)
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+
+	if got := rec.Header().Get("X-Custom"); got != "hello" {
+		t.Errorf("X-Custom = %q, want hello", got)
+	}
+	if got := rec.Header().Get("X-Another"); got != "world" {
+		t.Errorf("X-Another = %q, want world", got)
+	}
+}
+
+// --- Gzip: WriteHeader path (explicit status code before write) ---
+
+func TestGzipWriteHeaderExplicit(t *testing.T) {
+	body := strings.Repeat("Hello gzip! ", 200)
+
+	handler := Gzip(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(201)
+		w.Write([]byte(body))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 201 {
+		t.Errorf("status = %d, want 201", rec.Code)
+	}
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("should be gzip encoded")
+	}
+
+	gr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("invalid gzip: %v", err)
+	}
+	decoded, _ := io.ReadAll(gr)
+	gr.Close()
+
+	if string(decoded) != body {
+		t.Errorf("decoded length = %d, want %d", len(decoded), len(body))
+	}
+}
+
+// --- CORS: wildcard "*" origin ---
+
+func TestCORSWildcardOrigin(t *testing.T) {
+	handler := CORS(CORSConfig{
+		AllowedOrigins: []string{"*"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "https://anything.example.com")
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://anything.example.com" {
+		t.Errorf("ACAO = %q, want the request origin", got)
+	}
+}
+
+// --- RealIP: with trusted proxy CIDR ---
+
+func TestRealIPTrustedProxyCIDR(t *testing.T) {
+	var capturedIP string
+
+	handler := RealIP([]string{"10.0.0.0/8"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedIP = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	// XFF: client, trusted proxy
+	req.Header.Set("X-Forwarded-For", "203.0.113.50, 10.0.0.1")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !strings.HasPrefix(capturedIP, "203.0.113.50") {
+		t.Errorf("RemoteAddr = %q, want 203.0.113.50 (rightmost untrusted)", capturedIP)
+	}
+}

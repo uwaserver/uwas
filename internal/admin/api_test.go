@@ -2,9 +2,13 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -133,4 +137,189 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// --- handleConfig ---
+
+func TestConfigEndpoint(t *testing.T) {
+	s := testServer()
+	s.config.Global.WorkerCount = "4"
+	s.config.Global.MaxConnections = 1024
+	s.config.Global.LogLevel = "debug"
+	s.config.Global.LogFormat = "json"
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["domain_count"] != float64(2) {
+		t.Errorf("domain_count = %v, want 2", body["domain_count"])
+	}
+	global := body["global"].(map[string]any)
+	if global["log_level"] != "debug" {
+		t.Errorf("log_level = %v", global["log_level"])
+	}
+}
+
+// --- SetCache ---
+
+func TestAdminSetCache(t *testing.T) {
+	s := testServer()
+	if s.cache != nil {
+		t.Error("cache should be nil initially")
+	}
+
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	if s.cache == nil {
+		t.Error("cache should be set after SetCache")
+	}
+}
+
+// --- SetReloadFunc ---
+
+func TestAdminSetReloadFunc(t *testing.T) {
+	s := testServer()
+	if s.reloadFn != nil {
+		t.Error("reloadFn should be nil initially")
+	}
+
+	s.SetReloadFunc(func() error { return nil })
+
+	if s.reloadFn == nil {
+		t.Error("reloadFn should be set after SetReloadFunc")
+	}
+}
+
+// --- handleReload: success ---
+
+func TestReloadSuccess(t *testing.T) {
+	s := testServer()
+	s.SetReloadFunc(func() error { return nil })
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/reload", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["status"] != "reloaded" {
+		t.Errorf("status = %q, want reloaded", body["status"])
+	}
+}
+
+// --- handleReload: failure ---
+
+func TestReloadFailure(t *testing.T) {
+	s := testServer()
+	s.SetReloadFunc(func() error { return errors.New("bad config") })
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/reload", nil))
+
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+
+	var body map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if !strings.Contains(body["error"], "bad config") {
+		t.Errorf("error = %q, want contains 'bad config'", body["error"])
+	}
+}
+
+// --- handleReload: no reload function ---
+
+func TestReloadNotSupported(t *testing.T) {
+	s := testServer()
+	// reloadFn is nil
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/reload", nil))
+
+	if rec.Code != 501 {
+		t.Errorf("status = %d, want 501", rec.Code)
+	}
+}
+
+// --- handleCachePurge: with tag ---
+
+func TestCachePurgeWithTag(t *testing.T) {
+	s := testServer()
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	// Insert tagged entries
+	req1 := httptest.NewRequest("GET", "/a", nil)
+	eng.Set(req1, &cache.CachedResponse{
+		StatusCode: 200, Body: []byte("a"), Created: time.Now(), TTL: time.Minute, Tags: []string{"blog"},
+	})
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"tag":"blog"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cache/purge", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["status"] != "purged" {
+		t.Errorf("status = %v, want purged", resp["status"])
+	}
+}
+
+// --- handleCachePurge: without tag (purge all) ---
+
+func TestCachePurgeAll(t *testing.T) {
+	s := testServer()
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cache/purge", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["status"] != "all purged" {
+		t.Errorf("status = %v, want 'all purged'", resp["status"])
+	}
+}
+
+// --- handleCachePurge: no cache ---
+
+func TestCachePurgeNoCache(t *testing.T) {
+	s := testServer()
+	// cache is nil
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cache/purge", strings.NewReader(`{}`)))
+
+	if rec.Code != 501 {
+		t.Errorf("status = %d, want 501", rec.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["error"] != "cache not enabled" {
+		t.Errorf("error = %q", resp["error"])
+	}
 }

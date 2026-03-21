@@ -1,6 +1,9 @@
 package router
 
 import (
+	"bufio"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -60,4 +63,191 @@ func TestResponseWriterDoubleWriteHeader(t *testing.T) {
 	if w.StatusCode() != 200 {
 		t.Errorf("StatusCode() = %d, should be 200 (first call wins)", w.StatusCode())
 	}
+}
+
+// --- Tests for AcquireContext, ReleaseContext, generateID, Error, Flush, Hijack, Unwrap ---
+
+func TestAcquireAndReleaseContext(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/hello?foo=bar", nil)
+
+	ctx := AcquireContext(rec, req)
+	if ctx == nil {
+		t.Fatal("AcquireContext returned nil")
+	}
+	if ctx.ID == "" {
+		t.Error("AcquireContext should set a non-empty ID")
+	}
+	if ctx.Request != req {
+		t.Error("AcquireContext should set Request")
+	}
+	if ctx.Response == nil {
+		t.Error("AcquireContext should set Response")
+	}
+	if ctx.OriginalURI != "/hello?foo=bar" {
+		t.Errorf("OriginalURI = %q, want /hello?foo=bar", ctx.OriginalURI)
+	}
+	if ctx.StartTime.IsZero() {
+		t.Error("StartTime should be set")
+	}
+	// All reset fields should be zero values
+	if ctx.RewrittenURI != "" || ctx.DocumentRoot != "" || ctx.ResolvedPath != "" ||
+		ctx.ScriptName != "" || ctx.PathInfo != "" || ctx.CacheStatus != "" ||
+		ctx.Upstream != "" || ctx.VHostName != "" || ctx.RemoteIP != "" ||
+		ctx.RemotePort != "" || ctx.ServerPort != "" {
+		t.Error("AcquireContext should reset all string fields to empty")
+	}
+	if ctx.BytesSent != 0 || ctx.Duration != 0 || ctx.TTFBDur != 0 {
+		t.Error("AcquireContext should reset numeric fields to zero")
+	}
+	if ctx.IsHTTPS {
+		t.Error("AcquireContext should reset IsHTTPS to false")
+	}
+
+	// Release and verify cleanup
+	ReleaseContext(ctx)
+	if ctx.Request != nil {
+		t.Error("ReleaseContext should nil out Request")
+	}
+	if ctx.Response != nil {
+		t.Error("ReleaseContext should nil out Response")
+	}
+}
+
+func TestAcquireContextPoolReuse(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/a", nil)
+
+	ctx1 := AcquireContext(rec, req)
+	ctx1.VHostName = "dirty"
+	ctx1.BytesSent = 999
+	ReleaseContext(ctx1)
+
+	ctx2 := AcquireContext(rec, req)
+	// After re-acquire, fields should be reset
+	if ctx2.VHostName != "" {
+		t.Errorf("VHostName should be reset, got %q", ctx2.VHostName)
+	}
+	if ctx2.BytesSent != 0 {
+		t.Errorf("BytesSent should be reset, got %d", ctx2.BytesSent)
+	}
+	ReleaseContext(ctx2)
+}
+
+func TestGenerateID(t *testing.T) {
+	id1 := generateID()
+	id2 := generateID()
+
+	// Basic format check: UUID-like with dashes
+	if len(id1) == 0 {
+		t.Fatal("generateID returned empty string")
+	}
+	// Should be unique
+	if id1 == id2 {
+		t.Errorf("generateID returned duplicate IDs: %q", id1)
+	}
+	// Check it contains dashes (UUID format)
+	parts := 0
+	for _, c := range id1 {
+		if c == '-' {
+			parts++
+		}
+	}
+	if parts != 4 {
+		t.Errorf("generateID format has %d dashes, want 4 (UUID format): %q", parts, id1)
+	}
+}
+
+func TestResponseWriterError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	w := NewResponseWriter(rec)
+
+	w.Error(500, "Internal Server Error")
+
+	if w.StatusCode() != 500 {
+		t.Errorf("StatusCode() = %d, want 500", w.StatusCode())
+	}
+	if rec.Body.Len() == 0 {
+		t.Error("Error should write a body")
+	}
+}
+
+func TestResponseWriterFlush(t *testing.T) {
+	rec := httptest.NewRecorder()
+	w := NewResponseWriter(rec)
+
+	// httptest.ResponseRecorder implements http.Flusher, so Flush should not panic
+	w.Flush()
+	if !rec.Flushed {
+		t.Error("Flush should call underlying Flusher.Flush()")
+	}
+}
+
+// nonHijackWriter is a minimal ResponseWriter that does NOT support Hijack.
+type nonHijackWriter struct {
+	http.ResponseWriter
+}
+
+func TestResponseWriterHijackNotSupported(t *testing.T) {
+	w := NewResponseWriter(&nonHijackWriter{})
+
+	conn, buf, err := w.Hijack()
+	if err == nil {
+		t.Fatal("Hijack should return error for non-Hijacker")
+	}
+	if conn != nil || buf != nil {
+		t.Error("Hijack should return nil conn and buf when not supported")
+	}
+	if err.Error() != "hijack not supported" {
+		t.Errorf("Hijack error = %q, want %q", err.Error(), "hijack not supported")
+	}
+}
+
+// fakeHijackWriter implements http.ResponseWriter and http.Hijacker.
+type fakeHijackWriter struct {
+	headerMap http.Header
+}
+
+func (w *fakeHijackWriter) Header() http.Header        { return w.headerMap }
+func (w *fakeHijackWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *fakeHijackWriter) WriteHeader(int)             {}
+func (w *fakeHijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, nil // simulate successful hijack
+}
+
+func TestResponseWriterHijackSupported(t *testing.T) {
+	hw := &fakeHijackWriter{headerMap: make(http.Header)}
+	w := NewResponseWriter(hw)
+
+	_, _, err := w.Hijack()
+	if err != nil {
+		t.Fatalf("Hijack should succeed for Hijacker: %v", err)
+	}
+}
+
+func TestResponseWriterUnwrap(t *testing.T) {
+	rec := httptest.NewRecorder()
+	w := NewResponseWriter(rec)
+
+	inner := w.Unwrap()
+	if inner != rec {
+		t.Error("Unwrap should return the original underlying ResponseWriter")
+	}
+}
+
+// nonFlusherWriter is a minimal ResponseWriter that does NOT support Flusher.
+type nonFlusherWriter struct {
+	headerMap http.Header
+}
+
+func (w *nonFlusherWriter) Header() http.Header        { return w.headerMap }
+func (w *nonFlusherWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *nonFlusherWriter) WriteHeader(int)             {}
+
+func TestResponseWriterFlushNoFlusher(t *testing.T) {
+	nf := &nonFlusherWriter{headerMap: make(http.Header)}
+	w := NewResponseWriter(nf)
+
+	// Should not panic even though underlying writer doesn't support Flush
+	w.Flush()
 }
