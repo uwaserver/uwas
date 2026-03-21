@@ -11,6 +11,12 @@ func applyDefaults(cfg *Config) {
 	if g.MaxConnections == 0 {
 		g.MaxConnections = 65536
 	}
+	if g.HTTPListen == "" {
+		g.HTTPListen = ":80"
+	}
+	if g.HTTPSListen == "" {
+		g.HTTPSListen = ":443"
+	}
 	if g.PIDFile == "" {
 		g.PIDFile = "/var/run/uwas.pid"
 	}

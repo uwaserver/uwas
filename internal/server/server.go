@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/build"
@@ -32,36 +31,37 @@ import (
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 )
 
+// Server is the main UWAS server that orchestrates all modules.
 type Server struct {
-	config   *config.Config
-	logger   *logger.Logger
-	vhosts   *router.VHostRouter
-	static   *static.Handler
-	php      *fcgihandler.Handler
-	proxy    *proxyhandler.Handler
-	tlsMgr   *uwastls.Manager
-	cache    *cache.Engine
-	metrics  *metrics.Collector
-	admin    *admin.Server
-	mcp      *mcp.Server
-	handler  http.Handler // compiled middleware chain
-	httpSrv  *http.Server
-	httpsSrv *http.Server
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	config     *config.Config
+	configPath string
+	logger     *logger.Logger
+	vhosts     *router.VHostRouter
+	static     *static.Handler
+	php        *fcgihandler.Handler
+	proxy      *proxyhandler.Handler
+	tlsMgr     *uwastls.Manager
+	cache      *cache.Engine
+	metrics    *metrics.Collector
+	admin      *admin.Server
+	mcp        *mcp.Server
+	handler    http.Handler // compiled middleware chain
+	httpSrv    *http.Server
+	httpsSrv   *http.Server
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 
-	// Proxy state per domain
-	proxyPools    map[string]*proxyhandler.UpstreamPool
+	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
 }
 
+// New creates a fully initialized server from config.
 func New(cfg *config.Config, log *logger.Logger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-
 	m := metrics.New()
 
-	// Initialize cache engine
+	// Cache engine
 	var cacheEngine *cache.Engine
 	if cfg.Global.Cache.Enabled {
 		cacheEngine = cache.NewEngine(
@@ -88,15 +88,16 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		proxyBalancers: make(map[string]proxyhandler.Balancer),
 	}
 
-	// Initialize admin API
+	// Admin API
 	if cfg.Global.Admin.Enabled {
 		s.admin = admin.New(cfg, log, m)
 		if cacheEngine != nil {
 			s.admin.SetCache(cacheEngine)
 		}
+		s.admin.SetReloadFunc(s.reload)
 	}
 
-	// Initialize MCP server
+	// MCP server
 	if cfg.Global.MCP.Enabled {
 		s.mcp = mcp.New(cfg, log, m)
 		if cacheEngine != nil {
@@ -104,22 +105,18 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 	}
 
-	// Initialize proxy pools for proxy-type domains
+	// Proxy pools per domain
 	for _, d := range cfg.Domains {
 		if d.Type != "proxy" || len(d.Proxy.Upstreams) == 0 {
 			continue
 		}
-		var upstreams []proxyhandler.UpstreamConfig
+		var ups []proxyhandler.UpstreamConfig
 		for _, u := range d.Proxy.Upstreams {
-			upstreams = append(upstreams, proxyhandler.UpstreamConfig{
-				Address: u.Address,
-				Weight:  u.Weight,
-			})
+			ups = append(ups, proxyhandler.UpstreamConfig{Address: u.Address, Weight: u.Weight})
 		}
-		s.proxyPools[d.Host] = proxyhandler.NewUpstreamPool(upstreams)
+		s.proxyPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
 		s.proxyBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
 
-		// Start health checking
 		if d.Proxy.HealthCheck.Path != "" {
 			hc := proxyhandler.NewHealthChecker(s.proxyPools[d.Host], proxyhandler.HealthConfig{
 				Path:      d.Proxy.HealthCheck.Path,
@@ -132,22 +129,57 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 	}
 
-	// Build middleware chain
+	// Build middleware chain with all middleware
 	s.handler = s.buildMiddlewareChain()
 
 	return s
 }
 
+// SetConfigPath stores the config file path for reload support.
+func (s *Server) SetConfigPath(path string) {
+	s.configPath = path
+}
+
 func (s *Server) buildMiddlewareChain() http.Handler {
-	chain := middleware.Chain(
+	mws := []middleware.Middleware{
 		middleware.Recovery(s.logger),
 		middleware.RequestID(),
+		middleware.RealIP(nil), // TODO: make trusted proxies configurable
 		middleware.SecurityHeaders(),
-		middleware.AccessLog(s.logger),
-	)
+		middleware.Gzip(1024), // compress responses > 1KB
+	}
+
+	// Global rate limiting (use first domain's rate limit as global default)
+	for _, d := range s.config.Domains {
+		if d.Security.RateLimit.Requests > 0 {
+			mws = append(mws, middleware.RateLimit(
+				d.Security.RateLimit.Requests,
+				d.Security.RateLimit.Window.Duration,
+			))
+			break
+		}
+	}
+
+	// Security guard with WAF
+	var blockedPaths []string
+	wafEnabled := false
+	for _, d := range s.config.Domains {
+		blockedPaths = append(blockedPaths, d.Security.BlockedPaths...)
+		if d.Security.WAF.Enabled {
+			wafEnabled = true
+		}
+	}
+	if len(blockedPaths) > 0 || wafEnabled {
+		mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, wafEnabled))
+	}
+
+	mws = append(mws, middleware.AccessLog(s.logger))
+
+	chain := middleware.Chain(mws...)
 	return chain(http.HandlerFunc(s.handleRequest))
 }
 
+// Start starts all listeners and blocks until shutdown.
 func (s *Server) Start() error {
 	workers := runtime.NumCPU()
 	if s.config.Global.WorkerCount != "auto" {
@@ -161,7 +193,6 @@ func (s *Server) Start() error {
 		s.logger.Warn("failed to write pid file", "error", err)
 	}
 
-	// TLS
 	s.tlsMgr.LoadExistingCerts()
 	s.tlsMgr.LoadManualCerts()
 
@@ -175,6 +206,8 @@ func (s *Server) Start() error {
 
 	s.logger.Info("starting UWAS",
 		"version", build.Version,
+		"http", s.config.Global.HTTPListen,
+		"https", s.config.Global.HTTPSListen,
 		"workers", workers,
 		"domains", len(s.config.Domains),
 		"tls", hasSSL,
@@ -208,7 +241,6 @@ func (s *Server) Start() error {
 		}()
 	}
 
-	// Block until shutdown
 	<-s.ctx.Done()
 	s.shutdown()
 	s.wg.Wait()
@@ -218,7 +250,8 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) startHTTP() error {
-	addr := ":80"
+	addr := s.config.Global.HTTPListen
+
 	s.httpSrv = &http.Server{
 		Handler:      http.HandlerFunc(s.handleHTTP),
 		ReadTimeout:  s.config.Global.Timeouts.Read.Duration,
@@ -246,11 +279,11 @@ func (s *Server) startHTTP() error {
 }
 
 func (s *Server) startHTTPS() error {
-	addr := ":443"
+	addr := s.config.Global.HTTPSListen
 	tlsCfg := s.tlsMgr.TLSConfig()
 
 	s.httpsSrv = &http.Server{
-		Handler:      s.handler, // full middleware chain
+		Handler:      s.handler,
 		TLSConfig:    tlsCfg,
 		ReadTimeout:  s.config.Global.Timeouts.Read.Duration,
 		WriteTimeout: s.config.Global.Timeouts.Write.Duration,
@@ -276,6 +309,7 @@ func (s *Server) startHTTPS() error {
 	return nil
 }
 
+// handleHTTP handles port 80: ACME challenges, HTTPS redirect, or serve non-SSL domains.
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.tlsMgr.HandleHTTPChallenge(w, r) {
 		return
@@ -289,12 +323,11 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serve via middleware chain for non-SSL domains
 	s.handler.ServeHTTP(w, r)
 }
 
+// handleRequest is the core dispatch handler called after the middleware chain.
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
 	ctx := router.AcquireContext(w, r)
 	defer router.ReleaseContext(ctx)
 
@@ -304,14 +337,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		ctx.IsHTTPS = true
 	}
 
-	// Metrics
+	// Metrics tracking
 	s.metrics.ActiveConns.Add(1)
 	defer func() {
 		s.metrics.ActiveConns.Add(-1)
 		s.metrics.RequestsTotal.Add(1)
 		s.metrics.RecordRequest(ctx.Response.StatusCode())
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
-		_ = start
 	}()
 
 	// Virtual host lookup
@@ -323,7 +355,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
 
-	// Security guard: blocked paths
+	// Per-domain blocked paths
 	for _, blocked := range domain.Security.BlockedPaths {
 		if strings.Contains(r.URL.Path, blocked) {
 			renderErrorPage(ctx.Response, http.StatusForbidden)
@@ -331,14 +363,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply rewrite rules
+	// Rewrite engine
 	if len(domain.Rewrites) > 0 {
 		if s.applyRewrites(ctx, domain) {
 			return
 		}
 	}
 
-	// Cache lookup (GET/HEAD only)
+	// Cache lookup
 	if s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r) {
 		cached, status := s.cache.Get(r)
 		if cached != nil && (status == cache.StatusHit || status == cache.StatusStale) {
@@ -359,7 +391,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RecordCache(cache.StatusMiss)
 	}
 
-	// Dispatch
+	// Dispatch to handler
 	switch domain.Type {
 	case "redirect":
 		s.handleRedirect(ctx, domain)
@@ -400,8 +432,8 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 }
 
 func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) {
-	pool, ok := s.proxyPools[domain.Host]
-	if !ok || pool == nil {
+	pool := s.proxyPools[domain.Host]
+	if pool == nil {
 		renderErrorPage(ctx.Response, http.StatusBadGateway)
 		return
 	}
@@ -427,18 +459,15 @@ func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domai
 }
 
 func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain) bool {
-	var configRewrites []rewrite.ConfigRewrite
+	var cfgRewrites []rewrite.ConfigRewrite
 	for _, rw := range domain.Rewrites {
-		configRewrites = append(configRewrites, rewrite.ConfigRewrite{
-			Match:      rw.Match,
-			To:         rw.To,
-			Status:     rw.Status,
-			Conditions: rw.Conditions,
-			Flags:      rw.Flags,
+		cfgRewrites = append(cfgRewrites, rewrite.ConfigRewrite{
+			Match: rw.Match, To: rw.To, Status: rw.Status,
+			Conditions: rw.Conditions, Flags: rw.Flags,
 		})
 	}
 
-	rules := rewrite.ConvertConfigRewrites(configRewrites)
+	rules := rewrite.ConvertConfigRewrites(cfgRewrites)
 	if len(rules) == 0 {
 		return false
 	}
@@ -459,7 +488,6 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 		http.Redirect(ctx.Response, ctx.Request, result.URI, result.StatusCode)
 		return true
 	}
-
 	if result.Modified {
 		ctx.Request.URL.Path = result.URI
 		if result.Query != "" {
@@ -467,8 +495,31 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 		}
 		ctx.RewrittenURI = result.URI
 	}
-
 	return false
+}
+
+// reload re-reads and applies the config file.
+func (s *Server) reload() error {
+	if s.configPath == "" {
+		return fmt.Errorf("no config path set")
+	}
+
+	newCfg, err := config.Load(s.configPath)
+	if err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+
+	// Update vhosts
+	s.vhosts.Update(newCfg.Domains)
+
+	// Update TLS domains
+	s.tlsMgr.UpdateDomains(newCfg.Domains)
+
+	// Update stored config
+	s.config = newCfg
+
+	s.logger.Info("config reloaded", "domains", len(newCfg.Domains))
+	return nil
 }
 
 func (s *Server) handleSignals() {
@@ -487,14 +538,14 @@ func (s *Server) handleSignals() {
 
 func (s *Server) shutdown() {
 	grace := s.config.Global.Timeouts.ShutdownGrace.Duration
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), grace)
-	defer shutdownCancel()
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
 
 	if s.httpSrv != nil {
-		s.httpSrv.Shutdown(shutdownCtx)
+		s.httpSrv.Shutdown(ctx)
 	}
 	if s.httpsSrv != nil {
-		s.httpsSrv.Shutdown(shutdownCtx)
+		s.httpsSrv.Shutdown(ctx)
 	}
 }
 
@@ -503,17 +554,14 @@ func (s *Server) writePID() error {
 	if pidFile == "" {
 		return nil
 	}
-	dir := filepath.Dir(pidFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644)
 }
 
 func (s *Server) removePID() {
-	pidFile := s.config.Global.PIDFile
-	if pidFile == "" {
-		return
+	if s.config.Global.PIDFile != "" {
+		os.Remove(s.config.Global.PIDFile)
 	}
-	os.Remove(pidFile)
 }

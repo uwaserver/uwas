@@ -36,6 +36,12 @@ func Gzip(minSize int) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip compression for conditional requests (let ServeContent handle 304)
+			if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Check Accept-Encoding
 			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				next.ServeHTTP(w, r)

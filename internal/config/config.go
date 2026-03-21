@@ -10,6 +10,8 @@ type Config struct {
 type GlobalConfig struct {
 	WorkerCount    string         `yaml:"worker_count"`
 	MaxConnections int            `yaml:"max_connections"`
+	HTTPListen     string         `yaml:"http_listen"`
+	HTTPSListen    string         `yaml:"https_listen"`
 	PIDFile        string         `yaml:"pid_file"`
 	LogLevel       string         `yaml:"log_level"`
 	LogFormat      string         `yaml:"log_format"`
