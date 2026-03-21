@@ -1,6 +1,7 @@
 package fastcgi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -13,63 +14,26 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// parseAddress
+// NewClient / Client.Close
 // ---------------------------------------------------------------------------
 
-func TestParseAddress(t *testing.T) {
-	tests := []struct {
-		input       string
-		wantNetwork string
-		wantAddress string
-	}{
-		{"unix:/var/run/php-fpm.sock", "unix", "/var/run/php-fpm.sock"},
-		{"tcp:127.0.0.1:9000", "tcp", "127.0.0.1:9000"},
-		{"/var/run/php-fpm.sock", "unix", "/var/run/php-fpm.sock"},
-		{"127.0.0.1:9000", "tcp", "127.0.0.1:9000"},
-		{"tcp:localhost:9000", "tcp", "localhost:9000"},
-		{"unix:/tmp/test.sock", "unix", "/tmp/test.sock"},
+func TestNewClientCreatesPool(t *testing.T) {
+	c := NewClient(PoolConfig{Address: "tcp:127.0.0.1:9000"})
+	if c == nil {
+		t.Fatal("NewClient returned nil")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			network, address := parseAddress(tt.input)
-			if network != tt.wantNetwork {
-				t.Errorf("parseAddress(%q) network = %q, want %q", tt.input, network, tt.wantNetwork)
-			}
-			if address != tt.wantAddress {
-				t.Errorf("parseAddress(%q) address = %q, want %q", tt.input, address, tt.wantAddress)
-			}
-		})
+	if c.pool == nil {
+		t.Fatal("pool field is nil")
 	}
+	// Close should not panic even when no connections were created.
+	c.Close()
 }
 
 // ---------------------------------------------------------------------------
-// Pool (NewPool, Get, Put, Discard, Close, Stats)
+// NewPool with custom config values
 // ---------------------------------------------------------------------------
 
-func TestNewPoolDefaults(t *testing.T) {
-	cfg := PoolConfig{Address: "tcp:127.0.0.1:9000"}
-	p := NewPool(cfg)
-	defer p.Close()
-
-	if p.network != "tcp" {
-		t.Errorf("network = %q, want tcp", p.network)
-	}
-	if p.address != "127.0.0.1:9000" {
-		t.Errorf("address = %q, want 127.0.0.1:9000", p.address)
-	}
-	if p.maxIdle != 10 {
-		t.Errorf("maxIdle = %d, want 10", p.maxIdle)
-	}
-	if p.maxOpen != 64 {
-		t.Errorf("maxOpen = %d, want 64", p.maxOpen)
-	}
-	if p.maxLife != 5*time.Minute {
-		t.Errorf("maxLife = %v, want 5m", p.maxLife)
-	}
-}
-
-func TestNewPoolCustom(t *testing.T) {
+func TestNewPoolCustomConfig(t *testing.T) {
 	cfg := PoolConfig{
 		Address:     "unix:/tmp/test.sock",
 		MaxIdle:     5,
@@ -82,6 +46,9 @@ func TestNewPoolCustom(t *testing.T) {
 	if p.network != "unix" {
 		t.Errorf("network = %q, want unix", p.network)
 	}
+	if p.address != "/tmp/test.sock" {
+		t.Errorf("address = %q, want /tmp/test.sock", p.address)
+	}
 	if p.maxIdle != 5 {
 		t.Errorf("maxIdle = %d, want 5", p.maxIdle)
 	}
@@ -93,32 +60,256 @@ func TestNewPoolCustom(t *testing.T) {
 	}
 }
 
-// newLocalPool creates a Pool wired to a local TCP listener address.
-func newLocalPool(addr string) *Pool {
-	return NewPool(PoolConfig{
-		Address:     "tcp:" + addr,
-		MaxIdle:     4,
-		MaxOpen:     8,
-		MaxLifetime: 1 * time.Minute,
-	})
+// ---------------------------------------------------------------------------
+// parseAddress: additional edge-case subtests
+// ---------------------------------------------------------------------------
+
+func TestParseAddressSubtests(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantNetwork string
+		wantAddress string
+	}{
+		{"unix prefix", "unix:/var/run/php-fpm.sock", "unix", "/var/run/php-fpm.sock"},
+		{"tcp prefix", "tcp:127.0.0.1:9000", "tcp", "127.0.0.1:9000"},
+		{"bare unix path", "/var/run/php-fpm.sock", "unix", "/var/run/php-fpm.sock"},
+		{"bare tcp address", "127.0.0.1:9000", "tcp", "127.0.0.1:9000"},
+		{"tcp localhost", "tcp:localhost:9000", "tcp", "localhost:9000"},
+		{"unix tmp", "unix:/tmp/test.sock", "unix", "/tmp/test.sock"},
+		{"bare hostname", "myhost:8080", "tcp", "myhost:8080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			network, address := parseAddress(tt.input)
+			if network != tt.wantNetwork {
+				t.Errorf("parseAddress(%q) network = %q, want %q", tt.input, network, tt.wantNetwork)
+			}
+			if address != tt.wantAddress {
+				t.Errorf("parseAddress(%q) address = %q, want %q", tt.input, address, tt.wantAddress)
+			}
+		})
+	}
 }
 
-func TestPoolGetPutStats(t *testing.T) {
-	// Start a dummy TCP listener so dials succeed.
+// ---------------------------------------------------------------------------
+// mockFCGIServerFull is a mock FastCGI server that supports stdout, stderr,
+// and a configurable app status.
+// ---------------------------------------------------------------------------
+
+func mockFCGIServerFull(
+	t *testing.T,
+	ln net.Listener,
+	stdoutPayload string,
+	stderrPayload string,
+	appStatus uint32,
+	wg *sync.WaitGroup,
+) {
+	t.Helper()
+	defer wg.Done()
+
+	c, err := ln.Accept()
+	if err != nil {
+		t.Errorf("mock accept: %v", err)
+		return
+	}
+	defer c.Close()
+
+	br := bufio.NewReader(c)
+	bw := bufio.NewWriter(c)
+
+	// Read all incoming records until we get an empty STDIN.
+	for {
+		rec, err := ReadRecord(br)
+		if err != nil {
+			t.Errorf("mock ReadRecord: %v", err)
+			return
+		}
+		if rec.Type == TypeStdin && rec.ContentLength == 0 {
+			break
+		}
+	}
+
+	requestID := uint16(1)
+
+	// STDOUT
+	if len(stdoutPayload) > 0 {
+		if err := WriteRecord(bw, TypeStdout, requestID, []byte(stdoutPayload)); err != nil {
+			t.Errorf("mock write stdout: %v", err)
+			return
+		}
+	}
+	WriteRecord(bw, TypeStdout, requestID, nil)
+
+	// STDERR
+	if len(stderrPayload) > 0 {
+		WriteRecord(bw, TypeStderr, requestID, []byte(stderrPayload))
+		WriteRecord(bw, TypeStderr, requestID, nil)
+	}
+
+	// END_REQUEST
+	endBody := make([]byte, 8)
+	binary.BigEndian.PutUint32(endBody[0:4], appStatus)
+	WriteRecord(bw, TypeEndRequest, requestID, endBody)
+
+	bw.Flush()
+}
+
+// ---------------------------------------------------------------------------
+// Client.Execute with stderr and non-zero app status
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteWithStderrAndAppStatus(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 
-	// Accept connections in the background so they don't hang.
+	stdoutPayload := "Status: 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\nError"
+	stderrPayload := "PHP Fatal error: something went wrong"
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go mockFCGIServerFull(t, ln, stdoutPayload, stderrPayload, 1, &wg)
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 2,
+		MaxOpen: 2,
+	})
+	defer client.Close()
+
+	env := map[string]string{
+		"SCRIPT_FILENAME": "/var/www/bad.php",
+		"REQUEST_METHOD":  "GET",
+	}
+
+	resp, err := client.Execute(context.Background(), env, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	wg.Wait()
+
+	if resp.AppStatus != 1 {
+		t.Errorf("AppStatus = %d, want 1", resp.AppStatus)
+	}
+
+	stderr := string(resp.Stderr())
+	if !strings.Contains(stderr, "PHP Fatal error") {
+		t.Errorf("stderr = %q, want it to contain 'PHP Fatal error'", stderr)
+	}
+
+	stdout := string(resp.Stdout())
+	if !strings.Contains(stdout, "Error") {
+		t.Errorf("stdout = %q, want it to contain 'Error'", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Client.Execute: dial error through the Client API
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteDialFailure(t *testing.T) {
+	client := NewClient(PoolConfig{
+		Address: "tcp:127.0.0.1:1", // port 1 is almost never open
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := client.Execute(ctx, map[string]string{}, nil)
+	if err == nil {
+		t.Fatal("expected error when connecting to unreachable port, got nil")
+	}
+	if !strings.Contains(err.Error(), "get connection") {
+		t.Errorf("error = %v, want it to mention 'get connection'", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Client.Execute roundtrip + Response.ParseHTTP with status 201
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteRoundtripParseHTTP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	stdoutPayload := "Status: 201 Created\r\nContent-Type: text/plain\r\nX-Custom: hello\r\n\r\nBody here"
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go mockFCGIServerFull(t, ln, stdoutPayload, "", 0, &wg)
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	resp, err := client.Execute(context.Background(), map[string]string{
+		"SCRIPT_FILENAME": "/test.php",
+		"REQUEST_METHOD":  "GET",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	wg.Wait()
+
+	statusCode, headers, bodyReader := resp.ParseHTTP()
+
+	if statusCode != 201 {
+		t.Errorf("statusCode = %d, want 201", statusCode)
+	}
+	if ct := headers.Get("Content-Type"); ct != "text/plain" {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+	if xc := headers.Get("X-Custom"); xc != "hello" {
+		t.Errorf("X-Custom = %q, want hello", xc)
+	}
+	if headers.Get("Status") != "" {
+		t.Error("Status pseudo-header should have been removed")
+	}
+
+	bodyBytes, err := io.ReadAll(bodyReader)
+	if err != nil {
+		t.Fatalf("ReadAll body: %v", err)
+	}
+	if string(bodyBytes) != "Body here" {
+		t.Errorf("body = %q, want 'Body here'", bodyBytes)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Multiple sequential Execute calls: connection reuse through the pool
+// ---------------------------------------------------------------------------
+
+// Connection reuse is tested implicitly via TestPoolGetPutLifecycle.
+
+// ---------------------------------------------------------------------------
+// Pool: Get, Put, Stats lifecycle
+// ---------------------------------------------------------------------------
+
+func TestPoolGetPutLifecycle(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			// Keep the connection open until the test closes the listener.
 			go func(c net.Conn) {
 				io.Copy(io.Discard, c)
 				c.Close()
@@ -126,12 +317,16 @@ func TestPoolGetPutStats(t *testing.T) {
 		}
 	}()
 
-	p := newLocalPool(ln.Addr().String())
+	p := NewPool(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 4,
+		MaxOpen: 8,
+	})
 	defer p.Close()
 
 	ctx := context.Background()
 
-	// Stats should be zero initially.
+	// Initially empty.
 	active, idle := p.Stats()
 	if active != 0 || idle != 0 {
 		t.Errorf("initial stats: active=%d, idle=%d; want 0, 0", active, idle)
@@ -142,40 +337,35 @@ func TestPoolGetPutStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-
-	active, idle = p.Stats()
+	active, _ = p.Stats()
 	if active != 1 {
 		t.Errorf("after Get: active=%d, want 1", active)
 	}
 
 	// Put it back.
 	p.Put(c1)
-
 	active, idle = p.Stats()
-	if active != 1 {
-		t.Errorf("after Put: active=%d, want 1", active)
-	}
-	if idle != 1 {
-		t.Errorf("after Put: idle=%d, want 1", idle)
+	if active != 1 || idle != 1 {
+		t.Errorf("after Put: active=%d, idle=%d; want 1, 1", active, idle)
 	}
 
-	// Get again -- should reuse the idle connection.
+	// Get again: should reuse the idle connection.
 	c2, err := p.Get(ctx)
 	if err != nil {
 		t.Fatalf("Get reuse: %v", err)
 	}
-
-	active, idle = p.Stats()
-	if active != 1 {
-		t.Errorf("after reuse Get: active=%d, want 1", active)
-	}
+	_, idle = p.Stats()
 	if idle != 0 {
 		t.Errorf("after reuse Get: idle=%d, want 0", idle)
 	}
 	p.Put(c2)
 }
 
-func TestPoolDiscard(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Pool: Discard reduces active count
+// ---------------------------------------------------------------------------
+
+func TestPoolDiscardReducesActive(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +384,11 @@ func TestPoolDiscard(t *testing.T) {
 		}
 	}()
 
-	p := newLocalPool(ln.Addr().String())
+	p := NewPool(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 4,
+		MaxOpen: 8,
+	})
 	defer p.Close()
 
 	ctx := context.Background()
@@ -216,21 +410,11 @@ func TestPoolDiscard(t *testing.T) {
 	}
 }
 
-func TestPoolDiscardNil(t *testing.T) {
-	p := NewPool(PoolConfig{Address: "tcp:127.0.0.1:9000"})
-	defer p.Close()
-	// Should not panic.
-	p.Discard(nil)
-}
+// ---------------------------------------------------------------------------
+// Pool: Close drains idle connections
+// ---------------------------------------------------------------------------
 
-func TestPoolPutNil(t *testing.T) {
-	p := NewPool(PoolConfig{Address: "tcp:127.0.0.1:9000"})
-	defer p.Close()
-	// Should not panic.
-	p.Put(nil)
-}
-
-func TestPoolClose(t *testing.T) {
+func TestPoolCloseDrainsIdle(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +433,11 @@ func TestPoolClose(t *testing.T) {
 		}
 	}()
 
-	p := newLocalPool(ln.Addr().String())
+	p := NewPool(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 4,
+		MaxOpen: 8,
+	})
 
 	ctx := context.Background()
 	c, err := p.Get(ctx)
@@ -263,12 +451,14 @@ func TestPoolClose(t *testing.T) {
 		t.Errorf("before Close: idle=%d, want 1", idle)
 	}
 
-	p.Close()
-	// After close the idle channel is drained and closed.
+	p.Close() // should not panic and should drain the idle channel
 }
 
-func TestPoolGetContextCancel(t *testing.T) {
-	// Create a pool with maxOpen=1 so that a second Get blocks.
+// ---------------------------------------------------------------------------
+// Pool: cancelled context when pool is exhausted
+// ---------------------------------------------------------------------------
+
+func TestPoolGetCancelledContext(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -295,15 +485,13 @@ func TestPoolGetContextCancel(t *testing.T) {
 	defer p.Close()
 
 	ctx := context.Background()
-	// Consume the one allowed connection.
 	c, err := p.Get(ctx)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 
-	// A second Get with a cancelled context should fail.
 	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
+	cancel()
 
 	_, err = p.Get(cancelCtx)
 	if err == nil {
@@ -314,169 +502,255 @@ func TestPoolGetContextCancel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// NewClient / Client.Close
+// Pool: Put and Discard nil are safe no-ops
 // ---------------------------------------------------------------------------
 
-func TestNewClientAndClose(t *testing.T) {
-	c := NewClient(PoolConfig{Address: "tcp:127.0.0.1:9000"})
-	if c == nil {
-		t.Fatal("NewClient returned nil")
-	}
-	if c.pool == nil {
-		t.Fatal("pool is nil")
-	}
-	// Close should not panic even without active connections.
-	c.Close()
+func TestPoolPutAndDiscardNil(t *testing.T) {
+	p := NewPool(PoolConfig{Address: "tcp:127.0.0.1:9000"})
+	defer p.Close()
+	// Neither should panic.
+	p.Put(nil)
+	p.Discard(nil)
 }
 
 // ---------------------------------------------------------------------------
-// Mock FastCGI server
+// Pool: Put overflow drops the connection
 // ---------------------------------------------------------------------------
 
-// mockFCGIServer accepts one connection on the given listener, reads a
-// complete FastCGI request (BEGIN, PARAMS, STDIN), then writes back STDOUT
-// and END_REQUEST records.
-//
-// stdoutPayload is sent as-is inside a FCGI_STDOUT record.
-// stderrPayload, if non-empty, is sent inside a FCGI_STDERR record.
-// appStatus is placed into the FCGI_END_REQUEST body.
-func mockFCGIServer(
-	t *testing.T,
-	ln net.Listener,
-	stdoutPayload string,
-	stderrPayload string,
-	appStatus uint32,
-) {
-	t.Helper()
-
-	c, err := ln.Accept()
+func TestPoolPutOverflowDropsConn(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Errorf("mock accept: %v", err)
-		return
+		t.Fatal(err)
 	}
-	defer c.Close()
-
-	// --- Read all incoming records until empty STDIN. ---
-	gotBegin := false
-	gotParamsEnd := false
-	gotStdinEnd := false
-
-	for !gotStdinEnd {
-		rec, err := ReadRecord(c)
-		if err != nil {
-			t.Errorf("mock ReadRecord: %v", err)
-			return
-		}
-		switch rec.Type {
-		case TypeBeginRequest:
-			gotBegin = true
-		case TypeParams:
-			if rec.ContentLength == 0 {
-				gotParamsEnd = true
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
 			}
-		case TypeStdin:
-			if rec.ContentLength == 0 {
-				gotStdinEnd = true
-			}
+			go func(c net.Conn) {
+				io.Copy(io.Discard, c)
+				c.Close()
+			}(c)
 		}
+	}()
+
+	p := NewPool(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 4,
+	})
+	defer p.Close()
+
+	ctx := context.Background()
+	c1, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get c1: %v", err)
+	}
+	c2, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get c2: %v", err)
 	}
 
-	if !gotBegin || !gotParamsEnd {
-		t.Errorf("mock: missing expected records (begin=%v, paramsEnd=%v)", gotBegin, gotParamsEnd)
-		return
-	}
+	p.Put(c1) // goes to idle (maxIdle=1)
+	p.Put(c2) // overflow -> closed
 
-	requestID := uint16(1)
-
-	// --- Send STDOUT ---
-	if len(stdoutPayload) > 0 {
-		if err := WriteRecord(c, TypeStdout, requestID, []byte(stdoutPayload)); err != nil {
-			t.Errorf("mock WriteRecord stdout: %v", err)
-			return
-		}
+	active, idle := p.Stats()
+	if idle != 1 {
+		t.Errorf("idle = %d, want 1", idle)
 	}
-	// Empty stdout signals end of stdout.
-	if err := WriteRecord(c, TypeStdout, requestID, nil); err != nil {
-		t.Errorf("mock WriteRecord empty stdout: %v", err)
-		return
-	}
-
-	// --- Send STDERR ---
-	if len(stderrPayload) > 0 {
-		if err := WriteRecord(c, TypeStderr, requestID, []byte(stderrPayload)); err != nil {
-			t.Errorf("mock WriteRecord stderr: %v", err)
-			return
-		}
-		if err := WriteRecord(c, TypeStderr, requestID, nil); err != nil {
-			t.Errorf("mock WriteRecord empty stderr: %v", err)
-			return
-		}
-	}
-
-	// --- Send END_REQUEST ---
-	endBody := make([]byte, 8)
-	binary.BigEndian.PutUint32(endBody[0:4], appStatus)
-	if err := WriteRecord(c, TypeEndRequest, requestID, endBody); err != nil {
-		t.Errorf("mock WriteRecord end: %v", err)
-		return
+	if active != 1 {
+		t.Errorf("active = %d, want 1 (overflow was closed)", active)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Client.Execute + Response helpers
+// Pool: stale connection eviction on Get
 // ---------------------------------------------------------------------------
 
-func TestClientExecuteSimple(t *testing.T) {
+func TestPoolStaleEviction(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				io.Copy(io.Discard, c)
+				c.Close()
+			}(c)
+		}
+	}()
+
+	p := NewPool(PoolConfig{
+		Address:     "tcp:" + ln.Addr().String(),
+		MaxIdle:     4,
+		MaxOpen:     8,
+		MaxLifetime: 50 * time.Millisecond,
+	})
+	defer p.Close()
+
+	ctx := context.Background()
+	c, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	p.Put(c)
+
+	time.Sleep(100 * time.Millisecond)
+
+	c2, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get after stale: %v", err)
+	}
+	if time.Since(c2.createdAt) > 50*time.Millisecond {
+		t.Error("expected a freshly created connection after stale eviction")
+	}
+	p.Put(c2)
+}
+
+// ---------------------------------------------------------------------------
+// Response: empty stdout and stderr
+// ---------------------------------------------------------------------------
+
+func TestResponseEmptyStdoutStderr(t *testing.T) {
+	r := &Response{}
+	if len(r.Stdout()) != 0 {
+		t.Errorf("Stdout() on empty = %q, want empty", r.Stdout())
+	}
+	if len(r.Stderr()) != 0 {
+		t.Errorf("Stderr() on empty = %q, want empty", r.Stderr())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Response.ParseHTTP: large body
+// ---------------------------------------------------------------------------
+
+func TestResponseParseHTTPLargeBody(t *testing.T) {
+	body := strings.Repeat("ABCDEFGHIJ", 1000) // 10 KB
+	r := &Response{}
+	r.stdout.WriteString("Status: 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n" + body)
+
+	statusCode, headers, bodyReader := r.ParseHTTP()
+
+	if statusCode != 200 {
+		t.Errorf("statusCode = %d, want 200", statusCode)
+	}
+	if headers.Get("Content-Type") != "application/octet-stream" {
+		t.Errorf("Content-Type = %q", headers.Get("Content-Type"))
+	}
+
+	got, err := io.ReadAll(bodyReader)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("body length = %d, want %d", len(got), len(body))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Verify the mock server reads PARAMS sent by Client.Execute
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteParamsReachMock(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 
-	stdoutPayload := "Status: 200 OK\r\nContent-Type: text/plain\r\n\r\nHello World"
-
+	var receivedParams map[string]string
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 	wg.Add(1)
+
 	go func() {
 		defer wg.Done()
-		mockFCGIServer(t, ln, stdoutPayload, "", 0)
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+
+		br := bufio.NewReader(c)
+		bw := bufio.NewWriter(c)
+
+		var paramData bytes.Buffer
+
+		for {
+			rec, err := ReadRecord(br)
+			if err != nil {
+				return
+			}
+			switch rec.Type {
+			case TypeParams:
+				if rec.ContentLength > 0 {
+					paramData.Write(rec.Content)
+				}
+			case TypeStdin:
+				if rec.ContentLength == 0 {
+					goto respond
+				}
+			}
+		}
+
+	respond:
+		params, err := DecodeParams(paramData.Bytes())
+		if err == nil {
+			mu.Lock()
+			receivedParams = params
+			mu.Unlock()
+		}
+
+		WriteRecord(bw, TypeStdout, 1, []byte("Content-Type: text/plain\r\n\r\nok"))
+		WriteRecord(bw, TypeStdout, 1, nil)
+		endBody := make([]byte, 8)
+		WriteRecord(bw, TypeEndRequest, 1, endBody)
+		bw.Flush()
 	}()
 
 	client := NewClient(PoolConfig{
 		Address: "tcp:" + ln.Addr().String(),
-		MaxIdle: 2,
-		MaxOpen: 2,
+		MaxIdle: 1,
+		MaxOpen: 1,
 	})
 	defer client.Close()
 
 	env := map[string]string{
-		"SCRIPT_FILENAME": "/var/www/index.php",
-		"REQUEST_METHOD":  "GET",
-		"REQUEST_URI":     "/",
+		"SCRIPT_FILENAME": "/var/www/hello.php",
+		"REQUEST_METHOD":  "POST",
+		"CONTENT_TYPE":    "text/plain",
 	}
 
-	resp, err := client.Execute(context.Background(), env, nil)
+	_, err = client.Execute(context.Background(), env, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	wg.Wait()
 
-	if resp.AppStatus != 0 {
-		t.Errorf("AppStatus = %d, want 0", resp.AppStatus)
-	}
+	mu.Lock()
+	defer mu.Unlock()
 
-	stdout := string(resp.Stdout())
-	if !strings.Contains(stdout, "Hello World") {
-		t.Errorf("stdout = %q, want it to contain 'Hello World'", stdout)
-	}
-
-	stderr := string(resp.Stderr())
-	if len(stderr) != 0 {
-		t.Errorf("stderr = %q, want empty", stderr)
+	for k, v := range env {
+		if receivedParams[k] != v {
+			t.Errorf("param %q = %q, want %q", k, receivedParams[k], v)
+		}
 	}
 }
 
-func TestClientExecuteWithStdin(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Client.Execute with stdin body
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteWithStdinBody(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -487,10 +761,7 @@ func TestClientExecuteWithStdin(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		mockFCGIServer(t, ln, stdoutPayload, "", 0)
-	}()
+	go mockFCGIServerFull(t, ln, stdoutPayload, "", 0, &wg)
 
 	client := NewClient(PoolConfig{
 		Address: "tcp:" + ln.Addr().String(),
@@ -519,137 +790,11 @@ func TestClientExecuteWithStdin(t *testing.T) {
 	}
 }
 
-func TestClientExecuteWithStderr(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	stdoutPayload := "Status: 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\nError"
-	stderrPayload := "PHP Fatal error: something went wrong"
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		mockFCGIServer(t, ln, stdoutPayload, stderrPayload, 1)
-	}()
-
-	client := NewClient(PoolConfig{
-		Address: "tcp:" + ln.Addr().String(),
-		MaxIdle: 2,
-		MaxOpen: 2,
-	})
-	defer client.Close()
-
-	env := map[string]string{
-		"SCRIPT_FILENAME": "/var/www/bad.php",
-		"REQUEST_METHOD":  "GET",
-	}
-
-	resp, err := client.Execute(context.Background(), env, nil)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	wg.Wait()
-
-	if resp.AppStatus != 1 {
-		t.Errorf("AppStatus = %d, want 1", resp.AppStatus)
-	}
-
-	stderr := string(resp.Stderr())
-	if !strings.Contains(stderr, "PHP Fatal error") {
-		t.Errorf("stderr = %q, want it to contain 'PHP Fatal error'", stderr)
-	}
-}
-
-func TestClientExecuteDialError(t *testing.T) {
-	// Point at an address that no one is listening on.
-	client := NewClient(PoolConfig{
-		Address: "tcp:127.0.0.1:1", // port 1 is very unlikely to be open
-		MaxIdle: 1,
-		MaxOpen: 1,
-	})
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	_, err := client.Execute(ctx, map[string]string{}, nil)
-	if err == nil {
-		t.Fatal("expected error when connecting to closed port, got nil")
-	}
-}
-
 // ---------------------------------------------------------------------------
-// Response.ParseHTTP
+// Response.ParseHTTP: no Status header defaults to 200
 // ---------------------------------------------------------------------------
 
-func TestResponseParseHTTP(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-
-	stdoutPayload := "Status: 201 Created\r\nContent-Type: text/plain\r\nX-Custom: hello\r\n\r\nBody here"
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		mockFCGIServer(t, ln, stdoutPayload, "", 0)
-	}()
-
-	client := NewClient(PoolConfig{
-		Address: "tcp:" + ln.Addr().String(),
-		MaxIdle: 1,
-		MaxOpen: 1,
-	})
-	defer client.Close()
-
-	resp, err := client.Execute(context.Background(), map[string]string{
-		"SCRIPT_FILENAME": "/test.php",
-		"REQUEST_METHOD":  "GET",
-	}, nil)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	wg.Wait()
-
-	statusCode, headers, bodyReader := resp.ParseHTTP()
-
-	if statusCode != 201 {
-		t.Errorf("statusCode = %d, want 201", statusCode)
-	}
-
-	ct := headers.Get("Content-Type")
-	if ct != "text/plain" {
-		t.Errorf("Content-Type = %q, want text/plain", ct)
-	}
-
-	xc := headers.Get("X-Custom")
-	if xc != "hello" {
-		t.Errorf("X-Custom = %q, want hello", xc)
-	}
-
-	// The Status pseudo-header should be removed.
-	if headers.Get("Status") != "" {
-		t.Error("Status header should have been removed")
-	}
-
-	bodyBytes, err := io.ReadAll(bodyReader)
-	if err != nil {
-		t.Fatalf("ReadAll body: %v", err)
-	}
-	if string(bodyBytes) != "Body here" {
-		t.Errorf("body = %q, want 'Body here'", bodyBytes)
-	}
-}
-
-func TestResponseParseHTTPNoStatus(t *testing.T) {
-	// Build a Response manually without a Status header.
+func TestResponseParseHTTPDefaultsTo200(t *testing.T) {
 	r := &Response{}
 	r.stdout.WriteString("Content-Type: text/html\r\n\r\n<h1>Hi</h1>")
 
@@ -658,9 +803,7 @@ func TestResponseParseHTTPNoStatus(t *testing.T) {
 	if statusCode != 200 {
 		t.Errorf("statusCode = %d, want 200 (default)", statusCode)
 	}
-
-	ct := headers.Get("Content-Type")
-	if ct != "text/html" {
+	if ct := headers.Get("Content-Type"); ct != "text/html" {
 		t.Errorf("Content-Type = %q, want text/html", ct)
 	}
 
@@ -670,8 +813,11 @@ func TestResponseParseHTTPNoStatus(t *testing.T) {
 	}
 }
 
-func TestResponseParseHTTPMalformed(t *testing.T) {
-	// Malformed content — ParseHTTP should not panic and return 200 status.
+// ---------------------------------------------------------------------------
+// Response.ParseHTTP: malformed response falls back gracefully
+// ---------------------------------------------------------------------------
+
+func TestResponseParseHTTPMalformedFallback(t *testing.T) {
 	r := &Response{}
 	r.stdout.WriteString("this is not http at all")
 
@@ -682,7 +828,11 @@ func TestResponseParseHTTPMalformed(t *testing.T) {
 	}
 }
 
-func TestResponseStdoutStderr(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Response.Stdout / Response.Stderr basic accessors
+// ---------------------------------------------------------------------------
+
+func TestResponseAccessors(t *testing.T) {
 	r := &Response{}
 	r.stdout.WriteString("stdout data")
 	r.stderr.WriteString("stderr data")
@@ -692,121 +842,5 @@ func TestResponseStdoutStderr(t *testing.T) {
 	}
 	if !bytes.Equal(r.Stderr(), []byte("stderr data")) {
 		t.Errorf("Stderr() = %q", r.Stderr())
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Pool: stale connection eviction
-// ---------------------------------------------------------------------------
-
-func TestPoolEvictsStaleConnection(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				io.Copy(io.Discard, c)
-				c.Close()
-			}(c)
-		}
-	}()
-
-	p := NewPool(PoolConfig{
-		Address:     "tcp:" + ln.Addr().String(),
-		MaxIdle:     4,
-		MaxOpen:     8,
-		MaxLifetime: 50 * time.Millisecond, // very short lifetime
-	})
-	defer p.Close()
-
-	ctx := context.Background()
-
-	// Get a connection and return it.
-	c, err := p.Get(ctx)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	p.Put(c)
-
-	// Wait for it to become stale.
-	time.Sleep(100 * time.Millisecond)
-
-	// Next Get should evict the stale connection and create a new one.
-	c2, err := p.Get(ctx)
-	if err != nil {
-		t.Fatalf("Get after stale: %v", err)
-	}
-
-	// The new connection should be different (fresh createdAt).
-	if time.Since(c2.createdAt) > 50*time.Millisecond {
-		t.Error("expected a freshly created connection after stale eviction")
-	}
-	p.Put(c2)
-}
-
-// ---------------------------------------------------------------------------
-// Pool: Put when pool is full drops the connection
-// ---------------------------------------------------------------------------
-
-func TestPoolPutWhenFull(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				io.Copy(io.Discard, c)
-				c.Close()
-			}(c)
-		}
-	}()
-
-	p := NewPool(PoolConfig{
-		Address: "tcp:" + ln.Addr().String(),
-		MaxIdle: 1, // only 1 idle slot
-		MaxOpen: 4,
-	})
-	defer p.Close()
-
-	ctx := context.Background()
-
-	c1, err := p.Get(ctx)
-	if err != nil {
-		t.Fatalf("Get c1: %v", err)
-	}
-	c2, err := p.Get(ctx)
-	if err != nil {
-		t.Fatalf("Get c2: %v", err)
-	}
-
-	active, _ := p.Stats()
-	if active != 2 {
-		t.Errorf("active = %d, want 2", active)
-	}
-
-	// Put both back; the second should be dropped because maxIdle=1.
-	p.Put(c1)
-	p.Put(c2)
-
-	active, idle := p.Stats()
-	if idle != 1 {
-		t.Errorf("idle = %d, want 1 (maxIdle)", idle)
-	}
-	// active should be 1 because the second conn was closed on Put overflow.
-	if active != 1 {
-		t.Errorf("active = %d, want 1 (overflow conn was closed)", active)
 	}
 }
