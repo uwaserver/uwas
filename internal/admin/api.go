@@ -76,6 +76,11 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Health endpoint is always public
+		if r.URL.Path == "/api/v1/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		auth := r.Header.Get("Authorization")
 		if auth != "Bearer "+apiKey {
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
