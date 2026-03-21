@@ -2,10 +2,13 @@ package admin
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -45,6 +48,32 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/reload", s.handleReload)
 	s.mux.HandleFunc("POST /api/v1/cache/purge", s.handleCachePurge)
 	s.mux.Handle("GET /api/v1/metrics", s.metrics.Handler())
+
+	// Dashboard UI (embedded SPA)
+	distFS, err := fs.Sub(dashboard.Assets, "dist")
+	if err == nil {
+		s.mux.Handle("/_uwas/dashboard/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Strip prefix to get the file path
+			path := strings.TrimPrefix(r.URL.Path, "/_uwas/dashboard/")
+
+			// Try to serve the actual file
+			if path != "" {
+				if _, err := fs.Stat(distFS, path); err == nil {
+					http.StripPrefix("/_uwas/dashboard/", http.FileServer(http.FS(distFS))).ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// SPA fallback: serve index.html for all other routes
+			indexData, err := fs.ReadFile(distFS, "index.html")
+			if err != nil {
+				http.Error(w, "dashboard not found", 500)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(indexData)
+		}))
+	}
 }
 
 // Start starts the admin API server.
@@ -76,8 +105,16 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Health endpoint is always public
-		if r.URL.Path == "/api/v1/health" {
+		// CORS for dashboard dev mode
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(204)
+			return
+		}
+		// Public endpoints: health check and dashboard UI
+		if r.URL.Path == "/api/v1/health" || strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
 			next.ServeHTTP(w, r)
 			return
 		}

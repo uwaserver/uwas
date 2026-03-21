@@ -37,4 +37,4 @@ Thumbs.db
 *.log.*
 *.out
 *.exe
-*.test.exe
+*.test.exeweb/dashboard/node_modules/
