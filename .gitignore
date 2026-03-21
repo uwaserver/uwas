@@ -31,3 +31,9 @@ Thumbs.db
 
 # Certs
 /certs/
+
+
+*.log
+*.log.*
+*.out
+*.exe
