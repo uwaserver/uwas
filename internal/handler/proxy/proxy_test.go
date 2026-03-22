@@ -295,22 +295,6 @@ func newTestDomain() *config.Domain {
 
 // --- Additional coverage tests ---
 
-func TestHandlerName(t *testing.T) {
-	log := newTestLogger()
-	h := New(log)
-	if got := h.Name(); got != "proxy" {
-		t.Errorf("Name() = %q, want %q", got, "proxy")
-	}
-}
-
-func TestHandlerDescription(t *testing.T) {
-	log := newTestLogger()
-	h := New(log)
-	if got := h.Description(); got != "Reverse proxy with load balancing" {
-		t.Errorf("Description() = %q, want %q", got, "Reverse proxy with load balancing")
-	}
-}
-
 func TestUpstreamPoolAll(t *testing.T) {
 	pool := NewUpstreamPool([]UpstreamConfig{
 		{Address: "http://localhost:3000", Weight: 1},

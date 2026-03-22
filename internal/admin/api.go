@@ -25,6 +25,7 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
+	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 )
@@ -63,6 +64,7 @@ type Server struct {
 	alerter   *alerting.Alerter
 	phpMgr    *phpmanager.Manager
 	backupMgr *backup.BackupManager
+	mcpSrv    *mcp.Server
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -145,6 +147,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/backups/{name}", s.handleBackupDelete)
 	s.mux.HandleFunc("GET /api/v1/backups/schedule", s.handleBackupScheduleGet)
 	s.mux.HandleFunc("PUT /api/v1/backups/schedule", s.handleBackupSchedulePut)
+
+	// MCP endpoints
+	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
+	s.mux.HandleFunc("POST /api/v1/mcp/call", s.handleMCPCall)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -1295,6 +1301,40 @@ func (s *Server) domainFilePath(host string) (string, error) {
 	}
 
 	return filepath.Join(domainsDir, host+".yaml"), nil
+}
+
+// --- MCP ---
+
+// SetMCP sets the MCP server for AI tool management endpoints.
+func (s *Server) SetMCP(m *mcp.Server) { s.mcpSrv = m }
+
+func (s *Server) handleMCPTools(w http.ResponseWriter, r *http.Request) {
+	if s.mcpSrv == nil {
+		jsonError(w, "MCP not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, s.mcpSrv.ListTools())
+}
+
+func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
+	if s.mcpSrv == nil {
+		jsonError(w, "MCP not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	result, err := s.mcpSrv.CallTool(req.Name, req.Input)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, result)
 }
 
 // --- Backup ---

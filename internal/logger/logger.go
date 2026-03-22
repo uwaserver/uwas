@@ -34,10 +34,6 @@ func New(level, format string) *Logger {
 	}
 }
 
-func (l *Logger) SetLevel(level string) {
-	l.level.Set(parseLevel(level))
-}
-
 // StdLogger returns a *log.Logger compatible with net/http.Server.ErrorLog.
 func (l *Logger) StdLogger() *log.Logger {
 	return slog.NewLogLogger(l.Logger.Handler(), slog.LevelError)

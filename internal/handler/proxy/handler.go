@@ -37,9 +37,6 @@ func New(log *logger.Logger) *Handler {
 	}
 }
 
-func (h *Handler) Name() string        { return "proxy" }
-func (h *Handler) Description() string  { return "Reverse proxy with load balancing" }
-
 // Serve proxies the request to an upstream backend.
 func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool *UpstreamPool, balancer Balancer) {
 	backends := pool.Healthy()
@@ -232,8 +229,8 @@ func isRetryableError(err error) bool {
 		return false
 	}
 	// Connection refused, timeout, etc. are retryable
-	if netErr, ok := err.(net.Error); ok {
-		return netErr.Timeout() || true
+	if _, ok := err.(net.Error); ok {
+		return true
 	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "connection refused") ||

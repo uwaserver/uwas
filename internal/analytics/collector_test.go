@@ -12,9 +12,9 @@ import (
 func TestRecordAndSnapshot(t *testing.T) {
 	c := New()
 
-	c.Record("example.com", "/", "1.2.3.4:1234", 200, 1024)
-	c.Record("example.com", "/about", "1.2.3.4:1234", 200, 512)
-	c.Record("example.com", "/about", "5.6.7.8:5678", 404, 256)
+	c.RecordFull("example.com", "/", "1.2.3.4:1234", "", "", 200, 1024)
+	c.RecordFull("example.com", "/about", "1.2.3.4:1234", "", "", 200, 512)
+	c.RecordFull("example.com", "/about", "5.6.7.8:5678", "", "", 404, 256)
 
 	snap := c.GetHost("example.com")
 	if snap == nil {
@@ -51,8 +51,8 @@ func TestGetHostNotFound(t *testing.T) {
 
 func TestGetAll(t *testing.T) {
 	c := New()
-	c.Record("a.com", "/", "1.1.1.1:1", 200, 100)
-	c.Record("b.com", "/", "2.2.2.2:2", 200, 200)
+	c.RecordFull("a.com", "/", "1.1.1.1:1", "", "", 200, 100)
+	c.RecordFull("b.com", "/", "2.2.2.2:2", "", "", 200, 200)
 
 	all := c.GetAll()
 	if len(all) != 2 {
@@ -70,7 +70,7 @@ func TestGetAll(t *testing.T) {
 
 func TestHourlyViews(t *testing.T) {
 	c := New()
-	c.Record("example.com", "/", "1.2.3.4:1234", 200, 100)
+	c.RecordFull("example.com", "/", "1.2.3.4:1234", "", "", 200, 100)
 
 	snap := c.GetHost("example.com")
 	hour := time.Now().Hour()
@@ -79,35 +79,9 @@ func TestHourlyViews(t *testing.T) {
 	}
 }
 
-func TestRollingWindow(t *testing.T) {
-	c := New()
-
-	// Record some requests
-	for i := 0; i < 10; i++ {
-		c.Record("example.com", "/", "1.2.3.4:1234", 200, 100)
-	}
-
-	// Views in last hour should include our requests
-	views := requestsInWindow(c, "example.com", time.Hour)
-	if views != 10 {
-		t.Errorf("views in last hour = %d, want 10", views)
-	}
-}
-
-func TestActiveDomains(t *testing.T) {
-	c := New()
-	c.Record("a.com", "/", "1.1.1.1:1", 200, 0)
-	c.Record("b.com", "/", "2.2.2.2:2", 200, 0)
-	c.Record("c.com", "/", "3.3.3.3:3", 200, 0)
-
-	if count := c.ActiveDomains(); count != 3 {
-		t.Errorf("ActiveDomains = %d, want 3", count)
-	}
-}
-
 func TestHandlerAll(t *testing.T) {
 	c := New()
-	c.Record("example.com", "/", "1.2.3.4:1234", 200, 100)
+	c.RecordFull("example.com", "/", "1.2.3.4:1234", "", "", 200, 100)
 
 	allHandler, _ := c.Handler()
 
@@ -133,7 +107,7 @@ func TestHandlerAll(t *testing.T) {
 
 func TestHandlerHost(t *testing.T) {
 	c := New()
-	c.Record("example.com", "/", "1.2.3.4:1234", 200, 100)
+	c.RecordFull("example.com", "/", "1.2.3.4:1234", "", "", 200, 100)
 
 	_, hostHandler := c.Handler()
 
@@ -175,13 +149,13 @@ func TestTopNPaths(t *testing.T) {
 
 	// Record many different paths, some more than others
 	for i := 0; i < 100; i++ {
-		c.Record("example.com", "/popular", "1.2.3.4:1234", 200, 10)
+		c.RecordFull("example.com", "/popular", "1.2.3.4:1234", "", "", 200, 10)
 	}
 	for i := 0; i < 50; i++ {
-		c.Record("example.com", "/medium", "1.2.3.4:1234", 200, 10)
+		c.RecordFull("example.com", "/medium", "1.2.3.4:1234", "", "", 200, 10)
 	}
 	for i := 0; i < 10; i++ {
-		c.Record("example.com", "/rare", "1.2.3.4:1234", 200, 10)
+		c.RecordFull("example.com", "/rare", "1.2.3.4:1234", "", "", 200, 10)
 	}
 
 	snap := c.GetHost("example.com")
@@ -201,7 +175,7 @@ func TestTopNPathsExceedsLimit(t *testing.T) {
 		path := "/path-" + itoa(i)
 		// Higher index = more views so the top 20 have highest indices
 		for j := 0; j <= i; j++ {
-			c.Record("topn.com", path, "1.2.3.4:1234", 200, 10)
+			c.RecordFull("topn.com", path, "1.2.3.4:1234", "", "", 200, 10)
 		}
 	}
 
@@ -227,10 +201,10 @@ func TestTopNPathsExceedsLimit(t *testing.T) {
 func TestGetAllMultipleDomains(t *testing.T) {
 	c := New()
 
-	c.Record("alpha.com", "/", "1.1.1.1:1", 200, 100)
-	c.Record("alpha.com", "/about", "1.1.1.2:1", 200, 200)
-	c.Record("beta.com", "/", "2.2.2.2:2", 200, 300)
-	c.Record("gamma.com", "/", "3.3.3.3:3", 404, 50)
+	c.RecordFull("alpha.com", "/", "1.1.1.1:1", "", "", 200, 100)
+	c.RecordFull("alpha.com", "/about", "1.1.1.2:1", "", "", 200, 200)
+	c.RecordFull("beta.com", "/", "2.2.2.2:2", "", "", 200, 300)
+	c.RecordFull("gamma.com", "/", "3.3.3.3:3", "", "", 404, 50)
 
 	all := c.GetAll()
 	if len(all) != 3 {
@@ -260,7 +234,7 @@ func TestGetHostNotFoundReturnsNil(t *testing.T) {
 	c := New()
 
 	// Record something for one domain
-	c.Record("exists.com", "/", "1.1.1.1:1", 200, 10)
+	c.RecordFull("exists.com", "/", "1.1.1.1:1", "", "", 200, 10)
 
 	// Query a different domain
 	snap := c.GetHost("does-not-exist.com")
@@ -287,7 +261,7 @@ func TestRecordConcurrent(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			ip := "10.0.0." + itoa(n%256) + ":8080"
-			c.Record("concurrent.com", "/", ip, 200, 100)
+			c.RecordFull("concurrent.com", "/", ip, "", "", 200, 100)
 		}(i)
 	}
 	wg.Wait()
@@ -314,7 +288,7 @@ func TestRecordConcurrentMultipleDomains(t *testing.T) {
 			wg.Add(1)
 			go func(host string, n int) {
 				defer wg.Done()
-				c.Record(host, "/page", "10.0.0.1:1", 200, 10)
+				c.RecordFull(host, "/page", "10.0.0.1:1", "", "", 200, 10)
 			}(d, i)
 		}
 	}
@@ -329,16 +303,12 @@ func TestRecordConcurrentMultipleDomains(t *testing.T) {
 			t.Errorf("%s PageViews = %d, want 25", d, snap.PageViews)
 		}
 	}
-
-	if count := c.ActiveDomains(); count != 4 {
-		t.Errorf("ActiveDomains = %d, want 4", count)
-	}
 }
 
 func TestExtractIPWithoutPort(t *testing.T) {
 	// extractIP should handle addresses without port
 	c := New()
-	c.Record("noport.com", "/", "192.168.1.1", 200, 10)
+	c.RecordFull("noport.com", "/", "192.168.1.1", "", "", 200, 10)
 
 	snap := c.GetHost("noport.com")
 	if snap == nil {
@@ -354,7 +324,7 @@ func TestHourlyViewsDistribution(t *testing.T) {
 
 	// Record several requests -- they should all go in the current hour bucket
 	for i := 0; i < 5; i++ {
-		c.Record("hourly.com", "/", "1.2.3.4:1234", 200, 100)
+		c.RecordFull("hourly.com", "/", "1.2.3.4:1234", "", "", 200, 100)
 	}
 
 	snap := c.GetHost("hourly.com")
@@ -375,34 +345,6 @@ func TestHourlyViewsDistribution(t *testing.T) {
 	}
 }
 
-func TestRollingWindowRequestsInWindow(t *testing.T) {
-	c := New()
-
-	for i := 0; i < 20; i++ {
-		c.Record("window.com", "/", "1.2.3.4:1234", 200, 50)
-	}
-
-	// All 20 should be within the last hour
-	views := requestsInWindow(c, "window.com", time.Hour)
-	if views != 20 {
-		t.Errorf("views in last hour = %d, want 20", views)
-	}
-
-	// Also within last 24h
-	views24h := requestsInWindow(c, "window.com", 24*time.Hour)
-	if views24h != 20 {
-		t.Errorf("views in last 24h = %d, want 20", views24h)
-	}
-}
-
-func TestRequestsInWindowUnknownHost(t *testing.T) {
-	c := New()
-	views := requestsInWindow(c, "unknown.com", time.Hour)
-	if views != 0 {
-		t.Errorf("views for unknown host = %d, want 0", views)
-	}
-}
-
 func TestGetAllEmpty(t *testing.T) {
 	c := New()
 	all := c.GetAll()
@@ -414,11 +356,11 @@ func TestGetAllEmpty(t *testing.T) {
 func TestMultipleStatusCodes(t *testing.T) {
 	c := New()
 
-	c.Record("statuscodes.com", "/ok", "1.1.1.1:1", 200, 10)
-	c.Record("statuscodes.com", "/ok2", "1.1.1.1:1", 200, 10)
-	c.Record("statuscodes.com", "/redir", "1.1.1.1:1", 301, 10)
-	c.Record("statuscodes.com", "/notfound", "1.1.1.1:1", 404, 10)
-	c.Record("statuscodes.com", "/error", "1.1.1.1:1", 500, 10)
+	c.RecordFull("statuscodes.com", "/ok", "1.1.1.1:1", "", "", 200, 10)
+	c.RecordFull("statuscodes.com", "/ok2", "1.1.1.1:1", "", "", 200, 10)
+	c.RecordFull("statuscodes.com", "/redir", "1.1.1.1:1", "", "", 301, 10)
+	c.RecordFull("statuscodes.com", "/notfound", "1.1.1.1:1", "", "", 404, 10)
+	c.RecordFull("statuscodes.com", "/error", "1.1.1.1:1", "", "", 500, 10)
 
 	snap := c.GetHost("statuscodes.com")
 	if snap.StatusCodes[200] != 2 {
@@ -437,9 +379,9 @@ func TestMultipleStatusCodes(t *testing.T) {
 
 func TestHandlerAllMultipleDomains(t *testing.T) {
 	c := New()
-	c.Record("h1.com", "/", "1.1.1.1:1", 200, 100)
-	c.Record("h2.com", "/", "2.2.2.2:2", 200, 200)
-	c.Record("h3.com", "/page", "3.3.3.3:3", 404, 50)
+	c.RecordFull("h1.com", "/", "1.1.1.1:1", "", "", 200, 100)
+	c.RecordFull("h2.com", "/", "2.2.2.2:2", "", "", 200, 200)
+	c.RecordFull("h3.com", "/page", "3.3.3.3:3", "", "", 404, 50)
 
 	allHandler, _ := c.Handler()
 
@@ -464,7 +406,7 @@ func TestSnapshotViewsLastHour(t *testing.T) {
 	c := New()
 
 	for i := 0; i < 15; i++ {
-		c.Record("viewshour.com", "/", "1.1.1.1:1", 200, 10)
+		c.RecordFull("viewshour.com", "/", "1.1.1.1:1", "", "", 200, 10)
 	}
 
 	snap := c.GetHost("viewshour.com")
@@ -490,25 +432,6 @@ func itoa(n int) string {
 	return itoa(n/10) + string(rune('0'+n%10))
 }
 
-func TestActiveDomainsConcurrent(t *testing.T) {
-	c := New()
-
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
-			host := "domain-" + itoa(n) + ".com"
-			c.Record(host, "/", "1.1.1.1:1", 200, 10)
-		}(i)
-	}
-	wg.Wait()
-
-	if count := c.ActiveDomains(); count != 10 {
-		t.Errorf("ActiveDomains = %d, want 10", count)
-	}
-}
-
 func TestAdvanceBucketsMinuteRollover(t *testing.T) {
 	c := New()
 
@@ -523,7 +446,7 @@ func TestAdvanceBucketsMinuteRollover(t *testing.T) {
 	c.domains.Store("rollover.com", stats)
 
 	// Record a request -- this should trigger advanceBuckets with elapsed > 0
-	c.Record("rollover.com", "/", "1.1.1.1:1", 200, 100)
+	c.RecordFull("rollover.com", "/", "1.1.1.1:1", "", "", 200, 100)
 
 	snap := c.GetHost("rollover.com")
 	if snap == nil {
@@ -548,7 +471,7 @@ func TestAdvanceBucketsLargeGap(t *testing.T) {
 	c.domains.Store("biggap.com", stats)
 
 	// Record should trigger advanceBuckets with elapsed capped to minuteBucketCount
-	c.Record("biggap.com", "/", "1.1.1.1:1", 200, 50)
+	c.RecordFull("biggap.com", "/", "1.1.1.1:1", "", "", 200, 50)
 
 	snap := c.GetHost("biggap.com")
 	if snap == nil {
@@ -563,8 +486,8 @@ func TestAdvanceBucketsSameMinute(t *testing.T) {
 	c := New()
 
 	// Record two requests within the same minute -- should not advance bucket
-	c.Record("sameminute.com", "/a", "1.1.1.1:1", 200, 10)
-	c.Record("sameminute.com", "/b", "1.1.1.1:1", 200, 20)
+	c.RecordFull("sameminute.com", "/a", "1.1.1.1:1", "", "", 200, 10)
+	c.RecordFull("sameminute.com", "/b", "1.1.1.1:1", "", "", 200, 20)
 
 	snap := c.GetHost("sameminute.com")
 	if snap == nil {
@@ -586,7 +509,7 @@ func TestRecordWithNilMaps(t *testing.T) {
 	c.domains.Store("nilmaps.com", stats)
 
 	// Record should initialize the nil maps
-	c.Record("nilmaps.com", "/", "1.2.3.4:5678", 200, 100)
+	c.RecordFull("nilmaps.com", "/", "1.2.3.4:5678", "", "", 200, 100)
 
 	snap := c.GetHost("nilmaps.com")
 	if snap == nil {

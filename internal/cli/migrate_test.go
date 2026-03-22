@@ -434,46 +434,6 @@ func TestMigrateApacheDefaultServerName(t *testing.T) {
 
 // --- Parser unit tests ---
 
-func TestExtractNginxDirective(t *testing.T) {
-	tests := []struct {
-		line, directive, want string
-	}{
-		{"server_name example.com;", "server_name", "example.com"},
-		{"root /var/www;", "root", "/var/www"},
-		{"listen 443 ssl;", "listen", "443 ssl"},
-		{"proxy_pass http://localhost:3000;", "proxy_pass", "http://localhost:3000"},
-		{"# server_name commented;", "server_name", ""},
-		{"other_directive value;", "server_name", ""},
-	}
-
-	for _, tt := range tests {
-		got := extractNginxDirective(tt.line, tt.directive)
-		if got != tt.want {
-			t.Errorf("extractNginxDirective(%q, %q) = %q, want %q", tt.line, tt.directive, got, tt.want)
-		}
-	}
-}
-
-func TestExtractNginxLocationPath(t *testing.T) {
-	tests := []struct {
-		line string
-		want string
-	}{
-		{"location / {", "/"},
-		{"location /api {", "/api"},
-		{"location ~ \\.php$ {", "\\.php$"},
-		{"location ~* \\.(jpg|png)$ {", "\\.(jpg|png)$"},
-		{"location = /favicon.ico {", "/favicon.ico"},
-	}
-
-	for _, tt := range tests {
-		got := extractNginxLocationPath(tt.line)
-		if got != tt.want {
-			t.Errorf("extractNginxLocationPath(%q) = %q, want %q", tt.line, got, tt.want)
-		}
-	}
-}
-
 func TestExtractApacheValue(t *testing.T) {
 	tests := []struct {
 		line string

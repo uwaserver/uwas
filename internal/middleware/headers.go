@@ -18,18 +18,3 @@ func SecurityHeaders() Middleware {
 	}
 }
 
-// CustomHeaders applies per-domain header add/remove rules.
-func CustomHeaders(add map[string]string, remove []string) Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h := w.Header()
-			for k, v := range add {
-				h.Set(k, v)
-			}
-			for _, k := range remove {
-				h.Del(k)
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}

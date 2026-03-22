@@ -414,37 +414,6 @@ func TestConvertConfigRewritesConditionTypes(t *testing.T) {
 	}
 }
 
-func TestResultResolvedURI(t *testing.T) {
-	tests := []struct {
-		name  string
-		uri   string
-		query string
-	}{
-		{"no query", "/path", ""},
-		{"with query", "/path", "foo=bar"},
-		{"with special chars", "/path", "a=b&c=d"},
-	}
-
-	for _, tt := range tests {
-		r := &Result{URI: tt.uri, Query: tt.query}
-		got := r.ResolvedURI()
-		if tt.query == "" {
-			if got != tt.uri {
-				t.Errorf("ResolvedURI() %s: got %q, want %q", tt.name, got, tt.uri)
-			}
-		} else {
-			// Should contain the URI and a ? separator
-			if !strings.HasPrefix(got, tt.uri+"?") {
-				t.Errorf("ResolvedURI() %s: got %q, should start with %q", tt.name, got, tt.uri+"?")
-			}
-			// Should not be just the bare URI
-			if got == tt.uri {
-				t.Errorf("ResolvedURI() %s: got %q, should include query string", tt.name, got)
-			}
-		}
-	}
-}
-
 func TestGoneFlag(t *testing.T) {
 	rule, _ := ParseRule("^/removed", "-", "G")
 	engine := NewEngine([]*Rule{rule})

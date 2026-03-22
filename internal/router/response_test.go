@@ -48,8 +48,8 @@ func TestResponseWriterTTFB(t *testing.T) {
 	if w.TTFB() < 0 {
 		t.Error("TTFB should be >= 0 after Write")
 	}
-	if !w.Written() {
-		t.Error("Written() should be true after Write")
+	if w.StatusCode() == 0 {
+		t.Error("StatusCode should be set after Write")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
 )
 
@@ -1097,5 +1098,89 @@ func TestAuthMiddlewareDashboardPublic(t *testing.T) {
 	// Should not get 401
 	if rec.Code == 401 {
 		t.Error("dashboard should be publicly accessible")
+	}
+}
+
+func TestMCPToolsDisabled(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/mcp/tools", nil))
+
+	if rec.Code != 503 {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}
+
+func TestMCPToolsEnabled(t *testing.T) {
+	s := testServer()
+	mcpSrv := mcp.New(s.config, s.logger, s.metrics)
+	s.SetMCP(mcpSrv)
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/mcp/tools", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var tools []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &tools); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(tools) == 0 {
+		t.Error("expected at least one tool")
+	}
+}
+
+func TestMCPCallDisabled(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"domain_list"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", body))
+
+	if rec.Code != 503 {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+}
+
+func TestMCPCallToolDomainList(t *testing.T) {
+	s := testServer()
+	mcpSrv := mcp.New(s.config, s.logger, s.metrics)
+	s.SetMCP(mcpSrv)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"domain_list"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestMCPCallToolUnknown(t *testing.T) {
+	s := testServer()
+	mcpSrv := mcp.New(s.config, s.logger, s.metrics)
+	s.SetMCP(mcpSrv)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"nonexistent"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestMCPCallInvalidJSON(t *testing.T) {
+	s := testServer()
+	mcpSrv := mcp.New(s.config, s.logger, s.metrics)
+	s.SetMCP(mcpSrv)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{not valid json`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }

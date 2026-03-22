@@ -2531,14 +2531,6 @@ func TestMigrateApacheProxyPassReverse(t *testing.T) {
 	}
 }
 
-func TestExtractNginxLocationPathNoMatch(t *testing.T) {
-	// A malformed location line that doesn't match the regexp
-	got := extractNginxLocationPath("location {")
-	if got != "/" {
-		t.Errorf("expected / for no-match, got %q", got)
-	}
-}
-
 func TestExtractApacheVHostAddrNoMatch(t *testing.T) {
 	got := extractApacheVHostAddr("not a vhost line")
 	if got != "" {

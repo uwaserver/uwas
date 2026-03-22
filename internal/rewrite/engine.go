@@ -2,7 +2,6 @@ package rewrite
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -217,7 +216,6 @@ func ConvertConfigRewrites(rewrites []ConfigRewrite) []*Rule {
 		// Convert simple conditions
 		for _, condStr := range rw.Conditions {
 			var variable, pattern string
-			negated := false
 
 			switch condStr {
 			case "!is_file", "!-f":
@@ -240,7 +238,6 @@ func ConvertConfigRewrites(rewrites []ConfigRewrite) []*Rule {
 			if err != nil {
 				continue
 			}
-			_ = negated
 			rule.Conditions = append(rule.Conditions, *cond)
 		}
 
@@ -268,10 +265,3 @@ type ConfigRewrite struct {
 	Flags      []string
 }
 
-// ResolvedURI returns the final URI with query string.
-func (r *Result) ResolvedURI() string {
-	if r.Query != "" {
-		return r.URI + "?" + url.PathEscape(r.Query)
-	}
-	return r.URI
-}

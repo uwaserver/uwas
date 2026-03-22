@@ -23,21 +23,6 @@ func New() *Handler {
 	}
 }
 
-func (h *Handler) Name() string        { return "static" }
-func (h *Handler) Description() string  { return "Serves static files from disk" }
-
-// CanHandle returns true if the resolved path is an existing file.
-func (h *Handler) CanHandle(ctx *router.RequestContext) bool {
-	if ctx.ResolvedPath == "" {
-		return false
-	}
-	info, err := os.Stat(ctx.ResolvedPath)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}
-
 // Serve handles the request by serving the resolved static file.
 func (h *Handler) Serve(ctx *router.RequestContext) {
 	path := ctx.ResolvedPath

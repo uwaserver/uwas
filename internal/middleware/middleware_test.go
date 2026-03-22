@@ -426,29 +426,6 @@ func TestAccessLog(t *testing.T) {
 	}
 }
 
-// --- CustomHeaders ---
-
-func TestCustomHeaders(t *testing.T) {
-	handler := CustomHeaders(
-		map[string]string{"X-Custom": "hello", "X-Another": "world"},
-		[]string{"X-Remove-Me"},
-	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Remove-Me", "should-be-removed")
-		w.WriteHeader(200)
-	}))
-
-	rec := httptest.NewRecorder()
-	// Pre-set the header to be removed (CustomHeaders runs before handler)
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-
-	if got := rec.Header().Get("X-Custom"); got != "hello" {
-		t.Errorf("X-Custom = %q, want hello", got)
-	}
-	if got := rec.Header().Get("X-Another"); got != "world" {
-		t.Errorf("X-Another = %q, want world", got)
-	}
-}
-
 // --- Gzip: WriteHeader path (explicit status code before write) ---
 
 func TestGzipWriteHeaderExplicit(t *testing.T) {
