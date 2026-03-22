@@ -227,6 +227,45 @@ func TestMetricsHandlerIncludesHandlerTypes(t *testing.T) {
 	}
 }
 
+func TestPercentileFunctionEdgeCases(t *testing.T) {
+	// Empty slice
+	if v := percentile(nil, 0.5); v != 0 {
+		t.Errorf("percentile(nil, 0.5) = %f, want 0", v)
+	}
+
+	// Single value — lower == upper
+	if v := percentile([]float64{0.042}, 0.5); math.Abs(v-0.042) > 0.001 {
+		t.Errorf("percentile([0.042], 0.5) = %f, want 0.042", v)
+	}
+
+	// p=1.0 — upper >= len (boundary)
+	data := []float64{0.01, 0.02, 0.03}
+	if v := percentile(data, 1.0); math.Abs(v-0.03) > 0.001 {
+		t.Errorf("percentile(data, 1.0) = %f, want 0.03", v)
+	}
+
+	// p=0.0 — should return first element
+	if v := percentile(data, 0.0); math.Abs(v-0.01) > 0.001 {
+		t.Errorf("percentile(data, 0.0) = %f, want 0.01", v)
+	}
+
+	// Interpolation case
+	data2 := []float64{0.01, 0.02}
+	v := percentile(data2, 0.5)
+	if math.Abs(v-0.015) > 0.001 {
+		t.Errorf("percentile([0.01,0.02], 0.5) = %f, want 0.015", v)
+	}
+}
+
+func TestSlowThresholdZeroDisabled(t *testing.T) {
+	c := New()
+	c.SlowThreshold = 0 // disabled
+	c.RecordLatency(10 * time.Second)
+	if c.SlowRequests.Load() != 0 {
+		t.Error("slow requests should not count when threshold is 0")
+	}
+}
+
 func TestPercentileCalculation(t *testing.T) {
 	// Test with a single value
 	c := New()
