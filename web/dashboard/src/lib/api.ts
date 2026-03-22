@@ -101,3 +101,40 @@ export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/c
 export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
 export const addDomain = (domain: Partial<DomainData>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
 export const deleteDomain = (host: string) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
+
+/** SSE stats endpoint URL (with auth token as query param for EventSource). */
+export function sseStatsURL(): string {
+  const params = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${BASE}/api/v1/sse/stats${params}`;
+}
+
+/** Download the current server config as a YAML file. */
+export async function fetchConfigExport(): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE}/api/v1/config/export`, { headers });
+
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = '/_uwas/dashboard/login';
+    throw new Error('Unauthorized');
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || res.statusText);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'uwas-config.yaml';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

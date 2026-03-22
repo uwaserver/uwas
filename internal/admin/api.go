@@ -2,12 +2,15 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/cache"
@@ -72,6 +75,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/domains/{host}", s.handleDeleteDomain)
 	s.mux.HandleFunc("PUT /api/v1/domains/{host}", s.handleUpdateDomain)
 	s.mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
+	s.mux.HandleFunc("GET /api/v1/sse/stats", s.handleSSEStats)
+	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -240,6 +245,69 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 		s.cache.PurgeAll()
 		jsonResponse(w, map[string]string{"status": "all purged"})
 	}
+}
+
+// handleSSEStats streams server stats as Server-Sent Events every second.
+func (s *Server) handleSSEStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Remove the write deadline so the SSE stream is not killed by WriteTimeout.
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Time{})
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	// Send an initial event immediately so the client doesn't wait 1s.
+	s.writeSSEStats(w, flusher)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			s.writeSSEStats(w, flusher)
+		}
+	}
+}
+
+func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
+	stats := map[string]any{
+		"requests_total": s.metrics.RequestsTotal.Load(),
+		"cache_hits":     s.metrics.CacheHits.Load(),
+		"cache_misses":   s.metrics.CacheMisses.Load(),
+		"active_conns":   s.metrics.ActiveConns.Load(),
+		"bytes_sent":     s.metrics.BytesSent.Load(),
+		"uptime":         time.Since(s.metrics.StartTime).String(),
+	}
+	data, _ := json.Marshal(stats)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
+}
+
+// handleConfigExport returns the current configuration as a YAML file download.
+func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
+	// Build a sanitized copy: strip the admin API key.
+	export := *s.config
+	export.Global.Admin.APIKey = ""
+
+	out, err := yaml.Marshal(&export)
+	if err != nil {
+		jsonError(w, "failed to marshal config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Header().Set("Content-Disposition", "attachment; filename=uwas.yaml")
+	w.Write(out)
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {

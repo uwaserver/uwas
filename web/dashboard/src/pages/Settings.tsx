@@ -7,14 +7,16 @@ import {
   Cpu,
   Activity,
   Database,
+  Download,
 } from 'lucide-react';
-import { fetchConfig, fetchHealth, triggerReload, type ConfigData, type HealthData } from '@/lib/api';
+import { fetchConfig, fetchHealth, fetchConfigExport, triggerReload, type ConfigData, type HealthData } from '@/lib/api';
 
 export default function Settings() {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -47,6 +49,19 @@ export default function Settings() {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    setStatus(null);
+    try {
+      await fetchConfigExport();
+      setStatus({ ok: true, message: 'Configuration exported successfully' });
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center text-slate-400">
@@ -64,14 +79,24 @@ export default function Settings() {
             Server configuration and status
           </p>
         </div>
-        <button
-          onClick={handleReload}
-          disabled={reloading}
-          className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={reloading ? 'animate-spin' : ''} />
-          {reloading ? 'Reloading...' : 'Reload Config'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-[#334155] disabled:opacity-50"
+          >
+            <Download size={14} />
+            {exporting ? 'Exporting...' : 'Export Config'}
+          </button>
+          <button
+            onClick={handleReload}
+            disabled={reloading}
+            className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={reloading ? 'animate-spin' : ''} />
+            {reloading ? 'Reloading...' : 'Reload Config'}
+          </button>
+        </div>
       </div>
 
       {/* Status message */}
