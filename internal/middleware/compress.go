@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/andybalholm/brotli"
 )
 
 // gzipPool reuses gzip.Writer instances. This is safe because gzip.Writer.Reset
@@ -16,6 +18,14 @@ var gzipPool = sync.Pool{
 	New: func() any {
 		w, _ := gzip.NewWriterLevel(io.Discard, gzip.DefaultCompression)
 		return w
+	},
+}
+
+// brotliPool reuses brotli.Writer instances. Like gzip.Writer, brotli.Writer.Reset
+// reinitializes internal state before new writes, making pooling safe.
+var brotliPool = sync.Pool{
+	New: func() any {
+		return brotli.NewWriterLevel(io.Discard, brotli.DefaultCompression)
 	},
 }
 
@@ -32,8 +42,33 @@ var compressibleTypes = []string{
 	"image/svg+xml",
 }
 
-// Gzip returns middleware that compresses responses with gzip.
-func Gzip(minSize int) Middleware {
+// encodingType represents the compression encoding to use.
+type encodingType int
+
+const (
+	encodingNone   encodingType = iota
+	encodingBrotli              // br
+	encodingGzip                // gzip
+)
+
+// selectEncoding inspects the Accept-Encoding header and returns the best
+// supported encoding. Brotli is preferred over gzip when both are present.
+func selectEncoding(acceptEncoding string) encodingType {
+	hasBr := strings.Contains(acceptEncoding, "br")
+	hasGzip := strings.Contains(acceptEncoding, "gzip")
+
+	if hasBr {
+		return encodingBrotli
+	}
+	if hasGzip {
+		return encodingGzip
+	}
+	return encodingNone
+}
+
+// Compress returns middleware that compresses responses with brotli or gzip.
+// Brotli is preferred when the client supports it; gzip is used as fallback.
+func Compress(minSize int) Middleware {
 	if minSize <= 0 {
 		minSize = 1024
 	}
@@ -46,27 +81,37 @@ func Gzip(minSize int) Middleware {
 				return
 			}
 
-			// Check Accept-Encoding
-			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			enc := selectEncoding(r.Header.Get("Accept-Encoding"))
+			if enc == encodingNone {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			gw := &gzipResponseWriter{
+			cw := &compressResponseWriter{
 				ResponseWriter: w,
 				minSize:        minSize,
+				encoding:       enc,
 			}
-			defer gw.Close()
+			defer cw.Close()
 
 			w.Header().Set("Vary", "Accept-Encoding")
-			next.ServeHTTP(gw, r)
+			next.ServeHTTP(cw, r)
 		})
 	}
 }
 
-type gzipResponseWriter struct {
+// Gzip returns middleware that compresses responses with brotli (preferred) or gzip.
+// It is kept for backward compatibility; it delegates to Compress internally.
+func Gzip(minSize int) Middleware {
+	return Compress(minSize)
+}
+
+// compressResponseWriter buffers output until enough data is available to decide
+// whether compression is worthwhile, then delegates to brotli or gzip.
+type compressResponseWriter struct {
 	http.ResponseWriter
-	gzWriter    *gzip.Writer
+	writer      io.WriteCloser // brotli or gzip writer (nil until compression starts)
+	encoding    encodingType
 	minSize     int
 	buf         []byte
 	wroteHeader bool
@@ -74,20 +119,20 @@ type gzipResponseWriter struct {
 	compressed  bool
 }
 
-func (w *gzipResponseWriter) WriteHeader(code int) {
+func (w *compressResponseWriter) WriteHeader(code int) {
 	w.statusCode = code
 	// Defer actual WriteHeader until we know if we're compressing
 	w.wroteHeader = true
 }
 
-func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+func (w *compressResponseWriter) Write(b []byte) (int, error) {
 	if !w.wroteHeader {
 		w.statusCode = http.StatusOK
 		w.wroteHeader = true
 	}
 
 	// Buffer until we have enough to decide
-	if w.gzWriter == nil && !w.compressed {
+	if w.writer == nil && !w.compressed {
 		w.buf = append(w.buf, b...)
 
 		if len(w.buf) < w.minSize {
@@ -108,29 +153,41 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 		return w.flushUncompressed()
 	}
 
-	if w.gzWriter != nil {
-		return w.gzWriter.Write(b)
+	if w.writer != nil {
+		return w.writer.Write(b)
 	}
 
 	return w.ResponseWriter.Write(b)
 }
 
-func (w *gzipResponseWriter) startCompression() (int, error) {
+func (w *compressResponseWriter) startCompression() (int, error) {
 	w.compressed = true
-	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Del("Content-Length") // unknown after compression
-	w.ResponseWriter.WriteHeader(w.statusCode)
 
-	gz := gzipPool.Get().(*gzip.Writer)
-	gz.Reset(w.ResponseWriter)
-	w.gzWriter = gz
+	switch w.encoding {
+	case encodingBrotli:
+		w.Header().Set("Content-Encoding", "br")
+		w.Header().Del("Content-Length")
+		w.ResponseWriter.WriteHeader(w.statusCode)
 
-	n, err := gz.Write(w.buf)
+		br := brotliPool.Get().(*brotli.Writer)
+		br.Reset(w.ResponseWriter)
+		w.writer = br
+	default:
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+		w.ResponseWriter.WriteHeader(w.statusCode)
+
+		gz := gzipPool.Get().(*gzip.Writer)
+		gz.Reset(w.ResponseWriter)
+		w.writer = gz
+	}
+
+	n, err := w.writer.Write(w.buf)
 	w.buf = nil
 	return n, err
 }
 
-func (w *gzipResponseWriter) flushUncompressed() (int, error) {
+func (w *compressResponseWriter) flushUncompressed() (int, error) {
 	w.ResponseWriter.WriteHeader(w.statusCode)
 	n, err := w.ResponseWriter.Write(w.buf)
 	w.buf = nil
@@ -138,7 +195,7 @@ func (w *gzipResponseWriter) flushUncompressed() (int, error) {
 	return n, err
 }
 
-func (w *gzipResponseWriter) Close() {
+func (w *compressResponseWriter) Close() {
 	// Flush remaining buffer
 	if len(w.buf) > 0 {
 		ct := w.Header().Get("Content-Type")
@@ -152,9 +209,15 @@ func (w *gzipResponseWriter) Close() {
 		}
 	}
 
-	if w.gzWriter != nil {
-		w.gzWriter.Close()
-		gzipPool.Put(w.gzWriter)
+	if w.writer != nil {
+		w.writer.Close()
+		// Return the writer to the appropriate pool
+		switch w.encoding {
+		case encodingBrotli:
+			brotliPool.Put(w.writer)
+		default:
+			gzipPool.Put(w.writer)
+		}
 	}
 
 	// If nothing was written at all

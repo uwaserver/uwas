@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/admin"
+	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -47,6 +48,7 @@ type Server struct {
 	tlsMgr     *uwastls.Manager
 	cache      *cache.Engine
 	metrics    *metrics.Collector
+	analytics  *analytics.Collector
 	admin      *admin.Server
 	mcp        *mcp.Server
 	handler    http.Handler // compiled middleware chain
@@ -96,6 +98,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		tlsMgr:         uwastls.NewManager(cfg.Global.ACME, cfg.Domains, log),
 		cache:          cacheEngine,
 		metrics:        m,
+		analytics:      analytics.New(),
 		ctx:            ctx,
 		cancel:         cancel,
 		proxyPools:     make(map[string]*proxyhandler.UpstreamPool),
@@ -129,6 +132,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			s.admin.SetCache(cacheEngine)
 		}
 		s.admin.SetReloadFunc(s.reload)
+		s.admin.SetAnalytics(s.analytics)
 	}
 
 	// MCP server
@@ -399,6 +403,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				Duration:   time.Since(start).String(),
 				RemoteAddr: r.RemoteAddr,
 			})
+		}
+
+		// Record analytics
+		if s.analytics != nil {
+			s.analytics.Record(r.Host, r.URL.Path, r.RemoteAddr, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 		}
 	}()
 
