@@ -1,24 +1,45 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import Navbar from '@/components/Navbar'
+import Hero from '@/components/Hero'
+import Features from '@/components/Features'
+import Pipeline from '@/components/Pipeline'
+import QuickStart from '@/components/QuickStart'
+import Comparison from '@/components/Comparison'
+import Performance from '@/components/Performance'
+import CTA from '@/components/CTA'
 import Footer from '@/components/Footer'
-import Home from '@/pages/Home'
-import Docs from '@/pages/Docs'
-import QuickStart from '@/pages/QuickStart'
 
 export default function App() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('uwas-theme')
+      if (saved === 'light' || saved === 'dark') return saved
+    }
+    return 'dark'
+  })
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light')
+    localStorage.setItem('uwas-theme', theme)
+  }, [theme])
+
+  function toggleTheme() {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }
+
   return (
-    <BrowserRouter>
-      <div className="flex min-h-screen flex-col">
-        <Navbar />
-        <main className="flex-1">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/docs" element={<Docs />} />
-            <Route path="/quickstart" element={<QuickStart />} />
-          </Routes>
-        </main>
-        <Footer />
-      </div>
-    </BrowserRouter>
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
+      <Navbar theme={theme} onToggleTheme={toggleTheme} />
+      <main>
+        <Hero />
+        <Features />
+        <Pipeline />
+        <QuickStart />
+        <Comparison />
+        <Performance />
+        <CTA />
+      </main>
+      <Footer />
+    </div>
   )
 }
