@@ -332,6 +332,135 @@ func TestGzipMultipleWrites(t *testing.T) {
 	}
 }
 
+// --- RealIP: extractRealIP, extractIP, parseCIDRs ---
+
+func TestRealIPXRealIPHeader(t *testing.T) {
+	var capturedIP string
+
+	handler := RealIP([]string{"192.0.2.0/24"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedIP = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Real-IP", "198.51.100.99")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !strings.HasPrefix(capturedIP, "198.51.100.99") {
+		t.Errorf("RemoteAddr = %q, want 198.51.100.99", capturedIP)
+	}
+}
+
+func TestRealIPXFFAllTrusted(t *testing.T) {
+	var capturedIP string
+
+	// Trust everything in 10.0.0.0/8
+	handler := RealIP([]string{"10.0.0.0/8"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedIP = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	// All XFF IPs are in the trusted range
+	req.Header.Set("X-Forwarded-For", "10.0.0.2, 10.0.0.3")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	// When all IPs are trusted, extractRealIP returns the leftmost
+	if !strings.HasPrefix(capturedIP, "10.0.0.2") {
+		t.Errorf("RemoteAddr = %q, want 10.0.0.2 (leftmost when all trusted)", capturedIP)
+	}
+}
+
+func TestParseCIDRsSingleIPs(t *testing.T) {
+	// Single IPs should be converted to /32
+	nets := parseCIDRs([]string{"192.168.1.1", "10.0.0.5"})
+	if len(nets) != 2 {
+		t.Fatalf("got %d nets, want 2", len(nets))
+	}
+}
+
+func TestParseCIDRsIPv6(t *testing.T) {
+	// IPv6 single IP should get /128
+	nets := parseCIDRs([]string{"::1"})
+	if len(nets) != 1 {
+		t.Fatalf("got %d nets, want 1", len(nets))
+	}
+}
+
+func TestParseCIDRsInvalid(t *testing.T) {
+	nets := parseCIDRs([]string{"not-an-ip", "999.999.999.999"})
+	if len(nets) != 0 {
+		t.Errorf("got %d nets, want 0 for invalid IPs", len(nets))
+	}
+}
+
+func TestExtractIPBareIP(t *testing.T) {
+	ip := extractIP("192.168.1.1")
+	if ip == nil {
+		t.Error("should parse bare IP without port")
+	}
+}
+
+func TestExtractIPInvalid(t *testing.T) {
+	ip := extractIP("not-an-ip")
+	if ip != nil {
+		t.Error("should return nil for invalid input")
+	}
+}
+
+func TestExtractRealIPEmptyXFF(t *testing.T) {
+	result := extractRealIP("", nil)
+	if result != "" {
+		t.Errorf("got %q, want empty for empty XFF", result)
+	}
+}
+
+func TestExtractRealIPInvalidIPInXFF(t *testing.T) {
+	// Invalid IP entries should be skipped
+	result := extractRealIP("not-an-ip, 203.0.113.50", nil)
+	if result != "203.0.113.50" {
+		t.Errorf("got %q, want 203.0.113.50 (skip invalid)", result)
+	}
+}
+
+func TestRealIPDirectIPNil(t *testing.T) {
+	var capturedIP string
+	handler := RealIP([]string{"10.0.0.0/8"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedIP = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "not-a-valid-ip"
+	req.Header.Set("X-Forwarded-For", "203.0.113.50")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	// Direct IP is invalid, so headers should be ignored
+	if capturedIP != "not-a-valid-ip" {
+		t.Errorf("RemoteAddr = %q, want not-a-valid-ip (invalid direct IP)", capturedIP)
+	}
+}
+
+// --- CORS: non-preflight with valid origin ---
+
+func TestCORSNonPreflightWithOrigin(t *testing.T) {
+	handler := CORS(CORSConfig{
+		AllowedOrigins: []string{"https://example.com"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data", nil)
+	req.Header.Set("Origin", "https://example.com")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "https://example.com" {
+		t.Error("ACAO should be set for valid non-preflight request")
+	}
+}
+
 // --- RateLimit: Retry-After header ---
 
 func TestRateLimitRetryAfterHeader(t *testing.T) {

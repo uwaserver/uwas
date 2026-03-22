@@ -616,6 +616,106 @@ func TestPoolStaleEviction(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Client.Execute with large stdin (multiple reads)
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteWithLargeStdin(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	stdoutPayload := "Status: 200 OK\r\nContent-Type: text/plain\r\n\r\nGot it"
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go mockFCGIServerFull(t, ln, stdoutPayload, "", 0, &wg)
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 2,
+		MaxOpen: 2,
+	})
+	defer client.Close()
+
+	// Send a large body that requires multiple reads
+	largeBody := strings.Repeat("x", 100000) // 100KB
+	env := map[string]string{
+		"SCRIPT_FILENAME": "/var/www/upload.php",
+		"REQUEST_METHOD":  "POST",
+		"CONTENT_LENGTH":  "100000",
+	}
+
+	resp, err := client.Execute(context.Background(), env, strings.NewReader(largeBody))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	wg.Wait()
+
+	if resp.AppStatus != 0 {
+		t.Errorf("AppStatus = %d, want 0", resp.AppStatus)
+	}
+	stdout := string(resp.Stdout())
+	if !strings.Contains(stdout, "Got it") {
+		t.Errorf("stdout = %q, want it to contain 'Got it'", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pool: Get stale eviction with MaxLifetime
+// ---------------------------------------------------------------------------
+
+func TestPoolStaleEvictionWithMaxLifetime(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				io.Copy(io.Discard, c)
+				c.Close()
+			}(c)
+		}
+	}()
+
+	p := NewPool(PoolConfig{
+		Address:     "tcp:" + ln.Addr().String(),
+		MaxIdle:     4,
+		MaxOpen:     8,
+		MaxLifetime: 10 * time.Millisecond,
+	})
+	defer p.Close()
+
+	ctx := context.Background()
+	c, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	p.Put(c)
+
+	// Wait for usedAt to become stale (>30s idle check)
+	// MaxLifetime is 10ms, so the connection should be evicted
+	time.Sleep(50 * time.Millisecond)
+
+	c2, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get after stale: %v", err)
+	}
+	// Should be a new connection since the old one was evicted
+	if time.Since(c2.createdAt) > 20*time.Millisecond {
+		t.Error("expected a fresh connection")
+	}
+	p.Put(c2)
+}
+
+// ---------------------------------------------------------------------------
 // Response: empty stdout and stderr
 // ---------------------------------------------------------------------------
 
