@@ -34,10 +34,18 @@ Thumbs.db
 
 
 *.log
-*.log.*
 *.out
 *.exe
 *.test.exeweb/dashboard/node_modules/
 web/
 docs/site/node_modules/
 demo/
+
+*.cov
+# Coverage files
+*.cov
+*.out
+cov_*
+cover_*
+*_coverage.html
+*.test.exe
