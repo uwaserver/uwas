@@ -1,0 +1,128 @@
+# UWAS Test Environment Configuration
+# Used by docker-compose.test.yml for integration testing
+
+global:
+  worker_count: auto
+  http_listen: ":80"
+  https_listen: ":443"
+  max_connections: 1024
+  log_level: debug
+  log_format: json
+
+  timeouts:
+    read: 10s
+    write: 30s
+    idle: 60s
+    shutdown_grace: 5s
+
+  admin:
+    enabled: true
+    listen: "0.0.0.0:9443"
+    api_key: "test-key-12345"
+
+  acme:
+    email: "test@example.com"
+    storage: /var/lib/uwas/certs
+
+  cache:
+    enabled: true
+    memory_limit: 64MB
+    disk_path: /var/cache/uwas
+    disk_limit: 256MB
+    default_ttl: 300
+    grace_ttl: 600
+    stale_while_revalidate: true
+
+  backup:
+    enabled: true
+    provider: local
+    schedule: "24h"
+    keep: 3
+    local:
+      path: /var/lib/uwas/backups
+
+# ─── Domains ────────────────────────────────────────────────────
+
+domains:
+  # Static file serving
+  - host: static.test
+    root: /var/www/static
+    type: static
+    ssl:
+      mode: "off"
+    index_files:
+      - index.html
+    cache:
+      enabled: true
+      ttl: 300
+    security:
+      rate_limit:
+        requests: 100
+        window: 60s
+        by: ip
+    headers:
+      add:
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: SAMEORIGIN
+    compression:
+      enabled: true
+      algorithms:
+        - gzip
+      min_size: 256
+      types:
+        - text/html
+        - text/css
+        - application/javascript
+
+  # PHP-FPM domain
+  - host: php.test
+    root: /var/www/php
+    type: php
+    ssl:
+      mode: "off"
+    php:
+      fpm_address: "tcp:php:9000"
+      index_files:
+        - index.php
+      max_upload: 10MB
+      timeout: 30s
+    cache:
+      enabled: false
+    headers:
+      add:
+        X-Content-Type-Options: nosniff
+      remove:
+        - X-Powered-By
+
+  # Reverse proxy domain
+  - host: proxy.test
+    type: proxy
+    ssl:
+      mode: "off"
+    proxy:
+      upstreams:
+        - address: "http://upstream:8080"
+          weight: 1
+      algorithm: round_robin
+      health_check:
+        path: /
+        interval: 10s
+        timeout: 5s
+        threshold: 3
+      timeouts:
+        connect: 5s
+        read: 10s
+        write: 10s
+    headers:
+      add:
+        X-Content-Type-Options: nosniff
+
+  # Redirect domain
+  - host: redirect.test
+    type: redirect
+    ssl:
+      mode: "off"
+    redirect:
+      target: "https://example.com"
+      status: 301
+      preserve_path: false

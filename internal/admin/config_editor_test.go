@@ -189,12 +189,26 @@ func TestConfigRawPutReloadError(t *testing.T) {
 
 func TestDomainRawGetNoConfigPath(t *testing.T) {
 	s := testServer()
-
+	// configPath is empty, but domain exists in memory → should return YAML from memory
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/domains/example.com/raw", nil))
 
-	if rec.Code != 400 {
-		t.Errorf("status = %d, want 400", rec.Code)
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (in-memory fallback)", rec.Code)
+	}
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/x-yaml" {
+		t.Errorf("Content-Type = %q, want application/x-yaml", ct)
+	}
+}
+
+func TestDomainRawGetNoConfigPathNotFound(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/domains/nonexistent.com/raw", nil))
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
