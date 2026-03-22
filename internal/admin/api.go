@@ -79,6 +79,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
 	s.mux.HandleFunc("GET /api/v1/sse/stats", s.handleSSEStats)
 	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
+	s.mux.HandleFunc("GET /api/v1/certs", s.handleCerts)
+	s.mux.HandleFunc("GET /api/v1/domains/{host}", s.handleDomainDetail)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -569,4 +571,56 @@ func isAllowedOrigin(origin string, r *http.Request) bool {
 	}
 	dashboardOrigin := scheme + "://" + r.Host
 	return origin == dashboardOrigin
+}
+
+// --- Certificates ---
+
+func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+
+	type certInfo struct {
+		Host     string `json:"host"`
+		SSLMode  string `json:"ssl_mode"`
+		Status   string `json:"status"`  // "active", "pending", "expired", "none"
+		Issuer   string `json:"issuer"`
+		Expiry   string `json:"expiry"`
+		DaysLeft int    `json:"days_left"`
+	}
+
+	var certs []certInfo
+	for _, d := range s.config.Domains {
+		ci := certInfo{
+			Host:    d.Host,
+			SSLMode: d.SSL.Mode,
+		}
+		switch d.SSL.Mode {
+		case "off":
+			ci.Status = "none"
+		case "auto":
+			ci.Status = "pending"
+			ci.Issuer = "Let's Encrypt"
+		case "manual":
+			ci.Status = "active"
+			ci.Issuer = "Manual"
+		}
+		certs = append(certs, ci)
+	}
+	jsonResponse(w, certs)
+}
+
+// --- Domain detail ---
+
+func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+
+	for _, d := range s.config.Domains {
+		if d.Host == host {
+			jsonResponse(w, d)
+			return
+		}
+	}
+	jsonError(w, "domain not found", http.StatusNotFound)
 }

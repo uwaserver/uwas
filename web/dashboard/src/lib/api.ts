@@ -99,8 +99,32 @@ export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/c
 });
 
 export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
-export const addDomain = (domain: Partial<DomainData>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
+export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
 export const deleteDomain = (host: string) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
+
+export interface DomainDetail {
+  host: string;
+  aliases: string[] | null;
+  type: string;
+  ssl: string;
+  root: string;
+  cache?: { enabled: boolean; ttl: number; rules?: { match: string; ttl: number; bypass: boolean }[] };
+  security?: { blocked_paths: string[] | null; waf: boolean; rate_limit?: { requests: number; window: string } };
+  php?: { fpm_address: string; index_files: string[] | null; timeout: number; upload_max_size: string };
+  proxy?: { upstreams: string[] | null; algorithm: string; health_check?: { path: string; interval: string } };
+  redirect?: { target: string; status_code: number };
+  htaccess?: { enabled: boolean };
+}
+
+export interface CertInfo {
+  host: string;
+  ssl_mode: string;
+  status: string;
+  issuer: string;
+}
+
+export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
+export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');
 
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {
