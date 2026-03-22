@@ -47,7 +47,8 @@ go test ./internal/cache/            # Single package
 go test -v -run TestWordPress ./...  # Specific test
 ```
 
-156 tests across 14 packages. No race detector on Windows (CGO_ENABLED=0).
+1,728 tests across 27 packages. No race detector on Windows (CGO_ENABLED=0).
+Use `make test-coverage` for coverage report.
 
 ## Common Tasks
 
@@ -55,3 +56,6 @@ go test -v -run TestWordPress ./...  # Specific test
 - **Add middleware**: Create file in `internal/middleware/`, add to chain in `server.go:buildMiddlewareChain()`
 - **Add admin endpoint**: Register in `internal/admin/api.go:registerRoutes()`
 - **Add MCP tool**: Register in `internal/mcp/server.go:registerTools()`
+- **Add backup provider**: Implement `StorageProvider` interface in `internal/backup/`
+- **Add CLI command**: Create file in `internal/cli/`, register in `cmd/uwas/main.go`
+- **Add dashboard page**: Create in `web/dashboard/src/pages/`, add route in `App.tsx`, link in `Sidebar.tsx`
