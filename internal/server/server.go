@@ -497,6 +497,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.ActiveConns.Add(-1)
 		s.metrics.RequestsTotal.Add(1)
 		s.metrics.RecordRequest(ctx.Response.StatusCode())
+		s.metrics.RecordLatency(time.Since(start))
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
 
 		// Record to admin log ring buffer
@@ -522,6 +523,19 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// Record for alerting (error spike detection)
 		if s.alerter != nil {
 			s.alerter.RecordRequest(ctx.Response.StatusCode() >= 500)
+		}
+
+		// Slow request logging
+		elapsed := time.Since(start)
+		if s.metrics.SlowThreshold > 0 && elapsed >= s.metrics.SlowThreshold {
+			s.logger.Warn("slow request",
+				"host", r.Host,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ctx.Response.StatusCode(),
+				"duration", elapsed.String(),
+				"bytes", ctx.Response.BytesWritten(),
+			)
 		}
 	}()
 
