@@ -18,6 +18,7 @@ import (
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
+	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -56,9 +57,10 @@ type Server struct {
 	mux            *http.ServeMux
 	httpSrv        *http.Server
 
-	monitor *monitor.Monitor
-	alerter *alerting.Alerter
-	phpMgr  *phpmanager.Manager
+	monitor   *monitor.Monitor
+	alerter   *alerting.Alerter
+	phpMgr    *phpmanager.Manager
+	backupMgr *backup.BackupManager
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -117,6 +119,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/php/domains/{domain}/stop", s.handlePHPDomainStop)
 	s.mux.HandleFunc("GET /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigGet)
 	s.mux.HandleFunc("PUT /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigPut)
+
+	// Backup endpoints
+	s.mux.HandleFunc("GET /api/v1/backups", s.handleBackupList)
+	s.mux.HandleFunc("POST /api/v1/backups", s.handleBackupCreate)
+	s.mux.HandleFunc("POST /api/v1/backups/restore", s.handleBackupRestore)
+	s.mux.HandleFunc("DELETE /api/v1/backups/{name}", s.handleBackupDelete)
+	s.mux.HandleFunc("GET /api/v1/backups/schedule", s.handleBackupScheduleGet)
+	s.mux.HandleFunc("PUT /api/v1/backups/schedule", s.handleBackupSchedulePut)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -1156,4 +1166,157 @@ func (s *Server) domainFilePath(host string) (string, error) {
 	}
 
 	return filepath.Join(domainsDir, host+".yaml"), nil
+}
+
+// --- Backup ---
+
+// SetBackupManager sets the backup manager for the backup API endpoints.
+func (s *Server) SetBackupManager(m *backup.BackupManager) { s.backupMgr = m }
+
+func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	backups := s.backupMgr.ListBackups()
+	if backups == nil {
+		backups = make([]backup.BackupInfo, 0)
+	}
+	jsonResponse(w, backups)
+}
+
+func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "local"
+	}
+
+	info, err := s.backupMgr.CreateBackup(req.Provider)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(info)
+}
+
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req struct {
+		Name     string `json:"name"`
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		jsonError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "local"
+	}
+
+	if err := s.backupMgr.RestoreBackup(req.Name, req.Provider); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "restored", "name": req.Name})
+}
+
+func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		jsonError(w, "backup name required", http.StatusBadRequest)
+		return
+	}
+	provider := r.URL.Query().Get("provider")
+	if provider == "" {
+		provider = "local"
+	}
+
+	if err := s.backupMgr.DeleteBackup(name, provider); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "deleted", "name": name})
+}
+
+func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request) {
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	interval, active := s.backupMgr.ScheduleStatus()
+	jsonResponse(w, map[string]any{
+		"interval": interval.String(),
+		"active":   active,
+	})
+}
+
+func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request) {
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req struct {
+		Interval string `json:"interval"`
+		Enabled  *bool  `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Enabled != nil && !*req.Enabled {
+		s.backupMgr.ScheduleBackup(0)
+		jsonResponse(w, map[string]any{"status": "stopped", "active": false})
+		return
+	}
+
+	if req.Interval == "" {
+		jsonError(w, "interval is required", http.StatusBadRequest)
+		return
+	}
+	d, err := time.ParseDuration(req.Interval)
+	if err != nil {
+		jsonError(w, "invalid interval: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if d < time.Minute {
+		jsonError(w, "interval must be at least 1m", http.StatusBadRequest)
+		return
+	}
+
+	s.backupMgr.ScheduleBackup(d)
+	jsonResponse(w, map[string]any{
+		"status":   "scheduled",
+		"interval": d.String(),
+		"active":   true,
+	})
 }
