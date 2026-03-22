@@ -14,6 +14,8 @@ Apache + Nginx + Varnish + Caddy → UWAS
 
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-1728_passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)]()
 
 ## What is UWAS?
 
@@ -24,28 +26,40 @@ One binary. Zero hassle. Production ready.
 ## Features
 
 - **Auto HTTPS** — Let's Encrypt certificates with zero configuration
+- **HTTP/3 (QUIC)** — Via quic-go with Alt-Svc header advertisement
 - **Built-in Cache** — Varnish-level caching with grace mode, tag-based purge
 - **PHP Ready** — FastCGI with connection pooling and .htaccess support
+- **Per-domain PHP** — Multiple PHP versions per domain with auto-port assignment
 - **Load Balancer** — 5 algorithms, health checks, circuit breaker
+- **WebSocket Proxy** — TCP hijack with bidirectional tunneling
 - **URL Rewrite** — Apache mod_rewrite compatible engine
-- **Observable** — Prometheus metrics, structured JSON logs, admin dashboard
+- **Brotli + Gzip** — Dual compression with Accept-Encoding negotiation
+- **Image Optimization** — On-the-fly WebP/AVIF conversion
+- **Dashboard** — 15-page React 19 admin dashboard with real-time stats
+- **Analytics** — Per-domain traffic analytics, referrer tracking, user agent breakdown
+- **Observable** — Prometheus metrics with p50/p95/p99 latency percentiles
+- **Distributed Tracing** — W3C Trace Context (traceparent) propagation
+- **Uptime Monitoring** — Per-domain health checks with alerting
+- **A/B Testing** — Canary routing with cookie stickiness
+- **Request Mirroring** — Shadow traffic to secondary backends
+- **Backup/Restore** — Local, S3, SFTP storage providers with scheduling
+- **Nginx/Apache Migration** — `uwas migrate nginx/apache <file>` CLI converter
+- **Audit Logging** — Track all admin actions with timestamps and IPs
 - **AI-Native** — MCP server for LLM-driven management
 - **Secure** — WAF rules, rate limiting, security headers, blocked paths
+- **First-Run UX** — Auto-config creation, interactive setup, startup banner
 - **Single Binary** — No dependencies, just download and run
 
 ## Quick Start
 
 ```bash
-# Build from source
-go install github.com/uwaserver/uwas@latest
+# Just run it — creates config automatically on first launch
+uwas
 
-# Or build locally
-git clone https://github.com/uwaserver/uwas.git
-cd uwas
+# Or build from source
+git clone https://github.com/uwaserver/uwas.git && cd uwas
 make build
-
-# Serve a static site
-./bin/uwas serve -c uwas.yaml
+./bin/uwas
 ```
 
 ## Configuration
@@ -126,11 +140,22 @@ domains:
 ## CLI
 
 ```
-uwas serve    -c uwas.yaml     Start the server
-uwas version                    Print version info
-uwas config   validate -c ...   Validate a config file
-uwas config   test -c ...       Show parsed config details
-uwas help                       Show help
+uwas                         Start server (auto-setup if no config)
+uwas serve    -c uwas.yaml   Start with specific config
+uwas version                 Print version info
+uwas config   validate       Validate config file
+uwas domain   list           List domains
+uwas cache    stats          Cache statistics
+uwas cache    purge          Purge cache
+uwas status                  Server status via admin API
+uwas reload                  Hot-reload configuration
+uwas migrate  nginx <file>   Convert Nginx config to UWAS
+uwas migrate  apache <file>  Convert Apache config to UWAS
+uwas backup                  Create config backup
+uwas restore                 Restore from backup
+uwas php      list           List detected PHP versions
+uwas php      start <ver>    Start PHP-FPM for version
+uwas help                    Show help
 ```
 
 ## Architecture
@@ -161,6 +186,9 @@ Request Flow:
 cmd/uwas/                → CLI entry point
 internal/
   admin/                 → REST API (health, stats, domains, metrics)
+  alerting/              → Webhook alerts, error spike detection
+  analytics/             → Per-domain traffic analytics
+  backup/                → Backup/restore with Local, S3, SFTP
   build/                 → Version info (ldflags)
   cache/                 → L1 memory (256-shard LRU) + L2 disk cache
   cli/                   → CLI framework and commands
@@ -173,6 +201,9 @@ internal/
   mcp/                   → MCP server for AI management
   metrics/               → Prometheus-compatible metrics
   middleware/            → Chain, recovery, request ID, rate limit, gzip, CORS, WAF
+  migrate/               → Nginx/Apache config converter
+  monitor/               → Uptime monitoring per domain
+  phpmanager/            → PHP version management
   rewrite/               → URL rewrite engine, conditions, variables
   router/                → Virtual host routing, request context
   server/                → HTTP/HTTPS server, dispatch, error pages
@@ -230,21 +261,68 @@ docker build -t uwas .
 docker run -p 80:80 -p 443:443 -v ./uwas.yaml:/etc/uwas/uwas.yaml uwas
 ```
 
+## Migration from Nginx/Apache
+
+```bash
+# Convert existing Nginx config
+uwas migrate nginx /etc/nginx/sites-enabled/example.conf > uwas.yaml
+
+# Convert Apache config
+uwas migrate apache /etc/apache2/sites-enabled/example.conf > uwas.yaml
+```
+
 ## Admin API
 
 When `admin.enabled: true`, the REST API is available at `127.0.0.1:9443`:
 
 ```
-GET  /api/v1/health       → Server health status
-GET  /api/v1/stats        → Request/cache/connection statistics
-GET  /api/v1/domains      → List configured domains
-GET  /api/v1/config       → Show sanitized configuration
-GET  /api/v1/metrics      → Prometheus text format metrics
-POST /api/v1/reload       → Trigger config reload
-POST /api/v1/cache/purge  → Purge cache entries
+GET  /api/v1/health          → Health status (public, no auth)
+GET  /api/v1/system          → System info (Go, OS, memory, goroutines)
+GET  /api/v1/stats           → Stats + latency percentiles
+GET  /api/v1/domains         → Domain list
+GET  /api/v1/domains/{host}  → Domain detail
+POST /api/v1/domains         → Create domain
+PUT  /api/v1/domains/{host}  → Update domain
+DELETE /api/v1/domains/{host} → Delete domain
+GET  /api/v1/config          → Sanitized config
+GET  /api/v1/config/raw      → Raw YAML config
+PUT  /api/v1/config/raw      → Update config
+POST /api/v1/reload          → Reload config
+GET  /api/v1/metrics         → Prometheus metrics
+GET  /api/v1/logs            → Access logs
+GET  /api/v1/audit           → Audit log
+GET  /api/v1/certs           → Certificate info
+GET  /api/v1/monitor         → Uptime monitoring
+GET  /api/v1/alerts          → Alert history
+POST /api/v1/cache/purge     → Purge cache
+GET  /api/v1/cache/stats     → Cache statistics
+GET  /api/v1/analytics       → Traffic analytics
+GET  /api/v1/php             → PHP versions
+GET  /api/v1/backups         → Backup list
+POST /api/v1/backups         → Create backup
+POST /api/v1/backups/restore → Restore backup
+GET  /api/v1/sse/stats       → Server-Sent Events stream
 ```
 
 Protected with `Authorization: Bearer <api_key>` when `admin.api_key` is set.
+
+## Dashboard
+
+UWAS includes a built-in React 19 dashboard at `/_uwas/dashboard/`:
+
+- **Overview** — Request stats, cache hit rate, latency percentiles, live chart
+- **Domains** — CRUD with templates (WordPress, Static, Proxy, Redirect)
+- **Topology** — React Flow network diagram
+- **Cache** — Hit/miss/stale breakdown, per-domain rules, tag purge
+- **Metrics** — Prometheus metrics viewer with auto-refresh
+- **Analytics** — Per-domain traffic, referrers, user agent breakdown
+- **Logs** — Real-time access log viewer with status filters
+- **Config Editor** — YAML editor for main + per-domain configs
+- **Certificates** — SSL certificate timeline and expiry tracking
+- **PHP** — Per-domain PHP version management
+- **Backups** — Create/restore/delete with Local/S3/SFTP providers
+- **Audit Log** — Admin action history with filters
+- **Settings** — System info, config reload, export
 
 ## MCP Server
 

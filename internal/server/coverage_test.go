@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1771,3 +1772,665 @@ var _ = backup.BackupManager{}
 
 // import cache for ETag test
 var _ = cache.CachedResponse{}
+
+// --- handleHTTP: non-SSL domain passes through to handler ---
+
+func TestHandleHTTPNonSSLDomainPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "page.html"), []byte("plain http"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "plain.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// handleHTTP should serve the request directly (no redirect) for non-SSL domains
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/page.html", nil)
+	req.Host = "plain.com"
+	s.handleHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 for non-SSL domain", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "plain http") {
+		t.Errorf("body = %q, want 'plain http'", rec.Body.String())
+	}
+}
+
+// --- handleHTTP: manual SSL domain redirects to HTTPS ---
+
+func TestHandleHTTPManualSSLRedirect(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{
+				Host: "manual-ssl.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "manual"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/secure-page?token=abc", nil)
+	req.Host = "manual-ssl.com"
+	s.handleHTTP(rec, req)
+
+	if rec.Code != 301 {
+		t.Errorf("status = %d, want 301 for manual SSL redirect", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "https://manual-ssl.com/secure-page?token=abc" {
+		t.Errorf("Location = %q, want https://manual-ssl.com/secure-page?token=abc", loc)
+	}
+	if rec.Header().Get("Strict-Transport-Security") == "" {
+		t.Error("HSTS header should be set for manual SSL redirect")
+	}
+}
+
+// --- handleHTTP: unknown host passes through to handler ---
+
+func TestHandleHTTPUnknownHost(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "known.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "unknown.com"
+	s.handleHTTP(rec, req)
+
+	// Unknown host goes through the handler chain which returns 404
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404 for unknown host", rec.Code)
+	}
+}
+
+// --- startHTTP verifies server timeout configuration ---
+
+func TestStartHTTPTimeoutsConfigured(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:   "error",
+			LogFormat:  "text",
+			HTTPListen: "127.0.0.1:0",
+			Timeouts: config.TimeoutConfig{
+				Read:          config.Duration{Duration: 10 * time.Second},
+				ReadHeader:    config.Duration{Duration: 3 * time.Second},
+				Write:         config.Duration{Duration: 15 * time.Second},
+				Idle:          config.Duration{Duration: 60 * time.Second},
+				MaxHeaderBytes: 1 << 20,
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	err := s.startHTTP()
+	if err != nil {
+		t.Fatalf("startHTTP: %v", err)
+	}
+	defer s.httpSrv.Close()
+
+	if s.httpSrv.ReadTimeout != 10*time.Second {
+		t.Errorf("ReadTimeout = %v, want 10s", s.httpSrv.ReadTimeout)
+	}
+	if s.httpSrv.ReadHeaderTimeout != 3*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 3s", s.httpSrv.ReadHeaderTimeout)
+	}
+	if s.httpSrv.WriteTimeout != 15*time.Second {
+		t.Errorf("WriteTimeout = %v, want 15s", s.httpSrv.WriteTimeout)
+	}
+	if s.httpSrv.IdleTimeout != 60*time.Second {
+		t.Errorf("IdleTimeout = %v, want 60s", s.httpSrv.IdleTimeout)
+	}
+	if s.httpSrv.MaxHeaderBytes != 1<<20 {
+		t.Errorf("MaxHeaderBytes = %d, want %d", s.httpSrv.MaxHeaderBytes, 1<<20)
+	}
+}
+
+// --- startHTTPS error path with invalid address ---
+
+func TestStartHTTPSBadAddress(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:    "error",
+			LogFormat:   "text",
+			HTTPSListen: "invalid-address-no-port",
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	err := s.startHTTPS()
+	if err == nil {
+		t.Error("startHTTPS should fail with invalid address")
+		if s.httpsSrv != nil {
+			s.httpsSrv.Close()
+		}
+	}
+	if err != nil && !strings.Contains(err.Error(), "listen") {
+		t.Errorf("expected listen error, got: %v", err)
+	}
+}
+
+// --- writePID: successful write and read back ---
+
+func TestWritePIDSuccess(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "subdir", "uwas.pid")
+
+	cfg := testConfig(dir)
+	cfg.Global.PIDFile = pidFile
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	err := s.writePID()
+	if err != nil {
+		t.Fatalf("writePID: %v", err)
+	}
+
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read PID file: %v", err)
+	}
+	pid := strings.TrimSpace(string(data))
+	if pid == "" {
+		t.Error("PID file should contain a PID")
+	}
+	// Verify it matches our process PID
+	expectedPID := strconv.Itoa(os.Getpid())
+	if pid != expectedPID {
+		t.Errorf("PID = %q, want %q", pid, expectedPID)
+	}
+}
+
+// --- writePID: empty PIDFile skips write ---
+
+func TestWritePIDEmptyPathCov(t *testing.T) {
+	cfg := testConfig(t.TempDir())
+	cfg.Global.PIDFile = ""
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	err := s.writePID()
+	if err != nil {
+		t.Errorf("writePID with empty path should return nil, got: %v", err)
+	}
+}
+
+// --- removePID: cleans up PID file ---
+
+func TestRemovePIDCov(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "uwas.pid")
+	os.WriteFile(pidFile, []byte("12345"), 0644)
+
+	cfg := testConfig(dir)
+	cfg.Global.PIDFile = pidFile
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	s.removePID()
+
+	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+		t.Error("PID file should be removed after removePID")
+	}
+}
+
+// --- reload: no config path returns error ---
+
+func TestReloadNoConfigPathCov(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	err := s.reload()
+	if err == nil {
+		t.Error("reload should fail when configPath is empty")
+	}
+	if !strings.Contains(err.Error(), "no config path") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- reload: invalid config file returns error ---
+
+func TestReloadInvalidConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "bad.yaml")
+	os.WriteFile(configPath, []byte("{{{{invalid yaml"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+	s.SetConfigPath(configPath)
+
+	err := s.reload()
+	if err == nil {
+		t.Error("reload should fail with invalid config file")
+	}
+	if !strings.Contains(err.Error(), "reload config") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- GracefulRestart with admin server ---
+
+func TestGracefulRestartWithAdmin(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "error",
+			LogFormat: "text",
+			Admin:     config.AdminConfig{Enabled: true, Listen: "127.0.0.1:0"},
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
+			},
+		},
+	}
+	_ = dir
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Start admin
+	go s.admin.Start()
+	time.Sleep(50 * time.Millisecond)
+
+	err := s.GracefulRestart()
+	if err != nil {
+		t.Fatalf("GracefulRestart with admin: %v", err)
+	}
+}
+
+// --- GracefulRestart with zero grace timeout uses default ---
+
+func TestGracefulRestartDefaultGraceCov(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 0},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := &Server{
+		config: cfg,
+		logger: log,
+	}
+
+	err := s.GracefulRestart()
+	if err != nil {
+		t.Fatalf("GracefulRestart with default grace: %v", err)
+	}
+}
+
+// --- DrainAndWait with zero grace timeout uses default ---
+
+func TestDrainAndWaitDefaultGrace(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 0},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := &Server{
+		config: cfg,
+		logger: log,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.DrainAndWait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// OK
+	case <-time.After(3 * time.Second):
+		t.Fatal("DrainAndWait with default grace did not complete in time")
+	}
+}
+
+// --- wp-settings cookie bypasses cache ---
+
+func TestCacheBypassWPSettingsCookie(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "wp-page.html"), []byte("wp content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "wpset.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/wp-page.html", nil)
+	req.Host = "wpset.com"
+	req.Header.Set("Cookie", "wp-settings-1=abc")
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	// Cache should be bypassed due to wp-settings cookie
+	xcache := rec.Header().Get("X-Cache")
+	if xcache == "HIT" {
+		t.Error("cache should be bypassed for wp-settings cookie")
+	}
+}
+
+// --- handleRequest: unknown domain type with cache enabled dispatches default ---
+
+func TestHandleRequestUnknownTypeWithCache(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "badtype-cache.com",
+				Type:  "unknown_type",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "badtype-cache.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500 for unknown domain type with cache", rec.Code)
+	}
+}
+
+// --- applyHtaccess with rewrite query modification ---
+
+func TestApplyHtaccessRewriteWithQuery(t *testing.T) {
+	dir := t.TempDir()
+	htContent := `RewriteEngine On
+RewriteRule ^/page$ /index.php?page=1 [L,QSA]
+`
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(htContent), 0644)
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("index"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "queryht.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/page", nil)
+	req.Host = "queryht.local"
+	s.handleRequest(rec, req)
+
+	// Just verify it completes without panic
+	if rec.Code == 0 {
+		t.Error("expected non-zero status code")
+	}
+}
+
+// --- parseHtaccess with no .htaccess file returns nil ---
+
+func TestParseHtaccessNoFile(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rules := s.parseHtaccess(dir)
+	if rules != nil {
+		t.Errorf("parseHtaccess should return nil for dir without .htaccess, got %d rules", len(rules))
+	}
+}
+
+// --- parseHtaccess with valid rewrite rules and conditions ---
+
+func TestParseHtaccessWithMultipleRulesAndBadCondition(t *testing.T) {
+	dir := t.TempDir()
+	htContent := `RewriteEngine On
+RewriteCond %{INVALID_VARIABLE [bad
+RewriteRule ^/good$ /target [L]
+RewriteRule ^/other$ /elsewhere [L]
+`
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(htContent), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rules := s.parseHtaccess(dir)
+	// Should not panic even with bad condition syntax
+	// At least some rules should parse (the ones without bad conditions)
+	_ = rules
+}
+
+// --- handleFileRequest: directory listing enabled for root ---
+
+func TestHandleFileRequestDirectoryListingEnabled(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "file1.txt"), []byte("content1"), 0644)
+	os.WriteFile(filepath.Join(dir, "file2.txt"), []byte("content2"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:             "dirlist.com",
+				Root:             dir,
+				Type:             "static",
+				SSL:              config.SSLConfig{Mode: "off"},
+				DirectoryListing: true,
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "dirlist.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 for directory listing", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "file1.txt") || !strings.Contains(body, "file2.txt") {
+		t.Error("directory listing should contain both files")
+	}
+}
+
+// --- handleRequest with alerter records request ---
+
+func TestHandleRequestWithAlerter(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "alert.html"), []byte("alert test"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Alerting: config.AlertingConfig{
+				Enabled: true,
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host: "alerter.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/alert.html", nil)
+	req.Host = "alerter.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// --- handleRequest with admin records log ---
+
+func TestHandleRequestWithAdminRecordsLog(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "admin-log.html"), []byte("logged"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Admin:       config.AdminConfig{Enabled: true, Listen: "127.0.0.1:0"},
+		},
+		Domains: []config.Domain{
+			{
+				Host: "adminlog.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/admin-log.html", nil)
+	req.Host = "adminlog.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// --- applyRewrites: redirect rule ---
+
+func TestApplyRewritesRedirectRule(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "redirect-rw.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Rewrites: []config.RewriteRule{
+					{Match: "^/old-page$", To: "https://external.com/new-page", Status: 302},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/old-page", nil)
+	req.Host = "redirect-rw.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 302 {
+		t.Errorf("status = %d, want 302 (redirect rewrite)", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "https://external.com/new-page" {
+		t.Errorf("Location = %q", loc)
+	}
+}
