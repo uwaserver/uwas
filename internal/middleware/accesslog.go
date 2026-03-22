@@ -21,7 +21,7 @@ func AccessLog(log *logger.Logger) Middleware {
 
 			duration := time.Since(start)
 
-			log.Info("request",
+			fields := []any{
 				"method", r.Method,
 				"host", r.Host,
 				"path", r.URL.Path,
@@ -32,7 +32,14 @@ func AccessLog(log *logger.Logger) Middleware {
 				"remote", clientIP(r),
 				"user_agent", r.Header.Get("User-Agent"),
 				"request_id", w.Header().Get("X-Request-ID"),
-			)
+			}
+			if tp := r.Header.Get("Traceparent"); tp != "" {
+				fields = append(fields, "traceparent", tp)
+			}
+			if ref := r.Referer(); ref != "" {
+				fields = append(fields, "referer", ref)
+			}
+			log.Info("request", fields...)
 		})
 	}
 }

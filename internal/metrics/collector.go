@@ -29,6 +29,12 @@ type Collector struct {
 	latencyFull    bool
 	SlowThreshold  time.Duration // log requests slower than this
 	SlowRequests   atomic.Int64  // count of slow requests
+
+	// Per-handler type counters
+	StaticRequests  atomic.Int64
+	PHPRequests     atomic.Int64
+	ProxyRequests   atomic.Int64
+	RedirectRequests atomic.Int64
 }
 
 const latencyBufSize = 10000 // track last 10K requests for percentile calculation
@@ -108,6 +114,20 @@ func percentile(sorted []float64, p float64) float64 {
 	return sorted[lower]*(1-frac) + sorted[upper]*frac
 }
 
+// RecordHandlerType records which handler type served the request.
+func (c *Collector) RecordHandlerType(handlerType string) {
+	switch handlerType {
+	case "static":
+		c.StaticRequests.Add(1)
+	case "php":
+		c.PHPRequests.Add(1)
+	case "proxy":
+		c.ProxyRequests.Add(1)
+	case "redirect":
+		c.RedirectRequests.Add(1)
+	}
+}
+
 func (c *Collector) RecordCache(status string) {
 	switch status {
 	case "HIT":
@@ -168,6 +188,13 @@ func (c *Collector) Handler() http.Handler {
 		fmt.Fprintf(&b, "# HELP uwas_slow_requests_total Requests exceeding slow threshold.\n")
 		fmt.Fprintf(&b, "# TYPE uwas_slow_requests_total counter\n")
 		fmt.Fprintf(&b, "uwas_slow_requests_total %d\n", c.SlowRequests.Load())
+
+		fmt.Fprintf(&b, "# HELP uwas_requests_by_handler Requests by handler type.\n")
+		fmt.Fprintf(&b, "# TYPE uwas_requests_by_handler counter\n")
+		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"static\"} %d\n", c.StaticRequests.Load())
+		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"php\"} %d\n", c.PHPRequests.Load())
+		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"proxy\"} %d\n", c.ProxyRequests.Load())
+		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"redirect\"} %d\n", c.RedirectRequests.Load())
 
 		w.Write([]byte(b.String()))
 	})

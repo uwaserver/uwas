@@ -622,6 +622,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		capture = newResponseCapture(ctx.Response.ResponseWriter)
 	}
 
+	// Record handler type for per-handler metrics
+	s.metrics.RecordHandlerType(domain.Type)
+
 	// Dispatch to handler
 	if capture != nil {
 		// Temporarily swap the underlying writer so handlers write through the capture.
