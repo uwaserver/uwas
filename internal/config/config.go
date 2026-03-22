@@ -81,10 +81,16 @@ type Domain struct {
 	ErrorPages  map[int]string   `yaml:"error_pages"`
 	Proxy       ProxyConfig      `yaml:"proxy"`
 	Redirect    RedirectConfig   `yaml:"redirect"`
-	TryFiles         []string         `yaml:"try_files"`
-	SPAMode          bool             `yaml:"spa_mode"`
-	IndexFiles       []string         `yaml:"index_files"`
-	DirectoryListing bool             `yaml:"directory_listing"`
+	TryFiles          []string                `yaml:"try_files"`
+	SPAMode           bool                    `yaml:"spa_mode"`
+	IndexFiles        []string                `yaml:"index_files"`
+	DirectoryListing  bool                    `yaml:"directory_listing"`
+	ImageOptimization ImageOptimizationConfig `yaml:"image_optimization"`
+}
+
+type ImageOptimizationConfig struct {
+	Enabled bool     `yaml:"enabled"`
+	Formats []string `yaml:"formats"` // ["webp", "avif"]
 }
 
 type SSLConfig struct {
@@ -133,6 +139,8 @@ type SecurityConfig struct {
 	HotlinkProtection HotlinkConfig      `yaml:"hotlink_protection"`
 	RateLimit         RateLimitConfig    `yaml:"rate_limit"`
 	WAF               WAFConfig          `yaml:"waf"`
+	IPWhitelist       []string           `yaml:"ip_whitelist"`
+	IPBlacklist       []string           `yaml:"ip_blacklist"`
 }
 
 type HotlinkConfig struct {
@@ -153,8 +161,12 @@ type WAFConfig struct {
 }
 
 type HeadersConfig struct {
-	Add    map[string]string `yaml:"add"`
-	Remove []string          `yaml:"remove"`
+	Add            map[string]string `yaml:"add"`
+	Remove         []string          `yaml:"remove"`
+	RequestAdd     map[string]string `yaml:"request_add"`
+	RequestRemove  []string          `yaml:"request_remove"`
+	ResponseAdd    map[string]string `yaml:"response_add"`
+	ResponseRemove []string          `yaml:"response_remove"`
 }
 
 type CompressionConfig struct {
@@ -185,6 +197,15 @@ type ProxyConfig struct {
 	CircuitBreaker CircuitConfig      `yaml:"circuit_breaker"`
 	WebSocket      bool               `yaml:"websocket"`
 	Timeouts       ProxyTimeouts      `yaml:"timeouts"`
+	MaxRetries     int                `yaml:"max_retries"`
+	Canary         CanaryConfig       `yaml:"canary"`
+}
+
+type CanaryConfig struct {
+	Enabled   bool       `yaml:"enabled"`
+	Weight    int        `yaml:"weight"`
+	Upstreams []Upstream `yaml:"upstreams"`
+	Cookie    string     `yaml:"cookie"`
 }
 
 type Upstream struct {

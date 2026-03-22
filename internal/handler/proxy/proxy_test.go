@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -783,5 +784,357 @@ func TestRandomSingleBackend(t *testing.T) {
 		if b != backends[0] {
 			t.Fatal("single backend should always be selected")
 		}
+	}
+}
+
+// --- Retry Logic ---
+
+func TestProxyRetryOnConnectionRefused(t *testing.T) {
+	// First backend refuses connections; second backend works.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Backend", "good")
+		w.WriteHeader(200)
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1},   // will refuse
+		{Address: upstream.URL, Weight: 1},             // will succeed
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.MaxRetries = 2
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 2 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (should have retried to good backend)", rec.Code)
+	}
+	if rec.Body.String() != "ok" {
+		t.Errorf("body = %q, want ok", rec.Body.String())
+	}
+}
+
+func TestProxyRetryExhausted(t *testing.T) {
+	// Both backends refuse connections — all retries exhausted.
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1},
+		{Address: "http://127.0.0.1:2", Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.MaxRetries = 2
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 2 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 502 {
+		t.Errorf("status = %d, want 502 after all retries exhausted", rec.Code)
+	}
+}
+
+func TestProxyNoRetryOnSuccess(t *testing.T) {
+	callCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(200)
+		w.Write([]byte("first call"))
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: upstream.URL, Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.MaxRetries = 3
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if callCount != 1 {
+		t.Errorf("upstream called %d times, want 1 (no retry on success)", callCount)
+	}
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestProxyDefaultMaxRetries(t *testing.T) {
+	// When MaxRetries is 0, default to 2
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1},
+		{Address: upstream.URL, Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	// MaxRetries is 0, which should default to 2
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 2 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 with default retry", rec.Code)
+	}
+}
+
+func TestIsRetryableError(t *testing.T) {
+	if isRetryableError(nil) {
+		t.Error("nil error should not be retryable")
+	}
+
+	// Test with string containing "connection refused"
+	err := fmt.Errorf("dial tcp 127.0.0.1:1: connection refused")
+	if !isRetryableError(err) {
+		t.Error("connection refused should be retryable")
+	}
+
+	err2 := fmt.Errorf("dial tcp: connection reset")
+	if !isRetryableError(err2) {
+		t.Error("connection reset should be retryable")
+	}
+}
+
+// --- Canary Routing ---
+
+func TestCanaryIsCanaryDisabled(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: false,
+		Weight:  50,
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	if cr.IsCanary(req, cfg) {
+		t.Error("should not be canary when disabled")
+	}
+}
+
+func TestCanaryIsCanaryWeight100(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  100,
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	if !cr.IsCanary(req, cfg) {
+		t.Error("should always be canary with weight 100")
+	}
+}
+
+func TestCanaryIsCanaryWeight0(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  0,
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	if cr.IsCanary(req, cfg) {
+		t.Error("should never be canary with weight 0")
+	}
+}
+
+func TestCanaryCookieStickiness(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  0, // weight 0 means without cookie it should not be canary
+		Cookie:  "uwas-canary",
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	// Request without cookie: should not be canary (weight 0)
+	req := httptest.NewRequest("GET", "/", nil)
+	if cr.IsCanary(req, cfg) {
+		t.Error("should not be canary without cookie and weight 0")
+	}
+
+	// Request with canary cookie: should be canary regardless of weight
+	req2 := httptest.NewRequest("GET", "/", nil)
+	req2.AddCookie(&http.Cookie{Name: "uwas-canary", Value: "true"})
+	if !cr.IsCanary(req2, cfg) {
+		t.Error("should be canary when cookie is set")
+	}
+
+	// Request with canary cookie value=false: should not be canary
+	req3 := httptest.NewRequest("GET", "/", nil)
+	req3.AddCookie(&http.Cookie{Name: "uwas-canary", Value: "false"})
+	if cr.IsCanary(req3, cfg) {
+		t.Error("should not be canary when cookie value is false")
+	}
+}
+
+func TestCanaryDefaultCookieName(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  0,
+		// Cookie is empty, should default to "X-Canary"
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(&http.Cookie{Name: "X-Canary", Value: "true"})
+	if !cr.IsCanary(req, cfg) {
+		t.Error("should use X-Canary as default cookie name")
+	}
+}
+
+func TestCanaryServe(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Backend", "canary")
+		w.WriteHeader(200)
+		w.Write([]byte("canary response"))
+	}))
+	defer upstream.Close()
+
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  100,
+		Upstreams: []config.Upstream{
+			{Address: upstream.URL, Weight: 1},
+		},
+		Cookie: "uwas-canary",
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.Canary = cfg
+
+	cr.Serve(ctx, domain, h)
+
+	if rec.Code != 200 {
+		t.Errorf("canary status = %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != "canary response" {
+		t.Errorf("canary body = %q", rec.Body.String())
+	}
+	if rec.Header().Get("X-Canary") != "true" {
+		t.Error("X-Canary header should be set on canary response")
+	}
+	// Check stickiness cookie
+	cookies := rec.Header().Get("Set-Cookie")
+	if cookies == "" || !strings.Contains(cookies, "uwas-canary=true") {
+		t.Errorf("expected canary stickiness cookie, got %q", cookies)
+	}
+}
+
+func TestCanaryServeNoHealthyBackends(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  100,
+		Upstreams: []config.Upstream{
+			{Address: "http://127.0.0.1:1", Weight: 1},
+		},
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	// Mark all canary backends unhealthy
+	for _, b := range cr.CanaryPool().All() {
+		b.SetState(StateUnhealthy)
+	}
+
+	h := New(log)
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.Canary = cfg
+
+	cr.Serve(ctx, domain, h)
+
+	// When no healthy canary backends, it should fall back (not write a response)
+	// rec.Code will be the default 200 from httptest.NewRecorder since Serve returns early
+	// The caller should handle fallback. Check that X-Canary is NOT set.
+	if rec.Header().Get("X-Canary") == "true" {
+		t.Error("X-Canary should not be set when no healthy canary backends")
+	}
+}
+
+func TestCanaryPool(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  50,
+		Upstreams: []config.Upstream{
+			{Address: "http://canary1:8080", Weight: 1},
+			{Address: "http://canary2:8080", Weight: 2},
+		},
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	pool := cr.CanaryPool()
+	if pool.Len() != 2 {
+		t.Errorf("canary pool len = %d, want 2", pool.Len())
+	}
+}
+
+func TestCanaryWeightDistribution(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  50,
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	canaryCount := 0
+	iterations := 1000
+	for i := 0; i < iterations; i++ {
+		req := httptest.NewRequest("GET", "/", nil)
+		if cr.IsCanary(req, cfg) {
+			canaryCount++
+		}
+	}
+
+	// With 50% weight, expect roughly 500 canary hits (allow 35% to 65%)
+	if canaryCount < 350 || canaryCount > 650 {
+		t.Errorf("canary distribution = %d/%d, expected roughly 50%%", canaryCount, iterations)
 	}
 }

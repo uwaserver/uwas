@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -44,94 +45,181 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		return
 	}
 
-	backend := balancer.Select(backends, ctx.Request)
-	if backend == nil {
-		ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — no backend selected")
-		return
+	maxRetries := domain.Proxy.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = 2
+	}
+	if maxRetries > len(backends) {
+		maxRetries = len(backends)
 	}
 
-	backend.ActiveConns.Add(1)
-	defer backend.ActiveConns.Add(-1)
-	backend.TotalReqs.Add(1)
-
-	ctx.Upstream = backend.URL.String()
-
-	// Build upstream request
-	upstreamURL := *backend.URL
-	upstreamURL.Path = ctx.Request.URL.Path
-	upstreamURL.RawQuery = ctx.Request.URL.RawQuery
-
-	// Per-backend timeout via request context
-	readTimeout := 60 * time.Second
-	if domain.Proxy.Timeouts.Read.Duration > 0 {
-		readTimeout = domain.Proxy.Timeouts.Read.Duration
-	}
-
-	reqCtx := ctx.Request.Context()
-	reqCtx, cancel := context.WithTimeout(reqCtx, readTimeout)
-	defer cancel()
-
-	proxyReq, err := http.NewRequestWithContext(
-		reqCtx,
-		ctx.Request.Method,
-		upstreamURL.String(),
-		ctx.Request.Body,
-	)
-	if err != nil {
-		backend.TotalFails.Add(1)
-		ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
-		return
-	}
-
-	// Copy headers
-	for key, vals := range ctx.Request.Header {
-		for _, v := range vals {
-			proxyReq.Header.Add(key, v)
-		}
-	}
-
-	// Add proxy headers
-	proxyReq.Header.Set("X-Forwarded-For", clientIP(ctx.Request))
-	proxyReq.Header.Set("X-Forwarded-Proto", forwardedProto(ctx))
-	proxyReq.Header.Set("X-Forwarded-Host", ctx.Request.Host)
-	proxyReq.Header.Set("X-Real-IP", clientIP(ctx.Request))
-
-	// Remove hop-by-hop headers
-	removeHopByHop(proxyReq.Header)
-
-	// Execute
-	resp, err := h.transport.RoundTrip(proxyReq)
-	if err != nil {
-		backend.TotalFails.Add(1)
-		h.logger.Error("upstream error",
-			"backend", backend.URL.String(),
-			"error", err,
-		)
-		if ctx.Request.Context().Err() == context.DeadlineExceeded {
-			ctx.Response.Error(http.StatusGatewayTimeout, "504 Gateway Timeout")
-		} else {
+	// Buffer the request body so we can retry
+	var bodyBytes []byte
+	if ctx.Request.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(ctx.Request.Body)
+		if err != nil {
 			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+			return
 		}
+		ctx.Request.Body.Close()
+	}
+
+	tried := make(map[*Backend]bool)
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		backend := balancer.Select(backends, ctx.Request)
+		if backend == nil {
+			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — no backend selected")
+			return
+		}
+
+		// On retries, try to pick a different backend
+		if attempt > 0 {
+			var found bool
+			for _, b := range backends {
+				if !tried[b] {
+					backend = b
+					found = true
+					break
+				}
+			}
+			if !found {
+				// All backends tried, give up
+				break
+			}
+			h.logger.Warn("retrying upstream request",
+				"attempt", attempt,
+				"backend", backend.URL.String(),
+				"path", ctx.Request.URL.Path,
+			)
+		}
+		tried[backend] = true
+
+		backend.ActiveConns.Add(1)
+		backend.TotalReqs.Add(1)
+
+		ctx.Upstream = backend.URL.String()
+
+		// Build upstream request
+		upstreamURL := *backend.URL
+		upstreamURL.Path = ctx.Request.URL.Path
+		upstreamURL.RawQuery = ctx.Request.URL.RawQuery
+
+		// Per-backend timeout via request context
+		readTimeout := 60 * time.Second
+		if domain.Proxy.Timeouts.Read.Duration > 0 {
+			readTimeout = domain.Proxy.Timeouts.Read.Duration
+		}
+
+		reqCtx := ctx.Request.Context()
+		reqCtx, cancel := context.WithTimeout(reqCtx, readTimeout)
+
+		var body io.Reader
+		if bodyBytes != nil {
+			body = bytes.NewReader(bodyBytes)
+		}
+
+		proxyReq, err := http.NewRequestWithContext(
+			reqCtx,
+			ctx.Request.Method,
+			upstreamURL.String(),
+			body,
+		)
+		if err != nil {
+			cancel()
+			backend.ActiveConns.Add(-1)
+			backend.TotalFails.Add(1)
+			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+			return
+		}
+
+		// Copy headers
+		for key, vals := range ctx.Request.Header {
+			for _, v := range vals {
+				proxyReq.Header.Add(key, v)
+			}
+		}
+
+		// Add proxy headers
+		proxyReq.Header.Set("X-Forwarded-For", clientIP(ctx.Request))
+		proxyReq.Header.Set("X-Forwarded-Proto", forwardedProto(ctx))
+		proxyReq.Header.Set("X-Forwarded-Host", ctx.Request.Host)
+		proxyReq.Header.Set("X-Real-IP", clientIP(ctx.Request))
+
+		// Remove hop-by-hop headers
+		removeHopByHop(proxyReq.Header)
+
+		// Execute
+		resp, err := h.transport.RoundTrip(proxyReq)
+		if err != nil {
+			cancel()
+			backend.ActiveConns.Add(-1)
+			backend.TotalFails.Add(1)
+			h.logger.Error("upstream error",
+				"backend", backend.URL.String(),
+				"error", err,
+			)
+
+			// Don't retry if the original client request context is done
+			if ctx.Request.Context().Err() == context.DeadlineExceeded {
+				ctx.Response.Error(http.StatusGatewayTimeout, "504 Gateway Timeout")
+				return
+			}
+			if ctx.Request.Context().Err() != nil {
+				ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+				return
+			}
+
+			// If there are more retries available, continue to next backend
+			if attempt < maxRetries && isRetryableError(err) {
+				continue
+			}
+
+			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+			return
+		}
+
+		cancel()
+		backend.ActiveConns.Add(-1)
+
+		// Copy response headers
+		for key, vals := range resp.Header {
+			for _, v := range vals {
+				ctx.Response.Header().Add(key, v)
+			}
+		}
+		removeHopByHop(ctx.Response.Header())
+
+		// Write status + body
+		ctx.Response.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
+			h.logger.Error("error copying upstream response body",
+				"backend", backend.URL.String(),
+				"error", err,
+			)
+		}
+		resp.Body.Close()
 		return
 	}
-	defer resp.Body.Close()
 
-	// Copy response headers
-	for key, vals := range resp.Header {
-		for _, v := range vals {
-			ctx.Response.Header().Add(key, v)
-		}
-	}
-	removeHopByHop(ctx.Response.Header())
+	// All retries exhausted
+	ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — all backends failed")
+}
 
-	// Write status + body
-	ctx.Response.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
-		h.logger.Error("error copying upstream response body",
-			"backend", backend.URL.String(),
-			"error", err,
-		)
+// isRetryableError checks if the error is a connection-level error worth retrying.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
 	}
+	// Connection refused, timeout, etc. are retryable
+	if netErr, ok := err.(net.Error); ok {
+		return netErr.Timeout() || true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "connection reset")
 }
 
 var hopByHopHeaders = []string{

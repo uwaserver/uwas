@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
@@ -517,5 +518,242 @@ func TestRealIPTrustedProxyCIDR(t *testing.T) {
 
 	if !strings.HasPrefix(capturedIP, "203.0.113.50") {
 		t.Errorf("RemoteAddr = %q, want 203.0.113.50 (rightmost untrusted)", capturedIP)
+	}
+}
+
+// --- Brotli ---
+
+func TestBrotliCompression(t *testing.T) {
+	body := strings.Repeat("Hello, brotli world! ", 200) // > 1KB
+
+	handler := Compress(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(body))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "br")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") != "br" {
+		t.Error("should be brotli encoded")
+	}
+
+	// Verify it's valid brotli
+	br := brotli.NewReader(rec.Body)
+	decoded, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("invalid brotli: %v", err)
+	}
+
+	if string(decoded) != body {
+		t.Errorf("decoded length = %d, want %d", len(decoded), len(body))
+	}
+}
+
+func TestBrotliPriorityOverGzip(t *testing.T) {
+	body := strings.Repeat("Brotli preferred! ", 200)
+
+	handler := Compress(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(body))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	// Client supports both br and gzip
+	req.Header.Set("Accept-Encoding", "gzip, br")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") != "br" {
+		t.Errorf("Content-Encoding = %q, want br (brotli should be preferred over gzip)", rec.Header().Get("Content-Encoding"))
+	}
+
+	// Verify it's valid brotli
+	br := brotli.NewReader(rec.Body)
+	decoded, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("invalid brotli: %v", err)
+	}
+	if string(decoded) != body {
+		t.Errorf("decoded length = %d, want %d", len(decoded), len(body))
+	}
+}
+
+func TestBrotliSkipSmall(t *testing.T) {
+	handler := Compress(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("small"))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "br")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") == "br" {
+		t.Error("should not brotli compress small responses")
+	}
+}
+
+func TestGzipFallbackWhenNoBrotli(t *testing.T) {
+	body := strings.Repeat("Only gzip supported! ", 200)
+
+	handler := Compress(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(body))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("should fall back to gzip when br is not accepted")
+	}
+
+	gr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("invalid gzip: %v", err)
+	}
+	decoded, _ := io.ReadAll(gr)
+	gr.Close()
+
+	if string(decoded) != body {
+		t.Errorf("decoded length = %d, want %d", len(decoded), len(body))
+	}
+}
+
+// --- IP ACL ---
+
+func TestIPACLWhitelistAllowed(t *testing.T) {
+	handler := IPACL(IPACLConfig{
+		Whitelist: []string{"10.0.0.0/8"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (whitelisted IP)", rec.Code)
+	}
+}
+
+func TestIPACLWhitelistDenied(t *testing.T) {
+	handler := IPACL(IPACLConfig{
+		Whitelist: []string{"10.0.0.0/8"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "192.168.1.1:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 (IP not in whitelist)", rec.Code)
+	}
+}
+
+func TestIPACLBlacklistBlocked(t *testing.T) {
+	handler := IPACL(IPACLConfig{
+		Blacklist: []string{"1.2.3.4"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 (blacklisted IP)", rec.Code)
+	}
+}
+
+func TestIPACLBlacklistAllowed(t *testing.T) {
+	handler := IPACL(IPACLConfig{
+		Blacklist: []string{"1.2.3.4"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (IP not in blacklist)", rec.Code)
+	}
+}
+
+func TestIPACLCIDRBlacklist(t *testing.T) {
+	handler := IPACL(IPACLConfig{
+		Blacklist: []string{"192.168.0.0/16"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "192.168.5.100:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 (IP in CIDR blacklist)", rec.Code)
+	}
+}
+
+func TestIPACLNoRulesPassthrough(t *testing.T) {
+	handler := IPACL(IPACLConfig{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (no ACL rules should pass through)", rec.Code)
+	}
+}
+
+func TestIPACLWhitelistAndBlacklist(t *testing.T) {
+	// IP in whitelist but also in blacklist should be denied
+	handler := IPACL(IPACLConfig{
+		Whitelist: []string{"10.0.0.0/8"},
+		Blacklist: []string{"10.0.0.5"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	// 10.0.0.5 is in whitelist range but specifically blacklisted
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 (in whitelist but also blacklisted)", rec.Code)
+	}
+
+	// 10.0.0.6 is in whitelist and not blacklisted
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/", nil)
+	req2.RemoteAddr = "10.0.0.6:1234"
+	handler.ServeHTTP(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Errorf("status = %d, want 200 (in whitelist, not blacklisted)", rec2.Code)
 	}
 }

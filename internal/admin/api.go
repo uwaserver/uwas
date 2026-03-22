@@ -3,9 +3,12 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
+	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -39,8 +43,10 @@ const maxLogEntries = 1000
 type Server struct {
 	config         *config.Config
 	configMu       sync.RWMutex
+	configPath     string
 	logger         *logger.Logger
 	metrics        *metrics.Collector
+	analytics      *analytics.Collector
 	cache          *cache.Engine
 	reloadFn       ReloadFunc
 	onDomainChange func()
@@ -81,6 +87,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
 	s.mux.HandleFunc("GET /api/v1/certs", s.handleCerts)
 	s.mux.HandleFunc("GET /api/v1/domains/{host}", s.handleDomainDetail)
+	s.mux.HandleFunc("GET /api/v1/config/raw", s.handleConfigRawGet)
+	s.mux.HandleFunc("PUT /api/v1/config/raw", s.handleConfigRawPut)
+	s.mux.HandleFunc("GET /api/v1/config/domains/{host}/raw", s.handleDomainRawGet)
+	s.mux.HandleFunc("PUT /api/v1/config/domains/{host}/raw", s.handleDomainRawPut)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -222,6 +232,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // SetCache sets the cache engine for purge operations.
 func (s *Server) SetCache(c *cache.Engine) { s.cache = c }
+
+// SetAnalytics sets the analytics collector and registers analytics routes.
+func (s *Server) SetAnalytics(a *analytics.Collector) {
+	s.analytics = a
+	allHandler, hostHandler := a.Handler()
+	s.mux.HandleFunc("GET /api/v1/analytics", allHandler)
+	s.mux.HandleFunc("GET /api/v1/analytics/{host}", hostHandler)
+}
+
+// Analytics returns the analytics collector, if set.
+func (s *Server) Analytics() *analytics.Collector { return s.analytics }
 
 // SetReloadFunc sets the callback for config reload.
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
@@ -623,4 +644,214 @@ func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonError(w, "domain not found", http.StatusNotFound)
+}
+
+// --- Config path for raw YAML editor ---
+
+// SetConfigPath stores the main config file path so the raw YAML endpoints
+// can read/write the file.
+func (s *Server) SetConfigPath(path string) { s.configPath = path }
+
+// --- Raw YAML config editor ---
+
+// handleConfigRawGet returns the raw YAML content of the main config file.
+func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
+	if s.configPath == "" {
+		jsonError(w, "config path not set", http.StatusNotImplemented)
+		return
+	}
+
+	data, err := os.ReadFile(s.configPath)
+	if err != nil {
+		jsonError(w, "failed to read config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Write(data)
+}
+
+// handleConfigRawPut validates and writes raw YAML content to the main config
+// file, then triggers a reload.
+func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
+	if s.configPath == "" {
+		jsonError(w, "config path not set", http.StatusNotImplemented)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate YAML syntax.
+	var probe config.Config
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Atomic write: write to temp file, then rename.
+	dir := filepath.Dir(s.configPath)
+	tmp, err := os.CreateTemp(dir, ".uwas-config-*.yaml")
+	if err != nil {
+		jsonError(w, "failed to create temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		jsonError(w, "failed to write temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		jsonError(w, "failed to close temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.Rename(tmpName, s.configPath); err != nil {
+		os.Remove(tmpName)
+		jsonError(w, "failed to rename config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Trigger reload if available.
+	if s.reloadFn != nil {
+		if err := s.reloadFn(); err != nil {
+			// File is already written, report reload failure.
+			jsonError(w, "config saved but reload failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// handleDomainRawGet returns the raw YAML content of a single domain file
+// from the domains.d/ directory.
+func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	path, err := s.domainFilePath(host)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			jsonError(w, "domain file not found", http.StatusNotFound)
+			return
+		}
+		jsonError(w, "failed to read domain file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Write(data)
+}
+
+// handleDomainRawPut validates and writes raw YAML content for a single
+// domain file in domains.d/, then triggers a reload.
+func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	path, err := s.domainFilePath(host)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate YAML syntax by parsing as a domain.
+	var probe config.Domain
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Ensure the domains.d directory exists.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		jsonError(w, "failed to create domains directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Atomic write: temp file then rename.
+	tmp, err := os.CreateTemp(dir, ".uwas-domain-*.yaml")
+	if err != nil {
+		jsonError(w, "failed to create temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		jsonError(w, "failed to write temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		jsonError(w, "failed to close temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		jsonError(w, "failed to rename domain file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Trigger reload if available.
+	if s.reloadFn != nil {
+		if err := s.reloadFn(); err != nil {
+			jsonError(w, "domain saved but reload failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// domainFilePath resolves the on-disk path for a domain's YAML file inside
+// the domains.d/ directory adjacent to the main config file.
+func (s *Server) domainFilePath(host string) (string, error) {
+	if s.configPath == "" {
+		return "", fmt.Errorf("config path not set")
+	}
+
+	// Sanitize host to prevent path traversal.
+	clean := filepath.Base(host)
+	if clean != host || clean == "." || clean == ".." || strings.ContainsAny(clean, `/\`) {
+		return "", fmt.Errorf("invalid host name")
+	}
+
+	baseDir := filepath.Dir(s.configPath)
+
+	// Use configured domains_dir if present, else default to domains.d/
+	s.configMu.RLock()
+	domainsDir := s.config.DomainsDir
+	s.configMu.RUnlock()
+
+	if domainsDir == "" {
+		domainsDir = "domains.d"
+	}
+	if !filepath.IsAbs(domainsDir) {
+		domainsDir = filepath.Join(baseDir, domainsDir)
+	}
+
+	return filepath.Join(domainsDir, host+".yaml"), nil
 }
