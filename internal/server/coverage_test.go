@@ -1732,6 +1732,40 @@ func TestWritePIDInvalidDir(t *testing.T) {
 	_ = s.writePID()
 }
 
+// --- Integration test via real HTTP server ---
+
+func TestStartHTTPAndServeRequest(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "live.html"), []byte("live content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			HTTPListen:  "127.0.0.1:0",
+			Timeouts: config.TimeoutConfig{
+				Read:          config.Duration{Duration: 5 * time.Second},
+				ReadHeader:    config.Duration{Duration: 5 * time.Second},
+				Write:         config.Duration{Duration: 5 * time.Second},
+				Idle:          config.Duration{Duration: 5 * time.Second},
+				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "localhost", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	err := s.startHTTP()
+	if err != nil {
+		t.Fatalf("startHTTP: %v", err)
+	}
+	defer s.httpSrv.Close()
+}
+
 // needed for backup integration and imports:
 var _ = backup.BackupManager{}
 
