@@ -2075,3 +2075,72 @@ func TestProxyServeNilBackendFromBalancer(t *testing.T) {
 		t.Errorf("status = %d, want 502 for nil backend", rec.Code)
 	}
 }
+
+// --- WebSocket proxy tests ---
+
+func TestWebSocketUpgradeSkipsRetryLoop(t *testing.T) {
+	// When WebSocket is enabled and request has Upgrade headers,
+	// the proxy should attempt WS tunnel (not HTTP round-trip).
+	// Since httptest.NewRecorder doesn't support Hijack, we verify
+	// the Error fallback path.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: upstream.URL, Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.WebSocket = true
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	// Since httptest.NewRecorder doesn't implement Hijack,
+	// the handler should fall back with an error status (500)
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500 for non-hijackable WS", rec.Code)
+	}
+}
+
+func TestWebSocketDisabledFallsBackToHTTP(t *testing.T) {
+	// When WebSocket is disabled, even with Upgrade headers,
+	// the proxy should use normal HTTP round-trip.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("http-response"))
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: upstream.URL, Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.WebSocket = false // disabled
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 for disabled WS (HTTP fallback)", rec.Code)
+	}
+}

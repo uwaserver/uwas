@@ -14,6 +14,7 @@ import ConfigEditor from '@/pages/ConfigEditor';
 import Certificates from '@/pages/Certificates';
 import PHP from '@/pages/PHP';
 import Backups from '@/pages/Backups';
+import AuditLog from '@/pages/AuditLog';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="/certificates" element={<Certificates />} />
         <Route path="/php" element={<PHP />} />
         <Route path="/backups" element={<Backups />} />
+        <Route path="/audit" element={<AuditLog />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

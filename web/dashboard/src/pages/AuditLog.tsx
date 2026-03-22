@@ -1,0 +1,133 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Shield, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { fetchAuditLog, type AuditEntry } from '@/lib/api';
+
+const ACTION_COLORS: Record<string, string> = {
+  'config.reload': 'bg-blue-500/20 text-blue-400',
+  'domain.create': 'bg-green-500/20 text-green-400',
+  'domain.delete': 'bg-red-500/20 text-red-400',
+  'domain.update': 'bg-yellow-500/20 text-yellow-400',
+  'cache.purge': 'bg-purple-500/20 text-purple-400',
+  'backup.create': 'bg-emerald-500/20 text-emerald-400',
+  'backup.restore': 'bg-orange-500/20 text-orange-400',
+  'backup.delete': 'bg-red-500/20 text-red-400',
+  'backup.schedule': 'bg-cyan-500/20 text-cyan-400',
+};
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString();
+}
+
+export default function AuditLog() {
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const result = await fetchAuditLog();
+      setEntries((result || []).reverse()); // newest first
+      setError('');
+    } catch (e) { setError((e as Error).message); }
+  }, []);
+
+  useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id); }, [load]);
+
+  const filtered = filter
+    ? entries.filter(e => e.action.includes(filter) || e.detail.includes(filter) || e.ip.includes(filter))
+    : entries;
+
+  const actionTypes = [...new Set(entries.map(e => e.action))].sort();
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100">Audit Log</h1>
+          <p className="text-sm text-slate-400">Admin action history ({entries.length} entries)</p>
+        </div>
+        <button onClick={load} className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]">
+          <RefreshCw size={12} /> Refresh
+        </button>
+      </div>
+
+      {error && <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
+
+      {/* Filter */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setFilter('')}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            !filter ? 'bg-blue-600 text-white' : 'bg-[#334155] text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          All
+        </button>
+        {actionTypes.map(action => (
+          <button
+            key={action}
+            onClick={() => setFilter(filter === action ? '' : action)}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              filter === action ? 'bg-blue-600 text-white' : 'bg-[#334155] text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {action}
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#334155] text-slate-400">
+                <th className="px-5 py-3 w-8"></th>
+                <th className="px-5 py-3">Time</th>
+                <th className="px-5 py-3">Action</th>
+                <th className="px-5 py-3">Detail</th>
+                <th className="px-5 py-3">IP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((entry, i) => (
+                <tr key={i} className="border-b border-[#334155]/50 text-slate-300">
+                  <td className="px-5 py-2.5">
+                    {entry.success ? (
+                      <CheckCircle size={14} className="text-green-400" />
+                    ) : (
+                      <XCircle size={14} className="text-red-400" />
+                    )}
+                  </td>
+                  <td className="px-5 py-2.5 text-xs text-slate-400 whitespace-nowrap">
+                    {formatTime(entry.time)}
+                  </td>
+                  <td className="px-5 py-2.5">
+                    <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ACTION_COLORS[entry.action] || 'bg-slate-500/20 text-slate-400'}`}>
+                      {entry.action}
+                    </span>
+                  </td>
+                  <td className="px-5 py-2.5 font-mono text-xs text-slate-400 max-w-xs truncate">
+                    {entry.detail || '-'}
+                  </td>
+                  <td className="px-5 py-2.5 font-mono text-xs text-slate-500">
+                    {entry.ip}
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-5 py-8 text-center text-slate-500">
+                    <Shield size={24} className="mx-auto mb-2 opacity-50" />
+                    No audit entries yet
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
