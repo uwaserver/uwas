@@ -1,59 +1,102 @@
 @import "tailwindcss";
 
-@theme {
-  --color-uwas-bg: #0f172a;
-  --color-uwas-bg-light: #1e293b;
-  --color-uwas-bg-card: #1e293b;
-  --color-uwas-blue: #2563eb;
-  --color-uwas-blue-light: #3b82f6;
-  --color-uwas-cyan: #06b6d4;
-  --color-uwas-green: #10b981;
-  --color-uwas-purple: #8b5cf6;
-  --color-uwas-orange: #f59e0b;
-  --color-uwas-text: #f1f5f9;
-  --color-uwas-text-muted: #94a3b8;
-  --color-uwas-border: #334155;
-  --color-uwas-code-bg: #0d1117;
+/* ------------------------------------------------------------------ */
+/*  Theme tokens                                                       */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #111118;
+  --bg-card: #16161f;
+  --border: #1e1e2e;
+  --text-primary: #f0f0f5;
+  --text-secondary: #8888a0;
+  --accent-blue: #3b82f6;
+  --accent-cyan: #06b6d4;
+  --accent-green: #10b981;
+  --accent-purple: #8b5cf6;
+  --accent-orange: #f59e0b;
+  --accent-pink: #ec4899;
+  --accent-red: #ef4444;
+  --accent-indigo: #6366f1;
+  --accent-teal: #14b8a6;
+  --accent-violet: #8b5cf6;
+  --accent-amber: #f59e0b;
+  --code-bg: #0d1117;
 }
+
+.light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-card: #ffffff;
+  --border: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --accent-blue: #3b82f6;
+  --accent-cyan: #0891b2;
+  --accent-green: #059669;
+  --accent-purple: #7c3aed;
+  --accent-orange: #d97706;
+  --accent-pink: #db2777;
+  --accent-red: #dc2626;
+  --accent-indigo: #4f46e5;
+  --accent-teal: #0d9488;
+  --accent-violet: #7c3aed;
+  --accent-amber: #d97706;
+  --code-bg: #f1f5f9;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Base                                                               */
+/* ------------------------------------------------------------------ */
 
 html {
   scroll-behavior: smooth;
 }
 
 body {
-  background-color: var(--color-uwas-bg);
-  color: var(--color-uwas-text);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   margin: 0;
 }
 
-/* Custom scrollbar */
+/* ------------------------------------------------------------------ */
+/*  Scrollbar                                                          */
+/* ------------------------------------------------------------------ */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-uwas-bg);
+  background: var(--bg-primary);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-uwas-border);
+  background: var(--border);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--text-secondary);
 }
 
-/* Code block styling */
+/* ------------------------------------------------------------------ */
+/*  Code                                                               */
+/* ------------------------------------------------------------------ */
+
 pre code {
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
   font-size: 0.875rem;
   line-height: 1.7;
 }
 
-/* Terminal cursor blink */
+/* ------------------------------------------------------------------ */
+/*  Animations                                                         */
+/* ------------------------------------------------------------------ */
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
@@ -63,24 +106,6 @@ pre code {
   animation: blink 1s step-end infinite;
 }
 
-/* Glow effects */
-.glow-blue {
-  box-shadow: 0 0 20px rgba(37, 99, 235, 0.3), 0 0 60px rgba(37, 99, 235, 0.1);
-}
-
-.glow-blue-sm {
-  box-shadow: 0 0 10px rgba(37, 99, 235, 0.2);
-}
-
-/* Gradient text */
-.gradient-text {
-  background: linear-gradient(135deg, #3b82f6, #06b6d4);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* Fade in animation */
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -94,4 +119,34 @@ pre code {
 
 .animate-fade-in-up {
   animation: fadeInUp 0.6s ease-out forwards;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.15); }
+  50% { box-shadow: 0 0 30px rgba(59, 130, 246, 0.3); }
+}
+
+.glow-blue {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3), 0 0 60px rgba(59, 130, 246, 0.1);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Light theme overrides for code blocks                              */
+/* ------------------------------------------------------------------ */
+
+.light pre {
+  background-color: var(--code-bg) !important;
+}
+
+.light .code-block-wrapper {
+  border-color: var(--border);
+  background-color: var(--code-bg);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Pipeline connector lines                                           */
+/* ------------------------------------------------------------------ */
+
+.pipeline-line {
+  background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan), var(--accent-green));
 }

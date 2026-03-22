@@ -1,54 +1,75 @@
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { Menu, X, Github, Server } from 'lucide-react'
+import { Menu, X, Github, Server, Sun, Moon } from 'lucide-react'
 
-export default function Navbar() {
+interface NavbarProps {
+  theme: 'dark' | 'light'
+  onToggleTheme: () => void
+}
+
+const navLinks = [
+  { href: '#features', label: 'Features' },
+  { href: '#architecture', label: 'Architecture' },
+  { href: '#quickstart', label: 'Quick Start' },
+  { href: '#compare', label: 'Compare' },
+]
+
+export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
-  const location = useLocation()
 
-  const links = [
-    { to: '/', label: 'Home' },
-    { to: '/docs', label: 'Docs' },
-    { to: '/quickstart', label: 'Quick Start' },
-  ]
-
-  function isActive(path: string) {
-    if (path === '/') return location.pathname === '/'
-    return location.pathname.startsWith(path)
+  function handleNavClick() {
+    setMobileOpen(false)
   }
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 border-b border-uwas-border bg-uwas-bg/80 backdrop-blur-xl">
+    <nav
+      className="sticky top-0 z-50 border-b backdrop-blur-xl"
+      style={{
+        backgroundColor: theme === 'dark' ? 'rgba(10, 10, 15, 0.8)' : 'rgba(255, 255, 255, 0.8)',
+        borderColor: 'var(--border)',
+      }}
+    >
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2.5 no-underline">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-uwas-blue">
+          <a href="#" className="flex items-center gap-2.5 no-underline">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600">
               <Server className="h-5 w-5 text-white" />
             </div>
-            <span className="text-xl font-bold tracking-tight text-uwas-text">UWAS</span>
-          </Link>
+            <span className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+              UWAS
+            </span>
+          </a>
 
-          {/* Desktop links */}
+          {/* Desktop nav */}
           <div className="hidden items-center gap-1 md:flex">
-            {links.map((link) => (
-              <Link
-                key={link.to}
-                to={link.to}
-                className={`rounded-lg px-3.5 py-2 text-sm font-medium no-underline transition-colors ${
-                  isActive(link.to)
-                    ? 'bg-uwas-blue/10 text-uwas-blue-light'
-                    : 'text-uwas-text-muted hover:bg-uwas-bg-light hover:text-uwas-text'
-                }`}
+            {navLinks.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                className="rounded-lg px-3.5 py-2 text-sm font-medium no-underline transition-colors hover:opacity-80"
+                style={{ color: 'var(--text-secondary)' }}
               >
                 {link.label}
-              </Link>
+              </a>
             ))}
+
+            {/* Theme toggle */}
+            <button
+              onClick={onToggleTheme}
+              className="ml-2 rounded-lg p-2 transition-colors hover:opacity-80"
+              style={{ color: 'var(--text-secondary)' }}
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+
+            {/* GitHub */}
             <a
-              href="https://github.com/avrahambenaram/uwas"
+              href="https://github.com/uwaserver/uwas"
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-2 flex items-center gap-2 rounded-lg border border-uwas-border px-3.5 py-2 text-sm font-medium text-uwas-text-muted no-underline transition-colors hover:border-uwas-blue hover:text-uwas-text"
+              className="ml-1 flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium no-underline transition-colors hover:opacity-80"
+              style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
             >
               <Github className="h-4 w-4" />
               GitHub
@@ -56,38 +77,50 @@ export default function Navbar() {
           </div>
 
           {/* Mobile toggle */}
-          <button
-            onClick={() => setMobileOpen(!mobileOpen)}
-            className="rounded-lg p-2 text-uwas-text-muted transition-colors hover:bg-uwas-bg-light md:hidden"
-          >
-            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+          <div className="flex items-center gap-2 md:hidden">
+            <button
+              onClick={onToggleTheme}
+              className="rounded-lg p-2 transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+            <button
+              onClick={() => setMobileOpen(!mobileOpen)}
+              className="rounded-lg p-2 transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="border-t border-uwas-border bg-uwas-bg md:hidden">
+        <div
+          className="border-t md:hidden"
+          style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)' }}
+        >
           <div className="space-y-1 px-4 py-3">
-            {links.map((link) => (
-              <Link
-                key={link.to}
-                to={link.to}
-                onClick={() => setMobileOpen(false)}
-                className={`block rounded-lg px-3 py-2.5 text-sm font-medium no-underline transition-colors ${
-                  isActive(link.to)
-                    ? 'bg-uwas-blue/10 text-uwas-blue-light'
-                    : 'text-uwas-text-muted hover:bg-uwas-bg-light hover:text-uwas-text'
-                }`}
+            {navLinks.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                onClick={handleNavClick}
+                className="block rounded-lg px-3 py-2.5 text-sm font-medium no-underline transition-colors"
+                style={{ color: 'var(--text-secondary)' }}
               >
                 {link.label}
-              </Link>
+              </a>
             ))}
             <a
-              href="https://github.com/avrahambenaram/uwas"
+              href="https://github.com/uwaserver/uwas"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-uwas-text-muted no-underline transition-colors hover:bg-uwas-bg-light hover:text-uwas-text"
+              onClick={handleNavClick}
+              className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium no-underline transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
             >
               <Github className="h-4 w-4" />
               GitHub
