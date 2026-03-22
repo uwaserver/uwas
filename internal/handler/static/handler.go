@@ -44,11 +44,12 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	w := ctx.Response
 	r := ctx.Request
 
-	// Security: reject dotfiles (e.g., .git, .env)
-	base := filepath.Base(path)
-	if strings.HasPrefix(base, ".") && base != "." && base != ".." {
-		w.Error(http.StatusForbidden, "403 Forbidden")
-		return
+	// Security: reject dotfiles in any path component (e.g., .git, .env)
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if strings.HasPrefix(component, ".") && component != "." && component != ".." {
+			w.Error(http.StatusForbidden, "403 Forbidden")
+			return
+		}
 	}
 
 	info, err := os.Stat(path)
@@ -112,7 +113,6 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		if err != nil {
 			continue
 		}
-		defer f.Close()
 
 		w.Header().Set("Content-Encoding", c.encoding)
 		w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
@@ -120,6 +120,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		w.Header().Set("ETag", generateETag(origInfo)+"-"+c.encoding)
 
 		http.ServeContent(w, r, filepath.Base(path), origInfo.ModTime(), f)
+		f.Close()
 		return true
 	}
 
@@ -202,6 +203,14 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		last := candidates[len(candidates)-1]
 		if !strings.HasPrefix(last, "$") {
 			fullPath := filepath.Join(docRoot, filepath.Clean("/"+last))
+
+			// Security: path must stay within document root
+			absRoot, _ := filepath.Abs(docRoot)
+			absPath, _ := filepath.Abs(fullPath)
+			if !strings.HasPrefix(absPath, absRoot) {
+				return false
+			}
+
 			ctx.ResolvedPath = fullPath
 			ctx.RewrittenURI = last
 			ctx.DocumentRoot = docRoot

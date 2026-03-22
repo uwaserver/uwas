@@ -50,26 +50,13 @@ var contextPool = sync.Pool{
 
 func AcquireContext(w http.ResponseWriter, r *http.Request) *RequestContext {
 	ctx := contextPool.Get().(*RequestContext)
+	// Zero the entire struct to prevent data leaking between pooled uses.
+	*ctx = RequestContext{}
 	ctx.ID = generateID()
 	ctx.StartTime = time.Now()
 	ctx.Request = r
 	ctx.Response = NewResponseWriter(w)
 	ctx.OriginalURI = r.URL.RequestURI()
-	ctx.RewrittenURI = ""
-	ctx.DocumentRoot = ""
-	ctx.ResolvedPath = ""
-	ctx.ScriptName = ""
-	ctx.PathInfo = ""
-	ctx.CacheStatus = ""
-	ctx.Upstream = ""
-	ctx.BytesSent = 0
-	ctx.Duration = 0
-	ctx.TTFBDur = 0
-	ctx.VHostName = ""
-	ctx.RemoteIP = ""
-	ctx.RemotePort = ""
-	ctx.ServerPort = ""
-	ctx.IsHTTPS = false
 	return ctx
 }
 

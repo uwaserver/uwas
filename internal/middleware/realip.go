@@ -14,6 +14,21 @@ func RealIP(trustedProxies []string) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// When no trusted proxies are configured, skip all header
+			// processing to avoid trusting spoofed proxy headers.
+			if len(trusted) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check whether the direct connection IP is a trusted proxy
+			// before reading any proxy headers.
+			directIP := extractIP(r.RemoteAddr)
+			if directIP == nil || !isTrusted(directIP, trusted) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Priority: CF-Connecting-IP > X-Real-IP > X-Forwarded-For
 			if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
 				r.RemoteAddr = ip + ":0"
@@ -60,6 +75,16 @@ func extractRealIP(xff string, trusted []*net.IPNet) string {
 		return strings.TrimSpace(parts[0])
 	}
 	return ""
+}
+
+// extractIP parses the IP from an address that may include a port.
+func extractIP(addr string) net.IP {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// May be bare IP without port.
+		return net.ParseIP(addr)
+	}
+	return net.ParseIP(host)
 }
 
 func isTrusted(ip net.IP, trusted []*net.IPNet) bool {

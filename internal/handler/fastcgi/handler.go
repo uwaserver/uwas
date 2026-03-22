@@ -46,7 +46,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 
 	// Execute FastCGI request
 	var stdin io.Reader
-	if ctx.Request.Body != nil && ctx.Request.ContentLength > 0 {
+	if ctx.Request.Body != nil && ctx.Request.ContentLength != 0 {
 		stdin = ctx.Request.Body
 	}
 

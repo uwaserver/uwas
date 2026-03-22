@@ -38,6 +38,7 @@ const maxLogEntries = 1000
 // Server is the admin REST API server.
 type Server struct {
 	config         *config.Config
+	configMu       sync.RWMutex
 	logger         *logger.Logger
 	metrics        *metrics.Collector
 	cache          *cache.Engine
@@ -134,10 +135,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// CORS for dashboard dev mode
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		// CORS: only allow the dashboard's own origin (or localhost for dev).
+		if origin := r.Header.Get("Origin"); origin != "" {
+			if isAllowedOrigin(origin, r) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Vary", "Origin")
+			}
+		}
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
@@ -183,6 +189,7 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 		Root    string   `json:"root,omitempty"`
 	}
 
+	s.configMu.RLock()
 	var domains []domainInfo
 	for _, d := range s.config.Domains {
 		domains = append(domains, domainInfo{
@@ -193,6 +200,7 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 			Root:    d.Root,
 		})
 	}
+	s.configMu.RUnlock()
 	jsonResponse(w, domains)
 }
 
@@ -228,6 +236,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if s.cache == nil {
 		jsonError(w, "cache not enabled", http.StatusNotImplemented)
 		return
@@ -295,9 +304,21 @@ func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
 
 // handleConfigExport returns the current configuration as a YAML file download.
 func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
-	// Build a sanitized copy: strip the admin API key.
+	// Build a sanitized copy: strip secrets.
+	s.configMu.RLock()
 	export := *s.config
+	s.configMu.RUnlock()
 	export.Global.Admin.APIKey = ""
+	export.Global.ACME.DNSCredentials = nil
+	export.Global.Cache.PurgeKey = ""
+
+	// Strip per-domain secrets.
+	sanitized := make([]config.Domain, len(export.Domains))
+	copy(sanitized, export.Domains)
+	for i := range sanitized {
+		sanitized[i].PHP.Env = nil
+	}
+	export.Domains = sanitized
 
 	out, err := yaml.Marshal(&export)
 	if err != nil {
@@ -333,6 +354,7 @@ func (s *Server) notifyDomainChange() {
 }
 
 func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var d config.Domain
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -342,14 +364,19 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
 	}
+
+	s.configMu.Lock()
 	// Check for duplicates.
 	for _, existing := range s.config.Domains {
 		if existing.Host == d.Host {
+			s.configMu.Unlock()
 			jsonError(w, "domain already exists", http.StatusConflict)
 			return
 		}
 	}
 	s.config.Domains = append(s.config.Domains, d)
+	s.configMu.Unlock()
+
 	s.notifyDomainChange()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -358,37 +385,55 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	s.configMu.Lock()
+	found := false
 	for i, d := range s.config.Domains {
 		if d.Host == host {
 			s.config.Domains = append(s.config.Domains[:i], s.config.Domains[i+1:]...)
-			s.notifyDomainChange()
-			jsonResponse(w, map[string]string{"status": "deleted"})
-			return
+			found = true
+			break
 		}
 	}
-	jsonError(w, "domain not found", http.StatusNotFound)
+	s.configMu.Unlock()
+
+	if !found {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	s.notifyDomainChange()
+	jsonResponse(w, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	host := r.PathValue("host")
 	var d config.Domain
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	s.configMu.Lock()
+	found := false
 	for i, existing := range s.config.Domains {
 		if existing.Host == host {
-			// Allow the body to omit host; default to the path param.
 			if d.Host == "" {
 				d.Host = host
 			}
 			s.config.Domains[i] = d
-			s.notifyDomainChange()
-			jsonResponse(w, d)
-			return
+			found = true
+			break
 		}
 	}
-	jsonError(w, "domain not found", http.StatusNotFound)
+	s.configMu.Unlock()
+
+	if !found {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	s.notifyDomainChange()
+	jsonResponse(w, d)
 }
 
 // --- Logs ring buffer ---
@@ -446,4 +491,27 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonResponse(w, result)
+}
+
+// isAllowedOrigin returns true when the Origin header belongs to the
+// dashboard itself (same scheme+host as the admin listener) or is a
+// localhost address (for local development).
+func isAllowedOrigin(origin string, r *http.Request) bool {
+	// Allow any localhost origin for dev convenience.
+	lower := strings.ToLower(origin)
+	if strings.HasPrefix(lower, "http://localhost") ||
+		strings.HasPrefix(lower, "https://localhost") ||
+		strings.HasPrefix(lower, "http://127.0.0.1") ||
+		strings.HasPrefix(lower, "https://127.0.0.1") {
+		return true
+	}
+
+	// Allow the dashboard's own origin: derive it from the Host header
+	// which is the admin listener itself.
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	dashboardOrigin := scheme + "://" + r.Host
+	return origin == dashboardOrigin
 }

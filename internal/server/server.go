@@ -36,6 +36,7 @@ import (
 // Server is the main UWAS server that orchestrates all modules.
 type Server struct {
 	config     *config.Config
+	configMu   sync.RWMutex
 	configPath string
 	logger     *logger.Logger
 	vhosts     *router.VHostRouter
@@ -56,6 +57,15 @@ type Server struct {
 
 	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
+
+	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
+	// Invalidated on config reload.
+	htaccessCacheMu sync.RWMutex
+	htaccessCache   map[string][]*rewrite.Rule
+
+	// rewriteCache caches pre-compiled rewrite rules keyed by domain host.
+	// Invalidated on config reload.
+	rewriteCache map[string]*rewrite.Engine
 }
 
 // New creates a fully initialized server from config.
@@ -67,6 +77,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	var cacheEngine *cache.Engine
 	if cfg.Global.Cache.Enabled {
 		cacheEngine = cache.NewEngine(
+			ctx,
 			int64(cfg.Global.Cache.MemoryLimit),
 			cfg.Global.Cache.DiskPath,
 			int64(cfg.Global.Cache.DiskLimit),
@@ -88,6 +99,26 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		cancel:         cancel,
 		proxyPools:     make(map[string]*proxyhandler.UpstreamPool),
 		proxyBalancers: make(map[string]proxyhandler.Balancer),
+		htaccessCache:  make(map[string][]*rewrite.Rule),
+		rewriteCache:   make(map[string]*rewrite.Engine),
+	}
+
+	// Pre-compile rewrite rules for each domain.
+	for _, d := range cfg.Domains {
+		if len(d.Rewrites) == 0 {
+			continue
+		}
+		var cfgRewrites []rewrite.ConfigRewrite
+		for _, rw := range d.Rewrites {
+			cfgRewrites = append(cfgRewrites, rewrite.ConfigRewrite{
+				Match: rw.Match, To: rw.To, Status: rw.Status,
+				Conditions: rw.Conditions, Flags: rw.Flags,
+			})
+		}
+		rules := rewrite.ConvertConfigRewrites(cfgRewrites)
+		if len(rules) > 0 {
+			s.rewriteCache[d.Host] = rewrite.NewEngine(rules)
+		}
 	}
 
 	// Admin API
@@ -155,6 +186,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	for _, d := range s.config.Domains {
 		if d.Security.RateLimit.Requests > 0 {
 			mws = append(mws, middleware.RateLimit(
+				s.ctx,
 				d.Security.RateLimit.Requests,
 				d.Security.RateLimit.Window.Duration,
 			))
@@ -319,7 +351,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	domain := s.vhosts.Lookup(r.Host)
 	if domain != nil && (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") {
-		target := "https://" + r.Host + r.URL.RequestURI()
+		target := "https://" + domain.Host + r.URL.RequestURI()
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 		return
@@ -437,9 +469,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// Restore the original writer.
 		ctx.Response.ResponseWriter = origWriter
 
-		// Store the response in cache if it is cacheable.
+		// Store the response in cache if it is cacheable and not too large.
 		hdrs := capture.capturedHeaders()
-		if cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
+		if !capture.overflow && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
 			ttl := time.Duration(domain.Cache.TTL) * time.Second
 			if ttl <= 0 {
 				ttl = 60 * time.Second
@@ -531,20 +563,11 @@ func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domai
 }
 
 func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain) bool {
-	var cfgRewrites []rewrite.ConfigRewrite
-	for _, rw := range domain.Rewrites {
-		cfgRewrites = append(cfgRewrites, rewrite.ConfigRewrite{
-			Match: rw.Match, To: rw.To, Status: rw.Status,
-			Conditions: rw.Conditions, Flags: rw.Flags,
-		})
-	}
-
-	rules := rewrite.ConvertConfigRewrites(cfgRewrites)
-	if len(rules) == 0 {
+	engine := s.rewriteCache[domain.Host]
+	if engine == nil {
 		return false
 	}
 
-	engine := rewrite.NewEngine(rules)
 	vars := rewrite.BuildVariables(ctx.Request, domain.Root, ctx.ResolvedPath, ctx.IsHTTPS)
 	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
@@ -571,44 +594,9 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 }
 
 // applyHtaccess reads and applies .htaccess rewrite rules from the document root.
+// Parsed rules are cached per domain root and invalidated on config reload.
 func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) {
-	htPath := filepath.Join(domain.Root, ".htaccess")
-	f, err := os.Open(htPath)
-	if err != nil {
-		return // no .htaccess file, skip silently
-	}
-	defer f.Close()
-
-	directives, err := htaccess.Parse(f)
-	if err != nil {
-		s.logger.Warn("htaccess parse error", "path", htPath, "error", err)
-		return
-	}
-
-	ruleSet := htaccess.Convert(directives)
-	if !ruleSet.RewriteEnabled || len(ruleSet.Rewrites) == 0 {
-		return
-	}
-
-	// Convert htaccess rewrites to engine rules
-	var rules []*rewrite.Rule
-	for _, rw := range ruleSet.Rewrites {
-		rule, err := rewrite.ParseRule(rw.Pattern, rw.Target, rw.Flags)
-		if err != nil {
-			continue
-		}
-		// Convert conditions
-		for _, cond := range rw.Conditions {
-			c, err := rewrite.ParseCondition(cond.Variable, cond.Pattern, cond.Flags)
-			if err != nil {
-				continue
-			}
-			rule.Conditions = append(rule.Conditions, *c)
-		}
-		rule.Flags.Last = true
-		rules = append(rules, rule)
-	}
-
+	rules := s.getHtaccessRules(domain.Root)
 	if len(rules) == 0 {
 		return
 	}
@@ -628,6 +616,66 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 	}
 }
 
+// getHtaccessRules returns cached htaccess rules for the given root, parsing
+// the .htaccess file on first access.
+func (s *Server) getHtaccessRules(root string) []*rewrite.Rule {
+	s.htaccessCacheMu.RLock()
+	if rules, ok := s.htaccessCache[root]; ok {
+		s.htaccessCacheMu.RUnlock()
+		return rules
+	}
+	s.htaccessCacheMu.RUnlock()
+
+	// Parse .htaccess and cache the result (including nil for missing files).
+	rules := s.parseHtaccess(root)
+
+	s.htaccessCacheMu.Lock()
+	s.htaccessCache[root] = rules
+	s.htaccessCacheMu.Unlock()
+
+	return rules
+}
+
+// parseHtaccess reads and parses .htaccess rules from the given document root.
+func (s *Server) parseHtaccess(root string) []*rewrite.Rule {
+	htPath := filepath.Join(root, ".htaccess")
+	f, err := os.Open(htPath)
+	if err != nil {
+		return nil // no .htaccess file, skip silently
+	}
+	defer f.Close()
+
+	directives, err := htaccess.Parse(f)
+	if err != nil {
+		s.logger.Warn("htaccess parse error", "path", htPath, "error", err)
+		return nil
+	}
+
+	ruleSet := htaccess.Convert(directives)
+	if !ruleSet.RewriteEnabled || len(ruleSet.Rewrites) == 0 {
+		return nil
+	}
+
+	var rules []*rewrite.Rule
+	for _, rw := range ruleSet.Rewrites {
+		rule, err := rewrite.ParseRule(rw.Pattern, rw.Target, rw.Flags)
+		if err != nil {
+			continue
+		}
+		for _, cond := range rw.Conditions {
+			c, err := rewrite.ParseCondition(cond.Variable, cond.Pattern, cond.Flags)
+			if err != nil {
+				continue
+			}
+			rule.Conditions = append(rule.Conditions, *c)
+		}
+		rule.Flags.Last = true
+		rules = append(rules, rule)
+	}
+
+	return rules
+}
+
 // reload re-reads and applies the config file.
 func (s *Server) reload() error {
 	if s.configPath == "" {
@@ -645,8 +693,35 @@ func (s *Server) reload() error {
 	// Update TLS domains
 	s.tlsMgr.UpdateDomains(newCfg.Domains)
 
-	// Update stored config
+	// Invalidate htaccess cache
+	s.htaccessCacheMu.Lock()
+	s.htaccessCache = make(map[string][]*rewrite.Rule)
+	s.htaccessCacheMu.Unlock()
+
+	// Rebuild rewrite cache for new domains
+	newRewriteCache := make(map[string]*rewrite.Engine)
+	for _, d := range newCfg.Domains {
+		if len(d.Rewrites) == 0 {
+			continue
+		}
+		var cfgRewrites []rewrite.ConfigRewrite
+		for _, rw := range d.Rewrites {
+			cfgRewrites = append(cfgRewrites, rewrite.ConfigRewrite{
+				Match: rw.Match, To: rw.To, Status: rw.Status,
+				Conditions: rw.Conditions, Flags: rw.Flags,
+			})
+		}
+		rules := rewrite.ConvertConfigRewrites(cfgRewrites)
+		if len(rules) > 0 {
+			newRewriteCache[d.Host] = rewrite.NewEngine(rules)
+		}
+	}
+	s.rewriteCache = newRewriteCache
+
+	// Update stored config under write lock
+	s.configMu.Lock()
 	s.config = newCfg
+	s.configMu.Unlock()
 
 	s.logger.Info("config reloaded", "domains", len(newCfg.Domains))
 	return nil

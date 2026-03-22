@@ -2,6 +2,7 @@ package cache
 
 import (
 	"container/list"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -200,12 +201,18 @@ func shardIdx(key string) uint8 {
 }
 
 // StartCleanup runs periodic eviction of expired entries.
-func (mc *MemoryCache) StartCleanup(interval time.Duration) {
+// The goroutine exits when ctx is cancelled.
+func (mc *MemoryCache) StartCleanup(ctx context.Context, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			mc.cleanExpired()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				mc.cleanExpired()
+			}
 		}
 	}()
 }

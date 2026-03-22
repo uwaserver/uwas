@@ -8,6 +8,10 @@ import (
 	"sync"
 )
 
+// gzipPool reuses gzip.Writer instances. This is safe because gzip.Writer.Reset
+// reinitializes all internal state (including the compressor, hasher, and
+// buffered data) before any new writes, so a previously-used writer returned
+// to the pool cannot leak data from an earlier response.
 var gzipPool = sync.Pool{
 	New: func() any {
 		w, _ := gzip.NewWriterLevel(io.Discard, gzip.DefaultCompression)

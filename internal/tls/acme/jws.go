@@ -169,6 +169,8 @@ func (p *noncePool) get(client *http.Client, newNonceURL string) (string, error)
 
 func (p *noncePool) put(nonce string) {
 	p.mu.Lock()
-	p.nonces = append(p.nonces, nonce)
+	if len(p.nonces) < 10 {
+		p.nonces = append(p.nonces, nonce)
+	}
 	p.mu.Unlock()
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -30,7 +31,8 @@ type bucket struct {
 }
 
 // NewRateLimiter creates a rate limiter with the given limit per window.
-func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
+// The ctx parameter controls the lifetime of the background cleanup goroutine.
+func NewRateLimiter(ctx context.Context, limit int, window time.Duration) *RateLimiter {
 	rl := &RateLimiter{
 		limit:  limit,
 		window: window,
@@ -40,18 +42,19 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 
 	// Background cleanup
-	go rl.cleanupLoop()
+	go rl.cleanupLoop(ctx)
 
 	return rl
 }
 
 // RateLimit returns middleware that enforces per-IP rate limiting.
-func RateLimit(limit int, window time.Duration) Middleware {
+// The ctx parameter controls the lifetime of the background cleanup goroutine.
+func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware {
 	if limit <= 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	rl := NewRateLimiter(limit, window)
+	rl := NewRateLimiter(ctx, limit, window)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,24 +97,29 @@ func (rl *RateLimiter) Allow(key string) bool {
 	return false
 }
 
-func (rl *RateLimiter) cleanupLoop() {
+func (rl *RateLimiter) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		rl.cleanup.Store(true)
-		now := time.Now()
-		for i := range rl.shards {
-			s := &rl.shards[i]
-			s.mu.Lock()
-			for key, b := range s.buckets {
-				if now.Sub(b.lastReset) > rl.window*2 {
-					delete(s.buckets, key)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.cleanup.Store(true)
+			now := time.Now()
+			for i := range rl.shards {
+				s := &rl.shards[i]
+				s.mu.Lock()
+				for key, b := range s.buckets {
+					if now.Sub(b.lastReset) > rl.window*2 {
+						delete(s.buckets, key)
+					}
 				}
+				s.mu.Unlock()
 			}
-			s.mu.Unlock()
+			rl.cleanup.Store(false)
 		}
-		rl.cleanup.Store(false)
 	}
 }
 

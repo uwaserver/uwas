@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -16,7 +17,8 @@ type Engine struct {
 }
 
 // NewEngine creates a cache engine with memory and optional disk backing.
-func NewEngine(memoryLimit int64, diskPath string, diskLimit int64, log *logger.Logger) *Engine {
+// The ctx parameter controls the lifetime of background cleanup goroutines.
+func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimit int64, log *logger.Logger) *Engine {
 	e := &Engine{
 		memory: NewMemoryCache(memoryLimit),
 		logger: log,
@@ -27,7 +29,7 @@ func NewEngine(memoryLimit int64, diskPath string, diskLimit int64, log *logger.
 	}
 
 	// Start periodic cleanup every 5 minutes
-	e.memory.StartCleanup(5 * time.Minute)
+	e.memory.StartCleanup(ctx, 5*time.Minute)
 
 	return e
 }
