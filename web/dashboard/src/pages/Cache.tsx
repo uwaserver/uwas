@@ -1,155 +1,273 @@
-import { useState } from 'react';
-import { Database, Trash2, Tag, CheckCircle, XCircle } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Database, Trash2, Tag, CheckCircle, XCircle, RefreshCw,
+  HardDrive, Zap, Clock, Globe, Shield,
+} from 'lucide-react';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell,
+} from 'recharts';
 import { useStats } from '@/hooks/useStats';
-import { triggerPurge } from '@/lib/api';
+import { triggerPurge, getToken } from '@/lib/api';
 import Card from '@/components/Card';
 
-export default function Cache() {
-  const { stats } = useStats(5000);
-  const [tag, setTag] = useState('');
-  const [confirmAll, setConfirmAll] = useState(false);
-  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(
-    null,
-  );
-  const [purging, setPurging] = useState(false);
+const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
-  const total = (stats?.cache_hits ?? 0) + (stats?.cache_misses ?? 0);
-  const hitRate = total > 0 ? ((stats!.cache_hits / total) * 100).toFixed(1) : '0';
+interface CacheStatsData {
+  enabled: boolean;
+  hits: number;
+  misses: number;
+  stales: number;
+  entries: number;
+  used_bytes: number;
+  hit_rate: string;
+  domains: {
+    host: string;
+    enabled: boolean;
+    ttl: number;
+    tags: string[] | null;
+    rules?: { match: string; ttl: number; bypass: boolean }[];
+  }[];
+}
+
+function formatBytes(b: number): string {
+  if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
+  if (b >= 1 << 20) return `${(b / (1 << 20)).toFixed(1)} MB`;
+  if (b >= 1 << 10) return `${(b / (1 << 10)).toFixed(1)} KB`;
+  return `${b} B`;
+}
+
+const COLORS = ['#10b981', '#ef4444', '#f59e0b'];
+
+export default function Cache() {
+  const { history } = useStats(3000);
+  const [cacheStats, setCacheStats] = useState<CacheStatsData | null>(null);
+  const [tag, setTag] = useState('');
+  const [purgeHost, setPurgeHost] = useState('');
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [purging, setPurging] = useState(false);
+  const [purgeLog, setPurgeLog] = useState<{ time: string; action: string; ok: boolean }[]>([]);
+
+  const fetchCacheStats = useCallback(async () => {
+    try {
+      const headers: Record<string, string> = {};
+      const token = getToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE}/api/v1/cache/stats`, { headers });
+      if (res.ok) setCacheStats(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    fetchCacheStats();
+    const id = setInterval(fetchCacheStats, 5000);
+    return () => clearInterval(id);
+  }, [fetchCacheStats]);
+
+  const total = (cacheStats?.hits ?? 0) + (cacheStats?.misses ?? 0);
+  const hitRate = total > 0 ? ((cacheStats!.hits / total) * 100).toFixed(1) : '0.0';
+
+  const addPurgeLog = (action: string, ok: boolean) => {
+    setPurgeLog(prev => [{ time: new Date().toLocaleTimeString(), action, ok }, ...prev].slice(0, 20));
+  };
 
   const handlePurgeTag = async () => {
     if (!tag.trim()) return;
-    setPurging(true);
-    setStatus(null);
+    setPurging(true); setStatus(null);
     try {
       await triggerPurge(tag.trim());
-      setStatus({ ok: true, message: `Purged entries with tag "${tag.trim()}"` });
-      setTag('');
+      setStatus({ ok: true, message: `Purged tag "${tag.trim()}"` });
+      addPurgeLog(`Purge tag: ${tag.trim()}`, true);
+      setTag(''); fetchCacheStats();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
-    } finally {
-      setPurging(false);
-    }
+      addPurgeLog(`Purge tag: ${tag.trim()} — FAILED`, false);
+    } finally { setPurging(false); }
+  };
+
+  const handlePurgeDomain = async () => {
+    if (!purgeHost) return;
+    setPurging(true); setStatus(null);
+    try {
+      const domainTag = `site:${purgeHost.replace(/[^a-zA-Z0-9.-]/g, '')}`;
+      await triggerPurge(domainTag);
+      setStatus({ ok: true, message: `Purged cache for ${purgeHost}` });
+      addPurgeLog(`Purge domain: ${purgeHost}`, true);
+      setPurgeHost(''); fetchCacheStats();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+      addPurgeLog(`Purge domain: ${purgeHost} — FAILED`, false);
+    } finally { setPurging(false); }
   };
 
   const handlePurgeAll = async () => {
-    setPurging(true);
-    setStatus(null);
+    setPurging(true); setStatus(null);
     try {
       await triggerPurge();
       setStatus({ ok: true, message: 'All cache entries purged' });
+      addPurgeLog('Purge ALL', true); fetchCacheStats();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
-    } finally {
-      setPurging(false);
-      setConfirmAll(false);
-    }
+      addPurgeLog('Purge ALL — FAILED', false);
+    } finally { setPurging(false); setConfirmAll(false); }
   };
+
+  const pieData = [
+    { name: 'Hits', value: cacheStats?.hits ?? 0 },
+    { name: 'Misses', value: cacheStats?.misses ?? 0 },
+    { name: 'Stale', value: cacheStats?.stales ?? 0 },
+  ].filter(d => d.value > 0);
+
+  const chartData = history.map(h => ({ time: h.time, hits: h.cacheHits }));
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-100">Cache</h1>
-        <p className="text-sm text-slate-400">
-          Cache statistics and purge controls
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100">Cache</h1>
+          <p className="text-sm text-slate-400">
+            {cacheStats?.enabled ? `${cacheStats.entries} entries, ${formatBytes(cacheStats.used_bytes)} used` : 'Cache not enabled'}
+          </p>
+        </div>
+        <button onClick={fetchCacheStats} className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]">
+          <RefreshCw size={12} /> Refresh
+        </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card
-          icon={<CheckCircle size={20} />}
-          label="Cache Hits"
-          value={stats?.cache_hits.toLocaleString() ?? '--'}
-        />
-        <Card
-          icon={<XCircle size={20} />}
-          label="Cache Misses"
-          value={stats?.cache_misses.toLocaleString() ?? '--'}
-        />
-        <Card
-          icon={<Database size={20} />}
-          label="Hit Rate"
-          value={`${hitRate}%`}
-        />
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <Card icon={<Zap size={20} />} label="Hit Rate" value={`${hitRate}%`} />
+        <Card icon={<CheckCircle size={20} />} label="Hits" value={(cacheStats?.hits ?? 0).toLocaleString()} />
+        <Card icon={<XCircle size={20} />} label="Misses" value={(cacheStats?.misses ?? 0).toLocaleString()} />
+        <Card icon={<Database size={20} />} label="Entries" value={(cacheStats?.entries ?? 0).toLocaleString()} />
+        <Card icon={<HardDrive size={20} />} label="Memory" value={formatBytes(cacheStats?.used_bytes ?? 0)} />
       </div>
 
-      {/* Purge controls */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
-        <h2 className="mb-4 text-sm font-semibold text-slate-300">
-          Purge Cache
-        </h2>
+      {/* Charts */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
+          <h3 className="mb-3 text-sm font-semibold text-slate-300">Cache Hits Over Time</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={chartData}>
+              <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 10 }} />
+              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+              <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: 8 }} labelStyle={{ color: '#94a3b8' }} />
+              <Area type="monotone" dataKey="hits" stroke="#10b981" fill="#10b981" fillOpacity={0.15} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
+          <h3 className="mb-3 text-sm font-semibold text-slate-300">Distribution</h3>
+          {pieData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart><Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              </Pie><Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: 8 }} /></PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[200px] items-center justify-center text-sm text-slate-500">No cache data yet</div>
+          )}
+          <div className="mt-2 flex justify-center gap-4 text-xs">
+            <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> Hits</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" /> Misses</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" /> Stale</span>
+          </div>
+        </div>
+      </div>
 
-        {/* Status message */}
+      {/* Per-domain */}
+      {cacheStats?.domains && cacheStats.domains.length > 0 && (
+        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300"><Globe size={14} /> Per-Domain Cache</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead><tr className="border-b border-[#334155] text-xs text-slate-500">
+                <th className="pb-2 pr-4">Domain</th><th className="pb-2 pr-4">Status</th><th className="pb-2 pr-4">TTL</th><th className="pb-2 pr-4">Tags</th><th className="pb-2 pr-4">Rules</th><th className="pb-2">Actions</th>
+              </tr></thead>
+              <tbody>{cacheStats.domains.map(d => (
+                <tr key={d.host} className="border-b border-[#334155]/50 hover:bg-[#0f172a]/30">
+                  <td className="py-2.5 pr-4 font-medium text-slate-200">{d.host}</td>
+                  <td className="py-2.5 pr-4">
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${d.enabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-500/15 text-slate-400'}`}>
+                      {d.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}{d.enabled ? 'On' : 'Off'}
+                    </span>
+                  </td>
+                  <td className="py-2.5 pr-4 text-slate-400">{d.ttl > 0 ? `${d.ttl}s` : '—'}</td>
+                  <td className="py-2.5 pr-4">{d.tags?.map(t => <span key={t} className="mr-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-xs text-blue-400">{t}</span>) || <span className="text-slate-500">—</span>}</td>
+                  <td className="py-2.5 pr-4 text-slate-400">{d.rules ? (
+                    <span title={d.rules.map(r => `${r.match} ${r.bypass ? '(bypass)' : `TTL:${r.ttl}s`}`).join('\n')}>{d.rules.length} rules</span>
+                  ) : '—'}</td>
+                  <td className="py-2.5">{d.enabled && d.tags && d.tags.length > 0 && (
+                    <button onClick={() => { setTag(d.tags![0]); }} className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20">Purge</button>
+                  )}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Purge controls */}
+      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
+        <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-300"><Shield size={14} /> Purge Controls</h2>
         {status && (
-          <div
-            className={`mb-4 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
-              status.ok
-                ? 'bg-emerald-500/10 text-emerald-400'
-                : 'bg-red-500/10 text-red-400'
-            }`}
-          >
-            {status.ok ? <CheckCircle size={14} /> : <XCircle size={14} />}
-            {status.message}
+          <div className={`mb-4 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${status.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+            {status.ok ? <CheckCircle size={14} /> : <XCircle size={14} />}{status.message}
           </div>
         )}
-
-        {/* Purge by tag */}
-        <div className="mb-4 flex gap-3">
-          <div className="relative flex-1">
-            <Tag
-              size={14}
-              className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500"
-            />
-            <input
-              type="text"
-              value={tag}
-              onChange={(e) => setTag(e.target.value)}
-              placeholder="Enter cache tag to purge"
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 pr-3 pl-9 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-              onKeyDown={(e) => e.key === 'Enter' && handlePurgeTag()}
-            />
+        <div className="mb-4">
+          <label className="mb-1.5 block text-xs text-slate-400">Purge by Cache Tag</label>
+          <div className="flex gap-3">
+            <div className="relative flex-1">
+              <Tag size={14} className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500" />
+              <input type="text" value={tag} onChange={e => setTag(e.target.value)} placeholder='e.g., site:blog'
+                className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 pr-3 pl-9 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                onKeyDown={e => e.key === 'Enter' && handlePurgeTag()} />
+            </div>
+            <button onClick={handlePurgeTag} disabled={purging || !tag.trim()} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Purge Tag</button>
           </div>
-          <button
-            onClick={handlePurgeTag}
-            disabled={purging || !tag.trim()}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Purge Tag
-          </button>
         </div>
-
-        {/* Purge all */}
+        <div className="mb-4">
+          <label className="mb-1.5 block text-xs text-slate-400">Purge by Domain</label>
+          <div className="flex gap-3">
+            <select value={purgeHost} onChange={e => setPurgeHost(e.target.value)} className="flex-1 rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
+              <option value="">Select domain...</option>
+              {cacheStats?.domains?.filter(d => d.enabled).map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
+            </select>
+            <button onClick={handlePurgeDomain} disabled={purging || !purgeHost} className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50">Purge Domain</button>
+          </div>
+        </div>
         <div className="border-t border-[#334155] pt-4">
           {!confirmAll ? (
-            <button
-              onClick={() => setConfirmAll(true)}
-              className="flex items-center gap-2 rounded-md bg-red-600/15 px-4 py-2 text-sm font-medium text-red-400 transition hover:bg-red-600/25"
-            >
-              <Trash2 size={14} />
-              Purge All Cache
+            <button onClick={() => setConfirmAll(true)} className="flex items-center gap-2 rounded-md bg-red-600/15 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-600/25">
+              <Trash2 size={14} /> Purge All Cache
             </button>
           ) : (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-slate-400">
-                Are you sure? This cannot be undone.
-              </span>
-              <button
-                onClick={handlePurgeAll}
-                disabled={purging}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
-              >
-                {purging ? 'Purging...' : 'Yes, Purge All'}
-              </button>
-              <button
-                onClick={() => setConfirmAll(false)}
-                className="rounded-md bg-[#334155] px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-[#475569]"
-              >
-                Cancel
-              </button>
+              <span className="text-sm text-slate-400">Clear all {cacheStats?.entries ?? 0} entries?</span>
+              <button onClick={handlePurgeAll} disabled={purging} className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">{purging ? 'Purging...' : 'Yes, Purge All'}</button>
+              <button onClick={() => setConfirmAll(false)} className="rounded-md bg-[#334155] px-4 py-2 text-sm text-slate-300 hover:bg-[#475569]">Cancel</button>
             </div>
           )}
         </div>
       </div>
+
+      {/* Purge history */}
+      {purgeLog.length > 0 && (
+        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300"><Clock size={14} /> Purge History</h3>
+          <div className="space-y-1.5">
+            {purgeLog.map((entry, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs">
+                <span className="font-mono text-slate-500">{entry.time}</span>
+                {entry.ok ? <CheckCircle size={12} className="text-emerald-400" /> : <XCircle size={12} className="text-red-400" />}
+                <span className={entry.ok ? 'text-slate-300' : 'text-red-400'}>{entry.action}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
