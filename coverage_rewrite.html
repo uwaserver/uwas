@@ -55,11 +55,11 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/uwaserver/uwas/internal/rewrite/condition.go (88.5%)</option>
+				<option value="file0">github.com/uwaserver/uwas/internal/rewrite/condition.go (100.0%)</option>
 				
-				<option value="file1">github.com/uwaserver/uwas/internal/rewrite/engine.go (97.4%)</option>
+				<option value="file1">github.com/uwaserver/uwas/internal/rewrite/engine.go (99.1%)</option>
 				
-				<option value="file2">github.com/uwaserver/uwas/internal/rewrite/rule.go (91.1%)</option>
+				<option value="file2">github.com/uwaserver/uwas/internal/rewrite/rule.go (100.0%)</option>
 				
 				</select>
 			</div>
@@ -101,7 +101,7 @@ type Condition struct {
 }
 
 // ParseCondition parses a RewriteCond from variable, pattern, and flags.
-func ParseCondition(variable, pattern, flags string) (*Condition, error) <span class="cov9" title="26">{
+func ParseCondition(variable, pattern, flags string) (*Condition, error) <span class="cov9" title="34">{
         c := &amp;Condition{
                 Variable:   variable,
                 RawPattern: pattern,
@@ -110,24 +110,24 @@ func ParseCondition(variable, pattern, flags string) (*Condition, error) <span c
         // Check for [OR] flag
         flags = strings.TrimSpace(flags)
         flags = strings.Trim(flags, "[]")
-        for _, f := range strings.Split(flags, ",") </span><span class="cov9" title="26">{
-                if strings.EqualFold(strings.TrimSpace(f), "OR") </span><span class="cov4" title="4">{
+        for _, f := range strings.Split(flags, ",") </span><span class="cov9" title="34">{
+                if strings.EqualFold(strings.TrimSpace(f), "OR") </span><span class="cov5" title="7">{
                         c.OrNext = true
                 }</span>
         }
 
         // Check for negation
-        <span class="cov9" title="26">if strings.HasPrefix(pattern, "!") </span><span class="cov6" title="9">{
+        <span class="cov9" title="34">if strings.HasPrefix(pattern, "!") </span><span class="cov6" title="9">{
                 c.Negated = true
                 pattern = pattern[1:]
         }</span>
 
         // Check for special file tests
-        <span class="cov9" title="26">switch pattern </span>{
-        case "-f":<span class="cov6" title="7">
+        <span class="cov9" title="34">switch pattern </span>{
+        case "-f":<span class="cov5" title="8">
                 c.TestType = "-f"
                 return c, nil</span>
-        case "-d":<span class="cov5" title="5">
+        case "-d":<span class="cov5" title="6">
                 c.TestType = "-d"
                 return c, nil</span>
         case "-l":<span class="cov1" title="1">
@@ -138,18 +138,18 @@ func ParseCondition(variable, pattern, flags string) (*Condition, error) <span c
                 return c, nil</span>
         }
 
-        <span class="cov7" title="12">re, err := regexp.Compile(pattern)
+        <span class="cov7" title="18">re, err := regexp.Compile(pattern)
         if err != nil </span><span class="cov1" title="1">{
                 return nil, err
         }</span>
-        <span class="cov7" title="11">c.Pattern = re
+        <span class="cov7" title="17">c.Pattern = re
 
         return c, nil</span>
 }
 
 // Evaluate tests the condition against the given variables.
 // Returns (matched, backreferences).
-func (c *Condition) Evaluate(vars *Variables) (bool, []string) <span class="cov9" title="24">{
+func (c *Condition) Evaluate(vars *Variables) (bool, []string) <span class="cov8" title="32">{
         testValue := vars.Expand(c.Variable)
 
         var matched bool
@@ -168,21 +168,21 @@ func (c *Condition) Evaluate(vars *Variables) (bool, []string) <span class="cov9
         case "-s":<span class="cov2" title="2">
                 info, err := os.Stat(testValue)
                 matched = err == nil &amp;&amp; info.Size() &gt; 0</span>
-        default:<span class="cov7" title="13">
-                if c.Pattern != nil </span><span class="cov7" title="13">{
+        default:<span class="cov7" title="21">
+                if c.Pattern != nil </span><span class="cov7" title="21">{
                         matches := c.Pattern.FindStringSubmatch(testValue)
-                        if matches != nil </span><span class="cov6" title="7">{
+                        if matches != nil </span><span class="cov6" title="11">{
                                 matched = true
                                 captures = matches
                         }</span>
                 }
         }
 
-        <span class="cov9" title="24">if c.Negated </span><span class="cov6" title="8">{
+        <span class="cov8" title="32">if c.Negated </span><span class="cov5" title="8">{
                 matched = !matched
         }</span>
 
-        <span class="cov9" title="24">return matched, captures</span>
+        <span class="cov8" title="32">return matched, captures</span>
 }
 
 // Variables holds server variables for rewrite condition evaluation.
@@ -203,41 +203,41 @@ type Variables struct {
 }
 
 // Expand resolves a variable reference like %{REQUEST_URI} to its value.
-func (v *Variables) Expand(s string) string <span class="cov10" title="29">{
+func (v *Variables) Expand(s string) string <span class="cov10" title="52">{
         // Strip %{ and } if present
         name := s
-        if strings.HasPrefix(s, "%{") &amp;&amp; strings.HasSuffix(s, "}") </span><span class="cov10" title="29">{
+        if strings.HasPrefix(s, "%{") &amp;&amp; strings.HasSuffix(s, "}") </span><span class="cov9" title="51">{
                 name = s[2 : len(s)-1]
         }</span>
 
-        <span class="cov10" title="29">switch strings.ToUpper(name) </span>{
-        case "REQUEST_URI":<span class="cov4" title="4">
+        <span class="cov10" title="52">switch strings.ToUpper(name) </span>{
+        case "REQUEST_URI":<span class="cov5" title="7">
                 return v.RequestURI</span>
-        case "REQUEST_FILENAME":<span class="cov7" title="11">
+        case "REQUEST_FILENAME":<span class="cov6" title="12">
                 return v.RequestFilename</span>
-        case "QUERY_STRING":<span class="cov0" title="0">
+        case "QUERY_STRING":<span class="cov1" title="1">
                 return v.QueryString</span>
-        case "HTTP_HOST":<span class="cov6" title="7">
+        case "HTTP_HOST":<span class="cov6" title="9">
                 return v.HTTPHost</span>
-        case "HTTP_REFERER":<span class="cov0" title="0">
+        case "HTTP_REFERER":<span class="cov1" title="1">
                 return v.HTTPReferer</span>
-        case "HTTP_USER_AGENT":<span class="cov2" title="2">
+        case "HTTP_USER_AGENT":<span class="cov3" title="3">
                 return v.HTTPUserAgent</span>
-        case "REMOTE_ADDR":<span class="cov0" title="0">
+        case "REMOTE_ADDR":<span class="cov1" title="1">
                 return v.RemoteAddr</span>
-        case "REQUEST_METHOD":<span class="cov3" title="3">
+        case "REQUEST_METHOD":<span class="cov6" title="10">
                 return v.RequestMethod</span>
-        case "SERVER_PORT":<span class="cov0" title="0">
+        case "SERVER_PORT":<span class="cov1" title="1">
                 return v.ServerPort</span>
-        case "HTTPS":<span class="cov1" title="1">
+        case "HTTPS":<span class="cov2" title="2">
                 return v.HTTPS</span>
-        case "DOCUMENT_ROOT":<span class="cov0" title="0">
+        case "DOCUMENT_ROOT":<span class="cov1" title="1">
                 return v.DocumentRoot</span>
-        case "SERVER_NAME":<span class="cov0" title="0">
+        case "SERVER_NAME":<span class="cov1" title="1">
                 return v.ServerName</span>
-        case "THE_REQUEST":<span class="cov0" title="0">
+        case "THE_REQUEST":<span class="cov1" title="1">
                 return v.TheRequest</span>
-        default:<span class="cov1" title="1">
+        default:<span class="cov2" title="2">
                 return ""</span>
         }
 }
@@ -270,35 +270,35 @@ type Engine struct {
 }
 
 // NewEngine creates a rewrite engine with the given rules.
-func NewEngine(rules []*Rule) *Engine <span class="cov7" title="17">{
+func NewEngine(rules []*Rule) *Engine <span class="cov8" title="23">{
         return &amp;Engine{rules: rules}
 }</span>
 
 // Process evaluates all rules against the request URI.
-func (e *Engine) Process(uri, queryString string, vars *Variables) *Result <span class="cov8" title="19">{
+func (e *Engine) Process(uri, queryString string, vars *Variables) *Result <span class="cov8" title="26">{
         result := &amp;Result{
                 URI:   uri,
                 Query: queryString,
         }
 
-        for iteration := 0; iteration &lt; maxRewrites; iteration++ </span><span class="cov9" title="28">{
+        for iteration := 0; iteration &lt; maxRewrites; iteration++ </span><span class="cov9" title="35">{
                 changed := false
 
-                for i := 0; i &lt; len(e.rules); i++ </span><span class="cov10" title="41">{
+                for i := 0; i &lt; len(e.rules); i++ </span><span class="cov10" title="49">{
                         rule := e.rules[i]
 
                         // Evaluate conditions
                         condMatch, condCaptures := e.evalConditions(rule.Conditions, vars)
-                        if !condMatch </span><span class="cov3" title="3">{
+                        if !condMatch </span><span class="cov4" title="5">{
                                 // If this is a chain rule and didn't match, skip until non-chain
-                                if rule.Flags.Chain </span><span class="cov0" title="0">{
+                                if rule.Flags.Chain </span><span class="cov1" title="1">{
                                         i = e.skipChain(i)
                                 }</span>
-                                <span class="cov3" title="3">continue</span>
+                                <span class="cov4" title="5">continue</span>
                         }
 
                         // Match rule pattern against current URI
-                        <span class="cov9" title="38">matched, ruleCaptures := rule.Match(result.URI)
+                        <span class="cov9" title="44">matched, ruleCaptures := rule.Match(result.URI)
                         if !matched </span><span class="cov4" title="4">{
                                 if rule.Flags.Chain </span><span class="cov2" title="2">{
                                         i = e.skipChain(i)
@@ -307,25 +307,25 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result <span
                         }
 
                         // Apply substitution
-                        <span class="cov9" title="34">newURI := rule.Apply(rule.Target, ruleCaptures, condCaptures)
+                        <span class="cov9" title="40">newURI := rule.Apply(rule.Target, ruleCaptures, condCaptures)
 
                         // Handle special targets
-                        if newURI == "-" </span>{<span class="cov3" title="3">
+                        if newURI == "-" </span>{<span class="cov4" title="4">
                                 // "-" means no substitution, just apply flags
-                        }</span> else<span class="cov9" title="31"> {
+                        }</span> else<span class="cov9" title="36"> {
                                 // Handle query string
-                                if qIdx := strings.Index(newURI, "?"); qIdx != -1 </span><span class="cov2" title="2">{
+                                if qIdx := strings.Index(newURI, "?"); qIdx != -1 </span><span class="cov3" title="3">{
                                         if rule.Flags.QSAppend &amp;&amp; result.Query != "" </span><span class="cov1" title="1">{
                                                 result.Query = newURI[qIdx+1:] + "&amp;" + result.Query
-                                        }</span> else<span class="cov1" title="1"> {
+                                        }</span> else<span class="cov2" title="2"> {
                                                 result.Query = newURI[qIdx+1:]
                                         }</span>
-                                        <span class="cov2" title="2">newURI = newURI[:qIdx]</span>
-                                } else<span class="cov9" title="29"> if rule.Flags.QSAppend </span>{<span class="cov0" title="0">
+                                        <span class="cov3" title="3">newURI = newURI[:qIdx]</span>
+                                } else<span class="cov9" title="33"> if rule.Flags.QSAppend </span>{<span class="cov1" title="1">
                                         // Keep original query string
                                 }</span>
 
-                                <span class="cov9" title="31">result.URI = newURI
+                                <span class="cov9" title="36">result.URI = newURI
                                 changed = true
                                 result.Modified = true
 
@@ -334,87 +334,87 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result <span
                         }
 
                         // Handle flags
-                        <span class="cov9" title="34">if rule.Flags.Forbidden </span><span class="cov1" title="1">{
+                        <span class="cov9" title="40">if rule.Flags.Forbidden </span><span class="cov1" title="1">{
                                 result.Forbidden = true
                                 return result
                         }</span>
-                        <span class="cov9" title="33">if rule.Flags.Gone </span><span class="cov1" title="1">{
+                        <span class="cov9" title="39">if rule.Flags.Gone </span><span class="cov1" title="1">{
                                 result.Gone = true
                                 return result
                         }</span>
-                        <span class="cov9" title="32">if rule.Flags.Redirect &gt; 0 </span><span class="cov2" title="2">{
+                        <span class="cov9" title="38">if rule.Flags.Redirect &gt; 0 </span><span class="cov3" title="3">{
                                 result.Redirect = true
                                 result.StatusCode = rule.Flags.Redirect
-                                if result.Query != "" </span><span class="cov0" title="0">{
+                                if result.Query != "" </span><span class="cov1" title="1">{
                                         result.URI = result.URI + "?" + result.Query
                                 }</span>
-                                <span class="cov2" title="2">return result</span>
+                                <span class="cov3" title="3">return result</span>
                         }
-                        <span class="cov9" title="30">if rule.Flags.Skip &gt; 0 </span><span class="cov1" title="1">{
+                        <span class="cov9" title="35">if rule.Flags.Skip &gt; 0 </span><span class="cov1" title="1">{
                                 i += rule.Flags.Skip
                         }</span>
-                        <span class="cov9" title="30">if rule.Flags.Last </span><span class="cov6" title="9">{
+                        <span class="cov9" title="35">if rule.Flags.Last </span><span class="cov7" title="14">{
                                 return result
                         }</span>
                 }
 
                 // If no rule changed the URI this iteration, we're done
-                <span class="cov7" title="15">if !changed </span><span class="cov4" title="5">{
+                <span class="cov7" title="16">if !changed </span><span class="cov5" title="6">{
                         break</span>
                 }
         }
 
-        <span class="cov5" title="6">return result</span>
+        <span class="cov5" title="7">return result</span>
 }
 
 // evalConditions evaluates a list of conditions with AND/OR logic.
-func (e *Engine) evalConditions(conditions []Condition, vars *Variables) (bool, []string) <span class="cov10" title="41">{
-        if len(conditions) == 0 </span><span class="cov9" title="34">{
+func (e *Engine) evalConditions(conditions []Condition, vars *Variables) (bool, []string) <span class="cov10" title="49">{
+        if len(conditions) == 0 </span><span class="cov9" title="38">{
                 return true, nil
         }</span>
 
-        <span class="cov5" title="7">var lastCaptures []string
+        <span class="cov6" title="11">var lastCaptures []string
         overallResult := false
         groupResult := true // current AND-group result
 
-        for i, cond := range conditions </span><span class="cov7" title="13">{
+        for i, cond := range conditions </span><span class="cov8" title="21">{
                 matched, captures := cond.Evaluate(vars)
 
-                if matched </span><span class="cov5" title="7">{
+                if matched </span><span class="cov6" title="11">{
                         lastCaptures = captures
                 }</span>
 
-                <span class="cov7" title="13">if cond.OrNext </span><span class="cov4" title="5">{
+                <span class="cov8" title="21">if cond.OrNext </span><span class="cov6" title="9">{
                         // OR logic: if any in the OR group matches, the group is true
-                        if matched </span><span class="cov2" title="2">{
+                        if matched </span><span class="cov4" title="4">{
                                 overallResult = true
                                 // Skip remaining OR conditions in this group
-                                for i+1 &lt; len(conditions) &amp;&amp; conditions[i].OrNext </span><span class="cov3" title="3">{
+                                for i+1 &lt; len(conditions) &amp;&amp; conditions[i].OrNext </span><span class="cov4" title="5">{
                                         i++
                                 }</span>
-                                <span class="cov2" title="2">continue</span>
+                                <span class="cov4" title="4">continue</span>
                         }
-                        <span class="cov3" title="3">groupResult = groupResult &amp;&amp; matched</span>
-                } else<span class="cov6" title="8"> {
+                        <span class="cov4" title="5">groupResult = groupResult &amp;&amp; matched</span>
+                } else<span class="cov6" title="12"> {
                         // AND logic (default)
                         groupResult = groupResult &amp;&amp; matched
-                        if !groupResult &amp;&amp; !overallResult </span><span class="cov3" title="3">{
+                        if !groupResult &amp;&amp; !overallResult </span><span class="cov4" title="5">{
                                 return false, nil
                         }</span>
-                        <span class="cov4" title="5">overallResult = overallResult || groupResult
+                        <span class="cov5" title="7">overallResult = overallResult || groupResult
                         groupResult = true</span>
                 }
         }
 
-        <span class="cov4" title="4">return overallResult || groupResult, lastCaptures</span>
+        <span class="cov5" title="6">return overallResult || groupResult, lastCaptures</span>
 }
 
 // skipChain skips rules that are chained ([C] flag) after a non-matching rule.
-func (e *Engine) skipChain(current int) int <span class="cov2" title="2">{
-        for current &lt; len(e.rules)-1 &amp;&amp; e.rules[current].Flags.Chain </span><span class="cov3" title="3">{
+func (e *Engine) skipChain(current int) int <span class="cov3" title="3">{
+        for current &lt; len(e.rules)-1 &amp;&amp; e.rules[current].Flags.Chain </span><span class="cov4" title="4">{
                 current++
         }</span>
-        <span class="cov2" title="2">return current</span>
+        <span class="cov3" title="3">return current</span>
 }
 
 // BuildVariables creates a Variables struct from an HTTP request.
@@ -451,16 +451,16 @@ func BuildVariables(r *http.Request, docRoot, resolvedPath string, isHTTPS bool)
 }
 
 // ConvertConfigRewrites converts config rewrite rules to engine rules.
-func ConvertConfigRewrites(rewrites []ConfigRewrite) []*Rule <span class="cov3" title="3">{
+func ConvertConfigRewrites(rewrites []ConfigRewrite) []*Rule <span class="cov4" title="5">{
         var rules []*Rule
-        for _, rw := range rewrites </span><span class="cov4" title="5">{
+        for _, rw := range rewrites </span><span class="cov5" title="8">{
                 rule, err := ParseRule(rw.Match, rw.To, strings.Join(rw.Flags, ","))
                 if err != nil </span><span class="cov1" title="1">{
                         continue</span>
                 }
 
                 // Convert simple conditions
-                <span class="cov4" title="4">for _, condStr := range rw.Conditions </span><span class="cov5" title="7">{
+                <span class="cov5" title="7">for _, condStr := range rw.Conditions </span><span class="cov6" title="9">{
                         var variable, pattern string
                         negated := false
 
@@ -468,40 +468,40 @@ func ConvertConfigRewrites(rewrites []ConfigRewrite) []*Rule <span class="cov3" 
                         case "!is_file", "!-f":<span class="cov2" title="2">
                                 variable = "%{REQUEST_FILENAME}"
                                 pattern = "!-f"</span>
-                        case "is_file", "-f":<span class="cov1" title="1">
+                        case "is_file", "-f":<span class="cov2" title="2">
                                 variable = "%{REQUEST_FILENAME}"
                                 pattern = "-f"</span>
                         case "!is_dir", "!-d":<span class="cov2" title="2">
                                 variable = "%{REQUEST_FILENAME}"
                                 pattern = "!-d"</span>
-                        case "is_dir", "-d":<span class="cov1" title="1">
+                        case "is_dir", "-d":<span class="cov2" title="2">
                                 variable = "%{REQUEST_FILENAME}"
                                 pattern = "-d"</span>
                         default:<span class="cov1" title="1">
                                 continue</span>
                         }
 
-                        <span class="cov5" title="6">cond, err := ParseCondition(variable, pattern, "")
+                        <span class="cov5" title="8">cond, err := ParseCondition(variable, pattern, "")
                         if err != nil </span><span class="cov0" title="0">{
                                 continue</span>
                         }
-                        <span class="cov5" title="6">_ = negated
+                        <span class="cov5" title="8">_ = negated
                         rule.Conditions = append(rule.Conditions, *cond)</span>
                 }
 
                 // Set redirect flag from config status
-                <span class="cov4" title="4">if rw.Status &gt; 0 </span><span class="cov1" title="1">{
+                <span class="cov5" title="7">if rw.Status &gt; 0 </span><span class="cov1" title="1">{
                         rule.Flags.Redirect = rw.Status
                 }</span>
 
                 // Default: last flag
-                <span class="cov4" title="4">if !rule.Flags.Chain &amp;&amp; rule.Flags.Redirect == 0 </span><span class="cov3" title="3">{
+                <span class="cov5" title="7">if !rule.Flags.Chain &amp;&amp; rule.Flags.Redirect == 0 </span><span class="cov4" title="5">{
                         rule.Flags.Last = true
                 }</span>
 
-                <span class="cov4" title="4">rules = append(rules, rule)</span>
+                <span class="cov5" title="7">rules = append(rules, rule)</span>
         }
-        <span class="cov3" title="3">return rules</span>
+        <span class="cov4" title="5">return rules</span>
 }
 
 // ConfigRewrite matches the config.RewriteRule struct shape.
@@ -555,7 +555,7 @@ type Flags struct {
 }
 
 // ParseRule parses a rewrite rule from pattern, target, and optional flags string.
-func ParseRule(pattern, target, flagStr string) (*Rule, error) <span class="cov9" title="30">{
+func ParseRule(pattern, target, flagStr string) (*Rule, error) <span class="cov9" title="41">{
         flags := ParseFlags(flagStr)
 
         opts := ""
@@ -563,12 +563,12 @@ func ParseRule(pattern, target, flagStr string) (*Rule, error) <span class="cov9
                 opts = "(?i)"
         }</span>
 
-        <span class="cov9" title="30">re, err := regexp.Compile(opts + pattern)
+        <span class="cov9" title="41">re, err := regexp.Compile(opts + pattern)
         if err != nil </span><span class="cov1" title="1">{
                 return nil, err
         }</span>
 
-        <span class="cov9" title="29">return &amp;Rule{
+        <span class="cov9" title="40">return &amp;Rule{
                 Pattern:    re,
                 Target:     target,
                 Flags:      flags,
@@ -577,22 +577,22 @@ func ParseRule(pattern, target, flagStr string) (*Rule, error) <span class="cov9
 }
 
 // ParseFlags parses a flag string like "L,R=301,QSA,NC" into Flags.
-func ParseFlags(s string) Flags <span class="cov10" title="39">{
+func ParseFlags(s string) Flags <span class="cov10" title="56">{
         s = strings.TrimSpace(s)
         s = strings.Trim(s, "[]")
-        if s == "" </span><span class="cov5" title="6">{
+        if s == "" </span><span class="cov5" title="8">{
                 return Flags{}
         }</span>
 
-        <span class="cov9" title="33">var f Flags
-        for _, part := range strings.Split(s, ",") </span><span class="cov9" title="38">{
+        <span class="cov9" title="48">var f Flags
+        for _, part := range strings.Split(s, ",") </span><span class="cov9" title="54">{
                 part = strings.TrimSpace(part)
                 upper := strings.ToUpper(part)
 
                 switch </span>{
-                case upper == "L":<span class="cov8" title="19">
+                case upper == "L":<span class="cov8" title="26">
                         f.Last = true</span>
-                case upper == "QSA":<span class="cov3" title="3">
+                case upper == "QSA":<span class="cov4" title="4">
                         f.QSAppend = true</span>
                 case upper == "NC":<span class="cov3" title="3">
                         f.NoCase = true</span>
@@ -600,55 +600,55 @@ func ParseFlags(s string) Flags <span class="cov10" title="39">{
                         f.Forbidden = true</span>
                 case upper == "G":<span class="cov2" title="2">
                         f.Gone = true</span>
-                case upper == "C":<span class="cov3" title="3">
+                case upper == "C":<span class="cov5" title="6">
                         f.Chain = true</span>
-                case upper == "PT":<span class="cov0" title="0">
+                case upper == "PT":<span class="cov1" title="1">
                         f.PassThrough = true</span>
-                case upper == "NE":<span class="cov0" title="0">
+                case upper == "NE":<span class="cov1" title="1">
                         f.NoEscape = true</span>
-                case strings.HasPrefix(upper, "R="):<span class="cov3" title="3">
+                case strings.HasPrefix(upper, "R="):<span class="cov4" title="5">
                         code, _ := strconv.Atoi(part[2:])
-                        if code == 0 </span><span class="cov0" title="0">{
+                        if code == 0 </span><span class="cov1" title="1">{
                                 code = 302
                         }</span>
-                        <span class="cov3" title="3">f.Redirect = code</span>
+                        <span class="cov4" title="5">f.Redirect = code</span>
                 case upper == "R":<span class="cov1" title="1">
                         f.Redirect = 302</span>
                 case strings.HasPrefix(upper, "S="):<span class="cov2" title="2">
                         f.Skip, _ = strconv.Atoi(part[2:])</span>
-                case strings.HasPrefix(upper, "E="):<span class="cov0" title="0">
+                case strings.HasPrefix(upper, "E="):<span class="cov1" title="1">
                         f.EnvironmentVar = part[2:]</span>
                 }
         }
-        <span class="cov9" title="33">return f</span>
+        <span class="cov9" title="48">return f</span>
 }
 
 // Match tests if the rule matches the given URI and returns backreferences.
-func (r *Rule) Match(uri string) (bool, []string) <span class="cov9" title="38">{
+func (r *Rule) Match(uri string) (bool, []string) <span class="cov9" title="44">{
         matches := r.Pattern.FindStringSubmatch(uri)
         if matches == nil </span><span class="cov4" title="4">{
                 return false, nil
         }</span>
-        <span class="cov9" title="34">return true, matches</span>
+        <span class="cov9" title="40">return true, matches</span>
 }
 
 // Apply substitutes backreferences ($1, $2, ...) in the target string.
-func (r *Rule) Apply(target string, ruleMatches, condMatches []string) string <span class="cov9" title="34">{
+func (r *Rule) Apply(target string, ruleMatches, condMatches []string) string <span class="cov9" title="40">{
         result := target
 
         // Rule backreferences: $1, $2, ...
-        for i := len(ruleMatches) - 1; i &gt;= 0; i-- </span><span class="cov9" title="38">{
+        for i := len(ruleMatches) - 1; i &gt;= 0; i-- </span><span class="cov9" title="45">{
                 placeholder := "$" + strconv.Itoa(i)
                 result = strings.ReplaceAll(result, placeholder, ruleMatches[i])
         }</span>
 
         // Condition backreferences: %1, %2, ...
-        <span class="cov9" title="34">for i := len(condMatches) - 1; i &gt;= 0; i-- </span><span class="cov4" title="5">{
+        <span class="cov9" title="40">for i := len(condMatches) - 1; i &gt;= 0; i-- </span><span class="cov5" title="7">{
                 placeholder := "%" + strconv.Itoa(i)
                 result = strings.ReplaceAll(result, placeholder, condMatches[i])
         }</span>
 
-        <span class="cov9" title="34">return result</span>
+        <span class="cov9" title="40">return result</span>
 }
 </pre>
 		

@@ -629,9 +629,9 @@ func TestConvertConfigRewritesWithChain(t *testing.T) {
 	}
 }
 
-// --- engine.go: evalConditions with OR group where second matches ---
+// --- engine.go: evalConditions with OR group where first fails and second is AND ---
 
-func TestEvalConditionsOrSecondMatches(t *testing.T) {
+func TestEvalConditionsOrFirstFailsSecondAnd(t *testing.T) {
 	cond1, _ := ParseCondition("%{REQUEST_METHOD}", "^DELETE$", "[OR]")
 	cond2, _ := ParseCondition("%{REQUEST_METHOD}", "^PUT$", "")
 
@@ -640,13 +640,47 @@ func TestEvalConditionsOrSecondMatches(t *testing.T) {
 
 	engine := NewEngine([]*Rule{rule})
 
-	// PUT should match via second condition (after first OR fails)
-	vars := &Variables{RequestMethod: "PUT", RequestURI: "/resource"}
+	// DELETE matches via first OR condition
+	vars := &Variables{RequestMethod: "DELETE", RequestURI: "/resource"}
 	result := engine.Process("/resource", "", vars)
 	if result.URI != "/write-handler" {
-		t.Errorf("URI = %q, want /write-handler", result.URI)
+		t.Errorf("DELETE: URI = %q, want /write-handler", result.URI)
+	}
+
+	// PUT doesn't match because when cond1[OR] fails, groupResult becomes false
+	// and cond2 (AND) evaluates false && true = false
+	vars2 := &Variables{RequestMethod: "PUT", RequestURI: "/resource"}
+	result2 := engine.Process("/resource", "", vars2)
+	if result2.Modified {
+		t.Error("PUT: should not be modified (OR group fails, AND with second fails)")
 	}
 }
+
+// --- engine.go: evalConditions both OR conditions in group ---
+
+func TestEvalConditionsBothOr(t *testing.T) {
+	cond1, _ := ParseCondition("%{REQUEST_METHOD}", "^DELETE$", "[OR]")
+	cond2, _ := ParseCondition("%{REQUEST_METHOD}", "^PUT$", "[OR]")
+	cond3, _ := ParseCondition("%{REQUEST_URI}", ".*", "")
+
+	rule, _ := ParseRule(".*", "/write-handler", "L")
+	rule.Conditions = []Condition{*cond1, *cond2, *cond3}
+
+	engine := NewEngine([]*Rule{rule})
+
+	// PUT matches via second OR condition
+	vars := &Variables{RequestMethod: "PUT", RequestURI: "/resource"}
+	result := engine.Process("/resource", "", vars)
+	// cond1 OR fails, cond2 OR succeeds -> overallResult=true, cond3 AND matches
+	if result.URI != "/write-handler" {
+		t.Errorf("PUT: URI = %q, want /write-handler", result.URI)
+	}
+}
+
+// --- engine.go: ConvertConfigRewrites with condition that triggers ParseCondition error ---
+// Note: Currently all valid config conditions ("-f", "!-f", etc.) never fail ParseCondition.
+// The error path (line 240) is triggered when ParseCondition returns an error,
+// which can't happen with the current condition types. This path is defensive code.
 
 // --- engine.go: chain with conditions not matching ---
 

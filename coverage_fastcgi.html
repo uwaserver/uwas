@@ -55,9 +55,9 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/uwaserver/uwas/pkg/fastcgi/client.go (77.1%)</option>
+				<option value="file0">github.com/uwaserver/uwas/pkg/fastcgi/client.go (80.0%)</option>
 				
-				<option value="file1">github.com/uwaserver/uwas/pkg/fastcgi/pool.go (96.5%)</option>
+				<option value="file1">github.com/uwaserver/uwas/pkg/fastcgi/pool.go (100.0%)</option>
 				
 				<option value="file2">github.com/uwaserver/uwas/pkg/fastcgi/protocol.go (97.8%)</option>
 				
@@ -102,7 +102,7 @@ type Client struct {
 }
 
 // NewClient creates a FastCGI client with the given pool config.
-func NewClient(cfg PoolConfig) *Client <span class="cov7" title="7">{
+func NewClient(cfg PoolConfig) *Client <span class="cov7" title="9">{
         return &amp;Client{
                 pool: NewPool(cfg),
         }
@@ -116,14 +116,14 @@ type Response struct {
 }
 
 // Execute sends a FastCGI request and returns the response.
-func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Reader) (*Response, error) <span class="cov6" title="6">{
+func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Reader) (*Response, error) <span class="cov7" title="8">{
         cn, err := c.pool.Get(ctx)
         if err != nil </span><span class="cov1" title="1">{
                 return nil, fmt.Errorf("get connection: %w", err)
         }</span>
 
         // Use a buffered writer for efficiency
-        <span class="cov6" title="5">bw := bufio.NewWriter(cn.netConn)
+        <span class="cov6" title="7">bw := bufio.NewWriter(cn.netConn)
         requestID := uint16(1)
 
         // 1. FCGI_BEGIN_REQUEST
@@ -134,86 +134,86 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
         }</span>
 
         // 2. FCGI_PARAMS
-        <span class="cov6" title="5">params := EncodeParams(env)
+        <span class="cov6" title="7">params := EncodeParams(env)
         if err := WriteRecord(bw, TypeParams, requestID, params); err != nil </span><span class="cov0" title="0">{
                 c.pool.Discard(cn)
                 return nil, fmt.Errorf("write params: %w", err)
         }</span>
         // Empty params record signals end of params
-        <span class="cov6" title="5">if err := WriteRecord(bw, TypeParams, requestID, nil); err != nil </span><span class="cov0" title="0">{
+        <span class="cov6" title="7">if err := WriteRecord(bw, TypeParams, requestID, nil); err != nil </span><span class="cov0" title="0">{
                 c.pool.Discard(cn)
                 return nil, fmt.Errorf("write params end: %w", err)
         }</span>
 
         // 3. FCGI_STDIN (request body)
-        <span class="cov6" title="5">if stdin != nil </span><span class="cov3" title="2">{
+        <span class="cov6" title="7">if stdin != nil </span><span class="cov4" title="3">{
                 buf := make([]byte, maxContentLength)
-                for </span><span class="cov6" title="5">{
+                for </span><span class="cov6" title="7">{
                         n, readErr := stdin.Read(buf)
-                        if n &gt; 0 </span><span class="cov4" title="3">{
+                        if n &gt; 0 </span><span class="cov5" title="4">{
                                 if err := WriteRecord(bw, TypeStdin, requestID, buf[:n]); err != nil </span><span class="cov0" title="0">{
                                         c.pool.Discard(cn)
                                         return nil, fmt.Errorf("write stdin: %w", err)
                                 }</span>
                         }
-                        <span class="cov6" title="5">if readErr == io.EOF </span><span class="cov3" title="2">{
+                        <span class="cov6" title="7">if readErr == io.EOF </span><span class="cov3" title="2">{
                                 break</span>
                         }
-                        <span class="cov4" title="3">if readErr != nil </span><span class="cov0" title="0">{
+                        <span class="cov5" title="5">if readErr != nil </span><span class="cov1" title="1">{
                                 c.pool.Discard(cn)
                                 return nil, fmt.Errorf("read stdin: %w", readErr)
                         }</span>
                 }
         }
         // Empty stdin record signals end of input
-        <span class="cov6" title="5">if err := WriteRecord(bw, TypeStdin, requestID, nil); err != nil </span><span class="cov0" title="0">{
+        <span class="cov6" title="6">if err := WriteRecord(bw, TypeStdin, requestID, nil); err != nil </span><span class="cov0" title="0">{
                 c.pool.Discard(cn)
                 return nil, fmt.Errorf("write stdin end: %w", err)
         }</span>
 
         // Flush all buffered writes
-        <span class="cov6" title="5">if err := bw.Flush(); err != nil </span><span class="cov0" title="0">{
+        <span class="cov6" title="6">if err := bw.Flush(); err != nil </span><span class="cov0" title="0">{
                 c.pool.Discard(cn)
                 return nil, fmt.Errorf("flush: %w", err)
         }</span>
 
         // 4. Read response records
-        <span class="cov6" title="5">resp := &amp;Response{}
+        <span class="cov6" title="6">resp := &amp;Response{}
         br := bufio.NewReader(cn.netConn)
 
-        for </span><span class="cov10" title="17">{
+        for </span><span class="cov10" title="20">{
                 rec, err := ReadRecord(br)
                 if err != nil </span><span class="cov0" title="0">{
                         c.pool.Discard(cn)
                         return nil, fmt.Errorf("read record: %w", err)
                 }</span>
 
-                <span class="cov10" title="17">switch rec.Type </span>{
-                case TypeStdout:<span class="cov8" title="10">
-                        if len(rec.Content) &gt; 0 </span><span class="cov6" title="5">{
+                <span class="cov10" title="20">switch rec.Type </span>{
+                case TypeStdout:<span class="cov8" title="12">
+                        if len(rec.Content) &gt; 0 </span><span class="cov6" title="6">{
                                 resp.stdout.Write(rec.Content)
                         }</span>
                 case TypeStderr:<span class="cov3" title="2">
                         if len(rec.Content) &gt; 0 </span><span class="cov1" title="1">{
                                 resp.stderr.Write(rec.Content)
                         }</span>
-                case TypeEndRequest:<span class="cov6" title="5">
-                        if len(rec.Content) &gt;= 4 </span><span class="cov6" title="5">{
+                case TypeEndRequest:<span class="cov6" title="6">
+                        if len(rec.Content) &gt;= 4 </span><span class="cov6" title="6">{
                                 resp.AppStatus = binary.BigEndian.Uint32(rec.Content[0:4])
                         }</span>
-                        <span class="cov6" title="5">c.pool.Put(cn)
+                        <span class="cov6" title="6">c.pool.Put(cn)
                         return resp, nil</span>
                 }
         }
 }
 
 // Close shuts down the client and its connection pool.
-func (c *Client) Close() <span class="cov7" title="7">{
+func (c *Client) Close() <span class="cov7" title="9">{
         c.pool.Close()
 }</span>
 
 // Stdout returns the raw stdout output.
-func (r *Response) Stdout() []byte <span class="cov6" title="5">{
+func (r *Response) Stdout() []byte <span class="cov5" title="5">{
         return r.stdout.Bytes()
 }</span>
 
@@ -224,7 +224,7 @@ func (r *Response) Stderr() []byte <span class="cov4" title="3">{
 
 // ParseHTTP parses the FastCGI response as HTTP (status, headers, body).
 // PHP-FPM returns: "Status: 200 OK\r\nContent-Type: text/html\r\n\r\n&lt;body&gt;"
-func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Reader) <span class="cov5" title="4">{
+func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Reader) <span class="cov6" title="6">{
         reader := bufio.NewReader(&amp;r.stdout)
         tp := textproto.NewReader(reader)
 
@@ -234,22 +234,22 @@ func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Rea
                 return http.StatusOK, http.Header{}, &amp;r.stdout
         }</span>
 
-        <span class="cov4" title="3">headers = http.Header(mimeHeader)
+        <span class="cov5" title="5">headers = http.Header(mimeHeader)
 
         // Parse Status header
-        if status := headers.Get("Status"); status != "" </span><span class="cov3" title="2">{
+        if status := headers.Get("Status"); status != "" </span><span class="cov4" title="3">{
                 if len(status) &gt;= 3 </span><span class="cov3" title="2">{
                         if code, err := strconv.Atoi(status[:3]); err == nil </span><span class="cov3" title="2">{
                                 statusCode = code
                         }</span>
                 }
-                <span class="cov3" title="2">headers.Del("Status")</span>
+                <span class="cov4" title="3">headers.Del("Status")</span>
         }
-        <span class="cov4" title="3">if statusCode == 0 </span><span class="cov1" title="1">{
+        <span class="cov5" title="5">if statusCode == 0 </span><span class="cov4" title="3">{
                 statusCode = http.StatusOK
         }</span>
 
-        <span class="cov4" title="3">body = reader // remaining bytes = response body
+        <span class="cov5" title="5">body = reader // remaining bytes = response body
         return</span>
 }
 </pre>
@@ -294,23 +294,23 @@ type PoolConfig struct {
 }
 
 // NewPool creates a new connection pool.
-func NewPool(cfg PoolConfig) *Pool <span class="cov8" title="16">{
+func NewPool(cfg PoolConfig) *Pool <span class="cov9" title="20">{
         network, address := parseAddress(cfg.Address)
 
         maxIdle := cfg.MaxIdle
-        if maxIdle &lt;= 0 </span><span class="cov2" title="2">{
+        if maxIdle &lt;= 0 </span><span class="cov4" title="3">{
                 maxIdle = 10
         }</span>
-        <span class="cov8" title="16">maxOpen := cfg.MaxOpen
-        if maxOpen &lt;= 0 </span><span class="cov2" title="2">{
+        <span class="cov9" title="20">maxOpen := cfg.MaxOpen
+        if maxOpen &lt;= 0 </span><span class="cov4" title="3">{
                 maxOpen = 64
         }</span>
-        <span class="cov8" title="16">maxLife := cfg.MaxLifetime
-        if maxLife &lt;= 0 </span><span class="cov8" title="13">{
+        <span class="cov9" title="20">maxLife := cfg.MaxLifetime
+        if maxLife &lt;= 0 </span><span class="cov8" title="17">{
                 maxLife = 5 * time.Minute
         }</span>
 
-        <span class="cov8" title="16">return &amp;Pool{
+        <span class="cov9" title="20">return &amp;Pool{
                 network: network,
                 address: address,
                 maxIdle: maxIdle,
@@ -321,9 +321,9 @@ func NewPool(cfg PoolConfig) *Pool <span class="cov8" title="16">{
 }
 
 // Get returns an idle connection or creates a new one.
-func (p *Pool) Get(ctx context.Context) (*conn, error) <span class="cov9" title="18">{
+func (p *Pool) Get(ctx context.Context) (*conn, error) <span class="cov9" title="22">{
         // 1. Try idle connection
-        for </span><span class="cov9" title="20">{
+        for </span><span class="cov9" title="24">{
                 select </span>{
                 case c := &lt;-p.idle:<span class="cov4" title="3">
                         // Check if stale
@@ -334,20 +334,20 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) <span class="cov9" title=
                         }
                         <span class="cov1" title="1">c.usedAt = time.Now()
                         return c, nil</span>
-                default:<span class="cov9" title="17">
+                default:<span class="cov9" title="21">
                         goto create</span>
                 }
         }
 
 create:
         // 2. Create new if under limit
-        <span class="cov9" title="17">if int(p.active.Load()) &lt; p.maxOpen </span><span class="cov8" title="16">{
+        <span class="cov9" title="21">if int(p.active.Load()) &lt; p.maxOpen </span><span class="cov9" title="19">{
                 return p.create(ctx)
         }</span>
 
         // 3. Wait for idle connection or context cancel
-        <span class="cov1" title="1">select </span>{
-        case c := &lt;-p.idle:<span class="cov0" title="0">
+        <span class="cov2" title="2">select </span>{
+        case c := &lt;-p.idle:<span class="cov1" title="1">
                 c.usedAt = time.Now()
                 return c, nil</span>
         case &lt;-ctx.Done():<span class="cov1" title="1">
@@ -356,13 +356,13 @@ create:
 }
 
 // Put returns a connection to the pool.
-func (p *Pool) Put(c *conn) <span class="cov8" title="16">{
+func (p *Pool) Put(c *conn) <span class="cov9" title="19">{
         if c == nil </span><span class="cov1" title="1">{
                 return
         }</span>
-        <span class="cov8" title="15">c.usedAt = time.Now()
+        <span class="cov8" title="18">c.usedAt = time.Now()
         select </span>{
-        case p.idle &lt;- c:<span class="cov8" title="14"></span>
+        case p.idle &lt;- c:<span class="cov8" title="17"></span>
         default:<span class="cov1" title="1">
                 // Pool full
                 c.netConn.Close()
@@ -371,22 +371,22 @@ func (p *Pool) Put(c *conn) <span class="cov8" title="16">{
 }
 
 // Discard closes a connection without returning it to the pool.
-func (p *Pool) Discard(c *conn) <span class="cov2" title="2">{
+func (p *Pool) Discard(c *conn) <span class="cov4" title="3">{
         if c == nil </span><span class="cov1" title="1">{
                 return
         }</span>
-        <span class="cov1" title="1">c.netConn.Close()
+        <span class="cov2" title="2">c.netConn.Close()
         p.active.Add(-1)</span>
 }
 
 // Close drains and closes all connections.
-func (p *Pool) Close() <span class="cov8" title="16">{
+func (p *Pool) Close() <span class="cov9" title="20">{
         p.mu.Lock()
         p.closed = true
         p.mu.Unlock()
 
         close(p.idle)
-        for c := range p.idle </span><span class="cov7" title="11">{
+        for c := range p.idle </span><span class="cov8" title="13">{
                 c.netConn.Close()
         }</span>
 }
@@ -396,7 +396,7 @@ func (p *Pool) Stats() (active, idle int) <span class="cov6" title="8">{
         return int(p.active.Load()), len(p.idle)
 }</span>
 
-func (p *Pool) create(ctx context.Context) (*conn, error) <span class="cov8" title="16">{
+func (p *Pool) create(ctx context.Context) (*conn, error) <span class="cov9" title="19">{
         p.active.Add(1)
 
         d := net.Dialer{Timeout: 5 * time.Second}
@@ -406,7 +406,7 @@ func (p *Pool) create(ctx context.Context) (*conn, error) <span class="cov8" tit
                 return nil, fmt.Errorf("dial %s %s: %w", p.network, p.address, err)
         }</span>
 
-        <span class="cov8" title="15">return &amp;conn{
+        <span class="cov8" title="18">return &amp;conn{
                 netConn:   nc,
                 createdAt: time.Now(),
                 usedAt:    time.Now(),
@@ -414,11 +414,11 @@ func (p *Pool) create(ctx context.Context) (*conn, error) <span class="cov8" tit
 }
 
 // parseAddress splits "unix:/path" or "tcp:host:port" into network and address.
-func parseAddress(addr string) (network, address string) <span class="cov10" title="23">{
+func parseAddress(addr string) (network, address string) <span class="cov10" title="27">{
         if strings.HasPrefix(addr, "unix:") </span><span class="cov4" title="3">{
                 return "unix", addr[5:]
         }</span>
-        <span class="cov9" title="20">if strings.HasPrefix(addr, "tcp:") </span><span class="cov9" title="17">{
+        <span class="cov9" title="24">if strings.HasPrefix(addr, "tcp:") </span><span class="cov9" title="21">{
                 return "tcp", addr[4:]
         }</span>
         // Default: if it starts with / it's unix, otherwise tcp
@@ -489,7 +489,7 @@ type Record struct {
 }
 
 // EncodeHeader writes an 8-byte header to the given writer.
-func EncodeHeader(w io.Writer, h *Header) error <span class="cov10" title="50">{
+func EncodeHeader(w io.Writer, h *Header) error <span class="cov10" title="61">{
         var buf [headerSize]byte
         buf[0] = h.Version
         buf[1] = h.Type
@@ -502,12 +502,12 @@ func EncodeHeader(w io.Writer, h *Header) error <span class="cov10" title="50">{
 }</span>
 
 // DecodeHeader reads an 8-byte header from the given reader.
-func DecodeHeader(r io.Reader) (*Header, error) <span class="cov9" title="48">{
+func DecodeHeader(r io.Reader) (*Header, error) <span class="cov9" title="55">{
         var buf [headerSize]byte
         if _, err := io.ReadFull(r, buf[:]); err != nil </span><span class="cov1" title="1">{
                 return nil, err
         }</span>
-        <span class="cov9" title="47">return &amp;Header{
+        <span class="cov9" title="54">return &amp;Header{
                 Version:       buf[0],
                 Type:          buf[1],
                 RequestID:     binary.BigEndian.Uint16(buf[2:4]),
@@ -518,7 +518,7 @@ func DecodeHeader(r io.Reader) (*Header, error) <span class="cov9" title="48">{
 }
 
 // WriteRecord writes a complete record (header + content + padding).
-func WriteRecord(w io.Writer, recType uint8, requestID uint16, content []byte) error <span class="cov9" title="47">{
+func WriteRecord(w io.Writer, recType uint8, requestID uint16, content []byte) error <span class="cov9" title="58">{
         contentLen := len(content)
         padding := (8 - contentLen%8) % 8
 
@@ -533,31 +533,31 @@ func WriteRecord(w io.Writer, recType uint8, requestID uint16, content []byte) e
         if err := EncodeHeader(w, h); err != nil </span><span class="cov1" title="1">{
                 return err
         }</span>
-        <span class="cov9" title="46">if contentLen &gt; 0 </span><span class="cov8" title="29">{
+        <span class="cov9" title="57">if contentLen &gt; 0 </span><span class="cov8" title="36">{
                 if _, err := w.Write(content); err != nil </span><span class="cov1" title="1">{
                         return err
                 }</span>
         }
-        <span class="cov9" title="45">if padding &gt; 0 </span><span class="cov7" title="17">{
+        <span class="cov9" title="56">if padding &gt; 0 </span><span class="cov7" title="20">{
                 pad := make([]byte, padding)
                 if _, err := w.Write(pad); err != nil </span><span class="cov1" title="1">{
                         return err
                 }</span>
         }
-        <span class="cov9" title="44">return nil</span>
+        <span class="cov9" title="55">return nil</span>
 }
 
 // ReadRecord reads a complete record from the reader.
-func ReadRecord(r io.Reader) (*Record, error) <span class="cov9" title="46">{
+func ReadRecord(r io.Reader) (*Record, error) <span class="cov9" title="53">{
         h, err := DecodeHeader(r)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
 
-        <span class="cov9" title="46">rec := &amp;Record{Header: *h}
+        <span class="cov9" title="53">rec := &amp;Record{Header: *h}
 
         // Read content
-        if h.ContentLength &gt; 0 </span><span class="cov8" title="29">{
+        if h.ContentLength &gt; 0 </span><span class="cov8" title="33">{
                 rec.Content = make([]byte, h.ContentLength)
                 if _, err := io.ReadFull(r, rec.Content); err != nil </span><span class="cov1" title="1">{
                         return nil, fmt.Errorf("read content: %w", err)
@@ -565,18 +565,18 @@ func ReadRecord(r io.Reader) (*Record, error) <span class="cov9" title="46">{
         }
 
         // Discard padding
-        <span class="cov9" title="45">if h.PaddingLength &gt; 0 </span><span class="cov7" title="17">{
+        <span class="cov9" title="52">if h.PaddingLength &gt; 0 </span><span class="cov7" title="19">{
                 pad := make([]byte, h.PaddingLength)
                 if _, err := io.ReadFull(r, pad); err != nil </span><span class="cov1" title="1">{
                         return nil, fmt.Errorf("read padding: %w", err)
                 }</span>
         }
 
-        <span class="cov9" title="44">return rec, nil</span>
+        <span class="cov9" title="51">return rec, nil</span>
 }
 
 // EncodeBeginRequest builds the 8-byte body for a FCGI_BEGIN_REQUEST record.
-func EncodeBeginRequest(role uint16, flags uint8) []byte <span class="cov5" title="6">{
+func EncodeBeginRequest(role uint16, flags uint8) []byte <span class="cov5" title="8">{
         b := make([]byte, 8)
         binary.BigEndian.PutUint16(b[0:2], role)
         b[2] = flags
@@ -594,15 +594,15 @@ func EncodeParam(name, value string) []byte <span class="cov4" title="5">{
 }</span>
 
 // EncodeParams encodes multiple name-value pairs into a single byte slice.
-func EncodeParams(params map[string]string) []byte <span class="cov5" title="7">{
+func EncodeParams(params map[string]string) []byte <span class="cov5" title="9">{
         var buf bytes.Buffer
-        for k, v := range params </span><span class="cov7" title="20">{
+        for k, v := range params </span><span class="cov7" title="24">{
                 encodeLength(&amp;buf, len(k))
                 encodeLength(&amp;buf, len(v))
                 buf.WriteString(k)
                 buf.WriteString(v)
         }</span>
-        <span class="cov5" title="7">return buf.Bytes()</span>
+        <span class="cov5" title="9">return buf.Bytes()</span>
 }
 
 // DecodeParams decodes FastCGI name-value pairs from raw bytes.
@@ -620,11 +620,11 @@ func DecodeParams(data []byte) (map[string]string, error) <span class="cov6" tit
                         return params, err
                 }</span>
 
-                <span class="cov7" title="15">name := make([]byte, nameLen)
+                <span class="cov6" title="15">name := make([]byte, nameLen)
                 if _, err := io.ReadFull(r, name); err != nil </span><span class="cov0" title="0">{
                         return params, err
                 }</span>
-                <span class="cov7" title="15">value := make([]byte, valueLen)
+                <span class="cov6" title="15">value := make([]byte, valueLen)
                 if _, err := io.ReadFull(r, value); err != nil </span><span class="cov2" title="2">{
                         return params, err
                 }</span>
@@ -635,8 +635,8 @@ func DecodeParams(data []byte) (map[string]string, error) <span class="cov6" tit
         <span class="cov5" title="8">return params, nil</span>
 }
 
-func encodeLength(buf *bytes.Buffer, n int) <span class="cov10" title="50">{
-        if n &lt; 128 </span><span class="cov9" title="45">{
+func encodeLength(buf *bytes.Buffer, n int) <span class="cov9" title="58">{
+        if n &lt; 128 </span><span class="cov9" title="53">{
                 buf.WriteByte(byte(n))
         }</span> else<span class="cov4" title="5"> {
                 b := make([]byte, 4)
@@ -645,7 +645,7 @@ func encodeLength(buf *bytes.Buffer, n int) <span class="cov10" title="50">{
         }</span>
 }
 
-func decodeLength(r io.ByteReader) (int, error) <span class="cov9" title="33">{
+func decodeLength(r io.ByteReader) (int, error) <span class="cov8" title="33">{
         b, err := r.ReadByte()
         if err != nil </span><span class="cov1" title="1">{
                 return 0, err
@@ -654,7 +654,7 @@ func decodeLength(r io.ByteReader) (int, error) <span class="cov9" title="33">{
                 return int(b), nil
         }</span>
         // 4-byte encoding: high bit is flag, not part of length
-        <span class="cov5" title="6">var buf [3]byte
+        <span class="cov4" title="6">var buf [3]byte
         for i := range buf </span><span class="cov7" title="17">{
                 buf[i], err = r.ReadByte()
                 if err != nil </span><span class="cov1" title="1">{

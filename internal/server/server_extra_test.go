@@ -1003,6 +1003,86 @@ func TestParseHtaccessEmptyFile(t *testing.T) {
 	}
 }
 
+// --- handleFileRequest: stat error on resolved path ---
+
+func TestHandleFileRequestStatErrorOnResolved(t *testing.T) {
+	dir := t.TempDir()
+	// Create index.html but a path that will resolve to a nonexistent target
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "statfail.com",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				TryFiles: []string{"$uri"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Request for something that doesn't exist but resolves through tryFiles
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/nonexistent-file.html", nil)
+	req.Host = "statfail.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404 for file stat error", rec.Code)
+	}
+}
+
+// --- parseHtaccess: htaccess with conditions that fail to parse ---
+
+func TestParseHtaccessWithBadConditions(t *testing.T) {
+	dir := t.TempDir()
+	// Write .htaccess with a valid rule but an invalid condition variable syntax
+	htaccess := `
+RewriteEngine On
+RewriteCond %{INVALID_VAR_XYZ} ^value$
+RewriteRule ^/test$ /dest [L]
+`
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(htaccess), 0644)
+	os.WriteFile(filepath.Join(dir, "dest"), []byte("destination"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "htcond.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "htcond.local"
+	s.handleRequest(rec, req)
+
+	// Should not panic; conditions with unknown vars should still work
+	if rec.Code == 0 {
+		t.Error("expected non-zero status code")
+	}
+}
+
 // --- GracefulRestart with admin server ---
 
 func TestGracefulRestartWithAdminServer(t *testing.T) {

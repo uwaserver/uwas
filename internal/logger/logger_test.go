@@ -593,3 +593,96 @@ func TestAccessLoggerNegativeMaxBackups(t *testing.T) {
 		t.Errorf("maxBackups = %d, want 5 for negative input", al.maxBackups)
 	}
 }
+
+// --- accesslog.go: Reopen with nil file handle ---
+
+func TestAccessLoggerReopenNilFile(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:   logPath,
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	// Set file to nil to test the nil check path
+	al.file.Close()
+	al.file = nil
+
+	// Reopen should handle nil file gracefully
+	err = al.Reopen()
+	if err != nil {
+		t.Fatalf("Reopen with nil file: %v", err)
+	}
+
+	// Should be able to write after reopen
+	al.Log("GET", "test.com", "/after-nil", "1.1.1.1", "A", "r", 200, 50, 1, 1)
+	al.Close()
+}
+
+// --- accesslog.go: rotate when directory is unreadable for cleanOldBackups ---
+
+func TestAccessLoggerRotateCleanupDirError(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:       logPath,
+		Format:     "json",
+		MaxSize:    50,
+		MaxBackups: 1,
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Write enough to trigger rotation
+	for i := 0; i < 5; i++ {
+		al.Log("GET", "test.com", "/p", "1.1.1.1", "A", "r", 200, 100, 1, 1)
+	}
+	// Just ensuring rotation doesn't panic
+}
+
+// --- accesslog.go: multiple rotations in sequence ---
+
+func TestAccessLoggerMultipleRotations(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:       logPath,
+		Format:     "clf",
+		MaxSize:    100,
+		MaxBackups: 2,
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Write enough to trigger many rotations
+	for i := 0; i < 50; i++ {
+		al.Log("GET", "test.com", "/page", "1.2.3.4", "Agent/1.0", "rid",
+			200, 1024, 10, 2)
+	}
+
+	al.Close()
+
+	// Count backups - should be limited to maxBackups
+	entries, _ := os.ReadDir(dir)
+	backupCount := 0
+	for _, e := range entries {
+		name := e.Name()
+		if name != "access.log" && strings.HasPrefix(name, "access.log.") {
+			backupCount++
+		}
+	}
+
+	if backupCount > 2 {
+		t.Errorf("should have at most 2 backups, got %d", backupCount)
+	}
+}

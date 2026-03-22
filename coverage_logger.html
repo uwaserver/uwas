@@ -110,39 +110,39 @@ type AccessLogConfig struct {
 }
 
 // NewAccessLogger opens or creates an access log file.
-func NewAccessLogger(cfg AccessLogConfig) (*AccessLogger, error) <span class="cov6" title="11">{
+func NewAccessLogger(cfg AccessLogConfig) (*AccessLogger, error) <span class="cov7" title="17">{
         if cfg.Path == "" </span><span class="cov1" title="1">{
                 return nil, nil
         }</span>
 
-        <span class="cov6" title="10">dir := filepath.Dir(cfg.Path)
+        <span class="cov6" title="16">dir := filepath.Dir(cfg.Path)
         if err := os.MkdirAll(dir, 0755); err != nil </span><span class="cov1" title="1">{
                 return nil, fmt.Errorf("create log dir %s: %w", dir, err)
         }</span>
 
-        <span class="cov5" title="9">f, err := os.OpenFile(cfg.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+        <span class="cov6" title="15">f, err := os.OpenFile(cfg.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("open access log %s: %w", cfg.Path, err)
         }</span>
 
-        <span class="cov5" title="9">format := cfg.Format
+        <span class="cov6" title="15">format := cfg.Format
         if format == "" </span><span class="cov1" title="1">{
                 format = "json"
         }</span>
 
-        <span class="cov5" title="9">maxBackups := cfg.MaxBackups
-        if maxBackups &lt;= 0 </span><span class="cov5" title="6">{
+        <span class="cov6" title="15">maxBackups := cfg.MaxBackups
+        if maxBackups &lt;= 0 </span><span class="cov5" title="10">{
                 maxBackups = 5
         }</span>
 
         // Get current file size
-        <span class="cov5" title="9">info, _ := f.Stat()
+        <span class="cov6" title="15">info, _ := f.Stat()
         var written int64
-        if info != nil </span><span class="cov5" title="9">{
+        if info != nil </span><span class="cov6" title="15">{
                 written = info.Size()
         }</span>
 
-        <span class="cov5" title="9">return &amp;AccessLogger{
+        <span class="cov6" title="15">return &amp;AccessLogger{
                 file:       f,
                 path:       cfg.Path,
                 format:     format,
@@ -154,37 +154,37 @@ func NewAccessLogger(cfg AccessLogConfig) (*AccessLogger, error) <span class="co
 
 // Log writes an access log entry. Rotates the file if maxSize is exceeded.
 func (a *AccessLogger) Log(method, host, path, remoteIP, userAgent, requestID string,
-        status int, bytes int64, durationMs, ttfbMs int64) <span class="cov8" title="34">{
+        status int, bytes int64, durationMs, ttfbMs int64) <span class="cov9" title="46">{
 
         var line string
         now := time.Now()
 
         switch a.format </span>{
-        case "clf":<span class="cov1" title="1">
+        case "clf":<span class="cov6" title="11">
                 line = fmt.Sprintf("%s - - [%s] \"%s %s HTTP/1.1\" %d %d \"-\" \"%s\"\n",
                         remoteIP,
                         now.Format("02/Jan/2006:15:04:05 -0700"),
                         method, path, status, bytes, userAgent)</span>
-        default:<span class="cov8" title="33">
+        default:<span class="cov8" title="35">
                 line = fmt.Sprintf(`{"time":"%s","method":"%s","host":"%s","path":"%s","status":%d,"bytes":%d,"duration_ms":%d,"ttfb_ms":%d,"remote":"%s","user_agent":"%s","request_id":"%s"}`+"\n",
                         now.Format(time.RFC3339), method, host, path, status, bytes,
                         durationMs, ttfbMs, remoteIP, userAgent, requestID)</span>
         }
 
-        <span class="cov8" title="34">a.mu.Lock()
+        <span class="cov9" title="46">a.mu.Lock()
         defer a.mu.Unlock()
 
         a.file.WriteString(line)
         a.written += int64(len(line))
 
         // Rotate if needed
-        if a.maxSize &gt; 0 &amp;&amp; a.written &gt;= a.maxSize </span><span class="cov8" title="30">{
+        if a.maxSize &gt; 0 &amp;&amp; a.written &gt;= a.maxSize </span><span class="cov8" title="40">{
                 a.rotate()
         }</span>
 }
 
 // rotate closes the current file, renames it with a timestamp, and opens a new one.
-func (a *AccessLogger) rotate() <span class="cov8" title="30">{
+func (a *AccessLogger) rotate() <span class="cov8" title="40">{
         a.file.Close()
 
         // Rename current → timestamped backup
@@ -200,12 +200,12 @@ func (a *AccessLogger) rotate() <span class="cov8" title="30">{
         if err != nil </span><span class="cov0" title="0">{
                 return
         }</span>
-        <span class="cov8" title="30">a.file = f
+        <span class="cov8" title="40">a.file = f
         a.written = 0</span>
 }
 
 // cleanOldBackups keeps only the newest maxBackups rotated files.
-func (a *AccessLogger) cleanOldBackups() <span class="cov8" title="30">{
+func (a *AccessLogger) cleanOldBackups() <span class="cov8" title="41">{
         dir := filepath.Dir(a.path)
         base := filepath.Base(a.path)
         entries, err := os.ReadDir(dir)
@@ -213,45 +213,45 @@ func (a *AccessLogger) cleanOldBackups() <span class="cov8" title="30">{
                 return
         }</span>
 
-        <span class="cov8" title="30">var backups []string
-        for _, e := range entries </span><span class="cov10" title="56">{
+        <span class="cov8" title="41">var backups []string
+        for _, e := range entries </span><span class="cov10" title="67">{
                 name := e.Name()
-                if name != base &amp;&amp; len(name) &gt; len(base) &amp;&amp; name[:len(base)] == base </span><span class="cov10" title="56">{
+                if name != base &amp;&amp; len(name) &gt; len(base) &amp;&amp; name[:len(base)] == base </span><span class="cov9" title="66">{
                         backups = append(backups, filepath.Join(dir, name))
                 }</span>
         }
 
         // Remove oldest backups if over limit
-        <span class="cov8" title="30">for len(backups) &gt; a.maxBackups </span><span class="cov5" title="6">{
+        <span class="cov8" title="41">for len(backups) &gt; a.maxBackups </span><span class="cov4" title="6">{
                 os.Remove(backups[0])
                 backups = backups[1:]
         }</span>
 }
 
 // Reopen closes and reopens the log file (for SIGHUP-based rotation by external tools).
-func (a *AccessLogger) Reopen() error <span class="cov1" title="1">{
+func (a *AccessLogger) Reopen() error <span class="cov3" title="3">{
         a.mu.Lock()
         defer a.mu.Unlock()
 
-        if a.file != nil </span><span class="cov1" title="1">{
+        if a.file != nil </span><span class="cov3" title="3">{
                 a.file.Close()
         }</span>
 
-        <span class="cov1" title="1">f, err := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+        <span class="cov3" title="3">f, err := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
         if err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
-        <span class="cov1" title="1">a.file = f
+        <span class="cov3" title="3">a.file = f
         a.written = 0
         return nil</span>
 }
 
 // Close flushes and closes the log file.
-func (a *AccessLogger) Close() error <span class="cov7" title="15">{
+func (a *AccessLogger) Close() error <span class="cov7" title="23">{
         if a == nil || a.file == nil </span><span class="cov1" title="1">{
                 return nil
         }</span>
-        <span class="cov6" title="14">a.mu.Lock()
+        <span class="cov7" title="22">a.mu.Lock()
         defer a.mu.Unlock()
         return a.file.Close()</span>
 }

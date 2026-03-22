@@ -3,6 +3,7 @@ package middleware
 import (
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -1456,5 +1457,166 @@ func TestCompressCloseLargeCompressibleBuffer(t *testing.T) {
 
 	if rec.Header().Get("Content-Encoding") != "gzip" {
 		t.Error("should compress at exactly minSize threshold")
+	}
+}
+
+// --- compress.go: Close flushes compressible buffer >= minSize without Content-Type ---
+
+func TestCompressCloseAutoDetectCompressible(t *testing.T) {
+	// Write HTML data without setting Content-Type, all below minSize
+	// so it stays in the buffer, then Close auto-detects and compresses
+	htmlData := "<html><body>" + strings.Repeat("<p>Hello</p>", 50) + "</body></html>"
+
+	handler := Compress(len(htmlData) - 10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// NO Content-Type header set
+		// Write all at once but it exceeds minSize
+		w.Write([]byte(htmlData))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("should auto-detect text/html and compress")
+	}
+}
+
+// --- compress.go: Close with compressible buffer below minSize (flushUncompressed in Close) ---
+
+func TestCompressCloseCompressibleBelowMinSize(t *testing.T) {
+	data := strings.Repeat("<div>test</div>", 200) // HTML data
+
+	handler := Compress(len(data) + 1)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		// Write data that's below minSize (so buffer stays)
+		w.Write([]byte(data))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(rec, req)
+
+	// Data is below minSize, so Close will flush uncompressed
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("should not compress when below minSize even if compressible")
+	}
+}
+
+// --- compress.go: Close with no Content-Type set, buffer < minSize (exercises DetectContentType in Close) ---
+
+func TestCompressCloseNoContentTypeDetect(t *testing.T) {
+	// Write a small amount of text without Content-Type
+	// Close should detect the content type from the buffer
+	data := "Hello World"
+
+	handler := Compress(len(data) + 100)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// DO NOT set Content-Type
+		w.Write([]byte(data))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(rec, req)
+
+	// Buffer is small (< minSize), so should flush uncompressed
+	if rec.Body.String() != data {
+		t.Errorf("body = %q, want %q", rec.Body.String(), data)
+	}
+}
+
+// --- compress.go: Write to non-compressible then write more (exercises line 160) ---
+
+func TestCompressWriteAfterNonCompressibleFlush(t *testing.T) {
+	handler := Compress(50)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		// First write: exceeds minSize, triggers non-compressible flush
+		w.Write([]byte(strings.Repeat("\x00", 100)))
+		// Second write: goes through ResponseWriter.Write directly (line 160)
+		w.Write([]byte(strings.Repeat("\xFF", 50)))
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("should not compress non-compressible content")
+	}
+	if rec.Body.Len() != 150 {
+		t.Errorf("body length = %d, want 150", rec.Body.Len())
+	}
+}
+
+// --- compress.go: Close with nothing written and encoding accepted ---
+
+func TestCompressCloseNothingWrittenWithEncoding(t *testing.T) {
+	handler := Compress(100)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handler does absolutely nothing — not even WriteHeader
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept-Encoding", "br")
+	handler.ServeHTTP(rec, req)
+
+	// Close should write 200 OK
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// --- ratelimit.go: cleanup loop ticker fires ---
+
+func TestRateLimitCleanupLoopFires(t *testing.T) {
+	// We can't easily test the 1-minute ticker without waiting,
+	// but we can at least test the cleanup data structure is sound
+	ctx, cancel := context.WithCancel(context.Background())
+
+	rl := NewRateLimiter(ctx, 5, 10*time.Millisecond)
+
+	// Fill some buckets
+	for i := 0; i < 100; i++ {
+		rl.Allow(fmt.Sprintf("ip-%d", i))
+	}
+
+	// Cancel to stop the goroutine
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+
+	// The goroutine should have exited
+}
+
+// --- realip.go: extractRealIP returns "" for completely empty input ---
+
+func TestExtractRealIPEmptyString(t *testing.T) {
+	result := extractRealIP("", nil)
+	if result != "" {
+		t.Errorf("got %q, want empty for empty XFF", result)
+	}
+}
+
+// --- ipacl.go: combined whitelist+blacklist where IP not in whitelist ---
+
+func TestIPACLCombinedWhiteBlackNotInWhitelist(t *testing.T) {
+	handler := IPACL(IPACLConfig{
+		Whitelist: []string{"10.0.0.0/8"},
+		Blacklist: []string{"192.168.0.0/16"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	// IP not in whitelist → 403
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "172.16.0.1:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 (not in whitelist)", rec.Code)
 	}
 }

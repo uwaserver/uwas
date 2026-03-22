@@ -790,6 +790,26 @@ func TestServeDirListingSubpathParent(t *testing.T) {
 
 // --- handler.go: Serve with dotfile components "." and ".." should NOT be blocked ---
 
+// --- listing.go: parent dir is "/" when urlPath is like "/foo" ---
+
+func TestServeDirListingParentIsRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.txt", "data")
+
+	ctx := makeCtx(t, "GET", "/foo")
+	ServeDirListing(ctx, dir, "/foo")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	body := rec.Body.String()
+
+	// Should have a parent link (../)
+	if !strings.Contains(body, "../") {
+		t.Error("parent link for /foo should exist")
+	}
+}
+
+// --- handler.go: Serve with "." and ".." should NOT be blocked ---
+
 func TestServeDotAndDotDotNotBlocked(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "index.html", "<h1>Hello</h1>")

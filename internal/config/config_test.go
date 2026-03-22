@@ -1205,6 +1205,65 @@ domains:
 	}
 }
 
+// --- defaults.go: domain without type or SSL mode gets defaults ---
+
+func TestDefaultsDomainTypeAndSSL(t *testing.T) {
+	yaml := `
+domains:
+  - host: "bare.com"
+    root: /var/www
+    ssl:
+      mode: off
+`
+	cfg := loadFromString(t, yaml)
+
+	d := cfg.Domains[0]
+	if d.Type != "static" {
+		t.Errorf("Type = %q, want static (default)", d.Type)
+	}
+}
+
+func TestDefaultsDomainSSLMode(t *testing.T) {
+	// SSL mode empty should default to "off"
+	// We need a domain where ssl.mode is not set at all
+	// but the yaml must not have mode: off explicitly
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	// Domain file with no ssl.mode
+	os.WriteFile(filepath.Join(domainsDir, "test.yaml"), []byte(`
+host: nossl.com
+root: /var/www
+type: static
+`), 0644)
+
+	mainConfig := fmt.Sprintf(`
+global:
+  log_level: info
+domains_dir: "%s"
+`, filepath.ToSlash(domainsDir))
+
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Domains) == 0 {
+		t.Fatal("expected at least 1 domain")
+	}
+	d := cfg.Domains[0]
+	if d.SSL.Mode != "off" {
+		t.Errorf("SSL.Mode = %q, want off (default)", d.SSL.Mode)
+	}
+	if d.SSL.MinVersion != "1.2" {
+		t.Errorf("SSL.MinVersion = %q, want 1.2 (default)", d.SSL.MinVersion)
+	}
+}
+
 // --- defaults.go: all global defaults set (no override) ---
 
 func TestDefaultsGlobalAlreadySet(t *testing.T) {

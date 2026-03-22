@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/uwaserver/uwas/internal/handler/static/handler.go (96.4%)</option>
+				<option value="file0">github.com/uwaserver/uwas/internal/handler/static/handler.go (97.3%)</option>
 				
 				<option value="file1">github.com/uwaserver/uwas/internal/handler/static/listing.go (95.1%)</option>
 				
@@ -101,7 +101,7 @@ type Handler struct {
         mime *MIMERegistry
 }
 
-func New() *Handler <span class="cov6" title="16">{
+func New() *Handler <span class="cov6" title="19">{
         return &amp;Handler{
                 mime: NewMIMERegistry(nil),
         }
@@ -123,36 +123,36 @@ func (h *Handler) CanHandle(ctx *router.RequestContext) bool <span class="cov3" 
 }
 
 // Serve handles the request by serving the resolved static file.
-func (h *Handler) Serve(ctx *router.RequestContext) <span class="cov5" title="11">{
+func (h *Handler) Serve(ctx *router.RequestContext) <span class="cov5" title="14">{
         path := ctx.ResolvedPath
         w := ctx.Response
         r := ctx.Request
 
         // Security: reject dotfiles in any path component (e.g., .git, .env)
-        for _, component := range strings.Split(filepath.ToSlash(path), "/") </span><span class="cov10" title="99">{
-                if strings.HasPrefix(component, ".") &amp;&amp; component != "." &amp;&amp; component != ".." </span><span class="cov1" title="1">{
+        for _, component := range strings.Split(filepath.ToSlash(path), "/") </span><span class="cov10" title="126">{
+                if strings.HasPrefix(component, ".") &amp;&amp; component != "." &amp;&amp; component != ".." </span><span class="cov2" title="2">{
                         w.Error(http.StatusForbidden, "403 Forbidden")
                         return
                 }</span>
         }
 
-        <span class="cov5" title="10">info, err := os.Stat(path)
+        <span class="cov5" title="12">info, err := os.Stat(path)
         if err != nil </span><span class="cov1" title="1">{
                 w.Error(http.StatusNotFound, "404 Not Found")
                 return
         }</span>
 
         // Set content type
-        <span class="cov5" title="9">ct := h.mime.Lookup(path)
+        <span class="cov5" title="11">ct := h.mime.Lookup(path)
         w.Header().Set("Content-Type", ct)
 
         // Try pre-compressed version
-        if h.servePreCompressed(w, r, path, info) </span><span class="cov2" title="2">{
+        if h.servePreCompressed(w, r, path, info) </span><span class="cov3" title="3">{
                 return
         }</span>
 
         // Generate weak ETag: W/"mtime-size"
-        <span class="cov4" title="7">etag := generateETag(info)
+        <span class="cov4" title="8">etag := generateETag(info)
         w.Header().Set("ETag", etag)
 
         // Let http.ServeContent handle If-None-Match, If-Modified-Since, Range requests
@@ -161,20 +161,20 @@ func (h *Handler) Serve(ctx *router.RequestContext) <span class="cov5" title="11
                 w.Error(http.StatusInternalServerError, "500 Internal Server Error")
                 return
         }</span>
-        <span class="cov4" title="7">defer f.Close()
+        <span class="cov4" title="8">defer f.Close()
 
         http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)</span>
 }
 
 // servePreCompressed checks for .br or .gz pre-compressed files.
-func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, path string, origInfo fs.FileInfo) bool <span class="cov5" title="9">{
+func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, path string, origInfo fs.FileInfo) bool <span class="cov5" title="11">{
         accept := r.Header.Get("Accept-Encoding")
-        if accept == "" </span><span class="cov3" title="4">{
+        if accept == "" </span><span class="cov3" title="5">{
                 return false
         }</span>
 
         // Brotli has priority over gzip
-        <span class="cov4" title="5">type preComp struct {
+        <span class="cov4" title="6">type preComp struct {
                 ext      string
                 encoding string
         }
@@ -183,22 +183,22 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
                 {".gz", "gzip"},
         }
 
-        for _, c := range candidates </span><span class="cov5" title="9">{
+        for _, c := range candidates </span><span class="cov5" title="11">{
                 if !strings.Contains(accept, c.encoding) </span><span class="cov3" title="3">{
                         continue</span>
                 }
-                <span class="cov4" title="6">compPath := path + c.ext
+                <span class="cov4" title="8">compPath := path + c.ext
                 compInfo, err := os.Stat(compPath)
-                if err != nil || compInfo.IsDir() </span><span class="cov3" title="4">{
+                if err != nil || compInfo.IsDir() </span><span class="cov3" title="5">{
                         continue</span>
                 }
 
-                <span class="cov2" title="2">f, err := os.Open(compPath)
+                <span class="cov3" title="3">f, err := os.Open(compPath)
                 if err != nil </span><span class="cov0" title="0">{
                         continue</span>
                 }
 
-                <span class="cov2" title="2">w.Header().Set("Content-Encoding", c.encoding)
+                <span class="cov3" title="3">w.Header().Set("Content-Encoding", c.encoding)
                 w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
                 w.Header().Set("Vary", "Accept-Encoding")
                 w.Header().Set("ETag", generateETag(origInfo)+"-"+c.encoding)
@@ -211,7 +211,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
         <span class="cov3" title="3">return false</span>
 }
 
-func generateETag(info fs.FileInfo) string <span class="cov5" title="9">{
+func generateETag(info fs.FileInfo) string <span class="cov5" title="11">{
         raw := fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
         hash := sha256.Sum256([]byte(raw))
         return fmt.Sprintf(`W/"%x"`, hash[:8])
@@ -219,7 +219,7 @@ func generateETag(info fs.FileInfo) string <span class="cov5" title="9">{
 
 // ResolveRequest handles try_files logic and path resolution for a request.
 // Returns true if a file was resolved, false if nothing found.
-func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool <span class="cov5" title="11">{
+func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool <span class="cov5" title="12">{
         uri := ctx.Request.URL.Path
         docRoot := domain.Root
 
@@ -237,32 +237,32 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool <spa
         }
 
         // SPA mode override
-        <span class="cov5" title="11">if domain.SPAMode </span><span class="cov1" title="1">{
+        <span class="cov5" title="12">if domain.SPAMode </span><span class="cov1" title="1">{
                 candidates = []string{"$uri", "$uri/", "/index.html"}
         }</span>
 
-        <span class="cov5" title="11">indexFiles := domain.IndexFiles
-        if len(indexFiles) == 0 </span><span class="cov5" title="10">{
+        <span class="cov5" title="12">indexFiles := domain.IndexFiles
+        if len(indexFiles) == 0 </span><span class="cov5" title="11">{
                 indexFiles = []string{"index.html", "index.htm"}
         }</span>
 
-        <span class="cov5" title="11">for _, candidate := range candidates </span><span class="cov7" title="22">{
+        <span class="cov5" title="12">for _, candidate := range candidates </span><span class="cov6" title="24">{
                 resolved := expandTryFileVar(candidate, cleanURI)
                 fullPath := filepath.Join(docRoot, filepath.Clean("/"+resolved))
 
                 // Security: path must stay within document root
                 absRoot, _ := filepath.Abs(docRoot)
                 absPath, _ := filepath.Abs(fullPath)
-                if !strings.HasPrefix(absPath, absRoot) </span><span class="cov3" title="3">{
+                if !strings.HasPrefix(absPath, absRoot) </span><span class="cov3" title="4">{
                         continue</span>
                 }
 
-                <span class="cov6" title="19">stat, err := os.Stat(fullPath)
-                if err != nil </span><span class="cov5" title="11">{
+                <span class="cov6" title="20">stat, err := os.Stat(fullPath)
+                if err != nil </span><span class="cov5" title="12">{
                         continue</span>
                 }
 
-                <span class="cov5" title="8">if stat.IsDir() </span><span class="cov3" title="4">{
+                <span class="cov4" title="8">if stat.IsDir() </span><span class="cov3" title="4">{
                         // Try index files within directory
                         for _, idx := range indexFiles </span><span class="cov4" title="6">{
                                 idxPath := filepath.Join(fullPath, idx)
@@ -283,15 +283,15 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool <spa
         }
 
         // Last candidate might be a named route (e.g. /index.php)
-        <span class="cov4" title="5">if len(candidates) &gt; 0 </span><span class="cov4" title="5">{
+        <span class="cov4" title="6">if len(candidates) &gt; 0 </span><span class="cov4" title="6">{
                 last := candidates[len(candidates)-1]
-                if !strings.HasPrefix(last, "$") </span><span class="cov1" title="1">{
+                if !strings.HasPrefix(last, "$") </span><span class="cov2" title="2">{
                         fullPath := filepath.Join(docRoot, filepath.Clean("/"+last))
 
                         // Security: path must stay within document root
                         absRoot, _ := filepath.Abs(docRoot)
                         absPath, _ := filepath.Abs(fullPath)
-                        if !strings.HasPrefix(absPath, absRoot) </span><span class="cov0" title="0">{
+                        if !strings.HasPrefix(absPath, absRoot) </span><span class="cov1" title="1">{
                                 return false
                         }</span>
 
@@ -305,7 +305,7 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool <spa
         <span class="cov3" title="4">return false</span>
 }
 
-func expandTryFileVar(candidate, uri string) string <span class="cov7" title="22">{
+func expandTryFileVar(candidate, uri string) string <span class="cov6" title="24">{
         result := candidate
         result = strings.ReplaceAll(result, "$uri", uri)
         return result
@@ -327,7 +327,7 @@ import (
 )
 
 // ServeDirListing renders a minimal HTML directory listing.
-func ServeDirListing(ctx *router.RequestContext, dirPath, urlPath string) <span class="cov7" title="5">{
+func ServeDirListing(ctx *router.RequestContext, dirPath, urlPath string) <span class="cov7" title="6">{
         entries, err := os.ReadDir(dirPath)
         if err != nil </span><span class="cov1" title="1">{
                 ctx.Response.Error(http.StatusInternalServerError, "500 Internal Server Error")
@@ -335,7 +335,7 @@ func ServeDirListing(ctx *router.RequestContext, dirPath, urlPath string) <span 
         }</span>
 
         // Sort: directories first, then alphabetical
-        <span class="cov6" title="4">sort.Slice(entries, func(i, j int) bool </span><span class="cov6" title="4">{
+        <span class="cov6" title="5">sort.Slice(entries, func(i, j int) bool </span><span class="cov6" title="4">{
                 di, dj := entries[i].IsDir(), entries[j].IsDir()
                 if di != dj </span><span class="cov3" title="2">{
                         return di
@@ -343,7 +343,7 @@ func ServeDirListing(ctx *router.RequestContext, dirPath, urlPath string) <span 
                 <span class="cov3" title="2">return strings.ToLower(entries[i].Name()) &lt; strings.ToLower(entries[j].Name())</span>
         })
 
-        <span class="cov6" title="4">w := ctx.Response
+        <span class="cov6" title="5">w := ctx.Response
         w.Header().Set("Content-Type", "text/html; charset=utf-8")
         w.WriteHeader(http.StatusOK)
 
@@ -366,16 +366,16 @@ a:hover{text-decoration:underline}
 `, escapedPath, escapedPath)
 
         // Parent directory link
-        if urlPath != "/" </span><span class="cov1" title="1">{
+        if urlPath != "/" </span><span class="cov3" title="2">{
                 parent := filepath.Dir(strings.TrimRight(urlPath, "/"))
                 if parent == "" </span><span class="cov0" title="0">{
                         parent = "/"
                 }</span>
-                <span class="cov1" title="1">fmt.Fprintf(w, `&lt;tr&gt;&lt;td&gt;&lt;a href="%s"&gt;../&lt;/a&gt;&lt;/td&gt;&lt;td class="size"&gt;-&lt;/td&gt;&lt;td class="date"&gt;-&lt;/td&gt;&lt;/tr&gt;`+"\n",
+                <span class="cov3" title="2">fmt.Fprintf(w, `&lt;tr&gt;&lt;td&gt;&lt;a href="%s"&gt;../&lt;/a&gt;&lt;/td&gt;&lt;td class="size"&gt;-&lt;/td&gt;&lt;td class="date"&gt;-&lt;/td&gt;&lt;/tr&gt;`+"\n",
                         html.EscapeString(parent))</span>
         }
 
-        <span class="cov6" title="4">for _, entry := range entries </span><span class="cov8" title="7">{
+        <span class="cov6" title="5">for _, entry := range entries </span><span class="cov8" title="8">{
                 name := entry.Name()
 
                 // Skip dotfiles
@@ -383,12 +383,12 @@ a:hover{text-decoration:underline}
                         continue</span>
                 }
 
-                <span class="cov7" title="6">info, err := entry.Info()
+                <span class="cov8" title="7">info, err := entry.Info()
                 if err != nil </span><span class="cov0" title="0">{
                         continue</span>
                 }
 
-                <span class="cov7" title="6">displayName := html.EscapeString(name)
+                <span class="cov8" title="7">displayName := html.EscapeString(name)
                 link := html.EscapeString(filepath.ToSlash(filepath.Join(urlPath, name)))
                 size := formatSize(info.Size())
                 date := info.ModTime().Format("2006-01-02 15:04")
@@ -399,14 +399,14 @@ a:hover{text-decoration:underline}
                         size = "-"
                 }</span>
 
-                <span class="cov7" title="6">fmt.Fprintf(w, `&lt;tr&gt;&lt;td&gt;&lt;a href="%s"&gt;%s&lt;/a&gt;&lt;/td&gt;&lt;td class="size"&gt;%s&lt;/td&gt;&lt;td class="date"&gt;%s&lt;/td&gt;&lt;/tr&gt;`+"\n",
+                <span class="cov8" title="7">fmt.Fprintf(w, `&lt;tr&gt;&lt;td&gt;&lt;a href="%s"&gt;%s&lt;/a&gt;&lt;/td&gt;&lt;td class="size"&gt;%s&lt;/td&gt;&lt;td class="date"&gt;%s&lt;/td&gt;&lt;/tr&gt;`+"\n",
                         link, displayName, size, date)</span>
         }
 
-        <span class="cov6" title="4">fmt.Fprint(w, `&lt;/table&gt;&lt;/body&gt;&lt;/html&gt;`)</span>
+        <span class="cov6" title="5">fmt.Fprint(w, `&lt;/table&gt;&lt;/body&gt;&lt;/html&gt;`)</span>
 }
 
-func formatSize(bytes int64) string <span class="cov10" title="11">{
+func formatSize(bytes int64) string <span class="cov10" title="12">{
         switch </span>{
         case bytes &gt;= 1&lt;&lt;30:<span class="cov1" title="1">
                 return fmt.Sprintf("%.1f GB", float64(bytes)/(1&lt;&lt;30))</span>
@@ -414,7 +414,7 @@ func formatSize(bytes int64) string <span class="cov10" title="11">{
                 return fmt.Sprintf("%.1f MB", float64(bytes)/(1&lt;&lt;20))</span>
         case bytes &gt;= 1&lt;&lt;10:<span class="cov1" title="1">
                 return fmt.Sprintf("%.1f KB", float64(bytes)/(1&lt;&lt;10))</span>
-        default:<span class="cov8" title="8">
+        default:<span class="cov8" title="9">
                 return fmt.Sprintf("%d B", bytes)</span>
         }
 }
@@ -528,26 +528,26 @@ type MIMERegistry struct {
         types map[string]string
 }
 
-func NewMIMERegistry(custom map[string]string) *MIMERegistry <span class="cov4" title="19">{
+func NewMIMERegistry(custom map[string]string) *MIMERegistry <span class="cov4" title="22">{
         m := &amp;MIMERegistry{
                 types: make(map[string]string, len(defaultMIMETypes)+len(custom)),
         }
-        for k, v := range defaultMIMETypes </span><span class="cov10" title="1406">{
+        for k, v := range defaultMIMETypes </span><span class="cov10" title="1628">{
                 m.types[k] = v
         }</span>
-        <span class="cov4" title="19">for k, v := range custom </span><span class="cov1" title="2">{
+        <span class="cov4" title="22">for k, v := range custom </span><span class="cov1" title="2">{
                 if !strings.HasPrefix(k, ".") </span><span class="cov1" title="1">{
                         k = "." + k
                 }</span>
                 <span class="cov1" title="2">m.types[strings.ToLower(k)] = v</span>
         }
-        <span class="cov4" title="19">return m</span>
+        <span class="cov4" title="22">return m</span>
 }
 
 // Lookup returns the MIME type for a file path.
-func (m *MIMERegistry) Lookup(name string) string <span class="cov4" title="20">{
+func (m *MIMERegistry) Lookup(name string) string <span class="cov4" title="23">{
         ext := strings.ToLower(filepath.Ext(name))
-        if ct, ok := m.types[ext]; ok </span><span class="cov4" title="19">{
+        if ct, ok := m.types[ext]; ok </span><span class="cov4" title="22">{
                 return ct
         }</span>
         <span class="cov1" title="1">return "application/octet-stream"</span>
