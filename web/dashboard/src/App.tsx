@@ -9,6 +9,9 @@ import Cache from '@/pages/Cache';
 import Metrics from '@/pages/Metrics';
 import Logs from '@/pages/Logs';
 import Settings from '@/pages/Settings';
+import Analytics from '@/pages/Analytics';
+import ConfigEditor from '@/pages/ConfigEditor';
+import Certificates from '@/pages/Certificates';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -47,6 +50,9 @@ export default function App() {
         <Route path="/cache" element={<Cache />} />
         <Route path="/metrics" element={<Metrics />} />
         <Route path="/logs" element={<Logs />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/config-editor" element={<ConfigEditor />} />
+        <Route path="/certificates" element={<Certificates />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

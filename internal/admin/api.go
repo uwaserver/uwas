@@ -21,6 +21,7 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
+	"github.com/uwaserver/uwas/internal/monitor"
 )
 
 // ReloadFunc is called when a config reload is requested.
@@ -52,6 +53,8 @@ type Server struct {
 	onDomainChange func()
 	mux            *http.ServeMux
 	httpSrv        *http.Server
+
+	monitor *monitor.Monitor
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -91,6 +94,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/v1/config/raw", s.handleConfigRawPut)
 	s.mux.HandleFunc("GET /api/v1/config/domains/{host}/raw", s.handleDomainRawGet)
 	s.mux.HandleFunc("PUT /api/v1/config/domains/{host}/raw", s.handleDomainRawPut)
+	s.mux.HandleFunc("GET /api/v1/monitor", s.handleMonitor)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -243,6 +247,17 @@ func (s *Server) SetAnalytics(a *analytics.Collector) {
 
 // Analytics returns the analytics collector, if set.
 func (s *Server) Analytics() *analytics.Collector { return s.analytics }
+
+// SetMonitor sets the uptime monitor for the /api/v1/monitor endpoint.
+func (s *Server) SetMonitor(m *monitor.Monitor) { s.monitor = m }
+
+func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
+	if s.monitor == nil {
+		jsonError(w, "monitor not enabled", http.StatusNotImplemented)
+		return
+	}
+	jsonResponse(w, s.monitor.Results())
+}
 
 // SetReloadFunc sets the callback for config reload.
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
