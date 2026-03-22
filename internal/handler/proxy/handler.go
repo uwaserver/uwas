@@ -45,6 +45,17 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		return
 	}
 
+	// WebSocket: tunnel raw TCP instead of HTTP round-trip
+	if domain.Proxy.WebSocket && IsWebSocketUpgrade(ctx.Request) {
+		backend := balancer.Select(backends, ctx.Request)
+		if backend == nil {
+			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — no backend selected")
+			return
+		}
+		h.serveWebSocket(ctx, backend)
+		return
+	}
+
 	maxRetries := domain.Proxy.MaxRetries
 	if maxRetries <= 0 {
 		maxRetries = 2
@@ -253,4 +264,75 @@ func forwardedProto(ctx *router.RequestContext) string {
 func IsWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") &&
 		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
+
+// serveWebSocket tunnels a WebSocket connection by hijacking the client
+// connection and establishing a raw TCP connection to the backend. Both
+// directions are piped concurrently until one side closes.
+func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
+	// Hijack the client connection (ResponseWriter implements Hijack)
+	clientConn, clientBuf, err := ctx.Response.Hijack()
+	if err != nil {
+		h.logger.Error("websocket hijack failed", "error", err)
+		ctx.Response.Error(http.StatusInternalServerError, "WebSocket hijack not supported")
+		return
+	}
+	defer clientConn.Close()
+
+	// Connect to upstream
+	backendAddr := backend.URL.Host
+	if !strings.Contains(backendAddr, ":") {
+		if backend.URL.Scheme == "https" || backend.URL.Scheme == "wss" {
+			backendAddr += ":443"
+		} else {
+			backendAddr += ":80"
+		}
+	}
+
+	upstreamConn, err := net.DialTimeout("tcp", backendAddr, 5*time.Second)
+	if err != nil {
+		h.logger.Error("websocket upstream connect failed", "backend", backendAddr, "error", err)
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		return
+	}
+	defer upstreamConn.Close()
+
+	// Forward the original HTTP request (including Upgrade headers) to the backend
+	upstreamURL := *backend.URL
+	upstreamURL.Path = ctx.Request.URL.Path
+	upstreamURL.RawQuery = ctx.Request.URL.RawQuery
+
+	// Write the request line
+	reqLine := ctx.Request.Method + " " + upstreamURL.RequestURI() + " HTTP/1.1\r\n"
+	upstreamConn.Write([]byte(reqLine))
+
+	// Write headers (including Upgrade and Connection)
+	for key, vals := range ctx.Request.Header {
+		for _, v := range vals {
+			upstreamConn.Write([]byte(key + ": " + v + "\r\n"))
+		}
+	}
+	// Add proxy headers
+	upstreamConn.Write([]byte("X-Forwarded-For: " + clientIP(ctx.Request) + "\r\n"))
+	upstreamConn.Write([]byte("X-Real-IP: " + clientIP(ctx.Request) + "\r\n"))
+	upstreamConn.Write([]byte("Host: " + ctx.Request.Host + "\r\n"))
+	upstreamConn.Write([]byte("\r\n"))
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+
+	go func() {
+		io.Copy(upstreamConn, clientBuf)
+		done <- struct{}{}
+	}()
+
+	go func() {
+		io.Copy(clientConn, upstreamConn)
+		done <- struct{}{}
+	}()
+
+	// Wait for either direction to finish
+	<-done
+
+	h.logger.Debug("websocket connection closed", "backend", backendAddr, "path", ctx.Request.URL.Path)
 }
