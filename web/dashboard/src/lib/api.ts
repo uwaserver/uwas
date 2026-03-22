@@ -176,6 +176,30 @@ export const startPHP = (version: string, port?: number) =>
 export const stopPHP = (version: string) =>
   api<{status:string}>(`/api/v1/php/${version}/stop`, { method: 'POST' });
 
+export interface DomainPHP {
+  domain: string;
+  version: string;
+  listen_addr: string;
+  running: boolean;
+  pid: number;
+  config_overrides: Record<string, string>;
+}
+
+export const fetchDomainPHPInstances = () => api<DomainPHP[]>('/api/v1/php/domains');
+export const assignDomainPHP = (domain: string, version: string) =>
+  api<DomainPHP>('/api/v1/php/domains', { method: 'POST', body: JSON.stringify({domain, version}) });
+export const unassignDomainPHP = (domain: string) =>
+  api<{status:string}>(`/api/v1/php/domains/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+export const startDomainPHP = (domain: string) =>
+  api<{status:string}>(`/api/v1/php/domains/${encodeURIComponent(domain)}/start`, { method: 'POST' });
+export const stopDomainPHP = (domain: string) =>
+  api<{status:string}>(`/api/v1/php/domains/${encodeURIComponent(domain)}/stop`, { method: 'POST' });
+export const fetchDomainPHPConfig = (domain: string) =>
+  api<Record<string,string>>(`/api/v1/php/domains/${encodeURIComponent(domain)}/config`);
+export const updateDomainPHPConfig = (domain: string, key: string, value: string) =>
+  api<{status:string}>(`/api/v1/php/domains/${encodeURIComponent(domain)}/config`,
+    { method: 'PUT', body: JSON.stringify({key, value}) });
+
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {
   const params = token ? `?token=${encodeURIComponent(token)}` : '';
