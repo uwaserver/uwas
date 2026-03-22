@@ -182,6 +182,51 @@ func TestMetricsHandlerIncludesLatency(t *testing.T) {
 	}
 }
 
+func TestRecordHandlerType(t *testing.T) {
+	c := New()
+	c.RecordHandlerType("static")
+	c.RecordHandlerType("static")
+	c.RecordHandlerType("php")
+	c.RecordHandlerType("proxy")
+	c.RecordHandlerType("proxy")
+	c.RecordHandlerType("proxy")
+	c.RecordHandlerType("redirect")
+	c.RecordHandlerType("unknown") // should be ignored
+
+	if c.StaticRequests.Load() != 2 {
+		t.Errorf("static = %d, want 2", c.StaticRequests.Load())
+	}
+	if c.PHPRequests.Load() != 1 {
+		t.Errorf("php = %d, want 1", c.PHPRequests.Load())
+	}
+	if c.ProxyRequests.Load() != 3 {
+		t.Errorf("proxy = %d, want 3", c.ProxyRequests.Load())
+	}
+	if c.RedirectRequests.Load() != 1 {
+		t.Errorf("redirect = %d, want 1", c.RedirectRequests.Load())
+	}
+}
+
+func TestMetricsHandlerIncludesHandlerTypes(t *testing.T) {
+	c := New()
+	c.RecordHandlerType("static")
+	c.RecordHandlerType("php")
+
+	rec := httptest.NewRecorder()
+	c.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "uwas_requests_by_handler") {
+		t.Error("missing requests_by_handler")
+	}
+	if !strings.Contains(body, `handler="static"`) {
+		t.Error("missing static handler metric")
+	}
+	if !strings.Contains(body, `handler="php"`) {
+		t.Error("missing php handler metric")
+	}
+}
+
 func TestPercentileCalculation(t *testing.T) {
 	// Test with a single value
 	c := New()
