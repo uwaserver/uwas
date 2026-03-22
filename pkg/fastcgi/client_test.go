@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -942,5 +943,215 @@ func TestResponseAccessors(t *testing.T) {
 	}
 	if !bytes.Equal(r.Stderr(), []byte("stderr data")) {
 		t.Errorf("Stderr() = %q", r.Stderr())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Client.Execute: stdin reader that returns an error
+// ---------------------------------------------------------------------------
+
+type errReader struct {
+	data    []byte
+	pos     int
+	failAt  int
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if r.pos >= r.failAt {
+		return 0, errors.New("simulated read error")
+	}
+	n := copy(p, r.data[r.pos:])
+	if r.pos+n >= r.failAt {
+		n = r.failAt - r.pos
+		r.pos = r.failAt
+		return n, nil
+	}
+	r.pos += n
+	return n, nil
+}
+
+func TestClientExecuteStdinReadError(t *testing.T) {
+	// We connect to a mock server but send a failing stdin reader.
+	// The client should detect the read error and return it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// Mock server that accepts but just reads and discards
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		io.Copy(io.Discard, c)
+	}()
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	// Create reader that errors after some data
+	failingReader := &errReader{
+		data:   make([]byte, 10000),
+		failAt: 5000,
+	}
+
+	_, err = client.Execute(context.Background(), map[string]string{
+		"SCRIPT_FILENAME": "/test.php",
+		"REQUEST_METHOD":  "POST",
+	}, failingReader)
+	if err == nil {
+		t.Fatal("expected error from failing stdin reader")
+	}
+	if !strings.Contains(err.Error(), "read stdin") {
+		t.Errorf("error = %v, want it to mention 'read stdin'", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pool: Get returns idle connection from wait path when pool is exhausted
+// ---------------------------------------------------------------------------
+
+func TestPoolGetWaitForIdle(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				io.Copy(io.Discard, c)
+				c.Close()
+			}(c)
+		}
+	}()
+
+	p := NewPool(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 2,
+		MaxOpen: 1, // only 1 connection allowed
+	})
+	defer p.Close()
+
+	ctx := context.Background()
+
+	// Get the only connection
+	c1, err := p.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	// Start a goroutine that waits for an idle connection
+	done := make(chan error, 1)
+	go func() {
+		ctx2, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		c2, err := p.Get(ctx2)
+		if err != nil {
+			done <- err
+			return
+		}
+		p.Put(c2)
+		done <- nil
+	}()
+
+	// Return the first connection after a short delay
+	time.Sleep(50 * time.Millisecond)
+	p.Put(c1)
+
+	// The goroutine should succeed
+	err = <-done
+	if err != nil {
+		t.Fatalf("Get wait for idle: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Response.ParseHTTP: Status header with short code
+// ---------------------------------------------------------------------------
+
+func TestResponseParseHTTPShortStatus(t *testing.T) {
+	r := &Response{}
+	r.stdout.WriteString("Status: 20\r\nContent-Type: text/plain\r\n\r\nbody")
+
+	statusCode, _, _ := r.ParseHTTP()
+	// "20" is only 2 chars, code >= 3 check fails, so statusCode stays 0 -> default 200
+	if statusCode != 200 {
+		t.Errorf("statusCode = %d, want 200 (default for short status)", statusCode)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pool: NewPool with zero config values (defaults)
+// ---------------------------------------------------------------------------
+
+func TestNewPoolDefaults(t *testing.T) {
+	p := NewPool(PoolConfig{
+		Address: "tcp:127.0.0.1:9000",
+	})
+	defer p.Close()
+
+	if p.maxIdle != 10 {
+		t.Errorf("maxIdle = %d, want 10", p.maxIdle)
+	}
+	if p.maxOpen != 64 {
+		t.Errorf("maxOpen = %d, want 64", p.maxOpen)
+	}
+	if p.maxLife != 5*time.Minute {
+		t.Errorf("maxLife = %v, want 5m", p.maxLife)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Client.Execute: complete roundtrip with nil stdin and multiple records
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteNilStdin(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go mockFCGIServerFull(t, ln,
+		"Content-Type: text/plain\r\n\r\nOK",
+		"", 0, &wg)
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	resp, err := client.Execute(context.Background(), map[string]string{
+		"SCRIPT_FILENAME": "/test.php",
+		"REQUEST_METHOD":  "GET",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	wg.Wait()
+
+	statusCode, _, bodyReader := resp.ParseHTTP()
+	if statusCode != 200 {
+		t.Errorf("statusCode = %d, want 200", statusCode)
+	}
+	body, _ := io.ReadAll(bodyReader)
+	if string(body) != "OK" {
+		t.Errorf("body = %q, want OK", body)
 	}
 }

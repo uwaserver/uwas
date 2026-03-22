@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -1325,5 +1326,111 @@ func TestMemoryCacheSetOverLimitNoEviction(t *testing.T) {
 	_, status := mc.Get("too-big")
 	if status != StatusMiss {
 		t.Errorf("status = %q, want MISS for entry over limit", status)
+	}
+}
+
+// --- Deserialize: truncated at header key/val length field ---
+
+func TestDeserializeTruncatedAtHeaderKeyValLen(t *testing.T) {
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{"X-Long-Header-Name": {"some-value-here"}},
+		Body:       []byte("body"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+	data := resp.Serialize()
+
+	// Find the position after fixed header (28 bytes) + header count (4 bytes) = 32 bytes
+	// Then truncate in the middle of the header key/value length fields
+	if len(data) > 34 {
+		truncated := data[:33] // just 1 byte into first header key/val lengths
+		_, err := Deserialize(truncated)
+		if err == nil {
+			t.Error("expected error for truncated header key/val lengths")
+		}
+	}
+}
+
+// --- Deserialize: header key+val data truncated after lengths are read ---
+
+func TestDeserializeTruncatedHeaderKeyVal(t *testing.T) {
+	// Build a minimal valid buffer and then truncate after reading header count + key/val lengths
+	// Fixed header: 4(status) + 8(created) + 8(ttl) + 8(grace) = 28 bytes
+	// + 4(headerCount) = 32 bytes
+	// Then for each header: 2(keyLen) + 2(valLen) + key + val
+
+	// Manual construction:
+	buf := make([]byte, 0, 64)
+	b4 := make([]byte, 4)
+	b8 := make([]byte, 8)
+
+	// Status code = 200
+	b4[0], b4[1], b4[2], b4[3] = 0, 0, 0, 200
+	buf = append(buf, b4...)
+
+	// Created = 0
+	buf = append(buf, b8...)
+	// TTL = 0
+	buf = append(buf, b8...)
+	// GraceTTL = 0
+	buf = append(buf, b8...)
+
+	// HeaderCount = 1
+	b4[0], b4[1], b4[2], b4[3] = 0, 0, 0, 1
+	buf = append(buf, b4...)
+
+	// Key length = 5, Value length = 10
+	b2 := make([]byte, 2)
+	b2[0], b2[1] = 0, 5
+	buf = append(buf, b2...)
+	b2[0], b2[1] = 0, 10
+	buf = append(buf, b2...)
+
+	// Only provide 3 bytes of key (need 5+10=15)
+	buf = append(buf, 'K', 'E', 'Y')
+
+	_, err := Deserialize(buf)
+	if err == nil {
+		t.Error("expected error for truncated header key+val data")
+	}
+}
+
+// --- Engine.Set: disk write error path (covered by goroutine) ---
+// The disk write error is logged but not returned. We test that Set
+// doesn't panic when disk write would fail.
+
+func TestEngineSetDiskWriteError(t *testing.T) {
+	log := logger.New("error", "text")
+	// Use a path that will cause MkdirAll to fail on write
+	// We create an engine with a disk path, then remove the path
+	dir := t.TempDir()
+	e := NewEngine(context.Background(), 1<<20, dir, 1<<20, log)
+
+	req := httptest.NewRequest("GET", "/disk-error", nil)
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("test"),
+		Created:    time.Now(),
+		TTL:        5 * time.Minute,
+	}
+
+	// Remove the disk directory to cause write failure
+	os.RemoveAll(dir)
+
+	// Set should not panic even when disk write fails in background
+	e.Set(req, resp)
+
+	// Wait for async goroutine to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Memory should still have the entry
+	got, status := e.Get(req)
+	if status != StatusHit {
+		t.Errorf("status = %q, want HIT (memory should work despite disk error)", status)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil response from memory")
 	}
 }

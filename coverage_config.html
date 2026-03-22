@@ -59,7 +59,7 @@
 				
 				<option value="file1">github.com/uwaserver/uwas/internal/config/defaults.go (96.9%)</option>
 				
-				<option value="file2">github.com/uwaserver/uwas/internal/config/loader.go (97.6%)</option>
+				<option value="file2">github.com/uwaserver/uwas/internal/config/loader.go (98.8%)</option>
 				
 				<option value="file3">github.com/uwaserver/uwas/internal/config/parse.go (100.0%)</option>
 				
@@ -350,9 +350,9 @@ type Duration struct {
         time.Duration
 }
 
-func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error <span class="cov10" title="5">{
+func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error <span class="cov10" title="10">{
         var s string
-        if err := unmarshal(&amp;s); err != nil </span><span class="cov4" title="2">{
+        if err := unmarshal(&amp;s); err != nil </span><span class="cov3" title="2">{
                 var secs int
                 if err2 := unmarshal(&amp;secs); err2 != nil </span><span class="cov1" title="1">{
                         return err
@@ -360,11 +360,11 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error <span class="c
                 <span class="cov1" title="1">d.Duration = time.Duration(secs) * time.Second
                 return nil</span>
         }
-        <span class="cov7" title="3">dur, err := time.ParseDuration(s)
+        <span class="cov9" title="8">dur, err := time.ParseDuration(s)
         if err != nil </span><span class="cov1" title="1">{
                 return err
         }</span>
-        <span class="cov4" title="2">d.Duration = dur
+        <span class="cov8" title="7">d.Duration = dur
         return nil</span>
 }
 
@@ -377,9 +377,9 @@ const (
         GB ByteSize = 1024 * MB
 )
 
-func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error <span class="cov10" title="5">{
+func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error <span class="cov9" title="8">{
         var s string
-        if err := unmarshal(&amp;s); err != nil </span><span class="cov4" title="2">{
+        if err := unmarshal(&amp;s); err != nil </span><span class="cov3" title="2">{
                 var n int64
                 if err2 := unmarshal(&amp;n); err2 != nil </span><span class="cov1" title="1">{
                         return err
@@ -387,11 +387,11 @@ func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error <span class="c
                 <span class="cov1" title="1">*b = ByteSize(n)
                 return nil</span>
         }
-        <span class="cov7" title="3">size, err := parseByteSize(s)
+        <span class="cov8" title="6">size, err := parseByteSize(s)
         if err != nil </span><span class="cov1" title="1">{
                 return err
         }</span>
-        <span class="cov4" title="2">*b = size
+        <span class="cov7" title="5">*b = size
         return nil</span>
 }
 </pre>
@@ -400,117 +400,117 @@ func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error <span class="c
 
 import "time"
 
-func applyDefaults(cfg *Config) <span class="cov9" title="27">{
+func applyDefaults(cfg *Config) <span class="cov9" title="30">{
         g := &amp;cfg.Global
 
-        if g.WorkerCount == "" </span><span class="cov9" title="27">{
+        if g.WorkerCount == "" </span><span class="cov9" title="29">{
                 g.WorkerCount = "auto"
         }</span>
-        <span class="cov9" title="27">if g.MaxConnections == 0 </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.MaxConnections == 0 </span><span class="cov9" title="29">{
                 g.MaxConnections = 65536
         }</span>
-        <span class="cov9" title="27">if g.HTTPListen == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.HTTPListen == "" </span><span class="cov9" title="29">{
                 g.HTTPListen = ":80"
         }</span>
-        <span class="cov9" title="27">if g.HTTPSListen == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.HTTPSListen == "" </span><span class="cov9" title="29">{
                 g.HTTPSListen = ":443"
         }</span>
-        <span class="cov9" title="27">if g.PIDFile == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.PIDFile == "" </span><span class="cov9" title="29">{
                 g.PIDFile = "/var/run/uwas.pid"
         }</span>
-        <span class="cov9" title="27">if g.LogLevel == "" </span><span class="cov8" title="17">{
+        <span class="cov9" title="30">if g.LogLevel == "" </span><span class="cov8" title="19">{
                 g.LogLevel = "info"
         }</span>
-        <span class="cov9" title="27">if g.LogFormat == "" </span><span class="cov9" title="25">{
+        <span class="cov9" title="30">if g.LogFormat == "" </span><span class="cov9" title="27">{
                 g.LogFormat = "text"
         }</span>
 
         // Timeouts
-        <span class="cov9" title="27">if g.Timeouts.Read.Duration == 0 </span><span class="cov9" title="26">{
+        <span class="cov9" title="30">if g.Timeouts.Read.Duration == 0 </span><span class="cov9" title="28">{
                 g.Timeouts.Read.Duration = 30 * time.Second
         }</span>
-        <span class="cov9" title="27">if g.Timeouts.Write.Duration == 0 </span><span class="cov9" title="26">{
+        <span class="cov9" title="30">if g.Timeouts.Write.Duration == 0 </span><span class="cov9" title="28">{
                 g.Timeouts.Write.Duration = 60 * time.Second
         }</span>
-        <span class="cov9" title="27">if g.Timeouts.Idle.Duration == 0 </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.Timeouts.Idle.Duration == 0 </span><span class="cov9" title="29">{
                 g.Timeouts.Idle.Duration = 120 * time.Second
         }</span>
-        <span class="cov9" title="27">if g.Timeouts.ShutdownGrace.Duration == 0 </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.Timeouts.ShutdownGrace.Duration == 0 </span><span class="cov9" title="29">{
                 g.Timeouts.ShutdownGrace.Duration = 30 * time.Second
         }</span>
 
         // Admin
-        <span class="cov9" title="27">if g.Admin.Listen == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.Admin.Listen == "" </span><span class="cov9" title="29">{
                 g.Admin.Listen = "127.0.0.1:9443"
         }</span>
 
         // MCP
-        <span class="cov9" title="27">if g.MCP.Listen == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.MCP.Listen == "" </span><span class="cov9" title="29">{
                 g.MCP.Listen = "127.0.0.1:9444"
         }</span>
 
         // ACME
-        <span class="cov9" title="27">if g.ACME.CAURL == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.ACME.CAURL == "" </span><span class="cov9" title="29">{
                 g.ACME.CAURL = "https://acme-v02.api.letsencrypt.org/directory"
         }</span>
-        <span class="cov9" title="27">if g.ACME.Storage == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.ACME.Storage == "" </span><span class="cov9" title="29">{
                 g.ACME.Storage = "/var/lib/uwas/certs"
         }</span>
 
         // Cache
-        <span class="cov9" title="27">if g.Cache.MemoryLimit == 0 </span><span class="cov9" title="26">{
+        <span class="cov9" title="30">if g.Cache.MemoryLimit == 0 </span><span class="cov9" title="28">{
                 g.Cache.MemoryLimit = 512 * MB
         }</span>
-        <span class="cov9" title="27">if g.Cache.DiskPath == "" </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.Cache.DiskPath == "" </span><span class="cov9" title="29">{
                 g.Cache.DiskPath = "/var/cache/uwas"
         }</span>
-        <span class="cov9" title="27">if g.Cache.DiskLimit == 0 </span><span class="cov9" title="26">{
+        <span class="cov9" title="30">if g.Cache.DiskLimit == 0 </span><span class="cov9" title="28">{
                 g.Cache.DiskLimit = 10 * GB
         }</span>
-        <span class="cov9" title="27">if g.Cache.DefaultTTL == 0 </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.Cache.DefaultTTL == 0 </span><span class="cov9" title="29">{
                 g.Cache.DefaultTTL = 3600
         }</span>
-        <span class="cov9" title="27">if g.Cache.GraceTTL == 0 </span><span class="cov9" title="27">{
+        <span class="cov9" title="30">if g.Cache.GraceTTL == 0 </span><span class="cov9" title="29">{
                 g.Cache.GraceTTL = 86400
         }</span>
 
         // Domain defaults
-        <span class="cov9" title="27">for i := range cfg.Domains </span><span class="cov10" title="35">{
+        <span class="cov9" title="30">for i := range cfg.Domains </span><span class="cov10" title="38">{
                 d := &amp;cfg.Domains[i]
                 if d.Type == "" </span><span class="cov0" title="0">{
                         d.Type = "static"
                 }</span>
-                <span class="cov10" title="35">if d.SSL.Mode == "" </span><span class="cov0" title="0">{
+                <span class="cov10" title="38">if d.SSL.Mode == "" </span><span class="cov0" title="0">{
                         d.SSL.Mode = "off"
                 }</span>
-                <span class="cov10" title="35">if d.SSL.MinVersion == "" </span><span class="cov10" title="35">{
+                <span class="cov10" title="38">if d.SSL.MinVersion == "" </span><span class="cov10" title="38">{
                         d.SSL.MinVersion = "1.2"
                 }</span>
-                <span class="cov10" title="35">if d.Htaccess.Mode == "" </span><span class="cov10" title="35">{
+                <span class="cov10" title="38">if d.Htaccess.Mode == "" </span><span class="cov10" title="38">{
                         d.Htaccess.Mode = "off"
                 }</span>
-                <span class="cov10" title="35">if d.Compression.MinSize == 0 </span><span class="cov10" title="35">{
+                <span class="cov10" title="38">if d.Compression.MinSize == 0 </span><span class="cov10" title="38">{
                         d.Compression.MinSize = 1024
                 }</span>
 
                 // PHP defaults
-                <span class="cov10" title="35">if d.Type == "php" </span><span class="cov2" title="2">{
-                        if d.PHP.FPMAddress == "" </span><span class="cov2" title="2">{
+                <span class="cov10" title="38">if d.Type == "php" </span><span class="cov4" title="4">{
+                        if d.PHP.FPMAddress == "" </span><span class="cov3" title="3">{
                                 d.PHP.FPMAddress = "unix:/var/run/php/php-fpm.sock"
                         }</span>
-                        <span class="cov2" title="2">if len(d.PHP.IndexFiles) == 0 </span><span class="cov2" title="2">{
+                        <span class="cov4" title="4">if len(d.PHP.IndexFiles) == 0 </span><span class="cov3" title="3">{
                                 d.PHP.IndexFiles = []string{"index.php", "index.html"}
                         }</span>
-                        <span class="cov2" title="2">if d.PHP.MaxUpload == 0 </span><span class="cov2" title="2">{
+                        <span class="cov4" title="4">if d.PHP.MaxUpload == 0 </span><span class="cov3" title="3">{
                                 d.PHP.MaxUpload = 64 * MB
                         }</span>
-                        <span class="cov2" title="2">if d.PHP.Timeout.Duration == 0 </span><span class="cov2" title="2">{
+                        <span class="cov4" title="4">if d.PHP.Timeout.Duration == 0 </span><span class="cov3" title="3">{
                                 d.PHP.Timeout.Duration = 300 * time.Second
                         }</span>
                 }
 
                 // Index files
-                <span class="cov10" title="35">if len(d.IndexFiles) == 0 </span><span class="cov10" title="35">{
+                <span class="cov10" title="38">if len(d.IndexFiles) == 0 </span><span class="cov10" title="38">{
                         d.IndexFiles = []string{"index.html", "index.htm"}
                 }</span>
         }
@@ -550,7 +550,7 @@ var envPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 //   - Global settings come from the main file only
 //   - Domains from main file, include files, and domains_dir are all merged
 //   - domains_dir files can contain a single domain (no "domains:" wrapper needed)
-func Load(path string) (*Config, error) <span class="cov9" title="31">{
+func Load(path string) (*Config, error) <span class="cov9" title="35">{
         baseDir := filepath.Dir(path)
 
         data, err := os.ReadFile(path)
@@ -558,7 +558,7 @@ func Load(path string) (*Config, error) <span class="cov9" title="31">{
                 return nil, fmt.Errorf("read config: %w", err)
         }</span>
 
-        <span class="cov8" title="30">expanded := expandEnvVars(string(data))
+        <span class="cov9" title="34">expanded := expandEnvVars(string(data))
 
         cfg := &amp;Config{}
         if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil </span><span class="cov1" title="1">{
@@ -566,7 +566,7 @@ func Load(path string) (*Config, error) <span class="cov9" title="31">{
         }</span>
 
         // Process include patterns
-        <span class="cov8" title="29">for _, pattern := range cfg.Include </span><span class="cov3" title="3">{
+        <span class="cov9" title="33">for _, pattern := range cfg.Include </span><span class="cov3" title="3">{
                 if !filepath.IsAbs(pattern) </span><span class="cov1" title="1">{
                         pattern = filepath.Join(baseDir, pattern)
                 }</span>
@@ -578,7 +578,7 @@ func Load(path string) (*Config, error) <span class="cov9" title="31">{
         }
 
         // Process domains_dir
-        <span class="cov8" title="28">if cfg.DomainsDir != "" </span><span class="cov4" title="5">{
+        <span class="cov8" title="32">if cfg.DomainsDir != "" </span><span class="cov4" title="5">{
                 dir := cfg.DomainsDir
                 if !filepath.IsAbs(dir) </span><span class="cov2" title="2">{
                         dir = filepath.Join(baseDir, dir)
@@ -591,24 +591,24 @@ func Load(path string) (*Config, error) <span class="cov9" title="31">{
         }
 
         // Auto-detect domains.d/ next to config file
-        <span class="cov8" title="27">autoDir := filepath.Join(baseDir, "domains.d")
-        if cfg.DomainsDir == "" </span><span class="cov8" title="23">{
-                if info, err := os.Stat(autoDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov2" title="2">{
+        <span class="cov8" title="31">autoDir := filepath.Join(baseDir, "domains.d")
+        if cfg.DomainsDir == "" </span><span class="cov8" title="27">{
+                if info, err := os.Stat(autoDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov3" title="3">{
                         dirDomains, err := loadDomainsDir(autoDir)
-                        if err != nil </span><span class="cov0" title="0">{
+                        if err != nil </span><span class="cov1" title="1">{
                                 return nil, fmt.Errorf("auto domains.d: %w", err)
                         }</span>
                         <span class="cov2" title="2">cfg.Domains = append(cfg.Domains, dirDomains...)</span>
                 }
         }
 
-        <span class="cov8" title="27">applyDefaults(cfg)
+        <span class="cov8" title="30">applyDefaults(cfg)
 
         if err := validate(cfg); err != nil </span><span class="cov7" title="14">{
                 return nil, fmt.Errorf("validate config: %w", err)
         }</span>
 
-        <span class="cov7" title="13">return cfg, nil</span>
+        <span class="cov7" title="16">return cfg, nil</span>
 }
 
 // loadGlob loads domains from files matching a glob pattern.
@@ -635,7 +635,7 @@ func loadGlob(pattern string) ([]Domain, error) <span class="cov4" title="5">{
 }
 
 // loadDomainsDir loads all .yaml/.yml files from a directory.
-func loadDomainsDir(dir string) ([]Domain, error) <span class="cov5" title="7">{
+func loadDomainsDir(dir string) ([]Domain, error) <span class="cov5" title="8">{
         entries, err := os.ReadDir(dir)
         if err != nil </span><span class="cov1" title="1">{
                 if os.IsNotExist(err) </span><span class="cov1" title="1">{
@@ -644,19 +644,19 @@ func loadDomainsDir(dir string) ([]Domain, error) <span class="cov5" title="7">{
                 <span class="cov0" title="0">return nil, err</span>
         }
 
-        <span class="cov5" title="6">var all []Domain
-        for _, entry := range entries </span><span class="cov6" title="9">{
+        <span class="cov5" title="7">var all []Domain
+        for _, entry := range entries </span><span class="cov6" title="10">{
                 if entry.IsDir() </span><span class="cov1" title="1">{
                         continue</span>
                 }
-                <span class="cov5" title="8">name := entry.Name()
+                <span class="cov6" title="9">name := entry.Name()
                 if !strings.HasSuffix(name, ".yaml") &amp;&amp; !strings.HasSuffix(name, ".yml") </span><span class="cov1" title="1">{
                         continue</span>
                 }
 
-                <span class="cov5" title="7">path := filepath.Join(dir, name)
+                <span class="cov5" title="8">path := filepath.Join(dir, name)
                 domains, err := loadDomainFile(path)
-                if err != nil </span><span class="cov1" title="1">{
+                if err != nil </span><span class="cov2" title="2">{
                         return nil, fmt.Errorf("%s: %w", name, err)
                 }</span>
                 <span class="cov5" title="6">all = append(all, domains...)</span>
@@ -682,13 +682,13 @@ func loadDomainsDir(dir string) ([]Domain, error) <span class="cov5" title="7">{
 //            ...
 //          - host: other.com
 //            ...
-func loadDomainFile(path string) ([]Domain, error) <span class="cov7" title="15">{
+func loadDomainFile(path string) ([]Domain, error) <span class="cov7" title="16">{
         data, err := os.ReadFile(path)
         if err != nil </span><span class="cov1" title="1">{
                 return nil, fmt.Errorf("read: %w", err)
         }</span>
 
-        <span class="cov7" title="14">expanded := expandEnvVars(string(data))
+        <span class="cov7" title="15">expanded := expandEnvVars(string(data))
 
         // Try Format 2 first: { domains: [...] }
         var wrapper struct {
@@ -699,8 +699,8 @@ func loadDomainFile(path string) ([]Domain, error) <span class="cov7" title="15"
         }</span>
 
         // Try Format 1: single domain object
-        <span class="cov6" title="12">var domain Domain
-        if err := yaml.Unmarshal([]byte(expanded), &amp;domain); err != nil </span><span class="cov3" title="3">{
+        <span class="cov6" title="13">var domain Domain
+        if err := yaml.Unmarshal([]byte(expanded), &amp;domain); err != nil </span><span class="cov4" title="4">{
                 return nil, fmt.Errorf("parse: %w", err)
         }</span>
 
@@ -711,7 +711,7 @@ func loadDomainFile(path string) ([]Domain, error) <span class="cov7" title="15"
         <span class="cov5" title="8">return []Domain{domain}, nil</span>
 }
 
-func expandEnvVars(s string) string <span class="cov10" title="46">{
+func expandEnvVars(s string) string <span class="cov10" title="51">{
         return envPattern.ReplaceAllStringFunc(s, func(match string) string </span><span class="cov4" title="5">{
                 varName := match[2 : len(match)-1]
 
@@ -739,19 +739,19 @@ import (
         "unicode"
 )
 
-func parseByteSize(s string) (ByteSize, error) <span class="cov7" title="16">{
+func parseByteSize(s string) (ByteSize, error) <span class="cov7" title="19">{
         s = strings.TrimSpace(s)
         if s == "" </span><span class="cov1" title="1">{
                 return 0, fmt.Errorf("empty byte size")
         }</span>
 
         // Find where the number ends and unit begins
-        <span class="cov7" title="15">i := 0
-        for i &lt; len(s) &amp;&amp; (s[i] == '.' || unicode.IsDigit(rune(s[i]))) </span><span class="cov10" title="44">{
+        <span class="cov7" title="18">i := 0
+        for i &lt; len(s) &amp;&amp; (s[i] == '.' || unicode.IsDigit(rune(s[i]))) </span><span class="cov10" title="51">{
                 i++
         }</span>
 
-        <span class="cov7" title="15">numStr := s[:i]
+        <span class="cov7" title="18">numStr := s[:i]
         unit := strings.TrimSpace(s[i:])
 
         num, err := strconv.ParseFloat(numStr, 64)
@@ -759,14 +759,14 @@ func parseByteSize(s string) (ByteSize, error) <span class="cov7" title="16">{
                 return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
         }</span>
 
-        <span class="cov7" title="13">switch strings.ToUpper(unit) </span>{
+        <span class="cov7" title="16">switch strings.ToUpper(unit) </span>{
         case "", "B":<span class="cov4" title="5">
                 return ByteSize(num), nil</span>
         case "K", "KB":<span class="cov2" title="2">
                 return ByteSize(num * float64(KB)), nil</span>
-        case "M", "MB":<span class="cov2" title="2">
+        case "M", "MB":<span class="cov4" title="4">
                 return ByteSize(num * float64(MB)), nil</span>
-        case "G", "GB":<span class="cov3" title="3">
+        case "G", "GB":<span class="cov4" title="4">
                 return ByteSize(num * float64(GB)), nil</span>
         default:<span class="cov1" title="1">
                 return 0, fmt.Errorf("unknown byte unit %q in %q", unit, s)</span>
@@ -781,25 +781,25 @@ import (
         "strings"
 )
 
-func validate(cfg *Config) error <span class="cov9" title="27">{
+func validate(cfg *Config) error <span class="cov9" title="30">{
         var errs []string
 
         // Global validation
         switch cfg.Global.LogLevel </span>{
-        case "debug", "info", "warn", "error":<span class="cov9" title="26"></span>
+        case "debug", "info", "warn", "error":<span class="cov9" title="29"></span>
         default:<span class="cov1" title="1">
                 errs = append(errs, fmt.Sprintf("invalid log_level: %q (must be debug, info, warn, error)", cfg.Global.LogLevel))</span>
         }
 
-        <span class="cov9" title="27">switch cfg.Global.LogFormat </span>{
-        case "json", "text", "clf":<span class="cov9" title="26"></span>
+        <span class="cov9" title="30">switch cfg.Global.LogFormat </span>{
+        case "json", "text", "clf":<span class="cov9" title="29"></span>
         default:<span class="cov1" title="1">
                 errs = append(errs, fmt.Sprintf("invalid log_format: %q (must be json, text, clf)", cfg.Global.LogFormat))</span>
         }
 
         // Domain validation
-        <span class="cov9" title="27">hosts := make(map[string]bool)
-        for i, d := range cfg.Domains </span><span class="cov10" title="35">{
+        <span class="cov9" title="30">hosts := make(map[string]bool)
+        for i, d := range cfg.Domains </span><span class="cov10" title="38">{
                 prefix := fmt.Sprintf("domains[%d]", i)
 
                 if d.Host == "" </span><span class="cov1" title="1">{
@@ -807,10 +807,10 @@ func validate(cfg *Config) error <span class="cov9" title="27">{
                         continue</span>
                 }
 
-                <span class="cov9" title="34">if hosts[d.Host] </span><span class="cov1" title="1">{
+                <span class="cov9" title="37">if hosts[d.Host] </span><span class="cov1" title="1">{
                         errs = append(errs, fmt.Sprintf("%s: duplicate host %q", prefix, d.Host))
                 }</span>
-                <span class="cov9" title="34">hosts[d.Host] = true
+                <span class="cov9" title="37">hosts[d.Host] = true
 
                 for _, alias := range d.Aliases </span><span class="cov2" title="2">{
                         if hosts[alias] </span><span class="cov1" title="1">{
@@ -819,19 +819,19 @@ func validate(cfg *Config) error <span class="cov9" title="27">{
                         <span class="cov2" title="2">hosts[alias] = true</span>
                 }
 
-                <span class="cov9" title="34">switch d.Type </span>{
-                case "static", "php", "proxy", "redirect":<span class="cov9" title="33"></span>
+                <span class="cov9" title="37">switch d.Type </span>{
+                case "static", "php", "proxy", "redirect":<span class="cov9" title="36"></span>
                 default:<span class="cov1" title="1">
                         errs = append(errs, fmt.Sprintf("%s: invalid type %q (must be static, php, proxy, redirect)", prefix, d.Type))</span>
                 }
 
-                <span class="cov9" title="34">switch d.SSL.Mode </span>{
-                case "auto", "manual", "off":<span class="cov9" title="33"></span>
+                <span class="cov9" title="37">switch d.SSL.Mode </span>{
+                case "auto", "manual", "off":<span class="cov9" title="36"></span>
                 default:<span class="cov1" title="1">
                         errs = append(errs, fmt.Sprintf("%s: invalid ssl.mode %q (must be auto, manual, off)", prefix, d.SSL.Mode))</span>
                 }
 
-                <span class="cov9" title="34">if d.SSL.Mode == "manual" </span><span class="cov2" title="2">{
+                <span class="cov9" title="37">if d.SSL.Mode == "manual" </span><span class="cov2" title="2">{
                         if d.SSL.Cert == "" </span><span class="cov1" title="1">{
                                 errs = append(errs, fmt.Sprintf("%s: ssl.cert required when mode is manual", prefix))
                         }</span>
@@ -841,25 +841,25 @@ func validate(cfg *Config) error <span class="cov9" title="27">{
                 }
 
                 // Root required for static and php
-                <span class="cov9" title="34">if (d.Type == "static" || d.Type == "php") &amp;&amp; d.Root == "" </span><span class="cov2" title="2">{
+                <span class="cov9" title="37">if (d.Type == "static" || d.Type == "php") &amp;&amp; d.Root == "" </span><span class="cov2" title="2">{
                         errs = append(errs, fmt.Sprintf("%s: root is required for type %q", prefix, d.Type))
                 }</span>
 
                 // Proxy validation
-                <span class="cov9" title="34">if d.Type == "proxy" &amp;&amp; len(d.Proxy.Upstreams) == 0 </span><span class="cov2" title="2">{
+                <span class="cov9" title="37">if d.Type == "proxy" &amp;&amp; len(d.Proxy.Upstreams) == 0 </span><span class="cov2" title="2">{
                         errs = append(errs, fmt.Sprintf("%s: proxy.upstreams required for type proxy", prefix))
                 }</span>
 
                 // Redirect validation
-                <span class="cov9" title="34">if d.Type == "redirect" &amp;&amp; d.Redirect.Target == "" </span><span class="cov1" title="1">{
+                <span class="cov9" title="37">if d.Type == "redirect" &amp;&amp; d.Redirect.Target == "" </span><span class="cov1" title="1">{
                         errs = append(errs, fmt.Sprintf("%s: redirect.target required for type redirect", prefix))
                 }</span>
         }
 
-        <span class="cov9" title="27">if len(errs) &gt; 0 </span><span class="cov7" title="14">{
+        <span class="cov9" title="30">if len(errs) &gt; 0 </span><span class="cov7" title="14">{
                 return fmt.Errorf("config validation failed:\n  %s", strings.Join(errs, "\n  "))
         }</span>
-        <span class="cov7" title="13">return nil</span>
+        <span class="cov7" title="16">return nil</span>
 }
 </pre>
 		

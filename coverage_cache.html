@@ -57,9 +57,9 @@
 				
 				<option value="file0">github.com/uwaserver/uwas/internal/cache/disk.go (94.4%)</option>
 				
-				<option value="file1">github.com/uwaserver/uwas/internal/cache/engine.go (93.6%)</option>
+				<option value="file1">github.com/uwaserver/uwas/internal/cache/engine.go (97.9%)</option>
 				
-				<option value="file2">github.com/uwaserver/uwas/internal/cache/entry.go (94.9%)</option>
+				<option value="file2">github.com/uwaserver/uwas/internal/cache/entry.go (98.7%)</option>
 				
 				<option value="file3">github.com/uwaserver/uwas/internal/cache/key.go (100.0%)</option>
 				
@@ -105,7 +105,7 @@ type DiskCache struct {
 // NewDiskCache creates a disk cache at the given directory.
 // It scans existing cache files to initialise usedBytes so the accounting
 // stays correct across restarts.
-func NewDiskCache(baseDir string, maxBytes int64) *DiskCache <span class="cov6" title="15">{
+func NewDiskCache(baseDir string, maxBytes int64) *DiskCache <span class="cov6" title="16">{
         os.MkdirAll(baseDir, 0755)
         dc := &amp;DiskCache{
                 baseDir:  baseDir,
@@ -114,8 +114,8 @@ func NewDiskCache(baseDir string, maxBytes int64) *DiskCache <span class="cov6" 
 
         // Walk existing files to seed usedBytes.
         var total int64
-        filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error </span><span class="cov7" title="18">{
-                if err != nil || d.IsDir() </span><span class="cov7" title="17">{
+        filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error </span><span class="cov7" title="19">{
+                if err != nil || d.IsDir() </span><span class="cov7" title="18">{
                         return nil
                 }</span>
                 <span class="cov1" title="1">if info, err := d.Info(); err == nil </span><span class="cov1" title="1">{
@@ -123,23 +123,23 @@ func NewDiskCache(baseDir string, maxBytes int64) *DiskCache <span class="cov6" 
                 }</span>
                 <span class="cov1" title="1">return nil</span>
         })
-        <span class="cov6" title="15">dc.usedBytes.Store(total)
+        <span class="cov6" title="16">dc.usedBytes.Store(total)
 
         return dc</span>
 }
 
 // Get reads a cached response from disk.
-func (dc *DiskCache) Get(key string) (*CachedResponse, error) <span class="cov8" title="31">{
+func (dc *DiskCache) Get(key string) (*CachedResponse, error) <span class="cov8" title="32">{
         path := dc.path(key)
         data, err := os.ReadFile(path)
         if err != nil </span><span class="cov4" title="5">{
                 return nil, err
         }</span>
-        <span class="cov8" title="26">return Deserialize(data)</span>
+        <span class="cov8" title="27">return Deserialize(data)</span>
 }
 
 // Set writes a cached response to disk.
-func (dc *DiskCache) Set(key string, resp *CachedResponse) error <span class="cov8" title="32">{
+func (dc *DiskCache) Set(key string, resp *CachedResponse) error <span class="cov8" title="33">{
         data := resp.Serialize()
 
         // Check disk limit
@@ -147,17 +147,17 @@ func (dc *DiskCache) Set(key string, resp *CachedResponse) error <span class="co
                 return nil // silently skip if over limit
         }</span>
 
-        <span class="cov8" title="31">path := dc.path(key)
+        <span class="cov8" title="32">path := dc.path(key)
         dir := filepath.Dir(path)
         if err := os.MkdirAll(dir, 0755); err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
-        <span class="cov8" title="31">if err := os.WriteFile(path, data, 0644); err != nil </span><span class="cov0" title="0">{
+        <span class="cov8" title="32">if err := os.WriteFile(path, data, 0644); err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
-        <span class="cov8" title="31">dc.usedBytes.Add(int64(len(data)))
+        <span class="cov8" title="32">dc.usedBytes.Add(int64(len(data)))
         return nil</span>
 }
 
@@ -177,7 +177,7 @@ func (dc *DiskCache) PurgeAll() error <span class="cov2" title="2">{
         return os.RemoveAll(dc.baseDir)
 }</span>
 
-func (dc *DiskCache) path(key string) string <span class="cov10" title="64">{
+func (dc *DiskCache) path(key string) string <span class="cov10" title="66">{
         d1, d2 := KeyPrefix(key)
         return filepath.Join(dc.baseDir, d1, d2, HashKey(key)+".cache")
 }</span>
@@ -203,7 +203,7 @@ type Engine struct {
 
 // NewEngine creates a cache engine with memory and optional disk backing.
 // The ctx parameter controls the lifetime of background cleanup goroutines.
-func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimit int64, log *logger.Logger) *Engine <span class="cov6" title="10">{
+func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimit int64, log *logger.Logger) *Engine <span class="cov6" title="11">{
         e := &amp;Engine{
                 memory: NewMemoryCache(memoryLimit),
                 logger: log,
@@ -214,23 +214,23 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
         }</span>
 
         // Start periodic cleanup every 5 minutes
-        <span class="cov6" title="10">e.memory.StartCleanup(ctx, 5*time.Minute)
+        <span class="cov6" title="11">e.memory.StartCleanup(ctx, 5*time.Minute)
 
         return e</span>
 }
 
 // Get looks up a cache entry: L1 (memory) → L2 (disk) → miss.
-func (e *Engine) Get(r *http.Request) (*CachedResponse, string) <span class="cov10" title="58">{
+func (e *Engine) Get(r *http.Request) (*CachedResponse, string) <span class="cov10" title="59">{
         key := GenerateKey(r, []string{"Accept-Encoding"})
 
         // L1: memory
         resp, status := e.memory.Get(key)
-        if resp != nil </span><span class="cov8" title="32">{
+        if resp != nil </span><span class="cov8" title="34">{
                 return resp, status
         }</span>
 
         // L2: disk (promote to memory on hit)
-        <span class="cov8" title="26">if e.disk != nil </span><span class="cov4" title="4">{
+        <span class="cov8" title="25">if e.disk != nil </span><span class="cov4" title="4">{
                 resp, err := e.disk.Get(key)
                 if err == nil &amp;&amp; resp != nil </span><span class="cov3" title="3">{
                         if resp.IsFresh() || resp.IsStale() </span><span class="cov2" title="2">{
@@ -243,11 +243,11 @@ func (e *Engine) Get(r *http.Request) (*CachedResponse, string) <span class="cov
                 }
         }
 
-        <span class="cov8" title="24">return nil, StatusMiss</span>
+        <span class="cov7" title="23">return nil, StatusMiss</span>
 }
 
 // Set stores a response in L1 and async-writes to L2.
-func (e *Engine) Set(r *http.Request, resp *CachedResponse) <span class="cov9" title="56">{
+func (e *Engine) Set(r *http.Request, resp *CachedResponse) <span class="cov9" title="57">{
         key := GenerateKey(r, []string{"Accept-Encoding"})
         e.memory.Set(key, resp)
 
@@ -287,51 +287,51 @@ func (e *Engine) Stats() map[string]int64 <span class="cov2" title="2">{
 }</span>
 
 // IsCacheable checks if a response should be cached.
-func IsCacheable(r *http.Request, statusCode int, headers http.Header) bool <span class="cov4" title="6">{
+func IsCacheable(r *http.Request, statusCode int, headers http.Header) bool <span class="cov5" title="9">{
         // Only cache GET/HEAD
         if r.Method != http.MethodGet &amp;&amp; r.Method != http.MethodHead </span><span class="cov1" title="1">{
                 return false
         }</span>
 
         // Only cache specific status codes
-        <span class="cov4" title="5">switch statusCode </span>{
-        case 200, 301, 404:<span class="cov4" title="4"></span>
+        <span class="cov5" title="8">switch statusCode </span>{
+        case 200, 301, 404:<span class="cov5" title="7"></span>
         default:<span class="cov1" title="1">
                 return false</span>
         }
 
         // Don't cache if Set-Cookie present
-        <span class="cov4" title="4">if headers.Get("Set-Cookie") != "" </span><span class="cov1" title="1">{
+        <span class="cov5" title="7">if headers.Get("Set-Cookie") != "" </span><span class="cov1" title="1">{
                 return false
         }</span>
 
         // Don't cache if Cache-Control: no-store or private
-        <span class="cov3" title="3">cc := headers.Get("Cache-Control")
-        if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") </span><span class="cov0" title="0">{
+        <span class="cov4" title="6">cc := headers.Get("Cache-Control")
+        if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") </span><span class="cov2" title="2">{
                 return false
         }</span>
 
-        <span class="cov3" title="3">return true</span>
+        <span class="cov4" title="4">return true</span>
 }
 
 // ShouldBypass checks if the request should bypass the cache.
-func ShouldBypass(r *http.Request) bool <span class="cov3" title="3">{
+func ShouldBypass(r *http.Request) bool <span class="cov4" title="5">{
         // POST, PUT, DELETE always bypass
         if r.Method != http.MethodGet &amp;&amp; r.Method != http.MethodHead </span><span class="cov1" title="1">{
                 return true
         }</span>
 
         // Cache-Control: no-cache
-        <span class="cov2" title="2">if strings.Contains(r.Header.Get("Cache-Control"), "no-cache") </span><span class="cov1" title="1">{
+        <span class="cov4" title="4">if strings.Contains(r.Header.Get("Cache-Control"), "no-cache") </span><span class="cov1" title="1">{
                 return true
         }</span>
 
         // Pragma: no-cache (HTTP/1.0 compat)
-        <span class="cov1" title="1">if r.Header.Get("Pragma") == "no-cache" </span><span class="cov0" title="0">{
+        <span class="cov3" title="3">if r.Header.Get("Pragma") == "no-cache" </span><span class="cov1" title="1">{
                 return true
         }</span>
 
-        <span class="cov1" title="1">return false</span>
+        <span class="cov2" title="2">return false</span>
 }
 </pre>
 		
@@ -363,7 +363,7 @@ type CachedResponse struct {
 }
 
 // Size returns the approximate memory size of this entry in bytes.
-func (r *CachedResponse) Size() int64 <span class="cov10" title="438">{
+func (r *CachedResponse) Size() int64 <span class="cov10" title="440">{
         size := int64(len(r.Body))
         for k, vals := range r.Headers </span><span class="cov3" title="4">{
                 size += int64(len(k))
@@ -371,7 +371,7 @@ func (r *CachedResponse) Size() int64 <span class="cov10" title="438">{
                         size += int64(len(v))
                 }</span>
         }
-        <span class="cov10" title="438">size += 64 // struct overhead
+        <span class="cov10" title="440">size += 64 // struct overhead
         return size</span>
 }
 
@@ -381,7 +381,7 @@ func (r *CachedResponse) Age() time.Duration <span class="cov1" title="1">{
 }</span>
 
 // IsFresh returns true if the entry is within its TTL.
-func (r *CachedResponse) IsFresh() bool <span class="cov7" title="102">{
+func (r *CachedResponse) IsFresh() bool <span class="cov7" title="104">{
         return time.Since(r.Created) &lt; r.TTL
 }</span>
 
@@ -397,7 +397,7 @@ func (r *CachedResponse) IsExpired() bool <span class="cov2" title="2">{
 }</span>
 
 // Serialize encodes the response for disk storage.
-func (r *CachedResponse) Serialize() []byte <span class="cov6" title="33">{
+func (r *CachedResponse) Serialize() []byte <span class="cov6" title="37">{
         // Simple binary format:
         // [4] status code
         // [8] created unix nano
@@ -426,15 +426,15 @@ func (r *CachedResponse) Serialize() []byte <span class="cov6" title="33">{
 
         // Headers
         headerCount := 0
-        for _, vals := range r.Headers </span><span class="cov3" title="5">{
+        for _, vals := range r.Headers </span><span class="cov3" title="6">{
                 headerCount += len(vals)
         }</span>
-        <span class="cov6" title="33">binary.BigEndian.PutUint32(b4, uint32(headerCount))
+        <span class="cov6" title="37">binary.BigEndian.PutUint32(b4, uint32(headerCount))
         buf = append(buf, b4...)
 
         b2 := make([]byte, 2)
-        for k, vals := range r.Headers </span><span class="cov3" title="5">{
-                for _, v := range vals </span><span class="cov3" title="5">{
+        for k, vals := range r.Headers </span><span class="cov3" title="6">{
+                for _, v := range vals </span><span class="cov3" title="6">{
                         binary.BigEndian.PutUint16(b2, uint16(len(k)))
                         buf = append(buf, b2...)
                         binary.BigEndian.PutUint16(b2, uint16(len(v)))
@@ -445,7 +445,7 @@ func (r *CachedResponse) Serialize() []byte <span class="cov6" title="33">{
         }
 
         // Body
-        <span class="cov6" title="33">binary.BigEndian.PutUint32(b4, uint32(len(r.Body)))
+        <span class="cov6" title="37">binary.BigEndian.PutUint32(b4, uint32(len(r.Body)))
         buf = append(buf, b4...)
         buf = append(buf, r.Body...)
 
@@ -453,12 +453,12 @@ func (r *CachedResponse) Serialize() []byte <span class="cov6" title="33">{
 }
 
 // Deserialize decodes a cached response from disk storage.
-func Deserialize(data []byte) (*CachedResponse, error) <span class="cov5" title="28">{
+func Deserialize(data []byte) (*CachedResponse, error) <span class="cov6" title="32">{
         if len(data) &lt; 28 </span><span class="cov1" title="1">{
                 return nil, errCorrupt
         }</span>
 
-        <span class="cov5" title="27">r := &amp;CachedResponse{}
+        <span class="cov6" title="31">r := &amp;CachedResponse{}
         pos := 0
 
         r.StatusCode = int(binary.BigEndian.Uint32(data[pos:]))
@@ -477,8 +477,8 @@ func Deserialize(data []byte) (*CachedResponse, error) <span class="cov5" title=
         pos += 4
 
         r.Headers = make(http.Header)
-        for i := 0; i &lt; headerCount; i++ </span><span class="cov3" title="5">{
-                if pos+4 &gt; len(data) </span><span class="cov0" title="0">{
+        for i := 0; i &lt; headerCount; i++ </span><span class="cov3" title="6">{
+                if pos+4 &gt; len(data) </span><span class="cov1" title="1">{
                         return nil, errCorrupt
                 }</span>
                 <span class="cov3" title="5">keyLen := int(binary.BigEndian.Uint16(data[pos:]))
@@ -495,15 +495,15 @@ func Deserialize(data []byte) (*CachedResponse, error) <span class="cov5" title=
                 r.Headers.Add(key, val)</span>
         }
 
-        <span class="cov5" title="27">if pos+4 &gt; len(data) </span><span class="cov0" title="0">{
+        <span class="cov6" title="30">if pos+4 &gt; len(data) </span><span class="cov1" title="1">{
                 return nil, errCorrupt
         }</span>
-        <span class="cov5" title="27">bodyLen := int(binary.BigEndian.Uint32(data[pos:]))
+        <span class="cov5" title="29">bodyLen := int(binary.BigEndian.Uint32(data[pos:]))
         pos += 4
-        if pos+bodyLen &gt; len(data) </span><span class="cov0" title="0">{
+        if pos+bodyLen &gt; len(data) </span><span class="cov1" title="1">{
                 return nil, errCorrupt
         }</span>
-        <span class="cov5" title="27">r.Body = append([]byte(nil), data[pos:pos+bodyLen]...)
+        <span class="cov5" title="28">r.Body = append([]byte(nil), data[pos:pos+bodyLen]...)
 
         return r, nil</span>
 }
@@ -530,7 +530,7 @@ import (
 // The key is the full canonical string (method|host|path|query|vary) so that
 // collisions are impossible. The FNV-1a hash is only used for disk sharding
 // via HashKey.
-func GenerateKey(r *http.Request, varyHeaders []string) string <span class="cov5" title="124">{
+func GenerateKey(r *http.Request, varyHeaders []string) string <span class="cov5" title="126">{
         var b strings.Builder
         b.WriteString(r.Method)
         b.WriteByte('|')
@@ -547,36 +547,36 @@ func GenerateKey(r *http.Request, varyHeaders []string) string <span class="cov5
         }</span>
 
         // Vary headers
-        <span class="cov5" title="124">for _, name := range varyHeaders </span><span class="cov5" title="120">{
+        <span class="cov5" title="126">for _, name := range varyHeaders </span><span class="cov5" title="122">{
                 b.WriteByte('|')
                 b.WriteString(name)
                 b.WriteByte('=')
                 b.WriteString(r.Header.Get(name))
         }</span>
 
-        <span class="cov5" title="124">return b.String()</span>
+        <span class="cov5" title="126">return b.String()</span>
 }
 
 // HashKey returns a hex-encoded FNV-1a hash of the key, used for disk
 // directory sharding.
-func HashKey(key string) string <span class="cov5" title="130">{
+func HashKey(key string) string <span class="cov5" title="134">{
         h := fnv.New64a()
         h.Write([]byte(key))
         return formatKey(h.Sum64())
 }</span>
 
-func formatKey(n uint64) string <span class="cov7" title="1947">{
+func formatKey(n uint64) string <span class="cov7" title="1951">{
         const hex = "0123456789abcdef"
         var buf [16]byte
-        for i := 15; i &gt;= 0; i-- </span><span class="cov10" title="31152">{
+        for i := 15; i &gt;= 0; i-- </span><span class="cov10" title="31216">{
                 buf[i] = hex[n&amp;0xF]
                 n &gt;&gt;= 4
         }</span>
-        <span class="cov7" title="1947">return string(buf[:])</span>
+        <span class="cov7" title="1951">return string(buf[:])</span>
 }
 
 // KeyPrefix returns first 4 chars of the hash for disk cache directory sharding.
-func KeyPrefix(key string) (dir1, dir2 string) <span class="cov4" title="66">{
+func KeyPrefix(key string) (dir1, dir2 string) <span class="cov4" title="68">{
         h := HashKey(key)
         return h[:2], h[2:4]
 }</span>
@@ -618,17 +618,17 @@ type entry struct {
 }
 
 // NewMemoryCache creates a memory cache with the given byte limit.
-func NewMemoryCache(maxBytes int64) *MemoryCache <span class="cov3" title="25">{
+func NewMemoryCache(maxBytes int64) *MemoryCache <span class="cov3" title="27">{
         mc := &amp;MemoryCache{maxBytes: maxBytes}
-        for i := range mc.shards </span><span class="cov8" title="6400">{
+        for i := range mc.shards </span><span class="cov8" title="6912">{
                 mc.shards[i].items = make(map[string]*entry)
                 mc.shards[i].lru = list.New()
         }</span>
-        <span class="cov3" title="25">return mc</span>
+        <span class="cov3" title="27">return mc</span>
 }
 
 // Get looks up a key and returns the response and cache status.
-func (mc *MemoryCache) Get(key string) (*CachedResponse, string) <span class="cov5" title="128">{
+func (mc *MemoryCache) Get(key string) (*CachedResponse, string) <span class="cov5" title="130">{
         s := mc.getShard(key)
         s.mu.RLock()
         e, ok := s.items[key]
@@ -639,9 +639,9 @@ func (mc *MemoryCache) Get(key string) (*CachedResponse, string) <span class="co
                 return nil, StatusMiss
         }</span>
 
-        <span class="cov4" title="95">resp := e.resp
+        <span class="cov4" title="97">resp := e.resp
 
-        if resp.IsFresh() </span><span class="cov4" title="93">{
+        if resp.IsFresh() </span><span class="cov4" title="95">{
                 // Move to front (promote in LRU)
                 s.mu.Lock()
                 s.lru.MoveToFront(e.element)
@@ -661,7 +661,7 @@ func (mc *MemoryCache) Get(key string) (*CachedResponse, string) <span class="co
 }
 
 // Set stores a response in the cache.
-func (mc *MemoryCache) Set(key string, resp *CachedResponse) <span class="cov6" title="437">{
+func (mc *MemoryCache) Set(key string, resp *CachedResponse) <span class="cov6" title="439">{
         size := resp.Size()
         s := mc.getShard(key)
 
@@ -676,16 +676,16 @@ func (mc *MemoryCache) Set(key string, resp *CachedResponse) <span class="cov6" 
         }</span>
 
         // Evict LRU entries from this shard if over global memory limit
-        <span class="cov6" title="437">for mc.usedBytes.Load()+size &gt; mc.maxBytes &amp;&amp; s.lru.Len() &gt; 0 </span><span class="cov4" title="46">{
+        <span class="cov6" title="439">for mc.usedBytes.Load()+size &gt; mc.maxBytes &amp;&amp; s.lru.Len() &gt; 0 </span><span class="cov4" title="46">{
                 mc.evictLRU(s)
         }</span>
 
         // If still over limit (other shards), skip storing
-        <span class="cov6" title="437">if mc.usedBytes.Load()+size &gt; mc.maxBytes </span><span class="cov4" title="96">{
+        <span class="cov6" title="439">if mc.usedBytes.Load()+size &gt; mc.maxBytes </span><span class="cov4" title="97">{
                 return
         }</span>
 
-        <span class="cov5" title="341">e := &amp;entry{key: key, resp: resp, size: size}
+        <span class="cov5" title="342">e := &amp;entry{key: key, resp: resp, size: size}
         e.element = s.lru.PushFront(e)
         s.items[key] = e
         mc.usedBytes.Add(size)</span>
@@ -771,38 +771,38 @@ func (mc *MemoryCache) evictLRU(s *shard) <span class="cov4" title="46">{
         delete(s.items, e.key)</span>
 }
 
-func (mc *MemoryCache) getShard(key string) *shard <span class="cov6" title="586">{
+func (mc *MemoryCache) getShard(key string) *shard <span class="cov6" title="590">{
         return &amp;mc.shards[shardIdx(key)]
 }</span>
 
-func shardIdx(key string) uint8 <span class="cov7" title="1935">{
+func shardIdx(key string) uint8 <span class="cov7" title="1939">{
         h := uint32(2166136261)
-        for i := 0; i &lt; len(key); i++ </span><span class="cov10" title="45327">{
+        for i := 0; i &lt; len(key); i++ </span><span class="cov10" title="45425">{
                 h ^= uint32(key[i])
                 h *= 16777619
         }</span>
-        <span class="cov7" title="1935">return uint8(h)</span>
+        <span class="cov7" title="1939">return uint8(h)</span>
 }
 
 // StartCleanup runs periodic eviction of expired entries.
 // The goroutine exits when ctx is cancelled.
-func (mc *MemoryCache) StartCleanup(ctx context.Context, interval time.Duration) <span class="cov3" title="11">{
-        go func() </span><span class="cov3" title="11">{
+func (mc *MemoryCache) StartCleanup(ctx context.Context, interval time.Duration) <span class="cov3" title="12">{
+        go func() </span><span class="cov3" title="12">{
                 ticker := time.NewTicker(interval)
                 defer ticker.Stop()
-                for </span><span class="cov3" title="14">{
+                for </span><span class="cov3" title="16">{
                         select </span>{
                         case &lt;-ctx.Done():<span class="cov1" title="1">
                                 return</span>
-                        case &lt;-ticker.C:<span class="cov1" title="3">
+                        case &lt;-ticker.C:<span class="cov2" title="4">
                                 mc.cleanExpired()</span>
                         }
                 }
         }()
 }
 
-func (mc *MemoryCache) cleanExpired() <span class="cov1" title="3">{
-        for i := range mc.shards </span><span class="cov6" title="768">{
+func (mc *MemoryCache) cleanExpired() <span class="cov2" title="4">{
+        for i := range mc.shards </span><span class="cov6" title="1024">{
                 s := &amp;mc.shards[i]
                 s.mu.Lock()
                 for key, e := range s.items </span><span class="cov1" title="1">{
@@ -812,7 +812,7 @@ func (mc *MemoryCache) cleanExpired() <span class="cov1" title="3">{
                                 delete(s.items, key)
                         }</span>
                 }
-                <span class="cov6" title="768">s.mu.Unlock()</span>
+                <span class="cov6" title="1024">s.mu.Unlock()</span>
         }
 }
 </pre>
