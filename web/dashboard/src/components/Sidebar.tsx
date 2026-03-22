@@ -14,6 +14,7 @@ import {
   TrendingUp,
   Code,
   Lock,
+  Cpu,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -27,6 +28,7 @@ const links = [
   { to: '/logs', label: 'Logs', icon: FileText },
   { to: '/config-editor', label: 'Config Editor', icon: Code },
   { to: '/certificates', label: 'Certificates', icon: Lock },
+  { to: '/php', label: 'PHP', icon: Cpu },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

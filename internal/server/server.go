@@ -35,6 +35,7 @@ import (
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
+	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/router"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
@@ -157,6 +158,13 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetMonitor(s.monitor)
 	}
 
+	// PHP Manager
+	phpMgr := phpmanager.New(log)
+	phpMgr.Detect()
+	if s.admin != nil {
+		s.admin.SetPHPManager(phpMgr)
+	}
+
 	// MCP server
 	if cfg.Global.MCP.Enabled {
 		s.mcp = mcp.New(cfg, log, m)
@@ -204,9 +212,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	return s
 }
 
-// SetConfigPath stores the config file path for reload support.
+// SetConfigPath stores the config file path for reload support and config editor.
 func (s *Server) SetConfigPath(path string) {
 	s.configPath = path
+	if s.admin != nil {
+		s.admin.SetConfigPath(path)
+	}
 }
 
 func (s *Server) buildMiddlewareChain() http.Handler {

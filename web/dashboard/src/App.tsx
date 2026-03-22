@@ -12,6 +12,7 @@ import Settings from '@/pages/Settings';
 import Analytics from '@/pages/Analytics';
 import ConfigEditor from '@/pages/ConfigEditor';
 import Certificates from '@/pages/Certificates';
+import PHP from '@/pages/PHP';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/config-editor" element={<ConfigEditor />} />
         <Route path="/certificates" element={<Certificates />} />
+        <Route path="/php" element={<PHP />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

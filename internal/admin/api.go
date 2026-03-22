@@ -23,6 +23,7 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/monitor"
+	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
 // ReloadFunc is called when a config reload is requested.
@@ -57,6 +58,7 @@ type Server struct {
 
 	monitor *monitor.Monitor
 	alerter *alerting.Alerter
+	phpMgr  *phpmanager.Manager
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -98,6 +100,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/v1/config/domains/{host}/raw", s.handleDomainRawPut)
 	s.mux.HandleFunc("GET /api/v1/monitor", s.handleMonitor)
 	s.mux.HandleFunc("GET /api/v1/alerts", s.handleAlerts)
+
+	// PHP manager
+	s.mux.HandleFunc("GET /api/v1/php", s.handlePHPList)
+	s.mux.HandleFunc("GET /api/v1/php/{version}/config", s.handlePHPConfig)
+	s.mux.HandleFunc("PUT /api/v1/php/{version}/config", s.handlePHPConfigUpdate)
+	s.mux.HandleFunc("GET /api/v1/php/{version}/extensions", s.handlePHPExtensions)
+	s.mux.HandleFunc("POST /api/v1/php/{version}/start", s.handlePHPStart)
+	s.mux.HandleFunc("POST /api/v1/php/{version}/stop", s.handlePHPStop)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -275,6 +285,110 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		alerts = []alerting.Alert{}
 	}
 	jsonResponse(w, alerts)
+}
+
+// SetPHPManager sets the PHP manager for the PHP API endpoints.
+func (s *Server) SetPHPManager(m *phpmanager.Manager) { s.phpMgr = m }
+
+func (s *Server) handlePHPList(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	jsonResponse(w, s.phpMgr.Status())
+}
+
+func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+	cfg, err := s.phpMgr.GetConfig(version)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, cfg)
+}
+
+func (s *Server) handlePHPConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	version := r.PathValue("version")
+
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Key == "" {
+		jsonError(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.phpMgr.SetConfig(version, req.Key, req.Value); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "updated", "key": req.Key, "value": req.Value})
+}
+
+func (s *Server) handlePHPExtensions(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+	exts, err := s.phpMgr.GetExtensions(version)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, exts)
+}
+
+func (s *Server) handlePHPStart(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	version := r.PathValue("version")
+
+	var req struct {
+		ListenAddr string `json:"listen_addr"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.ListenAddr == "" {
+		req.ListenAddr = "127.0.0.1:9000"
+	}
+
+	if err := s.phpMgr.StartFPM(version, req.ListenAddr); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "started", "version": version, "listen": req.ListenAddr})
+}
+
+func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+
+	if err := s.phpMgr.StopFPM(version); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
 }
 
 // HTTPServer returns the underlying http.Server for shutdown during upgrades.
