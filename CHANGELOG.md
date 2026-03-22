@@ -5,6 +5,60 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-22
+
+### Highlights
+
+**1,728 tests, 93%+ average coverage, 0 failures.** 27 packages, 17k lines of Go source.
+
+### New Features
+
+- **Backup/Restore** — Local filesystem, S3 (AWS SigV4), SFTP over SSH; scheduled backups with auto-pruning
+- **HTTP/3 (QUIC)** — via quic-go with Alt-Svc header advertisement
+- **WebSocket Proxy** — TCP hijack + bidirectional tunneling for real-time apps
+- **Audit Logging** — 500-entry ring buffer tracking all admin actions with timestamps/IPs
+- **Latency Metrics** — p50/p95/p99/max percentiles via Prometheus endpoint
+- **Slow Request Logging** — WARN-level log for requests exceeding configurable threshold
+- **Per-domain PHP** — Multiple PHP versions per domain, auto-port assignment, php.ini editing
+- **Nginx/Apache Migration** — `uwas migrate nginx/apache <file>` converts configs to UWAS YAML
+- **W3C Trace Context** — traceparent header propagation through reverse proxy
+- **Per-handler Metrics** — uwas_requests_by_handler{handler=static/php/proxy/redirect}
+- **Connection Limiter** — Reject with 503 when at max capacity
+- **System Info API** — GET /api/v1/system (Go version, OS, arch, CPUs, goroutines, memory)
+
+### Dashboard (15 pages)
+
+- **Backups page** — Create/restore/delete with provider selection + scheduling
+- **Audit Log page** — Filterable action history with color-coded badges
+- **Analytics enhanced** — Referrer tracking + user agent breakdown charts
+- **Dashboard** — Latency cards (p50/p95/p99), dual-axis chart with p95 line
+- **Settings** — Real system info (Go version, CPUs, goroutines, memory, GC)
+- **Config Editor** — In-memory fallback when domain files don't exist
+
+### Security Hardening
+
+- **Admin API rate limiting** — 10 failed auths in 1 minute triggers 5-minute IP block
+- **Config validation expanded** — 300+ lines: CIDRs, ports, URLs, regexes, enums, file existence
+- **Slowloris protection** — ReadHeaderTimeout (10s), MaxHeaderBytes (1MB)
+- **Graceful shutdown** — Connection draining with configurable grace period
+
+### CLI / UX
+
+- **First-run experience** — Auto-config creation in ~/.uwas/, interactive port setup
+- **Startup banner** — ASCII art, version, listeners, features, dashboard URL
+- **Zero-arg launch** — `uwas` without arguments auto-starts server
+
+### Bug Fixes
+
+- Domain create: SSL, proxy, redirect, WAF payload structures fixed
+- Config editor: domain raw GET falls back to in-memory config
+- Domain file path: port in hostnames sanitized for filesystem
+- Analytics page crash: match actual API response format
+- PHP-FPM HTTP_HOST: set from r.Host, not r.Header
+- Cache bypass: wp-admin/wp-login session cookie detection
+
+---
+
 ## [1.0.0] - 2026-03-22
 
 ### Highlights
