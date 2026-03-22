@@ -121,10 +121,37 @@ export interface CertInfo {
   ssl_mode: string;
   status: string;
   issuer: string;
+  expiry?: string;
+  days_remaining?: number;
+}
+
+export interface AnalyticsData {
+  total_page_views: number;
+  unique_visitors: number;
+  bandwidth: number;
+  avg_response_time: number;
+  domains: DomainAnalytics[];
+  hourly_traffic: { hour: string; views: number }[];
+}
+
+export interface DomainAnalytics {
+  host: string;
+  page_views: number;
+  unique_ips: number;
+  bandwidth: number;
+  hit_rate: string;
+  top_paths: { path: string; views: number }[];
+  status_codes: { code: string; count: number }[];
+  hourly_traffic: { hour: string; views: number }[];
 }
 
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
 export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');
+export const fetchAnalytics = () => api<AnalyticsData>('/api/v1/analytics');
+export const fetchConfigRaw = () => api<{ content: string }>('/api/v1/config/raw');
+export const saveConfigRaw = (content: string) => api<{ status: string }>('/api/v1/config/raw', { method: 'PUT', body: JSON.stringify({ content }) });
+export const fetchDomainConfigRaw = (host: string) => api<{ content: string }>(`/api/v1/config/domains/${encodeURIComponent(host)}/raw`);
+export const saveDomainConfigRaw = (host: string, content: string) => api<{ status: string }>(`/api/v1/config/domains/${encodeURIComponent(host)}/raw`, { method: 'PUT', body: JSON.stringify({ content }) });
 
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {

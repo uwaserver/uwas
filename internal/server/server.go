@@ -29,6 +29,7 @@ import (
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
+	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/router"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
@@ -51,6 +52,7 @@ type Server struct {
 	analytics  *analytics.Collector
 	admin      *admin.Server
 	mcp        *mcp.Server
+	monitor    *monitor.Monitor
 	handler    http.Handler // compiled middleware chain
 	httpSrv    *http.Server
 	httpsSrv   *http.Server
@@ -133,6 +135,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 		s.admin.SetReloadFunc(s.reload)
 		s.admin.SetAnalytics(s.analytics)
+	}
+
+	// Uptime monitor
+	s.monitor = monitor.New(cfg.Domains, log)
+	if s.admin != nil {
+		s.admin.SetMonitor(s.monitor)
 	}
 
 	// MCP server
@@ -269,6 +277,11 @@ func (s *Server) Start() error {
 		}
 		go s.tlsMgr.ObtainCerts(s.ctx)
 		s.tlsMgr.StartRenewal(s.ctx)
+	}
+
+	// Uptime monitor
+	if s.monitor != nil {
+		go s.monitor.Start(s.ctx)
 	}
 
 	// Admin API
