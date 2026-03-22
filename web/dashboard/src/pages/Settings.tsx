@@ -9,11 +9,19 @@ import {
   Database,
   Download,
 } from 'lucide-react';
-import { fetchConfig, fetchHealth, fetchConfigExport, triggerReload, type ConfigData, type HealthData } from '@/lib/api';
+import { fetchConfig, fetchHealth, fetchSystem, fetchConfigExport, triggerReload, type ConfigData, type HealthData, type SystemInfo } from '@/lib/api';
+
+function formatBytes(b: number): string {
+  if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
+  if (b >= 1 << 20) return `${(b / (1 << 20)).toFixed(1)} MB`;
+  if (b >= 1 << 10) return `${(b / (1 << 10)).toFixed(1)} KB`;
+  return `${b} B`;
+}
 
 export default function Settings() {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [system, setSystem] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -21,9 +29,10 @@ export default function Settings() {
 
   const load = useCallback(async () => {
     try {
-      const [c, h] = await Promise.all([fetchConfig(), fetchHealth()]);
+      const [c, h, s] = await Promise.all([fetchConfig(), fetchHealth(), fetchSystem()]);
       setConfig(c);
       setHealth(h);
+      setSystem(s);
     } catch {
       // ignore
     } finally {
@@ -204,20 +213,23 @@ export default function Settings() {
         </p>
       </div>
 
-      {/* Runtime Info */}
+      {/* System Info */}
       <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Activity size={18} className="text-amber-400" />
           <h2 className="text-sm font-semibold text-slate-300">
-            Runtime Information
+            System Information
           </h2>
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <ConfigItem label="Server" value="UWAS" />
-          <ConfigItem
-            label="Configuration"
-            value={`${config?.domain_count ?? 0} domain(s) loaded`}
-          />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <ConfigItem label="Version" value={system?.version || '--'} />
+          <ConfigItem label="Go Version" value={system?.go_version || '--'} />
+          <ConfigItem label="OS / Arch" value={system ? `${system.os}/${system.arch}` : '--'} />
+          <ConfigItem label="CPUs" value={system?.cpus ?? '--'} />
+          <ConfigItem label="Goroutines" value={system?.goroutines ?? '--'} />
+          <ConfigItem label="Memory (Alloc)" value={system ? formatBytes(system.memory_alloc) : '--'} />
+          <ConfigItem label="Memory (Sys)" value={system ? formatBytes(system.memory_sys) : '--'} />
+          <ConfigItem label="GC Cycles" value={system?.gc_cycles ?? '--'} />
         </div>
       </div>
     </div>
