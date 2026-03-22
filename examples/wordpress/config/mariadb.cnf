@@ -1,0 +1,27 @@
+[mysqld]
+# Performance
+innodb_buffer_pool_size = 256M
+innodb_log_file_size = 64M
+innodb_flush_method = O_DIRECT
+innodb_flush_log_at_trx_commit = 2
+
+# Connections
+max_connections = 100
+wait_timeout = 600
+
+# Query cache (MariaDB still supports this)
+query_cache_type = 1
+query_cache_size = 32M
+query_cache_limit = 2M
+
+# Charset
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+# Logging
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 2
+
+[client]
+default-character-set = utf8mb4
