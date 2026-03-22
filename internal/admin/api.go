@@ -71,6 +71,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
 	s.mux.HandleFunc("POST /api/v1/reload", s.handleReload)
 	s.mux.HandleFunc("POST /api/v1/cache/purge", s.handleCachePurge)
+	s.mux.HandleFunc("GET /api/v1/cache/stats", s.handleCacheStats)
 	s.mux.Handle("GET /api/v1/metrics", s.metrics.Handler())
 	s.mux.HandleFunc("POST /api/v1/domains", s.handleAddDomain)
 	s.mux.HandleFunc("DELETE /api/v1/domains/{host}", s.handleDeleteDomain)
@@ -254,6 +255,60 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 		s.cache.PurgeAll()
 		jsonResponse(w, map[string]string{"status": "all purged"})
 	}
+}
+
+func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
+	if s.cache == nil {
+		jsonResponse(w, map[string]any{
+			"enabled":  false,
+			"message":  "cache not enabled",
+		})
+		return
+	}
+
+	cacheStats := s.cache.Stats()
+
+	// Per-domain cache info
+	s.configMu.RLock()
+	var domainCache []map[string]any
+	for _, d := range s.config.Domains {
+		dc := map[string]any{
+			"host":    d.Host,
+			"enabled": d.Cache.Enabled,
+			"ttl":     d.Cache.TTL,
+			"tags":    d.Cache.Tags,
+		}
+		if len(d.Cache.Rules) > 0 {
+			var rules []map[string]any
+			for _, rule := range d.Cache.Rules {
+				rules = append(rules, map[string]any{
+					"match":  rule.Match,
+					"ttl":    rule.TTL,
+					"bypass": rule.Bypass,
+				})
+			}
+			dc["rules"] = rules
+		}
+		domainCache = append(domainCache, dc)
+	}
+	s.configMu.RUnlock()
+
+	total := cacheStats["hits"] + cacheStats["misses"]
+	var hitRate float64
+	if total > 0 {
+		hitRate = float64(cacheStats["hits"]) / float64(total) * 100
+	}
+
+	jsonResponse(w, map[string]any{
+		"enabled":    true,
+		"hits":       cacheStats["hits"],
+		"misses":     cacheStats["misses"],
+		"stales":     cacheStats["stales"],
+		"entries":    cacheStats["entries"],
+		"used_bytes": cacheStats["used_bytes"],
+		"hit_rate":   fmt.Sprintf("%.1f%%", hitRate),
+		"domains":    domainCache,
+	})
 }
 
 // handleSSEStats streams server stats as Server-Sent Events every second.
