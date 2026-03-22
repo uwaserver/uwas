@@ -1665,3 +1665,427 @@ func TestHandleRequestUnknownType(t *testing.T) {
 		t.Errorf("status = %d, want 500 for unknown type", rec.Code)
 	}
 }
+
+// --- renderDomainError ---
+
+func TestRenderDomainErrorCustomPage(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "404.html"), []byte("<h1>Custom 404</h1>"), 0644)
+
+	domain := &config.Domain{
+		Root:       dir,
+		ErrorPages: map[int]string{404: "404.html"},
+	}
+
+	rec := httptest.NewRecorder()
+	renderDomainError(rec, 404, domain)
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Custom 404") {
+		t.Errorf("body should contain custom 404 page content, got: %q", rec.Body.String())
+	}
+}
+
+func TestRenderDomainErrorFallsBackToDefault(t *testing.T) {
+	domain := &config.Domain{
+		ErrorPages: map[int]string{404: "missing.html"},
+		Root:       "/nonexistent/path",
+	}
+
+	rec := httptest.NewRecorder()
+	renderDomainError(rec, 404, domain)
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	// Should fall back to default styled page (which contains "Not Found")
+	if !strings.Contains(rec.Body.String(), "Not Found") {
+		t.Error("should fall back to default error page when custom page not found")
+	}
+}
+
+func TestRenderDomainErrorNilDomain(t *testing.T) {
+	rec := httptest.NewRecorder()
+	renderDomainError(rec, 500, nil)
+
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+}
+
+func TestRenderDomainErrorNilErrorPages(t *testing.T) {
+	domain := &config.Domain{Root: "/tmp"}
+
+	rec := httptest.NewRecorder()
+	renderDomainError(rec, 403, domain)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestRenderDomainErrorUnmappedCode(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "404.html"), []byte("custom"), 0644)
+
+	domain := &config.Domain{
+		Root:       dir,
+		ErrorPages: map[int]string{404: "404.html"},
+	}
+
+	// 500 is not mapped in ErrorPages, should use default
+	rec := httptest.NewRecorder()
+	renderDomainError(rec, 500, domain)
+
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "custom") {
+		t.Error("should not use 404 custom page for 500 error")
+	}
+}
+
+// --- responseCapture: overflow ---
+
+func TestResponseCaptureOverflow(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cap := newResponseCapture(rec)
+
+	// Write more than maxCacheableBody to trigger overflow
+	bigChunk := make([]byte, maxCacheableBody+1)
+	cap.Write(bigChunk)
+
+	if !cap.overflow {
+		t.Error("overflow should be true after exceeding maxCacheableBody")
+	}
+	if cap.body.Len() != 0 {
+		t.Errorf("body should be reset after overflow, got %d bytes", cap.body.Len())
+	}
+
+	// The real writer should still have received the data
+	if rec.Body.Len() != maxCacheableBody+1 {
+		t.Errorf("real writer should have all %d bytes, got %d", maxCacheableBody+1, rec.Body.Len())
+	}
+}
+
+func TestResponseCaptureOverflowAfterMultipleWrites(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cap := newResponseCapture(rec)
+
+	// Write in chunks that eventually exceed the limit
+	chunk := make([]byte, maxCacheableBody/2+1)
+	cap.Write(chunk) // first write: under limit
+	if cap.overflow {
+		t.Error("should not overflow after first write")
+	}
+
+	cap.Write(chunk) // second write: exceeds limit
+	if !cap.overflow {
+		t.Error("should overflow after second write")
+	}
+}
+
+// --- applyRewrites: forbidden response ---
+
+func TestApplyRewritesForbidden(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "forbidden-rw.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Rewrites: []config.RewriteRule{
+					{Match: "^/secret", To: "-", Flags: []string{"F"}},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/secret", nil)
+	req.Host = "forbidden-rw.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 for forbidden rewrite", rec.Code)
+	}
+}
+
+func TestApplyRewritesGone(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "gone-rw.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Rewrites: []config.RewriteRule{
+					{Match: "^/removed", To: "-", Flags: []string{"G"}},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/removed", nil)
+	req.Host = "gone-rw.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 410 {
+		t.Errorf("status = %d, want 410 for gone rewrite", rec.Code)
+	}
+}
+
+// --- handleFileRequest: file resolves to directory ---
+
+func TestHandleFileRequestResolvedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "files")
+	os.MkdirAll(subDir, 0755)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:             "dirforbid.com",
+				Root:             dir,
+				Type:             "static",
+				SSL:              config.SSLConfig{Mode: "off"},
+				DirectoryListing: false,
+				TryFiles:         []string{"$uri"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/files", nil)
+	req.Host = "dirforbid.com"
+	s.handleRequest(rec, req)
+
+	// Requesting a directory path without directory listing should return 403
+	if rec.Code != 403 && rec.Code != 404 {
+		t.Errorf("status = %d, want 403 or 404 for directory access without listing", rec.Code)
+	}
+}
+
+// --- parseHtaccess: invalid .htaccess content ---
+
+func TestParseHtaccessInvalidContent(t *testing.T) {
+	dir := t.TempDir()
+	// Write invalid .htaccess
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte("<<<INVALID CONTENT>>>"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "badhtaccess.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "badhtaccess.local"
+	s.handleRequest(rec, req)
+
+	// Should not panic; should complete the request (probably 404 since no files)
+	if rec.Code == 0 {
+		t.Error("expected non-zero status code")
+	}
+}
+
+// --- reload with rewrites ---
+
+func TestReloadWithRewrites(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "uwas.yaml")
+
+	configContent := `
+domains:
+  - host: rewrite-reload.com
+    root: /tmp
+    type: static
+    ssl:
+      mode: "off"
+    rewrites:
+      - match: "^/old$"
+        to: "/new"
+        status: 301
+`
+	os.WriteFile(configPath, []byte(configContent), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "original.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+	s.SetConfigPath(configPath)
+
+	err := s.reload()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	// Verify rewrite cache was rebuilt
+	if _, ok := s.rewriteCache["rewrite-reload.com"]; !ok {
+		t.Error("rewrite cache should contain rewrite-reload.com after reload")
+	}
+
+	// Old rewrite cache entries should be gone
+	if _, ok := s.rewriteCache["original.com"]; ok {
+		t.Error("old domain should not be in rewrite cache after reload")
+	}
+}
+
+// --- handleRequest with cache + conditional request (If-None-Match) ---
+
+func TestCacheConditionalRequestIfNoneMatch(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "etag.html"), []byte("etag content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "etag.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Populate cache with ETag
+	cacheReq := httptest.NewRequest("GET", "/etag.html", nil)
+	cacheReq.Host = "etag.com"
+	s.cache.Set(cacheReq, &cache.CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{"Content-Type": {"text/html"}, "Etag": {`"abc123"`}},
+		Body:       []byte("etag content"),
+		Created:    time.Now(),
+		TTL:        60 * time.Second,
+	})
+
+	// Request with matching If-None-Match
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/etag.html", nil)
+	req.Host = "etag.com"
+	req.Header.Set("If-None-Match", `"abc123"`)
+	s.handleRequest(rec, req)
+
+	if rec.Code != 304 {
+		t.Errorf("status = %d, want 304 for matching ETag", rec.Code)
+	}
+}
+
+// --- New with admin and MCP enabled ---
+
+func TestNewWithAdminEnabled(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "error",
+			LogFormat: "text",
+			Admin: config.AdminConfig{
+				Enabled: true,
+				Listen:  "127.0.0.1:0",
+			},
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(1 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "admin.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.admin == nil {
+		t.Error("admin should be initialized when enabled")
+	}
+}
+
+// --- New with proxy pool and health check ---
+
+func TestNewWithProxyHealthCheck(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "error",
+			LogFormat: "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "health.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: "http://127.0.0.1:9999", Weight: 1},
+					},
+					Algorithm: "round_robin",
+					HealthCheck: config.HealthCheckConfig{
+						Path: "/health",
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.proxyPools["health.com"] == nil {
+		t.Error("proxy pool should be created for health.com")
+	}
+	if s.proxyBalancers["health.com"] == nil {
+		t.Error("proxy balancer should be created for health.com")
+	}
+}

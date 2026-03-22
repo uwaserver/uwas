@@ -2,9 +2,14 @@ package uwastls
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -737,4 +742,393 @@ func TestObtainCertsSkipsLoaded(t *testing.T) {
 	if got != cert {
 		t.Error("original cert should not have been replaced")
 	}
+}
+
+// --- ObtainCerts skips non-auto domains ---
+
+func TestObtainCertsSkipsNonAuto(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme-staging.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	domains := []config.Domain{
+		{Host: "manual.com", SSL: config.SSLConfig{Mode: "manual"}},
+		{Host: "off.com", SSL: config.SSLConfig{Mode: "off"}},
+	}
+	m := NewManager(cfg, domains, log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.ObtainCerts(ctx)
+
+	// Neither domain should have a cert
+	for _, host := range []string{"manual.com", "off.com"} {
+		hello := &tls.ClientHelloInfo{ServerName: host}
+		_, err := m.GetCertificate(hello)
+		if err == nil {
+			t.Errorf("should not have cert for %s (non-auto mode)", host)
+		}
+	}
+}
+
+// --- Save with cert that has no Leaf (fallback to DER parsing) ---
+
+func TestSaveWithoutLeaf(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	cert, certPEM, keyPEM := generateTestCert(t, "noleaf-save.com")
+	// Clear the Leaf so Save must parse from DER
+	cert.Leaf = nil
+
+	err := storage.Save("noleaf-save.com", cert, keyPEM, certPEM)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Verify meta was still written correctly
+	meta, err := storage.LoadMeta("noleaf-save.com")
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if meta.Domain != "noleaf-save.com" {
+		t.Errorf("Domain = %q, want noleaf-save.com", meta.Domain)
+	}
+}
+
+// --- Save with empty cert chain ---
+
+func TestSaveWithEmptyCertChain(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	cert := &tls.Certificate{
+		// No Leaf, no Certificate chain
+	}
+
+	_, certPEM, keyPEM := generateTestCert(t, "empty-chain.com")
+	err := storage.Save("empty-chain.com", cert, keyPEM, certPEM)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Meta should still be written, but with empty issuer/SANs
+	meta, err := storage.LoadMeta("empty-chain.com")
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if meta.Domain != "empty-chain.com" {
+		t.Errorf("Domain = %q, want empty-chain.com", meta.Domain)
+	}
+}
+
+// --- LoadAll with non-dir entries ---
+
+func TestLoadAllSkipsFiles(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	// Create a valid cert
+	cert, certPEM, keyPEM := generateTestCert(t, "real.com")
+	storage.Save("real.com", cert, keyPEM, certPEM)
+
+	// Create a non-directory file in the storage dir
+	os.WriteFile(filepath.Join(dir, "not-a-dir.txt"), []byte("junk"), 0644)
+
+	all, err := storage.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	if len(all) != 1 {
+		t.Errorf("LoadAll count = %d, want 1 (should skip non-dir files)", len(all))
+	}
+	if _, ok := all["real.com"]; !ok {
+		t.Error("should have loaded real.com cert")
+	}
+}
+
+// --- LoadAll with nonexistent storage dir ---
+
+func TestLoadAllNonexistentDir(t *testing.T) {
+	storage := NewCertStorage("/nonexistent/path/that/does/not/exist")
+
+	all, err := storage.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll should return empty map, not error for nonexistent dir: %v", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("should be empty for nonexistent dir, got %d", len(all))
+	}
+}
+
+// --- LoadMeta error path ---
+
+func TestLoadMetaNonexistent(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	_, err := storage.LoadMeta("nonexistent.com")
+	if err == nil {
+		t.Error("LoadMeta should return error for nonexistent domain")
+	}
+}
+
+func TestLoadMetaInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	// Create domain dir with invalid meta.json
+	domainDir := filepath.Join(dir, "badjson.com")
+	os.MkdirAll(domainDir, 0700)
+	os.WriteFile(filepath.Join(domainDir, "meta.json"), []byte("not json"), 0644)
+
+	_, err := storage.LoadMeta("badjson.com")
+	if err == nil {
+		t.Error("LoadMeta should return error for invalid JSON")
+	}
+}
+
+// --- Load error paths ---
+
+func TestLoadMissingKey(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	// Create domain dir with cert but no key
+	_, certPEM, _ := generateTestCert(t, "nokey.com")
+	domainDir := filepath.Join(dir, "nokey.com")
+	os.MkdirAll(domainDir, 0700)
+	os.WriteFile(filepath.Join(domainDir, "cert.pem"), certPEM, 0644)
+
+	_, err := storage.Load("nokey.com")
+	if err == nil {
+		t.Error("Load should fail when key.pem is missing")
+	}
+}
+
+func TestLoadMissingCert(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	_, err := storage.Load("missing.com")
+	if err == nil {
+		t.Error("Load should fail when domain dir doesn't exist")
+	}
+}
+
+func TestLoadInvalidKeyPair(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	domainDir := filepath.Join(dir, "badpair.com")
+	os.MkdirAll(domainDir, 0700)
+	os.WriteFile(filepath.Join(domainDir, "cert.pem"), []byte("invalid cert"), 0644)
+	os.WriteFile(filepath.Join(domainDir, "key.pem"), []byte("invalid key"), 0600)
+
+	_, err := storage.Load("badpair.com")
+	if err == nil {
+		t.Error("Load should fail for invalid key pair")
+	}
+}
+
+// --- checkRenewals with near-expiry cert ---
+
+func TestCheckRenewalsLogsExpiring(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme-staging.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	// Generate a cert that expires in 10 days (< 30 day threshold)
+	cert, _, _ := generateTestCertWithExpiry(t, "expiring.com", 10*24*time.Hour)
+	m.certs.Store("expiring.com", cert)
+
+	// checkRenewals will try to renew via ACME, which will fail since
+	// no real ACME server, but the important thing is it runs without panic
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx)
+
+	// The cert should still be there (renewal failed but didn't remove it)
+	hello := &tls.ClientHelloInfo{ServerName: "expiring.com"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got == nil {
+		t.Error("cert should still be present after failed renewal")
+	}
+}
+
+func TestCheckRenewalsSkipsDefault(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	// Store a _default cert
+	cert, _, _ := generateTestCert(t, "default")
+	m.certs.Store("_default", cert)
+
+	// checkRenewals should skip _default and not panic
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx)
+}
+
+func TestCheckRenewalsSkipsNonExpiring(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	// Cert with 90 days left -- should NOT trigger renewal
+	cert, _, _ := generateTestCert(t, "fresh.com")
+	m.certs.Store("fresh.com", cert)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx)
+
+	// Cert should be unchanged
+	hello := &tls.ClientHelloInfo{ServerName: "fresh.com"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got != cert {
+		t.Error("fresh cert should not be replaced")
+	}
+}
+
+// --- obtainCert with nil ACME ---
+
+func TestObtainCertNilACME(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	_, err := m.obtainCert(context.Background(), "test.com")
+	if err == nil {
+		t.Error("obtainCert should fail when ACME client is nil")
+	}
+}
+
+// --- GetCertificate on-demand rate limit rejection ---
+
+func TestGetCertificateOnDemandRateLimited(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:    "test@example.com",
+		CAURL:    "https://acme.example.com/directory",
+		Storage:  t.TempDir(),
+		OnDemand: true,
+	}
+	m := NewManager(cfg, nil, log)
+
+	// Exhaust the rate limiter
+	for i := 0; i < onDemandMaxPerMinute+1; i++ {
+		m.onDemandAllow()
+	}
+
+	hello := &tls.ClientHelloInfo{ServerName: "ratelimited.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should fail with rate limit exceeded")
+	}
+}
+
+// --- GetCertificate on-demand with ask URL rejection ---
+
+func TestGetCertificateOnDemandAskRejection(t *testing.T) {
+	// Start a server that rejects all on-demand asks
+	askServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer askServer.Close()
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:       "test@example.com",
+		CAURL:       "https://acme.example.com/directory",
+		Storage:     t.TempDir(),
+		OnDemand:    true,
+		OnDemandAsk: askServer.URL,
+	}
+	m := NewManager(cfg, nil, log)
+
+	hello := &tls.ClientHelloInfo{ServerName: "rejected.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should fail when on-demand ask returns non-200")
+	}
+}
+
+// --- GetCertificate on-demand ask URL error (bad URL) ---
+
+func TestGetCertificateOnDemandAskError(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:       "test@example.com",
+		CAURL:       "https://acme.example.com/directory",
+		Storage:     t.TempDir(),
+		OnDemand:    true,
+		OnDemandAsk: "http://127.0.0.1:1", // port 1 should fail to connect
+	}
+	m := NewManager(cfg, nil, log)
+
+	hello := &tls.ClientHelloInfo{ServerName: "error.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should fail when on-demand ask URL is unreachable")
+	}
+}
+
+// Helper to generate a test cert with a specific duration until expiry
+func generateTestCertWithExpiry(t *testing.T, cn string, validFor time.Duration) (*tls.Certificate, []byte, []byte) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: cn},
+		DNSNames:     []string{cn},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(validFor),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert.Leaf, _ = x509.ParseCertificate(cert.Certificate[0])
+
+	return &cert, certPEM, keyPEM
 }
