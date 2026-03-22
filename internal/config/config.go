@@ -14,6 +14,7 @@ type GlobalConfig struct {
 	MaxConnections int            `yaml:"max_connections"`
 	HTTPListen     string         `yaml:"http_listen"`
 	HTTPSListen    string         `yaml:"https_listen"`
+	HTTP3Enabled   bool           `yaml:"http3"`
 	PIDFile        string         `yaml:"pid_file"`
 	LogLevel       string         `yaml:"log_level"`
 	LogFormat      string         `yaml:"log_format"`

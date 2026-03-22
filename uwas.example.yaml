@@ -24,6 +24,7 @@ global:
   # Listen addresses
   http_listen: ":80"      # HTTP listener (also handles ACME + HTTPS redirect)
   https_listen: ":443"    # HTTPS listener (TLS termination)
+  http3: true             # Enable HTTP/3 (QUIC) on same port as HTTPS
 
   # PID file location
   pid_file: /var/run/uwas.pid

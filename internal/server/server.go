@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
+
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
@@ -59,6 +61,7 @@ type Server struct {
 	handler    http.Handler // compiled middleware chain
 	httpSrv    *http.Server
 	httpsSrv   *http.Server
+	h3srv      *http3.Server
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
@@ -297,6 +300,13 @@ func (s *Server) Start() error {
 		}
 		go s.tlsMgr.ObtainCerts(s.ctx)
 		s.tlsMgr.StartRenewal(s.ctx)
+
+		// HTTP/3 (QUIC) listener on same port
+		if s.config.Global.HTTP3Enabled {
+			if err := s.startHTTP3(); err != nil {
+				s.logger.Warn("http/3 start failed", "error", err)
+			}
+		}
 	}
 
 	// Uptime monitor
@@ -411,6 +421,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	defer router.ReleaseContext(ctx)
 
 	ctx.Response.Header().Set("Server", "UWAS/"+build.Version)
+
+	// Advertise HTTP/3 support via Alt-Svc header
+	if altSvc := s.altSvcHeader(); altSvc != "" {
+		ctx.Response.Header().Set("Alt-Svc", altSvc)
+	}
 
 	if r.TLS != nil {
 		ctx.IsHTTPS = true
@@ -856,6 +871,9 @@ func (s *Server) shutdown() {
 	}
 	if s.httpsSrv != nil {
 		s.httpsSrv.Shutdown(ctx)
+	}
+	if s.h3srv != nil {
+		s.h3srv.Close()
 	}
 }
 
