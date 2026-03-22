@@ -347,7 +347,7 @@ export default function Domains() {
       host: form.host.trim(),
       type: form.type,
       root: form.root.trim() || undefined,
-      ssl: form.ssl,
+      ssl: { mode: form.ssl },
     };
 
     if (form.cacheEnabled) {
@@ -363,7 +363,7 @@ export default function Domains() {
 
     if (form.type === 'proxy') {
       payload.proxy = {
-        upstreams: form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean),
+        upstreams: form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean).map(addr => ({ address: addr, weight: 1 })),
         algorithm: form.proxyAlgorithm,
       };
     }
@@ -371,19 +371,19 @@ export default function Domains() {
     if (form.type === 'redirect') {
       payload.redirect = {
         target: form.redirectTarget.trim(),
-        status_code: parseInt(form.redirectCode, 10) || 301,
+        status: parseInt(form.redirectCode, 10) || 301,
       };
     }
 
     if (form.wafEnabled || form.blockedPaths.trim()) {
       payload.security = {
-        waf: form.wafEnabled,
+        waf: { enabled: form.wafEnabled },
         blocked_paths: form.blockedPaths.split(',').map(s => s.trim()).filter(Boolean),
       };
     }
 
     if (form.htaccessEnabled) {
-      payload.htaccess = { enabled: true };
+      payload.htaccess = { mode: "import" };
     }
 
     try {

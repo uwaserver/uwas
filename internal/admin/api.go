@@ -1154,19 +1154,37 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 
+	// Try reading from domains.d/ file first
 	path, err := s.domainFilePath(host)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+	if err == nil {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			w.Header().Set("Content-Type", "application/x-yaml")
+			w.Write(data)
+			return
+		}
+	}
+
+	// Fallback: generate YAML from the in-memory config for this domain
+	s.configMu.RLock()
+	var found *config.Domain
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == host {
+			d := s.config.Domains[i]
+			found = &d
+			break
+		}
+	}
+	s.configMu.RUnlock()
+
+	if found == nil {
+		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := yaml.Marshal(found)
 	if err != nil {
-		if os.IsNotExist(err) {
-			jsonError(w, "domain file not found", http.StatusNotFound)
-			return
-		}
-		jsonError(w, "failed to read domain file: "+err.Error(), http.StatusInternalServerError)
+		jsonError(w, "failed to marshal domain config", http.StatusInternalServerError)
 		return
 	}
 
@@ -1250,9 +1268,15 @@ func (s *Server) domainFilePath(host string) (string, error) {
 		return "", fmt.Errorf("config path not set")
 	}
 
-	// Sanitize host to prevent path traversal.
-	clean := filepath.Base(host)
-	if clean != host || clean == "." || clean == ".." || strings.ContainsAny(clean, `/\`) {
+	// Reject path traversal characters before any transformation
+	if strings.ContainsAny(host, `/\`) || strings.Contains(host, "..") {
+		return "", fmt.Errorf("invalid host name")
+	}
+
+	// Sanitize host: replace port separator for filesystem safety
+	clean := strings.ReplaceAll(host, ":", "_")
+	clean = filepath.Base(clean)
+	if clean == "." || clean == ".." {
 		return "", fmt.Errorf("invalid host name")
 	}
 
