@@ -5,6 +5,11 @@ import (
 	"net/http"
 )
 
+// maxCacheableBody is the maximum response body size (10 MB) that will be
+// captured for caching. Responses exceeding this limit are still sent to
+// the client but are not stored in the cache.
+const maxCacheableBody = 10 * 1024 * 1024
+
 // responseCapture wraps an http.ResponseWriter to record the status code,
 // headers, and body so the response can be stored in the cache after the
 // handler returns.
@@ -14,6 +19,7 @@ type responseCapture struct {
 	headers    http.Header
 	body       bytes.Buffer
 	written    bool
+	overflow   bool // true if body exceeded maxCacheableBody
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
@@ -37,7 +43,14 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 	if !rc.written {
 		rc.WriteHeader(http.StatusOK)
 	}
-	rc.body.Write(b)
+	if !rc.overflow {
+		if rc.body.Len()+len(b) > maxCacheableBody {
+			rc.overflow = true
+			rc.body.Reset()
+		} else {
+			rc.body.Write(b)
+		}
+	}
 	return rc.ResponseWriter.Write(b)
 }
 

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -175,7 +176,7 @@ func TestAdminSetCache(t *testing.T) {
 	}
 
 	log := logger.New("error", "text")
-	eng := cache.NewEngine(1<<20, "", 0, log)
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
 	s.SetCache(eng)
 
 	if s.cache == nil {
@@ -257,7 +258,7 @@ func TestReloadNotSupported(t *testing.T) {
 func TestCachePurgeWithTag(t *testing.T) {
 	s := testServer()
 	log := logger.New("error", "text")
-	eng := cache.NewEngine(1<<20, "", 0, log)
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
 	s.SetCache(eng)
 
 	// Insert tagged entries
@@ -286,7 +287,7 @@ func TestCachePurgeWithTag(t *testing.T) {
 func TestCachePurgeAll(t *testing.T) {
 	s := testServer()
 	log := logger.New("error", "text")
-	eng := cache.NewEngine(1<<20, "", 0, log)
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
 	s.SetCache(eng)
 
 	rec := httptest.NewRecorder()

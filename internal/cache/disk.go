@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -14,12 +15,29 @@ type DiskCache struct {
 }
 
 // NewDiskCache creates a disk cache at the given directory.
+// It scans existing cache files to initialise usedBytes so the accounting
+// stays correct across restarts.
 func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
 	os.MkdirAll(baseDir, 0755)
-	return &DiskCache{
+	dc := &DiskCache{
 		baseDir:  baseDir,
 		maxBytes: maxBytes,
 	}
+
+	// Walk existing files to seed usedBytes.
+	var total int64
+	filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	dc.usedBytes.Store(total)
+
+	return dc
 }
 
 // Get reads a cached response from disk.
@@ -73,5 +91,5 @@ func (dc *DiskCache) PurgeAll() error {
 
 func (dc *DiskCache) path(key string) string {
 	d1, d2 := KeyPrefix(key)
-	return filepath.Join(dc.baseDir, d1, d2, key+".cache")
+	return filepath.Join(dc.baseDir, d1, d2, HashKey(key)+".cache")
 }

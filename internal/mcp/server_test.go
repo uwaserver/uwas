@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -105,7 +106,7 @@ func TestSetCache(t *testing.T) {
 	}
 
 	log := logger.New("error", "text")
-	eng := cache.NewEngine(1<<20, "", 0, log)
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
 	s.SetCache(eng)
 
 	if s.cache == nil {
@@ -117,7 +118,7 @@ func TestCachePurgeWithEngine(t *testing.T) {
 	s := testMCPServer()
 
 	log := logger.New("error", "text")
-	eng := cache.NewEngine(1<<20, "", 0, log)
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
 	s.SetCache(eng)
 
 	// Insert entries with tags via the engine's memory cache

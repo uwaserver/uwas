@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,9 +52,14 @@ func TestGenerateKeyVary(t *testing.T) {
 }
 
 func TestKeyPrefix(t *testing.T) {
-	d1, d2 := KeyPrefix("abcdef1234567890")
-	if d1 != "ab" || d2 != "cd" {
-		t.Errorf("prefix = %q/%q, want ab/cd", d1, d2)
+	d1, d2 := KeyPrefix("GET|example.com|/page|")
+	if len(d1) != 2 || len(d2) != 2 {
+		t.Errorf("prefix lengths = %d/%d, want 2/2", len(d1), len(d2))
+	}
+	// KeyPrefix should be deterministic
+	d1b, d2b := KeyPrefix("GET|example.com|/page|")
+	if d1 != d1b || d2 != d2b {
+		t.Errorf("KeyPrefix not deterministic: %q/%q vs %q/%q", d1, d2, d1b, d2b)
 	}
 }
 
@@ -288,7 +294,7 @@ func TestDiskCacheDelete(t *testing.T) {
 
 func TestEngineGetSet(t *testing.T) {
 	log := logger.New("error", "text")
-	e := NewEngine(1<<20, "", 0, log) // memory only, no disk (avoid async cleanup race)
+	e := NewEngine(context.Background(), 1<<20, "", 0, log) // memory only, no disk (avoid async cleanup race)
 
 	req := httptest.NewRequest("GET", "/page", nil)
 
@@ -313,7 +319,7 @@ func TestEngineGetSet(t *testing.T) {
 
 func TestEngineStats(t *testing.T) {
 	log := logger.New("error", "text")
-	e := NewEngine(1<<20, "", 0, log)
+	e := NewEngine(context.Background(), 1<<20, "", 0, log)
 
 	req := httptest.NewRequest("GET", "/stats-test", nil)
 	e.Get(req) // miss
@@ -380,7 +386,7 @@ func TestShouldBypass(t *testing.T) {
 
 func TestEnginePurgeByTag(t *testing.T) {
 	log := logger.New("error", "text")
-	e := NewEngine(1<<20, "", 0, log)
+	e := NewEngine(context.Background(), 1<<20, "", 0, log)
 
 	r1 := httptest.NewRequest("GET", "/a", nil)
 	e.Set(r1, &CachedResponse{
@@ -408,7 +414,7 @@ func TestEnginePurgeByTag(t *testing.T) {
 func TestEnginePurgeAll(t *testing.T) {
 	log := logger.New("error", "text")
 	dir := t.TempDir()
-	e := NewEngine(1<<20, dir, 1<<20, log)
+	e := NewEngine(context.Background(), 1<<20, dir, 1<<20, log)
 
 	req := httptest.NewRequest("GET", "/page", nil)
 	e.Set(req, &CachedResponse{
@@ -501,7 +507,9 @@ func TestCleanExpiredViaStartCleanup(t *testing.T) {
 	}
 
 	// Start cleanup with a very short interval
-	mc.StartCleanup(50 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mc.StartCleanup(ctx, 50*time.Millisecond)
 
 	// Wait for cleanup to run
 	time.Sleep(200 * time.Millisecond)

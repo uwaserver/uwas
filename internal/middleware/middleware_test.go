@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"compress/gzip"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -113,7 +114,8 @@ func TestRequestIDPreserved(t *testing.T) {
 func TestRealIPFromXFF(t *testing.T) {
 	var capturedIP string
 
-	handler := RealIP(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Trust the default httptest RemoteAddr network (192.0.2.0/24)
+	handler := RealIP([]string{"192.0.2.0/24"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedIP = r.RemoteAddr
 	}))
 
@@ -129,7 +131,8 @@ func TestRealIPFromXFF(t *testing.T) {
 func TestRealIPFromCF(t *testing.T) {
 	var capturedIP string
 
-	handler := RealIP(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Trust the default httptest RemoteAddr network (192.0.2.0/24)
+	handler := RealIP([]string{"192.0.2.0/24"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedIP = r.RemoteAddr
 	}))
 
@@ -142,10 +145,46 @@ func TestRealIPFromCF(t *testing.T) {
 	}
 }
 
+func TestRealIPNoTrustedProxiesPassthrough(t *testing.T) {
+	var capturedIP string
+
+	handler := RealIP(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedIP = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.50")
+	req.Header.Set("CF-Connecting-IP", "198.51.100.25")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	// With no trusted proxies, headers should be ignored; RemoteAddr unchanged.
+	if !strings.HasPrefix(capturedIP, "192.0.2.1") {
+		t.Errorf("RemoteAddr = %q, want 192.0.2.1 (original, headers ignored)", capturedIP)
+	}
+}
+
+func TestRealIPUntrustedDirectIP(t *testing.T) {
+	var capturedIP string
+
+	// Trust 10.0.0.0/8 but direct connection is from 192.0.2.1 (not trusted)
+	handler := RealIP([]string{"10.0.0.0/8"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedIP = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.50")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	// Direct IP is not trusted, so headers should be ignored.
+	if !strings.HasPrefix(capturedIP, "192.0.2.1") {
+		t.Errorf("RemoteAddr = %q, want 192.0.2.1 (untrusted direct IP, headers ignored)", capturedIP)
+	}
+}
+
 // --- Rate Limiter ---
 
 func TestRateLimitAllowed(t *testing.T) {
-	handler := RateLimit(10, time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimit(context.Background(), 10, time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -161,7 +200,7 @@ func TestRateLimitAllowed(t *testing.T) {
 }
 
 func TestRateLimitExceeded(t *testing.T) {
-	handler := RateLimit(3, time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimit(context.Background(), 3, time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -470,6 +509,8 @@ func TestRealIPTrustedProxyCIDR(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)
+	// Direct connection is from a trusted proxy
+	req.RemoteAddr = "10.0.0.5:1234"
 	// XFF: client, trusted proxy
 	req.Header.Set("X-Forwarded-For", "203.0.113.50, 10.0.0.1")
 	handler.ServeHTTP(httptest.NewRecorder(), req)

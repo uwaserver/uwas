@@ -344,7 +344,7 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 	resp.Body.Close()
 
 	// Wait for challenge validation
-	_, err = c.waitForStatus(ctx, authz.Challenges[0].URL, "valid", 30)
+	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)
 	return err
 }
 

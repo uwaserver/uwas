@@ -15,11 +15,22 @@ import (
 
 // Handler handles reverse proxy requests with load balancing.
 type Handler struct {
-	logger *logger.Logger
+	logger    *logger.Logger
+	transport *http.Transport
 }
 
 func New(log *logger.Logger) *Handler {
-	return &Handler{logger: log}
+	return &Handler{
+		logger: log,
+		transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: 5 * time.Second,
+			}).DialContext,
+			ResponseHeaderTimeout: 60 * time.Second,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
 }
 
 func (h *Handler) Name() string        { return "proxy" }
@@ -50,27 +61,18 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 	upstreamURL.Path = ctx.Request.URL.Path
 	upstreamURL.RawQuery = ctx.Request.URL.RawQuery
 
-	// Timeouts
-	connectTimeout := 5 * time.Second
+	// Per-backend timeout via request context
 	readTimeout := 60 * time.Second
-	if domain.Proxy.Timeouts.Connect.Duration > 0 {
-		connectTimeout = domain.Proxy.Timeouts.Connect.Duration
-	}
 	if domain.Proxy.Timeouts.Read.Duration > 0 {
 		readTimeout = domain.Proxy.Timeouts.Read.Duration
 	}
 
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: connectTimeout,
-		}).DialContext,
-		ResponseHeaderTimeout: readTimeout,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-	}
+	reqCtx := ctx.Request.Context()
+	reqCtx, cancel := context.WithTimeout(reqCtx, readTimeout)
+	defer cancel()
 
 	proxyReq, err := http.NewRequestWithContext(
-		ctx.Request.Context(),
+		reqCtx,
 		ctx.Request.Method,
 		upstreamURL.String(),
 		ctx.Request.Body,
@@ -98,7 +100,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 	removeHopByHop(proxyReq.Header)
 
 	// Execute
-	resp, err := transport.RoundTrip(proxyReq)
+	resp, err := h.transport.RoundTrip(proxyReq)
 	if err != nil {
 		backend.TotalFails.Add(1)
 		h.logger.Error("upstream error",
@@ -124,7 +126,12 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 	// Write status + body
 	ctx.Response.WriteHeader(resp.StatusCode)
-	io.Copy(ctx.Response, resp.Body)
+	if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
+		h.logger.Error("error copying upstream response body",
+			"backend", backend.URL.String(),
+			"error", err,
+		)
+	}
 }
 
 var hopByHopHeaders = []string{

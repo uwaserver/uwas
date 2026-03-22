@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -22,7 +23,13 @@ type Manager struct {
 	storage *CertStorage
 	logger  *logger.Logger
 	domains []config.Domain
+
+	// On-demand rate limiting: max 10 certs per minute.
+	onDemandCount atomic.Int64
+	onDemandReset atomic.Int64 // unix timestamp of current window start
 }
+
+const onDemandMaxPerMinute = 10
 
 func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logger) *Manager {
 	m := &Manager{
@@ -94,6 +101,25 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 	// 3. On-demand TLS
 	if m.config.OnDemand && m.acme != nil {
+		// Check OnDemandAsk URL if configured.
+		if m.config.OnDemandAsk != "" {
+			askURL := m.config.OnDemandAsk + "?domain=" + name
+			resp, err := http.Get(askURL)
+			if err != nil {
+				m.logger.Error("on-demand ask failed", "host", name, "error", err)
+				return nil, fmt.Errorf("on-demand ask error for %s: %w", name, err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf("on-demand ask rejected %s (status %d)", name, resp.StatusCode)
+			}
+		}
+
+		// Rate limit: max 10 on-demand certs per minute.
+		if !m.onDemandAllow() {
+			return nil, fmt.Errorf("on-demand rate limit exceeded for %s", name)
+		}
+
 		cert, err := m.obtainCert(context.Background(), name)
 		if err != nil {
 			m.logger.Error("on-demand cert failed", "host", name, "error", err)
@@ -158,6 +184,21 @@ func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate
 
 	m.logger.Info("certificate obtained", "host", host)
 	return cert, nil
+}
+
+// onDemandAllow checks the on-demand rate limiter. Returns true if the
+// request is allowed (fewer than onDemandMaxPerMinute in the current window).
+func (m *Manager) onDemandAllow() bool {
+	now := time.Now().Unix()
+	windowStart := m.onDemandReset.Load()
+	if now-windowStart >= 60 {
+		// New window: reset counter.
+		m.onDemandReset.Store(now)
+		m.onDemandCount.Store(1)
+		return true
+	}
+	count := m.onDemandCount.Add(1)
+	return count <= onDemandMaxPerMinute
 }
 
 // HandleHTTPChallenge checks if the request is an ACME HTTP-01 challenge

@@ -166,7 +166,7 @@ func Deserialize(data []byte) (*CachedResponse, error) {
 	if pos+bodyLen > len(data) {
 		return nil, errCorrupt
 	}
-	r.Body = data[pos : pos+bodyLen]
+	r.Body = append([]byte(nil), data[pos:pos+bodyLen]...)
 
 	return r, nil
 }

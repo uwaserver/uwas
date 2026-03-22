@@ -8,31 +8,41 @@ import (
 )
 
 // GenerateKey creates a cache key from the request.
-// Key = FNV-1a(method + host + path + sorted_query + vary_headers)
+// The key is the full canonical string (method|host|path|query|vary) so that
+// collisions are impossible. The FNV-1a hash is only used for disk sharding
+// via HashKey.
 func GenerateKey(r *http.Request, varyHeaders []string) string {
-	h := fnv.New64a()
-	h.Write([]byte(r.Method))
-	h.Write([]byte("|"))
-	h.Write([]byte(r.Host))
-	h.Write([]byte("|"))
-	h.Write([]byte(r.URL.Path))
-	h.Write([]byte("|"))
+	var b strings.Builder
+	b.WriteString(r.Method)
+	b.WriteByte('|')
+	b.WriteString(r.Host)
+	b.WriteByte('|')
+	b.WriteString(r.URL.Path)
+	b.WriteByte('|')
 
 	// Sorted query params for consistency
 	if r.URL.RawQuery != "" {
 		params := strings.Split(r.URL.RawQuery, "&")
 		sort.Strings(params)
-		h.Write([]byte(strings.Join(params, "&")))
+		b.WriteString(strings.Join(params, "&"))
 	}
 
 	// Vary headers
 	for _, name := range varyHeaders {
-		h.Write([]byte("|"))
-		h.Write([]byte(name))
-		h.Write([]byte("="))
-		h.Write([]byte(r.Header.Get(name)))
+		b.WriteByte('|')
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(r.Header.Get(name))
 	}
 
+	return b.String()
+}
+
+// HashKey returns a hex-encoded FNV-1a hash of the key, used for disk
+// directory sharding.
+func HashKey(key string) string {
+	h := fnv.New64a()
+	h.Write([]byte(key))
 	return formatKey(h.Sum64())
 }
 
@@ -46,10 +56,8 @@ func formatKey(n uint64) string {
 	return string(buf[:])
 }
 
-// KeyPrefix returns first 4 chars for disk cache directory sharding.
+// KeyPrefix returns first 4 chars of the hash for disk cache directory sharding.
 func KeyPrefix(key string) (dir1, dir2 string) {
-	if len(key) < 4 {
-		return "00", "00"
-	}
-	return key[:2], key[2:4]
+	h := HashKey(key)
+	return h[:2], h[2:4]
 }
