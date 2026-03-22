@@ -150,3 +150,14 @@ pre code {
 .pipeline-line {
   background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan), var(--accent-green));
 }
+
+@keyframes pipeline-flow {
+  0% { transform: translateX(-100px); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateX(calc(100vw - 100px)); opacity: 0; }
+}
+
+.pipeline-pulse {
+  animation: pipeline-flow 4s linear infinite;
+}
