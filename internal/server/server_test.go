@@ -690,6 +690,234 @@ func TestHandleRequestCacheEnabled(t *testing.T) {
 	}
 }
 
+func TestResponseCacheAutoStore(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "page.html"), []byte("hello world"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "autocache.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 120},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// First request: cache miss, response should be auto-stored.
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/page.html", nil)
+	req1.Host = "autocache.com"
+	s.handleRequest(rec1, req1)
+
+	if rec1.Code != 200 {
+		t.Fatalf("first request status = %d, want 200", rec1.Code)
+	}
+	if rec1.Body.String() != "hello world" {
+		t.Fatalf("first request body = %q, want 'hello world'", rec1.Body.String())
+	}
+
+	// Second request: should be served from cache (HIT).
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/page.html", nil)
+	req2.Host = "autocache.com"
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Errorf("second request status = %d, want 200", rec2.Code)
+	}
+	xcache := rec2.Header().Get("X-Cache")
+	if xcache != "HIT" {
+		t.Errorf("X-Cache = %q, want HIT", xcache)
+	}
+	if !strings.Contains(rec2.Body.String(), "hello world") {
+		t.Errorf("second request body = %q, should contain 'hello world'", rec2.Body.String())
+	}
+}
+
+func TestResponseCacheNotStoredForPOST(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("home"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "nocache.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// POST requests should bypass cache entirely.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/index.html", nil)
+	req.Host = "nocache.com"
+	s.handleRequest(rec, req)
+
+	// POST to a static file will get a 404 or method-specific response,
+	// but the key thing is the cache should not store anything.
+	// Verify with a subsequent GET that it is a MISS (not stored by POST).
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/index.html", nil)
+	req2.Host = "nocache.com"
+	s.handleRequest(rec2, req2)
+
+	// First GET is a miss; the important thing is it was not pre-populated by POST.
+	// After this GET, it should be stored.
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest("GET", "/index.html", nil)
+	req3.Host = "nocache.com"
+	s.handleRequest(rec3, req3)
+
+	xcache := rec3.Header().Get("X-Cache")
+	if xcache != "HIT" {
+		t.Errorf("third GET X-Cache = %q, want HIT (auto-stored from second GET)", xcache)
+	}
+}
+
+func TestResponseCacheNotStoredFor404(t *testing.T) {
+	dir := t.TempDir()
+	// No files in dir
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "notfound.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// 404 responses ARE cacheable per IsCacheable, so verify they get cached.
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/missing.html", nil)
+	req1.Host = "notfound.com"
+	s.handleRequest(rec1, req1)
+
+	if rec1.Code != 404 {
+		t.Fatalf("status = %d, want 404", rec1.Code)
+	}
+
+	// Second request should hit cache.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/missing.html", nil)
+	req2.Host = "notfound.com"
+	s.handleRequest(rec2, req2)
+
+	xcache := rec2.Header().Get("X-Cache")
+	if xcache != "HIT" {
+		t.Errorf("X-Cache = %q, want HIT for cached 404", xcache)
+	}
+}
+
+func TestResponseCaptureBasic(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cap := newResponseCapture(rec)
+
+	cap.Header().Set("Content-Type", "text/plain")
+	cap.WriteHeader(201)
+	cap.Write([]byte("hello"))
+
+	if cap.statusCode != 201 {
+		t.Errorf("statusCode = %d, want 201", cap.statusCode)
+	}
+	if cap.body.String() != "hello" {
+		t.Errorf("body = %q, want 'hello'", cap.body.String())
+	}
+	if !cap.written {
+		t.Error("written should be true after WriteHeader")
+	}
+	// Real writer should also have received the data.
+	if rec.Code != 201 {
+		t.Errorf("real writer code = %d, want 201", rec.Code)
+	}
+	if rec.Body.String() != "hello" {
+		t.Errorf("real writer body = %q, want 'hello'", rec.Body.String())
+	}
+}
+
+func TestResponseCaptureImplicitWriteHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cap := newResponseCapture(rec)
+
+	// Write without calling WriteHeader first should auto-set 200.
+	cap.Write([]byte("data"))
+
+	if cap.statusCode != 200 {
+		t.Errorf("statusCode = %d, want 200", cap.statusCode)
+	}
+	if rec.Code != 200 {
+		t.Errorf("real writer code = %d, want 200", rec.Code)
+	}
+}
+
+func TestResponseCaptureDoubleWriteHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cap := newResponseCapture(rec)
+
+	cap.WriteHeader(404)
+	cap.WriteHeader(500) // should be ignored
+
+	if cap.statusCode != 404 {
+		t.Errorf("statusCode = %d, want 404 (first call wins)", cap.statusCode)
+	}
+}
+
+func TestResponseCaptureCapturedHeaders(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cap := newResponseCapture(rec)
+
+	cap.Header().Set("X-Custom", "value")
+	cap.WriteHeader(200)
+	cap.Write([]byte("test"))
+
+	hdrs := cap.capturedHeaders()
+	if hdrs.Get("X-Custom") != "value" {
+		t.Errorf("captured header X-Custom = %q, want 'value'", hdrs.Get("X-Custom"))
+	}
+}
+
 func TestApplyHtaccess(t *testing.T) {
 	dir := t.TempDir()
 

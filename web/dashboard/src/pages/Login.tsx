@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, AlertCircle } from 'lucide-react';
-import { setToken, fetchHealth } from '@/lib/api';
+import { setToken, fetchStats } from '@/lib/api';
 
 export default function Login() {
   const [key, setKey] = useState('');
@@ -18,7 +18,7 @@ export default function Login() {
     setToken(key.trim());
 
     try {
-      await fetchHealth();
+      await fetchStats(); // uses protected endpoint to validate the key
       navigate('/');
     } catch {
       setError('Invalid API key or server unavailable');

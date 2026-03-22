@@ -537,3 +537,55 @@ func TestLogsMaxReturn(t *testing.T) {
 		t.Errorf("logs = %d, want 100", len(logs))
 	}
 }
+
+// --- GET /api/v1/config/export ---
+
+func TestConfigExportEndpoint(t *testing.T) {
+	s := testServer()
+	s.config.Global.WorkerCount = "8"
+	s.config.Global.Admin.APIKey = "supersecret"
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/export", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/x-yaml" {
+		t.Errorf("Content-Type = %q, want application/x-yaml", ct)
+	}
+
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "uwas.yaml") {
+		t.Errorf("Content-Disposition = %q, should contain uwas.yaml", cd)
+	}
+
+	body := rec.Body.String()
+	if len(body) == 0 {
+		t.Fatal("response body is empty")
+	}
+
+	// The response should be valid YAML containing domain hosts.
+	if !strings.Contains(body, "example.com") {
+		t.Errorf("YAML should contain domain host 'example.com', got:\n%s", body)
+	}
+
+	// The API key should be stripped from the export.
+	if strings.Contains(body, "supersecret") {
+		t.Error("exported YAML should not contain the admin API key")
+	}
+}
+
+func TestConfigExportContainsDomains(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/export", nil))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "api.example.com") {
+		t.Errorf("YAML should contain second domain, got:\n%s", body)
+	}
+}

@@ -392,7 +392,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cache lookup
-	if s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r) {
+	cacheEnabled := s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r)
+	if cacheEnabled {
 		cached, status := s.cache.Get(r)
 		if cached != nil && (status == cache.StatusHit || status == cache.StatusStale) {
 			ctx.CacheStatus = status
@@ -412,16 +413,57 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RecordCache(cache.StatusMiss)
 	}
 
+	// Wrap the response writer to capture the response for caching.
+	var capture *responseCapture
+	if cacheEnabled {
+		capture = newResponseCapture(ctx.Response.ResponseWriter)
+	}
+
 	// Dispatch to handler
-	switch domain.Type {
-	case "redirect":
-		s.handleRedirect(ctx, domain)
-	case "static", "php":
-		s.handleFileRequest(ctx, domain)
-	case "proxy":
-		s.handleProxy(ctx, domain)
-	default:
-		renderErrorPage(ctx.Response, http.StatusInternalServerError)
+	if capture != nil {
+		// Temporarily swap the underlying writer so handlers write through the capture.
+		origWriter := ctx.Response.ResponseWriter
+		ctx.Response.ResponseWriter = capture
+		switch domain.Type {
+		case "redirect":
+			s.handleRedirect(ctx, domain)
+		case "static", "php":
+			s.handleFileRequest(ctx, domain)
+		case "proxy":
+			s.handleProxy(ctx, domain)
+		default:
+			renderErrorPage(ctx.Response, http.StatusInternalServerError)
+		}
+		// Restore the original writer.
+		ctx.Response.ResponseWriter = origWriter
+
+		// Store the response in cache if it is cacheable.
+		hdrs := capture.capturedHeaders()
+		if cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
+			ttl := time.Duration(domain.Cache.TTL) * time.Second
+			if ttl <= 0 {
+				ttl = 60 * time.Second
+			}
+			s.cache.Set(r, &cache.CachedResponse{
+				StatusCode: ctx.Response.StatusCode(),
+				Headers:    hdrs,
+				Body:       capture.body.Bytes(),
+				Created:    time.Now(),
+				TTL:        ttl,
+				Tags:       domain.Cache.Tags,
+			})
+		}
+	} else {
+		switch domain.Type {
+		case "redirect":
+			s.handleRedirect(ctx, domain)
+		case "static", "php":
+			s.handleFileRequest(ctx, domain)
+		case "proxy":
+			s.handleProxy(ctx, domain)
+		default:
+			renderErrorPage(ctx.Response, http.StatusInternalServerError)
+		}
 	}
 }
 
