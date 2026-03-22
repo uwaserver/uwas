@@ -243,6 +243,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	p50, p95, p99, max := s.metrics.Percentiles()
 	jsonResponse(w, map[string]any{
 		"requests_total":   s.metrics.RequestsTotal.Load(),
 		"cache_hits":       s.metrics.CacheHits.Load(),
@@ -250,6 +251,11 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"active_conns":     s.metrics.ActiveConns.Load(),
 		"bytes_sent":       s.metrics.BytesSent.Load(),
 		"uptime":           time.Since(s.metrics.StartTime).String(),
+		"slow_requests":    s.metrics.SlowRequests.Load(),
+		"latency_p50_ms":   p50 * 1000,
+		"latency_p95_ms":   p95 * 1000,
+		"latency_p99_ms":   p99 * 1000,
+		"latency_max_ms":   max * 1000,
 	})
 }
 
