@@ -1,51 +1,46 @@
-# Binary output
+# ── Binary / Build ──
+/bin/
 /uwas
 /uwas.exe
-/bin/
+*.test.exe
 
-# Go
+# ── Go ──
 *.test
+vendor/
+
+# ── Coverage ──
 *.out
+*.cov
+cov_*
+cover_*
+*_coverage.html
 coverage.html
 coverage.txt
 
-# IDE
+# ── IDE ──
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 
-# OS
+# ── OS ──
 .DS_Store
 Thumbs.db
 
-# Config with secrets (not the example)
+# ── Config with secrets (not the example) ──
 /uwas.yaml
+!uwas.example.yaml
 
-# PID
+# ── Runtime data ──
 *.pid
-
-# Cache
+*.log
 /cache/
-
-# Certs
 /certs/
 
-
-*.log
-*.out
-*.exe
-*.test.exeweb/dashboard/node_modules/
-web/
+# ── Node modules (dashboard) ──
+web/dashboard/node_modules/
 docs/site/node_modules/
-demo/
 
-*.cov
-# Coverage files
-*.cov
-*.out
-cov_*
-cover_*
-*_coverage.html
-*.test.exe
+# ── Demo / temp ──
+demo/
