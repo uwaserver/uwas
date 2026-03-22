@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -423,8 +424,25 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cache lookup
+	// Cache lookup — check global bypass + per-domain bypass rules
 	cacheEnabled := s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r)
+	if cacheEnabled {
+		// Check per-domain cache bypass rules
+		for _, rule := range domain.Cache.Rules {
+			if rule.Bypass && matchPath(r.URL.Path, rule.Match) {
+				cacheEnabled = false
+				break
+			}
+		}
+		// Bypass cache if request has session cookies (WordPress, PHP sessions)
+		if cookie := r.Header.Get("Cookie"); cookie != "" {
+			if strings.Contains(cookie, "wordpress_logged_in") ||
+				strings.Contains(cookie, "wp-settings") ||
+				strings.Contains(cookie, "PHPSESSID") {
+				cacheEnabled = false
+			}
+		}
+	}
 	if cacheEnabled {
 		cached, status := s.cache.Get(r)
 		if cached != nil && (status == cache.StatusHit || status == cache.StatusStale) {
@@ -790,4 +808,10 @@ func (s *Server) removePID() {
 	if s.config.Global.PIDFile != "" {
 		os.Remove(s.config.Global.PIDFile)
 	}
+}
+
+// matchPath checks if a URL path matches a regex pattern from cache rules.
+func matchPath(path, pattern string) bool {
+	matched, err := regexp.MatchString(pattern, path)
+	return err == nil && matched
 }

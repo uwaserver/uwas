@@ -30,6 +30,11 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		"CONTENT_LENGTH":    r.Header.Get("Content-Length"),
 	}
 
+	// HTTP_HOST — Go stores Host header in r.Host, not r.Header
+	if r.Host != "" {
+		env["HTTP_HOST"] = r.Host
+	}
+
 	// Server port
 	if ctx.IsHTTPS {
 		env["HTTPS"] = "on"
