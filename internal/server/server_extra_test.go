@@ -8,12 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
-	"github.com/uwaserver/uwas/internal/metrics"
 )
 
 // TestMatchPathRegexVariants tests matchPath with various regex patterns.
@@ -595,91 +592,6 @@ func TestHandleRequestRecordsAlertingErrorSpike(t *testing.T) {
 	// The method is called in deferred func; no panic means success.
 }
 
-// --- GracefulRestart with both HTTP and HTTPS servers ---
-
-func TestGracefulRestartWithBothServers(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 5 * time.Second},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-
-	httpSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
-	httpsSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
-
-	s := &Server{
-		config:   cfg,
-		logger:   log,
-		httpSrv:  httpSrv,
-		httpsSrv: httpsSrv,
-	}
-
-	err := s.GracefulRestart()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestGracefulRestartDefaultGrace tests with zero grace (should default to 30s).
-func TestGracefulRestartDefaultGrace(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				// Zero grace - should default to 30s
-			},
-		},
-	}
-	log := logger.New("error", "text")
-	s := &Server{
-		config: cfg,
-		logger: log,
-	}
-
-	err := s.GracefulRestart()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// --- DrainAndWait with both listeners ---
-
-func TestDrainAndWaitWithBothListeners(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-
-	httpSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
-	httpsSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
-
-	s := &Server{
-		config:   cfg,
-		logger:   log,
-		httpSrv:  httpSrv,
-		httpsSrv: httpsSrv,
-	}
-
-	done := make(chan struct{})
-	go func() {
-		s.DrainAndWait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// OK
-	case <-time.After(5 * time.Second):
-		t.Fatal("DrainAndWait did not complete in time")
-	}
-}
-
 // --- matchPath edge cases ---
 
 func TestMatchPathAnchored(t *testing.T) {
@@ -1080,36 +992,6 @@ RewriteRule ^/test$ /dest [L]
 	// Should not panic; conditions with unknown vars should still work
 	if rec.Code == 0 {
 		t.Error("expected non-zero status code")
-	}
-}
-
-// --- GracefulRestart with admin server ---
-
-func TestGracefulRestartWithAdminServer(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 5 * time.Second},
-			},
-			Admin: config.AdminConfig{Enabled: true},
-		},
-	}
-	log := logger.New("error", "text")
-
-	// Create an admin server with an HTTPServer
-	admSrv := admin.New(cfg, log, metrics.New())
-
-	s := &Server{
-		config: cfg,
-		logger: log,
-		admin:  admSrv,
-	}
-
-	err := s.GracefulRestart()
-	// admin.HTTPServer() returns nil since Start() was not called.
-	// So the admin shutdown path is skipped.
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

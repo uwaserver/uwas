@@ -112,19 +112,6 @@ func TestVHostUpdate(t *testing.T) {
 	}
 }
 
-func TestVHostCount(t *testing.T) {
-	domains := []config.Domain{
-		{Host: "a.com", Aliases: []string{"www.a.com"}},
-		{Host: "b.com"},
-	}
-	r := NewVHostRouter(domains)
-
-	// Exact hosts: a.com, www.a.com, b.com = 3
-	if c := r.Count(); c != 3 {
-		t.Errorf("Count() = %d, want 3", c)
-	}
-}
-
 // === Additional coverage tests ===
 
 func TestVHostLookupEmptyHost(t *testing.T) {

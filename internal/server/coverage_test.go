@@ -1152,62 +1152,6 @@ RewriteRule ^(.*)$ /index.html [L]
 	}
 }
 
-// --- GracefulRestart with HTTPS server ---
-
-func TestGracefulRestartWithHTTPS(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-	s := &Server{
-		config:  cfg,
-		logger:  log,
-		httpSrv: &http.Server{},
-		httpsSrv: &http.Server{},
-	}
-
-	// Should succeed with unstarted servers
-	err := s.GracefulRestart()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// --- DrainAndWait with HTTPS ---
-
-func TestDrainAndWaitWithHTTPS(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-	s := &Server{
-		config:   cfg,
-		logger:   log,
-		httpsSrv: &http.Server{},
-	}
-
-	done := make(chan struct{})
-	go func() {
-		s.DrainAndWait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// OK
-	case <-time.After(3 * time.Second):
-		t.Fatal("DrainAndWait did not complete in time")
-	}
-}
-
 // --- handleFileRequest: static file that is a directory (not directory listing) ---
 
 func TestHandleFileRequestResolvedDirForbidden(t *testing.T) {
@@ -1669,29 +1613,6 @@ func TestStartHTTPBadAddress(t *testing.T) {
 	}
 }
 
-// --- GracefulRestart with httpsSrv ---
-
-func TestGracefulRestartWithHTTPSServer(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-	s := &Server{
-		config:   cfg,
-		logger:   log,
-		httpsSrv: &http.Server{},
-	}
-
-	err := s.GracefulRestart()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 // --- shutdown covers httpsSrv Shutdown path ---
 
 func TestShutdownWithHTTPAndHTTPS(t *testing.T) {
@@ -2041,86 +1962,6 @@ func TestReloadInvalidConfigFile(t *testing.T) {
 	}
 }
 
-// --- GracefulRestart with admin server ---
-
-func TestGracefulRestartWithAdmin(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			LogLevel:  "error",
-			LogFormat: "text",
-			Admin:     config.AdminConfig{Enabled: true, Listen: "127.0.0.1:0"},
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
-			},
-		},
-	}
-	_ = dir
-	log := logger.New("error", "text")
-	s := New(cfg, log)
-
-	// Start admin
-	go s.admin.Start()
-	time.Sleep(50 * time.Millisecond)
-
-	err := s.GracefulRestart()
-	if err != nil {
-		t.Fatalf("GracefulRestart with admin: %v", err)
-	}
-}
-
-// --- GracefulRestart with zero grace timeout uses default ---
-
-func TestGracefulRestartDefaultGraceCov(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 0},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-	s := &Server{
-		config: cfg,
-		logger: log,
-	}
-
-	err := s.GracefulRestart()
-	if err != nil {
-		t.Fatalf("GracefulRestart with default grace: %v", err)
-	}
-}
-
-// --- DrainAndWait with zero grace timeout uses default ---
-
-func TestDrainAndWaitDefaultGrace(t *testing.T) {
-	cfg := &config.Config{
-		Global: config.GlobalConfig{
-			Timeouts: config.TimeoutConfig{
-				ShutdownGrace: config.Duration{Duration: 0},
-			},
-		},
-	}
-	log := logger.New("error", "text")
-	s := &Server{
-		config: cfg,
-		logger: log,
-	}
-
-	done := make(chan struct{})
-	go func() {
-		s.DrainAndWait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// OK
-	case <-time.After(3 * time.Second):
-		t.Fatal("DrainAndWait with default grace did not complete in time")
-	}
-}
-
 // --- wp-settings cookie bypasses cache ---
 
 func TestCacheBypassWPSettingsCookie(t *testing.T) {
@@ -2432,5 +2273,765 @@ func TestApplyRewritesRedirectRule(t *testing.T) {
 	loc := rec.Header().Get("Location")
 	if loc != "https://external.com/new-page" {
 		t.Errorf("Location = %q", loc)
+	}
+}
+
+// --- Circuit Breaker Wiring ---
+
+func TestCircuitBreakerWiring(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("backend-ok"))
+	}))
+	defer backend.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "cb-test.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+					CircuitBreaker: config.CircuitConfig{
+						Threshold: 2,
+						Timeout:   config.Duration{Duration: time.Second},
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Verify circuit breaker was wired
+	cb := s.proxyBreakers["cb-test.com"]
+	if cb == nil {
+		t.Fatal("proxyBreakers should contain cb-test.com")
+	}
+
+	// Circuit is closed: request should succeed (reach backend)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api", nil)
+	req.Host = "cb-test.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code == 503 {
+		t.Errorf("status = %d, want != 503 when circuit is closed", rec.Code)
+	}
+
+	// Trip the circuit breaker by recording enough failures
+	cb.RecordFailure()
+	cb.RecordFailure()
+
+	// Now cb.Allow() should return false
+	if cb.Allow() {
+		t.Error("circuit breaker should be open after 2 failures")
+	}
+
+	// Request should be rejected with 503 when circuit is open
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/api", nil)
+	req2.Host = "cb-test.com"
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 503 {
+		t.Errorf("status = %d, want 503 when circuit is open", rec2.Code)
+	}
+}
+
+// --- Canary Router Wiring ---
+
+func TestCanaryRouterWiring(t *testing.T) {
+	primaryBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("primary"))
+	}))
+	defer primaryBackend.Close()
+
+	canaryBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("canary"))
+	}))
+	defer canaryBackend.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "canary-test.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: primaryBackend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+					Canary: config.CanaryConfig{
+						Enabled:   true,
+						Weight:    0, // 0% canary traffic = never canary via random
+						Upstreams: []config.Upstream{{Address: canaryBackend.URL, Weight: 1}},
+						Cookie:    "X-Canary",
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Verify canary router was wired
+	cr := s.proxyCanaries["canary-test.com"]
+	if cr == nil {
+		t.Fatal("proxyCanaries should contain canary-test.com")
+	}
+
+	// With weight=0 and no cookie, traffic should go to primary pool
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "canary-test.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code == 502 {
+		t.Error("proxy should not return 502 when backends are available")
+	}
+
+	body := rec.Body.String()
+	if body != "primary" {
+		t.Errorf("body = %q, want 'primary' (canary weight=0 should route to primary)", body)
+	}
+
+	// Verify that the response does NOT have canary headers
+	if rec.Header().Get("X-Canary") == "true" {
+		t.Error("request without canary cookie and weight=0 should not go to canary")
+	}
+}
+
+// --- Per-Domain IP ACL ---
+
+func TestPerDomainIPACL(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hello"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "acl-test.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Security: config.SecurityConfig{
+					IPBlacklist: []string{"10.0.0.1/32"},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Verify domain chain was wired
+	if _, ok := s.domainChains["acl-test.com"]; !ok {
+		t.Fatal("domainChains should contain acl-test.com")
+	}
+
+	// Request from blocked IP should get 403
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "acl-test.com"
+	req.RemoteAddr = "10.0.0.1:12345"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 for blocked IP", rec.Code)
+	}
+
+	// Request from allowed IP should succeed
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/index.html", nil)
+	req2.Host = "acl-test.com"
+	req2.RemoteAddr = "192.168.1.100:12345"
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Errorf("status = %d, want 200 for allowed IP", rec2.Code)
+	}
+}
+
+// --- Per-Domain Header Transform ---
+
+func TestPerDomainHeaderTransform(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "page.html"), []byte("content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "headers-test.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Headers: config.HeadersConfig{
+					ResponseAdd: map[string]string{
+						"X-Custom-Header": "custom-value",
+						"X-Frame-Options": "DENY",
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/page.html", nil)
+	req.Host = "headers-test.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	if rec.Header().Get("X-Custom-Header") != "custom-value" {
+		t.Errorf("X-Custom-Header = %q, want 'custom-value'", rec.Header().Get("X-Custom-Header"))
+	}
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want 'DENY'", rec.Header().Get("X-Frame-Options"))
+	}
+}
+
+// --- Image Optimization Wiring ---
+
+func TestImageOptimizationWiring(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create original JPG and its WebP variant
+	os.WriteFile(filepath.Join(dir, "photo.jpg"), []byte("jpeg-data"), 0644)
+	os.WriteFile(filepath.Join(dir, "photo.jpg.webp"), []byte("webp-data"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "imgopt-test.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				ImageOptimization: config.ImageOptimizationConfig{
+					Enabled: true,
+					Formats: []string{"webp"},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Verify image optimization chain was wired
+	if _, ok := s.imageOptChains["imgopt-test.com"]; !ok {
+		t.Fatal("imageOptChains should contain imgopt-test.com")
+	}
+
+	// Request for .jpg with Accept: image/webp should serve the webp variant
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/photo.jpg", nil)
+	req.Host = "imgopt-test.com"
+	req.Header.Set("Accept", "text/html, image/webp, */*")
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	// Verify the Content-Type was set to webp
+	ct := rec.Header().Get("Content-Type")
+	if !strings.Contains(ct, "image/webp") {
+		t.Errorf("Content-Type = %q, want to contain 'image/webp'", ct)
+	}
+
+	// Verify Vary header is set for content negotiation
+	vary := rec.Header().Get("Vary")
+	if !strings.Contains(vary, "Accept") {
+		t.Errorf("Vary = %q, want to contain 'Accept'", vary)
+	}
+
+	// Verify the body contains the webp data
+	if !strings.Contains(rec.Body.String(), "webp-data") {
+		t.Errorf("body = %q, want to contain 'webp-data'", rec.Body.String())
+	}
+
+	// Request without Accept: image/webp should serve original JPG
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/photo.jpg", nil)
+	req2.Host = "imgopt-test.com"
+	req2.Header.Set("Accept", "text/html, */*")
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Errorf("status = %d, want 200", rec2.Code)
+	}
+
+	if strings.Contains(rec2.Body.String(), "webp-data") {
+		t.Error("request without Accept: image/webp should serve original JPG, not webp")
+	}
+}
+
+// --- Connection limiter: fills channel then expects 503, then drains and expects success ---
+
+func TestHandleRequestConnectionLimiter(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "ok.html"), []byte("ok"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount:    "1",
+			LogLevel:       "error",
+			LogFormat:      "text",
+			MaxConnections: 1, // channel of size 1
+		},
+		Domains: []config.Domain{
+			{Host: "connlim.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.connLimiter == nil {
+		t.Fatal("connLimiter should be initialized when MaxConnections > 0")
+	}
+
+	// Fill the channel so no slots remain
+	s.connLimiter <- struct{}{}
+
+	// Request should be rejected with 503
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/ok.html", nil)
+	req.Host = "connlim.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 503 {
+		t.Errorf("status = %d, want 503 (at capacity)", rec.Code)
+	}
+
+	// Drain the channel to free a slot
+	<-s.connLimiter
+
+	// Now request should succeed
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/ok.html", nil)
+	req2.Host = "connlim.com"
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Errorf("status = %d, want 200 after freeing limiter slot", rec2.Code)
+	}
+}
+
+// --- handleFileRequest: directory listing for a subdirectory with files ---
+
+func TestHandleFileRequestDirectoryListingSubdir(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "assets")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(subDir, "style.css"), []byte("body{}"), 0644)
+	os.WriteFile(filepath.Join(subDir, "app.js"), []byte("console.log()"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:             "dirlisting.com",
+				Root:             dir,
+				Type:             "static",
+				SSL:              config.SSLConfig{Mode: "off"},
+				DirectoryListing: true,
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/assets/", nil)
+	req.Host = "dirlisting.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 for directory listing", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "style.css") {
+		t.Error("directory listing should contain style.css")
+	}
+	if !strings.Contains(body, "app.js") {
+		t.Error("directory listing should contain app.js")
+	}
+	// Verify it's an HTML response
+	ct := rec.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+}
+
+// --- Circuit breaker: open → half-open → RecordSuccess → closed recovery ---
+
+func TestHandleProxyCircuitBreakerOpen(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("recovered"))
+	}))
+	defer backend.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "cb-recovery.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+					CircuitBreaker: config.CircuitConfig{
+						Threshold: 2,
+						Timeout:   config.Duration{Duration: 50 * time.Millisecond}, // short timeout for test
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	cb := s.proxyBreakers["cb-recovery.com"]
+	if cb == nil {
+		t.Fatal("proxyBreakers should contain cb-recovery.com")
+	}
+
+	// 1. Closed state: request should succeed
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/api", nil)
+	req1.Host = "cb-recovery.com"
+	s.handleRequest(rec1, req1)
+
+	if rec1.Code == 503 {
+		t.Errorf("status = %d, want != 503 when circuit is closed", rec1.Code)
+	}
+
+	// 2. Trip the circuit breaker open
+	cb.RecordFailure()
+	cb.RecordFailure()
+
+	if cb.Allow() {
+		t.Error("circuit breaker should be open after 2 failures")
+	}
+
+	// 3. Request should be 503 while open
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/api", nil)
+	req2.Host = "cb-recovery.com"
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 503 {
+		t.Errorf("status = %d, want 503 when circuit is open", rec2.Code)
+	}
+
+	// 4. Wait for timeout to transition to half-open
+	time.Sleep(60 * time.Millisecond)
+
+	// 5. In half-open, Allow() returns true for one probe request
+	if !cb.Allow() {
+		t.Error("circuit breaker should allow one probe in half-open state")
+	}
+
+	// 6. RecordSuccess should transition back to closed
+	cb.RecordSuccess()
+
+	// 7. Now the circuit should be closed and requests should succeed
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest("GET", "/api", nil)
+	req3.Host = "cb-recovery.com"
+	s.handleRequest(rec3, req3)
+
+	if rec3.Code == 503 {
+		t.Errorf("status = %d, want != 503 after circuit recovery", rec3.Code)
+	}
+}
+
+// --- BasicAuth with wrong password expects 401 ---
+
+func TestHandleRequestBasicAuthWrongPassword(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "protected.html"), []byte("protected"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "authfail.example.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				BasicAuth: config.BasicAuthConfig{
+					Enabled: true,
+					Users:   map[string]string{"admin": "correctpassword"},
+					Realm:   "Secure",
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Request with wrong password should get 401
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/protected.html", nil)
+	req.Host = "authfail.example.com"
+	req.SetBasicAuth("admin", "wrongpassword")
+	s.handleRequest(rec, req)
+
+	if rec.Code != 401 {
+		t.Errorf("status = %d, want 401 for wrong password", rec.Code)
+	}
+
+	// Request with wrong username should also get 401
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/protected.html", nil)
+	req2.Host = "authfail.example.com"
+	req2.SetBasicAuth("nobody", "correctpassword")
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 401 {
+		t.Errorf("status = %d, want 401 for wrong username", rec2.Code)
+	}
+}
+
+// --- CORS non-preflight GET with allowed origin sets Access-Control-Allow-Origin ---
+
+func TestHandleRequestCORSNonPreflight(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"ok":true}`), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "cors-get.example.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				CORS: config.CORSConfig{
+					Enabled:          true,
+					AllowedOrigins:   []string{"https://trusted.com"},
+					AllowedMethods:   []string{"GET", "POST"},
+					AllowedHeaders:   []string{"X-Custom"},
+					AllowCredentials: true,
+					MaxAge:           7200,
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Normal GET (not OPTIONS) from allowed origin
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/data.json", nil)
+	req.Host = "cors-get.example.com"
+	req.Header.Set("Origin", "https://trusted.com")
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	acao := rec.Header().Get("Access-Control-Allow-Origin")
+	if acao != "https://trusted.com" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q", acao, "https://trusted.com")
+	}
+
+	acac := rec.Header().Get("Access-Control-Allow-Credentials")
+	if acac != "true" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want 'true'", acac)
+	}
+
+	// The response body should still be served
+	if !strings.Contains(rec.Body.String(), `{"ok":true}`) {
+		t.Errorf("body = %q, want contains '{\"ok\":true}'", rec.Body.String())
+	}
+
+	// GET from disallowed origin should NOT have ACAO header
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/data.json", nil)
+	req2.Host = "cors-get.example.com"
+	req2.Header.Set("Origin", "https://evil.com")
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code != 200 {
+		t.Errorf("status = %d, want 200 even for disallowed origin", rec2.Code)
+	}
+
+	acao2 := rec2.Header().Get("Access-Control-Allow-Origin")
+	if acao2 == "https://evil.com" {
+		t.Errorf("Access-Control-Allow-Origin should not be set for disallowed origin, got %q", acao2)
+	}
+}
+
+// --- Per-Domain CORS ---
+
+func TestPerDomainCORS(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hello"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "cors.example.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				CORS: config.CORSConfig{
+					Enabled:        true,
+					AllowedOrigins: []string{"https://allowed.com"},
+					AllowedMethods: []string{"GET", "POST"},
+					AllowedHeaders: []string{"X-Custom"},
+					MaxAge:         3600,
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// OPTIONS preflight from allowed origin
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("OPTIONS", "/index.html", nil)
+	req.Host = "cors.example.com"
+	req.Header.Set("Origin", "https://allowed.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	s.handleRequest(rec, req)
+
+	if rec.Code != 204 && rec.Code != 200 {
+		t.Errorf("status = %d, want 204 or 200 for preflight", rec.Code)
+	}
+
+	acao := rec.Header().Get("Access-Control-Allow-Origin")
+	if acao != "https://allowed.com" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q", acao, "https://allowed.com")
+	}
+
+	// OPTIONS preflight from disallowed origin should NOT have ACAO header
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("OPTIONS", "/index.html", nil)
+	req2.Host = "cors.example.com"
+	req2.Header.Set("Origin", "https://evil.com")
+	req2.Header.Set("Access-Control-Request-Method", "POST")
+	s.handleRequest(rec2, req2)
+
+	acao2 := rec2.Header().Get("Access-Control-Allow-Origin")
+	if acao2 == "https://evil.com" {
+		t.Errorf("Access-Control-Allow-Origin should not be set for disallowed origin, got %q", acao2)
+	}
+}
+
+// --- Per-Domain Basic Auth ---
+
+func TestPerDomainBasicAuth(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("secret-content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "auth.example.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				BasicAuth: config.BasicAuthConfig{
+					Enabled: true,
+					Users:   map[string]string{"admin": "secret"},
+					Realm:   "Test",
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Request without auth should get 401
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "auth.example.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 401 {
+		t.Errorf("status = %d, want 401 for unauthenticated request", rec.Code)
+	}
+
+	// Request with correct auth should succeed
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/index.html", nil)
+	req2.Host = "auth.example.com"
+	req2.Header.Set("Authorization", "Basic YWRtaW46c2VjcmV0") // admin:secret
+	s.handleRequest(rec2, req2)
+
+	if rec2.Code == 401 {
+		t.Errorf("status = %d, want non-401 for authenticated request", rec2.Code)
+	}
+	if rec2.Code != 200 {
+		t.Errorf("status = %d, want 200 for authenticated request", rec2.Code)
 	}
 }

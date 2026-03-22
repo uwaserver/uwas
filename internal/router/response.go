@@ -47,7 +47,6 @@ func (w *ResponseWriter) Write(b []byte) (int, error) {
 func (w *ResponseWriter) StatusCode() int    { return w.statusCode }
 func (w *ResponseWriter) BytesWritten() int64 { return w.bytesWritten }
 func (w *ResponseWriter) TTFB() time.Duration { return w.ttfb }
-func (w *ResponseWriter) Written() bool       { return w.headerWritten }
 
 // Hijack support for WebSocket proxy.
 func (w *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {

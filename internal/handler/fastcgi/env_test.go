@@ -140,54 +140,6 @@ func TestHandlerNew(t *testing.T) {
 	}
 }
 
-func TestHandlerName(t *testing.T) {
-	log := logger.New("error", "text")
-	h := New(log)
-	if got := h.Name(); got != "fastcgi" {
-		t.Errorf("Name() = %q, want %q", got, "fastcgi")
-	}
-}
-
-func TestHandlerDescription(t *testing.T) {
-	log := logger.New("error", "text")
-	h := New(log)
-	if got := h.Description(); got != "Handles PHP via FastCGI/PHP-FPM" {
-		t.Errorf("Description() = %q, want %q", got, "Handles PHP via FastCGI/PHP-FPM")
-	}
-}
-
-func TestCanHandlePHP(t *testing.T) {
-	log := logger.New("error", "text")
-	h := New(log)
-
-	r := httptest.NewRequest("GET", "/index.php", nil)
-	w := httptest.NewRecorder()
-	ctx := router.AcquireContext(w, r)
-	defer router.ReleaseContext(ctx)
-
-	ctx.ResolvedPath = "/var/www/html/index.php"
-
-	if !h.CanHandle(ctx) {
-		t.Error("CanHandle should return true for .php files")
-	}
-}
-
-func TestCanHandleHTML(t *testing.T) {
-	log := logger.New("error", "text")
-	h := New(log)
-
-	r := httptest.NewRequest("GET", "/index.html", nil)
-	w := httptest.NewRecorder()
-	ctx := router.AcquireContext(w, r)
-	defer router.ReleaseContext(ctx)
-
-	ctx.ResolvedPath = "/var/www/html/index.html"
-
-	if h.CanHandle(ctx) {
-		t.Error("CanHandle should return false for .html files")
-	}
-}
-
 func TestBuildEnvRemoteIPOverride(t *testing.T) {
 	r := httptest.NewRequest("GET", "/index.php", nil)
 	r.RemoteAddr = "192.168.1.50:12345"

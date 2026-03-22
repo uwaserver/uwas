@@ -37,9 +37,6 @@ type Alerter struct {
 	errorWindow   []errorEntry
 	errorWindowMu sync.Mutex
 
-	// Rate limit trigger tracking.
-	rateLimitWindow   []time.Time
-	rateLimitWindowMu sync.Mutex
 }
 
 type errorEntry struct {
@@ -88,26 +85,6 @@ func (a *Alerter) Alert(alert Alert) {
 	if a.webhookURL != "" {
 		go a.sendWebhook(alert)
 	}
-}
-
-// DomainDown fires a critical alert when a domain goes down.
-func (a *Alerter) DomainDown(host string) {
-	a.Alert(Alert{
-		Level:   "critical",
-		Type:    "domain_down",
-		Host:    host,
-		Message: "Domain " + host + " is down",
-	})
-}
-
-// CertExpiry fires a warning alert when a certificate expires in less than 7 days.
-func (a *Alerter) CertExpiry(host string, daysLeft int) {
-	a.Alert(Alert{
-		Level:   "warning",
-		Type:    "cert_expiry",
-		Host:    host,
-		Message: "Certificate for " + host + " expires in " + itoa(daysLeft) + " days",
-	})
 }
 
 // RecordRequest records a request result for error spike detection.
@@ -163,54 +140,6 @@ func (a *Alerter) RecordRequest(isError bool) {
 				Level:   "warning",
 				Type:    "error_spike",
 				Message: "Error rate " + ftoa(pct) + "% in last 5 minutes (" + itoa(errors) + "/" + itoa(total) + " requests)",
-			})
-		}
-	}
-}
-
-// RecordRateLimit tracks rate limit triggers and fires an info alert
-// when more than 100 triggers occur in 1 minute.
-func (a *Alerter) RecordRateLimit() {
-	if !a.enabled {
-		return
-	}
-
-	now := time.Now()
-	cutoff := now.Add(-1 * time.Minute)
-
-	a.rateLimitWindowMu.Lock()
-	a.rateLimitWindow = append(a.rateLimitWindow, now)
-
-	// Prune old entries
-	start := 0
-	for start < len(a.rateLimitWindow) && a.rateLimitWindow[start].Before(cutoff) {
-		start++
-	}
-	if start > 0 {
-		a.rateLimitWindow = a.rateLimitWindow[start:]
-	}
-
-	count := len(a.rateLimitWindow)
-	a.rateLimitWindowMu.Unlock()
-
-	if count > 100 {
-		// Deduplicate: only alert once per minute
-		a.mu.Lock()
-		shouldAlert := true
-		for i := 0; i < maxAlertHistory; i++ {
-			h := a.history[i]
-			if h.Type == "rate_limit" && now.Sub(h.Time) < time.Minute {
-				shouldAlert = false
-				break
-			}
-		}
-		a.mu.Unlock()
-
-		if shouldAlert {
-			a.Alert(Alert{
-				Level:   "info",
-				Type:    "rate_limit",
-				Message: "Rate limit triggered " + itoa(count) + " times in the last minute",
 			})
 		}
 	}

@@ -8,10 +8,9 @@ import (
 
 // Status constants for X-Cache header.
 const (
-	StatusHit    = "HIT"
-	StatusMiss   = "MISS"
-	StatusStale  = "STALE"
-	StatusBypass = "BYPASS"
+	StatusHit   = "HIT"
+	StatusMiss  = "MISS"
+	StatusStale = "STALE"
 )
 
 // CachedResponse holds a complete HTTP response for caching.

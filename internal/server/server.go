@@ -73,6 +73,8 @@ type Server struct {
 	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
 	proxyMirrors   map[string]*proxyhandler.Mirror
+	proxyBreakers  map[string]*proxyhandler.CircuitBreaker
+	proxyCanaries  map[string]*proxyhandler.CanaryRouter
 
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
 	// Invalidated on config reload.
@@ -86,6 +88,12 @@ type Server struct {
 	// connLimiter is a semaphore channel that limits concurrent connections.
 	// Nil when max_connections is 0 (unlimited).
 	connLimiter chan struct{}
+
+	// domainChains holds pre-compiled per-domain IP ACL middleware.
+	domainChains map[string]middleware.Middleware
+
+	// imageOptChains holds pre-compiled per-domain image optimization middleware.
+	imageOptChains map[string]middleware.Middleware
 }
 
 // New creates a fully initialized server from config.
@@ -125,6 +133,8 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		proxyPools:     make(map[string]*proxyhandler.UpstreamPool),
 		proxyBalancers: make(map[string]proxyhandler.Balancer),
 		proxyMirrors:   make(map[string]*proxyhandler.Mirror),
+		proxyBreakers:  make(map[string]*proxyhandler.CircuitBreaker),
+		proxyCanaries:  make(map[string]*proxyhandler.CanaryRouter),
 		htaccessCache:  make(map[string][]*rewrite.Rule),
 		rewriteCache:   make(map[string]*rewrite.Engine),
 	}
@@ -185,6 +195,9 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		if cacheEngine != nil {
 			s.mcp.SetCache(cacheEngine)
 		}
+		if s.admin != nil {
+			s.admin.SetMCP(s.mcp)
+		}
 	}
 
 	// Proxy pools per domain
@@ -210,6 +223,19 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			hc.Start(ctx)
 		}
 
+		// Circuit breaker
+		if d.Proxy.CircuitBreaker.Threshold > 0 {
+			s.proxyBreakers[d.Host] = proxyhandler.NewCircuitBreaker(
+				d.Proxy.CircuitBreaker.Threshold,
+				d.Proxy.CircuitBreaker.Timeout.Duration,
+			)
+		}
+
+		// Canary routing
+		if d.Proxy.Canary.Enabled && len(d.Proxy.Canary.Upstreams) > 0 {
+			s.proxyCanaries[d.Host] = proxyhandler.NewCanaryRouter(d.Proxy.Canary, d.Proxy.Algorithm, log)
+		}
+
 		// Request mirroring
 		if d.Proxy.Mirror.Enabled && d.Proxy.Mirror.Backend != "" {
 			s.proxyMirrors[d.Host] = proxyhandler.NewMirror(proxyhandler.MirrorConfig{
@@ -217,6 +243,28 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				Backend: d.Proxy.Mirror.Backend,
 				Percent: d.Proxy.Mirror.Percent,
 			}, log)
+		}
+	}
+
+	// Per-domain IP ACL middleware
+	s.domainChains = make(map[string]middleware.Middleware)
+	for _, d := range cfg.Domains {
+		if len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
+			s.domainChains[d.Host] = middleware.IPACL(middleware.IPACLConfig{
+				Whitelist: d.Security.IPWhitelist,
+				Blacklist: d.Security.IPBlacklist,
+			})
+		}
+	}
+
+	// Per-domain image optimization
+	s.imageOptChains = make(map[string]middleware.Middleware)
+	for _, d := range cfg.Domains {
+		if d.ImageOptimization.Enabled && d.Root != "" {
+			s.imageOptChains[d.Host] = middleware.ImageOptimization(middleware.ImageOptConfig{
+				Enabled: true,
+				Formats: d.ImageOptimization.Formats,
+			}, d.Root)
 		}
 	}
 
@@ -551,7 +599,53 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain blocked paths
 	for _, blocked := range domain.Security.BlockedPaths {
 		if strings.Contains(r.URL.Path, blocked) {
-			renderErrorPage(ctx.Response, http.StatusForbidden)
+			renderDomainError(ctx.Response, http.StatusForbidden, domain)
+			return
+		}
+	}
+
+	// Per-domain IP ACL (whitelist/blacklist)
+	if chain := s.domainChains[domain.Host]; chain != nil {
+		passed := false
+		chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			passed = true
+		})).ServeHTTP(ctx.Response, r)
+		if !passed {
+			return
+		}
+	}
+
+	// Per-domain Basic Authentication
+	if domain.BasicAuth.Enabled && len(domain.BasicAuth.Users) > 0 {
+		passed := false
+		realm := domain.BasicAuth.Realm
+		if realm == "" {
+			realm = domain.Host
+		}
+		middleware.BasicAuth(domain.BasicAuth.Users, realm)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			passed = true
+		})).ServeHTTP(ctx.Response, r)
+		if !passed {
+			return
+		}
+	}
+
+	// Per-domain CORS
+	if domain.CORS.Enabled {
+		corsMiddleware := middleware.CORS(middleware.CORSConfig{
+			AllowedOrigins:   domain.CORS.AllowedOrigins,
+			AllowedMethods:   domain.CORS.AllowedMethods,
+			AllowedHeaders:   domain.CORS.AllowedHeaders,
+			AllowCredentials: domain.CORS.AllowCredentials,
+			MaxAge:           domain.CORS.MaxAge,
+		})
+		// CORS always calls next (even for preflight it writes headers first).
+		// For OPTIONS preflight, it handles the response and may not call next.
+		passed := false
+		corsMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			passed = true
+		})).ServeHTTP(ctx.Response, r)
+		if !passed {
 			return
 		}
 	}
@@ -566,6 +660,34 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if s.applyRewrites(ctx, domain) {
 			return
 		}
+	}
+
+	// Per-domain header transforms
+	if h := domain.Headers; len(h.RequestAdd) > 0 || len(h.RequestRemove) > 0 {
+		for k, v := range h.RequestAdd {
+			r.Header.Set(k, v)
+		}
+		for _, k := range h.RequestRemove {
+			r.Header.Del(k)
+		}
+	}
+	if h := domain.Headers; len(h.Add) > 0 || len(h.Remove) > 0 ||
+		len(h.ResponseAdd) > 0 || len(h.ResponseRemove) > 0 {
+		defer func() {
+			w := ctx.Response.Header()
+			for k, v := range h.Add {
+				w.Set(k, v)
+			}
+			for k, v := range h.ResponseAdd {
+				w.Set(k, v)
+			}
+			for _, k := range h.Remove {
+				w.Del(k)
+			}
+			for _, k := range h.ResponseRemove {
+				w.Del(k)
+			}
+		}()
 	}
 
 	// Cache lookup — check global bypass + per-domain bypass rules
@@ -638,7 +760,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		case "proxy":
 			s.handleProxy(ctx, domain)
 		default:
-			renderErrorPage(ctx.Response, http.StatusInternalServerError)
+			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 		}
 		// Restore the original writer.
 		ctx.Response.ResponseWriter = origWriter
@@ -668,7 +790,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		case "proxy":
 			s.handleProxy(ctx, domain)
 		default:
-			renderErrorPage(ctx.Response, http.StatusInternalServerError)
+			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 		}
 	}
 }
@@ -684,7 +806,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 	}
 
 	if !static.ResolveRequest(ctx, domain) {
-		renderErrorPage(ctx.Response, http.StatusNotFound)
+		renderDomainError(ctx.Response, http.StatusNotFound, domain)
 		return
 	}
 
@@ -692,12 +814,12 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 
 	info, err := os.Stat(resolved)
 	if err != nil {
-		renderErrorPage(ctx.Response, http.StatusNotFound)
+		renderDomainError(ctx.Response, http.StatusNotFound, domain)
 		return
 	}
 
 	if info.IsDir() {
-		renderErrorPage(ctx.Response, http.StatusForbidden)
+		renderDomainError(ctx.Response, http.StatusForbidden, domain)
 		return
 	}
 
@@ -706,19 +828,45 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		return
 	}
 
+	// Image optimization: serve pre-converted WebP/AVIF if available
+	if _, ok := s.imageOptChains[domain.Host]; ok {
+		accept := ctx.Request.Header.Get("Accept")
+		ext := filepath.Ext(resolved)
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" {
+			for _, fmt := range domain.ImageOptimization.Formats {
+				if strings.Contains(accept, "image/"+fmt) {
+					optPath := resolved + "." + fmt
+					if _, err := os.Stat(optPath); err == nil {
+						ctx.ResolvedPath = optPath
+						ctx.Response.Header().Set("Content-Type", "image/"+fmt)
+						ctx.Response.Header().Set("Vary", "Accept")
+						break
+					}
+				}
+			}
+		}
+	}
+
 	s.static.Serve(ctx)
 }
 
 func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) {
 	pool := s.proxyPools[domain.Host]
 	if pool == nil {
-		renderErrorPage(ctx.Response, http.StatusBadGateway)
+		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
 		return
 	}
 
 	balancer := s.proxyBalancers[domain.Host]
 	if balancer == nil {
 		balancer = proxyhandler.NewBalancer("round_robin")
+	}
+
+	// Circuit breaker: reject if circuit is open
+	cb := s.proxyBreakers[domain.Host]
+	if cb != nil && !cb.Allow() {
+		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
+		return
 	}
 
 	// Request mirroring: fire-and-forget copy to mirror backend
@@ -733,7 +881,21 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 		mirror.Send(ctx.Request, bodyBytes)
 	}
 
-	s.proxy.Serve(ctx, domain, pool, balancer)
+	// Canary routing: route a percentage of traffic to canary upstreams
+	if cr := s.proxyCanaries[domain.Host]; cr != nil && cr.IsCanary(ctx.Request, domain.Proxy.Canary) {
+		cr.Serve(ctx, domain, s.proxy)
+	} else {
+		s.proxy.Serve(ctx, domain, pool, balancer)
+	}
+
+	// Record circuit breaker result
+	if cb != nil {
+		if ctx.Response.StatusCode() >= 500 {
+			cb.RecordFailure()
+		} else {
+			cb.RecordSuccess()
+		}
+	}
 }
 
 func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domain) {
@@ -758,11 +920,11 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
 	if result.Forbidden {
-		renderErrorPage(ctx.Response, http.StatusForbidden)
+		renderDomainError(ctx.Response, http.StatusForbidden, domain)
 		return true
 	}
 	if result.Gone {
-		renderErrorPage(ctx.Response, http.StatusGone)
+		renderDomainError(ctx.Response, http.StatusGone, domain)
 		return true
 	}
 	if result.Redirect {

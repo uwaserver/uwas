@@ -106,9 +106,3 @@ func (r *VHostRouter) Update(domains []config.Domain) {
 	r.load(domains)
 }
 
-// Domains returns the number of configured exact hosts.
-func (r *VHostRouter) Count() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.exact)
-}

@@ -378,7 +378,7 @@ func TestAnalyticsEndpointsRegistered(t *testing.T) {
 	s.SetAnalytics(a)
 
 	// Record some data
-	a.Record("example.com", "/", "1.2.3.4:80", 200, 100)
+	a.RecordFull("example.com", "/", "1.2.3.4:80", "", "", 200, 100)
 
 	// Test all analytics endpoint
 	rec := httptest.NewRecorder()

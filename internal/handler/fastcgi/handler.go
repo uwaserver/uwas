@@ -2,7 +2,6 @@ package fastcgi
 
 import (
 	"io"
-	"strings"
 	"sync"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -19,14 +18,6 @@ type Handler struct {
 
 func New(log *logger.Logger) *Handler {
 	return &Handler{logger: log}
-}
-
-func (h *Handler) Name() string        { return "fastcgi" }
-func (h *Handler) Description() string  { return "Handles PHP via FastCGI/PHP-FPM" }
-
-// CanHandle returns true if the resolved path ends in .php.
-func (h *Handler) CanHandle(ctx *router.RequestContext) bool {
-	return strings.HasSuffix(ctx.ResolvedPath, ".php")
 }
 
 // Serve processes a PHP request via FastCGI.

@@ -5,11 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
-
-const shardCount = 64
 
 // Collector tracks per-domain analytics: page views, unique IPs,
 // bandwidth, status codes, and top paths using sharded maps for concurrency.
@@ -47,11 +44,6 @@ type minuteBucket struct {
 // New creates a new analytics Collector.
 func New() *Collector {
 	return &Collector{}
-}
-
-// Record records a request for analytics tracking.
-func (c *Collector) Record(host, path, remoteAddr string, statusCode int, bytesSent int64) {
-	c.RecordFull(host, path, remoteAddr, "", "", statusCode, bytesSent)
 }
 
 // RecordFull records a request with full context including referrer and user agent.
@@ -370,35 +362,3 @@ func writeJSON(w http.ResponseWriter, data any) {
 	jsonEncode(w, data)
 }
 
-// RequestsInWindow returns the total page views recorded in the given
-// duration for the specified host. This is a convenience for testing
-// rolling window functionality.
-var requestsInWindow = func(c *Collector, host string, d time.Duration) int64 {
-	v, ok := c.domains.Load(host)
-	if !ok {
-		return 0
-	}
-	stats := v.(*DomainStats)
-	stats.mu.Lock()
-	defer stats.mu.Unlock()
-
-	var total int64
-	cutoff := time.Now().Add(-d)
-	for i := 0; i < minuteBucketCount; i++ {
-		b := stats.minuteBuckets[i]
-		if !b.timestamp.IsZero() && b.timestamp.After(cutoff) {
-			total += b.views
-		}
-	}
-	return total
-}
-
-// ActiveDomains returns the count of domains being tracked.
-func (c *Collector) ActiveDomains() int64 {
-	var count atomic.Int64
-	c.domains.Range(func(_, _ any) bool {
-		count.Add(1)
-		return true
-	})
-	return count.Load()
-}

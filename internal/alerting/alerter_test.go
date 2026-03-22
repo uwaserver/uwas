@@ -1,9 +1,10 @@
 package alerting
 
 import (
-	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -80,65 +81,6 @@ func TestAlertDisabled(t *testing.T) {
 	}
 }
 
-func TestDomainDown(t *testing.T) {
-	a := New(true, "", testLogger())
-	a.DomainDown("example.com")
-
-	alerts := a.Alerts()
-	if len(alerts) != 1 {
-		t.Fatalf("expected 1 alert, got %d", len(alerts))
-	}
-	if alerts[0].Level != "critical" {
-		t.Errorf("expected level critical, got %s", alerts[0].Level)
-	}
-	if alerts[0].Type != "domain_down" {
-		t.Errorf("expected type domain_down, got %s", alerts[0].Type)
-	}
-}
-
-func TestCertExpiry(t *testing.T) {
-	a := New(true, "", testLogger())
-	a.CertExpiry("example.com", 5)
-
-	alerts := a.Alerts()
-	if len(alerts) != 1 {
-		t.Fatalf("expected 1 alert, got %d", len(alerts))
-	}
-	if alerts[0].Level != "warning" {
-		t.Errorf("expected level warning, got %s", alerts[0].Level)
-	}
-	if alerts[0].Type != "cert_expiry" {
-		t.Errorf("expected type cert_expiry, got %s", alerts[0].Type)
-	}
-}
-
-func TestWebhookDelivery(t *testing.T) {
-	var received Alert
-	var mu sync.Mutex
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		json.NewDecoder(r.Body).Decode(&received)
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
-
-	a := New(true, ts.URL, testLogger())
-	a.DomainDown("webhook-test.com")
-
-	// Wait for async webhook delivery
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if received.Host != "webhook-test.com" {
-		t.Errorf("expected webhook host webhook-test.com, got %s", received.Host)
-	}
-	if received.Type != "domain_down" {
-		t.Errorf("expected type domain_down, got %s", received.Type)
-	}
-}
-
 func TestErrorSpikeDetection(t *testing.T) {
 	a := New(true, "", testLogger())
 
@@ -160,27 +102,6 @@ func TestErrorSpikeDetection(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected error_spike alert to be generated")
-	}
-}
-
-func TestRateLimitAlert(t *testing.T) {
-	a := New(true, "", testLogger())
-
-	// Trigger more than 100 rate limits in quick succession
-	for i := 0; i < 105; i++ {
-		a.RecordRateLimit()
-	}
-
-	alerts := a.Alerts()
-	found := false
-	for _, alert := range alerts {
-		if alert.Type == "rate_limit" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected rate_limit alert to be generated")
 	}
 }
 
@@ -224,44 +145,6 @@ func TestConcurrentAlerts(t *testing.T) {
 	alerts := a.Alerts()
 	if len(alerts) != 50 {
 		t.Errorf("expected 50 alerts, got %d", len(alerts))
-	}
-}
-
-func TestWebhookDeliveryFailure(t *testing.T) {
-	// Server that returns 500 -- should not crash, just log
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(500)
-	}))
-	defer ts.Close()
-
-	a := New(true, ts.URL, testLogger())
-	a.DomainDown("fail-webhook.com")
-
-	// Wait for async webhook
-	time.Sleep(200 * time.Millisecond)
-
-	// Alert should still be recorded in history
-	alerts := a.Alerts()
-	if len(alerts) != 1 {
-		t.Fatalf("expected 1 alert, got %d", len(alerts))
-	}
-	if alerts[0].Host != "fail-webhook.com" {
-		t.Errorf("host = %q, want fail-webhook.com", alerts[0].Host)
-	}
-}
-
-func TestWebhookDeliveryConnectionRefused(t *testing.T) {
-	// Use an unreachable URL
-	a := New(true, "http://127.0.0.1:1/webhook", testLogger())
-	a.DomainDown("conn-refused.com")
-
-	// Wait for async webhook to fail
-	time.Sleep(200 * time.Millisecond)
-
-	// Alert should still be in history
-	alerts := a.Alerts()
-	if len(alerts) != 1 {
-		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
 }
 
@@ -419,19 +302,6 @@ func TestRecordRequestDisabled(t *testing.T) {
 	}
 }
 
-func TestRecordRateLimitDisabled(t *testing.T) {
-	a := New(false, "", testLogger())
-
-	for i := 0; i < 200; i++ {
-		a.RecordRateLimit()
-	}
-
-	alerts := a.Alerts()
-	if len(alerts) != 0 {
-		t.Errorf("expected 0 alerts when disabled, got %d", len(alerts))
-	}
-}
-
 func TestItoaNegative(t *testing.T) {
 	if got := itoa(-5); got != "-5" {
 		t.Errorf("itoa(-5) = %q, want %q", got, "-5")
@@ -450,39 +320,6 @@ func TestFtoaSmallValues(t *testing.T) {
 	}
 	if got := ftoa(99.9); got != "99.9" {
 		t.Errorf("ftoa(99.9) = %q, want %q", got, "99.9")
-	}
-}
-
-func TestWebhookReceivesCorrectPayload(t *testing.T) {
-	var received Alert
-	var mu sync.Mutex
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		// Verify content type
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-			t.Errorf("Content-Type = %q, want application/json", ct)
-		}
-		json.NewDecoder(r.Body).Decode(&received)
-		w.WriteHeader(200)
-	}))
-	defer ts.Close()
-
-	a := New(true, ts.URL, testLogger())
-	a.CertExpiry("webhook-cert.com", 3)
-
-	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if received.Type != "cert_expiry" {
-		t.Errorf("type = %q, want cert_expiry", received.Type)
-	}
-	if received.Level != "warning" {
-		t.Errorf("level = %q, want warning", received.Level)
-	}
-	if received.Host != "webhook-cert.com" {
-		t.Errorf("host = %q, want webhook-cert.com", received.Host)
 	}
 }
 
@@ -560,42 +397,6 @@ func TestErrorSpikeDedup(t *testing.T) {
 	}
 }
 
-func TestRateLimitDedup(t *testing.T) {
-	a := New(true, "", testLogger())
-
-	// Trigger rate limit alert: >100 in 1 minute
-	for i := 0; i < 105; i++ {
-		a.RecordRateLimit()
-	}
-
-	alerts := a.Alerts()
-	rlCount := 0
-	for _, alert := range alerts {
-		if alert.Type == "rate_limit" {
-			rlCount++
-		}
-	}
-	if rlCount != 1 {
-		t.Fatalf("expected 1 rate_limit alert, got %d", rlCount)
-	}
-
-	// Trigger more -- should NOT fire again within same minute
-	for i := 0; i < 50; i++ {
-		a.RecordRateLimit()
-	}
-
-	alerts = a.Alerts()
-	rlCount = 0
-	for _, alert := range alerts {
-		if alert.Type == "rate_limit" {
-			rlCount++
-		}
-	}
-	if rlCount != 1 {
-		t.Errorf("expected still 1 rate_limit (dedup), got %d", rlCount)
-	}
-}
-
 func TestFtoaNegativeFraction(t *testing.T) {
 	// ftoa with negative value triggers frac < 0 branch
 	got := ftoa(-3.7)
@@ -628,26 +429,55 @@ func TestRecordRequestPrunesOldEntries(t *testing.T) {
 	}
 }
 
-func TestRecordRateLimitPrunesOldEntries(t *testing.T) {
-	a := New(true, "", testLogger())
+// --- Webhook delivery tests ---
 
-	// Manually insert old entries
-	a.rateLimitWindowMu.Lock()
-	oldTime := time.Now().Add(-5 * time.Minute)
-	for i := 0; i < 200; i++ {
-		a.rateLimitWindow = append(a.rateLimitWindow, oldTime)
+func TestWebhookDeliveryViaAlert(t *testing.T) {
+	var received []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	a := New(true, srv.URL, testLogger())
+	a.Alert(Alert{Level: "warning", Type: "test_alert", Host: "webhook.com", Message: "test delivery"})
+	time.Sleep(100 * time.Millisecond) // sendWebhook runs in goroutine
+
+	if len(received) == 0 {
+		t.Fatal("webhook did not receive any payload")
 	}
-	a.rateLimitWindowMu.Unlock()
-
-	// Record a new rate limit -- should prune all old entries
-	a.RecordRateLimit()
-
-	a.rateLimitWindowMu.Lock()
-	count := len(a.rateLimitWindow)
-	a.rateLimitWindowMu.Unlock()
-
-	// Should only have the 1 new entry
-	if count != 1 {
-		t.Errorf("after pruning, rate limit window has %d entries, want 1", count)
+	if !strings.Contains(string(received), "test_alert") {
+		t.Errorf("webhook payload missing alert type: %s", string(received))
 	}
 }
+
+func TestWebhookDeliveryFailure(t *testing.T) {
+	// Point to a non-existent server
+	a := New(true, "http://127.0.0.1:1/nonexistent", testLogger())
+	// Should not panic
+	a.Alert(Alert{Level: "critical", Type: "fail_test", Message: "should not crash"})
+	time.Sleep(100 * time.Millisecond)
+
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+}
+
+func TestWebhookErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500) // server error
+	}))
+	defer srv.Close()
+
+	a := New(true, srv.URL, testLogger())
+	a.Alert(Alert{Level: "info", Type: "status_test", Message: "server returns 500"})
+	time.Sleep(100 * time.Millisecond)
+
+	// Alert should still be recorded
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+}
+

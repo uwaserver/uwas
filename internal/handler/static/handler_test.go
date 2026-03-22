@@ -245,67 +245,6 @@ func makeCtxWithHeader(t *testing.T, method, path, hdrKey, hdrVal string) *route
 
 // --- Additional coverage tests ---
 
-func TestHandlerName(t *testing.T) {
-	h := New()
-	if got := h.Name(); got != "static" {
-		t.Errorf("Name() = %q, want %q", got, "static")
-	}
-}
-
-func TestHandlerDescription(t *testing.T) {
-	h := New()
-	if got := h.Description(); got != "Serves static files from disk" {
-		t.Errorf("Description() = %q, want %q", got, "Serves static files from disk")
-	}
-}
-
-func TestCanHandleTrue(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "hello.txt", "hi")
-
-	ctx := makeCtx(t, "GET", "/hello.txt")
-	ctx.ResolvedPath = filepath.Join(dir, "hello.txt")
-
-	h := New()
-	if !h.CanHandle(ctx) {
-		t.Error("CanHandle should return true for an existing file")
-	}
-}
-
-func TestCanHandleFalseEmpty(t *testing.T) {
-	ctx := makeCtx(t, "GET", "/nothing")
-	ctx.ResolvedPath = ""
-
-	h := New()
-	if h.CanHandle(ctx) {
-		t.Error("CanHandle should return false when ResolvedPath is empty")
-	}
-}
-
-func TestCanHandleFalseNoFile(t *testing.T) {
-	ctx := makeCtx(t, "GET", "/missing.txt")
-	ctx.ResolvedPath = filepath.Join(t.TempDir(), "nonexistent.txt")
-
-	h := New()
-	if h.CanHandle(ctx) {
-		t.Error("CanHandle should return false when file does not exist")
-	}
-}
-
-func TestCanHandleFalseDir(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "subdir")
-	os.MkdirAll(sub, 0755)
-
-	ctx := makeCtx(t, "GET", "/subdir")
-	ctx.ResolvedPath = sub
-
-	h := New()
-	if h.CanHandle(ctx) {
-		t.Error("CanHandle should return false for a directory")
-	}
-}
-
 func TestServeDirListing(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "file1.txt", "content1")

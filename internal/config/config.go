@@ -133,6 +133,23 @@ type Domain struct {
 	IndexFiles        []string                `yaml:"index_files"`
 	DirectoryListing  bool                    `yaml:"directory_listing"`
 	ImageOptimization ImageOptimizationConfig `yaml:"image_optimization"`
+	CORS              CORSConfig              `yaml:"cors"`
+	BasicAuth         BasicAuthConfig         `yaml:"basic_auth"`
+}
+
+type CORSConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	AllowedOrigins   []string `yaml:"allowed_origins"`
+	AllowedMethods   []string `yaml:"allowed_methods"`
+	AllowedHeaders   []string `yaml:"allowed_headers"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
+	MaxAge           int      `yaml:"max_age"`
+}
+
+type BasicAuthConfig struct {
+	Enabled bool              `yaml:"enabled"`
+	Users   map[string]string `yaml:"users"` // username → password
+	Realm   string            `yaml:"realm"`
 }
 
 type ImageOptimizationConfig struct {

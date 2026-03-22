@@ -30,11 +30,6 @@ type Tool struct {
 	Handler     func(input json.RawMessage) (any, error)
 }
 
-// ToolList is the MCP tools/list response.
-type ToolList struct {
-	Tools []ToolInfo `json:"tools"`
-}
-
 type ToolInfo struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
