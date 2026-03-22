@@ -1,0 +1,142 @@
+# UWAS Configuration — WordPress Production
+# Docs: https://github.com/uwaserver/uwas
+
+global:
+  worker_count: auto
+  http_listen: ":80"
+  https_listen: ":443"
+  max_connections: 65536
+  log_level: info
+  log_format: json
+
+  timeouts:
+    read: 30s
+    write: 120s       # longer for file uploads
+    idle: 120s
+    shutdown_grace: 30s
+
+  # Trusted proxies (uncomment if behind Cloudflare/load balancer)
+  # trusted_proxies:
+  #   - 173.245.48.0/20
+  #   - 103.21.244.0/22
+  #   - 103.22.200.0/22
+  #   - 103.31.4.0/22
+  #   - 141.101.64.0/18
+  #   - 108.162.192.0/18
+  #   - 190.93.240.0/20
+  #   - 188.114.96.0/20
+  #   - 197.234.240.0/22
+  #   - 198.41.128.0/17
+  #   - 162.158.0.0/15
+  #   - 104.16.0.0/13
+  #   - 104.24.0.0/14
+  #   - 172.64.0.0/13
+  #   - 131.0.72.0/22
+
+  admin:
+    enabled: true
+    listen: "0.0.0.0:9443"
+    api_key: "${UWAS_ADMIN_KEY}"
+
+  acme:
+    email: "${ADMIN_EMAIL}"
+    ca_url: "https://acme-v02.api.letsencrypt.org/directory"
+    storage: /var/lib/uwas/certs
+
+  cache:
+    enabled: true
+    memory_limit: 256MB
+    disk_path: /var/cache/uwas
+    disk_limit: 2GB
+    default_ttl: 3600
+    grace_ttl: 86400
+    stale_while_revalidate: true
+
+# ─── WordPress Domain ────────────────────────────────────────────
+domains:
+  - host: "${DOMAIN}"
+    aliases:
+      - "www.${DOMAIN}"
+    root: /var/www/wordpress
+    type: php
+    ssl:
+      mode: auto          # automatic Let's Encrypt certificate
+
+    php:
+      fpm_address: "tcp:php:9000"    # Docker service name
+      index_files:
+        - index.php
+        - index.html
+      max_upload: 64MB
+      timeout: 300s
+
+    htaccess:
+      mode: import        # parse .htaccess for pretty permalinks
+
+    cache:
+      enabled: true
+      ttl: 3600
+      rules:
+        # Cache static assets for 24 hours
+        - match: "^/wp-content/(uploads|themes|plugins)/.+\\.(jpg|jpeg|png|gif|webp|avif|ico|css|js|woff2|svg)$"
+          ttl: 86400
+        # Never cache admin area
+        - match: "^/wp-admin"
+          bypass: true
+        - match: "^/wp-login"
+          bypass: true
+        - match: "^/wp-cron"
+          bypass: true
+        # Never cache AJAX
+        - match: "^/wp-admin/admin-ajax\\.php"
+          bypass: true
+        # Never cache WooCommerce cart/checkout (if installed)
+        - match: "^/(cart|checkout|my-account)"
+          bypass: true
+      tags:
+        - "site:wordpress"
+
+    security:
+      blocked_paths:
+        - ".git"
+        - ".env"
+        - "wp-config.php"
+        - ".htpasswd"
+        - "xmlrpc.php"       # common attack target
+        - "wp-trackback.php"
+      rate_limit:
+        requests: 60
+        window: 60s
+        by: ip
+      waf:
+        enabled: true
+        rules:
+          - sql_injection
+          - xss
+          - path_traversal
+
+    headers:
+      add:
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: SAMEORIGIN
+        Referrer-Policy: strict-origin-when-cross-origin
+        Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+      remove:
+        - X-Powered-By
+
+    compression:
+      enabled: true
+      algorithms:
+        - gzip
+      min_size: 1024
+      types:
+        - text/html
+        - text/css
+        - application/javascript
+        - application/json
+        - image/svg+xml
+        - application/xml
+
+    access_log:
+      path: /var/log/uwas/wordpress.access.log
+      format: json

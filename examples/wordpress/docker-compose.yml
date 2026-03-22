@@ -1,0 +1,160 @@
+# UWAS + WordPress — Production-Ready Single VPS Stack
+#
+# Usage:
+#   1. Copy this directory to your VPS
+#   2. Edit .env file with your domain and passwords
+#   3. Run: docker compose up -d
+#   4. Open https://yourdomain.com to install WordPress
+#   5. UWAS Dashboard: https://yourdomain.com:9443/_uwas/dashboard/
+#
+# Stack: UWAS (web server) + PHP-FPM 8.3 + MariaDB 11 + Redis (optional)
+# Features: Auto HTTPS, caching, .htaccess support, admin dashboard
+
+services:
+  # ─── UWAS Web Server ───────────────────────────────────────────
+  uwas:
+    image: ghcr.io/uwaserver/uwas:latest
+    # build: ../..  # uncomment to build from source
+    ports:
+      - "80:80"
+      - "443:443"
+      - "${ADMIN_PORT:-9443}:9443"
+    volumes:
+      - ./config/uwas.yaml:/etc/uwas/uwas.yaml:ro
+      - wordpress:/var/www/wordpress
+      - certs:/var/lib/uwas/certs
+      - cache:/var/cache/uwas
+      - logs:/var/log/uwas
+    depends_on:
+      php:
+        condition: service_started
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+
+  # ─── PHP-FPM ───────────────────────────────────────────────────
+  php:
+    image: php:8.3-fpm-alpine
+    volumes:
+      - wordpress:/var/www/wordpress
+      - ./config/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+      - uploads:/var/www/wordpress/wp-content/uploads
+    environment:
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT:-256M}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || kill -0 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ─── MariaDB ───────────────────────────────────────────────────
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME:-wordpress}
+      MARIADB_USER: ${DB_USER:-wordpress}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./config/mariadb.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    restart: unless-stopped
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── WordPress CLI (init only) ─────────────────────────────────
+  wp-init:
+    image: wordpress:cli-php8.3
+    volumes:
+      - wordpress:/var/www/html
+      - uploads:/var/www/html/wp-content/uploads
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
+      WORDPRESS_DB_USER: ${DB_USER:-wordpress}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        # Wait for database
+        sleep 10
+
+        # Download WordPress if not present
+        if [ ! -f /var/www/html/wp-config.php ]; then
+          echo "Downloading WordPress..."
+          wp core download --path=/var/www/html --allow-root
+
+          # Create wp-config.php
+          wp config create \
+            --dbhost=db \
+            --dbname=$${WORDPRESS_DB_NAME} \
+            --dbuser=$${WORDPRESS_DB_USER} \
+            --dbpass=$${WORDPRESS_DB_PASSWORD} \
+            --path=/var/www/html \
+            --allow-root
+
+          # Fix permissions for PHP-FPM (www-data)
+          chown -R 82:82 /var/www/html
+
+          echo "WordPress installed at /var/www/html"
+          echo "Open your domain to complete setup."
+        else
+          echo "WordPress already installed."
+        fi
+
+        # Copy to UWAS document root
+        cp -a /var/www/html/. /var/www/html/ 2>/dev/null || true
+
+        # Create .htaccess for pretty permalinks
+        cat > /var/www/html/.htaccess << 'EOF'
+        # BEGIN WordPress
+        <IfModule mod_rewrite.c>
+        RewriteEngine On
+        RewriteBase /
+        RewriteRule ^index\.php$ - [L]
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule . /index.php [L]
+        </IfModule>
+        # END WordPress
+        EOF
+
+        chown 82:82 /var/www/html/.htaccess
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+
+volumes:
+  wordpress:
+    driver: local
+  uploads:
+    driver: local
+  db_data:
+    driver: local
+  certs:
+    driver: local
+  cache:
+    driver: local
+  logs:
+    driver: local
+
+networks:
+  frontend:
+  backend:
