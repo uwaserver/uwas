@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@theme {
+  --color-uwas-bg: #0f172a;
+  --color-uwas-bg-light: #1e293b;
+  --color-uwas-bg-card: #1e293b;
+  --color-uwas-blue: #2563eb;
+  --color-uwas-blue-light: #3b82f6;
+  --color-uwas-cyan: #06b6d4;
+  --color-uwas-green: #10b981;
+  --color-uwas-purple: #8b5cf6;
+  --color-uwas-orange: #f59e0b;
+  --color-uwas-text: #f1f5f9;
+  --color-uwas-text-muted: #94a3b8;
+  --color-uwas-border: #334155;
+  --color-uwas-code-bg: #0d1117;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-uwas-bg);
+  color: var(--color-uwas-text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  margin: 0;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-uwas-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-uwas-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Code block styling */
+pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.terminal-cursor {
+  animation: blink 1s step-end infinite;
+}
+
+/* Glow effects */
+.glow-blue {
+  box-shadow: 0 0 20px rgba(37, 99, 235, 0.3), 0 0 60px rgba(37, 99, 235, 0.1);
+}
+
+.glow-blue-sm {
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.2);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Fade in animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out forwards;
+}

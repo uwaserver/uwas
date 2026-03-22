@@ -39,3 +39,4 @@ Thumbs.db
 *.exe
 *.test.exeweb/dashboard/node_modules/
 web/
+docs/site/node_modules/
