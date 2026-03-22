@@ -18,6 +18,7 @@ func main() {
 	app.Register(&cli.MigrateCommand{})
 	app.Register(&cli.BackupCommand{})
 	app.Register(&cli.RestoreCommand{})
+	app.Register(&cli.RestartCommand{})
 	app.Register(cli.NewHelpCommand(app))
 
 	app.Run(os.Args[1:])

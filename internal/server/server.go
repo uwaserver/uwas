@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/admin"
+	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
@@ -60,8 +63,10 @@ type Server struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 
+	alerter        *alerting.Alerter
 	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
+	proxyMirrors   map[string]*proxyhandler.Mirror
 
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
 	// Invalidated on config reload.
@@ -90,6 +95,9 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		)
 	}
 
+	// Alerting engine
+	alerter := alerting.New(cfg.Global.Alerting.Enabled, cfg.Global.Alerting.WebhookURL, log)
+
 	s := &Server{
 		config:         cfg,
 		logger:         log,
@@ -101,10 +109,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		cache:          cacheEngine,
 		metrics:        m,
 		analytics:      analytics.New(),
+		alerter:        alerter,
 		ctx:            ctx,
 		cancel:         cancel,
 		proxyPools:     make(map[string]*proxyhandler.UpstreamPool),
 		proxyBalancers: make(map[string]proxyhandler.Balancer),
+		proxyMirrors:   make(map[string]*proxyhandler.Mirror),
 		htaccessCache:  make(map[string][]*rewrite.Rule),
 		rewriteCache:   make(map[string]*rewrite.Engine),
 	}
@@ -135,6 +145,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 		s.admin.SetReloadFunc(s.reload)
 		s.admin.SetAnalytics(s.analytics)
+		s.admin.SetAlerter(alerter)
 	}
 
 	// Uptime monitor
@@ -172,6 +183,15 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				Rise:      d.Proxy.HealthCheck.Rise,
 			}, log)
 			hc.Start(ctx)
+		}
+
+		// Request mirroring
+		if d.Proxy.Mirror.Enabled && d.Proxy.Mirror.Backend != "" {
+			s.proxyMirrors[d.Host] = proxyhandler.NewMirror(proxyhandler.MirrorConfig{
+				Enabled: d.Proxy.Mirror.Enabled,
+				Backend: d.Proxy.Mirror.Backend,
+				Percent: d.Proxy.Mirror.Percent,
+			}, log)
 		}
 	}
 
@@ -422,6 +442,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if s.analytics != nil {
 			s.analytics.Record(r.Host, r.URL.Path, r.RemoteAddr, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 		}
+
+		// Record for alerting (error spike detection)
+		if s.alerter != nil {
+			s.alerter.RecordRequest(ctx.Response.StatusCode() >= 500)
+		}
 	}()
 
 	// Virtual host lookup
@@ -601,6 +626,18 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 	balancer := s.proxyBalancers[domain.Host]
 	if balancer == nil {
 		balancer = proxyhandler.NewBalancer("round_robin")
+	}
+
+	// Request mirroring: fire-and-forget copy to mirror backend
+	if mirror := s.proxyMirrors[domain.Host]; mirror != nil && mirror.ShouldMirror() {
+		// Read body for mirroring (the proxy handler will also read it)
+		var bodyBytes []byte
+		if ctx.Request.Body != nil {
+			bodyBytes, _ = io.ReadAll(ctx.Request.Body)
+			ctx.Request.Body.Close()
+			ctx.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+		mirror.Send(ctx.Request, bodyBytes)
 	}
 
 	s.proxy.Serve(ctx, domain, pool, balancer)
