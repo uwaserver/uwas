@@ -1,0 +1,30 @@
+# Static website
+host: example.com
+aliases:
+  - www.example.com
+root: /var/www/example.com/public
+type: static
+
+ssl:
+  mode: auto
+
+compression:
+  enabled: true
+  algorithms: [gzip]
+  min_size: 1024
+
+cache:
+  enabled: true
+  ttl: 3600
+  rules:
+    - match: "^/assets/"
+      ttl: 86400
+
+security:
+  blocked_paths: [".git", ".env"]
+
+headers:
+  add:
+    X-Content-Type-Options: nosniff
+    X-Frame-Options: SAMEORIGIN
+  remove: [X-Powered-By]

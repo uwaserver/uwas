@@ -1,0 +1,40 @@
+# WordPress blog
+host: blog.example.com
+root: /var/www/wordpress
+type: php
+
+ssl:
+  mode: auto
+
+php:
+  fpm_address: "tcp:php-blog:9000"
+  index_files: [index.php, index.html]
+  max_upload: 64MB
+  timeout: 300s
+
+htaccess:
+  mode: import
+
+cache:
+  enabled: true
+  ttl: 1800
+  rules:
+    - match: "^/wp-content/uploads/"
+      ttl: 86400
+    - match: "^/wp-admin"
+      bypass: true
+    - match: "^/wp-login"
+      bypass: true
+    - match: "^/wp-cron"
+      bypass: true
+  tags: ["site:blog"]
+
+security:
+  blocked_paths: [".git", ".env", "wp-config.php", "xmlrpc.php"]
+  rate_limit:
+    requests: 60
+    window: 60s
+    by: ip
+  waf:
+    enabled: true
+    rules: [sql_injection, xss, path_traversal]

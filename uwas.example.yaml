@@ -1,6 +1,18 @@
 # UWAS — Unified Web Application Server
 # Example Configuration File
 # Docs: https://uwaserver.com/docs/configuration
+#
+# Domain config can be split into separate files:
+#   domains_dir: domains.d    # auto-load all .yaml files from this directory
+#   include:                  # or use glob patterns
+#     - includes/*.yaml
+#
+# Per-domain file format (domains.d/example.com.yaml):
+#   host: example.com
+#   root: /var/www/example
+#   type: static
+#   ssl:
+#     mode: auto
 
 global:
   # Worker count: "auto" = number of CPU cores

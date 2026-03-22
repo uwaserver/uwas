@@ -1,0 +1,31 @@
+# API reverse proxy
+host: api.example.com
+type: proxy
+
+ssl:
+  mode: auto
+
+proxy:
+  upstreams:
+    - address: "http://api-backend-1:3000"
+      weight: 3
+    - address: "http://api-backend-2:3000"
+      weight: 1
+  algorithm: least_conn
+  health_check:
+    path: /health
+    interval: 10s
+    timeout: 5s
+    threshold: 3
+    rise: 2
+  websocket: true
+  timeouts:
+    connect: 5s
+    read: 60s
+    write: 60s
+
+security:
+  rate_limit:
+    requests: 100
+    window: 60s
+    by: ip
