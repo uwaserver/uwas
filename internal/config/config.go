@@ -61,9 +61,11 @@ type BackupSFTPConfig struct {
 
 type TimeoutConfig struct {
 	Read          Duration `yaml:"read"`
+	ReadHeader    Duration `yaml:"read_header"`
 	Write         Duration `yaml:"write"`
 	Idle          Duration `yaml:"idle"`
 	ShutdownGrace Duration `yaml:"shutdown_grace"`
+	MaxHeaderBytes int     `yaml:"max_header_bytes"`
 }
 
 type AdminConfig struct {

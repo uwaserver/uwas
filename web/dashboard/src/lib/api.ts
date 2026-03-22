@@ -136,7 +136,19 @@ export interface DomainAnalytics {
   views_last_hour: number;
   views_last_24h: number;
   views_last_7d: number;
+  top_referrers: Record<string, number>;
+  user_agents: Record<string, number>;
 }
+
+export interface AuditEntry {
+  time: string;
+  action: string;
+  detail: string;
+  ip: string;
+  success: boolean;
+}
+
+export const fetchAuditLog = () => api<AuditEntry[]>('/api/v1/audit');
 
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
 export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');

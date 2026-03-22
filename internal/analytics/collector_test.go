@@ -657,3 +657,125 @@ func TestExtractIPFormats(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordFullReferrer(t *testing.T) {
+	c := New()
+
+	c.RecordFull("example.com", "/", "1.2.3.4:1234", "https://google.com/search?q=test", "Mozilla/5.0 Chrome/120", 200, 1024)
+	c.RecordFull("example.com", "/about", "5.6.7.8:5678", "https://google.com/", "Mozilla/5.0 Firefox/120", 200, 512)
+	c.RecordFull("example.com", "/page", "9.10.11.12:9012", "https://twitter.com/link", "curl/8.0", 200, 256)
+	// Self-referrer should be excluded
+	c.RecordFull("example.com", "/page", "1.2.3.4:1234", "https://example.com/other", "", 200, 128)
+
+	snap := c.GetHost("example.com")
+	if snap == nil {
+		t.Fatal("expected snapshot")
+	}
+	if snap.PageViews != 4 {
+		t.Errorf("PageViews = %d, want 4", snap.PageViews)
+	}
+
+	if snap.TopReferrers["google.com"] != 2 {
+		t.Errorf("google.com referrals = %d, want 2", snap.TopReferrers["google.com"])
+	}
+	if snap.TopReferrers["twitter.com"] != 1 {
+		t.Errorf("twitter.com referrals = %d, want 1", snap.TopReferrers["twitter.com"])
+	}
+	// Self-referrer should not appear
+	if _, ok := snap.TopReferrers["example.com"]; ok {
+		t.Error("self-referrer should not appear in top referrers")
+	}
+}
+
+func TestRecordFullUserAgents(t *testing.T) {
+	c := New()
+
+	c.RecordFull("example.com", "/", "1.1.1.1:1", "", "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120.0 Safari/537.36", 200, 100)
+	c.RecordFull("example.com", "/", "2.2.2.2:2", "", "Mozilla/5.0 (Macintosh) AppleWebKit/605.1 Safari/605.1", 200, 100)
+	c.RecordFull("example.com", "/", "3.3.3.3:3", "", "Mozilla/5.0 Gecko/20100101 Firefox/120.0", 200, 100)
+	c.RecordFull("example.com", "/", "4.4.4.4:4", "", "Mozilla/5.0 (compatible; Googlebot/2.1)", 200, 100)
+	c.RecordFull("example.com", "/", "5.5.5.5:5", "", "curl/8.4.0", 200, 100)
+
+	snap := c.GetHost("example.com")
+	if snap == nil {
+		t.Fatal("expected snapshot")
+	}
+
+	if snap.UserAgents["Chrome"] != 1 {
+		t.Errorf("Chrome = %d, want 1", snap.UserAgents["Chrome"])
+	}
+	if snap.UserAgents["Safari"] != 1 {
+		t.Errorf("Safari = %d, want 1", snap.UserAgents["Safari"])
+	}
+	if snap.UserAgents["Firefox"] != 1 {
+		t.Errorf("Firefox = %d, want 1", snap.UserAgents["Firefox"])
+	}
+	if snap.UserAgents["Googlebot"] != 1 {
+		t.Errorf("Googlebot = %d, want 1", snap.UserAgents["Googlebot"])
+	}
+	if snap.UserAgents["curl"] != 1 {
+		t.Errorf("curl = %d, want 1", snap.UserAgents["curl"])
+	}
+}
+
+func TestClassifyUA(t *testing.T) {
+	tests := []struct {
+		ua   string
+		want string
+	}{
+		{"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", "Googlebot"},
+		{"Mozilla/5.0 (compatible; bingbot/2.0)", "Bingbot"},
+		{"Slackbot-LinkExpanding 1.0", "Bot"},
+		{"Mozilla/5.0 Chrome/120.0.0.0 Edg/120.0", "Edge"},
+		{"Mozilla/5.0 OPR/106.0.0.0", "Opera"},
+		{"Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36", "Chrome"},
+		{"Mozilla/5.0 AppleWebKit/605.1 Safari/605.1", "Safari"},
+		{"Mozilla/5.0 Gecko/20100101 Firefox/120.0", "Firefox"},
+		{"curl/8.4.0", "curl"},
+		{"Wget/1.21", "wget"},
+		{"python-requests/2.31", "Python"},
+		{"Go-http-client/2.0", "Go"},
+		{"SomeUnknownClient/1.0", "Other"},
+	}
+
+	for _, tt := range tests {
+		got := classifyUA(tt.ua)
+		if got != tt.want {
+			t.Errorf("classifyUA(%q) = %q, want %q", tt.ua, got, tt.want)
+		}
+	}
+}
+
+func TestExtractRefDomain(t *testing.T) {
+	tests := []struct {
+		ref  string
+		want string
+	}{
+		{"https://google.com/search?q=test", "google.com"},
+		{"http://twitter.com/link", "twitter.com"},
+		{"https://www.example.com:8080/page", "www.example.com"},
+		{"google.com/path", "google.com"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		got := extractRefDomain(tt.ref)
+		if got != tt.want {
+			t.Errorf("extractRefDomain(%q) = %q, want %q", tt.ref, got, tt.want)
+		}
+	}
+}
+
+func TestRecordFullEmptyReferrerAndUA(t *testing.T) {
+	c := New()
+	// Empty referrer and UA should not create map entries
+	c.RecordFull("example.com", "/", "1.1.1.1:1", "", "", 200, 100)
+
+	snap := c.GetHost("example.com")
+	if len(snap.TopReferrers) != 0 {
+		t.Errorf("expected no referrers, got %d", len(snap.TopReferrers))
+	}
+	if len(snap.UserAgents) != 0 {
+		t.Errorf("expected no user agents, got %d", len(snap.UserAgents))
+	}
+}
