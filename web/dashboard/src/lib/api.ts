@@ -146,6 +146,36 @@ export const saveConfigRaw = (content: string) => api<{ status: string }>('/api/
 export const fetchDomainConfigRaw = (host: string) => api<{ content: string }>(`/api/v1/config/domains/${encodeURIComponent(host)}/raw`);
 export const saveDomainConfigRaw = (host: string, content: string) => api<{ status: string }>(`/api/v1/config/domains/${encodeURIComponent(host)}/raw`, { method: 'PUT', body: JSON.stringify({ content }) });
 
+export interface PHPInstall {
+  version: string;
+  binary: string;
+  config_file: string;
+  extensions: string[];
+  sapi: string;
+  running: boolean;
+  listen_addr: string;
+}
+
+export interface PHPConfig {
+  memory_limit: string;
+  max_execution_time: string;
+  upload_max_filesize: string;
+  post_max_size: string;
+  display_errors: string;
+  opcache_enable: string;
+  timezone: string;
+}
+
+export const fetchPHP = () => api<PHPInstall[]>('/api/v1/php');
+export const fetchPHPConfig = (version: string) => api<PHPConfig>(`/api/v1/php/${version}/config`);
+export const updatePHPConfig = (version: string, key: string, value: string) =>
+  api<{status:string}>(`/api/v1/php/${version}/config`, { method: 'PUT', body: JSON.stringify({key, value}) });
+export const fetchPHPExtensions = (version: string) => api<string[]>(`/api/v1/php/${version}/extensions`);
+export const startPHP = (version: string, port?: number) =>
+  api<{status:string}>(`/api/v1/php/${version}/start`, { method: 'POST', body: JSON.stringify({port: port || 9000}) });
+export const stopPHP = (version: string) =>
+  api<{status:string}>(`/api/v1/php/${version}/stop`, { method: 'POST' });
+
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {
   const params = token ? `?token=${encodeURIComponent(token)}` : '';
