@@ -5,6 +5,42 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-22
+
+### Security
+
+- **RealIP spoofing fix**: Proxy headers only trusted when direct connection is from a configured trusted proxy
+- **On-demand TLS hardened**: OnDemandAsk URL validation + rate limit (10 certs/minute)
+- **CORS restricted**: No more wildcard `*` origin — validates against dashboard/localhost origins only
+- **Open redirect fixed**: HTTPS redirect uses canonical `domain.Host` instead of raw `Host` header
+- **Dotfile protection**: Checks all path components, not just filename (blocks `/.git/config`)
+- **Path traversal**: Fallback try_files path validated against document root
+- **Config export sanitized**: Strips DNS credentials, PHP env vars, cache purge key
+- **Admin API body limits**: All mutation endpoints limited to 1MB request body
+- **WAF double-decode**: Checks URL-decoded query strings to catch encoded attacks
+
+### Fixed
+
+- **Transport leak**: Shared `http.Transport` across proxy requests (was creating one per request)
+- **Config race condition**: RWMutex protects config during hot reload
+- **Admin CRUD race**: RWMutex protects domain list during add/update/delete
+- **Response capture OOM**: Limited to 10MB max body for caching (prevents memory exhaustion)
+- **Cache key collision**: Uses full canonical key string (method|host|path|query|vary) instead of hash
+- **Goroutine leaks**: Cache cleanup and rate limiter accept context.Context for proper shutdown
+- **Disk cache accounting**: Scans existing files on startup to initialize byte counter
+- **ACME challenge**: Polls correct challenge URL (was hardcoded to index 0)
+- **ETag 304 from cache**: Conditional requests handled against cached ETag
+- **Chunked POST**: FastCGI forwards chunked transfer-encoding bodies
+- **io.Copy error**: Proxy logs upstream body copy failures
+- **Memory aliasing**: Cache deserialize copies body slice
+
+### Performance
+
+- **htaccess caching**: Parsed once per domain root, not on every request
+- **Rewrite precompilation**: Regex rules compiled at server init, not per request
+- **Nonce pool capped**: ACME nonce pool limited to 10 entries
+- **Request context zeroed**: Full struct zero on pool acquire prevents data leak
+
 ## [0.2.0] - 2026-03-22
 
 ### Added
