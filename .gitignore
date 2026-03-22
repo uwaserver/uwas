@@ -38,9 +38,15 @@ Thumbs.db
 /cache/
 /certs/
 
-# ── Node modules (dashboard) ──
+# ── Node modules ──
 web/dashboard/node_modules/
 docs/site/node_modules/
 
+# ── Build output (site) ──
+docs/site/dist/
+
 # ── Demo / temp ──
 demo/
+
+# ── Playwright screenshots ──
+.playwright-mcp/
