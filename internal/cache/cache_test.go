@@ -1140,3 +1140,190 @@ func TestDiskCacheInitialUsedBytes(t *testing.T) {
 		t.Errorf("new DiskCache usedBytes = %d, want %d (should scan existing files)", initialUsed, usedAfterWrite)
 	}
 }
+
+// --- IsCacheable: HEAD method should be cacheable ---
+
+func TestIsCacheableHEAD(t *testing.T) {
+	r := httptest.NewRequest("HEAD", "/", nil)
+	h := http.Header{}
+	if !IsCacheable(r, 200, h) {
+		t.Error("HEAD 200 should be cacheable")
+	}
+}
+
+// --- IsCacheable: Cache-Control: no-store ---
+
+func TestIsCacheableNoStore(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	h := http.Header{}
+	h.Set("Cache-Control", "no-store")
+	if IsCacheable(r, 200, h) {
+		t.Error("no-store should not be cacheable")
+	}
+}
+
+// --- IsCacheable: Cache-Control: private ---
+
+func TestIsCacheablePrivate(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	h := http.Header{}
+	h.Set("Cache-Control", "private, max-age=60")
+	if IsCacheable(r, 200, h) {
+		t.Error("private should not be cacheable")
+	}
+}
+
+// --- ShouldBypass: Pragma: no-cache ---
+
+func TestShouldBypassPragmaNoCache(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Pragma", "no-cache")
+	if !ShouldBypass(r) {
+		t.Error("Pragma: no-cache should bypass")
+	}
+}
+
+// --- ShouldBypass: HEAD should not bypass ---
+
+func TestShouldBypassHEAD(t *testing.T) {
+	r := httptest.NewRequest("HEAD", "/", nil)
+	if ShouldBypass(r) {
+		t.Error("HEAD should not bypass")
+	}
+}
+
+// --- Deserialize: truncated header data (body length check) ---
+
+func TestDeserializeTruncatedBodyLength(t *testing.T) {
+	// Build valid data up to headers but truncate before body length
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{},
+		Body:       []byte("hello"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+	data := resp.Serialize()
+	// Truncate just before body length (remove last 4 + body bytes)
+	truncated := data[:len(data)-len("hello")-4+2] // cut into body length field
+	_, err := Deserialize(truncated)
+	if err == nil {
+		t.Error("expected error for truncated body length")
+	}
+}
+
+// --- Deserialize: body shorter than declared ---
+
+func TestDeserializeTruncatedBody(t *testing.T) {
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{},
+		Body:       []byte("hello world here"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+	data := resp.Serialize()
+	// Cut off the last few bytes from the body
+	truncated := data[:len(data)-5]
+	_, err := Deserialize(truncated)
+	if err == nil {
+		t.Error("expected error for truncated body data")
+	}
+}
+
+// --- Deserialize: truncated header key/val data ---
+
+func TestDeserializeTruncatedHeaderData(t *testing.T) {
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{"Content-Type": {"text/html"}},
+		Body:       []byte("x"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+	data := resp.Serialize()
+	// Cut right after header count but before all header data
+	// Fixed header: 4+8+8+8+4 = 32 bytes, then header data starts
+	truncated := data[:34] // just 2 bytes into header data
+	_, err := Deserialize(truncated)
+	if err == nil {
+		t.Error("expected error for truncated header data")
+	}
+}
+
+// --- Engine.Set: without disk (nil disk) ---
+
+func TestEngineSetNoDisk(t *testing.T) {
+	log := logger.New("error", "text")
+	e := NewEngine(context.Background(), 1<<20, "", 0, log) // no disk
+
+	req := httptest.NewRequest("GET", "/no-disk", nil)
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("no disk"),
+		Created:    time.Now(),
+		TTL:        5 * time.Minute,
+	}
+
+	e.Set(req, resp)
+
+	got, status := e.Get(req)
+	if status != StatusHit {
+		t.Errorf("status = %q, want HIT", status)
+	}
+	if string(got.Body) != "no disk" {
+		t.Errorf("body = %q", string(got.Body))
+	}
+}
+
+// --- DiskCache.Set: maxBytes 0 means no limit ---
+
+func TestDiskCacheSetNoLimit(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 0) // 0 means no limit
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("unlimited"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+
+	err := dc.Set("unlimited-key-1234567890", resp)
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := dc.Get("unlimited-key-1234567890")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got.Body) != "unlimited" {
+		t.Errorf("body = %q", string(got.Body))
+	}
+}
+
+// --- MemoryCache: Set over global limit when shard is empty (skip storing) ---
+
+func TestMemoryCacheSetOverLimitNoEviction(t *testing.T) {
+	// Very small limit, one large entry
+	mc := NewMemoryCache(10) // 10 bytes limit
+
+	resp := &CachedResponse{
+		Body:    make([]byte, 1000), // way over limit
+		Created: time.Now(),
+		TTL:     time.Minute,
+	}
+
+	mc.Set("too-big", resp)
+
+	// Entry should not be stored (over limit and nothing to evict in this shard)
+	_, status := mc.Get("too-big")
+	if status != StatusMiss {
+		t.Errorf("status = %q, want MISS for entry over limit", status)
+	}
+}

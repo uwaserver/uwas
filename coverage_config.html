@@ -1,0 +1,895 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>config: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/uwaserver/uwas/internal/config/config.go (100.0%)</option>
+				
+				<option value="file1">github.com/uwaserver/uwas/internal/config/defaults.go (96.9%)</option>
+				
+				<option value="file2">github.com/uwaserver/uwas/internal/config/loader.go (97.6%)</option>
+				
+				<option value="file3">github.com/uwaserver/uwas/internal/config/parse.go (100.0%)</option>
+				
+				<option value="file4">github.com/uwaserver/uwas/internal/config/validate.go (100.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package config
+
+import "time"
+
+type Config struct {
+        Global    GlobalConfig `yaml:"global"`
+        Domains   []Domain     `yaml:"domains"`
+        Include   []string     `yaml:"include"`    // glob patterns: ["domains.d/*.yaml"]
+        DomainsDir string     `yaml:"domains_dir"` // directory of per-domain YAML files
+}
+
+type GlobalConfig struct {
+        WorkerCount    string         `yaml:"worker_count"`
+        MaxConnections int            `yaml:"max_connections"`
+        HTTPListen     string         `yaml:"http_listen"`
+        HTTPSListen    string         `yaml:"https_listen"`
+        PIDFile        string         `yaml:"pid_file"`
+        LogLevel       string         `yaml:"log_level"`
+        LogFormat      string         `yaml:"log_format"`
+        TrustedProxies []string       `yaml:"trusted_proxies"`
+        Timeouts       TimeoutConfig  `yaml:"timeouts"`
+        Admin          AdminConfig    `yaml:"admin"`
+        MCP            MCPConfig      `yaml:"mcp"`
+        ACME           ACMEConfig     `yaml:"acme"`
+        Cache          CacheConfig    `yaml:"cache"`
+        Alerting       AlertingConfig `yaml:"alerting"`
+}
+
+type TimeoutConfig struct {
+        Read          Duration `yaml:"read"`
+        Write         Duration `yaml:"write"`
+        Idle          Duration `yaml:"idle"`
+        ShutdownGrace Duration `yaml:"shutdown_grace"`
+}
+
+type AdminConfig struct {
+        Listen  string `yaml:"listen"`
+        Enabled bool   `yaml:"enabled"`
+        APIKey  string `yaml:"api_key"`
+}
+
+type MCPConfig struct {
+        Enabled bool   `yaml:"enabled"`
+        Listen  string `yaml:"listen"`
+}
+
+type ACMEConfig struct {
+        Email          string            `yaml:"email"`
+        CAURL          string            `yaml:"ca_url"`
+        Storage        string            `yaml:"storage"`
+        DNSProvider    string            `yaml:"dns_provider"`
+        DNSCredentials map[string]string `yaml:"dns_credentials"`
+        OnDemand       bool              `yaml:"on_demand"`
+        OnDemandAsk    string            `yaml:"on_demand_ask"`
+}
+
+type CacheConfig struct {
+        Enabled               bool     `yaml:"enabled"`
+        MemoryLimit           ByteSize `yaml:"memory_limit"`
+        DiskPath              string   `yaml:"disk_path"`
+        DiskLimit             ByteSize `yaml:"disk_limit"`
+        DefaultTTL            int      `yaml:"default_ttl"`
+        GraceTTL              int      `yaml:"grace_ttl"`
+        StaleWhileRevalidate  bool     `yaml:"stale_while_revalidate"`
+        PurgeKey              string   `yaml:"purge_key"`
+}
+
+type AlertingConfig struct {
+        Enabled    bool   `yaml:"enabled"`
+        WebhookURL string `yaml:"webhook_url"`
+}
+
+type MirrorConfig struct {
+        Enabled bool   `yaml:"enabled"`
+        Backend string `yaml:"backend"` // mirror backend URL
+        Percent int    `yaml:"percent"` // percentage of requests to mirror (0-100)
+}
+
+type Domain struct {
+        Host        string           `yaml:"host"`
+        Aliases     []string         `yaml:"aliases"`
+        Root        string           `yaml:"root"`
+        Type        string           `yaml:"type"`
+        SSL         SSLConfig        `yaml:"ssl"`
+        PHP         PHPConfig        `yaml:"php"`
+        Cache       DomainCache      `yaml:"cache"`
+        Rewrites    []RewriteRule    `yaml:"rewrites"`
+        Htaccess    HtaccessConfig   `yaml:"htaccess"`
+        Security    SecurityConfig   `yaml:"security"`
+        Headers     HeadersConfig    `yaml:"headers"`
+        Compression CompressionConfig `yaml:"compression"`
+        AccessLog   AccessLogConfig  `yaml:"access_log"`
+        ErrorPages  map[int]string   `yaml:"error_pages"`
+        Proxy       ProxyConfig      `yaml:"proxy"`
+        Redirect    RedirectConfig   `yaml:"redirect"`
+        TryFiles          []string                `yaml:"try_files"`
+        SPAMode           bool                    `yaml:"spa_mode"`
+        IndexFiles        []string                `yaml:"index_files"`
+        DirectoryListing  bool                    `yaml:"directory_listing"`
+        ImageOptimization ImageOptimizationConfig `yaml:"image_optimization"`
+}
+
+type ImageOptimizationConfig struct {
+        Enabled bool     `yaml:"enabled"`
+        Formats []string `yaml:"formats"` // ["webp", "avif"]
+}
+
+type SSLConfig struct {
+        Mode       string `yaml:"mode"`
+        Cert       string `yaml:"cert"`
+        Key        string `yaml:"key"`
+        MinVersion string `yaml:"min_version"`
+}
+
+type PHPConfig struct {
+        FPMAddress string            `yaml:"fpm_address"`
+        IndexFiles []string          `yaml:"index_files"`
+        MaxUpload  ByteSize          `yaml:"max_upload"`
+        Timeout    Duration          `yaml:"timeout"`
+        Env        map[string]string `yaml:"env"`
+}
+
+type DomainCache struct {
+        Enabled bool             `yaml:"enabled"`
+        TTL     int              `yaml:"ttl"`
+        Rules   []CacheRule      `yaml:"rules"`
+        Tags    []string         `yaml:"tags"`
+        ESI     bool             `yaml:"esi"`
+}
+
+type CacheRule struct {
+        Match  string `yaml:"match"`
+        TTL    int    `yaml:"ttl"`
+        Bypass bool   `yaml:"bypass"`
+}
+
+type RewriteRule struct {
+        Match      string   `yaml:"match"`
+        To         string   `yaml:"to"`
+        Status     int      `yaml:"status"`
+        Conditions []string `yaml:"conditions"`
+        Flags      []string `yaml:"flags"`
+}
+
+type HtaccessConfig struct {
+        Mode string `yaml:"mode"`
+}
+
+type SecurityConfig struct {
+        BlockedPaths      []string           `yaml:"blocked_paths"`
+        HotlinkProtection HotlinkConfig      `yaml:"hotlink_protection"`
+        RateLimit         RateLimitConfig    `yaml:"rate_limit"`
+        WAF               WAFConfig          `yaml:"waf"`
+        IPWhitelist       []string           `yaml:"ip_whitelist"`
+        IPBlacklist       []string           `yaml:"ip_blacklist"`
+}
+
+type HotlinkConfig struct {
+        Enabled         bool     `yaml:"enabled"`
+        AllowedReferers []string `yaml:"allowed_referers"`
+        Extensions      []string `yaml:"extensions"`
+}
+
+type RateLimitConfig struct {
+        Requests int      `yaml:"requests"`
+        Window   Duration `yaml:"window"`
+        By       string   `yaml:"by"`
+}
+
+type WAFConfig struct {
+        Enabled bool     `yaml:"enabled"`
+        Rules   []string `yaml:"rules"`
+}
+
+type HeadersConfig struct {
+        Add            map[string]string `yaml:"add"`
+        Remove         []string          `yaml:"remove"`
+        RequestAdd     map[string]string `yaml:"request_add"`
+        RequestRemove  []string          `yaml:"request_remove"`
+        ResponseAdd    map[string]string `yaml:"response_add"`
+        ResponseRemove []string          `yaml:"response_remove"`
+}
+
+type CompressionConfig struct {
+        Enabled    bool     `yaml:"enabled"`
+        Algorithms []string `yaml:"algorithms"`
+        MinSize    int      `yaml:"min_size"`
+        Types      []string `yaml:"types"`
+}
+
+type AccessLogConfig struct {
+        Path       string          `yaml:"path"`
+        Format     string          `yaml:"format"`
+        BufferSize int             `yaml:"buffer_size"`
+        Rotate     RotateConfig    `yaml:"rotate"`
+}
+
+type RotateConfig struct {
+        MaxSize    ByteSize `yaml:"max_size"`
+        MaxAge     Duration `yaml:"max_age"`
+        MaxBackups int      `yaml:"max_backups"`
+}
+
+type ProxyConfig struct {
+        Upstreams      []Upstream         `yaml:"upstreams"`
+        Algorithm      string             `yaml:"algorithm"`
+        HealthCheck    HealthCheckConfig  `yaml:"health_check"`
+        Sticky         StickyConfig       `yaml:"sticky"`
+        CircuitBreaker CircuitConfig      `yaml:"circuit_breaker"`
+        WebSocket      bool               `yaml:"websocket"`
+        Timeouts       ProxyTimeouts      `yaml:"timeouts"`
+        MaxRetries     int                `yaml:"max_retries"`
+        Canary         CanaryConfig       `yaml:"canary"`
+        Mirror         MirrorConfig       `yaml:"mirror"`
+}
+
+type CanaryConfig struct {
+        Enabled   bool       `yaml:"enabled"`
+        Weight    int        `yaml:"weight"`
+        Upstreams []Upstream `yaml:"upstreams"`
+        Cookie    string     `yaml:"cookie"`
+}
+
+type Upstream struct {
+        Address string `yaml:"address"`
+        Weight  int    `yaml:"weight"`
+}
+
+type HealthCheckConfig struct {
+        Path      string   `yaml:"path"`
+        Interval  Duration `yaml:"interval"`
+        Timeout   Duration `yaml:"timeout"`
+        Threshold int      `yaml:"threshold"`
+        Rise      int      `yaml:"rise"`
+}
+
+type StickyConfig struct {
+        Type       string `yaml:"type"`
+        CookieName string `yaml:"cookie_name"`
+        TTL        int    `yaml:"ttl"`
+}
+
+type CircuitConfig struct {
+        Threshold int      `yaml:"threshold"`
+        Timeout   Duration `yaml:"timeout"`
+}
+
+type ProxyTimeouts struct {
+        Connect Duration `yaml:"connect"`
+        Read    Duration `yaml:"read"`
+        Write   Duration `yaml:"write"`
+}
+
+type RedirectConfig struct {
+        Target       string `yaml:"target"`
+        Status       int    `yaml:"status"`
+        PreservePath bool   `yaml:"preserve_path"`
+}
+
+// Duration wraps time.Duration for YAML unmarshaling of strings like "30s", "5m".
+type Duration struct {
+        time.Duration
+}
+
+func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error <span class="cov10" title="5">{
+        var s string
+        if err := unmarshal(&amp;s); err != nil </span><span class="cov4" title="2">{
+                var secs int
+                if err2 := unmarshal(&amp;secs); err2 != nil </span><span class="cov1" title="1">{
+                        return err
+                }</span>
+                <span class="cov1" title="1">d.Duration = time.Duration(secs) * time.Second
+                return nil</span>
+        }
+        <span class="cov7" title="3">dur, err := time.ParseDuration(s)
+        if err != nil </span><span class="cov1" title="1">{
+                return err
+        }</span>
+        <span class="cov4" title="2">d.Duration = dur
+        return nil</span>
+}
+
+// ByteSize represents a size in bytes, parsed from strings like "512MB", "10GB".
+type ByteSize int64
+
+const (
+        KB ByteSize = 1024
+        MB ByteSize = 1024 * KB
+        GB ByteSize = 1024 * MB
+)
+
+func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error <span class="cov10" title="5">{
+        var s string
+        if err := unmarshal(&amp;s); err != nil </span><span class="cov4" title="2">{
+                var n int64
+                if err2 := unmarshal(&amp;n); err2 != nil </span><span class="cov1" title="1">{
+                        return err
+                }</span>
+                <span class="cov1" title="1">*b = ByteSize(n)
+                return nil</span>
+        }
+        <span class="cov7" title="3">size, err := parseByteSize(s)
+        if err != nil </span><span class="cov1" title="1">{
+                return err
+        }</span>
+        <span class="cov4" title="2">*b = size
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package config
+
+import "time"
+
+func applyDefaults(cfg *Config) <span class="cov9" title="27">{
+        g := &amp;cfg.Global
+
+        if g.WorkerCount == "" </span><span class="cov9" title="27">{
+                g.WorkerCount = "auto"
+        }</span>
+        <span class="cov9" title="27">if g.MaxConnections == 0 </span><span class="cov9" title="27">{
+                g.MaxConnections = 65536
+        }</span>
+        <span class="cov9" title="27">if g.HTTPListen == "" </span><span class="cov9" title="27">{
+                g.HTTPListen = ":80"
+        }</span>
+        <span class="cov9" title="27">if g.HTTPSListen == "" </span><span class="cov9" title="27">{
+                g.HTTPSListen = ":443"
+        }</span>
+        <span class="cov9" title="27">if g.PIDFile == "" </span><span class="cov9" title="27">{
+                g.PIDFile = "/var/run/uwas.pid"
+        }</span>
+        <span class="cov9" title="27">if g.LogLevel == "" </span><span class="cov8" title="17">{
+                g.LogLevel = "info"
+        }</span>
+        <span class="cov9" title="27">if g.LogFormat == "" </span><span class="cov9" title="25">{
+                g.LogFormat = "text"
+        }</span>
+
+        // Timeouts
+        <span class="cov9" title="27">if g.Timeouts.Read.Duration == 0 </span><span class="cov9" title="26">{
+                g.Timeouts.Read.Duration = 30 * time.Second
+        }</span>
+        <span class="cov9" title="27">if g.Timeouts.Write.Duration == 0 </span><span class="cov9" title="26">{
+                g.Timeouts.Write.Duration = 60 * time.Second
+        }</span>
+        <span class="cov9" title="27">if g.Timeouts.Idle.Duration == 0 </span><span class="cov9" title="27">{
+                g.Timeouts.Idle.Duration = 120 * time.Second
+        }</span>
+        <span class="cov9" title="27">if g.Timeouts.ShutdownGrace.Duration == 0 </span><span class="cov9" title="27">{
+                g.Timeouts.ShutdownGrace.Duration = 30 * time.Second
+        }</span>
+
+        // Admin
+        <span class="cov9" title="27">if g.Admin.Listen == "" </span><span class="cov9" title="27">{
+                g.Admin.Listen = "127.0.0.1:9443"
+        }</span>
+
+        // MCP
+        <span class="cov9" title="27">if g.MCP.Listen == "" </span><span class="cov9" title="27">{
+                g.MCP.Listen = "127.0.0.1:9444"
+        }</span>
+
+        // ACME
+        <span class="cov9" title="27">if g.ACME.CAURL == "" </span><span class="cov9" title="27">{
+                g.ACME.CAURL = "https://acme-v02.api.letsencrypt.org/directory"
+        }</span>
+        <span class="cov9" title="27">if g.ACME.Storage == "" </span><span class="cov9" title="27">{
+                g.ACME.Storage = "/var/lib/uwas/certs"
+        }</span>
+
+        // Cache
+        <span class="cov9" title="27">if g.Cache.MemoryLimit == 0 </span><span class="cov9" title="26">{
+                g.Cache.MemoryLimit = 512 * MB
+        }</span>
+        <span class="cov9" title="27">if g.Cache.DiskPath == "" </span><span class="cov9" title="27">{
+                g.Cache.DiskPath = "/var/cache/uwas"
+        }</span>
+        <span class="cov9" title="27">if g.Cache.DiskLimit == 0 </span><span class="cov9" title="26">{
+                g.Cache.DiskLimit = 10 * GB
+        }</span>
+        <span class="cov9" title="27">if g.Cache.DefaultTTL == 0 </span><span class="cov9" title="27">{
+                g.Cache.DefaultTTL = 3600
+        }</span>
+        <span class="cov9" title="27">if g.Cache.GraceTTL == 0 </span><span class="cov9" title="27">{
+                g.Cache.GraceTTL = 86400
+        }</span>
+
+        // Domain defaults
+        <span class="cov9" title="27">for i := range cfg.Domains </span><span class="cov10" title="35">{
+                d := &amp;cfg.Domains[i]
+                if d.Type == "" </span><span class="cov0" title="0">{
+                        d.Type = "static"
+                }</span>
+                <span class="cov10" title="35">if d.SSL.Mode == "" </span><span class="cov0" title="0">{
+                        d.SSL.Mode = "off"
+                }</span>
+                <span class="cov10" title="35">if d.SSL.MinVersion == "" </span><span class="cov10" title="35">{
+                        d.SSL.MinVersion = "1.2"
+                }</span>
+                <span class="cov10" title="35">if d.Htaccess.Mode == "" </span><span class="cov10" title="35">{
+                        d.Htaccess.Mode = "off"
+                }</span>
+                <span class="cov10" title="35">if d.Compression.MinSize == 0 </span><span class="cov10" title="35">{
+                        d.Compression.MinSize = 1024
+                }</span>
+
+                // PHP defaults
+                <span class="cov10" title="35">if d.Type == "php" </span><span class="cov2" title="2">{
+                        if d.PHP.FPMAddress == "" </span><span class="cov2" title="2">{
+                                d.PHP.FPMAddress = "unix:/var/run/php/php-fpm.sock"
+                        }</span>
+                        <span class="cov2" title="2">if len(d.PHP.IndexFiles) == 0 </span><span class="cov2" title="2">{
+                                d.PHP.IndexFiles = []string{"index.php", "index.html"}
+                        }</span>
+                        <span class="cov2" title="2">if d.PHP.MaxUpload == 0 </span><span class="cov2" title="2">{
+                                d.PHP.MaxUpload = 64 * MB
+                        }</span>
+                        <span class="cov2" title="2">if d.PHP.Timeout.Duration == 0 </span><span class="cov2" title="2">{
+                                d.PHP.Timeout.Duration = 300 * time.Second
+                        }</span>
+                }
+
+                // Index files
+                <span class="cov10" title="35">if len(d.IndexFiles) == 0 </span><span class="cov10" title="35">{
+                        d.IndexFiles = []string{"index.html", "index.htm"}
+                }</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package config
+
+import (
+        "fmt"
+        "os"
+        "path/filepath"
+        "regexp"
+        "sort"
+        "strings"
+
+        "gopkg.in/yaml.v3"
+)
+
+var envPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// Load reads the main config file, then loads any included files and
+// per-domain configs from domains_dir.
+//
+// Directory structure:
+//
+//        /etc/uwas/
+//        ├── uwas.yaml              ← main config (global + optional inline domains)
+//        ├── domains.d/             ← per-domain YAML files (auto-loaded)
+//        │   ├── example.com.yaml
+//        │   ├── blog.example.com.yaml
+//        │   └── api.example.com.yaml
+//        └── includes/              ← extra config fragments
+//            └── shared-security.yaml
+//
+// Config merging:
+//   - Global settings come from the main file only
+//   - Domains from main file, include files, and domains_dir are all merged
+//   - domains_dir files can contain a single domain (no "domains:" wrapper needed)
+func Load(path string) (*Config, error) <span class="cov9" title="31">{
+        baseDir := filepath.Dir(path)
+
+        data, err := os.ReadFile(path)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, fmt.Errorf("read config: %w", err)
+        }</span>
+
+        <span class="cov8" title="30">expanded := expandEnvVars(string(data))
+
+        cfg := &amp;Config{}
+        if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil </span><span class="cov1" title="1">{
+                return nil, fmt.Errorf("parse config: %w", err)
+        }</span>
+
+        // Process include patterns
+        <span class="cov8" title="29">for _, pattern := range cfg.Include </span><span class="cov3" title="3">{
+                if !filepath.IsAbs(pattern) </span><span class="cov1" title="1">{
+                        pattern = filepath.Join(baseDir, pattern)
+                }</span>
+                <span class="cov3" title="3">includeDomains, err := loadGlob(pattern)
+                if err != nil </span><span class="cov1" title="1">{
+                        return nil, fmt.Errorf("include %q: %w", pattern, err)
+                }</span>
+                <span class="cov2" title="2">cfg.Domains = append(cfg.Domains, includeDomains...)</span>
+        }
+
+        // Process domains_dir
+        <span class="cov8" title="28">if cfg.DomainsDir != "" </span><span class="cov4" title="5">{
+                dir := cfg.DomainsDir
+                if !filepath.IsAbs(dir) </span><span class="cov2" title="2">{
+                        dir = filepath.Join(baseDir, dir)
+                }</span>
+                <span class="cov4" title="5">dirDomains, err := loadDomainsDir(dir)
+                if err != nil </span><span class="cov1" title="1">{
+                        return nil, fmt.Errorf("domains_dir %q: %w", dir, err)
+                }</span>
+                <span class="cov4" title="4">cfg.Domains = append(cfg.Domains, dirDomains...)</span>
+        }
+
+        // Auto-detect domains.d/ next to config file
+        <span class="cov8" title="27">autoDir := filepath.Join(baseDir, "domains.d")
+        if cfg.DomainsDir == "" </span><span class="cov8" title="23">{
+                if info, err := os.Stat(autoDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov2" title="2">{
+                        dirDomains, err := loadDomainsDir(autoDir)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("auto domains.d: %w", err)
+                        }</span>
+                        <span class="cov2" title="2">cfg.Domains = append(cfg.Domains, dirDomains...)</span>
+                }
+        }
+
+        <span class="cov8" title="27">applyDefaults(cfg)
+
+        if err := validate(cfg); err != nil </span><span class="cov7" title="14">{
+                return nil, fmt.Errorf("validate config: %w", err)
+        }</span>
+
+        <span class="cov7" title="13">return cfg, nil</span>
+}
+
+// loadGlob loads domains from files matching a glob pattern.
+// Each file can contain either:
+//   - A full config with "domains:" list
+//   - A single domain object (no wrapper)
+func loadGlob(pattern string) ([]Domain, error) <span class="cov4" title="5">{
+        matches, err := filepath.Glob(pattern)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, err
+        }</span>
+
+        <span class="cov4" title="4">sort.Strings(matches) // deterministic order
+
+        var all []Domain
+        for _, path := range matches </span><span class="cov3" title="3">{
+                domains, err := loadDomainFile(path)
+                if err != nil </span><span class="cov1" title="1">{
+                        return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+                }</span>
+                <span class="cov2" title="2">all = append(all, domains...)</span>
+        }
+        <span class="cov3" title="3">return all, nil</span>
+}
+
+// loadDomainsDir loads all .yaml/.yml files from a directory.
+func loadDomainsDir(dir string) ([]Domain, error) <span class="cov5" title="7">{
+        entries, err := os.ReadDir(dir)
+        if err != nil </span><span class="cov1" title="1">{
+                if os.IsNotExist(err) </span><span class="cov1" title="1">{
+                        return nil, nil
+                }</span>
+                <span class="cov0" title="0">return nil, err</span>
+        }
+
+        <span class="cov5" title="6">var all []Domain
+        for _, entry := range entries </span><span class="cov6" title="9">{
+                if entry.IsDir() </span><span class="cov1" title="1">{
+                        continue</span>
+                }
+                <span class="cov5" title="8">name := entry.Name()
+                if !strings.HasSuffix(name, ".yaml") &amp;&amp; !strings.HasSuffix(name, ".yml") </span><span class="cov1" title="1">{
+                        continue</span>
+                }
+
+                <span class="cov5" title="7">path := filepath.Join(dir, name)
+                domains, err := loadDomainFile(path)
+                if err != nil </span><span class="cov1" title="1">{
+                        return nil, fmt.Errorf("%s: %w", name, err)
+                }</span>
+                <span class="cov5" title="6">all = append(all, domains...)</span>
+        }
+        <span class="cov4" title="5">return all, nil</span>
+}
+
+// loadDomainFile loads domains from a single YAML file.
+// Supports two formats:
+//
+// Format 1 — Single domain (recommended for domains.d/):
+//
+//        host: example.com
+//        root: /var/www/example
+//        type: static
+//        ssl:
+//          mode: auto
+//
+// Format 2 — Domain list (for include files):
+//
+//        domains:
+//          - host: example.com
+//            ...
+//          - host: other.com
+//            ...
+func loadDomainFile(path string) ([]Domain, error) <span class="cov7" title="15">{
+        data, err := os.ReadFile(path)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, fmt.Errorf("read: %w", err)
+        }</span>
+
+        <span class="cov7" title="14">expanded := expandEnvVars(string(data))
+
+        // Try Format 2 first: { domains: [...] }
+        var wrapper struct {
+                Domains []Domain `yaml:"domains"`
+        }
+        if err := yaml.Unmarshal([]byte(expanded), &amp;wrapper); err == nil &amp;&amp; len(wrapper.Domains) &gt; 0 </span><span class="cov2" title="2">{
+                return wrapper.Domains, nil
+        }</span>
+
+        // Try Format 1: single domain object
+        <span class="cov6" title="12">var domain Domain
+        if err := yaml.Unmarshal([]byte(expanded), &amp;domain); err != nil </span><span class="cov3" title="3">{
+                return nil, fmt.Errorf("parse: %w", err)
+        }</span>
+
+        <span class="cov6" title="9">if domain.Host == "" </span><span class="cov1" title="1">{
+                return nil, nil // empty or invalid file, skip
+        }</span>
+
+        <span class="cov5" title="8">return []Domain{domain}, nil</span>
+}
+
+func expandEnvVars(s string) string <span class="cov10" title="46">{
+        return envPattern.ReplaceAllStringFunc(s, func(match string) string </span><span class="cov4" title="5">{
+                varName := match[2 : len(match)-1]
+
+                if name, fallback, ok := strings.Cut(varName, ":-"); ok </span><span class="cov2" title="2">{
+                        if val, found := os.LookupEnv(name); found </span><span class="cov1" title="1">{
+                                return val
+                        }</span>
+                        <span class="cov1" title="1">return fallback</span>
+                }
+
+                <span class="cov3" title="3">if val, ok := os.LookupEnv(varName); ok </span><span class="cov2" title="2">{
+                        return val
+                }</span>
+                <span class="cov1" title="1">return match</span>
+        })
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package config
+
+import (
+        "fmt"
+        "strconv"
+        "strings"
+        "unicode"
+)
+
+func parseByteSize(s string) (ByteSize, error) <span class="cov7" title="16">{
+        s = strings.TrimSpace(s)
+        if s == "" </span><span class="cov1" title="1">{
+                return 0, fmt.Errorf("empty byte size")
+        }</span>
+
+        // Find where the number ends and unit begins
+        <span class="cov7" title="15">i := 0
+        for i &lt; len(s) &amp;&amp; (s[i] == '.' || unicode.IsDigit(rune(s[i]))) </span><span class="cov10" title="44">{
+                i++
+        }</span>
+
+        <span class="cov7" title="15">numStr := s[:i]
+        unit := strings.TrimSpace(s[i:])
+
+        num, err := strconv.ParseFloat(numStr, 64)
+        if err != nil </span><span class="cov2" title="2">{
+                return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+        }</span>
+
+        <span class="cov7" title="13">switch strings.ToUpper(unit) </span>{
+        case "", "B":<span class="cov4" title="5">
+                return ByteSize(num), nil</span>
+        case "K", "KB":<span class="cov2" title="2">
+                return ByteSize(num * float64(KB)), nil</span>
+        case "M", "MB":<span class="cov2" title="2">
+                return ByteSize(num * float64(MB)), nil</span>
+        case "G", "GB":<span class="cov3" title="3">
+                return ByteSize(num * float64(GB)), nil</span>
+        default:<span class="cov1" title="1">
+                return 0, fmt.Errorf("unknown byte unit %q in %q", unit, s)</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package config
+
+import (
+        "fmt"
+        "strings"
+)
+
+func validate(cfg *Config) error <span class="cov9" title="27">{
+        var errs []string
+
+        // Global validation
+        switch cfg.Global.LogLevel </span>{
+        case "debug", "info", "warn", "error":<span class="cov9" title="26"></span>
+        default:<span class="cov1" title="1">
+                errs = append(errs, fmt.Sprintf("invalid log_level: %q (must be debug, info, warn, error)", cfg.Global.LogLevel))</span>
+        }
+
+        <span class="cov9" title="27">switch cfg.Global.LogFormat </span>{
+        case "json", "text", "clf":<span class="cov9" title="26"></span>
+        default:<span class="cov1" title="1">
+                errs = append(errs, fmt.Sprintf("invalid log_format: %q (must be json, text, clf)", cfg.Global.LogFormat))</span>
+        }
+
+        // Domain validation
+        <span class="cov9" title="27">hosts := make(map[string]bool)
+        for i, d := range cfg.Domains </span><span class="cov10" title="35">{
+                prefix := fmt.Sprintf("domains[%d]", i)
+
+                if d.Host == "" </span><span class="cov1" title="1">{
+                        errs = append(errs, fmt.Sprintf("%s: host is required", prefix))
+                        continue</span>
+                }
+
+                <span class="cov9" title="34">if hosts[d.Host] </span><span class="cov1" title="1">{
+                        errs = append(errs, fmt.Sprintf("%s: duplicate host %q", prefix, d.Host))
+                }</span>
+                <span class="cov9" title="34">hosts[d.Host] = true
+
+                for _, alias := range d.Aliases </span><span class="cov2" title="2">{
+                        if hosts[alias] </span><span class="cov1" title="1">{
+                                errs = append(errs, fmt.Sprintf("%s: duplicate alias %q", prefix, alias))
+                        }</span>
+                        <span class="cov2" title="2">hosts[alias] = true</span>
+                }
+
+                <span class="cov9" title="34">switch d.Type </span>{
+                case "static", "php", "proxy", "redirect":<span class="cov9" title="33"></span>
+                default:<span class="cov1" title="1">
+                        errs = append(errs, fmt.Sprintf("%s: invalid type %q (must be static, php, proxy, redirect)", prefix, d.Type))</span>
+                }
+
+                <span class="cov9" title="34">switch d.SSL.Mode </span>{
+                case "auto", "manual", "off":<span class="cov9" title="33"></span>
+                default:<span class="cov1" title="1">
+                        errs = append(errs, fmt.Sprintf("%s: invalid ssl.mode %q (must be auto, manual, off)", prefix, d.SSL.Mode))</span>
+                }
+
+                <span class="cov9" title="34">if d.SSL.Mode == "manual" </span><span class="cov2" title="2">{
+                        if d.SSL.Cert == "" </span><span class="cov1" title="1">{
+                                errs = append(errs, fmt.Sprintf("%s: ssl.cert required when mode is manual", prefix))
+                        }</span>
+                        <span class="cov2" title="2">if d.SSL.Key == "" </span><span class="cov1" title="1">{
+                                errs = append(errs, fmt.Sprintf("%s: ssl.key required when mode is manual", prefix))
+                        }</span>
+                }
+
+                // Root required for static and php
+                <span class="cov9" title="34">if (d.Type == "static" || d.Type == "php") &amp;&amp; d.Root == "" </span><span class="cov2" title="2">{
+                        errs = append(errs, fmt.Sprintf("%s: root is required for type %q", prefix, d.Type))
+                }</span>
+
+                // Proxy validation
+                <span class="cov9" title="34">if d.Type == "proxy" &amp;&amp; len(d.Proxy.Upstreams) == 0 </span><span class="cov2" title="2">{
+                        errs = append(errs, fmt.Sprintf("%s: proxy.upstreams required for type proxy", prefix))
+                }</span>
+
+                // Redirect validation
+                <span class="cov9" title="34">if d.Type == "redirect" &amp;&amp; d.Redirect.Target == "" </span><span class="cov1" title="1">{
+                        errs = append(errs, fmt.Sprintf("%s: redirect.target required for type redirect", prefix))
+                }</span>
+        }
+
+        <span class="cov9" title="27">if len(errs) &gt; 0 </span><span class="cov7" title="14">{
+                return fmt.Errorf("config validation failed:\n  %s", strings.Join(errs, "\n  "))
+        }</span>
+        <span class="cov7" title="13">return nil</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

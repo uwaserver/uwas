@@ -455,3 +455,213 @@ func TestGoneFlag(t *testing.T) {
 		t.Error("should be gone")
 	}
 }
+
+// --- condition.go: Expand all variables ---
+
+func TestVariableExpandAll(t *testing.T) {
+	vars := &Variables{
+		RequestURI:      "/uri",
+		RequestFilename: "/var/www/file.php",
+		QueryString:     "a=1&b=2",
+		HTTPHost:        "example.com",
+		HTTPReferer:     "https://ref.com/",
+		HTTPUserAgent:   "TestBot/1.0",
+		RemoteAddr:      "192.168.1.1",
+		RequestMethod:   "POST",
+		ServerPort:      "443",
+		HTTPS:           "on",
+		DocumentRoot:    "/var/www",
+		ServerName:      "example.com",
+		TheRequest:      "POST /uri HTTP/1.1",
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"%{REQUEST_URI}", "/uri"},
+		{"%{REQUEST_FILENAME}", "/var/www/file.php"},
+		{"%{QUERY_STRING}", "a=1&b=2"},
+		{"%{HTTP_HOST}", "example.com"},
+		{"%{HTTP_REFERER}", "https://ref.com/"},
+		{"%{HTTP_USER_AGENT}", "TestBot/1.0"},
+		{"%{REMOTE_ADDR}", "192.168.1.1"},
+		{"%{REQUEST_METHOD}", "POST"},
+		{"%{SERVER_PORT}", "443"},
+		{"%{HTTPS}", "on"},
+		{"%{DOCUMENT_ROOT}", "/var/www"},
+		{"%{SERVER_NAME}", "example.com"},
+		{"%{THE_REQUEST}", "POST /uri HTTP/1.1"},
+		// Without %{} wrapper
+		{"REQUEST_URI", "/uri"},
+		// Unknown variable
+		{"%{UNKNOWN_VAR}", ""},
+	}
+
+	for _, tt := range tests {
+		got := vars.Expand(tt.input)
+		if got != tt.want {
+			t.Errorf("Expand(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// --- rule.go: ParseFlags for C, PT, NE, E= ---
+
+func TestParseFlagsAdditional(t *testing.T) {
+	tests := []struct {
+		input string
+		check func(Flags) bool
+		desc  string
+	}{
+		{"C", func(f Flags) bool { return f.Chain }, "Chain"},
+		{"PT", func(f Flags) bool { return f.PassThrough }, "PassThrough"},
+		{"NE", func(f Flags) bool { return f.NoEscape }, "NoEscape"},
+		{"E=VAR:value", func(f Flags) bool { return f.EnvironmentVar == "VAR:value" }, "EnvironmentVar"},
+		{"R=xyz", func(f Flags) bool { return f.Redirect == 302 }, "Redirect invalid code defaults to 302"},
+		{"", func(f Flags) bool { return !f.Last && f.Redirect == 0 }, "Empty string"},
+	}
+
+	for _, tt := range tests {
+		f := ParseFlags(tt.input)
+		if !tt.check(f) {
+			t.Errorf("ParseFlags(%q) failed for %s", tt.input, tt.desc)
+		}
+	}
+}
+
+// --- engine.go: Process with "-" target (no substitution) ---
+
+func TestProcessNoSubstitutionTarget(t *testing.T) {
+	rule, _ := ParseRule("^/api/(.*)$", "-", "L")
+	engine := NewEngine([]*Rule{rule})
+	vars := &Variables{RequestURI: "/api/v1/users"}
+
+	result := engine.Process("/api/v1/users", "", vars)
+	// "-" means no substitution, URI should remain unchanged
+	if result.URI != "/api/v1/users" {
+		t.Errorf("URI = %q, want /api/v1/users (no substitution)", result.URI)
+	}
+	// Modified should be false because the target is "-"
+	if result.Modified {
+		t.Error("Modified should be false for '-' target")
+	}
+}
+
+// --- engine.go: Process with QSA but no query in new URI ---
+
+func TestProcessQSANoQueryInNewURI(t *testing.T) {
+	rule, _ := ParseRule("^/page$", "/view", "QSA,L")
+	engine := NewEngine([]*Rule{rule})
+	vars := &Variables{RequestURI: "/page"}
+
+	result := engine.Process("/page", "lang=en", vars)
+	// New URI has no ?, QSA means keep original query string
+	if result.URI != "/view" {
+		t.Errorf("URI = %q, want /view", result.URI)
+	}
+	if result.Query != "lang=en" {
+		t.Errorf("Query = %q, want lang=en (preserved by QSA)", result.Query)
+	}
+}
+
+// --- engine.go: Process redirect with query string ---
+
+func TestProcessRedirectWithQuery(t *testing.T) {
+	rule, _ := ParseRule("^/old$", "/new?param=1", "R=301")
+	engine := NewEngine([]*Rule{rule})
+	vars := &Variables{RequestURI: "/old"}
+
+	result := engine.Process("/old", "existing=yes", vars)
+	if !result.Redirect {
+		t.Fatal("should be redirect")
+	}
+	if result.StatusCode != 301 {
+		t.Errorf("status = %d, want 301", result.StatusCode)
+	}
+	// The redirect URI should include the new query parameter
+	if !strings.Contains(result.URI, "/new") {
+		t.Errorf("URI = %q, should contain /new", result.URI)
+	}
+}
+
+// --- engine.go: ConvertConfigRewrites with is_file and is_dir conditions ---
+
+func TestConvertConfigRewritesIsFileIsDir(t *testing.T) {
+	rewrites := []ConfigRewrite{
+		{
+			Match:      ".*",
+			To:         "/handler",
+			Conditions: []string{"is_file", "is_dir"},
+		},
+	}
+	rules := ConvertConfigRewrites(rewrites)
+	if len(rules) != 1 {
+		t.Fatalf("got %d rules, want 1", len(rules))
+	}
+	if len(rules[0].Conditions) != 2 {
+		t.Errorf("conditions = %d, want 2", len(rules[0].Conditions))
+	}
+}
+
+// --- engine.go: ConvertConfigRewrites with chain flag ---
+
+func TestConvertConfigRewritesWithChain(t *testing.T) {
+	rewrites := []ConfigRewrite{
+		{
+			Match: "^/step1$",
+			To:    "/step2",
+			Flags: []string{"C"},
+		},
+		{
+			Match: "^/step2$",
+			To:    "/final",
+			Flags: []string{"L"},
+		},
+	}
+	rules := ConvertConfigRewrites(rewrites)
+	if len(rules) != 2 {
+		t.Fatalf("got %d rules, want 2", len(rules))
+	}
+	// First rule has Chain flag, so Last should NOT be forced
+	if rules[0].Flags.Last {
+		t.Error("rule[0] with Chain should not have Last forced")
+	}
+}
+
+// --- engine.go: evalConditions with OR group where second matches ---
+
+func TestEvalConditionsOrSecondMatches(t *testing.T) {
+	cond1, _ := ParseCondition("%{REQUEST_METHOD}", "^DELETE$", "[OR]")
+	cond2, _ := ParseCondition("%{REQUEST_METHOD}", "^PUT$", "")
+
+	rule, _ := ParseRule(".*", "/write-handler", "L")
+	rule.Conditions = []Condition{*cond1, *cond2}
+
+	engine := NewEngine([]*Rule{rule})
+
+	// PUT should match via second condition (after first OR fails)
+	vars := &Variables{RequestMethod: "PUT", RequestURI: "/resource"}
+	result := engine.Process("/resource", "", vars)
+	if result.URI != "/write-handler" {
+		t.Errorf("URI = %q, want /write-handler", result.URI)
+	}
+}
+
+// --- engine.go: chain with conditions not matching ---
+
+func TestChainConditionsMismatch(t *testing.T) {
+	// Rule with condition that doesn't match, and chain flag
+	cond, _ := ParseCondition("%{HTTP_HOST}", "^never\\.match$", "")
+	rule0, _ := ParseRule(".*", "/a", "C")
+	rule0.Conditions = []Condition{*cond}
+	rule1, _ := ParseRule(".*", "/b", "L") // chained, should be skipped
+	rule2, _ := ParseRule(".*", "/fallback", "L")
+
+	engine := NewEngine([]*Rule{rule0, rule1, rule2})
+	vars := &Variables{HTTPHost: "example.com", RequestURI: "/test"}
+	result := engine.Process("/test", "", vars)
+	if result.URI != "/fallback" {
+		t.Errorf("URI = %q, want /fallback", result.URI)
+	}
+}

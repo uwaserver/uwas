@@ -151,3 +151,57 @@ func TestCachePurgeWithEngine(t *testing.T) {
 		t.Errorf("status = %v, want 'all purged'", data2["status"])
 	}
 }
+
+// --- cache_purge with nil cache ---
+
+func TestCachePurgeWithoutEngine(t *testing.T) {
+	s := testMCPServer()
+	// cache is nil by default
+
+	// Purge by tag should indicate cache not enabled
+	result, err := s.CallTool("cache_purge", json.RawMessage(`{"tag":"blog"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := result.(map[string]string)
+	if data["status"] != "cache not enabled" {
+		t.Errorf("status = %q, want 'cache not enabled'", data["status"])
+	}
+
+	// Purge all with nil cache
+	result2, err := s.CallTool("cache_purge", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data2 := result2.(map[string]string)
+	if data2["status"] != "cache not enabled" {
+		t.Errorf("status = %q, want 'cache not enabled'", data2["status"])
+	}
+}
+
+// --- CallTool domain_list with multiple domains ---
+
+func TestCallToolDomainListMultiple(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{WorkerCount: "auto", MaxConnections: 65536, LogLevel: "info"},
+		Domains: []config.Domain{
+			{Host: "a.com", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
+			{Host: "b.com", Type: "php", SSL: config.SSLConfig{Mode: "off"}},
+			{Host: "c.com", Type: "proxy", SSL: config.SSLConfig{Mode: "manual"}},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	result, err := s.CallTool("domain_list", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := json.Marshal(result)
+	var domains []map[string]string
+	json.Unmarshal(data, &domains)
+
+	if len(domains) != 3 {
+		t.Errorf("domains = %d, want 3", len(domains))
+	}
+}

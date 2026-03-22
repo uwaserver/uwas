@@ -226,3 +226,428 @@ func TestConcurrentAlerts(t *testing.T) {
 		t.Errorf("expected 50 alerts, got %d", len(alerts))
 	}
 }
+
+func TestWebhookDeliveryFailure(t *testing.T) {
+	// Server that returns 500 -- should not crash, just log
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer ts.Close()
+
+	a := New(true, ts.URL, testLogger())
+	a.DomainDown("fail-webhook.com")
+
+	// Wait for async webhook
+	time.Sleep(200 * time.Millisecond)
+
+	// Alert should still be recorded in history
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Host != "fail-webhook.com" {
+		t.Errorf("host = %q, want fail-webhook.com", alerts[0].Host)
+	}
+}
+
+func TestWebhookDeliveryConnectionRefused(t *testing.T) {
+	// Use an unreachable URL
+	a := New(true, "http://127.0.0.1:1/webhook", testLogger())
+	a.DomainDown("conn-refused.com")
+
+	// Wait for async webhook to fail
+	time.Sleep(200 * time.Millisecond)
+
+	// Alert should still be in history
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+}
+
+func TestEmptyWebhookURL(t *testing.T) {
+	// With empty webhook URL, no HTTP call should be made (no crash)
+	a := New(true, "", testLogger())
+	a.Alert(Alert{
+		Level:   "info",
+		Type:    "rate_limit",
+		Host:    "test.com",
+		Message: "no webhook",
+	})
+
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+}
+
+func TestAlertHistoryRingBufferWrap(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	// Fill exactly maxAlertHistory alerts
+	for i := 0; i < maxAlertHistory; i++ {
+		a.Alert(Alert{
+			Level:   "info",
+			Type:    "rate_limit",
+			Host:    "wrap.com",
+			Message: "msg " + itoa(i),
+		})
+	}
+
+	alerts := a.Alerts()
+	if len(alerts) != maxAlertHistory {
+		t.Fatalf("expected %d alerts, got %d", maxAlertHistory, len(alerts))
+	}
+
+	// Newest should be last one added
+	if alerts[0].Message != "msg "+itoa(maxAlertHistory-1) {
+		t.Errorf("most recent = %q, want %q", alerts[0].Message, "msg "+itoa(maxAlertHistory-1))
+	}
+
+	// Oldest should be first one added
+	if alerts[maxAlertHistory-1].Message != "msg 0" {
+		t.Errorf("oldest = %q, want %q", alerts[maxAlertHistory-1].Message, "msg 0")
+	}
+
+	// Now add one more to wrap
+	a.Alert(Alert{
+		Level:   "info",
+		Type:    "rate_limit",
+		Host:    "wrap.com",
+		Message: "msg " + itoa(maxAlertHistory),
+	})
+
+	alerts = a.Alerts()
+	if len(alerts) != maxAlertHistory {
+		t.Fatalf("expected %d alerts after wrap, got %d", maxAlertHistory, len(alerts))
+	}
+
+	// Newest should be the one we just added
+	if alerts[0].Message != "msg "+itoa(maxAlertHistory) {
+		t.Errorf("newest after wrap = %q", alerts[0].Message)
+	}
+
+	// The oldest (msg 0) should have been overwritten, oldest now is msg 1
+	if alerts[maxAlertHistory-1].Message != "msg 1" {
+		t.Errorf("oldest after wrap = %q, want 'msg 1'", alerts[maxAlertHistory-1].Message)
+	}
+}
+
+func TestConcurrentAlertAndRetrieve(t *testing.T) {
+	a := New(true, "", testLogger())
+	var wg sync.WaitGroup
+
+	// Concurrent writes
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			a.Alert(Alert{
+				Level:   "info",
+				Type:    "rate_limit",
+				Host:    "concurrent.com",
+				Message: "msg " + itoa(n),
+			})
+		}(i)
+	}
+
+	// Concurrent reads while writes happen
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = a.Alerts()
+		}()
+	}
+
+	wg.Wait()
+
+	alerts := a.Alerts()
+	if len(alerts) != maxAlertHistory {
+		t.Errorf("expected %d alerts, got %d", maxAlertHistory, len(alerts))
+	}
+}
+
+func TestAlertTimestampAutoSet(t *testing.T) {
+	a := New(true, "", testLogger())
+	before := time.Now()
+	a.Alert(Alert{
+		Level:   "info",
+		Type:    "rate_limit",
+		Message: "auto time",
+	})
+	after := time.Now()
+
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Time.Before(before) || alerts[0].Time.After(after) {
+		t.Errorf("auto-set time %v not between %v and %v", alerts[0].Time, before, after)
+	}
+}
+
+func TestAlertTimestampExplicit(t *testing.T) {
+	a := New(true, "", testLogger())
+	explicit := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	a.Alert(Alert{
+		Time:    explicit,
+		Level:   "info",
+		Type:    "rate_limit",
+		Message: "explicit time",
+	})
+
+	alerts := a.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if !alerts[0].Time.Equal(explicit) {
+		t.Errorf("time = %v, want %v", alerts[0].Time, explicit)
+	}
+}
+
+func TestRecordRequestDisabled(t *testing.T) {
+	a := New(false, "", testLogger())
+
+	for i := 0; i < 20; i++ {
+		a.RecordRequest(true)
+	}
+
+	alerts := a.Alerts()
+	if len(alerts) != 0 {
+		t.Errorf("expected 0 alerts when disabled, got %d", len(alerts))
+	}
+}
+
+func TestRecordRateLimitDisabled(t *testing.T) {
+	a := New(false, "", testLogger())
+
+	for i := 0; i < 200; i++ {
+		a.RecordRateLimit()
+	}
+
+	alerts := a.Alerts()
+	if len(alerts) != 0 {
+		t.Errorf("expected 0 alerts when disabled, got %d", len(alerts))
+	}
+}
+
+func TestItoaNegative(t *testing.T) {
+	if got := itoa(-5); got != "-5" {
+		t.Errorf("itoa(-5) = %q, want %q", got, "-5")
+	}
+	if got := itoa(-100); got != "-100" {
+		t.Errorf("itoa(-100) = %q, want %q", got, "-100")
+	}
+}
+
+func TestFtoaSmallValues(t *testing.T) {
+	if got := ftoa(0.0); got != "0.0" {
+		t.Errorf("ftoa(0.0) = %q, want %q", got, "0.0")
+	}
+	if got := ftoa(1.5); got != "1.5" {
+		t.Errorf("ftoa(1.5) = %q, want %q", got, "1.5")
+	}
+	if got := ftoa(99.9); got != "99.9" {
+		t.Errorf("ftoa(99.9) = %q, want %q", got, "99.9")
+	}
+}
+
+func TestWebhookReceivesCorrectPayload(t *testing.T) {
+	var received Alert
+	var mu sync.Mutex
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		// Verify content type
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", ct)
+		}
+		json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	a := New(true, ts.URL, testLogger())
+	a.CertExpiry("webhook-cert.com", 3)
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if received.Type != "cert_expiry" {
+		t.Errorf("type = %q, want cert_expiry", received.Type)
+	}
+	if received.Level != "warning" {
+		t.Errorf("level = %q, want warning", received.Level)
+	}
+	if received.Host != "webhook-cert.com" {
+		t.Errorf("host = %q, want webhook-cert.com", received.Host)
+	}
+}
+
+func TestErrorSpikeBelowThreshold(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	// Record 9 ok, 1 error = 10% exactly, should not trigger (needs > 10%)
+	for i := 0; i < 9; i++ {
+		a.RecordRequest(false)
+	}
+	a.RecordRequest(true)
+
+	alerts := a.Alerts()
+	for _, alert := range alerts {
+		if alert.Type == "error_spike" {
+			t.Error("should not trigger error_spike at exactly 10%")
+		}
+	}
+}
+
+func TestErrorSpikeTooFewSamples(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	// Only 5 errors with no OKs = 100% error rate, but < 10 samples
+	for i := 0; i < 5; i++ {
+		a.RecordRequest(true)
+	}
+
+	alerts := a.Alerts()
+	for _, alert := range alerts {
+		if alert.Type == "error_spike" {
+			t.Error("should not trigger error_spike with < 10 samples")
+		}
+	}
+}
+
+func TestErrorSpikeDedup(t *testing.T) {
+	// After an error_spike alert fires, a second one should not fire within 1 minute
+	a := New(true, "", testLogger())
+
+	// Trigger error spike: 5 OK + 10 errors (total 15, error rate ~66%)
+	for i := 0; i < 5; i++ {
+		a.RecordRequest(false)
+	}
+	for i := 0; i < 10; i++ {
+		a.RecordRequest(true)
+	}
+
+	// Count error_spike alerts
+	alerts := a.Alerts()
+	spikeCount := 0
+	for _, alert := range alerts {
+		if alert.Type == "error_spike" {
+			spikeCount++
+		}
+	}
+	if spikeCount != 1 {
+		t.Fatalf("expected 1 error_spike alert, got %d", spikeCount)
+	}
+
+	// Now add more errors -- should NOT fire another alert within the same minute
+	for i := 0; i < 10; i++ {
+		a.RecordRequest(true)
+	}
+
+	alerts = a.Alerts()
+	spikeCount = 0
+	for _, alert := range alerts {
+		if alert.Type == "error_spike" {
+			spikeCount++
+		}
+	}
+	if spikeCount != 1 {
+		t.Errorf("expected still 1 error_spike (dedup), got %d", spikeCount)
+	}
+}
+
+func TestRateLimitDedup(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	// Trigger rate limit alert: >100 in 1 minute
+	for i := 0; i < 105; i++ {
+		a.RecordRateLimit()
+	}
+
+	alerts := a.Alerts()
+	rlCount := 0
+	for _, alert := range alerts {
+		if alert.Type == "rate_limit" {
+			rlCount++
+		}
+	}
+	if rlCount != 1 {
+		t.Fatalf("expected 1 rate_limit alert, got %d", rlCount)
+	}
+
+	// Trigger more -- should NOT fire again within same minute
+	for i := 0; i < 50; i++ {
+		a.RecordRateLimit()
+	}
+
+	alerts = a.Alerts()
+	rlCount = 0
+	for _, alert := range alerts {
+		if alert.Type == "rate_limit" {
+			rlCount++
+		}
+	}
+	if rlCount != 1 {
+		t.Errorf("expected still 1 rate_limit (dedup), got %d", rlCount)
+	}
+}
+
+func TestFtoaNegativeFraction(t *testing.T) {
+	// ftoa with negative value triggers frac < 0 branch
+	got := ftoa(-3.7)
+	if got != "-3.7" {
+		t.Errorf("ftoa(-3.7) = %q, want %q", got, "-3.7")
+	}
+}
+
+func TestRecordRequestPrunesOldEntries(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	// Manually insert old entries
+	a.errorWindowMu.Lock()
+	oldTime := time.Now().Add(-10 * time.Minute)
+	for i := 0; i < 20; i++ {
+		a.errorWindow = append(a.errorWindow, errorEntry{time: oldTime, isErr: true})
+	}
+	a.errorWindowMu.Unlock()
+
+	// Now record a new request -- should prune all old entries
+	a.RecordRequest(false)
+
+	a.errorWindowMu.Lock()
+	count := len(a.errorWindow)
+	a.errorWindowMu.Unlock()
+
+	// Should only have the 1 new entry (all old ones pruned)
+	if count != 1 {
+		t.Errorf("after pruning, error window has %d entries, want 1", count)
+	}
+}
+
+func TestRecordRateLimitPrunesOldEntries(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	// Manually insert old entries
+	a.rateLimitWindowMu.Lock()
+	oldTime := time.Now().Add(-5 * time.Minute)
+	for i := 0; i < 200; i++ {
+		a.rateLimitWindow = append(a.rateLimitWindow, oldTime)
+	}
+	a.rateLimitWindowMu.Unlock()
+
+	// Record a new rate limit -- should prune all old entries
+	a.RecordRateLimit()
+
+	a.rateLimitWindowMu.Lock()
+	count := len(a.rateLimitWindow)
+	a.rateLimitWindowMu.Unlock()
+
+	// Should only have the 1 new entry
+	if count != 1 {
+		t.Errorf("after pruning, rate limit window has %d entries, want 1", count)
+	}
+}
