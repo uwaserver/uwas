@@ -310,3 +310,264 @@ func loadStringConfig(content string) (*Config, error) {
 	defer os.Remove(path)
 	return Load(path)
 }
+
+// --- Include and DomainsDir tests ---
+
+func TestDomainsDir(t *testing.T) {
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	// Single domain file (Format 1)
+	os.WriteFile(filepath.Join(domainsDir, "blog.yaml"), []byte(`
+host: blog.example.com
+root: /var/www/blog
+type: php
+ssl:
+  mode: auto
+`), 0644)
+
+	// Another domain
+	os.WriteFile(filepath.Join(domainsDir, "api.yaml"), []byte(`
+host: api.example.com
+type: proxy
+ssl:
+  mode: auto
+proxy:
+  upstreams:
+    - address: "http://127.0.0.1:3000"
+`), 0644)
+
+	// Main config with domains_dir
+	mainConfig := fmt.Sprintf(`
+global:
+  log_level: info
+domains_dir: "%s"
+domains:
+  - host: example.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`, filepath.ToSlash(domainsDir))
+
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Domains) != 3 {
+		t.Fatalf("domains = %d, want 3 (1 inline + 2 from domains.d)", len(cfg.Domains))
+	}
+
+	hosts := map[string]bool{}
+	for _, d := range cfg.Domains {
+		hosts[d.Host] = true
+	}
+	if !hosts["example.com"] || !hosts["blog.example.com"] || !hosts["api.example.com"] {
+		t.Errorf("missing domains: %v", hosts)
+	}
+}
+
+func TestAutoDomainsDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create domains.d/ next to config file (auto-detected)
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	os.WriteFile(filepath.Join(domainsDir, "site.yaml"), []byte(`
+host: auto.example.com
+root: /var/www/auto
+type: static
+ssl:
+  mode: off
+`), 0644)
+
+	mainConfig := `
+global:
+  log_level: info
+domains:
+  - host: main.example.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Domains) != 2 {
+		t.Fatalf("domains = %d, want 2", len(cfg.Domains))
+	}
+}
+
+func TestIncludeGlob(t *testing.T) {
+	dir := t.TempDir()
+	includeDir := filepath.Join(dir, "includes")
+	os.MkdirAll(includeDir, 0755)
+
+	// Include file with domain list (Format 2)
+	os.WriteFile(filepath.Join(includeDir, "extra.yaml"), []byte(`
+domains:
+  - host: extra1.com
+    root: /var/www/extra1
+    type: static
+    ssl:
+      mode: off
+  - host: extra2.com
+    root: /var/www/extra2
+    type: static
+    ssl:
+      mode: off
+`), 0644)
+
+	mainConfig := fmt.Sprintf(`
+global:
+  log_level: info
+include:
+  - "%s"
+domains:
+  - host: main.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`, filepath.ToSlash(filepath.Join(includeDir, "*.yaml")))
+
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Domains) != 3 {
+		t.Fatalf("domains = %d, want 3 (1 inline + 2 from include)", len(cfg.Domains))
+	}
+}
+
+func TestDomainFileSingleFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "single.yaml")
+	os.WriteFile(path, []byte(`
+host: single.com
+root: /var/www/single
+type: static
+ssl:
+  mode: off
+`), 0644)
+
+	domains, err := loadDomainFile(path)
+	if err != nil {
+		t.Fatalf("loadDomainFile: %v", err)
+	}
+	if len(domains) != 1 {
+		t.Fatalf("domains = %d, want 1", len(domains))
+	}
+	if domains[0].Host != "single.com" {
+		t.Errorf("host = %q", domains[0].Host)
+	}
+}
+
+func TestDomainFileListFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "list.yaml")
+	os.WriteFile(path, []byte(`
+domains:
+  - host: a.com
+    root: /a
+    type: static
+    ssl:
+      mode: off
+  - host: b.com
+    root: /b
+    type: static
+    ssl:
+      mode: off
+`), 0644)
+
+	domains, err := loadDomainFile(path)
+	if err != nil {
+		t.Fatalf("loadDomainFile: %v", err)
+	}
+	if len(domains) != 2 {
+		t.Fatalf("domains = %d, want 2", len(domains))
+	}
+}
+
+func TestEmptyDomainFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.yaml")
+	os.WriteFile(path, []byte("# empty file\n"), 0644)
+
+	domains, err := loadDomainFile(path)
+	if err != nil {
+		t.Fatalf("loadDomainFile: %v", err)
+	}
+	if len(domains) != 0 {
+		t.Errorf("domains = %d, want 0 for empty file", len(domains))
+	}
+}
+
+func TestNonExistentDomainsDir(t *testing.T) {
+	dir := t.TempDir()
+	mainConfig := `
+global:
+  log_level: info
+domains_dir: "/nonexistent/path"
+`
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	// Should not error — nonexistent dir is silently skipped
+	_, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("should not error for nonexistent domains_dir: %v", err)
+	}
+}
+
+func TestEnvVarInDomainFile(t *testing.T) {
+	os.Setenv("TEST_DOMAIN_HOST", "env.example.com")
+	defer os.Unsetenv("TEST_DOMAIN_HOST")
+
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	os.WriteFile(filepath.Join(domainsDir, "env.yaml"), []byte(`
+host: "${TEST_DOMAIN_HOST}"
+root: /var/www/env
+type: static
+ssl:
+  mode: off
+`), 0644)
+
+	mainConfig := `
+global:
+  log_level: info
+`
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Domains) != 1 {
+		t.Fatalf("domains = %d, want 1", len(cfg.Domains))
+	}
+	if cfg.Domains[0].Host != "env.example.com" {
+		t.Errorf("host = %q, want env.example.com", cfg.Domains[0].Host)
+	}
+}

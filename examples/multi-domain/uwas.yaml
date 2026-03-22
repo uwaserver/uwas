@@ -1,0 +1,48 @@
+# UWAS Multi-Domain Configuration
+# Each domain has its own YAML file in domains.d/
+#
+# Directory structure:
+#   uwas.yaml              ← this file (global settings only)
+#   domains.d/
+#     ├── example.com.yaml      ← static site
+#     ├── blog.example.com.yaml ← WordPress
+#     └── api.example.com.yaml  ← reverse proxy
+
+global:
+  worker_count: auto
+  http_listen: ":80"
+  https_listen: ":443"
+  max_connections: 65536
+  log_level: info
+  log_format: json
+
+  timeouts:
+    read: 30s
+    write: 60s
+    idle: 120s
+    shutdown_grace: 30s
+
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+
+  admin:
+    enabled: true
+    listen: "127.0.0.1:9443"
+    api_key: "${UWAS_ADMIN_KEY}"
+
+  acme:
+    email: "admin@example.com"
+    storage: /var/lib/uwas/certs
+
+  cache:
+    enabled: true
+    memory_limit: 512MB
+    disk_path: /var/cache/uwas
+    disk_limit: 5GB
+    default_ttl: 3600
+    grace_ttl: 86400
+
+# Domains loaded automatically from domains.d/*.yaml
+# No need to list them here!

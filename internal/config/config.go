@@ -3,8 +3,10 @@ package config
 import "time"
 
 type Config struct {
-	Global  GlobalConfig  `yaml:"global"`
-	Domains []Domain      `yaml:"domains"`
+	Global    GlobalConfig `yaml:"global"`
+	Domains   []Domain     `yaml:"domains"`
+	Include   []string     `yaml:"include"`    // glob patterns: ["domains.d/*.yaml"]
+	DomainsDir string     `yaml:"domains_dir"` // directory of per-domain YAML files
 }
 
 type GlobalConfig struct {
