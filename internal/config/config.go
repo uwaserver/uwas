@@ -23,6 +23,7 @@ type GlobalConfig struct {
 	MCP            MCPConfig      `yaml:"mcp"`
 	ACME           ACMEConfig     `yaml:"acme"`
 	Cache          CacheConfig    `yaml:"cache"`
+	Alerting       AlertingConfig `yaml:"alerting"`
 }
 
 type TimeoutConfig struct {
@@ -62,6 +63,17 @@ type CacheConfig struct {
 	GraceTTL              int      `yaml:"grace_ttl"`
 	StaleWhileRevalidate  bool     `yaml:"stale_while_revalidate"`
 	PurgeKey              string   `yaml:"purge_key"`
+}
+
+type AlertingConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+type MirrorConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Backend string `yaml:"backend"` // mirror backend URL
+	Percent int    `yaml:"percent"` // percentage of requests to mirror (0-100)
 }
 
 type Domain struct {
@@ -199,6 +211,7 @@ type ProxyConfig struct {
 	Timeouts       ProxyTimeouts      `yaml:"timeouts"`
 	MaxRetries     int                `yaml:"max_retries"`
 	Canary         CanaryConfig       `yaml:"canary"`
+	Mirror         MirrorConfig       `yaml:"mirror"`
 }
 
 type CanaryConfig struct {

@@ -5,6 +5,109 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-03-22
+
+### Highlights
+
+UWAS v1.0.0 is a feature-complete, production-ready web server that replaces
+Apache + Nginx + Varnish + Caddy with a single 13MB Go binary.
+
+**818 tests, 88% coverage, 0 failures.** WordPress 6.9.4 verified.
+
+### Server
+
+- Auto HTTPS with Let's Encrypt ACME client
+- Built-in L1 memory + L2 disk cache with grace mode
+- PHP-FPM via FastCGI with .htaccess support
+- Reverse proxy with 5 load balancing algorithms
+- Circuit breaker + health checks + retry logic
+- A/B testing / canary routing with cookie stickiness
+- Brotli + gzip on-the-fly compression
+- URL rewrite engine (Apache mod_rewrite compatible)
+- WAF (SQL injection, XSS, path traversal detection)
+- Rate limiting (token bucket, per-IP)
+- IP whitelist/blacklist (CIDR)
+- Basic authentication per-path
+- Security headers (HSTS, CSP, X-Frame, CORS)
+- Request/response header transforms with variable substitution
+- Automatic image optimization (WebP/AVIF serving)
+- SPA mode + try_files + directory listing
+- Custom error pages per domain
+- ETag + 304 Not Modified + Range requests
+- Pre-compressed file serving (.br, .gz)
+- HTTP/2 via Go stdlib
+- SIGHUP config reload (zero-downtime)
+- Configurable listen addresses
+- Trusted proxies for X-Forwarded-For
+- Log rotation (size-based + SIGHUP reopen)
+- Systemd service file
+- Alerting (webhook + internal ring buffer)
+- Uptime monitoring per domain
+- Request mirroring (shadow traffic)
+
+### Dashboard (React 19 + Tailwind 4.1)
+
+- 11 pages: Login, Dashboard, Domains, Topology, Cache, Logs,
+  Settings, Metrics, Analytics, Config Editor, Certificates
+- Domain templates: WordPress, Static, Proxy, Redirect (one-click setup)
+- Real-time stats via Server-Sent Events
+- Cache management: charts, per-domain view, tag/domain/all purge
+- YAML config editor with syntax validation
+- SSL certificate timeline with expiry tracking
+- Per-domain analytics with traffic charts
+- Topology graph with React Flow
+
+### CLI (15 commands)
+
+- `serve`, `version`, `help`
+- `config validate/test`
+- `domain list/add/remove`
+- `cache stats/purge`
+- `status`, `reload`
+- `migrate nginx/apache <file>`
+- `backup`, `restore`
+
+### API (22+ endpoints)
+
+- Health, stats, config, domains CRUD, domain detail
+- Cache stats/purge, logs, metrics, SSE live stats
+- Certificates, analytics, monitor
+- Config raw read/write, domain raw read/write
+- Config export (YAML download)
+- Alerts
+
+### Configuration
+
+- Single YAML file or split per-domain files (domains.d/)
+- Include patterns (glob)
+- Environment variable expansion with fallback
+- Hot reload via SIGHUP or API
+
+### Security (28 fixes from code review)
+
+- Shared http.Transport (no connection leak)
+- Config race mutex, admin CRUD mutex
+- RealIP spoofing prevention
+- On-demand TLS rate limiting
+- Cache key collision fix (full canonical keys)
+- Goroutine leak prevention (context-based)
+- Request body limits, secret stripping
+- WAF URL-decode bypass fix
+- Open redirect fix, path traversal validation
+
+### Docker
+
+- Multi-stage Alpine build: 28.5MB image
+- docker-compose: UWAS + PHP-FPM + MariaDB
+- One-command VPS setup script
+
+### Performance (AMD Ryzen 9 9950X3D)
+
+- Static file: 7,000 req/sec
+- Cache L1 hit: 75,000,000 ops/sec
+- VHost routing: 70,000,000 ops/sec
+- Middleware chain: 308,000 req/sec
+
 ## [0.3.0] - 2026-03-22
 
 ### Security

@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
+	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -55,6 +56,7 @@ type Server struct {
 	httpSrv        *http.Server
 
 	monitor *monitor.Monitor
+	alerter *alerting.Alerter
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -95,6 +97,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/config/domains/{host}/raw", s.handleDomainRawGet)
 	s.mux.HandleFunc("PUT /api/v1/config/domains/{host}/raw", s.handleDomainRawPut)
 	s.mux.HandleFunc("GET /api/v1/monitor", s.handleMonitor)
+	s.mux.HandleFunc("GET /api/v1/alerts", s.handleAlerts)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -258,6 +261,24 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, s.monitor.Results())
 }
+
+// SetAlerter sets the alerting engine for the /api/v1/alerts endpoint.
+func (s *Server) SetAlerter(a *alerting.Alerter) { s.alerter = a }
+
+func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
+	if s.alerter == nil {
+		jsonError(w, "alerting not enabled", http.StatusNotImplemented)
+		return
+	}
+	alerts := s.alerter.Alerts()
+	if alerts == nil {
+		alerts = []alerting.Alert{}
+	}
+	jsonResponse(w, alerts)
+}
+
+// HTTPServer returns the underlying http.Server for shutdown during upgrades.
+func (s *Server) HTTPServer() *http.Server { return s.httpSrv }
 
 // SetReloadFunc sets the callback for config reload.
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
