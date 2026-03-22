@@ -31,6 +31,9 @@ func applyDefaults(cfg *Config) {
 	if g.Timeouts.Read.Duration == 0 {
 		g.Timeouts.Read.Duration = 30 * time.Second
 	}
+	if g.Timeouts.ReadHeader.Duration == 0 {
+		g.Timeouts.ReadHeader.Duration = 10 * time.Second
+	}
 	if g.Timeouts.Write.Duration == 0 {
 		g.Timeouts.Write.Duration = 60 * time.Second
 	}
@@ -39,6 +42,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if g.Timeouts.ShutdownGrace.Duration == 0 {
 		g.Timeouts.ShutdownGrace.Duration = 30 * time.Second
+	}
+	if g.Timeouts.MaxHeaderBytes == 0 {
+		g.Timeouts.MaxHeaderBytes = 1 << 20 // 1MB
 	}
 
 	// Admin

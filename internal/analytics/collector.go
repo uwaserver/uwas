@@ -3,6 +3,7 @@ package analytics
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,8 @@ type DomainStats struct {
 	StatusCodes map[int]int64    `json:"status_codes"`
 	Paths       map[string]int64 `json:"paths"`
 	HourlyViews [24]int64        `json:"hourly_views"`
+	Referrers   map[string]int64 `json:"referrers"`
+	UserAgents  map[string]int64 `json:"user_agents"`  // browser family → count
 
 	// Rolling window: minute-level buckets for last 7 days.
 	// Each bucket stores the count of views for that minute.
@@ -48,6 +51,11 @@ func New() *Collector {
 
 // Record records a request for analytics tracking.
 func (c *Collector) Record(host, path, remoteAddr string, statusCode int, bytesSent int64) {
+	c.RecordFull(host, path, remoteAddr, "", "", statusCode, bytesSent)
+}
+
+// RecordFull records a request with full context including referrer and user agent.
+func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent string, statusCode int, bytesSent int64) {
 	stats := c.getOrCreate(host)
 	ip := extractIP(remoteAddr)
 	now := time.Now()
@@ -75,6 +83,26 @@ func (c *Collector) Record(host, path, remoteAddr string, statusCode int, bytesS
 	stats.Paths[path]++
 
 	stats.HourlyViews[hour]++
+
+	// Track referrer
+	if referrer != "" {
+		if stats.Referrers == nil {
+			stats.Referrers = make(map[string]int64)
+		}
+		ref := extractRefDomain(referrer)
+		if ref != "" && ref != host {
+			stats.Referrers[ref]++
+		}
+	}
+
+	// Track user agent (browser family)
+	if userAgent != "" {
+		if stats.UserAgents == nil {
+			stats.UserAgents = make(map[string]int64)
+		}
+		browser := classifyUA(userAgent)
+		stats.UserAgents[browser]++
+	}
 
 	// Rolling minute bucket
 	c.advanceBuckets(stats, now)
@@ -117,9 +145,62 @@ func (c *Collector) getOrCreate(host string) *DomainStats {
 		UniqueIPs:   make(map[string]bool),
 		StatusCodes: make(map[int]int64),
 		Paths:       make(map[string]int64),
+		Referrers:   make(map[string]int64),
+		UserAgents:  make(map[string]int64),
 	}
 	actual, _ := c.domains.LoadOrStore(host, stats)
 	return actual.(*DomainStats)
+}
+
+// extractRefDomain extracts the hostname from a Referer URL.
+func extractRefDomain(ref string) string {
+	// Fast path: skip protocol prefix
+	s := ref
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	// Take host part (before first / or ?)
+	if i := strings.IndexAny(s, "/?"); i >= 0 {
+		s = s[:i]
+	}
+	// Strip port
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		return h
+	}
+	return s
+}
+
+// classifyUA classifies a user agent string into a browser family.
+func classifyUA(ua string) string {
+	lower := strings.ToLower(ua)
+	switch {
+	case strings.Contains(lower, "googlebot"):
+		return "Googlebot"
+	case strings.Contains(lower, "bingbot"):
+		return "Bingbot"
+	case strings.Contains(lower, "bot") || strings.Contains(lower, "crawler") || strings.Contains(lower, "spider"):
+		return "Bot"
+	case strings.Contains(lower, "edg/"):
+		return "Edge"
+	case strings.Contains(lower, "opr/") || strings.Contains(lower, "opera"):
+		return "Opera"
+	case strings.Contains(lower, "chrome") && !strings.Contains(lower, "edg/"):
+		return "Chrome"
+	case strings.Contains(lower, "safari") && !strings.Contains(lower, "chrome"):
+		return "Safari"
+	case strings.Contains(lower, "firefox"):
+		return "Firefox"
+	case strings.Contains(lower, "curl"):
+		return "curl"
+	case strings.Contains(lower, "wget"):
+		return "wget"
+	case strings.Contains(lower, "python"):
+		return "Python"
+	case strings.Contains(lower, "go-http"):
+		return "Go"
+	default:
+		return "Other"
+	}
 }
 
 // Snapshot holds a point-in-time analytics snapshot for a domain.
@@ -134,6 +215,8 @@ type Snapshot struct {
 	ViewsLastHour int64           `json:"views_last_hour"`
 	ViewsLast24h  int64           `json:"views_last_24h"`
 	ViewsLast7d   int64           `json:"views_last_7d"`
+	TopReferrers map[string]int64 `json:"top_referrers"`
+	UserAgents   map[string]int64 `json:"user_agents"`
 }
 
 // GetAll returns snapshots for all tracked domains.
@@ -179,6 +262,15 @@ func (c *Collector) snapshot(host string, stats *DomainStats) Snapshot {
 
 	// Top 20 paths by views
 	snap.TopPaths = topN(stats.Paths, 20)
+
+	// Top 10 referrers
+	snap.TopReferrers = topN(stats.Referrers, 10)
+
+	// User agent breakdown
+	snap.UserAgents = make(map[string]int64)
+	for k, v := range stats.UserAgents {
+		snap.UserAgents[k] = v
+	}
 
 	// Rolling window aggregation
 	now := time.Now()

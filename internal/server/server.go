@@ -82,6 +82,10 @@ type Server struct {
 	// rewriteCache caches pre-compiled rewrite rules keyed by domain host.
 	// Invalidated on config reload.
 	rewriteCache map[string]*rewrite.Engine
+
+	// connLimiter is a semaphore channel that limits concurrent connections.
+	// Nil when max_connections is 0 (unlimited).
+	connLimiter chan struct{}
 }
 
 // New creates a fully initialized server from config.
@@ -214,6 +218,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				Percent: d.Proxy.Mirror.Percent,
 			}, log)
 		}
+	}
+
+	// Connection limiter (semaphore-based)
+	if cfg.Global.MaxConnections > 0 {
+		s.connLimiter = make(chan struct{}, cfg.Global.MaxConnections)
 	}
 
 	// Build middleware chain with all middleware
@@ -370,11 +379,13 @@ func (s *Server) startHTTP() error {
 	addr := s.config.Global.HTTPListen
 
 	s.httpSrv = &http.Server{
-		Handler:      http.HandlerFunc(s.handleHTTP),
-		ReadTimeout:  s.config.Global.Timeouts.Read.Duration,
-		WriteTimeout: s.config.Global.Timeouts.Write.Duration,
-		IdleTimeout:  s.config.Global.Timeouts.Idle.Duration,
-		ErrorLog:     s.logger.StdLogger(),
+		Handler:           http.HandlerFunc(s.handleHTTP),
+		ReadTimeout:       s.config.Global.Timeouts.Read.Duration,
+		ReadHeaderTimeout: s.config.Global.Timeouts.ReadHeader.Duration,
+		WriteTimeout:      s.config.Global.Timeouts.Write.Duration,
+		IdleTimeout:       s.config.Global.Timeouts.Idle.Duration,
+		MaxHeaderBytes:    s.config.Global.Timeouts.MaxHeaderBytes,
+		ErrorLog:          s.logger.StdLogger(),
 	}
 
 	ln, err := net.Listen("tcp", addr)
@@ -400,12 +411,14 @@ func (s *Server) startHTTPS() error {
 	tlsCfg := s.tlsMgr.TLSConfig()
 
 	s.httpsSrv = &http.Server{
-		Handler:      s.handler,
-		TLSConfig:    tlsCfg,
-		ReadTimeout:  s.config.Global.Timeouts.Read.Duration,
-		WriteTimeout: s.config.Global.Timeouts.Write.Duration,
-		IdleTimeout:  s.config.Global.Timeouts.Idle.Duration,
-		ErrorLog:     s.logger.StdLogger(),
+		Handler:           s.handler,
+		TLSConfig:         tlsCfg,
+		ReadTimeout:       s.config.Global.Timeouts.Read.Duration,
+		ReadHeaderTimeout: s.config.Global.Timeouts.ReadHeader.Duration,
+		WriteTimeout:      s.config.Global.Timeouts.Write.Duration,
+		IdleTimeout:       s.config.Global.Timeouts.Idle.Duration,
+		MaxHeaderBytes:    s.config.Global.Timeouts.MaxHeaderBytes,
+		ErrorLog:          s.logger.StdLogger(),
 	}
 
 	ln, err := tls.Listen("tcp", addr, tlsCfg)
@@ -445,6 +458,17 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 // handleRequest is the core dispatch handler called after the middleware chain.
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	// Connection limiter: reject with 503 when at capacity.
+	if s.connLimiter != nil {
+		select {
+		case s.connLimiter <- struct{}{}:
+			defer func() { <-s.connLimiter }()
+		default:
+			renderErrorPage(w, http.StatusServiceUnavailable)
+			return
+		}
+	}
+
 	// Health check on main port (no auth, fast path)
 	if r.URL.Path == "/.well-known/health" || r.URL.Path == "/healthz" {
 		w.Header().Set("Content-Type", "application/json")
@@ -490,7 +514,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// Record analytics
 		if s.analytics != nil {
-			s.analytics.Record(r.Host, r.URL.Path, r.RemoteAddr, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
+			s.analytics.RecordFull(r.Host, r.URL.Path, r.RemoteAddr,
+				r.Referer(), r.UserAgent(),
+				ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 		}
 
 		// Record for alerting (error spike detection)
@@ -898,18 +924,43 @@ func (s *Server) handleSignals() {
 
 func (s *Server) shutdown() {
 	grace := s.config.Global.Timeouts.ShutdownGrace.Duration
+	s.logger.Info("shutting down gracefully...", "grace_period", grace)
+
 	ctx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
 
+	// Drain in-flight requests on HTTP and HTTPS listeners.
 	if s.httpSrv != nil {
-		s.httpSrv.Shutdown(ctx)
+		if err := s.httpSrv.Shutdown(ctx); err != nil {
+			s.logger.Warn("http shutdown error", "error", err)
+		}
 	}
 	if s.httpsSrv != nil {
-		s.httpsSrv.Shutdown(ctx)
+		if err := s.httpsSrv.Shutdown(ctx); err != nil {
+			s.logger.Warn("https shutdown error", "error", err)
+		}
 	}
 	if s.h3srv != nil {
-		s.h3srv.Close()
+		if err := s.h3srv.Close(); err != nil {
+			s.logger.Warn("http/3 shutdown error", "error", err)
+		}
 	}
+
+	// Gracefully shut down the admin API server.
+	if s.admin != nil {
+		if srv := s.admin.HTTPServer(); srv != nil {
+			if err := srv.Shutdown(ctx); err != nil {
+				s.logger.Warn("admin shutdown error", "error", err)
+			}
+		}
+	}
+
+	// Stop the backup scheduler if running.
+	if s.backupMgr != nil {
+		s.backupMgr.Stop()
+	}
+
+	s.logger.Info("shutdown complete")
 }
 
 func (s *Server) writePID() error {

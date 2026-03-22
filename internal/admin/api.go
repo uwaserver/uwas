@@ -66,6 +66,17 @@ type Server struct {
 	logEntries []LogEntry
 	logPos     int
 	logFull    bool
+
+	// Audit log ring buffer
+	auditMu      sync.Mutex
+	auditEntries []AuditEntry
+	auditPos     int
+	auditFull    bool
+
+	// Rate limiting for auth failures
+	rlMu      sync.Mutex
+	rateLimit map[string]*rateLimitEntry
+	rlDone    chan struct{}
 }
 
 func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
@@ -75,6 +86,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 		metrics: m,
 		mux:     http.NewServeMux(),
 	}
+	s.initAudit()
 	s.registerRoutes()
 	return s
 }
@@ -119,6 +131,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/php/domains/{domain}/stop", s.handlePHPDomainStop)
 	s.mux.HandleFunc("GET /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigGet)
 	s.mux.HandleFunc("PUT /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigPut)
+
+	// Audit log
+	s.mux.HandleFunc("GET /api/v1/audit", s.handleAudit)
 
 	// Backup endpoints
 	s.mux.HandleFunc("GET /api/v1/backups", s.handleBackupList)
@@ -197,6 +212,14 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(204)
 			return
 		}
+
+		// Rate limiting: check if IP is blocked before auth check.
+		ip := requestIP(r)
+		if s.checkRateLimit(ip) {
+			w.Header().Set("Retry-After", "300")
+			jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+			return
+		}
 		// Public endpoints: health check and dashboard UI
 		if r.URL.Path == "/api/v1/health" || strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
 			next.ServeHTTP(w, r)
@@ -204,6 +227,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		auth := r.Header.Get("Authorization")
 		if auth != "Bearer "+apiKey {
+			s.recordAuthFailure(ip)
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -560,20 +584,26 @@ func (s *Server) HTTPServer() *http.Server { return s.httpSrv }
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
 
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	if s.reloadFn == nil {
+		s.RecordAudit("config.reload", "reload not supported", ip, false)
 		jsonError(w, "reload not supported", http.StatusNotImplemented)
 		return
 	}
 	if err := s.reloadFn(); err != nil {
+		s.RecordAudit("config.reload", "error: "+err.Error(), ip, false)
 		jsonError(w, "reload failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.RecordAudit("config.reload", "", ip, true)
 	jsonResponse(w, map[string]string{"status": "reloaded"})
 }
 
 func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if s.cache == nil {
+		s.RecordAudit("cache.purge", "cache not enabled", ip, false)
 		jsonError(w, "cache not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -585,9 +615,11 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 
 	if req.Tag != "" {
 		count := s.cache.PurgeByTag(req.Tag)
+		s.RecordAudit("cache.purge", "tag: "+req.Tag, ip, true)
 		jsonResponse(w, map[string]any{"status": "purged", "tag": req.Tag, "count": count})
 	} else {
 		s.cache.PurgeAll()
+		s.RecordAudit("cache.purge", "all", ip, true)
 		jsonResponse(w, map[string]string{"status": "all purged"})
 	}
 }
@@ -744,6 +776,7 @@ func (s *Server) notifyDomainChange() {
 }
 
 func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var d config.Domain
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
@@ -760,6 +793,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	for _, existing := range s.config.Domains {
 		if existing.Host == d.Host {
 			s.configMu.Unlock()
+			s.RecordAudit("domain.create", "domain: "+d.Host+" (duplicate)", ip, false)
 			jsonError(w, "domain already exists", http.StatusConflict)
 			return
 		}
@@ -767,6 +801,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	s.config.Domains = append(s.config.Domains, d)
 	s.configMu.Unlock()
 
+	s.RecordAudit("domain.create", "domain: "+d.Host, ip, true)
 	s.notifyDomainChange()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -774,6 +809,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	host := r.PathValue("host")
 
 	s.configMu.Lock()
@@ -788,14 +824,17 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 
 	if !found {
+		s.RecordAudit("domain.delete", "domain: "+host+" (not found)", ip, false)
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
+	s.RecordAudit("domain.delete", "domain: "+host, ip, true)
 	s.notifyDomainChange()
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	host := r.PathValue("host")
 	var d config.Domain
@@ -819,9 +858,11 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 
 	if !found {
+		s.RecordAudit("domain.update", "domain: "+host+" (not found)", ip, false)
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
+	s.RecordAudit("domain.update", "domain: "+host, ip, true)
 	s.notifyDomainChange()
 	jsonResponse(w, d)
 }
@@ -1186,7 +1227,9 @@ func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	if s.backupMgr == nil {
+		s.RecordAudit("backup.create", "backup not enabled", ip, false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1205,16 +1248,20 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 
 	info, err := s.backupMgr.CreateBackup(req.Provider)
 	if err != nil {
+		s.RecordAudit("backup.create", "provider: "+req.Provider+", error: "+err.Error(), ip, false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.RecordAudit("backup.create", "provider: "+req.Provider, ip, true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(info)
 }
 
 func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	if s.backupMgr == nil {
+		s.RecordAudit("backup.restore", "backup not enabled", ip, false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1237,14 +1284,18 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.backupMgr.RestoreBackup(req.Name, req.Provider); err != nil {
+		s.RecordAudit("backup.restore", "name: "+req.Name+", error: "+err.Error(), ip, false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.RecordAudit("backup.restore", "name: "+req.Name, ip, true)
 	jsonResponse(w, map[string]string{"status": "restored", "name": req.Name})
 }
 
 func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	if s.backupMgr == nil {
+		s.RecordAudit("backup.delete", "backup not enabled", ip, false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1259,9 +1310,11 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.backupMgr.DeleteBackup(name, provider); err != nil {
+		s.RecordAudit("backup.delete", "name: "+name+", error: "+err.Error(), ip, false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.RecordAudit("backup.delete", "name: "+name, ip, true)
 	jsonResponse(w, map[string]string{"status": "deleted", "name": name})
 }
 
@@ -1278,7 +1331,9 @@ func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
 	if s.backupMgr == nil {
+		s.RecordAudit("backup.schedule", "backup not enabled", ip, false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1295,6 +1350,7 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 
 	if req.Enabled != nil && !*req.Enabled {
 		s.backupMgr.ScheduleBackup(0)
+		s.RecordAudit("backup.schedule", "disabled", ip, true)
 		jsonResponse(w, map[string]any{"status": "stopped", "active": false})
 		return
 	}
@@ -1314,6 +1370,7 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.backupMgr.ScheduleBackup(d)
+	s.RecordAudit("backup.schedule", "interval: "+d.String(), ip, true)
 	jsonResponse(w, map[string]any{
 		"status":   "scheduled",
 		"interval": d.String(),

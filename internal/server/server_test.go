@@ -2089,3 +2089,309 @@ func TestNewWithProxyHealthCheck(t *testing.T) {
 		t.Error("proxy balancer should be created for health.com")
 	}
 }
+
+// --- Production Hardening: Slowloris/DDoS Protection Tests ---
+
+func TestHTTPServerTimeouts(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Timeouts: config.TimeoutConfig{
+				Read:           config.Duration{Duration: 30 * time.Second},
+				ReadHeader:     config.Duration{Duration: 10 * time.Second},
+				Write:          config.Duration{Duration: 60 * time.Second},
+				Idle:           config.Duration{Duration: 120 * time.Second},
+				ShutdownGrace:  config.Duration{Duration: 30 * time.Second},
+				MaxHeaderBytes: 1 << 20,
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "timeout.test", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if err := s.startHTTP(); err != nil {
+		t.Fatalf("startHTTP: %v", err)
+	}
+	defer s.httpSrv.Close()
+
+	srv := s.httpSrv
+	if srv.ReadTimeout != 30*time.Second {
+		t.Errorf("ReadTimeout = %v, want 30s", srv.ReadTimeout)
+	}
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 10s", srv.ReadHeaderTimeout)
+	}
+	if srv.WriteTimeout != 60*time.Second {
+		t.Errorf("WriteTimeout = %v, want 60s", srv.WriteTimeout)
+	}
+	if srv.IdleTimeout != 120*time.Second {
+		t.Errorf("IdleTimeout = %v, want 120s", srv.IdleTimeout)
+	}
+	if srv.MaxHeaderBytes != 1<<20 {
+		t.Errorf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, 1<<20)
+	}
+}
+
+func TestHTTPServerTimeoutDefaults(t *testing.T) {
+	// When timeouts are zero, applyDefaults fills them in.
+	// Here we test that a server created with default-applied config gets expected values.
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			// Timeouts left at zero — defaults should apply via config loading.
+			// We manually set defaults here since testConfig doesn't call applyDefaults.
+			Timeouts: config.TimeoutConfig{
+				Read:           config.Duration{Duration: 30 * time.Second},
+				ReadHeader:     config.Duration{Duration: 10 * time.Second},
+				Write:          config.Duration{Duration: 60 * time.Second},
+				Idle:           config.Duration{Duration: 120 * time.Second},
+				ShutdownGrace:  config.Duration{Duration: 30 * time.Second},
+				MaxHeaderBytes: 1 << 20,
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "defaults.test", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if err := s.startHTTP(); err != nil {
+		t.Fatalf("startHTTP: %v", err)
+	}
+	defer s.httpSrv.Close()
+
+	if s.httpSrv.ReadHeaderTimeout == 0 {
+		t.Error("ReadHeaderTimeout should not be zero (Slowloris protection)")
+	}
+	if s.httpSrv.MaxHeaderBytes == 0 {
+		t.Error("MaxHeaderBytes should not be zero")
+	}
+}
+
+func TestHTTPServerCustomTimeouts(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Timeouts: config.TimeoutConfig{
+				Read:           config.Duration{Duration: 5 * time.Second},
+				ReadHeader:     config.Duration{Duration: 3 * time.Second},
+				Write:          config.Duration{Duration: 10 * time.Second},
+				Idle:           config.Duration{Duration: 60 * time.Second},
+				ShutdownGrace:  config.Duration{Duration: 15 * time.Second},
+				MaxHeaderBytes: 512 * 1024, // 512KB
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "custom.test", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if err := s.startHTTP(); err != nil {
+		t.Fatalf("startHTTP: %v", err)
+	}
+	defer s.httpSrv.Close()
+
+	srv := s.httpSrv
+	if srv.ReadHeaderTimeout != 3*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 3s", srv.ReadHeaderTimeout)
+	}
+	if srv.MaxHeaderBytes != 512*1024 {
+		t.Errorf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, 512*1024)
+	}
+}
+
+// --- Connection Limiter Tests ---
+
+func TestConnectionLimiterRejects503(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("ok"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount:    "1",
+			MaxConnections: 1, // Only allow 1 concurrent connection
+			LogLevel:       "error",
+			LogFormat:      "text",
+		},
+		Domains: []config.Domain{
+			{Host: "limited.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.connLimiter == nil {
+		t.Fatal("connLimiter should be initialized when MaxConnections > 0")
+	}
+	if cap(s.connLimiter) != 1 {
+		t.Fatalf("connLimiter capacity = %d, want 1", cap(s.connLimiter))
+	}
+
+	// Fill the semaphore so the next request gets rejected.
+	s.connLimiter <- struct{}{}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "limited.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 503 {
+		t.Errorf("status = %d, want 503 (connection limit reached)", rec.Code)
+	}
+
+	// Release the slot.
+	<-s.connLimiter
+}
+
+func TestConnectionLimiterAllowsWhenCapacityAvailable(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("ok"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount:    "1",
+			MaxConnections: 100,
+			LogLevel:       "error",
+			LogFormat:      "text",
+		},
+		Domains: []config.Domain{
+			{Host: "open.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "open.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (capacity available)", rec.Code)
+	}
+}
+
+func TestConnectionLimiterDisabledWhenZero(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount:    "1",
+			MaxConnections: 0, // Disabled
+			LogLevel:       "error",
+			LogFormat:      "text",
+		},
+		Domains: []config.Domain{
+			{Host: "unlimited.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.connLimiter != nil {
+		t.Error("connLimiter should be nil when MaxConnections is 0")
+	}
+}
+
+func TestConnectionLimiterSemaphoreCapacity(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount:    "1",
+			MaxConnections: 500,
+			LogLevel:       "error",
+			LogFormat:      "text",
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.connLimiter == nil {
+		t.Fatal("connLimiter should be initialized")
+	}
+	if cap(s.connLimiter) != 500 {
+		t.Errorf("connLimiter capacity = %d, want 500", cap(s.connLimiter))
+	}
+}
+
+// --- Graceful Shutdown Tests ---
+
+func TestShutdownGraceful(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Timeouts: config.TimeoutConfig{
+				Read:          config.Duration{Duration: 5 * time.Second},
+				ReadHeader:    config.Duration{Duration: 3 * time.Second},
+				Write:         config.Duration{Duration: 10 * time.Second},
+				Idle:          config.Duration{Duration: 60 * time.Second},
+				ShutdownGrace: config.Duration{Duration: 5 * time.Second},
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "shutdown.test", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Start HTTP so there's something to shut down.
+	if err := s.startHTTP(); err != nil {
+		t.Fatalf("startHTTP: %v", err)
+	}
+
+	// Shutdown should complete without error or panic.
+	done := make(chan struct{})
+	go func() {
+		s.shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown did not complete within 10 seconds")
+	}
+}
+
+func TestShutdownWithNilServers(t *testing.T) {
+	// Verify shutdown doesn't panic when servers are nil.
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// No servers started — shutdown should still work.
+	done := make(chan struct{})
+	go func() {
+		s.shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success — no panic
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown with nil servers should complete quickly")
+	}
+}
