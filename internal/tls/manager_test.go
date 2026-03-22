@@ -9,7 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -446,5 +449,292 @@ func TestNewManagerWithoutEmail(t *testing.T) {
 	m := NewManager(cfg, nil, log)
 	if m.acme != nil {
 		t.Error("ACME client should be nil when email is empty")
+	}
+}
+
+// --- LoadExistingCerts with valid certs on disk ---
+
+func TestLoadExistingCertsMultipleCerts(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	// Save three certs to disk
+	hosts := []string{"one.com", "two.com", "three.com"}
+	for _, h := range hosts {
+		cert, certPEM, keyPEM := generateTestCert(t, h)
+		if err := storage.Save(h, cert, keyPEM, certPEM); err != nil {
+			t.Fatalf("Save %s: %v", h, err)
+		}
+	}
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: dir}
+	m := NewManager(cfg, nil, log)
+	m.LoadExistingCerts()
+
+	// Verify all three are loadable
+	for _, h := range hosts {
+		hello := &tls.ClientHelloInfo{ServerName: h}
+		got, err := m.GetCertificate(hello)
+		if err != nil {
+			t.Errorf("GetCertificate(%q): %v", h, err)
+			continue
+		}
+		if got == nil {
+			t.Errorf("expected cert for %q, got nil", h)
+			continue
+		}
+		if got.Leaf != nil && got.Leaf.Subject.CommonName != h {
+			t.Errorf("CN = %q, want %q", got.Leaf.Subject.CommonName, h)
+		}
+	}
+}
+
+func TestLoadExistingCertsSkipsInvalidCert(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a valid cert
+	storage := NewCertStorage(dir)
+	cert, certPEM, keyPEM := generateTestCert(t, "valid.com")
+	storage.Save("valid.com", cert, keyPEM, certPEM)
+
+	// Create an invalid cert directory (corrupt files)
+	badDir := filepath.Join(dir, "bad.com")
+	os.MkdirAll(badDir, 0700)
+	os.WriteFile(filepath.Join(badDir, "cert.pem"), []byte("not a cert"), 0644)
+	os.WriteFile(filepath.Join(badDir, "key.pem"), []byte("not a key"), 0600)
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: dir}
+	m := NewManager(cfg, nil, log)
+	m.LoadExistingCerts()
+
+	// Valid cert should still be loaded
+	hello := &tls.ClientHelloInfo{ServerName: "valid.com"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate(valid.com): %v", err)
+	}
+	if got == nil {
+		t.Error("valid.com cert should be loaded despite bad.com being invalid")
+	}
+
+	// Bad cert should not be loaded
+	hello2 := &tls.ClientHelloInfo{ServerName: "bad.com"}
+	_, err2 := m.GetCertificate(hello2)
+	if err2 == nil {
+		t.Error("bad.com should not have a valid cert")
+	}
+}
+
+// --- onDemandAllow rate limiter ---
+
+func TestOnDemandAllowWithinLimit(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// First call in a new window should succeed
+	for i := 0; i < onDemandMaxPerMinute; i++ {
+		if !m.onDemandAllow() {
+			t.Errorf("call %d should be allowed (within limit)", i+1)
+		}
+	}
+}
+
+func TestOnDemandAllowExceedsLimit(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// Exhaust the limit
+	for i := 0; i < onDemandMaxPerMinute; i++ {
+		m.onDemandAllow()
+	}
+
+	// Next call should be rejected
+	if m.onDemandAllow() {
+		t.Error("should be rate limited after exceeding max per minute")
+	}
+}
+
+func TestOnDemandAllowResetsAfterWindow(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// Set the window start to 61 seconds ago so next call starts a new window
+	m.onDemandReset.Store(time.Now().Unix() - 61)
+	m.onDemandCount.Store(int64(onDemandMaxPerMinute))
+
+	// Should succeed because the window has expired
+	if !m.onDemandAllow() {
+		t.Error("should allow after window reset")
+	}
+
+	// Counter should have been reset to 1
+	if m.onDemandCount.Load() != 1 {
+		t.Errorf("count = %d, want 1 after window reset", m.onDemandCount.Load())
+	}
+}
+
+func TestOnDemandAllowConcurrent(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// Run many concurrent calls
+	var wg sync.WaitGroup
+	allowed := atomic.Int64{}
+	total := 50
+
+	for i := 0; i < total; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if m.onDemandAllow() {
+				allowed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Should have allowed at most onDemandMaxPerMinute (10) + 1 (for window reset)
+	if allowed.Load() > int64(onDemandMaxPerMinute)+1 {
+		t.Errorf("allowed %d, should be <= %d", allowed.Load(), onDemandMaxPerMinute+1)
+	}
+}
+
+// --- TLSConfig returns correct settings ---
+
+func TestTLSConfigCipherSuites(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	tlsCfg := m.TLSConfig()
+
+	if len(tlsCfg.CipherSuites) != 6 {
+		t.Errorf("CipherSuites count = %d, want 6", len(tlsCfg.CipherSuites))
+	}
+
+	// Verify specific ciphers are present
+	expectedCiphers := []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+		tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+	}
+	for i, expected := range expectedCiphers {
+		if tlsCfg.CipherSuites[i] != expected {
+			t.Errorf("CipherSuites[%d] = %d, want %d", i, tlsCfg.CipherSuites[i], expected)
+		}
+	}
+}
+
+func TestTLSConfigCurvePreferences(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	tlsCfg := m.TLSConfig()
+
+	if len(tlsCfg.CurvePreferences) != 2 {
+		t.Errorf("CurvePreferences count = %d, want 2", len(tlsCfg.CurvePreferences))
+	}
+	if tlsCfg.CurvePreferences[0] != tls.X25519 {
+		t.Errorf("first curve = %v, want X25519", tlsCfg.CurvePreferences[0])
+	}
+	if tlsCfg.CurvePreferences[1] != tls.CurveP256 {
+		t.Errorf("second curve = %v, want CurveP256", tlsCfg.CurvePreferences[1])
+	}
+}
+
+func TestTLSConfigNextProtos(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	tlsCfg := m.TLSConfig()
+
+	if len(tlsCfg.NextProtos) != 2 {
+		t.Fatalf("NextProtos count = %d, want 2", len(tlsCfg.NextProtos))
+	}
+	if tlsCfg.NextProtos[0] != "h2" {
+		t.Errorf("NextProtos[0] = %q, want h2", tlsCfg.NextProtos[0])
+	}
+	if tlsCfg.NextProtos[1] != "http/1.1" {
+		t.Errorf("NextProtos[1] = %q, want http/1.1", tlsCfg.NextProtos[1])
+	}
+}
+
+// --- GetCertificate case insensitivity ---
+
+func TestGetCertificateCaseInsensitive(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	cert, _, _ := generateTestCert(t, "example.com")
+	m.certs.Store("example.com", cert)
+
+	// ServerName in upper case should still match
+	hello := &tls.ClientHelloInfo{ServerName: "EXAMPLE.COM"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got != cert {
+		t.Error("should match case-insensitively")
+	}
+}
+
+// --- StartRenewal with nil ACME ---
+
+func TestStartRenewalNoACME(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// Should return immediately without panic when acme is nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+	m.StartRenewal(ctx)
+}
+
+// --- ObtainCerts skips already loaded certs ---
+
+func TestObtainCertsSkipsLoaded(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme-staging.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	domains := []config.Domain{
+		{Host: "already.com", SSL: config.SSLConfig{Mode: "auto"}},
+	}
+	m := NewManager(cfg, domains, log)
+
+	// Pre-load a cert
+	cert, _, _ := generateTestCert(t, "already.com")
+	m.certs.Store("already.com", cert)
+
+	// ObtainCerts should skip already.com since it's already loaded
+	// (we can't actually test ACME issuance here, but verify no panic/error)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.ObtainCerts(ctx)
+
+	// Verify the original cert is still there (not replaced)
+	hello := &tls.ClientHelloInfo{ServerName: "already.com"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got != cert {
+		t.Error("original cert should not have been replaced")
 	}
 }

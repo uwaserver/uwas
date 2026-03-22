@@ -2,8 +2,10 @@ package admin
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -588,5 +590,512 @@ func TestConfigExportContainsDomains(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "api.example.com") {
 		t.Errorf("YAML should contain second domain, got:\n%s", body)
+	}
+}
+
+// --- handleCacheStats ---
+
+func TestCacheStatsNoCache(t *testing.T) {
+	s := testServer()
+	// cache is nil
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cache/stats", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["enabled"] != false {
+		t.Errorf("enabled = %v, want false", body["enabled"])
+	}
+	if body["message"] != "cache not enabled" {
+		t.Errorf("message = %v, want 'cache not enabled'", body["message"])
+	}
+}
+
+func TestCacheStatsWithCache(t *testing.T) {
+	s := testServer()
+	// Add domains with cache config
+	s.config.Domains = []config.Domain{
+		{
+			Host: "cached.com",
+			Type: "static",
+			SSL:  config.SSLConfig{Mode: "off"},
+			Cache: config.DomainCache{
+				Enabled: true,
+				TTL:     300,
+				Tags:    []string{"site:cached"},
+				Rules: []config.CacheRule{
+					{Match: "*.css", TTL: 3600},
+				},
+			},
+		},
+	}
+
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cache/stats", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["enabled"] != true {
+		t.Errorf("enabled = %v, want true", body["enabled"])
+	}
+	if body["hit_rate"] == nil {
+		t.Error("hit_rate should be present")
+	}
+	domains, ok := body["domains"].([]any)
+	if !ok || len(domains) != 1 {
+		t.Errorf("domains count = %v, want 1", body["domains"])
+	}
+	if ok && len(domains) == 1 {
+		d := domains[0].(map[string]any)
+		if d["host"] != "cached.com" {
+			t.Errorf("domain host = %v, want cached.com", d["host"])
+		}
+		if d["enabled"] != true {
+			t.Errorf("domain cache enabled = %v, want true", d["enabled"])
+		}
+		// rules should be present
+		rules, ok := d["rules"].([]any)
+		if !ok || len(rules) != 1 {
+			t.Errorf("rules = %v, want 1 rule", d["rules"])
+		}
+	}
+}
+
+// --- handleCerts ---
+
+func TestCertsEndpoint(t *testing.T) {
+	s := testServer()
+	s.config.Domains = []config.Domain{
+		{Host: "auto.com", SSL: config.SSLConfig{Mode: "auto"}},
+		{Host: "manual.com", SSL: config.SSLConfig{Mode: "manual"}},
+		{Host: "plain.com", SSL: config.SSLConfig{Mode: "off"}},
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/certs", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var certs []map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &certs)
+	if len(certs) != 3 {
+		t.Fatalf("certs count = %d, want 3", len(certs))
+	}
+
+	// auto → pending + Let's Encrypt
+	if certs[0]["host"] != "auto.com" {
+		t.Errorf("cert[0] host = %v", certs[0]["host"])
+	}
+	if certs[0]["status"] != "pending" {
+		t.Errorf("cert[0] status = %v, want pending", certs[0]["status"])
+	}
+	if certs[0]["issuer"] != "Let's Encrypt" {
+		t.Errorf("cert[0] issuer = %v, want Let's Encrypt", certs[0]["issuer"])
+	}
+
+	// manual → active + Manual
+	if certs[1]["status"] != "active" {
+		t.Errorf("cert[1] status = %v, want active", certs[1]["status"])
+	}
+	if certs[1]["issuer"] != "Manual" {
+		t.Errorf("cert[1] issuer = %v, want Manual", certs[1]["issuer"])
+	}
+
+	// off → none
+	if certs[2]["status"] != "none" {
+		t.Errorf("cert[2] status = %v, want none", certs[2]["status"])
+	}
+}
+
+// --- handleDomainDetail ---
+
+func TestDomainDetailFound(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/domains/example.com", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["Host"] != "example.com" {
+		t.Errorf("host = %v, want example.com", body["Host"])
+	}
+}
+
+func TestDomainDetailNotFound(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/domains/nonexistent.com", nil))
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+
+	var body map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["error"] != "domain not found" {
+		t.Errorf("error = %q, want 'domain not found'", body["error"])
+	}
+}
+
+// --- isAllowedOrigin ---
+
+func TestIsAllowedOriginLocalhost(t *testing.T) {
+	tests := []struct {
+		origin string
+		want   bool
+	}{
+		{"http://localhost:3000", true},
+		{"https://localhost:9443", true},
+		{"http://127.0.0.1:8080", true},
+		{"https://127.0.0.1:443", true},
+		{"http://localhost", true},
+		{"http://evil.com", false},
+		{"http://example.com", false},
+	}
+
+	for _, tt := range tests {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Host = "admin.example.com:9443"
+		got := isAllowedOrigin(tt.origin, r)
+		if got != tt.want {
+			t.Errorf("isAllowedOrigin(%q) = %v, want %v", tt.origin, got, tt.want)
+		}
+	}
+}
+
+func TestIsAllowedOriginDashboard(t *testing.T) {
+	// When origin matches the Host header (dashboard's own origin).
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "admin.local:9443"
+
+	if !isAllowedOrigin("http://admin.local:9443", r) {
+		t.Error("dashboard's own origin should be allowed")
+	}
+
+	// Different host should be blocked.
+	if isAllowedOrigin("http://other.host:9443", r) {
+		t.Error("different origin should be blocked")
+	}
+}
+
+// --- handleConfigExport sanitization ---
+
+func TestConfigExportStripsDNSCredentials(t *testing.T) {
+	s := testServer()
+	s.config.Global.ACME.DNSCredentials = map[string]string{"key": "supersecret"}
+	s.config.Global.Cache.PurgeKey = "purgesecret"
+	s.config.Domains = []config.Domain{
+		{
+			Host: "withenv.com",
+			Type: "php",
+			PHP:  config.PHPConfig{Env: map[string]string{"DB_PASS": "secret"}},
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/export", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if strings.Contains(body, "supersecret") {
+		t.Error("should strip DNS credentials")
+	}
+	if strings.Contains(body, "purgesecret") {
+		t.Error("should strip purge key")
+	}
+	if strings.Contains(body, "DB_PASS") {
+		t.Error("should strip PHP env")
+	}
+}
+
+// --- CORS via authMiddleware ---
+
+func TestIsAllowedOriginTLS(t *testing.T) {
+	// Simulate a TLS request so scheme becomes "https"
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "admin.local:9443"
+	r.TLS = &tls.ConnectionState{} // non-nil → https
+
+	if !isAllowedOrigin("https://admin.local:9443", r) {
+		t.Error("TLS dashboard origin should be allowed")
+	}
+	// http variant should NOT match when TLS is present
+	if isAllowedOrigin("http://admin.local:9443", r) {
+		t.Error("http origin should not match when TLS is active")
+	}
+}
+
+func TestCacheStatsWithHitRate(t *testing.T) {
+	s := testServer()
+	log := logger.New("error", "text")
+	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, log)
+	s.SetCache(eng)
+
+	// Simulate some hits and misses by looking up entries
+	// The Stats() method reads from MemoryCache counters.
+	// We need to generate cache hits/misses.
+	req := httptest.NewRequest("GET", "http://test.com/page", nil)
+	eng.Set(req, &cache.CachedResponse{
+		StatusCode: 200, Body: []byte("hello"), Created: time.Now(), TTL: time.Minute,
+	})
+	// Get it to generate a hit
+	eng.Get(req)
+	// Get a missing key
+	miss := httptest.NewRequest("GET", "http://test.com/missing", nil)
+	eng.Get(miss)
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cache/stats", nil))
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["hit_rate"] == nil {
+		t.Error("hit_rate should be present")
+	}
+	// hit_rate should be a non-zero percentage string
+	hitRate, ok := body["hit_rate"].(string)
+	if !ok {
+		t.Fatalf("hit_rate type = %T", body["hit_rate"])
+	}
+	if hitRate == "0.0%" {
+		t.Errorf("hit_rate = %q, expected non-zero with hits", hitRate)
+	}
+}
+
+func TestAddDomainInvalidJSON(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{invalid`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestUpdateDomainInvalidJSON(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{broken`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/domains/example.com", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestUpdateDomainSetsHostIfEmpty(t *testing.T) {
+	s := testServer()
+
+	// Send update without host field — handler should set host from path.
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"type":"proxy","root":"/new"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/domains/example.com", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	for _, d := range s.config.Domains {
+		if d.Host == "example.com" {
+			if d.Type != "proxy" {
+				t.Errorf("type = %q, want proxy", d.Type)
+			}
+			return
+		}
+	}
+	t.Error("example.com should still exist after update")
+}
+
+func TestDashboardSPAFallback(t *testing.T) {
+	s := testServer()
+
+	// Request to dashboard root — should serve index.html (SPA fallback)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/_uwas/dashboard/", nil))
+
+	// Should serve index.html
+	if rec.Code != 200 {
+		t.Errorf("dashboard status = %d, want 200", rec.Code)
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+}
+
+func TestDashboardSPADeepRoute(t *testing.T) {
+	s := testServer()
+
+	// Request to a deep SPA route — should fallback to index.html
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/_uwas/dashboard/domains/example.com", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("dashboard deep route status = %d, want 200", rec.Code)
+	}
+}
+
+func TestDashboardServesRealAsset(t *testing.T) {
+	s := testServer()
+
+	// Request a real embedded file
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/_uwas/dashboard/favicon.svg", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("real asset status = %d, want 200", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareNoOrigin(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{APIKey: "testkey"},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	// Request with valid auth but no Origin header
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req.Header.Set("Authorization", "Bearer testkey")
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	// No CORS headers should be set
+	if rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Error("should not set CORS headers when no Origin")
+	}
+}
+
+func TestRecordLogInitializesBuffer(t *testing.T) {
+	s := testServer()
+	// logEntries is nil initially
+	s.RecordLog(LogEntry{Time: time.Now(), Host: "init.com", Method: "GET", Path: "/", Status: 200})
+
+	// Verify entry was recorded
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/logs", nil))
+
+	var logs []map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &logs)
+	if len(logs) != 1 {
+		t.Errorf("logs = %d, want 1", len(logs))
+	}
+}
+
+func TestLogsRingBufferWrap(t *testing.T) {
+	s := testServer()
+
+	// Fill the ring buffer completely to trigger wrap
+	for i := 0; i < maxLogEntries+50; i++ {
+		s.RecordLog(LogEntry{
+			Time:   time.Now(),
+			Host:   fmt.Sprintf("host-%d.com", i),
+			Method: "GET",
+			Path:   "/",
+			Status: 200,
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/logs", nil))
+
+	var logs []map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &logs)
+	// Should return at most 100 (returnLimit)
+	if len(logs) != 100 {
+		t.Errorf("logs = %d, want 100", len(logs))
+	}
+}
+
+func TestCORSHeaders(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{APIKey: "testkey"},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("OPTIONS", "/api/v1/stats", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+
+	if rec.Code != 204 {
+		t.Errorf("OPTIONS status = %d, want 204", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Errorf("CORS origin = %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCORSBlockedOrigin(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{APIKey: "testkey"},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	// Request with a blocked origin — CORS headers should NOT be set.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
+	req.Header.Set("Origin", "http://evil.com")
+	req.Header.Set("Authorization", "Bearer testkey")
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("blocked origin should not get CORS header, got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestAuthMiddlewareDashboardPublic(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{APIKey: "testkey"},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	// Dashboard should be accessible without auth
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/_uwas/dashboard/", nil)
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+
+	// Should not get 401
+	if rec.Code == 401 {
+		t.Error("dashboard should be publicly accessible")
 	}
 }

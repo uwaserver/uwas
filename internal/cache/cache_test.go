@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -516,5 +517,626 @@ func TestCleanExpiredViaStartCleanup(t *testing.T) {
 
 	if mc.Len() != 0 {
 		t.Errorf("expected 0 entries after cleanup, got %d", mc.Len())
+	}
+}
+
+// --- MemoryCache: Get with stale entry ---
+
+func TestMemoryCacheGetStale(t *testing.T) {
+	mc := NewMemoryCache(1 << 20)
+
+	// Insert an entry that is past TTL but within GraceTTL
+	mc.Set("stale-key", &CachedResponse{
+		Body:     []byte("stale data"),
+		Created:  time.Now().Add(-5 * time.Second),
+		TTL:      1 * time.Second,    // expired 4 seconds ago
+		GraceTTL: 10 * time.Second,   // but within grace period
+	})
+
+	got, status := mc.Get("stale-key")
+	if status != StatusStale {
+		t.Errorf("status = %q, want STALE", status)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil response for stale entry")
+	}
+	if string(got.Body) != "stale data" {
+		t.Errorf("body = %q, want 'stale data'", string(got.Body))
+	}
+}
+
+func TestMemoryCacheGetExpiredBeyondGrace(t *testing.T) {
+	mc := NewMemoryCache(1 << 20)
+
+	// Insert an entry that is expired beyond both TTL and GraceTTL
+	mc.Set("expired-key", &CachedResponse{
+		Body:     []byte("expired"),
+		Created:  time.Now().Add(-20 * time.Second),
+		TTL:      1 * time.Second,
+		GraceTTL: 1 * time.Second,
+	})
+
+	got, status := mc.Get("expired-key")
+	if status != StatusMiss {
+		t.Errorf("status = %q, want MISS for expired-beyond-grace entry", status)
+	}
+	if got != nil {
+		t.Error("expected nil response for expired-beyond-grace entry")
+	}
+}
+
+// --- MemoryCache: evictLRU ---
+
+func TestMemoryCacheEvictLRUOrder(t *testing.T) {
+	// Find keys that hash to the same shard so LRU eviction is predictable
+	var sameShardKeys []string
+	targetShard := shardIdx("seed")
+	for i := 0; len(sameShardKeys) < 5; i++ {
+		k := formatKey(uint64(i)) + "_evict"
+		if shardIdx(k) == targetShard {
+			sameShardKeys = append(sameShardKeys, k)
+		}
+	}
+
+	// Each entry: 100 body + 64 overhead = 164 bytes
+	// Limit of 500 bytes allows ~3 entries, so adding a 4th should evict oldest from that shard
+	mc := NewMemoryCache(500)
+
+	mc.Set(sameShardKeys[0], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+	mc.Set(sameShardKeys[1], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+	mc.Set(sameShardKeys[2], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+	mc.Set(sameShardKeys[3], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+
+	// Oldest key (sameShardKeys[0]) should have been evicted from the shard LRU
+	_, status := mc.Get(sameShardKeys[0])
+	if status != StatusMiss {
+		t.Errorf("oldest entry should be evicted (LRU), got status %q", status)
+	}
+
+	// Newest key should still be present
+	_, status = mc.Get(sameShardKeys[3])
+	if status == StatusMiss {
+		t.Error("newest entry should still be present")
+	}
+}
+
+func TestMemoryCacheEvictLRUPromotesOnAccess(t *testing.T) {
+	// Find keys that hash to the same shard
+	var sameShardKeys []string
+	targetShard := shardIdx("promote_seed")
+	for i := 0; len(sameShardKeys) < 5; i++ {
+		k := formatKey(uint64(i)) + "_promote"
+		if shardIdx(k) == targetShard {
+			sameShardKeys = append(sameShardKeys, k)
+		}
+	}
+
+	// Each entry ~164 bytes, limit allows ~3 entries in the shard
+	mc := NewMemoryCache(500)
+
+	mc.Set(sameShardKeys[0], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+	mc.Set(sameShardKeys[1], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+
+	// Access sameShardKeys[0] to promote it to front of LRU
+	mc.Get(sameShardKeys[0])
+
+	// Add two more entries to fill and evict
+	mc.Set(sameShardKeys[2], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+	mc.Set(sameShardKeys[3], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
+
+	// sameShardKeys[1] was not accessed so it should be evicted first
+	_, statusPromoted := mc.Get(sameShardKeys[0])
+	_, statusUnpromoted := mc.Get(sameShardKeys[1])
+
+	// The promoted key should survive eviction while the unpromoted one may be evicted
+	if statusPromoted == StatusMiss && statusUnpromoted != StatusMiss {
+		t.Error("promoted key should survive eviction better than unpromoted key")
+	}
+}
+
+// --- MemoryCache: concurrent access ---
+
+func TestMemoryCacheConcurrentAccess(t *testing.T) {
+	mc := NewMemoryCache(1 << 20) // 1MB
+	var wg sync.WaitGroup
+
+	// Concurrent writers
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			key := formatKey(uint64(n))
+			mc.Set(key, &CachedResponse{
+				Body:    []byte("concurrent"),
+				Created: time.Now(),
+				TTL:     time.Minute,
+			})
+		}(i)
+	}
+
+	// Concurrent readers
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			key := formatKey(uint64(n))
+			mc.Get(key)
+		}(i)
+	}
+
+	// Concurrent deleters
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			key := formatKey(uint64(n))
+			mc.Delete(key)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Just verify no panics/races occurred and stats are reasonable
+	_, _, _, used := mc.Stats()
+	if used < 0 {
+		t.Errorf("usedBytes = %d, should be >= 0", used)
+	}
+}
+
+func TestMemoryCacheConcurrentSetSameKey(t *testing.T) {
+	mc := NewMemoryCache(1 << 20)
+	var wg sync.WaitGroup
+
+	// Many goroutines writing the same key
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			mc.Set("same-key", &CachedResponse{
+				Body:    []byte("value"),
+				Created: time.Now(),
+				TTL:     time.Minute,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	// Should have exactly one entry for "same-key"
+	got, status := mc.Get("same-key")
+	if status != StatusHit {
+		t.Errorf("status = %q, want HIT", status)
+	}
+	if got == nil {
+		t.Error("expected non-nil response")
+	}
+}
+
+// --- DiskCache: Set over limit (should skip) ---
+
+func TestDiskCacheSetOverLimit(t *testing.T) {
+	dir := t.TempDir()
+	// Create a disk cache with a very small limit (100 bytes)
+	dc := NewDiskCache(dir, 100)
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       make([]byte, 200), // larger than the limit
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+
+	err := dc.Set("big-key-1234567890abcdef", resp)
+	if err != nil {
+		t.Fatalf("Set should not return error when over limit, got: %v", err)
+	}
+
+	// The entry should not have been stored
+	_, err = dc.Get("big-key-1234567890abcdef")
+	if err == nil {
+		t.Error("should not be able to Get an entry that was skipped due to disk limit")
+	}
+}
+
+func TestDiskCacheSetUnderLimit(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20) // 1MB limit
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("small"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+
+	err := dc.Set("small-key-1234567890abcdef", resp)
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := dc.Get("small-key-1234567890abcdef")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got.Body) != "small" {
+		t.Errorf("body = %q, want 'small'", string(got.Body))
+	}
+}
+
+// --- DiskCache: concurrent Get/Set ---
+
+func TestDiskCacheConcurrentGetSet(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+
+	var wg sync.WaitGroup
+
+	// Concurrent writers
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			key := formatKey(uint64(n)) + "1234567890ab"
+			resp := &CachedResponse{
+				StatusCode: 200,
+				Body:       []byte("concurrent disk write"),
+				Created:    time.Now(),
+				TTL:        time.Minute,
+				GraceTTL:   time.Minute,
+			}
+			dc.Set(key, resp)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Concurrent readers after writes are done
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			key := formatKey(uint64(n)) + "1234567890ab"
+			dc.Get(key)
+		}(i)
+	}
+
+	wg.Wait()
+	// No panics or races = success
+}
+
+// --- Engine: Get with disk promotion ---
+
+func TestEngineGetDiskPromotion(t *testing.T) {
+	log := logger.New("error", "text")
+	dir := t.TempDir()
+	e := NewEngine(context.Background(), 1<<20, dir, 1<<20, log)
+
+	req := httptest.NewRequest("GET", "/promote-test", nil)
+	key := GenerateKey(req, []string{"Accept-Encoding"})
+
+	// Write directly to disk, bypassing memory
+	diskResp := &CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{"Content-Type": {"text/html"}},
+		Body:       []byte("from disk"),
+		Created:    time.Now(),
+		TTL:        5 * time.Minute,
+		GraceTTL:   1 * time.Hour,
+	}
+	if err := e.disk.Set(key, diskResp); err != nil {
+		t.Fatalf("disk.Set: %v", err)
+	}
+
+	// Verify memory cache doesn't have it
+	memResp, memStatus := e.memory.Get(key)
+	if memResp != nil {
+		t.Fatal("memory should not have entry before promotion")
+	}
+	_ = memStatus
+
+	// Engine.Get should find it on disk and promote to memory
+	got, status := e.Get(req)
+	if status != StatusHit {
+		t.Errorf("status = %q, want HIT after disk promotion", status)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if string(got.Body) != "from disk" {
+		t.Errorf("body = %q, want 'from disk'", string(got.Body))
+	}
+
+	// Now verify it's been promoted to memory
+	memResp, memStatus = e.memory.Get(key)
+	if memResp == nil {
+		t.Error("entry should have been promoted to memory")
+	}
+	if memStatus != StatusHit {
+		t.Errorf("memory status = %q, want HIT after promotion", memStatus)
+	}
+}
+
+func TestEngineGetDiskPromotionStale(t *testing.T) {
+	log := logger.New("error", "text")
+	dir := t.TempDir()
+	e := NewEngine(context.Background(), 1<<20, dir, 1<<20, log)
+
+	req := httptest.NewRequest("GET", "/stale-disk", nil)
+	key := GenerateKey(req, []string{"Accept-Encoding"})
+
+	// Write a stale entry directly to disk
+	staleResp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("stale disk entry"),
+		Created:    time.Now().Add(-10 * time.Second),
+		TTL:        1 * time.Second,  // expired
+		GraceTTL:   1 * time.Minute,  // but within grace
+	}
+	if err := e.disk.Set(key, staleResp); err != nil {
+		t.Fatalf("disk.Set: %v", err)
+	}
+
+	got, status := e.Get(req)
+	if status != StatusStale {
+		t.Errorf("status = %q, want STALE for stale disk entry", status)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil stale response")
+	}
+	if string(got.Body) != "stale disk entry" {
+		t.Errorf("body = %q", string(got.Body))
+	}
+}
+
+func TestEngineGetDiskExpiredBeyondGrace(t *testing.T) {
+	log := logger.New("error", "text")
+	dir := t.TempDir()
+	e := NewEngine(context.Background(), 1<<20, dir, 1<<20, log)
+
+	req := httptest.NewRequest("GET", "/expired-disk", nil)
+	key := GenerateKey(req, []string{"Accept-Encoding"})
+
+	// Write a fully expired entry to disk
+	expiredResp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("expired"),
+		Created:    time.Now().Add(-1 * time.Hour),
+		TTL:        1 * time.Second,
+		GraceTTL:   1 * time.Second,
+	}
+	if err := e.disk.Set(key, expiredResp); err != nil {
+		t.Fatalf("disk.Set: %v", err)
+	}
+
+	_, status := e.Get(req)
+	if status != StatusMiss {
+		t.Errorf("status = %q, want MISS for fully expired disk entry", status)
+	}
+}
+
+// --- Engine: Set with async disk write ---
+
+func TestEngineSetAsyncDiskWrite(t *testing.T) {
+	log := logger.New("error", "text")
+	dir := t.TempDir()
+	e := NewEngine(context.Background(), 1<<20, dir, 1<<20, log)
+
+	req := httptest.NewRequest("GET", "/async-write", nil)
+	key := GenerateKey(req, []string{"Accept-Encoding"})
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Headers:    http.Header{"Content-Type": {"text/plain"}},
+		Body:       []byte("async content"),
+		Created:    time.Now(),
+		TTL:        5 * time.Minute,
+		GraceTTL:   time.Hour,
+	}
+
+	e.Set(req, resp)
+
+	// Memory should have it immediately
+	memResp, memStatus := e.memory.Get(key)
+	if memResp == nil || memStatus != StatusHit {
+		t.Fatal("memory should have entry immediately after Set")
+	}
+
+	// Wait for async disk write
+	time.Sleep(100 * time.Millisecond)
+
+	// Disk should also have it
+	diskResp, err := e.disk.Get(key)
+	if err != nil {
+		t.Fatalf("disk.Get: %v", err)
+	}
+	if string(diskResp.Body) != "async content" {
+		t.Errorf("disk body = %q, want 'async content'", string(diskResp.Body))
+	}
+}
+
+func TestEngineSetMemoryOnlyNoDisk(t *testing.T) {
+	log := logger.New("error", "text")
+	e := NewEngine(context.Background(), 1<<20, "", 0, log) // no disk
+
+	req := httptest.NewRequest("GET", "/memory-only", nil)
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("mem only"),
+		Created:    time.Now(),
+		TTL:        5 * time.Minute,
+	}
+
+	e.Set(req, resp)
+
+	got, status := e.Get(req)
+	if status != StatusHit {
+		t.Errorf("status = %q, want HIT", status)
+	}
+	if string(got.Body) != "mem only" {
+		t.Errorf("body = %q", string(got.Body))
+	}
+}
+
+// --- Engine: concurrent operations ---
+
+func TestEngineConcurrentGetSet(t *testing.T) {
+	log := logger.New("error", "text")
+	e := NewEngine(context.Background(), 1<<20, "", 0, log)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func(n int) {
+			defer wg.Done()
+			req := httptest.NewRequest("GET", "/concurrent/"+formatKey(uint64(n)), nil)
+			e.Set(req, &CachedResponse{
+				StatusCode: 200,
+				Body:       []byte("concurrent"),
+				Created:    time.Now(),
+				TTL:        time.Minute,
+			})
+		}(i)
+		go func(n int) {
+			defer wg.Done()
+			req := httptest.NewRequest("GET", "/concurrent/"+formatKey(uint64(n)), nil)
+			e.Get(req)
+		}(i)
+	}
+
+	wg.Wait()
+
+	stats := e.Stats()
+	if stats["entries"] < 0 {
+		t.Errorf("entries = %d, should be >= 0", stats["entries"])
+	}
+}
+
+// --- MemoryCache: Stats accuracy ---
+
+func TestMemoryCacheStatsAccuracy(t *testing.T) {
+	mc := NewMemoryCache(1 << 20)
+
+	mc.Set("hit-me", &CachedResponse{
+		Body:    []byte("data"),
+		Created: time.Now(),
+		TTL:     time.Minute,
+	})
+
+	// 3 hits
+	for i := 0; i < 3; i++ {
+		mc.Get("hit-me")
+	}
+	// 2 misses
+	mc.Get("nope1")
+	mc.Get("nope2")
+
+	hits, misses, _, used := mc.Stats()
+	if hits != 3 {
+		t.Errorf("hits = %d, want 3", hits)
+	}
+	if misses != 2 {
+		t.Errorf("misses = %d, want 2", misses)
+	}
+	if used <= 0 {
+		t.Errorf("usedBytes = %d, should be > 0", used)
+	}
+}
+
+// --- MemoryCache: Set replacing existing key ---
+
+func TestMemoryCacheSetReplacesExisting(t *testing.T) {
+	mc := NewMemoryCache(1 << 20)
+
+	mc.Set("replace-key", &CachedResponse{
+		Body:    []byte("original"),
+		Created: time.Now(),
+		TTL:     time.Minute,
+	})
+
+	mc.Set("replace-key", &CachedResponse{
+		Body:    []byte("replacement"),
+		Created: time.Now(),
+		TTL:     time.Minute,
+	})
+
+	got, status := mc.Get("replace-key")
+	if status != StatusHit {
+		t.Errorf("status = %q, want HIT", status)
+	}
+	if string(got.Body) != "replacement" {
+		t.Errorf("body = %q, want 'replacement'", string(got.Body))
+	}
+	if mc.Len() != 1 {
+		t.Errorf("len = %d, want 1 (should not duplicate)", mc.Len())
+	}
+}
+
+// --- DiskCache: Get nonexistent key ---
+
+func TestDiskCacheGetMiss(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+
+	_, err := dc.Get("nonexistent-key-abcdef")
+	if err == nil {
+		t.Error("Get for nonexistent key should return error")
+	}
+}
+
+// --- DiskCache: usedBytes tracking ---
+
+func TestDiskCacheUsedBytesTracking(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+
+	initial := dc.usedBytes.Load()
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("tracking test data"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+	dc.Set("track-key-1234567890abcdef", resp)
+
+	afterSet := dc.usedBytes.Load()
+	if afterSet <= initial {
+		t.Errorf("usedBytes after Set (%d) should be > initial (%d)", afterSet, initial)
+	}
+
+	dc.Delete("track-key-1234567890abcdef")
+
+	afterDelete := dc.usedBytes.Load()
+	if afterDelete >= afterSet {
+		t.Errorf("usedBytes after Delete (%d) should be < after Set (%d)", afterDelete, afterSet)
+	}
+}
+
+// --- DiskCache: accumulated usage across restarts ---
+
+func TestDiskCacheInitialUsedBytes(t *testing.T) {
+	dir := t.TempDir()
+	dc1 := NewDiskCache(dir, 1<<20)
+
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("persist me"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+	dc1.Set("persist-key-1234567890abcdef", resp)
+	usedAfterWrite := dc1.usedBytes.Load()
+
+	// Create a new DiskCache on the same dir (simulating restart)
+	dc2 := NewDiskCache(dir, 1<<20)
+	initialUsed := dc2.usedBytes.Load()
+
+	if initialUsed != usedAfterWrite {
+		t.Errorf("new DiskCache usedBytes = %d, want %d (should scan existing files)", initialUsed, usedAfterWrite)
 	}
 }

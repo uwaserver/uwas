@@ -961,3 +961,707 @@ RewriteRule ^(.*)$ /index.php [L]
 		t.Error("htaccess rewrite should have prevented a 404")
 	}
 }
+
+// --- matchPath tests ---
+
+func TestMatchPathExact(t *testing.T) {
+	if !matchPath("/api/v1/users", "^/api/") {
+		t.Error("should match prefix pattern")
+	}
+}
+
+func TestMatchPathNoMatch(t *testing.T) {
+	if matchPath("/home", "^/api/") {
+		t.Error("should not match unrelated path")
+	}
+}
+
+func TestMatchPathFullRegex(t *testing.T) {
+	if !matchPath("/assets/style.css", `\.(css|js|png)$`) {
+		t.Error("should match file extension regex")
+	}
+	if matchPath("/assets/style.txt", `\.(css|js|png)$`) {
+		t.Error("should not match .txt for css/js/png pattern")
+	}
+}
+
+func TestMatchPathWildcard(t *testing.T) {
+	if !matchPath("/anything/here", ".*") {
+		t.Error("wildcard should match any path")
+	}
+}
+
+func TestMatchPathInvalidRegex(t *testing.T) {
+	// Invalid regex should return false without panicking
+	if matchPath("/test", "[invalid") {
+		t.Error("invalid regex should return false")
+	}
+}
+
+func TestMatchPathEmptyPattern(t *testing.T) {
+	// Empty pattern matches everything (empty regex matches all)
+	if !matchPath("/test", "") {
+		t.Error("empty pattern should match")
+	}
+}
+
+func TestMatchPathEmptyPath(t *testing.T) {
+	if !matchPath("", "^$") {
+		t.Error("empty path should match ^$")
+	}
+	if matchPath("", "^/api") {
+		t.Error("empty path should not match ^/api")
+	}
+}
+
+// --- handleFileRequest with directory listing ---
+
+func TestHandleFileRequestDirectoryListing(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "subdir")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(subDir, "file.txt"), []byte("hello"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:             "listing.com",
+				Root:             dir,
+				Type:             "static",
+				SSL:              config.SSLConfig{Mode: "off"},
+				DirectoryListing: true,
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/subdir/", nil)
+	req.Host = "listing.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 for directory listing", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "file.txt") {
+		t.Errorf("directory listing should contain file.txt, got: %s", body[:min(200, len(body))])
+	}
+}
+
+func TestHandleFileRequestDirectoryListingDisabled(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "subdir")
+	os.MkdirAll(subDir, 0755)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:             "nolisting.com",
+				Root:             dir,
+				Type:             "static",
+				SSL:              config.SSLConfig{Mode: "off"},
+				DirectoryListing: false,
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/subdir/", nil)
+	req.Host = "nolisting.com"
+	s.handleRequest(rec, req)
+
+	// Without directory listing, requesting a directory should NOT return 200 directory listing
+	if rec.Code == 200 && strings.Contains(rec.Body.String(), "Index of") {
+		t.Error("directory listing should not be shown when disabled")
+	}
+}
+
+func TestHandleFileRequestDirectoryListingRootDir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hello"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:             "rootlist.com",
+				Root:             dir,
+				Type:             "static",
+				SSL:              config.SSLConfig{Mode: "off"},
+				DirectoryListing: true,
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "rootlist.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 for root directory listing", rec.Code)
+	}
+}
+
+// --- handleProxy with a working pool ---
+
+func TestHandleProxyWithPool(t *testing.T) {
+	// Start a backend HTTP server
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Backend", "true")
+		w.WriteHeader(200)
+		w.Write([]byte("backend response"))
+	}))
+	defer backend.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "proxy.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "proxy.com"
+	s.handleRequest(rec, req)
+
+	// The proxy should have forwarded the request to the backend
+	if rec.Code == 502 {
+		t.Error("proxy should not return 502 when backend is available")
+	}
+}
+
+// --- handleHTTP for non-SSL serving path ---
+
+func TestHandleHTTPNonSSLServesContent(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"ok":true}`), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "api.local", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/data.json", nil)
+	req.Host = "api.local"
+	s.handleHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"ok"`) {
+		t.Errorf("body = %q, expected JSON content", rec.Body.String())
+	}
+}
+
+func TestHandleHTTPUnknownHostNonSSL(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "known.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "unknown.com"
+	s.handleHTTP(rec, req)
+
+	// Unknown host with no SSL should fall through to the middleware chain, which returns 404
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404 for unknown host", rec.Code)
+	}
+}
+
+// --- buildMiddlewareChain ---
+
+func TestBuildMiddlewareChainWithRateLimit(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{
+				Host: "rate.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Security: config.SecurityConfig{
+					RateLimit: config.RateLimitConfig{
+						Requests: 100,
+						Window:   config.Duration{Duration: time.Minute},
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.handler == nil {
+		t.Fatal("handler should not be nil when rate limit is configured")
+	}
+
+	// Exercise the chain
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "rate.com"
+	s.handler.ServeHTTP(rec, req)
+
+	if rec.Code == 0 {
+		t.Error("expected a non-zero status code")
+	}
+}
+
+func TestBuildMiddlewareChainWithSecurityGuard(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{
+				Host: "guarded.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Security: config.SecurityConfig{
+					BlockedPaths: []string{".env", ".git"},
+					WAF:          config.WAFConfig{Enabled: true},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.handler == nil {
+		t.Fatal("handler should not be nil with security guard")
+	}
+}
+
+// --- applyHtaccess with cached rules ---
+
+func TestApplyHtaccessCachedRules(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write .htaccess with a simple rewrite
+	htContent := `RewriteEngine On
+RewriteRule ^old-page$ /new-page [L]
+`
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(htContent), 0644)
+	os.WriteFile(filepath.Join(dir, "new-page"), []byte("new content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "htcache.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// First request: parses .htaccess and caches rules
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/old-page", nil)
+	req1.Host = "htcache.local"
+	s.handleRequest(rec1, req1)
+
+	// Second request: should use cached rules (verify it still works)
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/old-page", nil)
+	req2.Host = "htcache.local"
+	s.handleRequest(rec2, req2)
+
+	// Verify cache was populated
+	s.htaccessCacheMu.RLock()
+	_, cached := s.htaccessCache[dir]
+	s.htaccessCacheMu.RUnlock()
+
+	if !cached {
+		t.Error("htaccess rules should be cached after first request")
+	}
+}
+
+func TestApplyHtaccessNoFile(t *testing.T) {
+	dir := t.TempDir()
+	// No .htaccess file in dir
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "nohtaccess.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/anything", nil)
+	req.Host = "nohtaccess.local"
+	s.handleRequest(rec, req)
+
+	// Should complete without error (nil rules cached for missing file)
+	s.htaccessCacheMu.RLock()
+	rules, cached := s.htaccessCache[dir]
+	s.htaccessCacheMu.RUnlock()
+
+	if !cached {
+		t.Error("should still cache nil result for missing .htaccess")
+	}
+	if len(rules) != 0 {
+		t.Errorf("rules should be nil/empty for missing .htaccess, got %d", len(rules))
+	}
+}
+
+// --- applyRewrites with precompiled cache ---
+
+func TestApplyRewritesRedirect(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "rewrite.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Rewrites: []config.RewriteRule{
+					{Match: "^/legacy$", To: "/modern", Status: 301},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Verify rewrite cache was populated
+	if _, ok := s.rewriteCache["rewrite.com"]; !ok {
+		t.Fatal("rewrite cache should have an entry for rewrite.com")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/legacy", nil)
+	req.Host = "rewrite.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 301 {
+		t.Errorf("status = %d, want 301 redirect", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "/modern" {
+		t.Errorf("Location = %q, want /modern", loc)
+	}
+}
+
+func TestApplyRewritesNoCache(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "norewrite.com",
+				Root: "/tmp",
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				// No rewrites configured
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// No rewrite cache for this domain
+	if _, ok := s.rewriteCache["norewrite.com"]; ok {
+		t.Error("should not have rewrite cache for domain without rewrites")
+	}
+}
+
+func TestApplyRewritesInternalRewrite(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "target.html"), []byte("rewrite target"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "internal-rw.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Rewrites: []config.RewriteRule{
+					{Match: "^/source$", To: "/target.html"},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/source", nil)
+	req.Host = "internal-rw.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 after internal rewrite", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "rewrite target") {
+		t.Errorf("body = %q, expected rewrite target content", rec.Body.String())
+	}
+}
+
+// --- Cache bypass for session cookies ---
+
+func TestCacheBypassSessionCookies(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "page.html"), []byte("page content"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "session.com",
+				Root:  dir,
+				Type:  "static",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Request with WordPress session cookie should bypass cache
+	for _, cookie := range []string{"wordpress_logged_in=abc", "wp-settings=1", "PHPSESSID=xyz"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/page.html", nil)
+		req.Host = "session.com"
+		req.Header.Set("Cookie", cookie)
+		s.handleRequest(rec, req)
+
+		xcache := rec.Header().Get("X-Cache")
+		if xcache == "HIT" {
+			t.Errorf("request with cookie %q should bypass cache, got X-Cache=%q", cookie, xcache)
+		}
+	}
+}
+
+// --- Cache bypass rules ---
+
+func TestCacheBypassRules(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "api.json"), []byte(`{"data":1}`), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host: "bypass.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{
+					Enabled: true,
+					TTL:     60,
+					Rules: []config.CacheRule{
+						{Match: `^/api/`, Bypass: true},
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// First request to cache something
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/api/data", nil)
+	req1.Host = "bypass.com"
+	s.handleRequest(rec1, req1)
+
+	// Second request to /api/ path should not hit cache
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/api/data", nil)
+	req2.Host = "bypass.com"
+	s.handleRequest(rec2, req2)
+
+	xcache := rec2.Header().Get("X-Cache")
+	if xcache == "HIT" {
+		t.Error("/api/ paths should bypass cache per rules")
+	}
+}
+
+// --- handleRedirect (preserve path edge cases) ---
+
+func TestHandleRedirectNoPreservePath(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{
+				Host: "redir.com",
+				Type: "redirect",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Redirect: config.RedirectConfig{
+					Target:       "https://target.com/landing",
+					Status:       302,
+					PreservePath: false,
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/some/deep/path", nil)
+	req.Host = "redir.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 302 {
+		t.Errorf("status = %d, want 302", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "https://target.com/landing" {
+		t.Errorf("Location = %q, want https://target.com/landing (no path preserved)", loc)
+	}
+}
+
+func TestHandleRedirectDefaultStatus(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{
+				Host: "default-redir.com",
+				Type: "redirect",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Redirect: config.RedirectConfig{
+					Target: "https://elsewhere.com",
+					Status: 0, // should default to 301
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "default-redir.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 301 {
+		t.Errorf("status = %d, want 301 (default)", rec.Code)
+	}
+}
+
+// --- handleRequest for unknown domain type ---
+
+func TestHandleRequestUnknownType(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{
+				Host: "unknown-type.com",
+				Type: "custom",
+				SSL:  config.SSLConfig{Mode: "off"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "unknown-type.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500 for unknown type", rec.Code)
+	}
+}
