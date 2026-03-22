@@ -231,6 +231,16 @@ func TestDecodeParamsValueLengthTruncated(t *testing.T) {
 	}
 }
 
+// TestDecodeParamsTruncatedNameData tests params where name data is shorter than declared.
+func TestDecodeParamsTruncatedNameData(t *testing.T) {
+	// nameLen=5, valLen=3, but only provide 2 bytes of name
+	data := []byte{5, 3, 'A', 'B'} // name needs 5 bytes, only 2 provided
+	_, err := DecodeParams(data)
+	if err == nil {
+		t.Error("expected error for truncated name data")
+	}
+}
+
 // TestEncodeParamShortNameLongValue tests 1-byte name, 4-byte value encoding.
 func TestEncodeParamShortNameLongValue(t *testing.T) {
 	name := "X"

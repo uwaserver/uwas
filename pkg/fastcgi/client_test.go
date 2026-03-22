@@ -1117,6 +1117,141 @@ func TestNewPoolDefaults(t *testing.T) {
 // Client.Execute: complete roundtrip with nil stdin and multiple records
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Client.Execute: server closes connection immediately (read record error)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Client.Execute: connection that closes immediately (write begin error)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Client.Execute: server that immediately closes causes write/flush error
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteFlushError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// Close immediately after accepting
+		c.Close()
+	}()
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	// Give time for connection to be established and then closed
+	time.Sleep(50 * time.Millisecond)
+
+	// Send a large amount of data to ensure the write buffer overflows and fails
+	largeBody := strings.NewReader(strings.Repeat("x", 1000000)) // 1MB
+	_, err = client.Execute(context.Background(), map[string]string{
+		"SCRIPT_FILENAME": "/test.php",
+		"REQUEST_METHOD":  "POST",
+		"CONTENT_LENGTH":  "1000000",
+	}, largeBody)
+	if err == nil {
+		t.Fatal("expected error when server closes connection")
+	}
+}
+
+func TestClientExecuteServerClosesEarly(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// Read a bit, then close immediately
+		buf := make([]byte, 100)
+		c.Read(buf)
+		c.Close()
+	}()
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	_, err = client.Execute(context.Background(), map[string]string{
+		"SCRIPT_FILENAME": "/test.php",
+		"REQUEST_METHOD":  "GET",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error when server closes connection early")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Client.Execute: server drops connection after accepting but before response
+// ---------------------------------------------------------------------------
+
+func TestClientExecuteServerDropsAfterStdin(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// Read all data then close without sending response
+		br := bufio.NewReader(c)
+		for {
+			rec, err := ReadRecord(br)
+			if err != nil {
+				c.Close()
+				return
+			}
+			if rec.Type == TypeStdin && rec.ContentLength == 0 {
+				// Got end of stdin, close without sending response
+				c.Close()
+				return
+			}
+		}
+	}()
+
+	client := NewClient(PoolConfig{
+		Address: "tcp:" + ln.Addr().String(),
+		MaxIdle: 1,
+		MaxOpen: 1,
+	})
+	defer client.Close()
+
+	_, err = client.Execute(context.Background(), map[string]string{
+		"SCRIPT_FILENAME": "/test.php",
+		"REQUEST_METHOD":  "GET",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error when server drops connection before response")
+	}
+	if !strings.Contains(err.Error(), "read record") {
+		t.Errorf("error = %v, want 'read record'", err)
+	}
+}
+
 func TestClientExecuteNilStdin(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
