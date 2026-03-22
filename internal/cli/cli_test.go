@@ -2408,6 +2408,45 @@ func TestBackupCertsWithBrokenSymlink(t *testing.T) {
 	}
 }
 
+func TestRestoreWithTruncatedEntry(t *testing.T) {
+	// Create a tar.gz where the entry data is truncated (size in header > actual data)
+	tmpDir, err := os.MkdirTemp("", "uwas-restore-trunc-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	archivePath := tmpDir + "/trunc.tar.gz"
+	f, _ := os.Create(archivePath)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	// Write a header claiming 1000 bytes but only write 5 bytes
+	tw.WriteHeader(&tar.Header{
+		Name: "config/big.yaml",
+		Size: 1000,
+		Mode: 0644,
+	})
+	tw.Write([]byte("short"))
+	// This corrupts the tar stream
+
+	tw.Close()
+	gw.Close()
+	f.Close()
+
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = restoreBackup(archivePath, tmpDir+"/cfg-out", tmpDir+"/crt-out")
+
+	w.Close()
+	os.Stdout = old
+
+	// May succeed or fail depending on how tar handles truncated entries
+	_ = err
+}
+
 func TestApiRequestBadMethod(t *testing.T) {
 	// An invalid HTTP method triggers http.NewRequest error
 	_, err := apiRequest("INVALID METHOD WITH SPACES", "http://localhost/test", "", nil)

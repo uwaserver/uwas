@@ -690,3 +690,49 @@ func TestCheckDomainAccumulates(t *testing.T) {
 		t.Errorf("checks = %d, want 5", len(results[0].Checks))
 	}
 }
+
+// TestStartTickerFires waits for the 30-second ticker in Start to fire once,
+// covering the ticker.C case body. This test takes ~32 seconds to run.
+func TestStartTickerFires(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow ticker test in short mode")
+	}
+
+	var requestCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	domains := []config.Domain{
+		{Host: host, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+	}
+
+	m := New(domains, testLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		m.Start(ctx)
+		close(done)
+	}()
+
+	// Wait for initial check + one ticker fire (30s + buffer)
+	time.Sleep(32 * time.Second)
+
+	count := atomic.LoadInt32(&requestCount)
+	// Should have at least 2 checks: initial + 1 ticker
+	if count < 2 {
+		t.Errorf("expected at least 2 checks (initial + 1 ticker), got %d", count)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not stop after cancel")
+	}
+}

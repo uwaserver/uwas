@@ -575,6 +575,20 @@ func TestAccessLoggerCleanOldBackupsNoBackups(t *testing.T) {
 
 // --- accesslog.go: NewAccessLogger with negative maxBackups defaults to 5 ---
 
+// --- accesslog.go: NewAccessLogger OpenFile error (dir exists but can't open as file) ---
+
+func TestNewAccessLoggerOpenFileError(t *testing.T) {
+	dir := t.TempDir()
+	// Create a subdirectory at the log file path — can't open a directory as a file
+	logPath := filepath.Join(dir, "access.log")
+	os.MkdirAll(logPath, 0755) // create the path as a directory
+
+	_, err := NewAccessLogger(AccessLogConfig{Path: logPath})
+	if err == nil {
+		t.Fatal("expected error when log path is a directory")
+	}
+}
+
 func TestAccessLoggerNegativeMaxBackups(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
@@ -591,6 +605,31 @@ func TestAccessLoggerNegativeMaxBackups(t *testing.T) {
 
 	if al.maxBackups != 5 {
 		t.Errorf("maxBackups = %d, want 5 for negative input", al.maxBackups)
+	}
+}
+
+// --- accesslog.go: Reopen with invalid path ---
+
+func TestAccessLoggerReopenInvalidPath(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:   logPath,
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Change the path to something invalid
+	al.path = filepath.Join(dir, "nonexistent_subdir", "deeply", "nested", "access.log")
+
+	// Reopen should fail because the parent directory doesn't exist
+	err = al.Reopen()
+	if err == nil {
+		t.Fatal("expected error for Reopen with invalid path")
 	}
 }
 
@@ -645,6 +684,36 @@ func TestAccessLoggerRotateCleanupDirError(t *testing.T) {
 		al.Log("GET", "test.com", "/p", "1.1.1.1", "A", "r", 200, 100, 1, 1)
 	}
 	// Just ensuring rotation doesn't panic
+}
+
+// --- accesslog.go: rotate with invalid path (OpenFile fails) ---
+
+func TestAccessLoggerRotateInvalidPath(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:       logPath,
+		Format:     "json",
+		MaxSize:    50,
+		MaxBackups: 1,
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Write enough to trigger first rotation
+	al.Log("GET", "test.com", "/p1234567890", "1.1.1.1", "Agent/1.0", "rid", 200, 100, 1, 1)
+
+	// Now change path to something that can't be opened
+	al.path = filepath.Join(dir, "no_such_dir", "access.log")
+
+	// Next write should trigger rotation with invalid path
+	al.Log("GET", "test.com", "/p1234567890", "1.1.1.1", "Agent/1.0", "rid", 200, 100, 1, 1)
+	al.Log("GET", "test.com", "/p1234567890", "1.1.1.1", "Agent/1.0", "rid", 200, 100, 1, 1)
+
+	// Should not panic even though rotate fails
 }
 
 // --- accesslog.go: multiple rotations in sequence ---

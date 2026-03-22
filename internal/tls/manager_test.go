@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -798,6 +799,379 @@ func TestSaveWithoutLeaf(t *testing.T) {
 	}
 }
 
+// --- LoadExistingCerts: storage error path ---
+
+func TestLoadExistingCertsStorageError(t *testing.T) {
+	// Use a path that is a file (not a dir) so LoadAll returns an error.
+	// On Windows, os.ReadDir on a file returns ENOTDIR which is not IsNotExist,
+	// but some Windows versions may still return empty. Use a path inside a file
+	// to force a definite error.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "not-a-dir")
+	os.WriteFile(filePath, []byte("data"), 0644)
+	// Use a path that is a subpath inside a file (guaranteed error on all OS)
+	brokenPath := filepath.Join(filePath, "subdir")
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: brokenPath}
+	m := NewManager(cfg, nil, log)
+
+	// Should not panic; just logs a warning
+	m.LoadExistingCerts()
+
+	// No certs should be loaded
+	hello := &tls.ClientHelloInfo{ServerName: "anything.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should have no certs when storage fails")
+	}
+}
+
+// --- GetCertificate: on-demand with Ask URL ---
+
+func TestGetCertificateOnDemandAskReject(t *testing.T) {
+	// Start a mock "ask" server that rejects all domains
+	askSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden) // reject
+	}))
+	defer askSrv.Close()
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:       "test@example.com",
+		CAURL:       "https://acme.example.com/directory",
+		Storage:     t.TempDir(),
+		OnDemand:    true,
+		OnDemandAsk: askSrv.URL,
+	}
+	m := NewManager(cfg, nil, log)
+
+	hello := &tls.ClientHelloInfo{ServerName: "unknown-domain.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should reject when ask URL returns non-200")
+	}
+	if !strings.Contains(err.Error(), "rejected") {
+		t.Errorf("error = %v, want contains 'rejected'", err)
+	}
+}
+
+func TestGetCertificateOnDemandAskError(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:       "test@example.com",
+		CAURL:       "https://acme.example.com/directory",
+		Storage:     t.TempDir(),
+		OnDemand:    true,
+		OnDemandAsk: "http://127.0.0.1:1/nonexistent", // connection refused
+	}
+	m := NewManager(cfg, nil, log)
+
+	hello := &tls.ClientHelloInfo{ServerName: "error-domain.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should error when ask URL fails")
+	}
+}
+
+func TestGetCertificateOnDemandRateLimited(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:    "test@example.com",
+		CAURL:    "https://acme.example.com/directory",
+		Storage:  t.TempDir(),
+		OnDemand: true,
+		// No OnDemandAsk URL - skip the ask check
+	}
+	m := NewManager(cfg, nil, log)
+
+	// Exhaust the on-demand rate limit
+	for i := 0; i < onDemandMaxPerMinute; i++ {
+		m.onDemandAllow()
+	}
+
+	hello := &tls.ClientHelloInfo{ServerName: "ratelimited.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should error when rate limited")
+	}
+	if !strings.Contains(err.Error(), "rate limit") {
+		t.Errorf("error = %v, want contains 'rate limit'", err)
+	}
+}
+
+// --- GetCertificate: wildcard no match ---
+
+func TestGetCertificateNoWildcardMatch(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// Store a wildcard for a different TLD
+	cert, _, _ := generateTestCert(t, "*.other.com")
+	m.certs.Store("*.other.com", cert)
+
+	// sub.example.com should not match *.other.com
+	hello := &tls.ClientHelloInfo{ServerName: "sub.example.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should not match wildcard for different domain")
+	}
+}
+
+// --- GetCertificate: single-level domain (no wildcard possible) ---
+
+func TestGetCertificateSingleLevelDomain(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// localhost has no dots, so wildcard lookup should not apply
+	hello := &tls.ClientHelloInfo{ServerName: "localhost"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should not find cert for single-level domain")
+	}
+}
+
+// --- checkRenewals: with near-expiry cert ---
+
+func TestCheckRenewalsNearExpiry(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	// Create a cert that expires in 10 days (within 30-day renewal window)
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "expiring.com"},
+		DNSNames:     []string{"expiring.com"},
+		NotBefore:    time.Now().Add(-80 * 24 * time.Hour),
+		NotAfter:     time.Now().Add(10 * 24 * time.Hour), // 10 days left
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certDER, _ := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	leaf, _ := x509.ParseCertificate(certDER)
+	cert := &tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+		Leaf:        leaf,
+	}
+	m.certs.Store("expiring.com", cert)
+
+	// checkRenewals should attempt renewal but fail since no real ACME server
+	// The important thing is it doesn't panic and logs the error.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx)
+
+	// Verify the cert is still there (renewal failed but original preserved)
+	hello := &tls.ClientHelloInfo{ServerName: "expiring.com"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got != cert {
+		t.Error("original cert should still be available after failed renewal")
+	}
+}
+
+// --- checkRenewals: skips _default cert ---
+
+func TestCheckRenewalsSkipsDefault(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	cert, _, _ := generateTestCert(t, "default")
+	m.certs.Store("_default", cert)
+
+	// Should not attempt renewal for _default
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx) // should not panic
+}
+
+// --- checkRenewals: cert with no Leaf (must parse DER) ---
+
+func TestCheckRenewalsNoLeaf(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	cert, _, _ := generateTestCert(t, "noleaf-check.com")
+	cert.Leaf = nil // force DER parsing in checkRenewals
+	m.certs.Store("noleaf-check.com", cert)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx) // should not panic
+}
+
+// --- checkRenewals: cert with empty Certificate (parse fails) ---
+
+func TestCheckRenewalsEmptyCert(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	m := NewManager(cfg, nil, log)
+
+	cert := &tls.Certificate{} // no Leaf, no Certificate data
+	m.certs.Store("empty.com", cert)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.checkRenewals(ctx) // should skip without panic (leafCert returns error)
+}
+
+// --- ObtainCerts: skips already loaded domains ---
+
+func TestObtainCertsSkipsAlreadyLoaded(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme-staging.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	domains := []config.Domain{
+		{Host: "Loaded.com", SSL: config.SSLConfig{Mode: "auto"}},
+	}
+	m := NewManager(cfg, domains, log)
+
+	// Pre-load using lowercase (as ObtainCerts normalizes to lowercase)
+	cert, _, _ := generateTestCert(t, "loaded.com")
+	m.certs.Store("loaded.com", cert)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	m.ObtainCerts(ctx)
+
+	// Cert should still be the original
+	hello := &tls.ClientHelloInfo{ServerName: "loaded.com"}
+	got, _ := m.GetCertificate(hello)
+	if got != cert {
+		t.Error("should not replace already loaded cert")
+	}
+}
+
+// --- GetCertificate: on-demand with Ask URL that accepts but obtain fails ---
+
+func TestGetCertOnDemandAskAcceptObtainFail(t *testing.T) {
+	// Start a mock "ask" server that accepts all domains
+	askSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK) // accept
+	}))
+	defer askSrv.Close()
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:       "test@example.com",
+		CAURL:       "https://acme.example.com/directory",
+		Storage:     t.TempDir(),
+		OnDemand:    true,
+		OnDemandAsk: askSrv.URL,
+	}
+	m := NewManager(cfg, nil, log)
+
+	hello := &tls.ClientHelloInfo{ServerName: "new-on-demand.com"}
+	_, err := m.GetCertificate(hello)
+	// Should fail because ACME server is not real, but it reaches the obtainCert path
+	if err == nil {
+		t.Error("should fail when ACME issuance fails")
+	}
+}
+
+// --- GetCertificate: on-demand without ask URL, obtainCert fails ---
+
+func TestGetCertOnDemandNoAskObtainFail(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:    "test@example.com",
+		CAURL:    "https://acme.example.com/directory",
+		Storage:  t.TempDir(),
+		OnDemand: true,
+		// No OnDemandAsk
+	}
+	m := NewManager(cfg, nil, log)
+
+	hello := &tls.ClientHelloInfo{ServerName: "fail-obtain.com"}
+	_, err := m.GetCertificate(hello)
+	// Should fail because ACME directory is fake
+	if err == nil {
+		t.Error("should fail when obtain cert fails")
+	}
+}
+
+// --- ObtainCerts: attempts to obtain for auto domains ---
+
+func TestObtainCertsAttemptsObtain(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: t.TempDir(),
+	}
+	domains := []config.Domain{
+		{Host: "obtain.com", SSL: config.SSLConfig{Mode: "auto"}},
+	}
+	m := NewManager(cfg, domains, log)
+
+	// ObtainCerts should try to obtain, fail (no real ACME), and continue
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	m.ObtainCerts(ctx) // should not panic
+
+	// No cert should be stored since ACME issuance failed
+	hello := &tls.ClientHelloInfo{ServerName: "obtain.com"}
+	_, err := m.GetCertificate(hello)
+	if err == nil {
+		t.Error("should not have a cert when ACME fails")
+	}
+}
+
+// --- LoadExistingCerts: successful load with logged count ---
+
+func TestLoadExistingCertsSuccess(t *testing.T) {
+	dir := t.TempDir()
+	storage := NewCertStorage(dir)
+
+	// Save one cert
+	cert, certPEM, keyPEM := generateTestCert(t, "success.com")
+	storage.Save("success.com", cert, keyPEM, certPEM)
+
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: dir}
+	m := NewManager(cfg, nil, log)
+	m.LoadExistingCerts()
+
+	// Should have loaded the cert
+	hello := &tls.ClientHelloInfo{ServerName: "success.com"}
+	got, err := m.GetCertificate(hello)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if got == nil {
+		t.Error("cert should be loaded")
+	}
+}
+
 // --- Save with empty cert chain ---
 
 func TestSaveWithEmptyCertChain(t *testing.T) {
@@ -966,7 +1340,7 @@ func TestCheckRenewalsLogsExpiring(t *testing.T) {
 	}
 }
 
-func TestCheckRenewalsSkipsDefault(t *testing.T) {
+func TestCheckRenewalsSkipsDefaultV2(t *testing.T) {
 	log := logger.New("error", "text")
 	cfg := config.ACMEConfig{
 		Email:   "test@example.com",
@@ -1028,7 +1402,7 @@ func TestObtainCertNilACME(t *testing.T) {
 
 // --- GetCertificate on-demand rate limit rejection ---
 
-func TestGetCertificateOnDemandRateLimited(t *testing.T) {
+func TestGetCertificateOnDemandRateLimitedV2(t *testing.T) {
 	log := logger.New("error", "text")
 	cfg := config.ACMEConfig{
 		Email:    "test@example.com",
@@ -1078,7 +1452,7 @@ func TestGetCertificateOnDemandAskRejection(t *testing.T) {
 
 // --- GetCertificate on-demand ask URL error (bad URL) ---
 
-func TestGetCertificateOnDemandAskError(t *testing.T) {
+func TestGetCertificateOnDemandAskErrorV2(t *testing.T) {
 	log := logger.New("error", "text")
 	cfg := config.ACMEConfig{
 		Email:       "test@example.com",

@@ -1362,6 +1362,44 @@ func TestRateLimitCleanupRuns(t *testing.T) {
 	}
 }
 
+// --- ratelimit.go: exercise cleanupLoop body directly ---
+
+func TestRateLimitCleanupLoopDirect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	rl := NewRateLimiter(ctx, 5, 1*time.Millisecond) // 1ms window
+
+	// Fill buckets
+	for i := 0; i < 50; i++ {
+		rl.Allow(fmt.Sprintf("ip-%d", i))
+	}
+
+	// Wait for entries to expire (>= 2x window)
+	time.Sleep(10 * time.Millisecond)
+
+	// Cancel the original goroutine
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+
+	// Now start a new cleanup loop goroutine and immediately cancel it
+	// This exercises the ctx.Done case
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		rl.cleanupLoop(ctx2)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel2()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanupLoop did not stop after cancel")
+	}
+}
+
 // --- Vary header set by compression ---
 
 func TestCompressVaryHeader(t *testing.T) {
