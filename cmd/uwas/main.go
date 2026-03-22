@@ -13,6 +13,8 @@ func main() {
 	app.Register(&cli.ConfigCommand{})
 	app.Register(&cli.DomainCommand{})
 	app.Register(&cli.CacheCommand{})
+	app.Register(&cli.StatusCommand{})
+	app.Register(&cli.ReloadCommand{})
 	app.Register(cli.NewHelpCommand(app))
 
 	app.Run(os.Args[1:])
