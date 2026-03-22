@@ -109,6 +109,15 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/php/{version}/start", s.handlePHPStart)
 	s.mux.HandleFunc("POST /api/v1/php/{version}/stop", s.handlePHPStop)
 
+	// Per-domain PHP instances
+	s.mux.HandleFunc("GET /api/v1/php/domains", s.handlePHPDomainsList)
+	s.mux.HandleFunc("POST /api/v1/php/domains", s.handlePHPDomainAssign)
+	s.mux.HandleFunc("DELETE /api/v1/php/domains/{domain}", s.handlePHPDomainUnassign)
+	s.mux.HandleFunc("POST /api/v1/php/domains/{domain}/start", s.handlePHPDomainStart)
+	s.mux.HandleFunc("POST /api/v1/php/domains/{domain}/stop", s.handlePHPDomainStop)
+	s.mux.HandleFunc("GET /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigGet)
+	s.mux.HandleFunc("PUT /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigPut)
+
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
 	if err == nil {
@@ -287,8 +296,25 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, alerts)
 }
 
-// SetPHPManager sets the PHP manager for the PHP API endpoints.
-func (s *Server) SetPHPManager(m *phpmanager.Manager) { s.phpMgr = m }
+// SetPHPManager sets the PHP manager for the PHP API endpoints and wires up
+// the domain change callback so that starting a per-domain PHP instance
+// automatically updates the domain's php.fpm_address in the running config.
+func (s *Server) SetPHPManager(m *phpmanager.Manager) {
+	s.phpMgr = m
+
+	// Auto-wire: when a domain PHP starts, update the running config.
+	m.SetDomainChangeFunc(func(domain, fpmAddr string) {
+		s.configMu.Lock()
+		for i, d := range s.config.Domains {
+			if d.Host == domain {
+				s.config.Domains[i].PHP.FPMAddress = fpmAddr
+				break
+			}
+		}
+		s.configMu.Unlock()
+		s.notifyDomainChange()
+	})
+}
 
 func (s *Server) handlePHPList(w http.ResponseWriter, r *http.Request) {
 	if s.phpMgr == nil {
@@ -389,6 +415,132 @@ func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
+}
+
+// --- Per-domain PHP endpoints ---
+
+func (s *Server) handlePHPDomainsList(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	jsonResponse(w, s.phpMgr.GetDomainInstances())
+}
+
+func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req struct {
+		Domain  string `json:"domain"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Domain == "" {
+		jsonError(w, "domain is required", http.StatusBadRequest)
+		return
+	}
+	if req.Version == "" {
+		jsonError(w, "version is required", http.StatusBadRequest)
+		return
+	}
+
+	dp, err := s.phpMgr.AssignDomain(req.Domain, req.Version)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(dp)
+}
+
+func (s *Server) handlePHPDomainUnassign(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+	s.phpMgr.UnassignDomain(domain)
+	jsonResponse(w, map[string]string{"status": "unassigned", "domain": domain})
+}
+
+func (s *Server) handlePHPDomainStart(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+
+	if err := s.phpMgr.StartDomain(domain); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "started", "domain": domain})
+}
+
+func (s *Server) handlePHPDomainStop(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+
+	if err := s.phpMgr.StopDomain(domain); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "stopped", "domain": domain})
+}
+
+func (s *Server) handlePHPDomainConfigGet(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+
+	cfg := s.phpMgr.GetDomainConfig(domain)
+	if cfg == nil {
+		jsonError(w, "domain not found or no PHP assignment", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, cfg)
+}
+
+func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	domain := r.PathValue("domain")
+
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Key == "" {
+		jsonError(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.phpMgr.SetDomainConfig(domain, req.Key, req.Value); err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "updated", "domain": domain, "key": req.Key, "value": req.Value})
 }
 
 // HTTPServer returns the underlying http.Server for shutdown during upgrades.

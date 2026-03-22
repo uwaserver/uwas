@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -41,12 +42,42 @@ type processInfo struct {
 	listenAddr string
 }
 
+// DomainPHP describes a per-domain PHP-CGI instance.
+type DomainPHP struct {
+	Domain          string            `json:"domain"`
+	Version         string            `json:"version"`          // "8.4" or "8.4.19"
+	ListenAddr      string            `json:"listen_addr"`      // auto-assigned "127.0.0.1:9001"
+	Running         bool              `json:"running"`
+	PID             int               `json:"pid"`
+	ConfigOverrides map[string]string `json:"config_overrides"` // per-domain php.ini overrides
+}
+
+// DomainChangeFunc is called when a domain's PHP configuration changes.
+// It receives the domain name and the new FPM address.
+type DomainChangeFunc func(domain, fpmAddr string)
+
+// domainInstance holds the internal state for a per-domain PHP assignment.
+type domainInstance struct {
+	domain          string
+	version         string
+	listenAddr      string
+	configOverrides map[string]string
+	proc            *processInfo
+	tmpINI          string // path to temp ini file, cleaned up on stop
+}
+
 // Manager detects and manages PHP installations and subprocesses.
 type Manager struct {
 	installations []PHPInstall
 	mu            sync.RWMutex
 	processes     sync.Map // version string → *processInfo
 	logger        *logger.Logger
+
+	// Per-domain PHP instances.
+	domainMu       sync.RWMutex
+	domainMap      map[string]*domainInstance // domain → instance
+	nextPort       int                        // next auto-assigned port
+	onDomainChange DomainChangeFunc           // called when a domain PHP starts
 
 	// execCommand is the function used to create exec.Cmd objects.
 	// It defaults to exec.Command and can be overridden for testing.
@@ -58,7 +89,350 @@ func New(log *logger.Logger) *Manager {
 	return &Manager{
 		logger:      log,
 		execCommand: exec.Command,
+		domainMap:   make(map[string]*domainInstance),
+		nextPort:    9001,
 	}
+}
+
+// SetDomainChangeFunc sets a callback invoked when a domain PHP instance
+// starts and the running config should be updated with the new FPM address.
+func (m *Manager) SetDomainChangeFunc(fn DomainChangeFunc) {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
+	m.onDomainChange = fn
+}
+
+// AssignDomain assigns a PHP version to a domain, auto-assigning a listen port.
+func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
+	if domain == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if version == "" {
+		return nil, fmt.Errorf("version is required")
+	}
+
+	// Verify the version is installed.
+	if _, ok := m.findInstall(version); !ok {
+		return nil, fmt.Errorf("PHP %s not found", version)
+	}
+
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
+
+	if _, exists := m.domainMap[domain]; exists {
+		return nil, fmt.Errorf("domain %s already has a PHP assignment", domain)
+	}
+
+	addr := fmt.Sprintf("127.0.0.1:%d", m.nextPort)
+	m.nextPort++
+
+	inst := &domainInstance{
+		domain:          domain,
+		version:         version,
+		listenAddr:      addr,
+		configOverrides: make(map[string]string),
+	}
+	m.domainMap[domain] = inst
+
+	m.logger.Info("assigned PHP to domain", "domain", domain, "version", version, "listen", addr)
+
+	return m.domainPHPFromInstance(inst), nil
+}
+
+// UnassignDomain removes a PHP assignment for a domain. Stops the process
+// if it is running.
+func (m *Manager) UnassignDomain(domain string) {
+	m.domainMu.Lock()
+	inst, exists := m.domainMap[domain]
+	if !exists {
+		m.domainMu.Unlock()
+		return
+	}
+	delete(m.domainMap, domain)
+	m.domainMu.Unlock()
+
+	// Stop the process if running.
+	if inst.proc != nil && inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
+		_ = inst.proc.cmd.Process.Kill()
+	}
+	// Clean up temp ini file.
+	if inst.tmpINI != "" {
+		os.Remove(inst.tmpINI)
+	}
+
+	m.logger.Info("unassigned PHP from domain", "domain", domain)
+}
+
+// StartDomain starts the PHP-CGI process for the given domain.
+func (m *Manager) StartDomain(domain string) error {
+	m.domainMu.Lock()
+	inst, exists := m.domainMap[domain]
+	if !exists {
+		m.domainMu.Unlock()
+		return fmt.Errorf("domain %s has no PHP assignment", domain)
+	}
+	if inst.proc != nil {
+		m.domainMu.Unlock()
+		return fmt.Errorf("PHP for domain %s is already running", domain)
+	}
+
+	phpInst, ok := m.findInstall(inst.version)
+	if !ok {
+		m.domainMu.Unlock()
+		return fmt.Errorf("PHP %s not found", inst.version)
+	}
+
+	// Build command args.
+	args := []string{"-b", inst.listenAddr}
+
+	// Create per-domain temp ini if there are overrides or a base config.
+	tmpINI, err := m.buildDomainINI(domain, phpInst, inst.configOverrides)
+	if err != nil {
+		m.domainMu.Unlock()
+		return fmt.Errorf("build domain ini: %w", err)
+	}
+	if tmpINI != "" {
+		args = append([]string{"-c", tmpINI}, args...)
+		inst.tmpINI = tmpINI
+	}
+
+	cmd := m.execCommand(phpInst.Binary, args...)
+	cmd.Stdout = m.logger.Writer(4) // slog.LevelInfo
+	cmd.Stderr = m.logger.Writer(8) // slog.LevelError
+
+	if err := cmd.Start(); err != nil {
+		m.domainMu.Unlock()
+		if tmpINI != "" {
+			os.Remove(tmpINI)
+		}
+		return fmt.Errorf("start php-cgi for domain %s: %w", domain, err)
+	}
+
+	inst.proc = &processInfo{
+		cmd:        cmd,
+		listenAddr: inst.listenAddr,
+	}
+
+	// Capture callback before releasing lock.
+	changeFn := m.onDomainChange
+	listenAddr := inst.listenAddr
+	m.domainMu.Unlock()
+
+	m.logger.Info("started PHP-CGI for domain", "domain", domain, "version", inst.version,
+		"listen", listenAddr, "pid", cmd.Process.Pid)
+
+	// Notify domain change so the running config is updated.
+	if changeFn != nil {
+		changeFn(domain, listenAddr)
+	}
+
+	// Reap the process in the background.
+	go func() {
+		waitErr := cmd.Wait()
+		m.domainMu.Lock()
+		if di, ok := m.domainMap[domain]; ok && di.proc != nil && di.proc.cmd == cmd {
+			di.proc = nil
+			if di.tmpINI != "" {
+				os.Remove(di.tmpINI)
+				di.tmpINI = ""
+			}
+		}
+		m.domainMu.Unlock()
+		if waitErr != nil {
+			m.logger.Warn("PHP-CGI for domain exited", "domain", domain, "error", waitErr)
+		} else {
+			m.logger.Info("PHP-CGI for domain exited", "domain", domain)
+		}
+	}()
+
+	return nil
+}
+
+// StopDomain stops the PHP-CGI process for the given domain.
+func (m *Manager) StopDomain(domain string) error {
+	m.domainMu.Lock()
+	inst, exists := m.domainMap[domain]
+	if !exists {
+		m.domainMu.Unlock()
+		return fmt.Errorf("domain %s has no PHP assignment", domain)
+	}
+	if inst.proc == nil {
+		m.domainMu.Unlock()
+		return fmt.Errorf("PHP for domain %s is not running", domain)
+	}
+
+	proc := inst.proc
+	inst.proc = nil
+	tmpINI := inst.tmpINI
+	inst.tmpINI = ""
+	m.domainMu.Unlock()
+
+	if err := proc.cmd.Process.Kill(); err != nil {
+		return fmt.Errorf("kill php-cgi for domain %s: %w", domain, err)
+	}
+
+	if tmpINI != "" {
+		os.Remove(tmpINI)
+	}
+
+	m.logger.Info("stopped PHP-CGI for domain", "domain", domain)
+	return nil
+}
+
+// SetDomainConfig sets a per-domain php.ini override.
+func (m *Manager) SetDomainConfig(domain, key, value string) error {
+	if key == "" {
+		return fmt.Errorf("key is required")
+	}
+
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
+
+	inst, exists := m.domainMap[domain]
+	if !exists {
+		return fmt.Errorf("domain %s has no PHP assignment", domain)
+	}
+
+	inst.configOverrides[key] = value
+	m.logger.Info("set domain PHP config", "domain", domain, "key", key, "value", value)
+	return nil
+}
+
+// GetDomainConfig returns the per-domain php.ini overrides.
+func (m *Manager) GetDomainConfig(domain string) map[string]string {
+	m.domainMu.RLock()
+	defer m.domainMu.RUnlock()
+
+	inst, exists := m.domainMap[domain]
+	if !exists {
+		return nil
+	}
+
+	out := make(map[string]string, len(inst.configOverrides))
+	for k, v := range inst.configOverrides {
+		out[k] = v
+	}
+	return out
+}
+
+// GetDomainInstances returns all per-domain PHP assignments.
+func (m *Manager) GetDomainInstances() []DomainPHP {
+	m.domainMu.RLock()
+	defer m.domainMu.RUnlock()
+
+	result := make([]DomainPHP, 0, len(m.domainMap))
+	for _, inst := range m.domainMap {
+		result = append(result, *m.domainPHPFromInstance(inst))
+	}
+
+	// Sort by domain for deterministic output.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Domain < result[j].Domain
+	})
+
+	return result
+}
+
+// AutoStartAll starts PHP-CGI processes for all assigned domains.
+// It is intended to be called on server startup.
+func (m *Manager) AutoStartAll() error {
+	m.domainMu.RLock()
+	domains := make([]string, 0, len(m.domainMap))
+	for domain := range m.domainMap {
+		domains = append(domains, domain)
+	}
+	m.domainMu.RUnlock()
+
+	var errs []string
+	for _, domain := range domains {
+		if err := m.StartDomain(domain); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", domain, err))
+			m.logger.Warn("failed to auto-start PHP for domain", "domain", domain, "error", err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("auto-start errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// buildDomainINI creates a temporary php.ini that includes the base config
+// and adds per-domain overrides. Returns the path to the temp file, or ""
+// if no customization is needed.
+func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[string]string) (string, error) {
+	if inst.ConfigFile == "" && len(overrides) == 0 {
+		return "", nil
+	}
+
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("uwas-php-%s-*.ini", domain))
+	if err != nil {
+		return "", err
+	}
+
+	var lines []string
+
+	// Include base php.ini if available.
+	if inst.ConfigFile != "" {
+		// On Windows, use forward slashes or escape backslashes in the include path.
+		cfgPath := strings.ReplaceAll(inst.ConfigFile, `\`, `/`)
+		lines = append(lines, fmt.Sprintf("; Per-domain PHP config for %s", domain))
+		lines = append(lines, fmt.Sprintf("; Base config: %s", cfgPath))
+		lines = append(lines, "")
+
+		// Read base config and include its contents directly, because
+		// PHP's include directive is not available in all builds.
+		baseData, readErr := os.ReadFile(inst.ConfigFile)
+		if readErr == nil {
+			lines = append(lines, string(baseData))
+			lines = append(lines, "")
+		}
+	}
+
+	// Add overrides.
+	if len(overrides) > 0 {
+		lines = append(lines, "; Per-domain overrides")
+		// Sort keys for deterministic output.
+		keys := make([]string, 0, len(overrides))
+		for k := range overrides {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			lines = append(lines, fmt.Sprintf("%s = %s", k, overrides[k]))
+		}
+	}
+
+	content := strings.Join(lines, "\n") + "\n"
+	if _, err := tmpFile.WriteString(content); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+
+	return tmpFile.Name(), nil
+}
+
+// domainPHPFromInstance converts internal state to the public DomainPHP type.
+func (m *Manager) domainPHPFromInstance(inst *domainInstance) *DomainPHP {
+	dp := &DomainPHP{
+		Domain:          inst.domain,
+		Version:         inst.version,
+		ListenAddr:      inst.listenAddr,
+		ConfigOverrides: make(map[string]string, len(inst.configOverrides)),
+	}
+	for k, v := range inst.configOverrides {
+		dp.ConfigOverrides[k] = v
+	}
+	if inst.proc != nil && inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
+		dp.Running = true
+		dp.PID = inst.proc.cmd.Process.Pid
+	}
+	return dp
 }
 
 // Installations returns a copy of the detected PHP installations.
@@ -459,7 +833,8 @@ func (m *Manager) Status() []PHPStatus {
 	return statuses
 }
 
-// StopAll stops all running PHP-CGI subprocesses. Called during server shutdown.
+// StopAll stops all running PHP-CGI subprocesses (both global and per-domain).
+// Called during server shutdown.
 func (m *Manager) StopAll() {
 	m.processes.Range(func(key, val any) bool {
 		version := key.(string)
@@ -472,4 +847,24 @@ func (m *Manager) StopAll() {
 		m.processes.Delete(key)
 		return true
 	})
+
+	// Stop all per-domain instances.
+	m.domainMu.Lock()
+	for domain, inst := range m.domainMap {
+		if inst.proc != nil {
+			if inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
+				if err := inst.proc.cmd.Process.Kill(); err != nil {
+					m.logger.Warn("failed to stop domain PHP-CGI", "domain", domain, "error", err)
+				} else {
+					m.logger.Info("stopped domain PHP-CGI", "domain", domain)
+				}
+			}
+			inst.proc = nil
+		}
+		if inst.tmpINI != "" {
+			os.Remove(inst.tmpINI)
+			inst.tmpINI = ""
+		}
+	}
+	m.domainMu.Unlock()
 }
