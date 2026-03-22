@@ -533,12 +533,19 @@ func captureStdout(t *testing.T, fn func()) string {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
+	// Read concurrently to avoid deadlock when output exceeds pipe buffer.
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		buf.ReadFrom(r)
+		close(done)
+	}()
+
 	fn()
 
 	w.Close()
 	os.Stdout = old
+	<-done
 
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
 	return buf.String()
 }

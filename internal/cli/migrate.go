@@ -6,6 +6,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	nginxmigrate "github.com/uwaserver/uwas/internal/migrate"
 )
 
 // MigrateCommand converts Nginx/Apache configs to UWAS YAML.
@@ -67,12 +69,11 @@ func migrateNginx(file string) error {
 	}
 	defer f.Close()
 
-	servers := parseNginxConfig(f)
-	if len(servers) == 0 {
-		return fmt.Errorf("no server blocks found in %s", file)
+	yaml, err := nginxmigrate.NginxToYAML(f)
+	if err != nil {
+		return fmt.Errorf("migrate %s: %w", file, err)
 	}
 
-	yaml := convertNginxToYAML(servers)
 	fmt.Print(yaml)
 	return nil
 }
