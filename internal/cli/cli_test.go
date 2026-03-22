@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -809,5 +811,1275 @@ func TestDomainListBadJSON(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "parse response") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+// ========== backup.go tests ==========
+
+func TestBackupCommandNameDescription(t *testing.T) {
+	b := &BackupCommand{}
+	if b.Name() != "backup" {
+		t.Errorf("Name() = %q, want backup", b.Name())
+	}
+	if b.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+}
+
+func TestBackupCommandHelp(t *testing.T) {
+	b := &BackupCommand{}
+	h := b.Help()
+	if !strings.Contains(h, "--output") {
+		t.Error("Help should mention --output")
+	}
+	if !strings.Contains(h, "--certs") {
+		t.Error("Help should mention --certs")
+	}
+}
+
+func TestBackupCommandRun(t *testing.T) {
+	// Create a temp config file to back up
+	tmpDir, err := os.MkdirTemp("", "uwas-backup-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgFile := tmpDir + "/uwas.yaml"
+	os.WriteFile(cfgFile, []byte("domains:\n  - host: test.com\n"), 0644)
+
+	outFile := tmpDir + "/test-backup.tar.gz"
+
+	b := &BackupCommand{}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = b.Run([]string{"--output", outFile, "-c", cfgFile, "--certs", tmpDir + "/nonexistent-certs"})
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("backup error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Backup created") {
+		t.Errorf("output = %q, want 'Backup created'", buf.String())
+	}
+
+	// Verify file was created
+	if _, err := os.Stat(outFile); os.IsNotExist(err) {
+		t.Error("backup file was not created")
+	}
+}
+
+func TestBackupCommandDefaultOutput(t *testing.T) {
+	// Test with default output (auto-generated name) -- just verify no crash
+	tmpDir, err := os.MkdirTemp("", "uwas-backup-default-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgFile := tmpDir + "/uwas.yaml"
+	os.WriteFile(cfgFile, []byte("test: true\n"), 0644)
+
+	// We need to be in the tmpDir so the auto-generated file goes there
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	b := &BackupCommand{}
+
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = b.Run([]string{"-c", cfgFile, "--certs", tmpDir + "/nonexistent"})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("backup with default output error: %v", err)
+	}
+}
+
+func TestBackupWithDomainsDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "uwas-backup-domains-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgFile := tmpDir + "/uwas.yaml"
+	os.WriteFile(cfgFile, []byte("test: true\n"), 0644)
+
+	// Create domains.d directory with yaml files
+	domainsDir := tmpDir + "/domains.d"
+	os.Mkdir(domainsDir, 0755)
+	os.WriteFile(domainsDir+"/site1.yaml", []byte("host: site1.com\n"), 0644)
+	os.WriteFile(domainsDir+"/site2.yml", []byte("host: site2.com\n"), 0644)
+	os.WriteFile(domainsDir+"/skip.txt", []byte("not yaml\n"), 0644)
+
+	outFile := tmpDir + "/backup-with-domains.tar.gz"
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = createBackup(outFile, cfgFile, tmpDir+"/nonexistent-certs")
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("createBackup error: %v", err)
+	}
+	// Should have 3 files: config + 2 yaml domain files (skip.txt excluded)
+	if !strings.Contains(buf.String(), "3 files") {
+		t.Errorf("output = %q, expected 3 files", buf.String())
+	}
+}
+
+func TestBackupWithCertsDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "uwas-backup-certs-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgFile := tmpDir + "/uwas.yaml"
+	os.WriteFile(cfgFile, []byte("test: true\n"), 0644)
+
+	certsDir := tmpDir + "/certs"
+	os.MkdirAll(certsDir+"/sub", 0755)
+	os.WriteFile(certsDir+"/cert.pem", []byte("cert data\n"), 0644)
+	os.WriteFile(certsDir+"/sub/key.pem", []byte("key data\n"), 0644)
+
+	outFile := tmpDir + "/backup-with-certs.tar.gz"
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = createBackup(outFile, cfgFile, certsDir)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("createBackup error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "3 files") {
+		t.Errorf("output = %q, expected 3 files (config + 2 certs)", buf.String())
+	}
+}
+
+func TestBackupMissingConfig(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "uwas-backup-miss-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	outFile := tmpDir + "/backup.tar.gz"
+
+	// Config file doesn't exist -- should warn but not error
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+	oldErr := os.Stderr
+	_, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+
+	err = createBackup(outFile, tmpDir+"/nonexistent.yaml", tmpDir+"/nonexistent-certs")
+
+	w.Close()
+	wErr.Close()
+	os.Stdout = old
+	os.Stderr = oldErr
+
+	if err != nil {
+		t.Fatalf("createBackup with missing config should not error, got: %v", err)
+	}
+}
+
+func TestRestoreCommandNameDescription(t *testing.T) {
+	r := &RestoreCommand{}
+	if r.Name() != "restore" {
+		t.Errorf("Name() = %q, want restore", r.Name())
+	}
+	if r.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+}
+
+func TestRestoreCommandHelp(t *testing.T) {
+	r := &RestoreCommand{}
+	h := r.Help()
+	if !strings.Contains(h, "--input") {
+		t.Error("Help should mention --input")
+	}
+	if !strings.Contains(h, "--config-dir") {
+		t.Error("Help should mention --config-dir")
+	}
+	if !strings.Contains(h, "--certs-dir") {
+		t.Error("Help should mention --certs-dir")
+	}
+}
+
+func TestRestoreCommandMissingInput(t *testing.T) {
+	r := &RestoreCommand{}
+	err := r.Run([]string{})
+	if err == nil {
+		t.Fatal("expected error for missing --input")
+	}
+	if !strings.Contains(err.Error(), "--input is required") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestBackupAndRestore(t *testing.T) {
+	// Create a source directory with config + certs
+	srcDir, err := os.MkdirTemp("", "uwas-src-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(srcDir)
+
+	cfgFile := srcDir + "/uwas.yaml"
+	os.WriteFile(cfgFile, []byte("domains:\n  - host: restore-test.com\n"), 0644)
+
+	certsDir := srcDir + "/certs"
+	os.Mkdir(certsDir, 0755)
+	os.WriteFile(certsDir+"/cert.pem", []byte("CERT_DATA"), 0644)
+
+	backupFile := srcDir + "/full-backup.tar.gz"
+
+	// Create backup
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+	err = createBackup(backupFile, cfgFile, certsDir)
+	w.Close()
+	os.Stdout = old
+	if err != nil {
+		t.Fatalf("createBackup error: %v", err)
+	}
+
+	// Restore to new location
+	destDir, err := os.MkdirTemp("", "uwas-dest-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(destDir)
+
+	configDest := destDir + "/config"
+	certsDest := destDir + "/certs"
+
+	old = os.Stdout
+	r2, w2, _ := os.Pipe()
+	os.Stdout = w2
+
+	err = restoreBackup(backupFile, configDest, certsDest)
+
+	w2.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r2)
+
+	if err != nil {
+		t.Fatalf("restoreBackup error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Restore complete") {
+		t.Errorf("output = %q", buf.String())
+	}
+
+	// Verify restored files exist
+	if _, err := os.Stat(configDest + "/uwas.yaml"); os.IsNotExist(err) {
+		t.Error("restored config file not found")
+	}
+	if _, err := os.Stat(certsDest + "/cert.pem"); os.IsNotExist(err) {
+		t.Error("restored cert file not found")
+	}
+
+	// Verify content
+	data, _ := os.ReadFile(configDest + "/uwas.yaml")
+	if !strings.Contains(string(data), "restore-test.com") {
+		t.Errorf("restored config content = %q", string(data))
+	}
+}
+
+func TestRestoreNonexistentInput(t *testing.T) {
+	r := &RestoreCommand{}
+	err := r.Run([]string{"--input", "/nonexistent/backup.tar.gz"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent input")
+	}
+}
+
+// ========== restart.go tests ==========
+
+func TestRestartCommandNameDescription(t *testing.T) {
+	r := &RestartCommand{}
+	if r.Name() != "restart" {
+		t.Errorf("Name() = %q, want restart", r.Name())
+	}
+	if r.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+}
+
+func TestRestartCommandHelp(t *testing.T) {
+	r := &RestartCommand{}
+	h := r.Help()
+	if !strings.Contains(h, "--pid-file") {
+		t.Error("Help should mention --pid-file")
+	}
+	if !strings.Contains(h, "--api-url") {
+		t.Error("Help should mention --api-url")
+	}
+	if !strings.Contains(h, "SIGTERM") {
+		t.Error("Help should mention SIGTERM")
+	}
+}
+
+func TestRestartCommandMissingPidFile(t *testing.T) {
+	// Mock API server that returns health
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "uptime": "1h"})
+	}))
+	defer srv.Close()
+
+	r := &RestartCommand{}
+
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := r.Run([]string{"--pid-file", "/nonexistent/uwas.pid", "--api-url", srv.URL})
+
+	w.Close()
+	os.Stdout = old
+
+	if err == nil {
+		t.Fatal("expected error for missing PID file")
+	}
+	if !strings.Contains(err.Error(), "cannot read PID file") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestRestartCommandInvalidPid(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "uwas-pid-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString("not-a-number")
+	tmpFile.Close()
+
+	r := &RestartCommand{}
+
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = r.Run([]string{"--pid-file", tmpFile.Name(), "--api-url", "http://127.0.0.1:1"})
+
+	w.Close()
+	os.Stdout = old
+
+	if err == nil {
+		t.Fatal("expected error for invalid PID")
+	}
+	if !strings.Contains(err.Error(), "invalid PID") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+// ========== status.go tests ==========
+
+func TestStatusCommandNameDescription(t *testing.T) {
+	s := &StatusCommand{}
+	if s.Name() != "status" {
+		t.Errorf("Name() = %q, want status", s.Name())
+	}
+	if s.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+}
+
+func TestStatusCommandWithMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": "healthy",
+				"uptime": "5h30m",
+			})
+		case "/api/v1/stats":
+			json.NewEncoder(w).Encode(map[string]any{
+				"requests_total": 1000,
+				"active_conns":   5,
+				"cache_hits":     800,
+				"cache_misses":   200,
+				"bytes_sent":     1048576,
+			})
+		case "/api/v1/domains":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"host": "example.com", "type": "static", "ssl": "auto"},
+				{"host": "api.test.com", "type": "proxy", "ssl": nil},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	s := &StatusCommand{}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := s.Run([]string{"--api-url", srv.URL, "--api-key", "testkey"})
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if err != nil {
+		t.Fatalf("status error: %v", err)
+	}
+	if !strings.Contains(output, "UWAS Server Status") {
+		t.Errorf("output should contain header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "healthy") {
+		t.Errorf("output should contain health status, got:\n%s", output)
+	}
+	if !strings.Contains(output, "example.com") {
+		t.Errorf("output should list domains, got:\n%s", output)
+	}
+}
+
+func TestStatusCommandServerNotReachable(t *testing.T) {
+	s := &StatusCommand{}
+	err := s.Run([]string{"--api-url", "http://127.0.0.1:1", "--api-key", "k"})
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
+	}
+	if !strings.Contains(err.Error(), "server not reachable") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestStatusCommandNullSSL(t *testing.T) {
+	// Test domain with nil ssl value (covers ssl == nil branch)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "uptime": "1m"})
+		case "/api/v1/stats":
+			w.WriteHeader(500) // stats fails -- still should not crash
+		case "/api/v1/domains":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"host": "no-ssl.com", "type": "static"},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	s := &StatusCommand{}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := s.Run([]string{"--api-url", srv.URL})
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("status error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "no-ssl.com") {
+		t.Errorf("output should contain no-ssl.com, got:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "off") {
+		t.Errorf("nil ssl should show as 'off', got:\n%s", buf.String())
+	}
+}
+
+func TestReloadCommandNameDescription(t *testing.T) {
+	r := &ReloadCommand{}
+	if r.Name() != "reload" {
+		t.Errorf("Name() = %q, want reload", r.Name())
+	}
+	if r.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+}
+
+func TestReloadCommandWithMockAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/reload" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "reloaded"})
+	}))
+	defer srv.Close()
+
+	rl := &ReloadCommand{}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := rl.Run([]string{"--api-url", srv.URL, "--api-key", "testkey"})
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("reload error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Config reloaded") {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+func TestReloadCommandServerNotReachable(t *testing.T) {
+	rl := &ReloadCommand{}
+	err := rl.Run([]string{"--api-url", "http://127.0.0.1:1", "--api-key", "k"})
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
+	}
+	if !strings.Contains(err.Error(), "reload failed") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+// ========== migrate.go additional edge-case tests ==========
+
+func TestMigrateCommandRunViaRun(t *testing.T) {
+	// Test the Run() dispatch for nginx
+	content := `
+server {
+    listen 80;
+    server_name run-test.com;
+    root /var/www/test;
+}
+`
+	tmpFile := writeTempFile(t, content, "migrate-run-*.conf")
+	defer os.Remove(tmpFile)
+
+	m := &MigrateCommand{}
+
+	output := captureStdout(t, func() {
+		err := m.Run([]string{"nginx", tmpFile})
+		if err != nil {
+			t.Fatalf("Run nginx error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "host: run-test.com") {
+		t.Errorf("output should contain host, got:\n%s", output)
+	}
+}
+
+func TestMigrateCommandRunViaRunApache(t *testing.T) {
+	content := `
+<VirtualHost *:80>
+    ServerName apache-run.com
+    DocumentRoot /var/www/apache
+</VirtualHost>
+`
+	tmpFile := writeTempFile(t, content, "migrate-run-apache-*.conf")
+	defer os.Remove(tmpFile)
+
+	m := &MigrateCommand{}
+
+	output := captureStdout(t, func() {
+		err := m.Run([]string{"apache", tmpFile})
+		if err != nil {
+			t.Fatalf("Run apache error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "host: apache-run.com") {
+		t.Errorf("output should contain host, got:\n%s", output)
+	}
+}
+
+func TestMigrateNonexistentFileViaRun(t *testing.T) {
+	m := &MigrateCommand{}
+	err := m.Run([]string{"nginx", "/nonexistent/file.conf"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
+
+func TestMigrateApache443AutoSSL(t *testing.T) {
+	// Apache VirtualHost with *:443 but no SSLEngine and no cert files
+	content := `
+<VirtualHost *:443>
+    ServerName auto443.example.com
+    DocumentRoot /var/www/auto443
+</VirtualHost>
+`
+	tmpFile := writeTempFile(t, content, "apache-443-auto-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateApache(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateApache error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "mode: auto") {
+		t.Errorf("443 without SSLEngine should get ssl auto, got:\n%s", output)
+	}
+}
+
+func TestMigrateNginxServerLevelProxy(t *testing.T) {
+	// Nginx with proxy_pass at server level (not in location)
+	content := `
+server {
+    listen 80;
+    server_name proxy-srv.com;
+    proxy_pass http://backend:8080;
+}
+`
+	tmpFile := writeTempFile(t, content, "nginx-srv-proxy-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateNginx(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateNginx error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "type: proxy") {
+		t.Errorf("should detect proxy type, got:\n%s", output)
+	}
+	if !strings.Contains(output, "address: http://backend:8080") {
+		t.Errorf("should contain upstream, got:\n%s", output)
+	}
+}
+
+func TestMigrateNginxNoServerName(t *testing.T) {
+	// Nginx server block without any server_name directive
+	content := `
+server {
+    listen 80;
+    root /var/www/default;
+}
+`
+	tmpFile := writeTempFile(t, content, "nginx-noname-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateNginx(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateNginx error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "host: example.com") {
+		t.Errorf("missing server_name should default to example.com, got:\n%s", output)
+	}
+}
+
+func TestMigrateNginxSSLCertNoKey(t *testing.T) {
+	// SSL with cert but no key
+	content := `
+server {
+    listen 443 ssl;
+    server_name certonly.com;
+    root /var/www/certonly;
+    ssl_certificate /etc/ssl/cert.pem;
+}
+`
+	tmpFile := writeTempFile(t, content, "nginx-certonly-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateNginx(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateNginx error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "mode: manual") {
+		t.Errorf("should have manual ssl mode, got:\n%s", output)
+	}
+	if !strings.Contains(output, "cert: /etc/ssl/cert.pem") {
+		t.Errorf("should have cert, got:\n%s", output)
+	}
+	// Should NOT have a key line
+	if strings.Contains(output, "key:") {
+		t.Errorf("should not have key line when no key is configured, got:\n%s", output)
+	}
+}
+
+func TestMigrateApacheSSLCertNoKey(t *testing.T) {
+	content := `
+<VirtualHost *:443>
+    ServerName certonly-apache.com
+    DocumentRoot /var/www/certonly
+    SSLCertificateFile /etc/ssl/cert.pem
+</VirtualHost>
+`
+	tmpFile := writeTempFile(t, content, "apache-certonly-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateApache(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateApache error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "mode: manual") {
+		t.Errorf("should have manual ssl mode, got:\n%s", output)
+	}
+	if strings.Contains(output, "key:") {
+		t.Errorf("should not have key line when no key is configured, got:\n%s", output)
+	}
+}
+
+func TestMigrateNginxMultipleLocationsProxy(t *testing.T) {
+	content := `
+server {
+    listen 80;
+    server_name multi-loc.com;
+
+    location /api {
+        proxy_pass http://api-backend:3000;
+    }
+
+    location /ws {
+        proxy_pass http://ws-backend:3001;
+    }
+}
+`
+	tmpFile := writeTempFile(t, content, "nginx-multi-loc-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateNginx(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateNginx error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "type: proxy") {
+		t.Errorf("should detect proxy type, got:\n%s", output)
+	}
+	if !strings.Contains(output, "address: http://api-backend:3000") {
+		t.Errorf("should contain api backend, got:\n%s", output)
+	}
+	if !strings.Contains(output, "address: http://ws-backend:3001") {
+		t.Errorf("should contain ws backend, got:\n%s", output)
+	}
+}
+
+func TestDomainListServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		fmt.Fprint(w, `{"error":"internal"}`)
+	}))
+	defer srv.Close()
+
+	d := &DomainCommand{}
+	err := d.Run([]string{"list", "--api-url", srv.URL, "--api-key", "k"})
+	if err == nil {
+		t.Fatal("expected error for server error")
+	}
+	if !strings.Contains(err.Error(), "API error 500") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestDomainRemoveServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		fmt.Fprint(w, `{"error":"not found"}`)
+	}))
+	defer srv.Close()
+
+	d := &DomainCommand{}
+	err := d.Run([]string{"remove", "--api-url", srv.URL, "--api-key", "k", "gone.com"})
+	if err == nil {
+		t.Fatal("expected error for 404")
+	}
+}
+
+func TestDomainAddServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		fmt.Fprint(w, `{"error":"bad request"}`)
+	}))
+	defer srv.Close()
+
+	d := &DomainCommand{}
+	err := d.Run([]string{"add", "--api-url", srv.URL, "--api-key", "k", "bad.com"})
+	if err == nil {
+		t.Fatal("expected error for bad request")
+	}
+}
+
+func TestCachePurgeServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		fmt.Fprint(w, `{"error":"fail"}`)
+	}))
+	defer srv.Close()
+
+	c := &CacheCommand{}
+	err := c.Run([]string{"purge", "--api-url", srv.URL})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCacheStatsServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		fmt.Fprint(w, `{"error":"fail"}`)
+	}))
+	defer srv.Close()
+
+	c := &CacheCommand{}
+	err := c.Run([]string{"stats", "--api-url", srv.URL})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConfigCommandUnknownSubcommand(t *testing.T) {
+	cmd := &ConfigCommand{}
+	err := cmd.Run([]string{"bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown subcommand")
+	}
+	if !strings.Contains(err.Error(), "unknown subcommand") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestRestoreInvalidGzip(t *testing.T) {
+	// Create a file that is not a valid gzip
+	tmpFile, err := os.CreateTemp("", "uwas-bad-gz-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString("this is not gzip data")
+	tmpFile.Close()
+
+	r := &RestoreCommand{}
+	err = r.Run([]string{"--input", tmpFile.Name()})
+	if err == nil {
+		t.Fatal("expected error for invalid gzip")
+	}
+	if !strings.Contains(err.Error(), "decompress") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestBackupCommandRunParseError(t *testing.T) {
+	b := &BackupCommand{}
+	// An unknown flag should trigger a parse error
+	err := b.Run([]string{"--unknown-flag"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+}
+
+func TestRestoreCommandRunParseError(t *testing.T) {
+	r := &RestoreCommand{}
+	err := r.Run([]string{"--unknown-flag"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+}
+
+func TestBackupCreateFileError(t *testing.T) {
+	// Try to create backup at an impossible path
+	err := createBackup("/nonexistent/dir/backup.tar.gz", "uwas.yaml", "/nonexistent")
+	if err == nil {
+		t.Fatal("expected error for impossible output path")
+	}
+}
+
+func TestAddFileToTar(t *testing.T) {
+	// Test addFileToTar with a real file
+	tmpDir, err := os.MkdirTemp("", "uwas-tar-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	testFile := tmpDir + "/test.txt"
+	os.WriteFile(testFile, []byte("hello tar"), 0644)
+
+	outFile := tmpDir + "/test.tar.gz"
+	f, err := os.Create(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	err = addFileToTar(tw, testFile, "test.txt")
+	if err != nil {
+		t.Fatalf("addFileToTar error: %v", err)
+	}
+
+	tw.Close()
+	gw.Close()
+	f.Close()
+
+	// Verify the tar was created and is not empty
+	info, _ := os.Stat(outFile)
+	if info.Size() == 0 {
+		t.Error("tar file should not be empty")
+	}
+}
+
+func TestAddFileToTarNonexistent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "uwas-tar-nofile-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	outFile := tmpDir + "/test.tar.gz"
+	f, _ := os.Create(outFile)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	err = addFileToTar(tw, "/nonexistent/file.txt", "missing.txt")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+
+	tw.Close()
+	gw.Close()
+	f.Close()
+}
+
+func TestRestartCommandParseError(t *testing.T) {
+	r := &RestartCommand{}
+	err := r.Run([]string{"--unknown-flag"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+}
+
+func TestRestartCommandWithValidPid(t *testing.T) {
+	// Write the current process PID to a temp file.
+	// os.FindProcess will succeed, but Signal(SIGTERM) will likely fail
+	// on Windows or fail for the current process -- either way we exercise the code path.
+	tmpPid, err := os.CreateTemp("", "uwas-pid-valid-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpPid.Name())
+
+	// Use PID 99999999 which almost certainly doesn't exist
+	tmpPid.WriteString("99999999")
+	tmpPid.Close()
+
+	r := &RestartCommand{}
+
+	old := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = r.Run([]string{"--pid-file", tmpPid.Name(), "--api-url", "http://127.0.0.1:1"})
+
+	w.Close()
+	os.Stdout = old
+
+	// On Windows, FindProcess always succeeds but Signal fails.
+	// On Linux, FindProcess succeeds but Signal fails for non-existent process.
+	// Either way we should get an error.
+	if err == nil {
+		t.Fatal("expected error when signaling non-existent process")
+	}
+}
+
+func TestBackupWithSubdirInDomains(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "uwas-backup-subdir-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgFile := tmpDir + "/uwas.yaml"
+	os.WriteFile(cfgFile, []byte("test: true\n"), 0644)
+
+	// Create domains.d with a subdirectory (should be skipped)
+	domainsDir := tmpDir + "/domains.d"
+	os.Mkdir(domainsDir, 0755)
+	os.Mkdir(domainsDir+"/subdir", 0755)
+	os.WriteFile(domainsDir+"/good.yaml", []byte("host: good.com\n"), 0644)
+
+	outFile := tmpDir + "/backup.tar.gz"
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = createBackup(outFile, cfgFile, tmpDir+"/nonexistent")
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	// config + 1 yaml file = 2
+	if !strings.Contains(buf.String(), "2 files") {
+		t.Errorf("output = %q, expected 2 files", buf.String())
+	}
+}
+
+func TestRestoreWithUnknownPrefix(t *testing.T) {
+	// Create a tar.gz with an entry that has an unknown prefix (should be skipped)
+	tmpDir, err := os.MkdirTemp("", "uwas-restore-unknown-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	archivePath := tmpDir + "/unknown.tar.gz"
+	f, _ := os.Create(archivePath)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	// Add a file with a known prefix
+	configContent := []byte("domains: []\n")
+	tw.WriteHeader(&tar.Header{
+		Name: "config/uwas.yaml",
+		Size: int64(len(configContent)),
+		Mode: 0644,
+	})
+	tw.Write(configContent)
+
+	// Add a file with unknown prefix (should be skipped)
+	unknownContent := []byte("unknown data")
+	tw.WriteHeader(&tar.Header{
+		Name: "unknown/file.txt",
+		Size: int64(len(unknownContent)),
+		Mode: 0644,
+	})
+	tw.Write(unknownContent)
+
+	tw.Close()
+	gw.Close()
+	f.Close()
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = restoreBackup(archivePath, tmpDir+"/config-out", tmpDir+"/certs-out")
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	// Only 1 file should be restored (the config one, not the unknown one)
+	if !strings.Contains(buf.String(), "1 files") {
+		t.Errorf("output = %q, expected 1 file restored", buf.String())
+	}
+}
+
+func TestRestoreWithCertsPrefix(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "uwas-restore-certs-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	archivePath := tmpDir + "/certs-archive.tar.gz"
+	f, _ := os.Create(archivePath)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	certContent := []byte("CERT DATA")
+	tw.WriteHeader(&tar.Header{
+		Name: "certs/server.pem",
+		Size: int64(len(certContent)),
+		Mode: 0644,
+	})
+	tw.Write(certContent)
+
+	tw.Close()
+	gw.Close()
+	f.Close()
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	certsOut := tmpDir + "/certs-restored"
+	err = restoreBackup(archivePath, tmpDir+"/config-out", certsOut)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	// Verify the cert was restored
+	data, err := os.ReadFile(certsOut + "/server.pem")
+	if err != nil {
+		t.Fatalf("failed to read restored cert: %v", err)
+	}
+	if string(data) != "CERT DATA" {
+		t.Errorf("cert content = %q", string(data))
+	}
+}
+
+func TestConfigValidateInvalidFile(t *testing.T) {
+	cmd := &ConfigCommand{}
+	err := cmd.Run([]string{"validate", "-c", "/nonexistent/uwas.yaml"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent config")
+	}
+}
+
+func TestConfigTestInvalidFile(t *testing.T) {
+	cmd := &ConfigCommand{}
+	err := cmd.Run([]string{"test", "-c", "/nonexistent/uwas.yaml"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent config")
+	}
+}
+
+func TestMigrateApacheProxyPassReverse(t *testing.T) {
+	// ProxyPassReverse should NOT be treated as ProxyPass
+	content := `
+<VirtualHost *:80>
+    ServerName ppreverse.com
+    DocumentRoot /var/www/ppreverse
+    ProxyPass / http://backend:8080/
+    ProxyPassReverse / http://backend:8080/
+</VirtualHost>
+`
+	tmpFile := writeTempFile(t, content, "apache-pprev-*.conf")
+	defer os.Remove(tmpFile)
+
+	output := captureStdout(t, func() {
+		err := migrateApache(tmpFile)
+		if err != nil {
+			t.Fatalf("migrateApache error: %v", err)
+		}
+	})
+
+	// Should only have one upstream (not two)
+	if !strings.Contains(output, "type: proxy") {
+		t.Errorf("should detect proxy, got:\n%s", output)
+	}
+	count := strings.Count(output, "address:")
+	if count != 1 {
+		t.Errorf("expected 1 upstream address, got %d in:\n%s", count, output)
+	}
+}
+
+func TestExtractNginxLocationPathNoMatch(t *testing.T) {
+	// A malformed location line that doesn't match the regexp
+	got := extractNginxLocationPath("location {")
+	if got != "/" {
+		t.Errorf("expected / for no-match, got %q", got)
+	}
+}
+
+func TestExtractApacheVHostAddrNoMatch(t *testing.T) {
+	got := extractApacheVHostAddr("not a vhost line")
+	if got != "" {
+		t.Errorf("expected empty for no-match, got %q", got)
+	}
+}
+
+func TestConfigTestSubcommand(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "uwas-config-test-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	tmpFile.WriteString(`
+domains:
+  - host: test.com
+    root: /tmp
+    type: static
+    ssl:
+      mode: off
+`)
+	tmpFile.Close()
+
+	cmd := &ConfigCommand{}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = cmd.Run([]string{"test", "-c", tmpFile.Name()})
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	if err != nil {
+		t.Fatalf("config test error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Config OK") {
+		t.Errorf("output = %q", buf.String())
 	}
 }

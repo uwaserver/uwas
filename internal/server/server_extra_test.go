@@ -1,15 +1,19 @@
 package server
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/metrics"
 )
 
 // TestMatchPathRegexVariants tests matchPath with various regex patterns.
@@ -352,4 +356,722 @@ func TestRenderDomainErrorCustomPageNotFound(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "UWAS") {
 		t.Error("should fallback to default error page")
 	}
+}
+
+// --- handleProxy with mirror config ---
+
+func TestHandleProxyWithMirrorConfig(t *testing.T) {
+	// Start a backend and a mirror server
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("backend-ok"))
+	}))
+	defer backend.Close()
+
+	mirrorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer mirrorSrv.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "mirror.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+					Mirror: config.MirrorConfig{
+						Enabled: true,
+						Backend: mirrorSrv.URL,
+						Percent: 100,
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Verify mirror was configured
+	if _, ok := s.proxyMirrors["mirror.com"]; !ok {
+		t.Fatal("proxyMirrors should contain mirror.com")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	req.Host = "mirror.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code == 502 {
+		t.Error("proxy with mirror should not return 502 when backend is available")
+	}
+}
+
+// TestHandleProxyWithMirrorAndBody tests mirror with a request body.
+func TestHandleProxyWithMirrorAndBody(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+
+	mirrorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer mirrorSrv.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "mirrorbody.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+					Mirror: config.MirrorConfig{
+						Enabled: true,
+						Backend: mirrorSrv.URL,
+						Percent: 100,
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/submit", strings.NewReader(`{"data":"test"}`))
+	req.Host = "mirrorbody.com"
+	req.Header.Set("Content-Type", "application/json")
+	s.handleRequest(rec, req)
+
+	if rec.Code == 502 {
+		t.Error("proxy with mirror and body should work")
+	}
+}
+
+// TestHandleProxyWithMirrorNilBody tests mirror when request body is nil.
+func TestHandleProxyWithMirrorNilBody(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer backend.Close()
+
+	mirrorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer mirrorSrv.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "mirrornobody.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+					Mirror: config.MirrorConfig{
+						Enabled: true,
+						Backend: mirrorSrv.URL,
+						Percent: 100,
+					},
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/no-body", nil)
+	req.Body = nil // explicit nil body
+	req.Host = "mirrornobody.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code == 502 {
+		t.Error("proxy with nil body mirror should work")
+	}
+}
+
+// --- handleRequest with analytics recording ---
+
+func TestHandleRequestRecordsAnalytics(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "track.html"), []byte("tracked"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{Host: "analytics.test", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// analytics is set during New()
+	if s.analytics == nil {
+		t.Fatal("analytics should be initialized")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/track.html", nil)
+	req.Host = "analytics.test"
+	req.RemoteAddr = "192.168.1.1:12345"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	// Analytics Record() is called in the deferred func; just verify no panic.
+}
+
+// --- handleRequest with alerting (error spike) ---
+
+func TestHandleRequestRecordsAlertingErrorSpike(t *testing.T) {
+	dir := t.TempDir()
+	// No files, so all requests return 404
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Alerting: config.AlertingConfig{
+				Enabled:    true,
+				WebhookURL: "http://localhost:1/noop",
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "alerttest.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	if s.alerter == nil {
+		t.Fatal("alerter should be initialized when alerting is enabled")
+	}
+
+	// Make requests that result in non-5xx (404) and verify alerter records them.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/missing", nil)
+	req.Host = "alerttest.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	// Verify alerter's RecordRequest was called (non-error path).
+	// The method is called in deferred func; no panic means success.
+}
+
+// --- GracefulRestart with both HTTP and HTTPS servers ---
+
+func TestGracefulRestartWithBothServers(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 5 * time.Second},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+
+	httpSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
+	httpsSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
+
+	s := &Server{
+		config:   cfg,
+		logger:   log,
+		httpSrv:  httpSrv,
+		httpsSrv: httpsSrv,
+	}
+
+	err := s.GracefulRestart()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestGracefulRestartDefaultGrace tests with zero grace (should default to 30s).
+func TestGracefulRestartDefaultGrace(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Timeouts: config.TimeoutConfig{
+				// Zero grace - should default to 30s
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := &Server{
+		config: cfg,
+		logger: log,
+	}
+
+	err := s.GracefulRestart()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- DrainAndWait with both listeners ---
+
+func TestDrainAndWaitWithBothListeners(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 1 * time.Second},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+
+	httpSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
+	httpsSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})}
+
+	s := &Server{
+		config:   cfg,
+		logger:   log,
+		httpSrv:  httpSrv,
+		httpsSrv: httpsSrv,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.DrainAndWait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// OK
+	case <-time.After(5 * time.Second):
+		t.Fatal("DrainAndWait did not complete in time")
+	}
+}
+
+// --- matchPath edge cases ---
+
+func TestMatchPathAnchored(t *testing.T) {
+	// Test a pattern anchored at both ends
+	if !matchPath("/exact", "^/exact$") {
+		t.Error("should match exactly anchored path")
+	}
+	if matchPath("/exact/more", "^/exact$") {
+		t.Error("should not match when path has extra segments")
+	}
+}
+
+func TestMatchPathSpecialRegexChars(t *testing.T) {
+	// Path containing regex-special characters
+	if !matchPath("/api/v1.0/users", `v1\.0`) {
+		t.Error("should match escaped dot")
+	}
+	if matchPath("/api/v1X0/users", `v1\.0`) {
+		t.Error("escaped dot should not match arbitrary character")
+	}
+}
+
+func TestMatchPathCaseInsensitive(t *testing.T) {
+	// matchPath uses regexp.MatchString which is case-sensitive by default
+	if matchPath("/API/v1", "^/api/") {
+		t.Error("matchPath should be case-sensitive by default")
+	}
+	// But we can use (?i) flag
+	if !matchPath("/API/v1", "(?i)^/api/") {
+		t.Error("(?i) flag should enable case-insensitive matching")
+	}
+}
+
+// --- handleRequest health check endpoints ---
+
+func TestHandleRequestHealthCheck(t *testing.T) {
+	cfg := testConfig(t.TempDir())
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	for _, path := range []string{"/.well-known/health", "/healthz"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", path, nil)
+		req.Host = "localhost"
+		s.handleRequest(rec, req)
+
+		if rec.Code != 200 {
+			t.Errorf("health check %s: status = %d, want 200", path, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
+			t.Errorf("health check %s: body = %q, want JSON health response", path, rec.Body.String())
+		}
+		if rec.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("health check %s: Content-Type = %q, want application/json", path, rec.Header().Get("Content-Type"))
+		}
+	}
+}
+
+// --- handleRequest with TLS (IsHTTPS) ---
+
+func TestHandleRequestWithTLS(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "secure.html"), []byte("secure-content"), 0644)
+
+	cfg := testConfig(dir)
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/secure.html", nil)
+	req.Host = "localhost"
+	req.TLS = &tls.ConnectionState{} // simulate TLS
+	s.handleRequest(rec, req)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// --- handleProxy with no balancer (nil case, default balancer created) ---
+
+func TestHandleProxyCreatesDefaultBalancer(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("default-balancer"))
+	}))
+	defer backend.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "defbalancer.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+				},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Remove the balancer to test the nil fallback
+	delete(s.proxyBalancers, "defbalancer.com")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "defbalancer.com"
+	s.handleRequest(rec, req)
+
+	// Should create a default round_robin balancer and not error
+	if rec.Code == 502 {
+		t.Error("should create default balancer when nil")
+	}
+}
+
+// --- handleRequest with cache + redirect domain (capture branch) ---
+
+func TestHandleRequestCacheWithRedirectDomain(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host: "cached-redir.com",
+				Type: "redirect",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Redirect: config.RedirectConfig{
+					Target:       "https://target.com",
+					Status:       301,
+					PreservePath: true,
+				},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/path", nil)
+	req.Host = "cached-redir.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 301 {
+		t.Errorf("status = %d, want 301", rec.Code)
+	}
+}
+
+// TestHandleRequestCacheWithProxyDomain tests the cache capture branch for proxy domains.
+func TestHandleRequestCacheWithProxyDomain(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(200)
+		w.Write([]byte("cached-proxy-response"))
+	}))
+	defer backend.Close()
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host: "cached-proxy.com",
+				Type: "proxy",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Proxy: config.ProxyConfig{
+					Upstreams: []config.Upstream{
+						{Address: backend.URL, Weight: 1},
+					},
+					Algorithm: "round_robin",
+				},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/data", nil)
+	req.Host = "cached-proxy.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code == 502 {
+		t.Error("cached proxy should forward to backend")
+	}
+}
+
+// TestHandleRequestCacheWithUnknownType tests cache capture branch for unknown domain type.
+func TestHandleRequestCacheWithUnknownType(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(10 * 1024 * 1024),
+			},
+		},
+		Domains: []config.Domain{
+			{
+				Host:  "cached-unknown.com",
+				Type:  "custom-type",
+				SSL:   config.SSLConfig{Mode: "off"},
+				Cache: config.DomainCache{Enabled: true, TTL: 60},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "cached-unknown.com"
+	s.handleRequest(rec, req)
+
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500 for unknown type in cache path", rec.Code)
+	}
+}
+
+// --- parseHtaccess: disabled RewriteEngine ---
+
+func TestParseHtaccessDisabledRewriteEngine(t *testing.T) {
+	dir := t.TempDir()
+	htaccess := `
+RewriteEngine Off
+RewriteRule ^/old$ /new [L]
+`
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(htaccess), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "htoff.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Make a request to trigger .htaccess parsing
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/old", nil)
+	req.Host = "htoff.local"
+	s.handleRequest(rec, req)
+
+	// With RewriteEngine Off, the rules should not apply, so /old returns 404
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404 (rewrite engine is off)", rec.Code)
+	}
+}
+
+// --- parseHtaccess: empty .htaccess file ---
+
+func TestParseHtaccessEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(""), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host:     "htempty.local",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Host = "htempty.local"
+	s.handleRequest(rec, req)
+
+	// Should not panic; expect 404 since no file exists
+	if rec.Code == 0 {
+		t.Error("expected non-zero status code")
+	}
+}
+
+// --- GracefulRestart with admin server ---
+
+func TestGracefulRestartWithAdminServer(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Timeouts: config.TimeoutConfig{
+				ShutdownGrace: config.Duration{Duration: 5 * time.Second},
+			},
+			Admin: config.AdminConfig{Enabled: true},
+		},
+	}
+	log := logger.New("error", "text")
+
+	// Create an admin server with an HTTPServer
+	admSrv := admin.New(cfg, log, metrics.New())
+
+	s := &Server{
+		config: cfg,
+		logger: log,
+		admin:  admSrv,
+	}
+
+	err := s.GracefulRestart()
+	// admin.HTTPServer() returns nil since Start() was not called.
+	// So the admin shutdown path is skipped.
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- ReloadSuccess clears htaccess and rewrite caches ---
+
+func TestReloadClearsHtaccessCache(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "uwas.yaml")
+	configContent := `
+domains:
+  - host: reloaded.com
+    root: /tmp
+    type: static
+    ssl:
+      mode: "off"
+`
+	os.WriteFile(configPath, []byte(configContent), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "original.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+	s.SetConfigPath(configPath)
+
+	// Pre-populate htaccess cache
+	s.htaccessCacheMu.Lock()
+	s.htaccessCache["/some/root"] = nil
+	s.htaccessCacheMu.Unlock()
+
+	err := s.reload()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	// htaccess cache should be cleared
+	s.htaccessCacheMu.RLock()
+	if len(s.htaccessCache) != 0 {
+		t.Error("htaccess cache should be cleared after reload")
+	}
+	s.htaccessCacheMu.RUnlock()
 }

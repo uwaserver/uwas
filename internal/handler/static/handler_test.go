@@ -703,3 +703,106 @@ func TestServePreCompressedCompressedIsDir(t *testing.T) {
 		t.Errorf("Content-Encoding = %q, want empty when compressed file is a directory", enc)
 	}
 }
+
+// --- handler.go: dotfile in middle path component ---
+
+func TestServeDotfileInSubpath(t *testing.T) {
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, ".git")
+	os.MkdirAll(gitDir, 0755)
+	writeFile(t, dir, filepath.Join(".git", "config"), "secret config")
+
+	ctx := makeCtx(t, "GET", "/.git/config")
+	ctx.ResolvedPath = filepath.Join(dir, ".git", "config")
+
+	h := New()
+	h.Serve(ctx)
+
+	if ctx.Response.StatusCode() != 403 {
+		t.Errorf("status = %d, want 403 for dotfile in subpath", ctx.Response.StatusCode())
+	}
+}
+
+// --- handler.go: servePreCompressed with only gzip available (not br) ---
+
+func TestServePreCompressedOnlyGzip(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "main.css", "body{color:red}")
+	writeFile(t, dir, "main.css.gz", "gzip-data")
+	// No .br file
+
+	ctx := makeCtxWithHeader(t, "GET", "/main.css", "Accept-Encoding", "br, gzip")
+	ctx.ResolvedPath = filepath.Join(dir, "main.css")
+
+	h := New()
+	h.Serve(ctx)
+
+	enc := ctx.Response.Header().Get("Content-Encoding")
+	if enc != "gzip" {
+		t.Errorf("Content-Encoding = %q, want gzip (br not available)", enc)
+	}
+}
+
+// --- handler.go: ResolveRequest path traversal in last candidate ---
+
+func TestResolveRequestPathTraversalLastCandidate(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "root")
+	os.MkdirAll(sub, 0755)
+
+	domain := &config.Domain{
+		Host:     "example.com",
+		Root:     sub,
+		Type:     "static",
+		TryFiles: []string{"$uri", "/../../../etc/passwd"},
+	}
+
+	ctx := makeCtx(t, "GET", "/nonexistent")
+	result := ResolveRequest(ctx, domain)
+	if result {
+		absRoot, _ := filepath.Abs(sub)
+		absPath, _ := filepath.Abs(ctx.ResolvedPath)
+		if !strings.HasPrefix(absPath, absRoot) {
+			t.Errorf("path traversal in last candidate not blocked: %q (root: %q)", absPath, absRoot)
+		}
+	}
+}
+
+// --- listing.go: parent path with trailing slash ---
+
+func TestServeDirListingSubpathParent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.txt", "data")
+
+	ctx := makeCtx(t, "GET", "/deep/nested/")
+	ServeDirListing(ctx, dir, "/deep/nested/")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "../") {
+		t.Error("nested listing should have parent link")
+	}
+}
+
+// --- listing.go: entry.Info() error path (covered via symlink to deleted) ---
+// This is hard to trigger portably; we rely on dotfile filter for coverage.
+
+// --- handler.go: Serve with dotfile components "." and ".." should NOT be blocked ---
+
+func TestServeDotAndDotDotNotBlocked(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "index.html", "<h1>Hello</h1>")
+
+	// Path with "." component (current dir) - should NOT be blocked
+	ctx := makeCtx(t, "GET", "/./index.html")
+	ctx.ResolvedPath = filepath.Join(dir, "index.html")
+
+	h := New()
+	h.Serve(ctx)
+
+	// "." and ".." are explicitly excluded from the dotfile check
+	if ctx.Response.StatusCode() != 200 {
+		t.Errorf("status = %d, want 200 (. and .. not blocked)", ctx.Response.StatusCode())
+	}
+}

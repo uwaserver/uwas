@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1136,5 +1137,576 @@ func TestCanaryWeightDistribution(t *testing.T) {
 	// With 50% weight, expect roughly 500 canary hits (allow 35% to 65%)
 	if canaryCount < 350 || canaryCount > 650 {
 		t.Errorf("canary distribution = %d/%d, expected roughly 50%%", canaryCount, iterations)
+	}
+}
+
+// === Coverage push tests ===
+
+// --- canary.go: negative weight ---
+
+func TestCanaryIsCanaryNegativeWeight(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  -10,
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	if cr.IsCanary(req, cfg) {
+		t.Error("should never be canary with negative weight")
+	}
+}
+
+func TestCanaryIsCanaryWeight150(t *testing.T) {
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  150,
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	if !cr.IsCanary(req, cfg) {
+		t.Error("should always be canary with weight >= 100")
+	}
+}
+
+// --- canary.go: default cookie name in Serve ---
+
+func TestCanaryServeDefaultCookieName(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("canary"))
+	}))
+	defer upstream.Close()
+
+	log := newTestLogger()
+	cfg := config.CanaryConfig{
+		Enabled: true,
+		Weight:  100,
+		Upstreams: []config.Upstream{
+			{Address: upstream.URL, Weight: 1},
+		},
+		// Cookie is empty — should default to X-Canary
+	}
+	cr := NewCanaryRouter(cfg, "round_robin", log)
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.Canary = cfg
+
+	cr.Serve(ctx, domain, h)
+
+	cookies := rec.Header().Get("Set-Cookie")
+	if !strings.Contains(cookies, "X-Canary=true") {
+		t.Errorf("expected default cookie name X-Canary, got %q", cookies)
+	}
+}
+
+// --- handler.go: Serve with POST body replay on retry ---
+
+func TestProxyRetryWithBodyReplay(t *testing.T) {
+	var receivedBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		receivedBody = string(body)
+		w.WriteHeader(200)
+		w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1}, // will refuse
+		{Address: upstream.URL, Weight: 1},          // will succeed
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("POST", "/api/data", strings.NewReader("request body content"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.MaxRetries = 2
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 2 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (retry with body replay)", rec.Code)
+	}
+	if receivedBody != "request body content" {
+		t.Errorf("body = %q, want 'request body content' (body should be replayed on retry)", receivedBody)
+	}
+}
+
+// --- handler.go: context cancelled (non-deadline) returns 502 ---
+
+func TestProxyHandlerContextCancelled502(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: upstream.URL, Weight: 1}})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	reqCtx, cancel := context.WithCancel(req.Context())
+	// Cancel immediately so context.Err() != nil but != DeadlineExceeded
+	cancel()
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 100 * time.Millisecond}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 502 {
+		t.Errorf("status = %d, want 502 for cancelled context", rec.Code)
+	}
+}
+
+// --- handler.go: isRetryableError with net.Error ---
+
+type testNetError struct {
+	timeout bool
+}
+
+func (e *testNetError) Error() string   { return "test net error" }
+func (e *testNetError) Timeout() bool   { return e.timeout }
+func (e *testNetError) Temporary() bool { return true }
+
+func TestIsRetryableErrorNetTimeout(t *testing.T) {
+	err := &testNetError{timeout: true}
+	if !isRetryableError(err) {
+		t.Error("net.Error with Timeout() should be retryable")
+	}
+}
+
+func TestIsRetryableErrorNetNonTimeout(t *testing.T) {
+	// net.Error interface is satisfied, and the code returns true for any net.Error
+	err := &testNetError{timeout: false}
+	if !isRetryableError(err) {
+		t.Error("any net.Error should be retryable")
+	}
+}
+
+func TestIsRetryableErrorNoSuchHost(t *testing.T) {
+	err := fmt.Errorf("lookup badhost.example.com: no such host")
+	if !isRetryableError(err) {
+		t.Error("no such host should be retryable")
+	}
+}
+
+func TestIsRetryableErrorNonRetryable(t *testing.T) {
+	err := fmt.Errorf("some random error")
+	if isRetryableError(err) {
+		t.Error("random error should not be retryable")
+	}
+}
+
+// --- handler.go: removeHopByHop ---
+
+func TestRemoveHopByHop(t *testing.T) {
+	h := http.Header{}
+	h.Set("Connection", "keep-alive")
+	h.Set("Keep-Alive", "timeout=5")
+	h.Set("Transfer-Encoding", "chunked")
+	h.Set("X-Custom", "keep-me")
+
+	removeHopByHop(h)
+
+	if h.Get("Connection") != "" {
+		t.Error("Connection header should be removed")
+	}
+	if h.Get("Keep-Alive") != "" {
+		t.Error("Keep-Alive header should be removed")
+	}
+	if h.Get("Transfer-Encoding") != "" {
+		t.Error("Transfer-Encoding header should be removed")
+	}
+	if h.Get("X-Custom") != "keep-me" {
+		t.Error("X-Custom header should be preserved")
+	}
+}
+
+// --- handler.go: forwardedProto ---
+
+func TestForwardedProtoHTTP(t *testing.T) {
+	ctx := newTestContext(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	ctx.IsHTTPS = false
+	if got := forwardedProto(ctx); got != "http" {
+		t.Errorf("forwardedProto = %q, want http", got)
+	}
+}
+
+func TestForwardedProtoHTTPS(t *testing.T) {
+	ctx := newTestContext(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	ctx.IsHTTPS = true
+	if got := forwardedProto(ctx); got != "https" {
+		t.Errorf("forwardedProto = %q, want https", got)
+	}
+}
+
+// --- handler.go: MaxRetries capped to len(backends) ---
+
+func TestProxyMaxRetriesCappedToBackendCount(t *testing.T) {
+	// One backend that refuses, MaxRetries=10 but only 1 backend so effectively 1
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.MaxRetries = 10
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 1 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 502 {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- health.go: checkOne with unreachable backend ---
+
+func TestHealthCheckerCheckOneUnreachable(t *testing.T) {
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1},
+	})
+	log := newTestLogger()
+
+	hc := NewHealthChecker(pool, HealthConfig{
+		Path:      "/health",
+		Interval:  50 * time.Millisecond,
+		Timeout:   500 * time.Millisecond,
+		Threshold: 1,
+		Rise:      1,
+	}, log)
+
+	backend := pool.All()[0]
+	hc.checkOne(backend)
+
+	if backend.IsHealthy() {
+		t.Error("backend should be unhealthy after failed health check to unreachable host")
+	}
+}
+
+// --- health.go: checkOne with 4xx status ---
+
+func TestHealthCheckerCheckOneBadStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+	}))
+	defer ts.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: ts.URL, Weight: 1},
+	})
+	log := newTestLogger()
+
+	hc := NewHealthChecker(pool, HealthConfig{
+		Path:      "/health",
+		Interval:  50 * time.Millisecond,
+		Timeout:   2 * time.Second,
+		Threshold: 1,
+		Rise:      1,
+	}, log)
+
+	backend := pool.All()[0]
+	hc.checkOne(backend)
+
+	if backend.IsHealthy() {
+		t.Error("backend should be unhealthy after 503 response")
+	}
+}
+
+// --- health.go: checkOne with 2xx status keeps healthy ---
+
+func TestHealthCheckerCheckOneSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("expected /health path, got %s", r.URL.Path)
+		}
+		if r.Header.Get("User-Agent") != "UWAS-HealthCheck/1.0" {
+			t.Errorf("User-Agent = %q, want UWAS-HealthCheck/1.0", r.Header.Get("User-Agent"))
+		}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: ts.URL, Weight: 1},
+	})
+	log := newTestLogger()
+
+	hc := NewHealthChecker(pool, HealthConfig{
+		Path:      "/health",
+		Interval:  50 * time.Millisecond,
+		Timeout:   2 * time.Second,
+		Threshold: 3,
+		Rise:      1,
+	}, log)
+
+	backend := pool.All()[0]
+	hc.checkOne(backend)
+
+	if !backend.IsHealthy() {
+		t.Error("backend should remain healthy after 200 response")
+	}
+}
+
+// --- health.go: Start performs immediate check via ticker ---
+
+func TestHealthCheckerStartPerformsCheck(t *testing.T) {
+	requestCount := 0
+	var mu sync.Mutex
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: ts.URL, Weight: 1},
+	})
+	log := newTestLogger()
+
+	hc := NewHealthChecker(pool, HealthConfig{
+		Interval: 20 * time.Millisecond,
+		Timeout:  2 * time.Second,
+	}, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	hc.Start(ctx)
+
+	// Let a few ticks fire
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+
+	mu.Lock()
+	count := requestCount
+	mu.Unlock()
+
+	if count == 0 {
+		t.Error("Start should have triggered at least one health check")
+	}
+}
+
+// --- mirror.go: Send with various HTTP methods ---
+
+func TestMirrorSendGETMethod(t *testing.T) {
+	var receivedMethod string
+	var mu sync.Mutex
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedMethod = r.Method
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	m := NewMirror(MirrorConfig{Enabled: true, Backend: ts.URL, Percent: 100}, testLogger())
+	req := httptest.NewRequest("GET", "/page", nil)
+	m.Send(req, nil)
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if receivedMethod != "GET" {
+		t.Errorf("expected GET, got %s", receivedMethod)
+	}
+}
+
+func TestMirrorSendPUTMethod(t *testing.T) {
+	var receivedMethod string
+	var receivedBody string
+	var mu sync.Mutex
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		receivedMethod = r.Method
+		receivedBody = string(body)
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	m := NewMirror(MirrorConfig{Enabled: true, Backend: ts.URL, Percent: 100}, testLogger())
+	req := httptest.NewRequest("PUT", "/resource", strings.NewReader("update data"))
+	m.Send(req, []byte("update data"))
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if receivedMethod != "PUT" {
+		t.Errorf("expected PUT, got %s", receivedMethod)
+	}
+	if receivedBody != "update data" {
+		t.Errorf("expected body 'update data', got %q", receivedBody)
+	}
+}
+
+func TestMirrorSendDELETEMethod(t *testing.T) {
+	var receivedMethod string
+	var mu sync.Mutex
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedMethod = r.Method
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	m := NewMirror(MirrorConfig{Enabled: true, Backend: ts.URL, Percent: 100}, testLogger())
+	req := httptest.NewRequest("DELETE", "/resource/123", nil)
+	m.Send(req, nil)
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if receivedMethod != "DELETE" {
+		t.Errorf("expected DELETE, got %s", receivedMethod)
+	}
+}
+
+// --- mirror.go: doMirror with 500 response (logs at debug) ---
+
+func TestMirrorSend500Response(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.Write([]byte("internal error"))
+	}))
+	defer ts.Close()
+
+	m := NewMirror(MirrorConfig{Enabled: true, Backend: ts.URL, Percent: 100}, testLogger())
+	req := httptest.NewRequest("GET", "/test", nil)
+	m.Send(req, nil)
+
+	// Wait for async mirror — should not panic, just log
+	time.Sleep(200 * time.Millisecond)
+}
+
+// --- mirror.go: doMirror with nil body ---
+
+func TestMirrorSendNilBody(t *testing.T) {
+	var receivedBody string
+	var mu sync.Mutex
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		receivedBody = string(body)
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	m := NewMirror(MirrorConfig{Enabled: true, Backend: ts.URL, Percent: 100}, testLogger())
+	req := httptest.NewRequest("GET", "/test", nil)
+	m.Send(req, nil)
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if receivedBody != "" {
+		t.Errorf("expected empty body, got %q", receivedBody)
+	}
+}
+
+// --- handler.go: WebSocket upgrade with mixed case ---
+
+func TestIsWebSocketUpgradeMixedCase(t *testing.T) {
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Upgrade", "WebSocket")
+	req.Header.Set("Connection", "upgrade, keep-alive")
+
+	if !IsWebSocketUpgrade(req) {
+		t.Error("should detect WebSocket upgrade with mixed case")
+	}
+}
+
+func TestIsWebSocketUpgradePartial(t *testing.T) {
+	// Only Upgrade header, no Connection
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Upgrade", "websocket")
+	if IsWebSocketUpgrade(req) {
+		t.Error("should not detect WebSocket without Connection: Upgrade")
+	}
+
+	// Only Connection header, no Upgrade
+	req2 := httptest.NewRequest("GET", "/ws", nil)
+	req2.Header.Set("Connection", "Upgrade")
+	if IsWebSocketUpgrade(req2) {
+		t.Error("should not detect WebSocket without Upgrade header")
+	}
+}
+
+// --- handler.go: Serve with all backends tried exhausted loop ---
+
+func TestProxyServeAllBackendsTried(t *testing.T) {
+	// 3 backends all refuse, MaxRetries=3
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://127.0.0.1:1", Weight: 1},
+		{Address: "http://127.0.0.1:2", Weight: 1},
+		{Address: "http://127.0.0.1:3", Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.MaxRetries = 3
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 1 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 502 {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+}
+
+// --- handler.go: clientIP with IPv6 ---
+
+func TestClientIPIPv6(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "[::1]:8080"
+	got := clientIP(req)
+	if got != "::1" {
+		t.Errorf("clientIP = %q, want ::1", got)
 	}
 }

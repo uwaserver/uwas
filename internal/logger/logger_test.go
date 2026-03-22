@@ -434,3 +434,162 @@ func TestAccessLoggerWrittenTracker(t *testing.T) {
 		t.Error("written should reflect pre-existing file size")
 	}
 }
+
+// --- accesslog.go: Reopen resets written counter ---
+
+func TestAccessLoggerReopenResetsWritten(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:   logPath,
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Write some data
+	al.Log("GET", "test.com", "/page", "1.1.1.1", "A", "r1", 200, 50, 1, 1)
+
+	if al.written == 0 {
+		t.Fatal("written should be > 0 after logging")
+	}
+
+	// Reopen should reset written to 0
+	err = al.Reopen()
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+
+	if al.written != 0 {
+		t.Errorf("written = %d after Reopen, want 0", al.written)
+	}
+}
+
+// --- accesslog.go: Reopen with file that was deleted between close and reopen ---
+
+func TestAccessLoggerReopenDeletedFile(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:   logPath,
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Delete the file before reopening (simulating log rotation by external tool)
+	os.Remove(logPath)
+
+	// Reopen should recreate the file
+	err = al.Reopen()
+	if err != nil {
+		t.Fatalf("Reopen after delete: %v", err)
+	}
+
+	// Should be able to write after reopen
+	al.Log("GET", "test.com", "/after", "1.1.1.1", "A", "r2", 200, 50, 1, 1)
+
+	al.Close()
+
+	// File should exist again
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		t.Error("log file should be recreated after Reopen")
+	}
+}
+
+// --- accesslog.go: rotation creates new file and resets written ---
+
+func TestAccessLoggerRotationResetWritten(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:       logPath,
+		Format:     "clf",
+		MaxSize:    50,
+		MaxBackups: 2,
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Write enough to trigger at least one rotation
+	for i := 0; i < 10; i++ {
+		al.Log("GET", "test.com", "/p", "1.1.1.1", "A", "r", 200, 100, 1, 1)
+	}
+
+	// After rotation, written should be less than total
+	if al.written > 500 {
+		t.Errorf("written = %d, should be < 500 after rotation", al.written)
+	}
+}
+
+// --- accesslog.go: Close on already-closed logger ---
+
+func TestAccessLoggerDoubleClose(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:   logPath,
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	// First close
+	al.Close()
+	// Second close - file handle is invalid but shouldn't panic
+	// (it may error, which is fine)
+	al.Close()
+}
+
+// --- accesslog.go: cleanOldBackups with no backups ---
+
+func TestAccessLoggerCleanOldBackupsNoBackups(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:       logPath,
+		Format:     "json",
+		MaxSize:    10000, // large enough that we don't rotate
+		MaxBackups: 3,
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	// Directly call cleanOldBackups with no backups - should not panic
+	al.cleanOldBackups()
+}
+
+// --- accesslog.go: NewAccessLogger with negative maxBackups defaults to 5 ---
+
+func TestAccessLoggerNegativeMaxBackups(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	al, err := NewAccessLogger(AccessLogConfig{
+		Path:       logPath,
+		Format:     "json",
+		MaxBackups: -1,
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	defer al.Close()
+
+	if al.maxBackups != 5 {
+		t.Errorf("maxBackups = %d, want 5 for negative input", al.maxBackups)
+	}
+}

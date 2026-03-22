@@ -1,0 +1,547 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>htaccess: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/uwaserver/uwas/pkg/htaccess/converter.go (100.0%)</option>
+				
+				<option value="file1">github.com/uwaserver/uwas/pkg/htaccess/parser.go (95.7%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package htaccess
+
+import (
+        "strconv"
+        "strings"
+)
+
+// RuleSet represents the converted internal rules from .htaccess directives.
+type RuleSet struct {
+        RewriteEnabled   bool
+        Rewrites         []RewriteRule
+        Redirects        []RedirectRule
+        ErrorDocuments   map[int]string
+        DirectoryIndex   []string
+        Headers          []HeaderRule
+        ExpiresActive    bool
+        ExpiresByType    map[string]string
+        DirectoryListing *bool // nil = not set, true/false = explicit
+        FollowSymlinks   *bool
+        AuthType         string
+        AuthName         string
+        AuthUserFile     string
+        Require          string
+        FilesMatch       []FilesMatchBlock
+}
+
+// RewriteRule is a converted rewrite rule.
+type RewriteRule struct {
+        Pattern    string
+        Target     string
+        Flags      string
+        Conditions []RewriteCondition
+}
+
+// RewriteCondition is a converted rewrite condition.
+type RewriteCondition struct {
+        Variable string
+        Pattern  string
+        Flags    string
+}
+
+// RedirectRule is a converted redirect directive.
+type RedirectRule struct {
+        Status  int
+        Pattern string
+        Target  string
+        IsRegex bool // RedirectMatch uses regex
+}
+
+// HeaderRule represents a Header directive.
+type HeaderRule struct {
+        Action string // "set", "unset", "append", "add"
+        Name   string
+        Value  string
+}
+
+// FilesMatchBlock represents a &lt;FilesMatch&gt; block.
+type FilesMatchBlock struct {
+        Pattern    string
+        Directives []Directive
+}
+
+// NewRuleSet creates an empty RuleSet with initialized maps.
+func NewRuleSet() *RuleSet <span class="cov8" title="27">{
+        return &amp;RuleSet{
+                ErrorDocuments: make(map[int]string),
+                ExpiresByType:  make(map[string]string),
+        }
+}</span>
+
+// Convert transforms parsed .htaccess directives into an internal RuleSet.
+func Convert(directives []Directive) *RuleSet <span class="cov8" title="24">{
+        rules := NewRuleSet()
+        var pendingConds []RewriteCondition
+
+        for _, d := range directives </span><span class="cov10" title="41">{
+                name := strings.ToLower(d.Name)
+
+                switch name </span>{
+                case "rewriteengine":<span class="cov4" title="4">
+                        if len(d.Args) &gt; 0 </span><span class="cov4" title="4">{
+                                rules.RewriteEnabled = strings.EqualFold(d.Args[0], "on")
+                        }</span>
+
+                case "rewritecond":<span class="cov3" title="3">
+                        if len(d.Args) &gt;= 2 </span><span class="cov3" title="3">{
+                                cond := RewriteCondition{
+                                        Variable: d.Args[0],
+                                        Pattern:  d.Args[1],
+                                }
+                                if len(d.Args) &gt;= 3 </span><span class="cov1" title="1">{
+                                        cond.Flags = d.Args[2]
+                                }</span>
+                                <span class="cov3" title="3">pendingConds = append(pendingConds, cond)</span>
+                        }
+
+                case "rewriterule":<span class="cov4" title="4">
+                        if len(d.Args) &gt;= 2 </span><span class="cov4" title="4">{
+                                rr := RewriteRule{
+                                        Pattern:    d.Args[0],
+                                        Target:     d.Args[1],
+                                        Conditions: pendingConds,
+                                }
+                                if len(d.Args) &gt;= 3 </span><span class="cov4" title="4">{
+                                        rr.Flags = d.Args[2]
+                                }</span>
+                                <span class="cov4" title="4">pendingConds = nil
+                                rules.Rewrites = append(rules.Rewrites, rr)</span>
+                        }
+
+                case "redirect":<span class="cov5" title="7">
+                        rules.Redirects = append(rules.Redirects, parseRedirect(d, false))</span>
+
+                case "redirectmatch":<span class="cov1" title="1">
+                        rules.Redirects = append(rules.Redirects, parseRedirect(d, true))</span>
+
+                case "errordocument":<span class="cov2" title="2">
+                        if len(d.Args) &gt;= 2 </span><span class="cov2" title="2">{
+                                code, _ := strconv.Atoi(d.Args[0])
+                                if code &gt; 0 </span><span class="cov2" title="2">{
+                                        rules.ErrorDocuments[code] = strings.Join(d.Args[1:], " ")
+                                }</span>
+                        }
+
+                case "directoryindex":<span class="cov1" title="1">
+                        rules.DirectoryIndex = append(rules.DirectoryIndex, d.Args...)</span>
+
+                case "header":<span class="cov2" title="2">
+                        if len(d.Args) &gt;= 2 </span><span class="cov2" title="2">{
+                                hr := HeaderRule{Action: strings.ToLower(d.Args[0])}
+                                if hr.Action == "unset" </span><span class="cov1" title="1">{
+                                        hr.Name = d.Args[1]
+                                }</span> else<span class="cov1" title="1"> if len(d.Args) &gt;= 3 </span><span class="cov1" title="1">{
+                                        hr.Name = d.Args[1]
+                                        hr.Value = d.Args[2]
+                                }</span>
+                                <span class="cov2" title="2">rules.Headers = append(rules.Headers, hr)</span>
+                        }
+
+                case "expiresactive":<span class="cov1" title="1">
+                        if len(d.Args) &gt; 0 </span><span class="cov1" title="1">{
+                                rules.ExpiresActive = strings.EqualFold(d.Args[0], "on")
+                        }</span>
+
+                case "expiresbytype":<span class="cov2" title="2">
+                        if len(d.Args) &gt;= 2 </span><span class="cov2" title="2">{
+                                rules.ExpiresByType[d.Args[0]] = d.Args[1]
+                        }</span>
+
+                case "options":<span class="cov4" title="4">
+                        for _, opt := range d.Args </span><span class="cov5" title="7">{
+                                switch strings.ToLower(opt) </span>{
+                                case "-indexes":<span class="cov1" title="1">
+                                        f := false
+                                        rules.DirectoryListing = &amp;f</span>
+                                case "+indexes", "indexes":<span class="cov2" title="2">
+                                        t := true
+                                        rules.DirectoryListing = &amp;t</span>
+                                case "-followsymlinks":<span class="cov1" title="1">
+                                        f := false
+                                        rules.FollowSymlinks = &amp;f</span>
+                                case "+followsymlinks", "followsymlinks":<span class="cov2" title="2">
+                                        t := true
+                                        rules.FollowSymlinks = &amp;t</span>
+                                }
+                        }
+
+                case "authtype":<span class="cov1" title="1">
+                        if len(d.Args) &gt; 0 </span><span class="cov1" title="1">{
+                                rules.AuthType = d.Args[0]
+                        }</span>
+
+                case "authname":<span class="cov1" title="1">
+                        if len(d.Args) &gt; 0 </span><span class="cov1" title="1">{
+                                rules.AuthName = d.Args[0]
+                        }</span>
+
+                case "authuserfile":<span class="cov1" title="1">
+                        if len(d.Args) &gt; 0 </span><span class="cov1" title="1">{
+                                rules.AuthUserFile = d.Args[0]
+                        }</span>
+
+                case "require":<span class="cov1" title="1">
+                        rules.Require = strings.Join(d.Args, " ")</span>
+
+                default:<span class="cov5" title="6">
+                        // Block directives: &lt;IfModule&gt;, &lt;FilesMatch&gt;, etc.
+                        if len(d.Block) &gt; 0 </span><span class="cov4" title="5">{
+                                if strings.EqualFold(d.Name, "IfModule") </span><span class="cov3" title="3">{
+                                        // IfModule always evaluates to true in UWAS
+                                        blockRules := Convert(d.Block)
+                                        rules.Merge(blockRules)
+                                }</span> else<span class="cov2" title="2"> if strings.EqualFold(d.Name, "FilesMatch") || strings.EqualFold(d.Name, "Files") </span><span class="cov2" title="2">{
+                                        pattern := ""
+                                        if len(d.Args) &gt; 0 </span><span class="cov2" title="2">{
+                                                pattern = d.Args[0]
+                                        }</span>
+                                        <span class="cov2" title="2">rules.FilesMatch = append(rules.FilesMatch, FilesMatchBlock{
+                                                Pattern:    pattern,
+                                                Directives: d.Block,
+                                        })</span>
+                                }
+                        }
+                }
+        }
+
+        <span class="cov8" title="24">return rules</span>
+}
+
+// Merge combines another RuleSet into this one.
+func (rs *RuleSet) Merge(other *RuleSet) <span class="cov4" title="5">{
+        if other == nil </span><span class="cov1" title="1">{
+                return
+        }</span>
+        <span class="cov4" title="4">if other.RewriteEnabled </span><span class="cov3" title="3">{
+                rs.RewriteEnabled = true
+        }</span>
+        <span class="cov4" title="4">rs.Rewrites = append(rs.Rewrites, other.Rewrites...)
+        rs.Redirects = append(rs.Redirects, other.Redirects...)
+        rs.Headers = append(rs.Headers, other.Headers...)
+        for k, v := range other.ErrorDocuments </span><span class="cov1" title="1">{
+                rs.ErrorDocuments[k] = v
+        }</span>
+        <span class="cov4" title="4">if len(other.DirectoryIndex) &gt; 0 </span><span class="cov1" title="1">{
+                rs.DirectoryIndex = other.DirectoryIndex
+        }</span>
+        <span class="cov4" title="4">if other.DirectoryListing != nil </span><span class="cov1" title="1">{
+                rs.DirectoryListing = other.DirectoryListing
+        }</span>
+        <span class="cov4" title="4">if other.FollowSymlinks != nil </span><span class="cov1" title="1">{
+                rs.FollowSymlinks = other.FollowSymlinks
+        }</span>
+        <span class="cov4" title="4">if other.AuthType != "" </span><span class="cov1" title="1">{
+                rs.AuthType = other.AuthType
+                rs.AuthName = other.AuthName
+                rs.AuthUserFile = other.AuthUserFile
+                rs.Require = other.Require
+        }</span>
+        <span class="cov4" title="4">if other.ExpiresActive </span><span class="cov1" title="1">{
+                rs.ExpiresActive = true
+        }</span>
+        <span class="cov4" title="4">for k, v := range other.ExpiresByType </span><span class="cov1" title="1">{
+                rs.ExpiresByType[k] = v
+        }</span>
+        <span class="cov4" title="4">rs.FilesMatch = append(rs.FilesMatch, other.FilesMatch...)</span>
+}
+
+func parseRedirect(d Directive, isRegex bool) RedirectRule <span class="cov6" title="8">{
+        r := RedirectRule{
+                Status:  302,
+                IsRegex: isRegex,
+        }
+
+        switch len(d.Args) </span>{
+        case 2:<span class="cov1" title="1">
+                // Redirect /old /new (default 302)
+                r.Pattern = d.Args[0]
+                r.Target = d.Args[1]</span>
+        case 3:<span class="cov5" title="7">
+                // Redirect 301 /old /new
+                code, err := strconv.Atoi(d.Args[0])
+                if err == nil </span><span class="cov2" title="2">{
+                        r.Status = code
+                        r.Pattern = d.Args[1]
+                        r.Target = d.Args[2]
+                }</span> else<span class="cov4" title="5"> {
+                        // Redirect permanent /old /new
+                        switch strings.ToLower(d.Args[0]) </span>{
+                        case "permanent":<span class="cov2" title="2">
+                                r.Status = 301</span>
+                        case "temp":<span class="cov1" title="1">
+                                r.Status = 302</span>
+                        case "seeother":<span class="cov1" title="1">
+                                r.Status = 303</span>
+                        case "gone":<span class="cov1" title="1">
+                                r.Status = 410</span>
+                        }
+                        <span class="cov4" title="5">r.Pattern = d.Args[1]
+                        r.Target = d.Args[2]</span>
+                }
+        }
+
+        <span class="cov6" title="8">return r</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package htaccess
+
+import (
+        "bufio"
+        "io"
+        "strings"
+)
+
+// Directive represents a parsed .htaccess directive.
+type Directive struct {
+        Name    string      // "RewriteRule", "Redirect", "Header", etc.
+        Args    []string    // directive arguments
+        Block   []Directive // inner directives for block types (&lt;IfModule&gt;, etc.)
+        LineNum int
+}
+
+// Parse reads an Apache .htaccess file and returns parsed directives.
+func Parse(reader io.Reader) ([]Directive, error) <span class="cov4" title="30">{
+        scanner := bufio.NewScanner(reader)
+        var directives []Directive
+        var blockStack []*Directive
+        lineNum := 0
+
+        for scanner.Scan() </span><span class="cov6" title="96">{
+                lineNum++
+                line := strings.TrimSpace(scanner.Text())
+
+                // Skip comments and empty lines
+                if line == "" || strings.HasPrefix(line, "#") </span><span class="cov3" title="11">{
+                        continue</span>
+                }
+
+                // Handle line continuation (\)
+                <span class="cov6" title="85">for strings.HasSuffix(line, "\\") </span><span class="cov1" title="1">{
+                        if !scanner.Scan() </span><span class="cov0" title="0">{
+                                break</span>
+                        }
+                        <span class="cov1" title="1">lineNum++
+                        line = line[:len(line)-1] + " " + strings.TrimSpace(scanner.Text())</span>
+                }
+
+                // Block open: &lt;IfModule mod_rewrite.c&gt;
+                <span class="cov6" title="85">if strings.HasPrefix(line, "&lt;") &amp;&amp; !strings.HasPrefix(line, "&lt;/") </span><span class="cov3" title="10">{
+                        name, args := parseBlockOpen(line)
+                        block := &amp;Directive{Name: name, Args: args, LineNum: lineNum}
+                        blockStack = append(blockStack, block)
+                        continue</span>
+                }
+
+                // Block close: &lt;/IfModule&gt;
+                <span class="cov6" title="75">if strings.HasPrefix(line, "&lt;/") </span><span class="cov3" title="9">{
+                        if len(blockStack) &gt; 0 </span><span class="cov3" title="9">{
+                                closed := blockStack[len(blockStack)-1]
+                                blockStack = blockStack[:len(blockStack)-1]
+                                if len(blockStack) &gt; 0 </span><span class="cov1" title="2">{
+                                        parent := blockStack[len(blockStack)-1]
+                                        parent.Block = append(parent.Block, *closed)
+                                }</span> else<span class="cov3" title="7"> {
+                                        directives = append(directives, *closed)
+                                }</span>
+                        }
+                        <span class="cov3" title="9">continue</span>
+                }
+
+                // Normal directive
+                <span class="cov5" title="66">d := parseDirective(line, lineNum)
+                if len(blockStack) &gt; 0 </span><span class="cov4" title="29">{
+                        current := blockStack[len(blockStack)-1]
+                        current.Block = append(current.Block, d)
+                }</span> else<span class="cov5" title="37"> {
+                        directives = append(directives, d)
+                }</span>
+        }
+
+        <span class="cov4" title="30">return directives, scanner.Err()</span>
+}
+
+// parseBlockOpen parses "&lt;IfModule mod_rewrite.c&gt;" into name and args.
+func parseBlockOpen(line string) (string, []string) <span class="cov3" title="10">{
+        // Strip &lt; and &gt;
+        line = strings.TrimPrefix(line, "&lt;")
+        line = strings.TrimSuffix(line, "&gt;")
+        line = strings.TrimSpace(line)
+
+        parts := splitArgs(line)
+        if len(parts) == 0 </span><span class="cov0" title="0">{
+                return "", nil
+        }</span>
+        <span class="cov3" title="10">return parts[0], parts[1:]</span>
+}
+
+// parseDirective parses "RewriteRule ^(.*)$ /index.php [L,QSA]" into Directive.
+func parseDirective(line string, lineNum int) Directive <span class="cov5" title="66">{
+        parts := splitArgs(line)
+        if len(parts) == 0 </span><span class="cov0" title="0">{
+                return Directive{LineNum: lineNum}
+        }</span>
+        <span class="cov5" title="66">return Directive{
+                Name:    parts[0],
+                Args:    parts[1:],
+                LineNum: lineNum,
+        }</span>
+}
+
+// splitArgs splits a directive line respecting quoted strings.
+func splitArgs(line string) []string <span class="cov6" title="78">{
+        var args []string
+        var current strings.Builder
+        inQuote := false
+        quoteChar := byte(0)
+
+        for i := 0; i &lt; len(line); i++ </span><span class="cov10" title="2206">{
+                ch := line[i]
+
+                if inQuote </span><span class="cov6" title="147">{
+                        if ch == quoteChar </span><span class="cov3" title="10">{
+                                inQuote = false
+                                // Include the content without quotes
+                        }</span> else<span class="cov6" title="137"> {
+                                current.WriteByte(ch)
+                        }</span>
+                        <span class="cov6" title="147">continue</span>
+                }
+
+                <span class="cov9" title="2059">if ch == '"' || ch == '\'' </span><span class="cov3" title="10">{
+                        inQuote = true
+                        quoteChar = ch
+                        continue</span>
+                }
+
+                <span class="cov9" title="2049">if ch == ' ' || ch == '\t' </span><span class="cov6" title="151">{
+                        if current.Len() &gt; 0 </span><span class="cov6" title="150">{
+                                args = append(args, current.String())
+                                current.Reset()
+                        }</span>
+                        <span class="cov6" title="151">continue</span>
+                }
+
+                <span class="cov9" title="1898">current.WriteByte(ch)</span>
+        }
+
+        <span class="cov6" title="78">if current.Len() &gt; 0 </span><span class="cov6" title="77">{
+                args = append(args, current.String())
+        }</span>
+
+        <span class="cov6" title="78">return args</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

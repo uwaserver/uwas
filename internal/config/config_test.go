@@ -1115,6 +1115,167 @@ func TestByteSizeUnmarshalBadString(t *testing.T) {
 	}
 }
 
+// --- defaults.go: PHP domain defaults (FPMAddress, IndexFiles, MaxUpload, Timeout) ---
+
+func TestDefaultsPHPDomain(t *testing.T) {
+	yaml := `
+domains:
+  - host: "php.example.com"
+    root: /var/www
+    type: php
+    ssl:
+      mode: off
+`
+	cfg := loadFromString(t, yaml)
+
+	d := cfg.Domains[0]
+	if d.PHP.FPMAddress != "unix:/var/run/php/php-fpm.sock" {
+		t.Errorf("FPMAddress = %q, want default unix socket", d.PHP.FPMAddress)
+	}
+	if len(d.PHP.IndexFiles) != 2 || d.PHP.IndexFiles[0] != "index.php" {
+		t.Errorf("PHP.IndexFiles = %v, want [index.php index.html]", d.PHP.IndexFiles)
+	}
+	if d.PHP.MaxUpload != 64*MB {
+		t.Errorf("PHP.MaxUpload = %d, want %d", d.PHP.MaxUpload, 64*MB)
+	}
+	if d.PHP.Timeout.Duration != 300*time.Second {
+		t.Errorf("PHP.Timeout = %v, want 300s", d.PHP.Timeout.Duration)
+	}
+}
+
+// --- defaults.go: PHP domain with values already set (no override) ---
+
+func TestDefaultsPHPDomainNoOverride(t *testing.T) {
+	yaml := `
+domains:
+  - host: "php2.example.com"
+    root: /var/www
+    type: php
+    ssl:
+      mode: off
+    php:
+      fpm_address: "tcp:127.0.0.1:9000"
+      index_files: ["app.php"]
+      max_upload: "128MB"
+      timeout: "60s"
+`
+	cfg := loadFromString(t, yaml)
+
+	d := cfg.Domains[0]
+	if d.PHP.FPMAddress != "tcp:127.0.0.1:9000" {
+		t.Errorf("FPMAddress = %q, want tcp:127.0.0.1:9000", d.PHP.FPMAddress)
+	}
+	if len(d.PHP.IndexFiles) != 1 || d.PHP.IndexFiles[0] != "app.php" {
+		t.Errorf("PHP.IndexFiles = %v, want [app.php]", d.PHP.IndexFiles)
+	}
+	if d.PHP.MaxUpload != 128*MB {
+		t.Errorf("PHP.MaxUpload = %d, want %d", d.PHP.MaxUpload, 128*MB)
+	}
+	if d.PHP.Timeout.Duration != 60*time.Second {
+		t.Errorf("PHP.Timeout = %v, want 60s", d.PHP.Timeout.Duration)
+	}
+}
+
+// --- loader.go: auto domains.d/ with error in file ---
+
+func TestAutoDetectDomainsDirError(t *testing.T) {
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	// Put a broken YAML file in auto-detected domains.d/
+	os.WriteFile(filepath.Join(domainsDir, "broken.yaml"), []byte("host: [bad {{"), 0644)
+
+	mainConfig := `
+global:
+  log_level: info
+domains:
+  - host: main.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for broken file in auto-detected domains.d/")
+	}
+}
+
+// --- defaults.go: all global defaults set (no override) ---
+
+func TestDefaultsGlobalAlreadySet(t *testing.T) {
+	yaml := `
+global:
+  worker_count: "4"
+  max_connections: 1024
+  http_listen: ":8080"
+  https_listen: ":8443"
+  pid_file: "/tmp/uwas.pid"
+  log_level: warn
+  log_format: json
+  timeouts:
+    read: 5s
+    write: 10s
+    idle: 30s
+    shutdown_grace: 5s
+  admin:
+    listen: "127.0.0.1:8000"
+  mcp:
+    listen: "127.0.0.1:8001"
+  acme:
+    ca_url: "https://custom.ca/"
+    storage: "/tmp/certs"
+  cache:
+    memory_limit: "256MB"
+    disk_path: "/tmp/cache"
+    disk_limit: "1GB"
+    default_ttl: 600
+    grace_ttl: 3600
+domains:
+  - host: "test.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: off
+`
+	cfg := loadFromString(t, yaml)
+
+	if cfg.Global.WorkerCount != "4" {
+		t.Errorf("WorkerCount = %q, want 4", cfg.Global.WorkerCount)
+	}
+	if cfg.Global.HTTPListen != ":8080" {
+		t.Errorf("HTTPListen = %q, want :8080", cfg.Global.HTTPListen)
+	}
+	if cfg.Global.HTTPSListen != ":8443" {
+		t.Errorf("HTTPSListen = %q, want :8443", cfg.Global.HTTPSListen)
+	}
+	if cfg.Global.PIDFile != "/tmp/uwas.pid" {
+		t.Errorf("PIDFile = %q, want /tmp/uwas.pid", cfg.Global.PIDFile)
+	}
+	if cfg.Global.Admin.Listen != "127.0.0.1:8000" {
+		t.Errorf("Admin.Listen = %q", cfg.Global.Admin.Listen)
+	}
+	if cfg.Global.MCP.Listen != "127.0.0.1:8001" {
+		t.Errorf("MCP.Listen = %q", cfg.Global.MCP.Listen)
+	}
+	if cfg.Global.ACME.CAURL != "https://custom.ca/" {
+		t.Errorf("ACME.CAURL = %q", cfg.Global.ACME.CAURL)
+	}
+	if cfg.Global.ACME.Storage != "/tmp/certs" {
+		t.Errorf("ACME.Storage = %q", cfg.Global.ACME.Storage)
+	}
+	if cfg.Global.Cache.DefaultTTL != 600 {
+		t.Errorf("Cache.DefaultTTL = %d, want 600", cfg.Global.Cache.DefaultTTL)
+	}
+	if cfg.Global.Cache.GraceTTL != 3600 {
+		t.Errorf("Cache.GraceTTL = %d, want 3600", cfg.Global.Cache.GraceTTL)
+	}
+}
+
 // helper
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))

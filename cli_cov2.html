@@ -1,0 +1,1452 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>cli: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/uwaserver/uwas/internal/cli/backup.go (83.3%)</option>
+				
+				<option value="file1">github.com/uwaserver/uwas/internal/cli/config.go (95.7%)</option>
+				
+				<option value="file2">github.com/uwaserver/uwas/internal/cli/domain.go (99.1%)</option>
+				
+				<option value="file3">github.com/uwaserver/uwas/internal/cli/migrate.go (98.6%)</option>
+				
+				<option value="file4">github.com/uwaserver/uwas/internal/cli/restart.go (63.3%)</option>
+				
+				<option value="file5">github.com/uwaserver/uwas/internal/cli/root.go (84.0%)</option>
+				
+				<option value="file6">github.com/uwaserver/uwas/internal/cli/serve.go (55.6%)</option>
+				
+				<option value="file7">github.com/uwaserver/uwas/internal/cli/status.go (100.0%)</option>
+				
+				<option value="file8">github.com/uwaserver/uwas/internal/cli/version.go (100.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package cli
+
+import (
+        "archive/tar"
+        "compress/gzip"
+        "flag"
+        "fmt"
+        "io"
+        "os"
+        "path/filepath"
+        "strings"
+        "time"
+)
+
+// BackupCommand creates a backup archive of UWAS config and certs.
+type BackupCommand struct{}
+
+func (b *BackupCommand) Name() string        <span class="cov8" title="1">{ return "backup" }</span>
+func (b *BackupCommand) Description() string <span class="cov8" title="1">{ return "Backup config and certificates" }</span>
+
+func (b *BackupCommand) Help() string <span class="cov8" title="1">{
+        return `Flags:
+  --output string   Path for the backup archive (default "uwas-backup-&lt;timestamp&gt;.tar.gz")
+  -c string         Path to config file (default "uwas.yaml")
+  --certs string    Path to certificates directory (default "/var/lib/uwas/certs")
+
+Examples:
+  uwas backup --output /tmp/backup.tar.gz
+  uwas backup -c /etc/uwas/uwas.yaml --output backup.tar.gz`
+}</span>
+
+func (b *BackupCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+        output := fs.String("output", "", "output path for backup archive")
+        configPath := fs.String("c", "uwas.yaml", "path to config file")
+        certsDir := fs.String("certs", "/var/lib/uwas/certs", "path to certificates directory")
+
+        if err := fs.Parse(args); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if *output == "" </span><span class="cov8" title="1">{
+                *output = fmt.Sprintf("uwas-backup-%s.tar.gz", time.Now().Format("20060102-150405"))
+        }</span>
+
+        <span class="cov8" title="1">return createBackup(*output, *configPath, *certsDir)</span>
+}
+
+func createBackup(output, configPath, certsDir string) error <span class="cov8" title="1">{
+        outFile, err := os.Create(output)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("create backup file: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer outFile.Close()
+
+        gw := gzip.NewWriter(outFile)
+        defer gw.Close()
+
+        tw := tar.NewWriter(gw)
+        defer tw.Close()
+
+        var fileCount int
+
+        // Add main config file
+        if err := addFileToTar(tw, configPath, "config/"+filepath.Base(configPath)); err != nil </span><span class="cov8" title="1">{
+                if !os.IsNotExist(err) </span><span class="cov0" title="0">{
+                        return fmt.Errorf("add config: %w", err)
+                }</span>
+                <span class="cov8" title="1">fmt.Fprintf(os.Stderr, "warning: config file not found: %s\n", configPath)</span>
+        } else<span class="cov8" title="1"> {
+                fileCount++
+        }</span>
+
+        // Add domains.d/ directory if it exists next to the config
+        <span class="cov8" title="1">domainsDir := filepath.Join(filepath.Dir(configPath), "domains.d")
+        if info, err := os.Stat(domainsDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov8" title="1">{
+                entries, err := os.ReadDir(domainsDir)
+                if err == nil </span><span class="cov8" title="1">{
+                        for _, entry := range entries </span><span class="cov8" title="1">{
+                                if entry.IsDir() </span><span class="cov0" title="0">{
+                                        continue</span>
+                                }
+                                <span class="cov8" title="1">name := entry.Name()
+                                if !strings.HasSuffix(name, ".yaml") &amp;&amp; !strings.HasSuffix(name, ".yml") </span><span class="cov8" title="1">{
+                                        continue</span>
+                                }
+                                <span class="cov8" title="1">src := filepath.Join(domainsDir, name)
+                                if err := addFileToTar(tw, src, "config/domains.d/"+name); err != nil </span><span class="cov0" title="0">{
+                                        fmt.Fprintf(os.Stderr, "warning: could not add %s: %v\n", src, err)
+                                }</span> else<span class="cov8" title="1"> {
+                                        fileCount++
+                                }</span>
+                        }
+                }
+        }
+
+        // Add TLS certificates
+        <span class="cov8" title="1">if info, err := os.Stat(certsDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov8" title="1">{
+                err := filepath.Walk(certsDir, func(path string, info os.FileInfo, err error) error </span><span class="cov8" title="1">{
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil // skip errors
+                        }</span>
+                        <span class="cov8" title="1">if info.IsDir() </span><span class="cov8" title="1">{
+                                return nil
+                        }</span>
+                        <span class="cov8" title="1">relPath, _ := filepath.Rel(certsDir, path)
+                        tarPath := "certs/" + filepath.ToSlash(relPath)
+                        if err := addFileToTar(tw, path, tarPath); err != nil </span><span class="cov0" title="0">{
+                                fmt.Fprintf(os.Stderr, "warning: could not add %s: %v\n", path, err)
+                        }</span> else<span class="cov8" title="1"> {
+                                fileCount++
+                        }</span>
+                        <span class="cov8" title="1">return nil</span>
+                })
+                <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "warning: error walking certs dir: %v\n", err)
+                }</span>
+        }
+
+        <span class="cov8" title="1">fmt.Printf("Backup created: %s (%d files)\n", output, fileCount)
+        return nil</span>
+}
+
+func addFileToTar(tw *tar.Writer, srcPath, tarName string) error <span class="cov8" title="1">{
+        file, err := os.Open(srcPath)
+        if err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+        <span class="cov8" title="1">defer file.Close()
+
+        info, err := file.Stat()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">header := &amp;tar.Header{
+                Name:    tarName,
+                Size:    info.Size(),
+                Mode:    int64(info.Mode()),
+                ModTime: info.ModTime(),
+        }
+
+        if err := tw.WriteHeader(header); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">_, err = io.Copy(tw, file)
+        return err</span>
+}
+
+// RestoreCommand restores from a backup archive.
+type RestoreCommand struct{}
+
+func (r *RestoreCommand) Name() string        <span class="cov8" title="1">{ return "restore" }</span>
+func (r *RestoreCommand) Description() string <span class="cov8" title="1">{ return "Restore config and certificates from backup" }</span>
+
+func (r *RestoreCommand) Help() string <span class="cov8" title="1">{
+        return `Flags:
+  --input string    Path to the backup archive (required)
+  --config-dir string  Destination for config files (default "/etc/uwas")
+  --certs-dir string   Destination for certificates (default "/var/lib/uwas/certs")
+
+Examples:
+  uwas restore --input /tmp/backup.tar.gz
+  uwas restore --input backup.tar.gz --config-dir /etc/uwas --certs-dir /var/lib/uwas/certs`
+}</span>
+
+func (r *RestoreCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("restore", flag.ContinueOnError)
+        input := fs.String("input", "", "path to backup archive")
+        configDir := fs.String("config-dir", "/etc/uwas", "destination for config files")
+        certsDir := fs.String("certs-dir", "/var/lib/uwas/certs", "destination for certificates")
+
+        if err := fs.Parse(args); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if *input == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("--input is required")
+        }</span>
+
+        <span class="cov8" title="1">return restoreBackup(*input, *configDir, *certsDir)</span>
+}
+
+func restoreBackup(input, configDir, certsDir string) error <span class="cov8" title="1">{
+        file, err := os.Open(input)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("open backup: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer file.Close()
+
+        gr, err := gzip.NewReader(file)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("decompress backup: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer gr.Close()
+
+        tr := tar.NewReader(gr)
+
+        var fileCount int
+
+        for </span><span class="cov8" title="1">{
+                header, err := tr.Next()
+                if err == io.EOF </span><span class="cov8" title="1">{
+                        break</span>
+                }
+                <span class="cov8" title="1">if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("read tar: %w", err)
+                }</span>
+
+                // Determine destination based on archive path prefix
+                <span class="cov8" title="1">var destPath string
+                switch </span>{
+                case strings.HasPrefix(header.Name, "config/"):<span class="cov8" title="1">
+                        relPath := strings.TrimPrefix(header.Name, "config/")
+                        destPath = filepath.Join(configDir, relPath)</span>
+                case strings.HasPrefix(header.Name, "certs/"):<span class="cov8" title="1">
+                        relPath := strings.TrimPrefix(header.Name, "certs/")
+                        destPath = filepath.Join(certsDir, relPath)</span>
+                default:<span class="cov0" title="0">
+                        // Skip unknown entries
+                        continue</span>
+                }
+
+                // Validate path to prevent traversal
+                <span class="cov8" title="1">destPath = filepath.Clean(destPath)
+                if strings.Contains(destPath, "..") </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "warning: skipping suspicious path: %s\n", header.Name)
+                        continue</span>
+                }
+
+                // Create parent directories
+                <span class="cov8" title="1">if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("create dir for %s: %w", destPath, err)
+                }</span>
+
+                // Write file
+                <span class="cov8" title="1">outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("create %s: %w", destPath, err)
+                }</span>
+
+                // Limit copy to prevent decompression bombs
+                <span class="cov8" title="1">if _, err := io.Copy(outFile, io.LimitReader(tr, header.Size)); err != nil </span><span class="cov0" title="0">{
+                        outFile.Close()
+                        return fmt.Errorf("write %s: %w", destPath, err)
+                }</span>
+                <span class="cov8" title="1">outFile.Close()
+                fileCount++</span>
+        }
+
+        <span class="cov8" title="1">fmt.Printf("Restore complete: %d files restored\n", fileCount)
+        fmt.Println("Run 'uwas reload' to apply the restored configuration.")
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package cli
+
+import (
+        "flag"
+        "fmt"
+
+        "github.com/uwaserver/uwas/internal/config"
+)
+
+// ConfigCommand validates a config file.
+type ConfigCommand struct{}
+
+func (c *ConfigCommand) Name() string        <span class="cov8" title="1">{ return "config" }</span>
+func (c *ConfigCommand) Description() string  <span class="cov8" title="1">{ return "Validate configuration file" }</span>
+
+func (c *ConfigCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("config", flag.ContinueOnError)
+        configPath := fs.String("c", "uwas.yaml", "path to config file")
+
+        subcommand := "validate"
+        if len(args) &gt; 0 &amp;&amp; args[0] != "-c" </span><span class="cov8" title="1">{
+                subcommand = args[0]
+                args = args[1:]
+        }</span>
+        <span class="cov8" title="1">fs.Parse(args)
+
+        switch subcommand </span>{
+        case "validate":<span class="cov8" title="1">
+                cfg, err := config.Load(*configPath)
+                if err != nil </span><span class="cov8" title="1">{
+                        return fmt.Errorf("invalid: %w", err)
+                }</span>
+                <span class="cov8" title="1">fmt.Printf("Configuration valid: %d domains\n", len(cfg.Domains))
+                return nil</span>
+
+        case "test":<span class="cov8" title="1">
+                cfg, err := config.Load(*configPath)
+                if err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("invalid: %w", err)
+                }</span>
+                <span class="cov8" title="1">fmt.Printf("Config OK — %d domains loaded\n", len(cfg.Domains))
+                for _, d := range cfg.Domains </span><span class="cov8" title="1">{
+                        fmt.Printf("  %s (type=%s, ssl=%s)\n", d.Host, d.Type, d.SSL.Mode)
+                }</span>
+                <span class="cov8" title="1">return nil</span>
+
+        default:<span class="cov8" title="1">
+                return fmt.Errorf("unknown subcommand %q (use: validate, test)", subcommand)</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package cli
+
+import (
+        "encoding/json"
+        "flag"
+        "fmt"
+        "io"
+        "net/http"
+        "os"
+        "strings"
+        "text/tabwriter"
+)
+
+// DomainCommand manages domains via the admin API.
+type DomainCommand struct{}
+
+func (d *DomainCommand) Name() string        <span class="cov8" title="1">{ return "domain" }</span>
+func (d *DomainCommand) Description() string <span class="cov8" title="1">{ return "Manage domains (list, add, remove)" }</span>
+
+func (d *DomainCommand) Help() string <span class="cov8" title="1">{
+        return `Subcommands:
+  list                 List all configured domains
+  add &lt;host&gt; [flags]   Add a new domain
+  remove &lt;host&gt;        Remove a domain
+
+Flags for 'add':
+  --type string    Domain type: static, php, proxy, redirect (default "static")
+  --root string    Document root path
+  --ssl string     SSL mode: auto, manual, off (default "off")
+
+Examples:
+  uwas domain list --api-url http://127.0.0.1:9443 --api-key mykey
+  uwas domain add example.com --type static --root /var/www --ssl auto
+  uwas domain remove old.example.com`
+}</span>
+
+func (d *DomainCommand) Run(args []string) error <span class="cov8" title="1">{
+        if len(args) == 0 </span><span class="cov8" title="1">{
+                fmt.Println(d.Help())
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">sub := args[0]
+        subArgs := args[1:]
+
+        switch sub </span>{
+        case "list":<span class="cov8" title="1">
+                return d.list(subArgs)</span>
+        case "add":<span class="cov8" title="1">
+                return d.add(subArgs)</span>
+        case "remove", "rm", "delete":<span class="cov8" title="1">
+                return d.remove(subArgs)</span>
+        default:<span class="cov8" title="1">
+                return fmt.Errorf("unknown subcommand %q (use: list, add, remove)", sub)</span>
+        }
+}
+
+func (d *DomainCommand) list(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("domain list", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        fs.Parse(args)
+
+        body, err := apiRequest("GET", *apiURL+"/api/v1/domains", *apiKey, nil)
+        if err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">var domains []struct {
+                Host    string   `json:"host"`
+                Aliases []string `json:"aliases"`
+                Type    string   `json:"type"`
+                SSL     string   `json:"ssl"`
+                Root    string   `json:"root"`
+        }
+        if err := json.Unmarshal(body, &amp;domains); err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("parse response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+        fmt.Fprintf(w, "HOST\tTYPE\tSSL\tROOT\n")
+        for _, d := range domains </span><span class="cov8" title="1">{
+                fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d.Host, d.Type, d.SSL, d.Root)
+        }</span>
+        <span class="cov8" title="1">w.Flush()
+        return nil</span>
+}
+
+func (d *DomainCommand) add(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("domain add", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        domainType := fs.String("type", "static", "domain type")
+        root := fs.String("root", "", "document root")
+        ssl := fs.String("ssl", "off", "SSL mode")
+        fs.Parse(args)
+
+        host := fs.Arg(0)
+        if host == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("host is required: uwas domain add &lt;host&gt; [flags]")
+        }</span>
+
+        <span class="cov8" title="1">payload := fmt.Sprintf(`{"host":%q,"type":%q,"root":%q,"ssl":{"mode":%q}}`,
+                host, *domainType, *root, *ssl)
+
+        body, err := apiRequest("POST", *apiURL+"/api/v1/domains", *apiKey, strings.NewReader(payload))
+        if err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">fmt.Printf("Domain added: %s\n", string(body))
+        return nil</span>
+}
+
+func (d *DomainCommand) remove(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("domain remove", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        fs.Parse(args)
+
+        host := fs.Arg(0)
+        if host == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("host is required: uwas domain remove &lt;host&gt;")
+        }</span>
+
+        <span class="cov8" title="1">_, err := apiRequest("DELETE", *apiURL+"/api/v1/domains/"+host, *apiKey, nil)
+        if err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">fmt.Printf("Domain removed: %s\n", host)
+        return nil</span>
+}
+
+// CacheCommand manages cache via the admin API.
+type CacheCommand struct{}
+
+func (c *CacheCommand) Name() string        <span class="cov8" title="1">{ return "cache" }</span>
+func (c *CacheCommand) Description() string <span class="cov8" title="1">{ return "Manage cache (purge, stats)" }</span>
+
+func (c *CacheCommand) Help() string <span class="cov8" title="1">{
+        return `Subcommands:
+  purge [--tag &lt;tag&gt;]   Purge cache entries (all or by tag)
+  stats                 Show cache statistics
+
+Examples:
+  uwas cache purge                    # purge all
+  uwas cache purge --tag site:blog    # purge by tag
+  uwas cache stats`
+}</span>
+
+func (c *CacheCommand) Run(args []string) error <span class="cov8" title="1">{
+        if len(args) == 0 </span><span class="cov8" title="1">{
+                fmt.Println(c.Help())
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">switch args[0] </span>{
+        case "purge":<span class="cov8" title="1">
+                return c.purge(args[1:])</span>
+        case "stats":<span class="cov8" title="1">
+                return c.stats(args[1:])</span>
+        default:<span class="cov8" title="1">
+                return fmt.Errorf("unknown subcommand %q", args[0])</span>
+        }
+}
+
+func (c *CacheCommand) purge(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("cache purge", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        tag := fs.String("tag", "", "purge by tag")
+        fs.Parse(args)
+
+        payload := "{}"
+        if *tag != "" </span><span class="cov8" title="1">{
+                payload = fmt.Sprintf(`{"tag":%q}`, *tag)
+        }</span>
+
+        <span class="cov8" title="1">body, err := apiRequest("POST", *apiURL+"/api/v1/cache/purge", *apiKey, strings.NewReader(payload))
+        if err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">fmt.Println(string(body))
+        return nil</span>
+}
+
+func (c *CacheCommand) stats(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("cache stats", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        fs.Parse(args)
+
+        body, err := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
+        if err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">var stats map[string]any
+        json.Unmarshal(body, &amp;stats)
+        w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+        for k, v := range stats </span><span class="cov8" title="1">{
+                fmt.Fprintf(w, "%s\t%v\n", k, v)
+        }</span>
+        <span class="cov8" title="1">w.Flush()
+        return nil</span>
+}
+
+func apiRequest(method, url, apiKey string, body io.Reader) ([]byte, error) <span class="cov8" title="1">{
+        req, err := http.NewRequest(method, url, body)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov8" title="1">if apiKey != "" </span><span class="cov8" title="1">{
+                req.Header.Set("Authorization", "Bearer "+apiKey)
+        }</span>
+        <span class="cov8" title="1">req.Header.Set("Content-Type", "application/json")
+
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("API request failed: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer resp.Body.Close()
+
+        data, _ := io.ReadAll(resp.Body)
+
+        if resp.StatusCode &gt;= 400 </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+        }</span>
+
+        <span class="cov8" title="1">return data, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package cli
+
+import (
+        "bufio"
+        "fmt"
+        "os"
+        "regexp"
+        "strings"
+)
+
+// MigrateCommand converts Nginx/Apache configs to UWAS YAML.
+type MigrateCommand struct{}
+
+func (m *MigrateCommand) Name() string        <span class="cov8" title="1">{ return "migrate" }</span>
+func (m *MigrateCommand) Description() string <span class="cov8" title="1">{ return "Convert Nginx/Apache config to UWAS YAML" }</span>
+
+func (m *MigrateCommand) Help() string <span class="cov8" title="1">{
+        return `Subcommands:
+  nginx &lt;file&gt;    Convert an Nginx config file to UWAS YAML
+  apache &lt;file&gt;   Convert an Apache config file to UWAS YAML
+
+Examples:
+  uwas migrate nginx /etc/nginx/sites-enabled/example.conf
+  uwas migrate apache /etc/apache2/sites-enabled/example.conf`
+}</span>
+
+func (m *MigrateCommand) Run(args []string) error <span class="cov8" title="1">{
+        if len(args) &lt; 2 </span><span class="cov8" title="1">{
+                fmt.Println(m.Help())
+                return nil
+        }</span>
+
+        <span class="cov8" title="1">format := args[0]
+        file := args[1]
+
+        switch format </span>{
+        case "nginx":<span class="cov8" title="1">
+                return migrateNginx(file)</span>
+        case "apache":<span class="cov8" title="1">
+                return migrateApache(file)</span>
+        default:<span class="cov8" title="1">
+                return fmt.Errorf("unknown format %q (use: nginx, apache)", format)</span>
+        }
+}
+
+// --- Nginx migration ---
+
+type nginxServer struct {
+        serverName  string
+        root        string
+        listen      string
+        sslCert     string
+        sslKey      string
+        proxyPass   string
+        locations   []nginxLocation
+}
+
+type nginxLocation struct {
+        path      string
+        proxyPass string
+}
+
+func migrateNginx(file string) error <span class="cov8" title="1">{
+        f, err := os.Open(file)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("open %s: %w", file, err)
+        }</span>
+        <span class="cov8" title="1">defer f.Close()
+
+        servers := parseNginxConfig(f)
+        if len(servers) == 0 </span><span class="cov8" title="1">{
+                return fmt.Errorf("no server blocks found in %s", file)
+        }</span>
+
+        <span class="cov8" title="1">yaml := convertNginxToYAML(servers)
+        fmt.Print(yaml)
+        return nil</span>
+}
+
+func parseNginxConfig(f *os.File) []nginxServer <span class="cov8" title="1">{
+        var servers []nginxServer
+        scanner := bufio.NewScanner(f)
+        inServer := false
+        inLocation := false
+        braceDepth := 0
+        var current nginxServer
+        var currentLocation nginxLocation
+
+        for scanner.Scan() </span><span class="cov8" title="1">{
+                line := strings.TrimSpace(scanner.Text())
+
+                // Skip comments and empty lines
+                if line == "" || strings.HasPrefix(line, "#") </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                // Track brace depth
+                <span class="cov8" title="1">openBraces := strings.Count(line, "{")
+                closeBraces := strings.Count(line, "}")
+
+                if !inServer &amp;&amp; strings.HasPrefix(line, "server") &amp;&amp; strings.Contains(line, "{") </span><span class="cov8" title="1">{
+                        inServer = true
+                        braceDepth = 1
+                        current = nginxServer{}
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if inServer </span><span class="cov8" title="1">{
+                        braceDepth += openBraces - closeBraces
+
+                        if braceDepth &lt;= 0 </span><span class="cov8" title="1">{
+                                // End of server block
+                                inServer = false
+                                servers = append(servers, current)
+                                continue</span>
+                        }
+
+                        // Check for location block
+                        <span class="cov8" title="1">if strings.HasPrefix(line, "location") &amp;&amp; strings.Contains(line, "{") </span><span class="cov8" title="1">{
+                                inLocation = true
+                                path := extractNginxLocationPath(line)
+                                currentLocation = nginxLocation{path: path}
+                                continue</span>
+                        }
+
+                        <span class="cov8" title="1">if inLocation </span><span class="cov8" title="1">{
+                                if closeBraces &gt; 0 &amp;&amp; !strings.Contains(line, "{") </span><span class="cov8" title="1">{
+                                        inLocation = false
+                                        current.locations = append(current.locations, currentLocation)
+                                        continue</span>
+                                }
+                                <span class="cov8" title="1">if val := extractNginxDirective(line, "proxy_pass"); val != "" </span><span class="cov8" title="1">{
+                                        currentLocation.proxyPass = val
+                                }</span>
+                                <span class="cov8" title="1">continue</span>
+                        }
+
+                        // Server-level directives
+                        <span class="cov8" title="1">if val := extractNginxDirective(line, "server_name"); val != "" </span><span class="cov8" title="1">{
+                                current.serverName = strings.Fields(val)[0] // take first name
+                        }</span>
+                        <span class="cov8" title="1">if val := extractNginxDirective(line, "root"); val != "" </span><span class="cov8" title="1">{
+                                current.root = val
+                        }</span>
+                        <span class="cov8" title="1">if val := extractNginxDirective(line, "listen"); val != "" </span><span class="cov8" title="1">{
+                                current.listen = val
+                        }</span>
+                        <span class="cov8" title="1">if val := extractNginxDirective(line, "ssl_certificate_key"); val != "" </span><span class="cov8" title="1">{
+                                current.sslKey = val
+                        }</span> else<span class="cov8" title="1"> if val := extractNginxDirective(line, "ssl_certificate"); val != "" </span><span class="cov8" title="1">{
+                                current.sslCert = val
+                        }</span>
+                        <span class="cov8" title="1">if val := extractNginxDirective(line, "proxy_pass"); val != "" </span><span class="cov8" title="1">{
+                                current.proxyPass = val
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">return servers</span>
+}
+
+func extractNginxDirective(line, directive string) string <span class="cov8" title="1">{
+        line = strings.TrimSpace(line)
+        prefix := directive + " "
+        if !strings.HasPrefix(line, prefix) </span><span class="cov8" title="1">{
+                return ""
+        }</span>
+        <span class="cov8" title="1">val := strings.TrimPrefix(line, prefix)
+        val = strings.TrimSuffix(val, ";")
+        return strings.TrimSpace(val)</span>
+}
+
+var locationPathRegexp = regexp.MustCompile(`location\s+(?:~\s+|~\*\s+|=\s+)?([^\s{]+)`)
+
+func extractNginxLocationPath(line string) string <span class="cov8" title="1">{
+        m := locationPathRegexp.FindStringSubmatch(line)
+        if len(m) &gt; 1 </span><span class="cov8" title="1">{
+                return m[1]
+        }</span>
+        <span class="cov0" title="0">return "/"</span>
+}
+
+func convertNginxToYAML(servers []nginxServer) string <span class="cov8" title="1">{
+        var b strings.Builder
+        b.WriteString("# Converted from Nginx config by UWAS\n")
+        b.WriteString("domains:\n")
+
+        for _, s := range servers </span><span class="cov8" title="1">{
+                host := s.serverName
+                if host == "" || host == "_" </span><span class="cov8" title="1">{
+                        host = "example.com"
+                }</span>
+
+                <span class="cov8" title="1">b.WriteString(fmt.Sprintf("  - host: %s\n", host))
+
+                // Determine type
+                hasProxy := s.proxyPass != "" || hasProxyLocations(s.locations)
+                if hasProxy </span><span class="cov8" title="1">{
+                        b.WriteString("    type: proxy\n")
+                }</span> else<span class="cov8" title="1"> {
+                        b.WriteString("    type: static\n")
+                }</span>
+
+                <span class="cov8" title="1">if s.root != "" </span><span class="cov8" title="1">{
+                        b.WriteString(fmt.Sprintf("    root: %s\n", s.root))
+                }</span>
+
+                // SSL
+                <span class="cov8" title="1">if s.sslCert != "" </span><span class="cov8" title="1">{
+                        b.WriteString("    ssl:\n")
+                        b.WriteString("      mode: manual\n")
+                        b.WriteString(fmt.Sprintf("      cert: %s\n", s.sslCert))
+                        if s.sslKey != "" </span><span class="cov8" title="1">{
+                                b.WriteString(fmt.Sprintf("      key: %s\n", s.sslKey))
+                        }</span>
+                } else<span class="cov8" title="1"> if strings.Contains(s.listen, "ssl") || strings.Contains(s.listen, "443") </span><span class="cov8" title="1">{
+                        b.WriteString("    ssl:\n")
+                        b.WriteString("      mode: auto\n")
+                }</span>
+
+                // Proxy config
+                <span class="cov8" title="1">if hasProxy </span><span class="cov8" title="1">{
+                        b.WriteString("    proxy:\n")
+                        b.WriteString("      upstreams:\n")
+
+                        if s.proxyPass != "" </span><span class="cov8" title="1">{
+                                b.WriteString(fmt.Sprintf("        - address: %s\n", s.proxyPass))
+                        }</span>
+                        <span class="cov8" title="1">for _, loc := range s.locations </span><span class="cov8" title="1">{
+                                if loc.proxyPass != "" </span><span class="cov8" title="1">{
+                                        b.WriteString(fmt.Sprintf("        - address: %s\n", loc.proxyPass))
+                                }</span>
+                        }
+                }
+
+                <span class="cov8" title="1">b.WriteString("\n")</span>
+        }
+
+        <span class="cov8" title="1">return b.String()</span>
+}
+
+func hasProxyLocations(locations []nginxLocation) bool <span class="cov8" title="1">{
+        for _, l := range locations </span><span class="cov8" title="1">{
+                if l.proxyPass != "" </span><span class="cov8" title="1">{
+                        return true
+                }</span>
+        }
+        <span class="cov8" title="1">return false</span>
+}
+
+// --- Apache migration ---
+
+type apacheVHost struct {
+        serverName   string
+        documentRoot string
+        sslEngine    bool
+        sslCertFile  string
+        sslKeyFile   string
+        proxyPass    []apacheProxy
+        listen       string
+}
+
+type apacheProxy struct {
+        path   string
+        target string
+}
+
+func migrateApache(file string) error <span class="cov8" title="1">{
+        f, err := os.Open(file)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("open %s: %w", file, err)
+        }</span>
+        <span class="cov8" title="1">defer f.Close()
+
+        vhosts := parseApacheConfig(f)
+        if len(vhosts) == 0 </span><span class="cov8" title="1">{
+                return fmt.Errorf("no VirtualHost blocks found in %s", file)
+        }</span>
+
+        <span class="cov8" title="1">yaml := convertApacheToYAML(vhosts)
+        fmt.Print(yaml)
+        return nil</span>
+}
+
+func parseApacheConfig(f *os.File) []apacheVHost <span class="cov8" title="1">{
+        var vhosts []apacheVHost
+        scanner := bufio.NewScanner(f)
+        inVHost := false
+        var current apacheVHost
+
+        for scanner.Scan() </span><span class="cov8" title="1">{
+                line := strings.TrimSpace(scanner.Text())
+
+                // Skip comments and empty lines
+                if line == "" || strings.HasPrefix(line, "#") </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if strings.HasPrefix(line, "&lt;VirtualHost") </span><span class="cov8" title="1">{
+                        inVHost = true
+                        current = apacheVHost{}
+                        // Extract listen address from &lt;VirtualHost *:443&gt;
+                        if addr := extractApacheVHostAddr(line); addr != "" </span><span class="cov8" title="1">{
+                                current.listen = addr
+                        }</span>
+                        <span class="cov8" title="1">continue</span>
+                }
+
+                <span class="cov8" title="1">if strings.HasPrefix(line, "&lt;/VirtualHost") </span><span class="cov8" title="1">{
+                        inVHost = false
+                        vhosts = append(vhosts, current)
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if !inVHost </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                // Parse directives inside VirtualHost
+                <span class="cov8" title="1">lower := strings.ToLower(line)
+
+                if strings.HasPrefix(lower, "servername") </span><span class="cov8" title="1">{
+                        current.serverName = extractApacheValue(line)
+                }</span>
+                <span class="cov8" title="1">if strings.HasPrefix(lower, "documentroot") </span><span class="cov8" title="1">{
+                        val := extractApacheValue(line)
+                        current.documentRoot = strings.Trim(val, `"'`)
+                }</span>
+                <span class="cov8" title="1">if strings.HasPrefix(lower, "sslengine") </span><span class="cov8" title="1">{
+                        val := strings.ToLower(extractApacheValue(line))
+                        current.sslEngine = (val == "on")
+                }</span>
+                <span class="cov8" title="1">if strings.HasPrefix(lower, "sslcertificatefile") </span><span class="cov8" title="1">{
+                        current.sslCertFile = extractApacheValue(line)
+                }</span>
+                <span class="cov8" title="1">if strings.HasPrefix(lower, "sslcertificatekeyfile") </span><span class="cov8" title="1">{
+                        current.sslKeyFile = extractApacheValue(line)
+                }</span>
+                <span class="cov8" title="1">if strings.HasPrefix(lower, "proxypass ") &amp;&amp; !strings.HasPrefix(lower, "proxypassreverse") </span><span class="cov8" title="1">{
+                        parts := strings.Fields(line)
+                        if len(parts) &gt;= 3 </span><span class="cov8" title="1">{
+                                current.proxyPass = append(current.proxyPass, apacheProxy{
+                                        path:   parts[1],
+                                        target: parts[2],
+                                })
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">return vhosts</span>
+}
+
+var apacheVHostAddrRegexp = regexp.MustCompile(`&lt;VirtualHost\s+([^&gt;]+)&gt;`)
+
+func extractApacheVHostAddr(line string) string <span class="cov8" title="1">{
+        m := apacheVHostAddrRegexp.FindStringSubmatch(line)
+        if len(m) &gt; 1 </span><span class="cov8" title="1">{
+                return strings.TrimSpace(m[1])
+        }</span>
+        <span class="cov0" title="0">return ""</span>
+}
+
+func extractApacheValue(line string) string <span class="cov8" title="1">{
+        parts := strings.Fields(line)
+        if len(parts) &gt;= 2 </span><span class="cov8" title="1">{
+                return parts[1]
+        }</span>
+        <span class="cov8" title="1">return ""</span>
+}
+
+func convertApacheToYAML(vhosts []apacheVHost) string <span class="cov8" title="1">{
+        var b strings.Builder
+        b.WriteString("# Converted from Apache config by UWAS\n")
+        b.WriteString("domains:\n")
+
+        for _, vh := range vhosts </span><span class="cov8" title="1">{
+                host := vh.serverName
+                if host == "" </span><span class="cov8" title="1">{
+                        host = "example.com"
+                }</span>
+
+                <span class="cov8" title="1">b.WriteString(fmt.Sprintf("  - host: %s\n", host))
+
+                // Determine type
+                hasProxy := len(vh.proxyPass) &gt; 0
+                if hasProxy </span><span class="cov8" title="1">{
+                        b.WriteString("    type: proxy\n")
+                }</span> else<span class="cov8" title="1"> {
+                        b.WriteString("    type: static\n")
+                }</span>
+
+                <span class="cov8" title="1">if vh.documentRoot != "" </span><span class="cov8" title="1">{
+                        b.WriteString(fmt.Sprintf("    root: %s\n", vh.documentRoot))
+                }</span>
+
+                // SSL
+                <span class="cov8" title="1">if vh.sslEngine || vh.sslCertFile != "" </span><span class="cov8" title="1">{
+                        b.WriteString("    ssl:\n")
+                        if vh.sslCertFile != "" </span><span class="cov8" title="1">{
+                                b.WriteString("      mode: manual\n")
+                                b.WriteString(fmt.Sprintf("      cert: %s\n", vh.sslCertFile))
+                                if vh.sslKeyFile != "" </span><span class="cov8" title="1">{
+                                        b.WriteString(fmt.Sprintf("      key: %s\n", vh.sslKeyFile))
+                                }</span>
+                        } else<span class="cov8" title="1"> {
+                                b.WriteString("      mode: auto\n")
+                        }</span>
+                } else<span class="cov8" title="1"> if strings.Contains(vh.listen, "443") </span><span class="cov8" title="1">{
+                        b.WriteString("    ssl:\n")
+                        b.WriteString("      mode: auto\n")
+                }</span>
+
+                // Proxy config
+                <span class="cov8" title="1">if hasProxy </span><span class="cov8" title="1">{
+                        b.WriteString("    proxy:\n")
+                        b.WriteString("      upstreams:\n")
+                        for _, p := range vh.proxyPass </span><span class="cov8" title="1">{
+                                b.WriteString(fmt.Sprintf("        - address: %s\n", p.target))
+                        }</span>
+                }
+
+                <span class="cov8" title="1">b.WriteString("\n")</span>
+        }
+
+        <span class="cov8" title="1">return b.String()</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package cli
+
+import (
+        "encoding/json"
+        "flag"
+        "fmt"
+        "os"
+        "strconv"
+        "strings"
+        "syscall"
+)
+
+// RestartCommand performs a graceful restart of the running UWAS server.
+// It sends SIGTERM to the running process (which drains connections), waits
+// for it to exit, then the process manager (systemd, etc.) restarts it.
+type RestartCommand struct{}
+
+func (r *RestartCommand) Name() string        <span class="cov8" title="1">{ return "restart" }</span>
+func (r *RestartCommand) Description() string <span class="cov8" title="1">{ return "Graceful restart of the running server" }</span>
+
+func (r *RestartCommand) Help() string <span class="cov8" title="1">{
+        return `Flags:
+  --pid-file string   Path to PID file (default "/var/run/uwas.pid")
+  --api-url string    Admin API URL for graceful drain (default "http://127.0.0.1:9443")
+  --api-key string    Admin API key (default from UWAS_ADMIN_KEY env)
+
+Process:
+  1. Optionally notifies the admin API to start draining
+  2. Sends SIGTERM to the running process (reads PID from file)
+  3. The process drains all active connections before exiting
+  4. The process manager (systemd) restarts the service
+
+Examples:
+  uwas restart
+  uwas restart --pid-file /var/run/uwas.pid`
+}</span>
+
+func (r *RestartCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+        pidFile := fs.String("pid-file", "/var/run/uwas.pid", "path to PID file")
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+
+        if err := fs.Parse(args); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Try to check health via admin API first
+        <span class="cov8" title="1">healthData, err := apiRequest("GET", *apiURL+"/api/v1/health", *apiKey, nil)
+        if err == nil </span><span class="cov8" title="1">{
+                var health map[string]any
+                json.Unmarshal(healthData, &amp;health)
+                fmt.Printf("Current server status: %s (uptime: %s)\n", health["status"], health["uptime"])
+        }</span>
+
+        // Read PID from file
+        <span class="cov8" title="1">pidData, err := os.ReadFile(*pidFile)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("cannot read PID file %s: %w\nIs the server running?", *pidFile, err)
+        }</span>
+
+        <span class="cov8" title="1">pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("invalid PID in %s: %w", *pidFile, err)
+        }</span>
+
+        // Find the process
+        <span class="cov0" title="0">process, err := os.FindProcess(pid)
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("cannot find process %d: %w", pid, err)
+        }</span>
+
+        // Send SIGTERM for graceful shutdown (which drains connections)
+        <span class="cov0" title="0">fmt.Printf("Sending SIGTERM to process %d...\n", pid)
+        if err := process.Signal(syscall.SIGTERM); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to send SIGTERM to process %d: %w", pid, err)
+        }</span>
+
+        <span class="cov0" title="0">fmt.Println("SIGTERM sent. The server will drain active connections and exit.")
+        fmt.Println("Your process manager (systemd) will restart the service automatically.")
+        fmt.Println("To manually restart: uwas serve -c /path/to/uwas.yaml")
+
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package cli
+
+import (
+        "fmt"
+        "os"
+        "sort"
+        "strings"
+        "text/tabwriter"
+)
+
+type Command interface {
+        Name() string
+        Description() string
+        Run(args []string) error
+}
+
+type CLI struct {
+        commands map[string]Command
+        order    []string
+}
+
+func New() *CLI <span class="cov8" title="1">{
+        return &amp;CLI{
+                commands: make(map[string]Command),
+        }
+}</span>
+
+func (c *CLI) Register(cmd Command) <span class="cov8" title="1">{
+        c.commands[cmd.Name()] = cmd
+        c.order = append(c.order, cmd.Name())
+}</span>
+
+func (c *CLI) Run(args []string) <span class="cov8" title="1">{
+        if len(args) == 0 </span><span class="cov0" title="0">{
+                c.printUsage()
+                os.Exit(0)
+        }</span>
+
+        <span class="cov8" title="1">name := args[0]
+
+        // Global flags
+        if name == "--help" || name == "-h" </span><span class="cov0" title="0">{
+                c.printUsage()
+                os.Exit(0)
+        }</span>
+
+        <span class="cov8" title="1">cmd, ok := c.commands[name]
+        if !ok </span><span class="cov0" title="0">{
+                fmt.Fprintf(os.Stderr, "uwas: unknown command %q\n\nRun 'uwas help' for usage.\n", name)
+                os.Exit(1)
+        }</span>
+
+        <span class="cov8" title="1">if err := cmd.Run(args[1:]); err != nil </span><span class="cov0" title="0">{
+                fmt.Fprintf(os.Stderr, "uwas %s: %v\n", name, err)
+                os.Exit(1)
+        }</span>
+}
+
+func (c *CLI) printUsage() <span class="cov8" title="1">{
+        fmt.Println("UWAS — Unified Web Application Server")
+        fmt.Println()
+        fmt.Println("Usage:")
+        fmt.Println("  uwas &lt;command&gt; [flags]")
+        fmt.Println()
+        fmt.Println("Commands:")
+
+        // Sort for consistent output
+        names := make([]string, len(c.order))
+        copy(names, c.order)
+        sort.Strings(names)
+
+        w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+        for _, name := range names </span><span class="cov8" title="1">{
+                cmd := c.commands[name]
+                fmt.Fprintf(w, "  %s\t%s\n", name, cmd.Description())
+        }</span>
+        <span class="cov8" title="1">w.Flush()
+
+        fmt.Println()
+        fmt.Println("Run 'uwas &lt;command&gt; --help' for more information on a command.")</span>
+}
+
+// HelpCommand implements the "help" command.
+type HelpCommand struct {
+        cli *CLI
+}
+
+func NewHelpCommand(c *CLI) *HelpCommand <span class="cov8" title="1">{
+        return &amp;HelpCommand{cli: c}
+}</span>
+
+func (h *HelpCommand) Name() string        <span class="cov8" title="1">{ return "help" }</span>
+func (h *HelpCommand) Description() string  <span class="cov8" title="1">{ return "Show help information" }</span>
+
+func (h *HelpCommand) Run(args []string) error <span class="cov8" title="1">{
+        if len(args) &gt; 0 </span><span class="cov8" title="1">{
+                name := args[0]
+                if cmd, ok := h.cli.commands[name]; ok </span><span class="cov8" title="1">{
+                        fmt.Printf("Usage: uwas %s [flags]\n\n", name)
+                        fmt.Printf("  %s\n", cmd.Description())
+
+                        // If it has detailed help, print subcommand help
+                        if helper, ok := cmd.(interface{ Help() string }); ok </span><span class="cov8" title="1">{
+                                detail := strings.TrimSpace(helper.Help())
+                                if detail != "" </span><span class="cov8" title="1">{
+                                        fmt.Println()
+                                        fmt.Println(detail)
+                                }</span>
+                        }
+                        <span class="cov8" title="1">return nil</span>
+                }
+                <span class="cov8" title="1">return fmt.Errorf("unknown command %q", name)</span>
+        }
+        <span class="cov8" title="1">h.cli.printUsage()
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package cli
+
+import (
+        "flag"
+        "fmt"
+
+        "github.com/uwaserver/uwas/internal/config"
+        "github.com/uwaserver/uwas/internal/logger"
+        "github.com/uwaserver/uwas/internal/server"
+)
+
+type ServeCommand struct{}
+
+func (s *ServeCommand) Name() string        <span class="cov8" title="1">{ return "serve" }</span>
+func (s *ServeCommand) Description() string  <span class="cov8" title="1">{ return "Start the UWAS server" }</span>
+
+func (s *ServeCommand) Help() string <span class="cov8" title="1">{
+        return `Flags:
+  -c, --config string   Path to config file (default "uwas.yaml")
+  --log-level string    Log level: debug, info, warn, error (default "info")`
+}</span>
+
+func (s *ServeCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+        configPath := fs.String("c", "uwas.yaml", "path to config file")
+        logLevel := fs.String("log-level", "", "log level override")
+
+        if err := fs.Parse(args); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">cfg, err := config.Load(*configPath)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("load config: %w", err)
+        }</span>
+
+        // CLI flag overrides config
+        <span class="cov0" title="0">if *logLevel != "" </span><span class="cov0" title="0">{
+                cfg.Global.LogLevel = *logLevel
+        }</span>
+
+        <span class="cov0" title="0">log := logger.New(cfg.Global.LogLevel, cfg.Global.LogFormat)
+        log.Info("configuration loaded", "path", *configPath, "domains", len(cfg.Domains))
+
+        srv := server.New(cfg, log)
+        srv.SetConfigPath(*configPath)
+        return srv.Start()</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package cli
+
+import (
+        "encoding/json"
+        "flag"
+        "fmt"
+        "os"
+)
+
+// StatusCommand shows the running server status.
+type StatusCommand struct{}
+
+func (s *StatusCommand) Name() string        <span class="cov8" title="1">{ return "status" }</span>
+func (s *StatusCommand) Description() string <span class="cov8" title="1">{ return "Show running server status" }</span>
+
+func (s *StatusCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("status", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        fs.Parse(args)
+
+        // Health
+        healthData, err := apiRequest("GET", *apiURL+"/api/v1/health", *apiKey, nil)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("server not reachable: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var health map[string]any
+        json.Unmarshal(healthData, &amp;health)
+
+        // Stats
+        statsData, _ := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
+        var stats map[string]any
+        json.Unmarshal(statsData, &amp;stats)
+
+        // Domains
+        domainsData, _ := apiRequest("GET", *apiURL+"/api/v1/domains", *apiKey, nil)
+        var domains []map[string]any
+        json.Unmarshal(domainsData, &amp;domains)
+
+        fmt.Println("UWAS Server Status")
+        fmt.Println("═══════════════════════════════════════")
+        fmt.Printf("  Status:       %s\n", health["status"])
+        fmt.Printf("  Uptime:       %s\n", health["uptime"])
+
+        if stats != nil </span><span class="cov8" title="1">{
+                fmt.Printf("  Requests:     %.0f\n", stats["requests_total"])
+                fmt.Printf("  Active Conns: %.0f\n", stats["active_conns"])
+                fmt.Printf("  Cache Hits:   %.0f\n", stats["cache_hits"])
+                fmt.Printf("  Cache Misses: %.0f\n", stats["cache_misses"])
+                fmt.Printf("  Bytes Sent:   %.0f\n", stats["bytes_sent"])
+        }</span>
+
+        <span class="cov8" title="1">fmt.Printf("  Domains:      %d\n", len(domains))
+        for _, d := range domains </span><span class="cov8" title="1">{
+                ssl := d["ssl"]
+                if ssl == nil </span><span class="cov8" title="1">{
+                        ssl = "off"
+                }</span>
+                <span class="cov8" title="1">fmt.Printf("    %-30s  %s  ssl=%s\n", d["host"], d["type"], ssl)</span>
+        }
+        <span class="cov8" title="1">fmt.Println("═══════════════════════════════════════")
+
+        return nil</span>
+}
+
+// ReloadCommand sends SIGHUP or triggers reload via API.
+type ReloadCommand struct{}
+
+func (r *ReloadCommand) Name() string        <span class="cov8" title="1">{ return "reload" }</span>
+func (r *ReloadCommand) Description() string <span class="cov8" title="1">{ return "Reload server configuration" }</span>
+
+func (r *ReloadCommand) Run(args []string) error <span class="cov8" title="1">{
+        fs := flag.NewFlagSet("reload", flag.ContinueOnError)
+        apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+        apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
+        fs.Parse(args)
+
+        body, err := apiRequest("POST", *apiURL+"/api/v1/reload", *apiKey, nil)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("reload failed: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">var result map[string]string
+        json.Unmarshal(body, &amp;result)
+        fmt.Printf("Config reloaded: %s\n", result["status"])
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">package cli
+
+import (
+        "fmt"
+
+        "github.com/uwaserver/uwas/internal/build"
+)
+
+type VersionCommand struct{}
+
+func (v *VersionCommand) Name() string        <span class="cov8" title="1">{ return "version" }</span>
+func (v *VersionCommand) Description() string  <span class="cov8" title="1">{ return "Print version information" }</span>
+
+func (v *VersionCommand) Run(args []string) error <span class="cov8" title="1">{
+        fmt.Println(build.Info())
+        return nil
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

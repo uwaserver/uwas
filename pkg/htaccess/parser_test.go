@@ -693,3 +693,76 @@ Header set Cache-Control "no-cache"
 		t.Errorf("pattern = %q, want *.txt", rules.FilesMatch[0].Pattern)
 	}
 }
+
+// --- parser.go: parseBlockOpen with empty angle brackets ---
+
+func TestParseBlockOpenEmpty(t *testing.T) {
+	name, args := parseBlockOpen("<>")
+	if name != "" {
+		t.Errorf("name = %q, want empty for <>", name)
+	}
+	if len(args) != 0 {
+		t.Errorf("args = %v, want empty for <>", args)
+	}
+}
+
+// --- parser.go: parseDirective with empty splitArgs result ---
+
+func TestParseDirectiveEmpty(t *testing.T) {
+	d := parseDirective("", 42)
+	if d.Name != "" {
+		t.Errorf("Name = %q, want empty", d.Name)
+	}
+	if d.LineNum != 42 {
+		t.Errorf("LineNum = %d, want 42", d.LineNum)
+	}
+}
+
+// --- parser.go: line continuation at EOF ---
+
+func TestParseLineContinuationAtEOF(t *testing.T) {
+	// Line continuation with backslash but no more lines after
+	input := `RewriteRule ^test$ \`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(directives) != 1 {
+		t.Fatalf("count = %d, want 1", len(directives))
+	}
+	if directives[0].Name != "RewriteRule" {
+		t.Errorf("name = %q, want RewriteRule", directives[0].Name)
+	}
+}
+
+// --- parser.go: block close without corresponding open ---
+
+func TestParseBlockCloseWithoutOpen(t *testing.T) {
+	input := `</IfModule>
+RewriteEngine On`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stray </IfModule> should be silently ignored since blockStack is empty
+	if len(directives) != 1 {
+		t.Fatalf("count = %d, want 1", len(directives))
+	}
+	if directives[0].Name != "RewriteEngine" {
+		t.Errorf("name = %q, want RewriteEngine", directives[0].Name)
+	}
+}
+
+// --- parser.go: tab separated args ---
+
+func TestSplitArgsTabSeparated(t *testing.T) {
+	args := splitArgs("AuthType\tBasic")
+	if len(args) != 2 {
+		t.Fatalf("args = %d, want 2", len(args))
+	}
+	if args[0] != "AuthType" || args[1] != "Basic" {
+		t.Errorf("args = %v", args)
+	}
+}
