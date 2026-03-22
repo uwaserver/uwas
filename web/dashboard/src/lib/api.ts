@@ -125,29 +125,22 @@ export interface CertInfo {
   days_remaining?: number;
 }
 
-export interface AnalyticsData {
-  total_page_views: number;
-  unique_visitors: number;
-  bandwidth: number;
-  avg_response_time: number;
-  domains: DomainAnalytics[];
-  hourly_traffic: { hour: string; views: number }[];
-}
-
 export interface DomainAnalytics {
   host: string;
   page_views: number;
   unique_ips: number;
-  bandwidth: number;
-  hit_rate: string;
-  top_paths: { path: string; views: number }[];
-  status_codes: { code: string; count: number }[];
-  hourly_traffic: { hour: string; views: number }[];
+  bytes_sent: number;
+  status_codes: Record<string, number>;
+  top_paths: Record<string, number>;
+  hourly_views: number[];
+  views_last_hour: number;
+  views_last_24h: number;
+  views_last_7d: number;
 }
 
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
 export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');
-export const fetchAnalytics = () => api<AnalyticsData>('/api/v1/analytics');
+export const fetchAnalytics = () => api<DomainAnalytics[]>('/api/v1/analytics');
 export const fetchConfigRaw = () => api<{ content: string }>('/api/v1/config/raw');
 export const saveConfigRaw = (content: string) => api<{ status: string }>('/api/v1/config/raw', { method: 'PUT', body: JSON.stringify({ content }) });
 export const fetchDomainConfigRaw = (host: string) => api<{ content: string }>(`/api/v1/config/domains/${encodeURIComponent(host)}/raw`);
