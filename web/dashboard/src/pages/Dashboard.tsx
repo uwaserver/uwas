@@ -6,6 +6,8 @@ import {
   Clock,
   CheckCircle,
   AlertTriangle,
+  Gauge,
+  AlertCircle,
 } from 'lucide-react';
 import {
   LineChart,
@@ -109,6 +111,35 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* Latency cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <Card
+          icon={<Gauge size={20} />}
+          label="p50 Latency"
+          value={stats ? `${stats.latency_p50_ms.toFixed(1)}ms` : '--'}
+        />
+        <Card
+          icon={<Gauge size={20} />}
+          label="p95 Latency"
+          value={stats ? `${stats.latency_p95_ms.toFixed(1)}ms` : '--'}
+        />
+        <Card
+          icon={<Gauge size={20} />}
+          label="p99 Latency"
+          value={stats ? `${stats.latency_p99_ms.toFixed(1)}ms` : '--'}
+        />
+        <Card
+          icon={<Gauge size={20} />}
+          label="Max Latency"
+          value={stats ? `${stats.latency_max_ms.toFixed(1)}ms` : '--'}
+        />
+        <Card
+          icon={<AlertCircle size={20} />}
+          label="Slow Requests"
+          value={stats?.slow_requests.toLocaleString() ?? '--'}
+        />
+      </div>
+
       {/* Chart */}
       <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
         <h2 className="mb-4 text-sm font-semibold text-slate-300">
@@ -120,6 +151,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="time" stroke="#64748b" fontSize={12} />
               <YAxis stroke="#64748b" fontSize={12} />
+              <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" fontSize={12} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: '#1e293b',
@@ -145,6 +177,15 @@ export default function Dashboard() {
                 stroke="#10b981"
                 strokeWidth={2}
                 dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="p95"
+                name="p95 Latency (ms)"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={false}
+                yAxisId="right"
               />
             </LineChart>
           </ResponsiveContainer>

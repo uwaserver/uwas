@@ -3,6 +3,9 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -158,6 +161,11 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		proxyReq.Header.Set("X-Forwarded-Host", ctx.Request.Host)
 		proxyReq.Header.Set("X-Real-IP", clientIP(ctx.Request))
 
+		// W3C Trace Context: propagate or generate traceparent
+		if proxyReq.Header.Get("Traceparent") == "" {
+			proxyReq.Header.Set("Traceparent", generateTraceparent())
+		}
+
 		// Remove hop-by-hop headers
 		removeHopByHop(proxyReq.Header)
 
@@ -258,6 +266,19 @@ func forwardedProto(ctx *router.RequestContext) string {
 		return "https"
 	}
 	return "http"
+}
+
+// generateTraceparent creates a W3C Trace Context traceparent header.
+// Format: 00-<trace-id>-<span-id>-01
+// See https://www.w3.org/TR/trace-context/
+func generateTraceparent() string {
+	var traceID [16]byte
+	var spanID [8]byte
+	rand.Read(traceID[:])
+	rand.Read(spanID[:])
+	return fmt.Sprintf("00-%s-%s-01",
+		hex.EncodeToString(traceID[:]),
+		hex.EncodeToString(spanID[:]))
 }
 
 // IsWebSocketUpgrade checks if the request is a WebSocket upgrade.

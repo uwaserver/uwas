@@ -52,6 +52,11 @@ export interface StatsData {
   active_conns: number;
   bytes_sent: number;
   uptime: string;
+  slow_requests: number;
+  latency_p50_ms: number;
+  latency_p95_ms: number;
+  latency_p99_ms: number;
+  latency_max_ms: number;
 }
 
 export interface DomainData {

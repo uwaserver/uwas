@@ -2144,3 +2144,93 @@ func TestWebSocketDisabledFallsBackToHTTP(t *testing.T) {
 		t.Errorf("status = %d, want 200 for disabled WS (HTTP fallback)", rec.Code)
 	}
 }
+
+// --- Trace Context tests ---
+
+func TestGenerateTraceparent(t *testing.T) {
+	tp := generateTraceparent()
+	// Format: 00-<32hex>-<16hex>-01
+	parts := strings.Split(tp, "-")
+	if len(parts) != 4 {
+		t.Fatalf("traceparent should have 4 parts, got %d: %q", len(parts), tp)
+	}
+	if parts[0] != "00" {
+		t.Errorf("version = %q, want 00", parts[0])
+	}
+	if len(parts[1]) != 32 {
+		t.Errorf("trace-id length = %d, want 32", len(parts[1]))
+	}
+	if len(parts[2]) != 16 {
+		t.Errorf("span-id length = %d, want 16", len(parts[2]))
+	}
+	if parts[3] != "01" {
+		t.Errorf("flags = %q, want 01", parts[3])
+	}
+
+	// Generate two — they should be unique
+	tp2 := generateTraceparent()
+	if tp == tp2 {
+		t.Error("two traceparents should be unique")
+	}
+}
+
+func TestTraceparentPropagation(t *testing.T) {
+	// Verify the proxy adds traceparent when not present
+	var receivedTP string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedTP = r.Header.Get("Traceparent")
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: upstream.URL, Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+	domain := newTestDomain()
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if receivedTP == "" {
+		t.Error("upstream should receive a traceparent header")
+	}
+	if !strings.HasPrefix(receivedTP, "00-") {
+		t.Errorf("traceparent = %q, should start with '00-'", receivedTP)
+	}
+}
+
+func TestTraceparentPreservesExisting(t *testing.T) {
+	// When client sends traceparent, proxy should forward it (not replace)
+	existingTP := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	var receivedTP string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedTP = r.Header.Get("Traceparent")
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: upstream.URL, Weight: 1},
+	})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Traceparent", existingTP)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+	domain := newTestDomain()
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if receivedTP != existingTP {
+		t.Errorf("traceparent = %q, want %q (should preserve existing)", receivedTP, existingTP)
+	}
+}

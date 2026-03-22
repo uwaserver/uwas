@@ -5,7 +5,7 @@ export function useStats(interval = 3000) {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<{ time: string; requests: number; cacheHits: number }[]>([]);
+  const [history, setHistory] = useState<{ time: string; requests: number; cacheHits: number; p95: number }[]>([]);
   const usingSSE = useRef(false);
 
   const pushStats = useCallback((s: StatsData) => {
@@ -16,6 +16,7 @@ export function useStats(interval = 3000) {
         time: new Date().toLocaleTimeString(),
         requests: s.requests_total,
         cacheHits: s.cache_hits,
+        p95: s.latency_p95_ms ?? 0,
       }];
       return next.slice(-30);
     });
