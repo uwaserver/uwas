@@ -1,0 +1,577 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>static: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/uwaserver/uwas/internal/handler/static/handler.go (88.2%)</option>
+				
+				<option value="file1">github.com/uwaserver/uwas/internal/handler/static/listing.go (92.7%)</option>
+				
+				<option value="file2">github.com/uwaserver/uwas/internal/handler/static/mime.go (91.7%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package static
+
+import (
+        "crypto/sha256"
+        "fmt"
+        "io/fs"
+        "net/http"
+        "os"
+        "path/filepath"
+        "strings"
+
+        "github.com/uwaserver/uwas/internal/config"
+        "github.com/uwaserver/uwas/internal/router"
+)
+
+type Handler struct {
+        mime *MIMERegistry
+}
+
+func New() *Handler <span class="cov8" title="1">{
+        return &amp;Handler{
+                mime: NewMIMERegistry(nil),
+        }
+}</span>
+
+func (h *Handler) Name() string        <span class="cov8" title="1">{ return "static" }</span>
+func (h *Handler) Description() string  <span class="cov8" title="1">{ return "Serves static files from disk" }</span>
+
+// CanHandle returns true if the resolved path is an existing file.
+func (h *Handler) CanHandle(ctx *router.RequestContext) bool <span class="cov8" title="1">{
+        if ctx.ResolvedPath == "" </span><span class="cov8" title="1">{
+                return false
+        }</span>
+        <span class="cov8" title="1">info, err := os.Stat(ctx.ResolvedPath)
+        if err != nil </span><span class="cov8" title="1">{
+                return false
+        }</span>
+        <span class="cov8" title="1">return !info.IsDir()</span>
+}
+
+// Serve handles the request by serving the resolved static file.
+func (h *Handler) Serve(ctx *router.RequestContext) <span class="cov8" title="1">{
+        path := ctx.ResolvedPath
+        w := ctx.Response
+        r := ctx.Request
+
+        // Security: reject dotfiles in any path component (e.g., .git, .env)
+        for _, component := range strings.Split(filepath.ToSlash(path), "/") </span><span class="cov8" title="1">{
+                if strings.HasPrefix(component, ".") &amp;&amp; component != "." &amp;&amp; component != ".." </span><span class="cov8" title="1">{
+                        w.Error(http.StatusForbidden, "403 Forbidden")
+                        return
+                }</span>
+        }
+
+        <span class="cov8" title="1">info, err := os.Stat(path)
+        if err != nil </span><span class="cov8" title="1">{
+                w.Error(http.StatusNotFound, "404 Not Found")
+                return
+        }</span>
+
+        // Set content type
+        <span class="cov8" title="1">ct := h.mime.Lookup(path)
+        w.Header().Set("Content-Type", ct)
+
+        // Try pre-compressed version
+        if h.servePreCompressed(w, r, path, info) </span><span class="cov8" title="1">{
+                return
+        }</span>
+
+        // Generate weak ETag: W/"mtime-size"
+        <span class="cov8" title="1">etag := generateETag(info)
+        w.Header().Set("ETag", etag)
+
+        // Let http.ServeContent handle If-None-Match, If-Modified-Since, Range requests
+        f, err := os.Open(path)
+        if err != nil </span><span class="cov0" title="0">{
+                w.Error(http.StatusInternalServerError, "500 Internal Server Error")
+                return
+        }</span>
+        <span class="cov8" title="1">defer f.Close()
+
+        http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)</span>
+}
+
+// servePreCompressed checks for .br or .gz pre-compressed files.
+func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, path string, origInfo fs.FileInfo) bool <span class="cov8" title="1">{
+        accept := r.Header.Get("Accept-Encoding")
+        if accept == "" </span><span class="cov8" title="1">{
+                return false
+        }</span>
+
+        // Brotli has priority over gzip
+        <span class="cov8" title="1">type preComp struct {
+                ext      string
+                encoding string
+        }
+        candidates := []preComp{
+                {".br", "br"},
+                {".gz", "gzip"},
+        }
+
+        for _, c := range candidates </span><span class="cov8" title="1">{
+                if !strings.Contains(accept, c.encoding) </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+                <span class="cov8" title="1">compPath := path + c.ext
+                compInfo, err := os.Stat(compPath)
+                if err != nil || compInfo.IsDir() </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">f, err := os.Open(compPath)
+                if err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">w.Header().Set("Content-Encoding", c.encoding)
+                w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
+                w.Header().Set("Vary", "Accept-Encoding")
+                w.Header().Set("ETag", generateETag(origInfo)+"-"+c.encoding)
+
+                http.ServeContent(w, r, filepath.Base(path), origInfo.ModTime(), f)
+                f.Close()
+                return true</span>
+        }
+
+        <span class="cov8" title="1">return false</span>
+}
+
+func generateETag(info fs.FileInfo) string <span class="cov8" title="1">{
+        raw := fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
+        hash := sha256.Sum256([]byte(raw))
+        return fmt.Sprintf(`W/"%x"`, hash[:8])
+}</span>
+
+// ResolveRequest handles try_files logic and path resolution for a request.
+// Returns true if a file was resolved, false if nothing found.
+func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool <span class="cov8" title="1">{
+        uri := ctx.Request.URL.Path
+        docRoot := domain.Root
+
+        // Security: prevent path traversal
+        cleanURI := filepath.Clean("/" + uri)
+
+        candidates := domain.TryFiles
+        if len(candidates) == 0 </span><span class="cov8" title="1">{
+                switch domain.Type </span>{
+                case "php":<span class="cov8" title="1">
+                        candidates = []string{"$uri", "$uri/", "/index.php"}</span>
+                default:<span class="cov8" title="1">
+                        candidates = []string{"$uri", "$uri/", "$uri/index.html"}</span>
+                }
+        }
+
+        // SPA mode override
+        <span class="cov8" title="1">if domain.SPAMode </span><span class="cov8" title="1">{
+                candidates = []string{"$uri", "$uri/", "/index.html"}
+        }</span>
+
+        <span class="cov8" title="1">indexFiles := domain.IndexFiles
+        if len(indexFiles) == 0 </span><span class="cov8" title="1">{
+                indexFiles = []string{"index.html", "index.htm"}
+        }</span>
+
+        <span class="cov8" title="1">for _, candidate := range candidates </span><span class="cov8" title="1">{
+                resolved := expandTryFileVar(candidate, cleanURI)
+                fullPath := filepath.Join(docRoot, filepath.Clean("/"+resolved))
+
+                // Security: path must stay within document root
+                absRoot, _ := filepath.Abs(docRoot)
+                absPath, _ := filepath.Abs(fullPath)
+                if !strings.HasPrefix(absPath, absRoot) </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">stat, err := os.Stat(fullPath)
+                if err != nil </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if stat.IsDir() </span><span class="cov8" title="1">{
+                        // Try index files within directory
+                        for _, idx := range indexFiles </span><span class="cov8" title="1">{
+                                idxPath := filepath.Join(fullPath, idx)
+                                if _, err := os.Stat(idxPath); err == nil </span><span class="cov8" title="1">{
+                                        ctx.ResolvedPath = idxPath
+                                        ctx.RewrittenURI = filepath.ToSlash(filepath.Join(resolved, idx))
+                                        ctx.DocumentRoot = docRoot
+                                        return true
+                                }</span>
+                        }
+                        <span class="cov0" title="0">continue</span>
+                }
+
+                <span class="cov8" title="1">ctx.ResolvedPath = fullPath
+                ctx.RewrittenURI = resolved
+                ctx.DocumentRoot = docRoot
+                return true</span>
+        }
+
+        // Last candidate might be a named route (e.g. /index.php)
+        <span class="cov8" title="1">if len(candidates) &gt; 0 </span><span class="cov8" title="1">{
+                last := candidates[len(candidates)-1]
+                if !strings.HasPrefix(last, "$") </span><span class="cov0" title="0">{
+                        fullPath := filepath.Join(docRoot, filepath.Clean("/"+last))
+
+                        // Security: path must stay within document root
+                        absRoot, _ := filepath.Abs(docRoot)
+                        absPath, _ := filepath.Abs(fullPath)
+                        if !strings.HasPrefix(absPath, absRoot) </span><span class="cov0" title="0">{
+                                return false
+                        }</span>
+
+                        <span class="cov0" title="0">ctx.ResolvedPath = fullPath
+                        ctx.RewrittenURI = last
+                        ctx.DocumentRoot = docRoot
+                        return true</span>
+                }
+        }
+
+        <span class="cov8" title="1">return false</span>
+}
+
+func expandTryFileVar(candidate, uri string) string <span class="cov8" title="1">{
+        result := candidate
+        result = strings.ReplaceAll(result, "$uri", uri)
+        return result
+}</span>
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package static
+
+import (
+        "fmt"
+        "html"
+        "net/http"
+        "os"
+        "path/filepath"
+        "sort"
+        "strings"
+
+        "github.com/uwaserver/uwas/internal/router"
+)
+
+// ServeDirListing renders a minimal HTML directory listing.
+func ServeDirListing(ctx *router.RequestContext, dirPath, urlPath string) <span class="cov8" title="1">{
+        entries, err := os.ReadDir(dirPath)
+        if err != nil </span><span class="cov8" title="1">{
+                ctx.Response.Error(http.StatusInternalServerError, "500 Internal Server Error")
+                return
+        }</span>
+
+        // Sort: directories first, then alphabetical
+        <span class="cov8" title="1">sort.Slice(entries, func(i, j int) bool </span><span class="cov8" title="1">{
+                di, dj := entries[i].IsDir(), entries[j].IsDir()
+                if di != dj </span><span class="cov8" title="1">{
+                        return di
+                }</span>
+                <span class="cov8" title="1">return strings.ToLower(entries[i].Name()) &lt; strings.ToLower(entries[j].Name())</span>
+        })
+
+        <span class="cov8" title="1">w := ctx.Response
+        w.Header().Set("Content-Type", "text/html; charset=utf-8")
+        w.WriteHeader(http.StatusOK)
+
+        escapedPath := html.EscapeString(urlPath)
+        fmt.Fprintf(w, `&lt;!DOCTYPE html&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta charset="utf-8"&gt;&lt;title&gt;Index of %s&lt;/title&gt;
+&lt;style&gt;
+body{font-family:system-ui,sans-serif;margin:2em;color:#1e293b}
+h1{font-size:1.25em;border-bottom:1px solid #e2e8f0;padding-bottom:.5em}
+table{border-collapse:collapse;width:100%%}
+th,td{text-align:left;padding:.35em 1em}
+th{border-bottom:2px solid #e2e8f0;font-size:.85em;color:#64748b}
+tr:hover{background:#f8fafc}
+a{color:#2563eb;text-decoration:none}
+a:hover{text-decoration:underline}
+.size,.date{color:#64748b;font-size:.9em}
+&lt;/style&gt;&lt;/head&gt;&lt;body&gt;
+&lt;h1&gt;Index of %s&lt;/h1&gt;
+&lt;table&gt;&lt;tr&gt;&lt;th&gt;Name&lt;/th&gt;&lt;th&gt;Size&lt;/th&gt;&lt;th&gt;Modified&lt;/th&gt;&lt;/tr&gt;
+`, escapedPath, escapedPath)
+
+        // Parent directory link
+        if urlPath != "/" </span><span class="cov8" title="1">{
+                parent := filepath.Dir(strings.TrimRight(urlPath, "/"))
+                if parent == "" </span><span class="cov0" title="0">{
+                        parent = "/"
+                }</span>
+                <span class="cov8" title="1">fmt.Fprintf(w, `&lt;tr&gt;&lt;td&gt;&lt;a href="%s"&gt;../&lt;/a&gt;&lt;/td&gt;&lt;td class="size"&gt;-&lt;/td&gt;&lt;td class="date"&gt;-&lt;/td&gt;&lt;/tr&gt;`+"\n",
+                        html.EscapeString(parent))</span>
+        }
+
+        <span class="cov8" title="1">for _, entry := range entries </span><span class="cov8" title="1">{
+                name := entry.Name()
+
+                // Skip dotfiles
+                if strings.HasPrefix(name, ".") </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">info, err := entry.Info()
+                if err != nil </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">displayName := html.EscapeString(name)
+                link := html.EscapeString(filepath.ToSlash(filepath.Join(urlPath, name)))
+                size := formatSize(info.Size())
+                date := info.ModTime().Format("2006-01-02 15:04")
+
+                if entry.IsDir() </span><span class="cov8" title="1">{
+                        displayName += "/"
+                        link += "/"
+                        size = "-"
+                }</span>
+
+                <span class="cov8" title="1">fmt.Fprintf(w, `&lt;tr&gt;&lt;td&gt;&lt;a href="%s"&gt;%s&lt;/a&gt;&lt;/td&gt;&lt;td class="size"&gt;%s&lt;/td&gt;&lt;td class="date"&gt;%s&lt;/td&gt;&lt;/tr&gt;`+"\n",
+                        link, displayName, size, date)</span>
+        }
+
+        <span class="cov8" title="1">fmt.Fprint(w, `&lt;/table&gt;&lt;/body&gt;&lt;/html&gt;`)</span>
+}
+
+func formatSize(bytes int64) string <span class="cov8" title="1">{
+        switch </span>{
+        case bytes &gt;= 1&lt;&lt;30:<span class="cov8" title="1">
+                return fmt.Sprintf("%.1f GB", float64(bytes)/(1&lt;&lt;30))</span>
+        case bytes &gt;= 1&lt;&lt;20:<span class="cov8" title="1">
+                return fmt.Sprintf("%.1f MB", float64(bytes)/(1&lt;&lt;20))</span>
+        case bytes &gt;= 1&lt;&lt;10:<span class="cov8" title="1">
+                return fmt.Sprintf("%.1f KB", float64(bytes)/(1&lt;&lt;10))</span>
+        default:<span class="cov8" title="1">
+                return fmt.Sprintf("%d B", bytes)</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package static
+
+import (
+        "path/filepath"
+        "strings"
+)
+
+var defaultMIMETypes = map[string]string{
+        // Text
+        ".html":  "text/html; charset=utf-8",
+        ".htm":   "text/html; charset=utf-8",
+        ".css":   "text/css; charset=utf-8",
+        ".js":    "application/javascript; charset=utf-8",
+        ".mjs":   "application/javascript; charset=utf-8",
+        ".json":  "application/json; charset=utf-8",
+        ".xml":   "application/xml; charset=utf-8",
+        ".txt":   "text/plain; charset=utf-8",
+        ".csv":   "text/csv; charset=utf-8",
+        ".md":    "text/markdown; charset=utf-8",
+        ".yaml":  "text/yaml; charset=utf-8",
+        ".yml":   "text/yaml; charset=utf-8",
+        ".toml":  "application/toml; charset=utf-8",
+        ".ics":   "text/calendar; charset=utf-8",
+
+        // Images
+        ".png":   "image/png",
+        ".jpg":   "image/jpeg",
+        ".jpeg":  "image/jpeg",
+        ".gif":   "image/gif",
+        ".webp":  "image/webp",
+        ".avif":  "image/avif",
+        ".svg":   "image/svg+xml; charset=utf-8",
+        ".ico":   "image/x-icon",
+        ".bmp":   "image/bmp",
+        ".tiff":  "image/tiff",
+        ".tif":   "image/tiff",
+        ".heic":  "image/heic",
+        ".heif":  "image/heif",
+        ".jxl":   "image/jxl",
+
+        // Fonts
+        ".woff":  "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf":   "font/ttf",
+        ".otf":   "font/otf",
+        ".eot":   "application/vnd.ms-fontobject",
+
+        // Audio
+        ".mp3":   "audio/mpeg",
+        ".ogg":   "audio/ogg",
+        ".wav":   "audio/wav",
+        ".flac":  "audio/flac",
+        ".aac":   "audio/aac",
+        ".m4a":   "audio/mp4",
+        ".opus":  "audio/opus",
+
+        // Video
+        ".mp4":   "video/mp4",
+        ".webm":  "video/webm",
+        ".ogv":   "video/ogg",
+        ".avi":   "video/x-msvideo",
+        ".mov":   "video/quicktime",
+        ".mkv":   "video/x-matroska",
+        ".m4v":   "video/mp4",
+
+        // Documents
+        ".pdf":   "application/pdf",
+        ".doc":   "application/msword",
+        ".docx":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls":   "application/vnd.ms-excel",
+        ".xlsx":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt":   "application/vnd.ms-powerpoint",
+        ".pptx":  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".odt":   "application/vnd.oasis.opendocument.text",
+        ".ods":   "application/vnd.oasis.opendocument.spreadsheet",
+
+        // Archives
+        ".zip":   "application/zip",
+        ".gz":    "application/gzip",
+        ".tar":   "application/x-tar",
+        ".bz2":   "application/x-bzip2",
+        ".7z":    "application/x-7z-compressed",
+        ".rar":   "application/vnd.rar",
+        ".zst":   "application/zstd",
+        ".xz":    "application/x-xz",
+
+        // WebAssembly &amp; Maps
+        ".wasm":  "application/wasm",
+        ".map":   "application/json",
+
+        // Manifest &amp; Config
+        ".webmanifest": "application/manifest+json",
+        ".appcache":    "text/cache-manifest",
+
+        // Misc
+        ".atom":  "application/atom+xml",
+        ".rss":   "application/rss+xml",
+        ".wsdl":  "application/wsdl+xml",
+        ".xsl":   "application/xslt+xml",
+        ".xslt":  "application/xslt+xml",
+        ".swf":   "application/x-shockwave-flash",
+}
+
+// MIMERegistry resolves file extensions to content types.
+type MIMERegistry struct {
+        types map[string]string
+}
+
+func NewMIMERegistry(custom map[string]string) *MIMERegistry <span class="cov8" title="1">{
+        m := &amp;MIMERegistry{
+                types: make(map[string]string, len(defaultMIMETypes)+len(custom)),
+        }
+        for k, v := range defaultMIMETypes </span><span class="cov8" title="1">{
+                m.types[k] = v
+        }</span>
+        <span class="cov8" title="1">for k, v := range custom </span><span class="cov8" title="1">{
+                if !strings.HasPrefix(k, ".") </span><span class="cov0" title="0">{
+                        k = "." + k
+                }</span>
+                <span class="cov8" title="1">m.types[strings.ToLower(k)] = v</span>
+        }
+        <span class="cov8" title="1">return m</span>
+}
+
+// Lookup returns the MIME type for a file path.
+func (m *MIMERegistry) Lookup(name string) string <span class="cov8" title="1">{
+        ext := strings.ToLower(filepath.Ext(name))
+        if ct, ok := m.types[ext]; ok </span><span class="cov8" title="1">{
+                return ct
+        }</span>
+        <span class="cov8" title="1">return "application/octet-stream"</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

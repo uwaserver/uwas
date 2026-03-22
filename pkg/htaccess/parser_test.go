@@ -379,3 +379,317 @@ func TestParseNestedIfModuleBlocks(t *testing.T) {
 		t.Errorf("rewrites = %d, want 1", len(rules.Rewrites))
 	}
 }
+
+// === Additional coverage tests ===
+
+// --- converter.go: Redirect permanent, seeother, gone ---
+
+func TestConvertRedirectPermanent(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`Redirect permanent /old /new`))
+	rules := Convert(directives)
+
+	if len(rules.Redirects) != 1 {
+		t.Fatalf("redirects = %d, want 1", len(rules.Redirects))
+	}
+	if rules.Redirects[0].Status != 301 {
+		t.Errorf("status = %d, want 301", rules.Redirects[0].Status)
+	}
+}
+
+func TestConvertRedirectSeeother(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`Redirect seeother /old /new`))
+	rules := Convert(directives)
+
+	if len(rules.Redirects) != 1 {
+		t.Fatalf("redirects = %d, want 1", len(rules.Redirects))
+	}
+	if rules.Redirects[0].Status != 303 {
+		t.Errorf("status = %d, want 303", rules.Redirects[0].Status)
+	}
+}
+
+func TestConvertRedirectGone(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`Redirect gone /old /new`))
+	rules := Convert(directives)
+
+	if len(rules.Redirects) != 1 {
+		t.Fatalf("redirects = %d, want 1", len(rules.Redirects))
+	}
+	if rules.Redirects[0].Status != 410 {
+		t.Errorf("status = %d, want 410", rules.Redirects[0].Status)
+	}
+}
+
+func TestConvertRedirectTemp(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`Redirect temp /old /new`))
+	rules := Convert(directives)
+
+	if len(rules.Redirects) != 1 {
+		t.Fatalf("redirects = %d, want 1", len(rules.Redirects))
+	}
+	if rules.Redirects[0].Status != 302 {
+		t.Errorf("status = %d, want 302", rules.Redirects[0].Status)
+	}
+}
+
+func TestConvertRedirectDefault(t *testing.T) {
+	// 2 args: default 302
+	directives, _ := Parse(strings.NewReader(`Redirect /old /new`))
+	rules := Convert(directives)
+
+	if len(rules.Redirects) != 1 {
+		t.Fatalf("redirects = %d, want 1", len(rules.Redirects))
+	}
+	if rules.Redirects[0].Status != 302 {
+		t.Errorf("status = %d, want 302", rules.Redirects[0].Status)
+	}
+	if rules.Redirects[0].Pattern != "/old" {
+		t.Errorf("pattern = %q, want /old", rules.Redirects[0].Pattern)
+	}
+	if rules.Redirects[0].Target != "/new" {
+		t.Errorf("target = %q, want /new", rules.Redirects[0].Target)
+	}
+}
+
+func TestConvertRedirectMatch(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`RedirectMatch 301 ^/old(.*)$ /new$1`))
+	rules := Convert(directives)
+
+	if len(rules.Redirects) != 1 {
+		t.Fatalf("redirects = %d, want 1", len(rules.Redirects))
+	}
+	if !rules.Redirects[0].IsRegex {
+		t.Error("RedirectMatch should set IsRegex=true")
+	}
+	if rules.Redirects[0].Status != 301 {
+		t.Errorf("status = %d, want 301", rules.Redirects[0].Status)
+	}
+}
+
+// --- parser.go: Parse with unclosed block tag ---
+
+func TestParseUnclosedBlock(t *testing.T) {
+	input := `<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^(.*)$ /index.php [L]
+`
+	// No </IfModule> closing tag
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The block is never closed so it stays on the stack and is not emitted.
+	// This is the expected behavior (silently ignored).
+	if len(directives) != 0 {
+		t.Errorf("directives = %d, want 0 (unclosed block stays on stack)", len(directives))
+	}
+}
+
+// --- converter.go: Merge with various fields ---
+
+func TestMergeNil(t *testing.T) {
+	rs := NewRuleSet()
+	rs.Merge(nil) // should not panic
+}
+
+func TestMergeAll(t *testing.T) {
+	base := NewRuleSet()
+	other := NewRuleSet()
+
+	other.RewriteEnabled = true
+	other.Rewrites = []RewriteRule{{Pattern: "^test$", Target: "/target"}}
+	other.Redirects = []RedirectRule{{Status: 301, Pattern: "/a", Target: "/b"}}
+	other.Headers = []HeaderRule{{Action: "set", Name: "X-Test", Value: "1"}}
+	other.ErrorDocuments[404] = "/error.html"
+	other.DirectoryIndex = []string{"index.php"}
+	listing := true
+	other.DirectoryListing = &listing
+	symlinks := false
+	other.FollowSymlinks = &symlinks
+	other.AuthType = "Basic"
+	other.AuthName = "Secure"
+	other.AuthUserFile = "/etc/htpasswd"
+	other.Require = "valid-user"
+	other.ExpiresActive = true
+	other.ExpiresByType["text/html"] = "1h"
+	other.FilesMatch = []FilesMatchBlock{{Pattern: `\.php$`}}
+
+	base.Merge(other)
+
+	if !base.RewriteEnabled {
+		t.Error("RewriteEnabled should be true after merge")
+	}
+	if len(base.Rewrites) != 1 {
+		t.Errorf("Rewrites = %d, want 1", len(base.Rewrites))
+	}
+	if len(base.Redirects) != 1 {
+		t.Errorf("Redirects = %d, want 1", len(base.Redirects))
+	}
+	if len(base.Headers) != 1 {
+		t.Errorf("Headers = %d, want 1", len(base.Headers))
+	}
+	if base.ErrorDocuments[404] != "/error.html" {
+		t.Errorf("ErrorDocuments[404] = %q", base.ErrorDocuments[404])
+	}
+	if len(base.DirectoryIndex) != 1 || base.DirectoryIndex[0] != "index.php" {
+		t.Errorf("DirectoryIndex = %v", base.DirectoryIndex)
+	}
+	if base.DirectoryListing == nil || *base.DirectoryListing != true {
+		t.Error("DirectoryListing should be true")
+	}
+	if base.FollowSymlinks == nil || *base.FollowSymlinks != false {
+		t.Error("FollowSymlinks should be false")
+	}
+	if base.AuthType != "Basic" {
+		t.Errorf("AuthType = %q", base.AuthType)
+	}
+	if base.AuthName != "Secure" {
+		t.Errorf("AuthName = %q", base.AuthName)
+	}
+	if base.AuthUserFile != "/etc/htpasswd" {
+		t.Errorf("AuthUserFile = %q", base.AuthUserFile)
+	}
+	if base.Require != "valid-user" {
+		t.Errorf("Require = %q", base.Require)
+	}
+	if !base.ExpiresActive {
+		t.Error("ExpiresActive should be true")
+	}
+	if base.ExpiresByType["text/html"] != "1h" {
+		t.Errorf("ExpiresByType[text/html] = %q", base.ExpiresByType["text/html"])
+	}
+	if len(base.FilesMatch) != 1 {
+		t.Errorf("FilesMatch = %d, want 1", len(base.FilesMatch))
+	}
+}
+
+// --- converter.go: Options +Indexes, +FollowSymLinks ---
+
+func TestConvertOptionsPositive(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`Options +Indexes +FollowSymLinks`))
+	rules := Convert(directives)
+
+	if rules.DirectoryListing == nil || *rules.DirectoryListing != true {
+		t.Error("DirectoryListing should be true for +Indexes")
+	}
+	if rules.FollowSymlinks == nil || *rules.FollowSymlinks != true {
+		t.Error("FollowSymlinks should be true for +FollowSymLinks")
+	}
+}
+
+func TestConvertOptionsPlain(t *testing.T) {
+	// "Indexes" without + prefix
+	directives, _ := Parse(strings.NewReader(`Options Indexes FollowSymLinks`))
+	rules := Convert(directives)
+
+	if rules.DirectoryListing == nil || *rules.DirectoryListing != true {
+		t.Error("DirectoryListing should be true for plain Indexes")
+	}
+	if rules.FollowSymlinks == nil || *rules.FollowSymlinks != true {
+		t.Error("FollowSymlinks should be true for plain FollowSymLinks")
+	}
+}
+
+// --- converter.go: DirectoryIndex ---
+
+func TestConvertDirectoryIndex(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`DirectoryIndex index.php index.html`))
+	rules := Convert(directives)
+
+	if len(rules.DirectoryIndex) != 2 {
+		t.Fatalf("DirectoryIndex = %d, want 2", len(rules.DirectoryIndex))
+	}
+	if rules.DirectoryIndex[0] != "index.php" || rules.DirectoryIndex[1] != "index.html" {
+		t.Errorf("DirectoryIndex = %v", rules.DirectoryIndex)
+	}
+}
+
+// --- converter.go: RewriteCond with flags ---
+
+func TestConvertRewriteCondWithFlags(t *testing.T) {
+	input := `RewriteEngine On
+RewriteCond %{HTTP_HOST} ^www\.example\.com [NC]
+RewriteRule ^(.*)$ http://example.com/$1 [R=301,L]`
+
+	directives, _ := Parse(strings.NewReader(input))
+	rules := Convert(directives)
+
+	if len(rules.Rewrites) != 1 {
+		t.Fatalf("rewrites = %d, want 1", len(rules.Rewrites))
+	}
+	if len(rules.Rewrites[0].Conditions) != 1 {
+		t.Fatalf("conditions = %d, want 1", len(rules.Rewrites[0].Conditions))
+	}
+	cond := rules.Rewrites[0].Conditions[0]
+	if cond.Flags != "[NC]" {
+		t.Errorf("cond flags = %q, want [NC]", cond.Flags)
+	}
+	if rules.Rewrites[0].Flags != "[R=301,L]" {
+		t.Errorf("rule flags = %q, want [R=301,L]", rules.Rewrites[0].Flags)
+	}
+}
+
+// --- parser.go: parseBlockOpen with empty block ---
+
+func TestParseEmptyBlock(t *testing.T) {
+	input := `<IfModule mod_rewrite.c>
+</IfModule>`
+
+	directives, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(directives) != 1 {
+		t.Fatalf("directives = %d, want 1", len(directives))
+	}
+	if len(directives[0].Block) != 0 {
+		t.Errorf("block should be empty, got %d directives", len(directives[0].Block))
+	}
+}
+
+// --- parser.go: parseDirective with empty line (edge case) ---
+
+func TestSplitArgsEmpty(t *testing.T) {
+	args := splitArgs("")
+	if len(args) != 0 {
+		t.Errorf("splitArgs('') = %v, want empty", args)
+	}
+}
+
+func TestSplitArgsSingleQuotes(t *testing.T) {
+	args := splitArgs("AuthName 'My Realm'")
+	if len(args) != 2 {
+		t.Fatalf("args = %d, want 2", len(args))
+	}
+	if args[1] != "My Realm" {
+		t.Errorf("args[1] = %q, want 'My Realm'", args[1])
+	}
+}
+
+// --- converter.go: RewriteEngine Off ---
+
+func TestConvertRewriteEngineOff(t *testing.T) {
+	directives, _ := Parse(strings.NewReader(`RewriteEngine Off`))
+	rules := Convert(directives)
+	if rules.RewriteEnabled {
+		t.Error("RewriteEnabled should be false for Off")
+	}
+}
+
+// --- converter.go: Files block (not just FilesMatch) ---
+
+func TestConvertFilesBlock(t *testing.T) {
+	input := `<Files "*.txt">
+Header set Cache-Control "no-cache"
+</Files>`
+
+	directives, _ := Parse(strings.NewReader(input))
+	rules := Convert(directives)
+
+	if len(rules.FilesMatch) != 1 {
+		t.Fatalf("FilesMatch = %d, want 1", len(rules.FilesMatch))
+	}
+	if rules.FilesMatch[0].Pattern != "*.txt" {
+		t.Errorf("pattern = %q, want *.txt", rules.FilesMatch[0].Pattern)
+	}
+}

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -434,5 +435,353 @@ func TestNewCircuitBreakerDefaults(t *testing.T) {
 	cb.RecordFailure() // 5th failure
 	if cb.State() != CircuitOpen {
 		t.Error("should be open after 5 failures with default threshold=5")
+	}
+}
+
+// === Additional coverage tests ===
+
+// --- upstream.go: NewUpstreamPool with invalid URL (should skip), All/Len ---
+
+func TestNewUpstreamPoolInvalidURL(t *testing.T) {
+	// url.Parse rarely fails, but we can also test zero-weight defaulting.
+	// A "://" alone is invalid enough:
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://good:8080", Weight: 1},
+		{Address: "://bad url", Weight: 2},
+	})
+	// The invalid URL is silently skipped by url.Parse failure path.
+	// url.Parse is lenient, so let's also confirm zero-weight defaults:
+	pool2 := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://localhost:3000", Weight: 0},
+		{Address: "http://localhost:3001", Weight: -5},
+	})
+	for _, b := range pool2.All() {
+		if b.Weight != 1 {
+			t.Errorf("expected weight=1 for zero/negative input, got %d", b.Weight)
+		}
+	}
+	_ = pool // pool was created just to exercise the code path
+}
+
+func TestUpstreamPoolAllCopy(t *testing.T) {
+	pool := NewUpstreamPool([]UpstreamConfig{
+		{Address: "http://a:1", Weight: 1},
+		{Address: "http://b:2", Weight: 1},
+	})
+	all1 := pool.All()
+	all2 := pool.All()
+	if &all1[0] == &all2[0] {
+		t.Error("All() should return a copy, not the same slice")
+	}
+	if pool.Len() != 2 {
+		t.Errorf("Len() = %d, want 2", pool.Len())
+	}
+}
+
+// --- handler.go: Serve with backend timeout (504), forwardedProto HTTPS ---
+
+func TestProxyHandlerTimeout504(t *testing.T) {
+	// Start a backend that hangs long enough to trigger the read timeout
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: upstream.URL, Weight: 1}})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	// Create a request with a deadline already set on its context.
+	// The handler checks ctx.Request.Context().Err() for DeadlineExceeded.
+	req := httptest.NewRequest("GET", "/slow", nil)
+	reqCtx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
+	defer cancel()
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 50 * time.Millisecond}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 504 {
+		t.Errorf("status = %d, want 504 for timeout", rec.Code)
+	}
+}
+
+func TestProxyHandlerForwardedProtoHTTPS(t *testing.T) {
+	var gotProto string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotProto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: upstream.URL, Weight: 1}})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+	ctx.IsHTTPS = true
+
+	domain := newTestDomain()
+	h.Serve(ctx, domain, pool, balancer)
+
+	if gotProto != "https" {
+		t.Errorf("X-Forwarded-Proto = %q, want https", gotProto)
+	}
+}
+
+func TestProxyHandlerBackendDown502(t *testing.T) {
+	// Use a backend that refuses connections (closed immediately)
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: "http://127.0.0.1:1", Weight: 1}})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	domain := newTestDomain()
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 1 * time.Second}
+
+	h.Serve(ctx, domain, pool, balancer)
+
+	if rec.Code != 502 {
+		t.Errorf("status = %d, want 502 for connection refused", rec.Code)
+	}
+}
+
+func TestClientIPNoPort(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4" // no port
+	got := clientIP(req)
+	if got != "1.2.3.4" {
+		t.Errorf("clientIP = %q, want 1.2.3.4", got)
+	}
+}
+
+// --- health.go: Start with context cancel (goroutine exits) ---
+
+func TestHealthCheckerStartCancelContext(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: ts.URL, Weight: 1}})
+	log := newTestLogger()
+
+	hc := NewHealthChecker(pool, HealthConfig{
+		Interval: 10 * time.Millisecond,
+		Timeout:  2 * time.Second,
+	}, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	hc.Start(ctx)
+
+	// Let at least one tick fire
+	time.Sleep(30 * time.Millisecond)
+
+	// Cancel the context; goroutine should exit
+	cancel()
+
+	// Give goroutine time to observe cancellation
+	time.Sleep(30 * time.Millisecond)
+
+	// If the goroutine leaks, it's a problem but we can't easily detect it here.
+	// The main assertion is that cancel() doesn't panic/hang.
+	backend := pool.All()[0]
+	if !backend.IsHealthy() {
+		t.Error("backend should still be healthy after health checks ran")
+	}
+}
+
+func TestHealthCheckerSkipsDraining(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer ts.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: ts.URL, Weight: 1}})
+	log := newTestLogger()
+
+	hc := NewHealthChecker(pool, HealthConfig{
+		Interval:  50 * time.Millisecond,
+		Timeout:   2 * time.Second,
+		Threshold: 1,
+	}, log)
+
+	backend := pool.All()[0]
+	backend.SetState(StateDraining)
+
+	// checkAll should skip draining backends
+	hc.checkAll()
+	hc.checkAll()
+
+	if backend.GetState() != StateDraining {
+		t.Error("draining backend should not be modified by health checks")
+	}
+}
+
+func TestNewHealthCheckerDefaults(t *testing.T) {
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: "http://localhost:9999", Weight: 1}})
+	log := newTestLogger()
+
+	// Pass all zeros/empty to trigger default assignments
+	hc := NewHealthChecker(pool, HealthConfig{}, log)
+
+	if hc.interval != 10*time.Second {
+		t.Errorf("default interval = %v, want 10s", hc.interval)
+	}
+	if hc.timeout != 5*time.Second {
+		t.Errorf("default timeout = %v, want 5s", hc.timeout)
+	}
+	if hc.threshold != 3 {
+		t.Errorf("default threshold = %d, want 3", hc.threshold)
+	}
+	if hc.rise != 2 {
+		t.Errorf("default rise = %d, want 2", hc.rise)
+	}
+	if hc.path != "/" {
+		t.Errorf("default path = %q, want /", hc.path)
+	}
+}
+
+// --- circuit.go: HalfOpen max requests exceeded ---
+
+func TestCircuitBreakerHalfOpenMaxExceeded(t *testing.T) {
+	cb := NewCircuitBreaker(2, 50*time.Millisecond)
+
+	// Trip the breaker
+	cb.RecordFailure()
+	cb.RecordFailure()
+	if cb.State() != CircuitOpen {
+		t.Fatal("should be open after 2 failures")
+	}
+
+	// Wait for timeout to transition to half-open
+	time.Sleep(60 * time.Millisecond)
+
+	// First Allow() transitions from Open to HalfOpen (resets halfOpenCount=0, returns true)
+	if !cb.Allow() {
+		t.Fatal("first call should be allowed (transitions to half-open)")
+	}
+	if cb.State() != CircuitHalfOpen {
+		t.Fatal("should be half-open now")
+	}
+
+	// Second Allow() enters HalfOpen path: halfOpenCount(0) < halfOpenMax(1) → increments to 1, returns true
+	if !cb.Allow() {
+		t.Fatal("second call should be allowed (halfOpenCount < halfOpenMax)")
+	}
+
+	// Third Allow(): halfOpenCount(1) < halfOpenMax(1) is false → rejected
+	if cb.Allow() {
+		t.Error("third call should be rejected in half-open (max exceeded)")
+	}
+}
+
+func TestCircuitBreakerHalfOpenFailure(t *testing.T) {
+	cb := NewCircuitBreaker(1, 50*time.Millisecond)
+
+	// Trip open
+	cb.RecordFailure()
+	if cb.State() != CircuitOpen {
+		t.Fatal("should be open")
+	}
+
+	// Wait for half-open
+	time.Sleep(60 * time.Millisecond)
+	cb.Allow() // transitions to half-open
+
+	// Record a failure in half-open — should go back to open
+	cb.RecordFailure()
+	if cb.State() != CircuitOpen {
+		t.Error("should return to open after failure in half-open")
+	}
+}
+
+func TestCircuitBreakerRecordSuccessInClosed(t *testing.T) {
+	cb := NewCircuitBreaker(5, time.Second)
+
+	// Record some failures then a success while still closed
+	cb.RecordFailure()
+	cb.RecordFailure()
+	cb.RecordSuccess()
+
+	if cb.State() != CircuitClosed {
+		t.Error("should remain closed")
+	}
+	// Failures should have been reset by RecordSuccess
+	// Now it should take 5 more failures to trip
+	for i := 0; i < 4; i++ {
+		cb.RecordFailure()
+	}
+	if cb.State() != CircuitClosed {
+		t.Error("should still be closed after 4 failures (reset by success)")
+	}
+	cb.RecordFailure()
+	if cb.State() != CircuitOpen {
+		t.Error("should be open after 5 failures")
+	}
+}
+
+// --- Proxy headers: test X-Forwarded-For / X-Real-IP ---
+
+func TestProxyHeadersForwarded(t *testing.T) {
+	var gotXFF, gotXRI, gotXFH string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotXFF = r.Header.Get("X-Forwarded-For")
+		gotXRI = r.Header.Get("X-Real-IP")
+		gotXFH = r.Header.Get("X-Forwarded-Host")
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: upstream.URL, Weight: 1}})
+	balancer := NewBalancer("round_robin")
+	log := newTestLogger()
+	h := New(log)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:9999"
+	req.Host = "myhost.com"
+	rec := httptest.NewRecorder()
+	ctx := newTestContext(rec, req)
+
+	h.Serve(ctx, newTestDomain(), pool, balancer)
+
+	if gotXFF != "10.0.0.1" {
+		t.Errorf("X-Forwarded-For = %q, want 10.0.0.1", gotXFF)
+	}
+	if gotXRI != "10.0.0.1" {
+		t.Errorf("X-Real-IP = %q, want 10.0.0.1", gotXRI)
+	}
+	if gotXFH != "myhost.com" {
+		t.Errorf("X-Forwarded-Host = %q, want myhost.com", gotXFH)
+	}
+}
+
+// --- Random balancer with single backend ---
+
+func TestRandomSingleBackend(t *testing.T) {
+	backends := makeBackends(1)
+	rn := &Random{}
+	req := httptest.NewRequest("GET", "/", nil)
+
+	for i := 0; i < 10; i++ {
+		b := rn.Select(backends, req)
+		if b != backends[0] {
+			t.Fatal("single backend should always be selected")
+		}
 	}
 }

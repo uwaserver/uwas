@@ -38,3 +38,4 @@ Thumbs.db
 *.out
 *.exe
 *.test.exeweb/dashboard/node_modules/
+web/

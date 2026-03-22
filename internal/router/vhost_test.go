@@ -124,3 +124,86 @@ func TestVHostCount(t *testing.T) {
 		t.Errorf("Count() = %d, want 3", c)
 	}
 }
+
+// === Additional coverage tests ===
+
+func TestVHostLookupEmptyHost(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www/default"},
+	}
+	r := NewVHostRouter(domains)
+
+	// Empty host should fall through to fallback
+	d := r.Lookup("")
+	if d == nil {
+		t.Fatal("Lookup('') should return fallback, not nil")
+	}
+	if d.Host != "example.com" {
+		t.Errorf("Lookup('') = %q, want example.com (fallback)", d.Host)
+	}
+}
+
+func TestVHostLookupEmptyHostNoFallback(t *testing.T) {
+	// No domains at all => no fallback
+	r := NewVHostRouter(nil)
+
+	d := r.Lookup("")
+	if d != nil {
+		t.Errorf("Lookup('') with no domains should return nil, got %v", d)
+	}
+}
+
+func TestVHostWildcardAlias(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "main.com", Aliases: []string{"*.main.com"}, Root: "/var/www/main"},
+	}
+	r := NewVHostRouter(domains)
+
+	d := r.Lookup("sub.main.com")
+	if d == nil || d.Host != "main.com" {
+		t.Error("wildcard alias should match sub.main.com")
+	}
+}
+
+func TestVHostLookupPortOnlyHost(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www/default"},
+	}
+	r := NewVHostRouter(domains)
+
+	// Host string ":8080" should strip port leaving empty, then fallback
+	d := r.Lookup(":8080")
+	if d == nil {
+		t.Fatal("Lookup(':8080') should return fallback")
+	}
+	if d.Host != "example.com" {
+		t.Errorf("Lookup(':8080') = %q, want example.com", d.Host)
+	}
+}
+
+func TestVHostMultipleWildcardsLongestMatch(t *testing.T) {
+	// Multiple wildcards with different suffix lengths to exercise the sort comparator.
+	// This covers vhost.go:66-68 (the sort.Slice body).
+	domains := []config.Domain{
+		{Host: "*.com", Root: "/var/www/short"},
+		{Host: "*.example.com", Root: "/var/www/long"},
+		{Host: "*.sub.example.com", Root: "/var/www/longest"},
+	}
+	r := NewVHostRouter(domains)
+
+	// Should match the longest suffix first
+	d := r.Lookup("test.sub.example.com")
+	if d == nil || d.Root != "/var/www/longest" {
+		t.Errorf("expected longest wildcard match, got %v", d)
+	}
+
+	d = r.Lookup("test.example.com")
+	if d == nil || d.Root != "/var/www/long" {
+		t.Errorf("expected long wildcard match, got %v", d)
+	}
+
+	d = r.Lookup("random.com")
+	if d == nil || d.Root != "/var/www/short" {
+		t.Errorf("expected short wildcard match, got %v", d)
+	}
+}

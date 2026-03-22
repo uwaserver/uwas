@@ -536,6 +536,599 @@ domains_dir: "/nonexistent/path"
 	}
 }
 
+// === Additional coverage tests ===
+
+// --- validate.go: all validation error paths ---
+
+func TestValidationInvalidLogLevel(t *testing.T) {
+	yaml := `
+global:
+  log_level: "trace"
+domains:
+  - host: "example.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for invalid log_level")
+	}
+	if !contains(err.Error(), "invalid log_level") {
+		t.Errorf("error = %q, want to contain 'invalid log_level'", err.Error())
+	}
+}
+
+func TestValidationInvalidLogFormat(t *testing.T) {
+	yaml := `
+global:
+  log_format: "xml"
+domains:
+  - host: "example.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for invalid log_format")
+	}
+	if !contains(err.Error(), "invalid log_format") {
+		t.Errorf("error = %q, want to contain 'invalid log_format'", err.Error())
+	}
+}
+
+func TestValidationInvalidSSLMode(t *testing.T) {
+	yaml := `
+domains:
+  - host: "example.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: "tls"
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for invalid ssl.mode")
+	}
+	if !contains(err.Error(), "invalid ssl.mode") {
+		t.Errorf("error = %q, want to contain 'invalid ssl.mode'", err.Error())
+	}
+}
+
+func TestValidationInvalidType(t *testing.T) {
+	yaml := `
+domains:
+  - host: "example.com"
+    root: /var/www
+    type: "ruby"
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for invalid type")
+	}
+	if !contains(err.Error(), "invalid type") {
+		t.Errorf("error = %q, want to contain 'invalid type'", err.Error())
+	}
+}
+
+func TestValidationMissingHost(t *testing.T) {
+	yaml := `
+domains:
+  - root: /var/www
+    type: static
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for missing host")
+	}
+	if !contains(err.Error(), "host is required") {
+		t.Errorf("error = %q, want to contain 'host is required'", err.Error())
+	}
+}
+
+func TestValidationDuplicateAlias(t *testing.T) {
+	yaml := `
+domains:
+  - host: "a.com"
+    aliases: ["www.a.com"]
+    root: /var/www/a
+    type: static
+    ssl:
+      mode: off
+  - host: "b.com"
+    aliases: ["www.a.com"]
+    root: /var/www/b
+    type: static
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for duplicate alias")
+	}
+	if !contains(err.Error(), "duplicate alias") {
+		t.Errorf("error = %q, want to contain 'duplicate alias'", err.Error())
+	}
+}
+
+func TestValidationSSLManualMissingCert(t *testing.T) {
+	yaml := `
+domains:
+  - host: "example.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: manual
+      key: "/path/to/key.pem"
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for missing ssl.cert")
+	}
+	if !contains(err.Error(), "ssl.cert required") {
+		t.Errorf("error = %q, want to contain 'ssl.cert required'", err.Error())
+	}
+}
+
+func TestValidationSSLManualMissingKey(t *testing.T) {
+	yaml := `
+domains:
+  - host: "example.com"
+    root: /var/www
+    type: static
+    ssl:
+      mode: manual
+      cert: "/path/to/cert.pem"
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for missing ssl.key")
+	}
+	if !contains(err.Error(), "ssl.key required") {
+		t.Errorf("error = %q, want to contain 'ssl.key required'", err.Error())
+	}
+}
+
+func TestValidationRedirectMissingTarget(t *testing.T) {
+	yaml := `
+domains:
+  - host: "old.com"
+    type: redirect
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for missing redirect.target")
+	}
+	if !contains(err.Error(), "redirect.target required") {
+		t.Errorf("error = %q, want to contain 'redirect.target required'", err.Error())
+	}
+}
+
+func TestValidationProxyNoUpstreams(t *testing.T) {
+	yaml := `
+domains:
+  - host: "api.com"
+    type: proxy
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for proxy without upstreams")
+	}
+	if !contains(err.Error(), "proxy.upstreams required") {
+		t.Errorf("error = %q, want to contain 'proxy.upstreams required'", err.Error())
+	}
+}
+
+func TestValidationStaticMissingRoot(t *testing.T) {
+	yaml := `
+domains:
+  - host: "example.com"
+    type: static
+    ssl:
+      mode: off
+`
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for missing root in static")
+	}
+	if !contains(err.Error(), "root is required") {
+		t.Errorf("error = %q, want to contain 'root is required'", err.Error())
+	}
+}
+
+// --- loader.go: loadDomainFile with invalid YAML ---
+
+func TestLoadDomainFileInvalidYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	os.WriteFile(path, []byte("host: [invalid: yaml: {{"), 0644)
+
+	_, err := loadDomainFile(path)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML in domain file")
+	}
+}
+
+func TestLoadDomainFileNotFound(t *testing.T) {
+	_, err := loadDomainFile(filepath.Join(t.TempDir(), "doesnotexist.yaml"))
+	if err == nil {
+		t.Fatal("expected error for non-existent file")
+	}
+}
+
+// --- loader.go: loadGlob with no matches ---
+
+func TestLoadGlobNoMatches(t *testing.T) {
+	dir := t.TempDir()
+	pattern := filepath.Join(dir, "*.yaml")
+
+	domains, err := loadGlob(pattern)
+	if err != nil {
+		t.Fatalf("loadGlob: %v", err)
+	}
+	if len(domains) != 0 {
+		t.Errorf("domains = %d, want 0 for no matches", len(domains))
+	}
+}
+
+func TestLoadGlobInvalidPattern(t *testing.T) {
+	// filepath.Glob returns error for bad patterns
+	_, err := loadGlob("[invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid glob pattern")
+	}
+}
+
+// --- parse.go: parseByteSize edge cases ---
+
+func TestParseByteSizeEmpty(t *testing.T) {
+	_, err := parseByteSize("")
+	if err == nil {
+		t.Fatal("expected error for empty byte size")
+	}
+	if !contains(err.Error(), "empty byte size") {
+		t.Errorf("error = %q, want 'empty byte size'", err.Error())
+	}
+}
+
+func TestParseByteSizeUnknownUnit(t *testing.T) {
+	_, err := parseByteSize("100TB")
+	if err == nil {
+		t.Fatal("expected error for unknown unit TB")
+	}
+	if !contains(err.Error(), "unknown byte unit") {
+		t.Errorf("error = %q, want 'unknown byte unit'", err.Error())
+	}
+}
+
+func TestParseByteSizeInvalidNumber(t *testing.T) {
+	_, err := parseByteSize("abcMB")
+	if err == nil {
+		t.Fatal("expected error for non-numeric input")
+	}
+	if !contains(err.Error(), "invalid byte size") {
+		t.Errorf("error = %q, want 'invalid byte size'", err.Error())
+	}
+}
+
+func TestParseByteSizeWhitespace(t *testing.T) {
+	// Leading/trailing whitespace should be trimmed
+	got, err := parseByteSize("  512 MB  ")
+	if err != nil {
+		t.Fatalf("parseByteSize: %v", err)
+	}
+	if got != 512*MB {
+		t.Errorf("parseByteSize = %d, want %d", got, 512*MB)
+	}
+}
+
+func TestParseByteSizeJustNumber(t *testing.T) {
+	got, err := parseByteSize("42")
+	if err != nil {
+		t.Fatalf("parseByteSize: %v", err)
+	}
+	if got != ByteSize(42) {
+		t.Errorf("parseByteSize = %d, want 42", got)
+	}
+}
+
+func TestParseByteSizeBSuffix(t *testing.T) {
+	got, err := parseByteSize("256B")
+	if err != nil {
+		t.Fatalf("parseByteSize: %v", err)
+	}
+	if got != ByteSize(256) {
+		t.Errorf("parseByteSize = %d, want 256", got)
+	}
+}
+
+func TestParseByteSizeK(t *testing.T) {
+	got, err := parseByteSize("8K")
+	if err != nil {
+		t.Fatalf("parseByteSize: %v", err)
+	}
+	if got != 8*KB {
+		t.Errorf("parseByteSize = %d, want %d", got, 8*KB)
+	}
+}
+
+func TestParseByteSizeG(t *testing.T) {
+	got, err := parseByteSize("2G")
+	if err != nil {
+		t.Fatalf("parseByteSize: %v", err)
+	}
+	if got != 2*GB {
+		t.Errorf("parseByteSize = %d, want %d", got, 2*GB)
+	}
+}
+
+// --- loader.go: expandEnvVars with unset variable (kept as-is) ---
+
+func TestExpandEnvVarsUnset(t *testing.T) {
+	os.Unsetenv("TOTALLY_UNSET_VAR")
+	result := expandEnvVars("value=${TOTALLY_UNSET_VAR}")
+	if result != "value=${TOTALLY_UNSET_VAR}" {
+		t.Errorf("expandEnvVars = %q, want original for unset var", result)
+	}
+}
+
+// --- loader.go: Load with non-existent config file ---
+
+func TestLoadNonExistentFile(t *testing.T) {
+	_, err := Load(filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	if err == nil {
+		t.Fatal("expected error for non-existent config file")
+	}
+}
+
+// --- loader.go: include with relative path ---
+
+func TestIncludeRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	includeDir := filepath.Join(dir, "inc")
+	os.MkdirAll(includeDir, 0755)
+
+	os.WriteFile(filepath.Join(includeDir, "extra.yaml"), []byte(`
+host: included.com
+root: /var/www/inc
+type: static
+ssl:
+  mode: off
+`), 0644)
+
+	// Use relative include path
+	mainConfig := `
+global:
+  log_level: info
+include:
+  - "inc/*.yaml"
+domains:
+  - host: main.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Domains) != 2 {
+		t.Errorf("domains = %d, want 2", len(cfg.Domains))
+	}
+}
+
+// --- loader.go: include with invalid file in glob ---
+
+func TestIncludeInvalidDomainFile(t *testing.T) {
+	dir := t.TempDir()
+	includeDir := filepath.Join(dir, "inc")
+	os.MkdirAll(includeDir, 0755)
+
+	os.WriteFile(filepath.Join(includeDir, "bad.yaml"), []byte("host: [invalid {{"), 0644)
+
+	mainConfig := fmt.Sprintf(`
+global:
+  log_level: info
+include:
+  - "%s"
+domains:
+  - host: main.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`, filepath.ToSlash(filepath.Join(includeDir, "*.yaml")))
+
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid include file")
+	}
+}
+
+// --- loader.go: domains_dir relative path ---
+
+func TestDomainsDirRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "mydomains")
+	os.MkdirAll(domainsDir, 0755)
+
+	os.WriteFile(filepath.Join(domainsDir, "site.yaml"), []byte(`
+host: relative.com
+root: /var/www/rel
+type: static
+ssl:
+  mode: off
+`), 0644)
+
+	mainConfig := `
+global:
+  log_level: info
+domains_dir: "mydomains"
+domains:
+  - host: main.com
+    root: /var/www/main
+    type: static
+    ssl:
+      mode: off
+`
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Domains) != 2 {
+		t.Errorf("domains = %d, want 2", len(cfg.Domains))
+	}
+}
+
+// --- loader.go: domains_dir with invalid file ---
+
+func TestDomainsDirInvalidFile(t *testing.T) {
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	os.WriteFile(filepath.Join(domainsDir, "bad.yaml"), []byte("host: [broken {{"), 0644)
+
+	mainConfig := fmt.Sprintf(`
+global:
+  log_level: info
+domains_dir: "%s"
+`, filepath.ToSlash(domainsDir))
+
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid file in domains_dir")
+	}
+}
+
+// --- loader.go: loadDomainsDir skips non-yaml files and directories ---
+
+func TestDomainsDirSkipsNonYAML(t *testing.T) {
+	dir := t.TempDir()
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+
+	// Create a non-YAML file and a subdirectory
+	os.WriteFile(filepath.Join(domainsDir, "readme.txt"), []byte("not yaml"), 0644)
+	os.MkdirAll(filepath.Join(domainsDir, "subdir"), 0755)
+	// Create a valid .yml file
+	os.WriteFile(filepath.Join(domainsDir, "site.yml"), []byte(`
+host: yml.com
+root: /var/www/yml
+type: static
+ssl:
+  mode: off
+`), 0644)
+
+	mainConfig := fmt.Sprintf(`
+global:
+  log_level: info
+domains_dir: "%s"
+`, filepath.ToSlash(domainsDir))
+
+	configPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(configPath, []byte(mainConfig), 0644)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Only the .yml file should be loaded
+	if len(cfg.Domains) != 1 {
+		t.Errorf("domains = %d, want 1", len(cfg.Domains))
+	}
+}
+
+// --- loader.go: expandEnvVars with set variable (with :- fallback syntax but var is set) ---
+
+func TestExpandEnvVarsSetWithFallback(t *testing.T) {
+	os.Setenv("TEST_EXPAND_SET", "actual_value")
+	defer os.Unsetenv("TEST_EXPAND_SET")
+
+	result := expandEnvVars("val=${TEST_EXPAND_SET:-default}")
+	if result != "val=actual_value" {
+		t.Errorf("expandEnvVars = %q, want val=actual_value", result)
+	}
+}
+
+// --- Duration UnmarshalYAML with bad duration string ---
+
+func TestDurationUnmarshalBadString(t *testing.T) {
+	var d Duration
+	fakeUnmarshal := func(v any) error {
+		switch p := v.(type) {
+		case *string:
+			*p = "not-a-duration"
+			return nil
+		default:
+			return fmt.Errorf("unexpected type %T", v)
+		}
+	}
+
+	err := d.UnmarshalYAML(fakeUnmarshal)
+	if err == nil {
+		t.Fatal("expected error for bad duration string")
+	}
+}
+
+// --- ByteSize UnmarshalYAML with bad string ---
+
+func TestByteSizeUnmarshalBadString(t *testing.T) {
+	var b ByteSize
+	fakeUnmarshal := func(v any) error {
+		switch p := v.(type) {
+		case *string:
+			*p = "badTB"
+			return nil
+		default:
+			return fmt.Errorf("unexpected type %T", v)
+		}
+	}
+
+	err := b.UnmarshalYAML(fakeUnmarshal)
+	if err == nil {
+		t.Fatal("expected error for bad byte size string")
+	}
+}
+
+// helper
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEnvVarInDomainFile(t *testing.T) {
 	os.Setenv("TEST_DOMAIN_HOST", "env.example.com")
 	defer os.Unsetenv("TEST_DOMAIN_HOST")

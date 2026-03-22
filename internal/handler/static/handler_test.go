@@ -397,3 +397,309 @@ func TestFormatSizeZero(t *testing.T) {
 		t.Errorf("formatSize(0) = %q, want %q", got, "0 B")
 	}
 }
+
+// === Additional coverage tests ===
+
+// --- handler.go: Serve with non-existent file stat error ---
+
+func TestServeNonExistentFile(t *testing.T) {
+	ctx := makeCtx(t, "GET", "/missing.txt")
+	ctx.ResolvedPath = filepath.Join(t.TempDir(), "nonexistent.txt")
+
+	h := New()
+	h.Serve(ctx)
+
+	if ctx.Response.StatusCode() != 404 {
+		t.Errorf("status = %d, want 404 for non-existent file", ctx.Response.StatusCode())
+	}
+}
+
+// --- handler.go: servePreCompressed when Accept-Encoding doesn't match ---
+
+func TestServePreCompressedNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "script.js", "var x = 1;")
+	writeFile(t, dir, "script.js.br", "compressed-br")
+	writeFile(t, dir, "script.js.gz", "compressed-gz")
+
+	// Request with Accept-Encoding that doesn't match br or gzip
+	ctx := makeCtxWithHeader(t, "GET", "/script.js", "Accept-Encoding", "deflate")
+	ctx.ResolvedPath = filepath.Join(dir, "script.js")
+
+	h := New()
+	h.Serve(ctx)
+
+	// Should serve the original file, not pre-compressed
+	enc := ctx.Response.Header().Get("Content-Encoding")
+	if enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty (no match)", enc)
+	}
+	if ctx.Response.StatusCode() != 200 {
+		t.Errorf("status = %d, want 200", ctx.Response.StatusCode())
+	}
+}
+
+func TestServePreCompressedEmptyAcceptEncoding(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "app.js", "var a = 1;")
+	writeFile(t, dir, "app.js.br", "compressed")
+
+	// No Accept-Encoding at all
+	ctx := makeCtx(t, "GET", "/app.js")
+	ctx.ResolvedPath = filepath.Join(dir, "app.js")
+
+	h := New()
+	h.Serve(ctx)
+
+	enc := ctx.Response.Header().Get("Content-Encoding")
+	if enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty (no Accept-Encoding header)", enc)
+	}
+}
+
+func TestServePreCompressedNoCompressedFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "style.css", "body{}")
+
+	// Request with Accept-Encoding br/gzip but no compressed files exist
+	ctx := makeCtxWithHeader(t, "GET", "/style.css", "Accept-Encoding", "br, gzip")
+	ctx.ResolvedPath = filepath.Join(dir, "style.css")
+
+	h := New()
+	h.Serve(ctx)
+
+	enc := ctx.Response.Header().Get("Content-Encoding")
+	if enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty (no compressed file)", enc)
+	}
+}
+
+// --- handler.go: ResolveRequest with custom try_files config ---
+
+func TestResolveRequestCustomTryFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "fallback.html", "<h1>Fallback</h1>")
+
+	domain := &config.Domain{
+		Host:     "example.com",
+		Root:     dir,
+		Type:     "static",
+		TryFiles: []string{"$uri", "/fallback.html"},
+	}
+
+	// Request a non-existent path; should fall back to /fallback.html
+	ctx := makeCtx(t, "GET", "/nonexistent")
+	if !ResolveRequest(ctx, domain) {
+		t.Fatal("ResolveRequest should resolve via custom try_files fallback")
+	}
+	if !strings.HasSuffix(ctx.ResolvedPath, "fallback.html") {
+		t.Errorf("ResolvedPath = %q, want fallback.html", ctx.ResolvedPath)
+	}
+}
+
+func TestResolveRequestTryFilesLastCandidateVariable(t *testing.T) {
+	dir := t.TempDir()
+
+	domain := &config.Domain{
+		Host:     "example.com",
+		Root:     dir,
+		Type:     "static",
+		TryFiles: []string{"$uri"},
+	}
+
+	// Non-existent file, last candidate is a variable: should return false
+	ctx := makeCtx(t, "GET", "/nothing")
+	if ResolveRequest(ctx, domain) {
+		t.Error("ResolveRequest should return false when last candidate is a variable and nothing matches")
+	}
+}
+
+func TestResolveRequestPHPDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "index.php", "<?php echo 1;")
+
+	domain := &config.Domain{
+		Host: "php.example.com",
+		Root: dir,
+		Type: "php",
+	}
+
+	// PHP type defaults try_files to ["$uri", "$uri/", "/index.php"]
+	ctx := makeCtx(t, "GET", "/nonexistent")
+	if !ResolveRequest(ctx, domain) {
+		t.Fatal("ResolveRequest should fallback to /index.php for PHP type")
+	}
+	if !strings.HasSuffix(ctx.ResolvedPath, "index.php") {
+		t.Errorf("ResolvedPath = %q, want index.php", ctx.ResolvedPath)
+	}
+}
+
+func TestResolveRequestDirWithCustomIndex(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	os.MkdirAll(sub, 0755)
+	writeFile(t, dir, filepath.Join("sub", "default.htm"), "<h1>Custom Index</h1>")
+
+	domain := &config.Domain{
+		Host:       "example.com",
+		Root:       dir,
+		Type:       "static",
+		IndexFiles: []string{"default.htm"},
+	}
+
+	ctx := makeCtx(t, "GET", "/sub/")
+	if !ResolveRequest(ctx, domain) {
+		t.Fatal("ResolveRequest should find custom index file")
+	}
+	if !strings.HasSuffix(ctx.ResolvedPath, "default.htm") {
+		t.Errorf("ResolvedPath = %q, want default.htm", ctx.ResolvedPath)
+	}
+}
+
+func TestResolveRequestNoMatchReturnsfalse(t *testing.T) {
+	dir := t.TempDir()
+
+	domain := &config.Domain{
+		Host: "example.com",
+		Root: dir,
+		Type: "static",
+	}
+
+	ctx := makeCtx(t, "GET", "/does-not-exist.txt")
+	if ResolveRequest(ctx, domain) {
+		t.Error("ResolveRequest should return false when no file matches")
+	}
+}
+
+// --- handler.go: Serve open file error (line 76-79) ---
+// This is hard to trigger directly since os.Stat succeeded but os.Open would fail.
+// We can test by making the file unreadable between stat and open on non-Windows.
+// Instead we test the code path for coverage via the pre-compressed fallback.
+
+// --- handler.go: ResolveRequest last candidate is a named route (non-variable fallback) ---
+
+func TestResolveRequestNamedRouteFallback(t *testing.T) {
+	dir := t.TempDir()
+	// The named route doesn't need to exist as a file; the code sets it regardless.
+	// Create a try_files with a last non-variable candidate that is NOT a file
+	// but the code still resolves it (lines 204-217).
+	domain := &config.Domain{
+		Host:     "example.com",
+		Root:     dir,
+		Type:     "static",
+		TryFiles: []string{"$uri", "/fallback.php"},
+	}
+
+	// Request for a non-existent file
+	ctx := makeCtx(t, "GET", "/nonexistent")
+	result := ResolveRequest(ctx, domain)
+	// The last candidate "/fallback.php" is not a $-variable, so lines 204-217 execute.
+	if !result {
+		t.Fatal("ResolveRequest should resolve to named route /fallback.php")
+	}
+	if ctx.RewrittenURI != "/fallback.php" {
+		t.Errorf("RewrittenURI = %q, want /fallback.php", ctx.RewrittenURI)
+	}
+	if ctx.DocumentRoot != dir {
+		t.Errorf("DocumentRoot = %q, want %q", ctx.DocumentRoot, dir)
+	}
+}
+
+// --- handler.go: ResolveRequest directory with no matching index files ---
+
+func TestResolveRequestDirNoIndex(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	os.MkdirAll(sub, 0755)
+	// No index file in sub/
+
+	domain := &config.Domain{
+		Host:     "example.com",
+		Root:     dir,
+		Type:     "static",
+		TryFiles: []string{"$uri", "$uri/"},
+	}
+
+	ctx := makeCtx(t, "GET", "/sub")
+	// The directory exists but has no index files, so $uri/ candidate hits the
+	// "Try index files within directory" loop but finds nothing (line 192 continue).
+	// Falls through to last-candidate check, but "$uri/" starts with "$" so returns false.
+	result := ResolveRequest(ctx, domain)
+	if result {
+		t.Error("should not resolve when directory has no index files and last candidate is a variable")
+	}
+}
+
+// --- mime.go: custom MIME type without leading dot ---
+
+func TestMIMERegistryCustomNoDot(t *testing.T) {
+	custom := map[string]string{
+		"nfo": "text/x-nfo",
+	}
+	m := NewMIMERegistry(custom)
+
+	got := m.Lookup("readme.nfo")
+	if got != "text/x-nfo" {
+		t.Errorf("Lookup(readme.nfo) = %q, want text/x-nfo", got)
+	}
+}
+
+// --- listing.go: dotfile in listing (filtered out) ---
+
+func TestServeDirListingDotfileFiltered(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".hidden", "secret")
+	writeFile(t, dir, "visible.txt", "hello")
+
+	ctx := makeCtx(t, "GET", "/")
+	ServeDirListing(ctx, dir, "/")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	body := rec.Body.String()
+
+	if strings.Contains(body, ".hidden") {
+		t.Error("dotfile should be filtered from directory listing")
+	}
+	if !strings.Contains(body, "visible.txt") {
+		t.Error("visible file should be in listing")
+	}
+}
+
+// --- listing.go: parent path edge case (root path "/") ---
+
+func TestServeDirListingRootNoParent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "file.txt", "hi")
+
+	ctx := makeCtx(t, "GET", "/")
+	ServeDirListing(ctx, dir, "/")
+
+	rec := ctx.Response.ResponseWriter.(*httptest.ResponseRecorder)
+	body := rec.Body.String()
+
+	// Root listing should NOT have parent link "../"
+	if strings.Contains(body, `>../</a>`) {
+		t.Error("root listing should not have parent directory link")
+	}
+}
+
+// --- servePreCompressed: compressed file that is a directory (skip it) ---
+
+func TestServePreCompressedCompressedIsDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "app.js", "var x = 1;")
+	// Create .br as a directory rather than a file
+	os.MkdirAll(filepath.Join(dir, "app.js.br"), 0755)
+
+	ctx := makeCtxWithHeader(t, "GET", "/app.js", "Accept-Encoding", "br, gzip")
+	ctx.ResolvedPath = filepath.Join(dir, "app.js")
+
+	h := New()
+	h.Serve(ctx)
+
+	// Should serve original file since .br is a directory
+	enc := ctx.Response.Header().Get("Content-Encoding")
+	if enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty when compressed file is a directory", enc)
+	}
+}

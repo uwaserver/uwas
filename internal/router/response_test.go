@@ -251,3 +251,42 @@ func TestResponseWriterFlushNoFlusher(t *testing.T) {
 	// Should not panic even though underlying writer doesn't support Flush
 	w.Flush()
 }
+
+// === Additional coverage tests ===
+
+func TestGenerateIDUniquenessOverManyCalls(t *testing.T) {
+	const n = 10000
+	seen := make(map[string]struct{}, n)
+	for i := 0; i < n; i++ {
+		id := generateID()
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate ID at iteration %d: %q", i, id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != n {
+		t.Errorf("expected %d unique IDs, got %d", n, len(seen))
+	}
+}
+
+func TestGenerateIDFormat(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		id := generateID()
+		// Should be 36 chars: 8-4-4-4-12
+		if len(id) != 36 {
+			t.Errorf("generateID length = %d, want 36: %q", len(id), id)
+			break
+		}
+		// Check version nibble (byte 14 should be '7')
+		if id[14] != '7' {
+			t.Errorf("version nibble = %c, want 7 in %q", id[14], id)
+			break
+		}
+		// Check variant nibble (byte 19 should be 8, 9, a, or b)
+		variant := id[19]
+		if variant != '8' && variant != '9' && variant != 'a' && variant != 'b' {
+			t.Errorf("variant nibble = %c, want 8/9/a/b in %q", variant, id)
+			break
+		}
+	}
+}
