@@ -32,6 +32,14 @@ func (c *CLI) Register(cmd Command) {
 
 func (c *CLI) Run(args []string) {
 	if len(args) == 0 {
+		// No arguments: auto-start server (first-run friendly)
+		if cmd, ok := c.commands["serve"]; ok {
+			if err := cmd.Run(nil); err != nil {
+				fmt.Fprintf(os.Stderr, "uwas: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		c.printUsage()
 		os.Exit(0)
 	}
