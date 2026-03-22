@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/alerting"
+	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/cache"
@@ -93,6 +95,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/v1/system", s.handleSystem)
 	s.mux.HandleFunc("GET /api/v1/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/v1/domains", s.handleDomains)
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
@@ -236,9 +239,64 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	checks := make(map[string]string)
+	overallStatus := "ok"
+
+	// Cache health
+	if s.cache != nil {
+		checks["cache"] = "ok"
+	} else {
+		checks["cache"] = "disabled"
+	}
+
+	// Monitor health
+	if s.monitor != nil {
+		checks["monitor"] = "ok"
+	} else {
+		checks["monitor"] = "disabled"
+	}
+
+	// Backup manager
+	if s.backupMgr != nil {
+		checks["backup"] = "ok"
+	} else {
+		checks["backup"] = "disabled"
+	}
+
+	// Domain count
+	s.configMu.RLock()
+	domainCount := len(s.config.Domains)
+	s.configMu.RUnlock()
+
+	resp := map[string]any{
+		"status":       overallStatus,
+		"uptime":       time.Since(s.metrics.StartTime).String(),
+		"uptime_secs":  time.Since(s.metrics.StartTime).Seconds(),
+		"domains":      domainCount,
+		"requests":     s.metrics.RequestsTotal.Load(),
+		"active_conns": s.metrics.ActiveConns.Load(),
+		"checks":       checks,
+		"version":      build.Version,
+	}
+
+	jsonResponse(w, resp)
+}
+
+func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
 	jsonResponse(w, map[string]any{
-		"status": "ok",
-		"uptime": time.Since(s.metrics.StartTime).String(),
+		"version":      build.Version,
+		"commit":       build.Commit,
+		"go_version":   runtime.Version(),
+		"os":           runtime.GOOS,
+		"arch":         runtime.GOARCH,
+		"cpus":         runtime.NumCPU(),
+		"goroutines":   runtime.NumGoroutine(),
+		"memory_alloc": memStats.Alloc,
+		"memory_sys":   memStats.Sys,
+		"gc_cycles":    memStats.NumGC,
 	})
 }
 

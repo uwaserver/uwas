@@ -89,7 +89,21 @@ export interface LogEntry {
   user_agent: string;
 }
 
+export interface SystemInfo {
+  version: string;
+  commit: string;
+  go_version: string;
+  os: string;
+  arch: string;
+  cpus: number;
+  goroutines: number;
+  memory_alloc: number;
+  memory_sys: number;
+  gc_cycles: number;
+}
+
 export const fetchHealth = () => api<HealthData>('/api/v1/health');
+export const fetchSystem = () => api<SystemInfo>('/api/v1/system');
 export const fetchStats = () => api<StatsData>('/api/v1/stats');
 export const fetchDomains = () => api<DomainData[]>('/api/v1/domains');
 export const fetchConfig = () => api<ConfigData>('/api/v1/config');
