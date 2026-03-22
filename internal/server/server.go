@@ -363,6 +363,13 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 // handleRequest is the core dispatch handler called after the middleware chain.
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	// Health check on main port (no auth, fast path)
+	if r.URL.Path == "/.well-known/health" || r.URL.Path == "/healthz" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+		return
+	}
+
 	ctx := router.AcquireContext(w, r)
 	defer router.ReleaseContext(ctx)
 
