@@ -437,6 +437,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 					ctx.Response.Header().Set(k, v)
 				}
 			}
+
+			// Handle conditional requests against cached ETag
+			if etag := ctx.Response.Header().Get("Etag"); etag != "" {
+				if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+					ctx.Response.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+
 			ctx.Response.WriteHeader(cached.StatusCode)
 			ctx.Response.Write(cached.Body)
 			return
