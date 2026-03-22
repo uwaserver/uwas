@@ -24,6 +24,7 @@ import (
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
+	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -68,6 +69,7 @@ type Server struct {
 	wg         sync.WaitGroup
 
 	alerter        *alerting.Alerter
+	backupMgr      *backup.BackupManager
 	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
 	proxyMirrors   map[string]*proxyhandler.Mirror
@@ -165,6 +167,14 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetPHPManager(phpMgr)
 	}
 
+	// Backup manager
+	if cfg.Global.Backup.Enabled {
+		s.backupMgr = backup.New(cfg.Global.Backup, log)
+		if s.admin != nil {
+			s.admin.SetBackupManager(s.backupMgr)
+		}
+	}
+
 	// MCP server
 	if cfg.Global.MCP.Enabled {
 		s.mcp = mcp.New(cfg, log, m)
@@ -217,6 +227,10 @@ func (s *Server) SetConfigPath(path string) {
 	s.configPath = path
 	if s.admin != nil {
 		s.admin.SetConfigPath(path)
+	}
+	if s.backupMgr != nil {
+		certsDir := s.config.Global.ACME.Storage
+		s.backupMgr.SetPaths(path, certsDir)
 	}
 }
 
@@ -323,6 +337,16 @@ func (s *Server) Start() error {
 	// Uptime monitor
 	if s.monitor != nil {
 		go s.monitor.Start(s.ctx)
+	}
+
+	// Backup scheduler
+	if s.backupMgr != nil {
+		if sched := s.config.Global.Backup.Schedule; sched != "" {
+			if d, err := time.ParseDuration(sched); err == nil && d > 0 {
+				s.backupMgr.ScheduleBackup(d)
+				s.logger.Info("backup scheduler started", "interval", d)
+			}
+		}
 	}
 
 	// Admin API

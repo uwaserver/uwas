@@ -200,6 +200,32 @@ export const updateDomainPHPConfig = (domain: string, key: string, value: string
   api<{status:string}>(`/api/v1/php/domains/${encodeURIComponent(domain)}/config`,
     { method: 'PUT', body: JSON.stringify({key, value}) });
 
+export interface BackupInfo {
+  name: string;
+  size: number;
+  created: string;
+  provider: string;
+}
+
+export interface BackupSchedule {
+  enabled: boolean;
+  interval: string;
+  keep: number;
+  last_backup: string;
+  next_backup: string;
+}
+
+export const fetchBackups = () => api<BackupInfo[]>('/api/v1/backups');
+export const createBackup = (provider?: string) =>
+  api<BackupInfo>('/api/v1/backups', { method: 'POST', body: JSON.stringify({ provider: provider || 'local' }) });
+export const restoreBackup = (name: string, provider: string) =>
+  api<{ status: string }>('/api/v1/backups/restore', { method: 'POST', body: JSON.stringify({ name, provider }) });
+export const deleteBackup = (name: string, provider?: string) =>
+  api<{ status: string }>(`/api/v1/backups/${encodeURIComponent(name)}?provider=${provider || 'local'}`, { method: 'DELETE' });
+export const fetchBackupSchedule = () => api<BackupSchedule>('/api/v1/backups/schedule');
+export const updateBackupSchedule = (schedule: Partial<BackupSchedule>) =>
+  api<{ status: string }>('/api/v1/backups/schedule', { method: 'PUT', body: JSON.stringify(schedule) });
+
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {
   const params = token ? `?token=${encodeURIComponent(token)}` : '';

@@ -25,6 +25,38 @@ type GlobalConfig struct {
 	ACME           ACMEConfig     `yaml:"acme"`
 	Cache          CacheConfig    `yaml:"cache"`
 	Alerting       AlertingConfig `yaml:"alerting"`
+	Backup         BackupConfig   `yaml:"backup"`
+}
+
+type BackupConfig struct {
+	Enabled  bool             `yaml:"enabled"`
+	Provider string           `yaml:"provider"` // local | s3 | sftp
+	Schedule string           `yaml:"schedule"` // duration string e.g. "24h"
+	Keep     int              `yaml:"keep"`      // keep last N backups
+	Local    BackupLocalConfig `yaml:"local"`
+	S3       BackupS3Config   `yaml:"s3"`
+	SFTP     BackupSFTPConfig `yaml:"sftp"`
+}
+
+type BackupLocalConfig struct {
+	Path string `yaml:"path"`
+}
+
+type BackupS3Config struct {
+	Endpoint  string `yaml:"endpoint"`
+	Bucket    string `yaml:"bucket"`
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	Region    string `yaml:"region"`
+}
+
+type BackupSFTPConfig struct {
+	Host       string `yaml:"host"`
+	Port       int    `yaml:"port"`
+	User       string `yaml:"user"`
+	KeyFile    string `yaml:"key_file"`
+	Password   string `yaml:"password"`
+	RemotePath string `yaml:"remote_path"`
 }
 
 type TimeoutConfig struct {
