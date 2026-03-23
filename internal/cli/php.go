@@ -72,10 +72,14 @@ func (p *PHPCommand) Run(args []string) error {
 
 func (p *PHPCommand) list(args []string) error {
 	fs := flag.NewFlagSet("php list", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
 	}
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/php", *apiKey, nil)
@@ -119,11 +123,15 @@ func (p *PHPCommand) list(args []string) error {
 
 func (p *PHPCommand) start(args []string) error {
 	fs := flag.NewFlagSet("php start", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	port := fs.String("port", "9000", "listen port")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
 	}
 
 	version := fs.Arg(0)
@@ -145,10 +153,14 @@ func (p *PHPCommand) start(args []string) error {
 
 func (p *PHPCommand) stop(args []string) error {
 	fs := flag.NewFlagSet("php stop", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
 	}
 
 	version := fs.Arg(0)
@@ -167,10 +179,14 @@ func (p *PHPCommand) stop(args []string) error {
 
 func (p *PHPCommand) config(args []string) error {
 	fs := flag.NewFlagSet("php config", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
 	}
 
 	version := fs.Arg(0)
@@ -201,10 +217,14 @@ func (p *PHPCommand) config(args []string) error {
 
 func (p *PHPCommand) extensions(args []string) error {
 	fs := flag.NewFlagSet("php extensions", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
 	}
 
 	version := fs.Arg(0)

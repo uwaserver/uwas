@@ -57,9 +57,13 @@ func (d *DomainCommand) Run(args []string) error {
 
 func (d *DomainCommand) list(args []string) error {
 	fs := flag.NewFlagSet("domain list", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/domains", *apiKey, nil)
 	if err != nil {
@@ -88,12 +92,16 @@ func (d *DomainCommand) list(args []string) error {
 
 func (d *DomainCommand) add(args []string) error {
 	fs := flag.NewFlagSet("domain add", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	domainType := fs.String("type", "static", "domain type")
 	root := fs.String("root", "", "document root")
 	ssl := fs.String("ssl", "off", "SSL mode")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	host := fs.Arg(0)
 	if host == "" {
@@ -114,9 +122,13 @@ func (d *DomainCommand) add(args []string) error {
 
 func (d *DomainCommand) remove(args []string) error {
 	fs := flag.NewFlagSet("domain remove", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	host := fs.Arg(0)
 	if host == "" {
@@ -167,10 +179,14 @@ func (c *CacheCommand) Run(args []string) error {
 
 func (c *CacheCommand) purge(args []string) error {
 	fs := flag.NewFlagSet("cache purge", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	tag := fs.String("tag", "", "purge by tag")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	payload := "{}"
 	if *tag != "" {
@@ -188,9 +204,13 @@ func (c *CacheCommand) purge(args []string) error {
 
 func (c *CacheCommand) stats(args []string) error {
 	fs := flag.NewFlagSet("cache stats", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
 	if err != nil {

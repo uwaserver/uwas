@@ -71,7 +71,7 @@ func generateAPIKey() string {
 
 // ensureDefaultConfig creates the default config directory and file if they
 // don't exist. Returns the config path.
-func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot string) (string, error) {
+func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail string) (string, error) {
 	dir := uwasDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create config dir: %w", err)
@@ -97,7 +97,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot string) (string
 	// Generate config with provided ports
 	apiKey := generateAPIKey()
 
-	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, dir, webRoot)
+	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, dir, webRoot, acmeEmail)
 
 	if err := os.WriteFile(cfgPath, []byte(configContent), 0644); err != nil {
 		return "", fmt.Errorf("write default config: %w", err)
@@ -121,7 +121,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot string) (string
 	return cfgPath, nil
 }
 
-func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, baseDir, webRoot string) string {
+func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, baseDir, webRoot, acmeEmail string) string {
 	// Normalize paths for the config (use forward slashes)
 	wwwDir := filepath.ToSlash(webRoot)
 	certsDir := filepath.ToSlash(filepath.Join(baseDir, "certs"))
@@ -155,7 +155,7 @@ global:
     api_key: "%s"
 
   acme:
-    email: ""
+    email: "%s"
     storage: %s
 
   cache:
@@ -192,7 +192,7 @@ domains:
         - ".git"
         - ".env"
 `, listenAddr, wwwDir, adminAddr, apiKey,
-		certsDir, cacheDir, backupsDir,
+		acmeEmail, certsDir, cacheDir, backupsDir,
 		httpPort, httpPort, wwwDir)) + "\n"
 }
 

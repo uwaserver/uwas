@@ -106,6 +106,12 @@ func (s *ServeCommand) Run(args []string) error {
 		fmt.Println("  Each domain gets its own subdirectory (e.g. /var/www/example.com/public_html).")
 		webRoot := promptWithDefault("  Web root base directory", "/var/www")
 
+		// Ask ACME email for auto SSL
+		fmt.Println()
+		fmt.Println("  For automatic HTTPS (Let's Encrypt), an email is required.")
+		fmt.Println("  Leave empty to skip — you can add it later in the config.")
+		acmeEmail := promptWithDefault("  ACME email (for Let's Encrypt)", "")
+
 		// Explain the API key
 		fmt.Println()
 		fmt.Println("  \033[33m!\033[0m An API key will be generated to protect your dashboard and API.")
@@ -113,7 +119,7 @@ func (s *ServeCommand) Run(args []string) error {
 		fmt.Println("    It will also be stored in \033[1m~/.uwas/.env\033[0m as UWAS_ADMIN_KEY.")
 
 		var err error
-		cfgFile, err = ensureDefaultConfig(hp, ap, adminBind, webRoot)
+		cfgFile, err = ensureDefaultConfig(hp, ap, adminBind, webRoot, acmeEmail)
 		if err != nil {
 			return fmt.Errorf("setup: %w", err)
 		}
