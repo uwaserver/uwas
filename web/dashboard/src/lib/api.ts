@@ -284,6 +284,22 @@ export const fetchBackupSchedule = () => api<BackupSchedule>('/api/v1/backups/sc
 export const updateBackupSchedule = (schedule: Partial<BackupSchedule>) =>
   api<{ status: string }>('/api/v1/backups/schedule', { method: 'PUT', body: JSON.stringify(schedule) });
 
+export interface UnknownDomainEntry {
+  host: string;
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+  blocked: boolean;
+}
+
+export const fetchUnknownDomains = () => api<UnknownDomainEntry[]>('/api/v1/unknown-domains');
+export const blockUnknownDomain = (host: string) =>
+  api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/block`, { method: 'POST' });
+export const unblockUnknownDomain = (host: string) =>
+  api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/unblock`, { method: 'POST' });
+export const dismissUnknownDomain = (host: string) =>
+  api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
+
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {
   const params = token ? `?token=${encodeURIComponent(token)}` : '';

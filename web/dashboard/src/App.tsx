@@ -15,6 +15,7 @@ import Certificates from '@/pages/Certificates';
 import PHP from '@/pages/PHP';
 import Backups from '@/pages/Backups';
 import AuditLog from '@/pages/AuditLog';
+import UnknownDomains from '@/pages/UnknownDomains';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="/php" element={<PHP />} />
         <Route path="/backups" element={<Backups />} />
         <Route path="/audit" element={<AuditLog />} />
+        <Route path="/unknown-domains" element={<UnknownDomains />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

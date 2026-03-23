@@ -43,6 +43,10 @@ func (r *VHostRouter) load(domains []config.Domain) {
 			wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
 		} else {
 			exact[host] = d
+			// Also register port-stripped form so IsConfigured matches.
+			if idx := strings.LastIndex(host, ":"); idx != -1 {
+				exact[host[:idx]] = d
+			}
 		}
 
 		// Register aliases
@@ -53,6 +57,9 @@ func (r *VHostRouter) load(domains []config.Domain) {
 				wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
 			} else {
 				exact[alias] = d
+				if idx := strings.LastIndex(alias, ":"); idx != -1 {
+					exact[alias[:idx]] = d
+				}
 			}
 		}
 
@@ -99,6 +106,32 @@ func (r *VHostRouter) Lookup(host string) *config.Domain {
 
 	// 3. Default fallback
 	return r.fallback
+}
+
+// IsConfigured returns true if the host matches a configured domain (exact or wildcard),
+// as opposed to falling through to the default fallback.
+func (r *VHostRouter) IsConfigured(host string) bool {
+	// Normalize the same way Lookup does.
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	host = strings.ToLower(host)
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Check exact — both raw host and port-stripped form may be in the map.
+	if _, ok := r.exact[host]; ok {
+		return true
+	}
+
+	// Check wildcards
+	for _, wc := range r.wildcards {
+		if strings.HasSuffix(host, wc.suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Update replaces all domain configurations (hot reload).
