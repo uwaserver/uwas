@@ -37,10 +37,15 @@ func (s *ServeCommand) Run(args []string) error {
 	httpPort := fs.String("http-port", "", "HTTP port for first-run setup")
 	adminPort := fs.String("admin-port", "", "admin API port for first-run setup")
 	noBanner := fs.Bool("no-banner", false, "suppress startup banner")
-	// daemon := fs.Bool("d", false, "run as daemon") // TODO: platform-specific daemon
+	daemon := fs.Bool("d", false, "run as daemon (background)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// Daemon mode: re-exec as detached process and exit parent
+	if *daemon && os.Getenv("UWAS_DAEMON") != "1" {
+		return daemonize(os.Args[1:])
 	}
 
 	// Find or create config
