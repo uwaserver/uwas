@@ -37,12 +37,22 @@ Examples:
 
 func (r *RestartCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
-	pidFile := fs.String("pid-file", "/var/run/uwas.pid", "path to PID file")
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	pidFile := fs.String("pid-file", "", "path to PID file")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *pidFile == "" {
+		*pidFile = pidFileFromConfig()
+	}
+	if *pidFile == "" {
+		*pidFile = "/var/run/uwas.pid"
+	}
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
 	}
 
 	// Try to check health via admin API first

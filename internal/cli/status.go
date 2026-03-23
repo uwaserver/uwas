@@ -15,9 +15,13 @@ func (s *StatusCommand) Description() string { return "Show running server statu
 
 func (s *StatusCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	// Health
 	healthData, err := apiRequest("GET", *apiURL+"/api/v1/health", *apiKey, nil)
@@ -72,9 +76,13 @@ func (r *ReloadCommand) Description() string { return "Reload server configurati
 
 func (r *ReloadCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
-	apiURL := fs.String("api-url", "http://127.0.0.1:9443", "admin API URL")
+	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
 	fs.Parse(args)
+
+	if *apiURL == "" {
+		*apiURL = adminURLFromConfig()
+	}
 
 	body, err := apiRequest("POST", *apiURL+"/api/v1/reload", *apiKey, nil)
 	if err != nil {
