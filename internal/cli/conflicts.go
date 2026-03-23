@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
 // ConflictingServer describes a detected web server that may conflict with UWAS.
@@ -154,6 +156,110 @@ func OfferStopConflicts(conflicts []ConflictingServer) {
 				fmt.Printf("    \033[31m✗\033[0m Could not remove %s — try: sudo apt remove %s\n", c.Name, c.Service)
 			}
 		}
+	}
+	fmt.Println()
+}
+
+// OfferPHPInstall checks if PHP-CGI/FPM is available and offers to install it.
+func OfferPHPInstall() {
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	// Quick check: is any php-cgi or php-fpm binary on PATH?
+	hasCGI := false
+	for _, bin := range []string{"php-cgi", "php-cgi8.4", "php-cgi8.3", "php-cgi8.2", "php-cgi8.1"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			hasCGI = true
+			break
+		}
+	}
+	for _, bin := range []string{"php-fpm", "php-fpm8.4", "php-fpm8.3", "php-fpm8.2", "php-fpm8.1"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			hasCGI = true
+			break
+		}
+	}
+
+	if hasCGI {
+		return // PHP already available
+	}
+
+	fmt.Println("  \033[33m!\033[0m No PHP (FastCGI/FPM) detected on this system.")
+	fmt.Println("    PHP is needed to serve WordPress, Laravel, and other PHP sites.")
+	fmt.Println()
+
+	versions := []string{"8.4", "8.3", "8.2"}
+	fmt.Println("    Available versions to install:")
+	for i, v := range versions {
+		tag := ""
+		if v == "8.4" {
+			tag = " \033[32m(latest)\033[0m"
+		} else if v == "8.3" {
+			tag = " \033[36m(LTS)\033[0m"
+		}
+		fmt.Printf("      %d) PHP %s%s\n", i+1, v, tag)
+	}
+	fmt.Println("      s) Skip — I'll install PHP later")
+	fmt.Println()
+
+	choice := promptWithDefault("  Install PHP version", "s")
+
+	var version string
+	switch strings.TrimSpace(choice) {
+	case "1", "8.4":
+		version = "8.4"
+	case "2", "8.3":
+		version = "8.3"
+	case "3", "8.2":
+		version = "8.2"
+	case "s", "S", "":
+		fmt.Println("  Skipped. You can install later with: uwas php install 8.3")
+		fmt.Println()
+		return
+	default:
+		// Treat as version string if it looks like one
+		if strings.Contains(choice, ".") {
+			version = choice
+		} else {
+			fmt.Println("  Skipped.")
+			fmt.Println()
+			return
+		}
+	}
+
+	info := phpmanager.GetInstallInfo(version)
+	fmt.Printf("\n  Installing PHP %s on %s...\n\n", version, info.Distro)
+	for _, cmd := range info.Commands {
+		fmt.Printf("    > %s\n", cmd)
+	}
+	fmt.Println()
+
+	confirm := promptWithDefault("  Run these commands now? (y/n)", "y")
+	if !strings.EqualFold(confirm, "y") && !strings.EqualFold(confirm, "yes") {
+		fmt.Println("  Skipped. Run manually or use: uwas php install " + version)
+		fmt.Println()
+		return
+	}
+
+	fmt.Println("  Running install (this may take a minute)...")
+	output, err := phpmanager.RunInstall(version)
+	if output != "" {
+		// Show last few lines only
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+		start := 0
+		if len(lines) > 10 {
+			start = len(lines) - 10
+		}
+		for _, l := range lines[start:] {
+			fmt.Printf("    %s\n", l)
+		}
+	}
+	if err != nil {
+		fmt.Printf("  \033[31m✗\033[0m Install failed: %v\n", err)
+		fmt.Println("    Try manually: uwas php install-info " + version)
+	} else {
+		fmt.Printf("  \033[32m✓\033[0m PHP %s installed successfully!\n", version)
 	}
 	fmt.Println()
 }

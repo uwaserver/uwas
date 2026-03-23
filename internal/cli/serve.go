@@ -79,6 +79,9 @@ func (s *ServeCommand) Run(args []string) error {
 			}
 		}
 
+		// Check for PHP and offer installation
+		OfferPHPInstall()
+
 		hp := *httpPort
 		ap := *adminPort
 
