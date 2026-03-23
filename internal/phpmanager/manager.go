@@ -841,8 +841,12 @@ func (m *Manager) Status() []PHPStatus {
 	copy(installs, m.installations)
 	m.mu.RUnlock()
 
-	statuses := make([]PHPStatus, len(installs))
-	for i, inst := range installs {
+	var statuses []PHPStatus
+	for _, inst := range installs {
+		// Skip CLI binaries — they can't serve FastCGI.
+		if inst.SAPI == "cli" {
+			continue
+		}
 		st := PHPStatus{PHPInstall: inst}
 		if val, ok := m.processes.Load(inst.Version); ok {
 			info := val.(*processInfo)
@@ -852,7 +856,7 @@ func (m *Manager) Status() []PHPStatus {
 				st.PID = info.cmd.Process.Pid
 			}
 		}
-		statuses[i] = st
+		statuses = append(statuses, st)
 	}
 	return statuses
 }

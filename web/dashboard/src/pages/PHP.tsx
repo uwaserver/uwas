@@ -362,7 +362,7 @@ export default function PHP() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">PHP Manager</h1>
           <p className="text-sm text-slate-400">
-            {installs.length} version{installs.length !== 1 ? 's' : ''} detected
+            {installs.filter(i => i.sapi !== 'cli').length} PHP engine{installs.filter(i => i.sapi !== 'cli').length !== 1 ? 's' : ''} detected
             {instances.length > 0 && <> &middot; {instances.length} assigned &middot; {runningCount} running</>}
           </p>
         </div>
@@ -403,22 +403,22 @@ export default function PHP() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {installs.map(inst => (
+            {installs.filter(i => i.sapi !== 'cli').map(inst => (
               <div
-                key={inst.version}
+                key={inst.binary}
                 className="rounded-lg border border-[#334155] bg-[#1e293b] p-4 shadow-md"
               >
                 <div className="flex items-start justify-between">
                   <div>
                     <span className="text-2xl font-bold text-slate-100">{inst.version}</span>
-                    <span className="ml-2 rounded bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-400" title={inst.sapi}>
-                      {inst.sapi === 'cgi-fcgi' ? 'FastCGI' : inst.sapi === 'fpm-fcgi' ? 'FPM' : inst.sapi === 'cli' ? 'CLI (not usable)' : inst.sapi}
+                    <span className="ml-2 rounded bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-400">
+                      {inst.sapi === 'cgi-fcgi' ? 'FastCGI' : inst.sapi === 'fpm-fcgi' ? 'FPM' : inst.sapi}
                     </span>
                   </div>
                   <span className="flex items-center gap-1.5">
                     <span className={`inline-block h-2.5 w-2.5 rounded-full ${inst.running ? 'bg-emerald-400' : 'bg-slate-500'}`} />
                     <span className={`text-xs ${inst.running ? 'text-emerald-400' : 'text-slate-500'}`}>
-                      {inst.running ? 'Available' : 'Installed'}
+                      {inst.running ? `Running (${inst.listen_addr})` : 'Ready'}
                     </span>
                   </span>
                 </div>
@@ -472,7 +472,7 @@ export default function PHP() {
           {/* Version quick-switch */}
           <div className="mt-3 flex items-center gap-2">
             <span className="text-xs text-slate-500">Other versions:</span>
-            {['8.1', '8.2', '8.3', '8.4'].map(v => (
+            {['8.1', '8.2', '8.3', '8.4', '8.5'].map(v => (
               <button
                 key={v}
                 onClick={() => fetchPHPInstallInfo(v).then(setInstallInfo).catch(() => {})}
