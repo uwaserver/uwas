@@ -286,7 +286,7 @@ export default function Domains() {
         /* fall back to list-level data */
         const found = domains.find(d => d.host === host);
         if (found) {
-          setDetail({ ...found, cache: undefined, security: undefined, php: undefined, proxy: undefined, redirect: undefined, htaccess: undefined });
+          setDetail({ ...found, ssl: { mode: found.ssl, cert: '', key: '', min_version: '' }, cache: undefined, security: undefined, php: undefined, proxy: undefined, redirect: undefined, htaccess: undefined });
         }
       })
       .finally(() => setDetailLoading(false));
@@ -352,7 +352,7 @@ export default function Domains() {
         host: d.host,
         type: d.type,
         root: d.root || '',
-        ssl: d.ssl,
+        ssl: d.ssl?.mode ?? 'off',
         cacheEnabled: d.cache?.enabled ?? false,
         cacheTTL: String(d.cache?.ttl ?? 3600),
         phpFpmAddress: d.php?.fpm_address ?? '',
@@ -360,10 +360,10 @@ export default function Domains() {
         proxyUpstreams: d.proxy?.upstreams?.join(', ') ?? '',
         proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
         redirectTarget: d.redirect?.target ?? '',
-        redirectCode: String(d.redirect?.status_code ?? 301),
+        redirectCode: String(d.redirect?.status ?? 301),
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
-        wafEnabled: d.security?.waf ?? false,
-        htaccessEnabled: d.htaccess?.enabled ?? false,
+        wafEnabled: d.security?.waf?.enabled ?? false,
+        htaccessEnabled: !!d.htaccess?.mode,
       };
       /* Determine if the PHP address matches a known install */
       const knownAddr = phpInstalls.some(p => p.listen_addr === editForm.phpFpmAddress);
@@ -894,7 +894,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
 
         {/* SSL card */}
         <InfoCard icon={<Lock size={16} />} title="SSL / TLS">
-          <DetailRow label="Mode" value={<SslBadge ssl={detail.ssl} />} />
+          <DetailRow label="Mode" value={<SslBadge ssl={detail.ssl?.mode ?? 'off'} />} />
           {certInfo ? (
             <>
               <DetailRow label="Status" value={
@@ -947,9 +947,9 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           {detail.security ? (
             <>
               <DetailRow label="WAF" value={
-                <span className={`inline-flex items-center gap-1 text-xs ${detail.security.waf ? 'text-emerald-400' : 'text-slate-400'}`}>
-                  {detail.security.waf ? <CheckCircle size={10} /> : <XCircle size={10} />}
-                  {detail.security.waf ? 'Enabled' : 'Disabled'}
+                <span className={`inline-flex items-center gap-1 text-xs ${detail.security.waf?.enabled ? 'text-emerald-400' : 'text-slate-400'}`}>
+                  {detail.security.waf?.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                  {detail.security.waf?.enabled ? 'Enabled' : 'Disabled'}
                 </span>
               } />
               {detail.security.rate_limit && (
@@ -982,8 +982,8 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
             )}
             {detail.htaccess && (
               <DetailRow label=".htaccess" value={
-                <span className={`text-xs ${detail.htaccess.enabled ? 'text-emerald-400' : 'text-slate-400'}`}>
-                  {detail.htaccess.enabled ? 'Imported' : 'Disabled'}
+                <span className={`text-xs ${detail.htaccess.mode ? 'text-emerald-400' : 'text-slate-400'}`}>
+                  {detail.htaccess.mode || 'Disabled'}
                 </span>
               } />
             )}
@@ -1019,7 +1019,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           <InfoCard icon={<ArrowRight size={16} />} title="Redirect">
             <DetailRow label="Target" value={<span className="font-mono">{detail.redirect.target}</span>} />
             <DetailRow label="Status Code" value={
-              <span className="rounded bg-slate-500/15 px-1.5 py-0.5 font-mono text-xs text-slate-300">{detail.redirect.status_code}</span>
+              <span className="rounded bg-slate-500/15 px-1.5 py-0.5 font-mono text-xs text-slate-300">{detail.redirect.status}</span>
             } />
           </InfoCard>
         )}

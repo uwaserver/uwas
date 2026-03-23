@@ -170,14 +170,14 @@ export interface DomainDetail {
   host: string;
   aliases: string[] | null;
   type: string;
-  ssl: string;
+  ssl: { mode: string; cert: string; key: string; min_version: string };
   root: string;
   cache?: { enabled: boolean; ttl: number; rules?: { match: string; ttl: number; bypass: boolean }[] };
-  security?: { blocked_paths: string[] | null; waf: boolean; rate_limit?: { requests: number; window: string } };
+  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; rules: string[] | null }; rate_limit?: { requests: number; window: string } };
   php?: { fpm_address: string; index_files: string[] | null; timeout: number; upload_max_size: string };
   proxy?: { upstreams: string[] | null; algorithm: string; health_check?: { path: string; interval: string } };
-  redirect?: { target: string; status_code: number };
-  htaccess?: { enabled: boolean };
+  redirect?: { target: string; status: number; preserve_path: boolean };
+  htaccess?: { mode: string };
 }
 
 export interface CertInfo {
