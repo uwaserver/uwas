@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
 // PHPCommand manages PHP installations via the admin API.
@@ -18,22 +21,24 @@ func (p *PHPCommand) Description() string { return "Manage PHP installations (li
 func (p *PHPCommand) Help() string {
 	return `Subcommands:
   list                    List detected PHP versions
+  install <version>       Install PHP (auto-detects OS, needs root)
+  install-info <version>  Show install commands without running them
   start <version>         Start PHP-CGI on a port (default 9000)
   stop <version>          Stop PHP-CGI for a version
   config <version>        Show PHP configuration
   extensions <version>    List enabled extensions
 
 Flags:
-  --api-url string   Admin API URL (default "http://127.0.0.1:9443")
+  --api-url string   Admin API URL (default auto-detected from config)
   --api-key string   Admin API key (env: UWAS_ADMIN_KEY)
   --port string      Listen port for 'start' (default "9000")
 
 Examples:
   uwas php list
+  uwas php install 8.4
+  uwas php install-info 8.3
   uwas php start 8.4 --port 9001
-  uwas php stop 8.4
-  uwas php config 8.4
-  uwas php extensions 8.4`
+  uwas php config 8.4`
 }
 
 func (p *PHPCommand) Run(args []string) error {
@@ -48,6 +53,10 @@ func (p *PHPCommand) Run(args []string) error {
 	switch sub {
 	case "list":
 		return p.list(subArgs)
+	case "install":
+		return p.install(subArgs)
+	case "install-info":
+		return p.installInfo(subArgs)
 	case "start":
 		return p.start(subArgs)
 	case "stop":
@@ -57,7 +66,7 @@ func (p *PHPCommand) Run(args []string) error {
 	case "extensions", "ext":
 		return p.extensions(subArgs)
 	default:
-		return fmt.Errorf("unknown subcommand %q (use: list, start, stop, config, extensions)", sub)
+		return fmt.Errorf("unknown subcommand %q (use: list, install, start, stop, config, extensions)", sub)
 	}
 }
 
@@ -219,5 +228,56 @@ func (p *PHPCommand) extensions(args []string) error {
 		fmt.Printf("  %s\n", ext)
 	}
 	fmt.Println("═══════════════════════════════════════")
+	return nil
+}
+
+func (p *PHPCommand) installInfo(args []string) error {
+	version := "8.3"
+	if len(args) > 0 {
+		version = args[0]
+	}
+
+	info := phpmanager.GetInstallInfo(version)
+
+	fmt.Printf("\n  PHP %s Install Guide (%s)\n\n", version, info.Distro)
+	for i, cmd := range info.Commands {
+		fmt.Printf("  %d. %s\n", i+1, cmd)
+	}
+	if info.Notes != "" {
+		fmt.Printf("\n  Note: %s\n", info.Notes)
+	}
+	fmt.Printf("\n  After installing, run: uwas php list\n\n")
+	return nil
+}
+
+func (p *PHPCommand) install(args []string) error {
+	version := "8.3"
+	if len(args) > 0 {
+		version = args[0]
+	}
+
+	info := phpmanager.GetInstallInfo(version)
+	fmt.Printf("\n  Installing PHP %s on %s\n\n", version, info.Distro)
+	for _, cmd := range info.Commands {
+		fmt.Printf("  > %s\n", cmd)
+	}
+	fmt.Println()
+
+	// Check root (Unix only)
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		fmt.Println("  \033[33m!\033[0m Root access required. Run with sudo:")
+		fmt.Printf("    sudo uwas php install %s\n\n", version)
+		return nil
+	}
+
+	fmt.Println("  Running install...")
+	output, err := phpmanager.RunInstall(version)
+	if output != "" {
+		fmt.Print(output)
+	}
+	if err != nil {
+		return fmt.Errorf("install failed: %w", err)
+	}
+	fmt.Println("\n  \033[32m✓\033[0m PHP installed. Run 'uwas php list' to verify.")
 	return nil
 }

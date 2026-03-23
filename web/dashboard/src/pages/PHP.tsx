@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import {
   fetchPHP,
+  fetchPHPInstallInfo,
   fetchDomains,
   fetchDomainPHPInstances,
   assignDomainPHP,
@@ -24,6 +25,7 @@ import {
   fetchDomainPHPConfig,
   updateDomainPHPConfig,
   type PHPInstall,
+  type PHPInstallInfo,
   type DomainPHP,
   type DomainData,
 } from '@/lib/api';
@@ -121,6 +123,10 @@ export default function PHP() {
   const [startingAll, setStartingAll] = useState(false);
   const [stoppingAll, setStoppingAll] = useState(false);
   const [wpSetup, setWpSetup] = useState(false);
+
+  /* Install help */
+  const [installInfo, setInstallInfo] = useState<PHPInstallInfo | null>(null);
+  const [showInstall, setShowInstall] = useState(false);
 
   /* -------- helpers -------- */
 
@@ -387,9 +393,13 @@ export default function PHP() {
           <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-8 text-center">
             <Cpu size={40} className="mx-auto mb-3 text-slate-500" />
             <p className="text-sm text-slate-400">No PHP installations detected.</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Install PHP and ensure it is in the system PATH, then refresh.
-            </p>
+            <p className="mt-1 text-xs text-slate-500">Click below to see install instructions for your OS.</p>
+            <button
+              onClick={() => { fetchPHPInstallInfo('8.3').then(setInstallInfo).catch(() => {}); setShowInstall(true); }}
+              className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              How to Install PHP
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -419,7 +429,61 @@ export default function PHP() {
             ))}
           </div>
         )}
+
+        {/* Install another version button */}
+        {installs.length > 0 && (
+          <button
+            onClick={() => { fetchPHPInstallInfo('8.4').then(setInstallInfo).catch(() => {}); setShowInstall(true); }}
+            className="mt-3 text-xs text-blue-400 hover:text-blue-300"
+          >
+            + Install another PHP version
+          </button>
+        )}
       </div>
+
+      {/* ============ Install Instructions Panel ============ */}
+      {showInstall && installInfo && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-5">
+          <div className="flex items-start justify-between mb-3">
+            <h2 className="text-sm font-semibold text-blue-400">
+              Install PHP {installInfo.version} — {installInfo.distro}
+            </h2>
+            <button onClick={() => setShowInstall(false)} className="text-slate-500 hover:text-slate-300">
+              <X size={16} />
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">Run these commands on your server (requires root):</p>
+          <div className="space-y-1.5">
+            {installInfo.commands.map((cmd, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className="shrink-0 mt-0.5 text-xs text-slate-500">{i + 1}.</span>
+                <code className="flex-1 rounded bg-[#0f172a] px-3 py-2 text-xs font-mono text-slate-200 select-all">
+                  {cmd}
+                </code>
+              </div>
+            ))}
+          </div>
+          {installInfo.notes && (
+            <p className="mt-3 text-xs text-slate-500">{installInfo.notes}</p>
+          )}
+          <p className="mt-3 text-xs text-slate-400">
+            After installing, click <strong>Refresh</strong> above to detect the new PHP version.
+          </p>
+          {/* Version quick-switch */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs text-slate-500">Other versions:</span>
+            {['8.1', '8.2', '8.3', '8.4'].map(v => (
+              <button
+                key={v}
+                onClick={() => fetchPHPInstallInfo(v).then(setInstallInfo).catch(() => {})}
+                className={`rounded px-2 py-0.5 text-xs ${installInfo.version === v ? 'bg-blue-600 text-white' : 'bg-[#334155] text-slate-400 hover:text-slate-200'}`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ============ Section 2: Per-Domain PHP Assignments ============ */}
       {installs.length > 0 && (

@@ -234,6 +234,16 @@ export interface PHPInstall {
 
 export const fetchPHP = () => api<PHPInstall[]>('/api/v1/php');
 
+export interface PHPInstallInfo {
+  distro: string;
+  version: string;
+  commands: string[];
+  packages: string[];
+  notes: string;
+}
+export const fetchPHPInstallInfo = (version?: string) =>
+  api<PHPInstallInfo>(`/api/v1/php/install-info${version ? `?version=${version}` : ''}`);
+
 export interface DomainPHP {
   domain: string;
   version: string;
