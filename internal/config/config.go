@@ -118,6 +118,7 @@ type MirrorConfig struct {
 
 type Domain struct {
 	Host        string           `yaml:"host" json:"host"`
+	IP          string           `yaml:"ip,omitempty" json:"ip,omitempty"` // dedicated IP for this domain
 	Aliases     []string         `yaml:"aliases,omitempty" json:"aliases,omitempty"`
 	Root        string           `yaml:"root,omitempty" json:"root,omitempty"`
 	Type        string           `yaml:"type" json:"type"`
@@ -148,6 +149,9 @@ func (d Domain) MarshalYAML() (any, error) {
 		"host": d.Host,
 		"type": d.Type,
 		"ssl":  map[string]string{"mode": d.SSL.Mode},
+	}
+	if d.IP != "" {
+		m["ip"] = d.IP
 	}
 	if d.Root != "" {
 		m["root"] = d.Root

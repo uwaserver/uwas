@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
-  fetchPHP, type DomainData, type DomainDetail, type CertInfo, type PHPInstall,
+  fetchPHP, fetchServerIPs, type DomainData, type DomainDetail, type CertInfo, type PHPInstall, type ServerIPInfo,
 } from '@/lib/api';
 
 /* ------------------------------------------------------------------ */
@@ -15,6 +15,7 @@ import {
 
 interface DomainFormState {
   host: string;
+  ip: string;
   type: string;
   root: string;
   ssl: string;
@@ -44,6 +45,7 @@ const redirectCodes = ['301', '302', '307', '308'] as const;
 
 const emptyForm: DomainFormState = {
   host: '',
+  ip: '',
   type: 'static',
   root: '',
   ssl: 'auto',
@@ -238,6 +240,9 @@ export default function Domains() {
   /* purge state */
   const [purgingHost, setPurgingHost] = useState<string | null>(null);
 
+  /* server IPs for IP dropdown */
+  const [serverIPs, setServerIPs] = useState<ServerIPInfo[]>([]);
+
   /* -------- data loading -------- */
 
   const loadDomains = useCallback(() => {
@@ -263,11 +268,18 @@ export default function Domains() {
       .catch(() => {});
   }, []);
 
+  const loadIPs = useCallback(() => {
+    fetchServerIPs()
+      .then(data => setServerIPs(data?.ips ?? []))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadDomains();
     loadCerts();
     loadPHP();
-  }, [loadDomains, loadCerts, loadPHP]);
+    loadIPs();
+  }, [loadDomains, loadCerts, loadPHP, loadIPs]);
 
   /* -------- expand row -------- */
 
@@ -350,6 +362,7 @@ export default function Domains() {
       const d = await fetchDomainDetail(host);
       const editForm: DomainFormState = {
         host: d.host,
+        ip: (d as any).ip ?? '',
         type: d.type,
         root: d.root || '',
         ssl: d.ssl?.mode ?? 'off',
@@ -392,6 +405,7 @@ export default function Domains() {
     /* Build API payload */
     const payload: Record<string, unknown> = {
       host: form.host.trim(),
+      ip: form.ip || undefined,
       type: form.type,
       ssl: { mode: form.ssl },
     };
@@ -494,7 +508,7 @@ export default function Domains() {
                 <th className="px-5 py-3 font-medium">Host</th>
                 <th className="px-5 py-3 font-medium">Type</th>
                 <th className="px-5 py-3 font-medium">SSL</th>
-                <th className="px-5 py-3 font-medium">Root / Target</th>
+                <th className="px-5 py-3 font-medium">IP</th>
                 <th className="px-5 py-3 font-medium">Status</th>
                 <th className="px-5 py-3 font-medium">Actions</th>
               </tr>
@@ -593,8 +607,8 @@ export default function Domains() {
                     className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
                 </FormField>
 
-                {/* Type + SSL row */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Type + SSL + IP row */}
+                <div className="grid grid-cols-3 gap-4">
                   <FormField label="Type" htmlFor="add-type">
                     <select id="add-type" value={form.type} onChange={e => patchField('type', e.target.value)} className={selectCls}>
                       {domainTypes.map(t => <option key={t} value={t}>{t}</option>)}
@@ -603,6 +617,16 @@ export default function Domains() {
                   <FormField label="SSL Mode" htmlFor="add-ssl">
                     <select id="add-ssl" value={form.ssl} onChange={e => patchField('ssl', e.target.value)} className={selectCls}>
                       {sslModes.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </FormField>
+                  <FormField label="IP Address" htmlFor="add-ip">
+                    <select id="add-ip" value={form.ip} onChange={e => patchField('ip', e.target.value)} className={selectCls}>
+                      <option value="">Shared (all IPs)</option>
+                      {serverIPs.filter(ip => ip.version === 4).map(ip => (
+                        <option key={ip.ip} value={ip.ip}>
+                          {ip.ip}{ip.primary ? ' (primary)' : ''} — {ip.interface}
+                        </option>
+                      ))}
                     </select>
                   </FormField>
                 </div>
@@ -809,7 +833,7 @@ function DomainRow({
         </td>
         <td className="px-5 py-3"><TypeBadge type={d.type} /></td>
         <td className="px-5 py-3"><SslBadge ssl={d.ssl} /></td>
-        <td className="px-5 py-3 font-mono text-xs text-slate-400">{d.root || '--'}</td>
+        <td className="px-5 py-3 font-mono text-xs text-slate-400">{d.ip || 'shared'}</td>
         <td className="px-5 py-3"><StatusDot active={true} /></td>
         <td className="px-5 py-3">
           {confirmDelete === d.host ? (

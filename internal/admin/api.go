@@ -418,6 +418,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	type domainInfo struct {
 		Host    string   `json:"host"`
+		IP      string   `json:"ip,omitempty"`
 		Aliases []string `json:"aliases"`
 		Type    string   `json:"type"`
 		SSL     string   `json:"ssl"`
@@ -429,6 +430,7 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	for _, d := range s.config.Domains {
 		domains = append(domains, domainInfo{
 			Host:    d.Host,
+			IP:      d.IP,
 			Aliases: d.Aliases,
 			Type:    d.Type,
 			SSL:     d.SSL.Mode,

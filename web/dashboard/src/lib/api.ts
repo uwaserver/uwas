@@ -61,6 +61,7 @@ export interface StatsData {
 
 export interface DomainData {
   host: string;
+  ip?: string;
   aliases: string[] | null;
   type: string;
   ssl: string;
