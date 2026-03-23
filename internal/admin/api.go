@@ -876,6 +876,25 @@ func (s *Server) notifyDomainChange() {
 	if s.onDomainChange != nil {
 		s.onDomainChange()
 	}
+	// Persist config to disk so changes survive restart.
+	s.persistConfig()
+}
+
+// persistConfig writes the current in-memory config to the YAML file.
+func (s *Server) persistConfig() {
+	if s.configPath == "" {
+		return
+	}
+	s.configMu.RLock()
+	data, err := yaml.Marshal(s.config)
+	s.configMu.RUnlock()
+	if err != nil {
+		s.logger.Error("failed to marshal config", "error", err)
+		return
+	}
+	if err := os.WriteFile(s.configPath, data, 0644); err != nil {
+		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
+	}
 }
 
 func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
@@ -901,6 +920,16 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Auto-create web root directory if root is set.
+	if d.Root != "" {
+		os.MkdirAll(d.Root, 0755)
+	} else if s.config.Global.WebRoot != "" {
+		// Default: {web_root}/{hostname}/public_html
+		root := filepath.Join(s.config.Global.WebRoot, d.Host, "public_html")
+		os.MkdirAll(root, 0755)
+		d.Root = root
+	}
+
 	s.config.Domains = append(s.config.Domains, d)
 	s.configMu.Unlock()
 

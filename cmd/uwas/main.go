@@ -13,6 +13,7 @@ func main() {
 	app.Register(&cli.ConfigCommand{})
 	app.Register(&cli.DomainCommand{})
 	app.Register(&cli.CacheCommand{})
+	app.Register(&cli.CertCommand{})
 	app.Register(&cli.StatusCommand{})
 	app.Register(&cli.ReloadCommand{})
 	app.Register(&cli.MigrateCommand{})
