@@ -188,7 +188,10 @@ func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path string `json:"path"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := filemanager.CreateDir(root, req.Path); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -326,7 +329,10 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 		Port  string `json:"port"`
 		Proto string `json:"proto"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if req.Port == "" {
 		jsonError(w, "port is required", http.StatusBadRequest)
 		return
@@ -345,7 +351,10 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 		Port  string `json:"port"`
 		Proto string `json:"proto"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if req.Port == "" {
 		jsonError(w, "port is required", http.StatusBadRequest)
 		return
@@ -443,7 +452,10 @@ func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Fingerprint string `json:"fingerprint"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	webRoot := "/var/www"
 	s.configMu.RLock()
