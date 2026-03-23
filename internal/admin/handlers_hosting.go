@@ -10,6 +10,8 @@ import (
 
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cronjob"
+	"github.com/uwaserver/uwas/internal/database"
+	"github.com/uwaserver/uwas/internal/dnschecker"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/middleware"
@@ -488,6 +490,84 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		"to":      info.LatestVersion,
 		"message": "Restart UWAS to use the new version",
 	})
+}
+
+// ============ Database ============
+
+func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, database.GetStatus())
+}
+
+func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) {
+	dbs, err := database.ListDatabases()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if dbs == nil {
+		dbs = []database.DBInfo{}
+	}
+	jsonResponse(w, dbs)
+}
+
+func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Name     string `json:"name"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+		Host     string `json:"host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		jsonError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if err := database.CreateDatabase(req.Name, req.User, req.Password, req.Host); err != nil {
+		jsonError(w, "create database: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("database created", "name", req.Name, "user", req.User)
+	jsonResponse(w, map[string]string{"status": "created", "name": req.Name, "user": req.User})
+}
+
+func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := database.DropDatabase(name, name, "localhost"); err != nil {
+		jsonError(w, "drop database: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("database dropped", "name", name)
+	jsonResponse(w, map[string]string{"status": "dropped", "name": name})
+}
+
+func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
+	st := database.GetStatus()
+	if st.Installed {
+		jsonResponse(w, map[string]string{"status": "already_installed", "version": st.Version})
+		return
+	}
+	output, err := database.InstallMySQL()
+	if err != nil {
+		jsonError(w, "install failed: "+err.Error()+"\n"+output, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "installed"})
+}
+
+// ============ DNS Checker ============
+
+func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	if domain == "" {
+		jsonError(w, "domain required", http.StatusBadRequest)
+		return
+	}
+	result := dnschecker.Check(domain)
+	jsonResponse(w, result)
 }
 
 // ============ Security Stats ============

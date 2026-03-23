@@ -14,6 +14,8 @@ import ConfigEditor from '@/pages/ConfigEditor';
 import Certificates from '@/pages/Certificates';
 import PHP from '@/pages/PHP';
 import Backups from '@/pages/Backups';
+import Database from '@/pages/Database';
+import DNS from '@/pages/DNS';
 import AuditLog from '@/pages/AuditLog';
 import UnknownDomains from '@/pages/UnknownDomains';
 import Users from '@/pages/Users';
@@ -65,6 +67,8 @@ export default function App() {
         <Route path="/certificates" element={<Certificates />} />
         <Route path="/php" element={<PHP />} />
         <Route path="/backups" element={<Backups />} />
+        <Route path="/database" element={<Database />} />
+        <Route path="/dns" element={<DNS />} />
         <Route path="/audit" element={<AuditLog />} />
         <Route path="/unknown-domains" element={<UnknownDomains />} />
         <Route path="/users" element={<Users />} />

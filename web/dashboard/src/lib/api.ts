@@ -378,6 +378,21 @@ export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${e
 export const addSSHKey = (domain: string, publicKey: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'POST', body: JSON.stringify({ public_key: publicKey }) });
 export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'DELETE', body: JSON.stringify({ fingerprint }) });
 
+// Database
+export interface DBStatus { installed: boolean; running: boolean; version: string; backend: string; }
+export interface DBInfo { name: string; user: string; password?: string; host: string; size?: string; tables?: number; }
+export const fetchDBStatus = () => api<DBStatus>('/api/v1/database/status');
+export const fetchDatabases = () => api<DBInfo[]>('/api/v1/database/list');
+export const createDatabase = (name: string, user?: string, password?: string) =>
+  api<{ status: string; name: string; user: string }>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password }) });
+export const dropDatabase = (name: string) =>
+  api<{ status: string }>(`/api/v1/database/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export const installDatabase = () => api<{ status: string }>('/api/v1/database/install', { method: 'POST' });
+
+// DNS
+export interface DNSResult { domain: string; a: string[]; aaaa: string[]; cname?: string; mx: string[]; ns: string[]; txt: string[]; points_here: boolean; server_ips: string[]; error?: string; }
+export const checkDNS = (domain: string) => api<DNSResult>(`/api/v1/dns/${encodeURIComponent(domain)}`);
+
 // Security
 export interface SecurityStats { waf_blocked: number; bot_blocked: number; rate_blocked: number; hotlink_blocked: number; total_blocked: number; }
 export interface BlockedRequest { time: string; ip: string; path: string; reason: string; ua: string; }
