@@ -116,6 +116,28 @@ func (s *ServeCommand) Run(args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// Check if another instance is already running.
+	if pid, ok := readAlivePID(cfg.Global.PIDFile); ok {
+		fmt.Println()
+		fmt.Println("  \033[33mUWAS is already running\033[0m")
+		fmt.Println()
+		fmt.Printf("    PID:       %d\n", pid)
+		fmt.Printf("    Config:    %s\n", cfgFile)
+		fmt.Printf("    HTTP:      %s\n", cfg.Global.HTTPListen)
+		if cfg.Global.HTTPSListen != "" {
+			fmt.Printf("    HTTPS:     %s\n", cfg.Global.HTTPSListen)
+		}
+		if cfg.Global.Admin.Enabled {
+			fmt.Printf("    Dashboard: http://%s/_uwas/dashboard/\n", cfg.Global.Admin.Listen)
+		}
+		fmt.Printf("    Domains:   %d configured\n", len(cfg.Domains))
+		fmt.Println()
+		fmt.Println("  Use \033[1muwas stop\033[0m to stop the running instance, or")
+		fmt.Println("  \033[1muwas serve -c other.yaml\033[0m to run with a different config.")
+		fmt.Println()
+		return nil
+	}
+
 	// CLI flag overrides
 	if *logLevel != "" {
 		cfg.Global.LogLevel = *logLevel
