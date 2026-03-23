@@ -184,6 +184,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/users", s.handleUserCreate)
 	s.mux.HandleFunc("DELETE /api/v1/users/{domain}", s.handleUserDelete)
 
+	// Database management
+	s.mux.HandleFunc("GET /api/v1/database/status", s.handleDBStatus)
+	s.mux.HandleFunc("GET /api/v1/database/list", s.handleDBList)
+	s.mux.HandleFunc("POST /api/v1/database/create", s.handleDBCreate)
+	s.mux.HandleFunc("DELETE /api/v1/database/{name}", s.handleDBDrop)
+	s.mux.HandleFunc("POST /api/v1/database/install", s.handleDBInstall)
+
+	// DNS checker
+	s.mux.HandleFunc("GET /api/v1/dns/{domain}", s.handleDNSCheck)
+
 	// WordPress installer
 	s.mux.HandleFunc("POST /api/v1/wordpress/install", s.handleWPInstall)
 	s.mux.HandleFunc("GET /api/v1/wordpress/install/status", s.handleWPInstallStatus)
