@@ -660,12 +660,12 @@ export default function Domains() {
                             }
                           }} className={selectCls}>
                             {phpInstalls.length === 0 && <option value="">No PHP detected</option>}
-                            {phpInstalls.map(p => {
-                              const sapiLabel = p.sapi === 'cgi-fcgi' ? 'CGI' : p.sapi === 'fpm-fcgi' ? 'FPM' : p.sapi?.toUpperCase() || '?';
-                              const status = p.running ? 'running' : 'stopped';
+                            {phpInstalls.filter(p => p.sapi !== 'cli').map((p, i) => {
+                              const sapiLabel = p.sapi === 'cgi-fcgi' ? 'FastCGI' : p.sapi === 'fpm-fcgi' ? 'FPM' : p.sapi;
+                              const addr = p.listen_addr || `127.0.0.1:${9000 + i}`;
                               return (
-                                <option key={p.listen_addr || p.version} value={p.listen_addr}>
-                                  PHP {p.version} {sapiLabel} — {p.listen_addr || 'not started'} ({status})
+                                <option key={p.binary || p.version} value={addr}>
+                                  PHP {p.version} ({sapiLabel}) — {addr}
                                 </option>
                               );
                             })}
