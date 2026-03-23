@@ -1379,11 +1379,13 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("SFTP user created", "domain", req.Domain, "username", user.Username)
 	jsonResponse(w, map[string]string{
-		"username": user.Username,
-		"domain":   user.Domain,
-		"password": password,
-		"home_dir": user.HomeDir,
-		"web_dir":  user.WebDir,
+		"username":  user.Username,
+		"domain":    user.Domain,
+		"password":  password,
+		"home_dir":  user.HomeDir,
+		"web_dir":   user.WebDir,
+		"server_ip": siteuser.GetServerIP(),
+		"port":      "22",
 	})
 }
 

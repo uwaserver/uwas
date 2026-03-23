@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -186,7 +187,7 @@ func chmodDir(path, mode string) {
 	exec.Command("chmod", mode, path).Run()
 }
 
-// ensureSFTPConfig appends a Match User block to sshd_config for chroot SFTP.
+// ensureSFTPConfig ensures sshd is configured for chroot SFTP and adds a Match block.
 func ensureSFTPConfig(username, chrootDir string) {
 	const sshdConfig = "/etc/ssh/sshd_config"
 
@@ -194,13 +195,38 @@ func ensureSFTPConfig(username, chrootDir string) {
 	if err != nil {
 		return
 	}
+	content := string(data)
 
-	marker := fmt.Sprintf("Match User %s", username)
-	if strings.Contains(string(data), marker) {
-		return // already configured
+	changed := false
+
+	// Ensure Subsystem sftp uses internal-sftp (required for ChrootDirectory)
+	if !strings.Contains(content, "Subsystem sftp internal-sftp") {
+		// Comment out existing Subsystem sftp line and add correct one
+		lines := strings.Split(content, "\n")
+		var newLines []string
+		foundSubsystem := false
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "Subsystem") && strings.Contains(trimmed, "sftp") && !strings.Contains(trimmed, "internal-sftp") {
+				newLines = append(newLines, "# "+line+" # disabled by UWAS")
+				newLines = append(newLines, "Subsystem sftp internal-sftp")
+				foundSubsystem = true
+			} else {
+				newLines = append(newLines, line)
+			}
+		}
+		if !foundSubsystem {
+			// No Subsystem sftp line at all — add one
+			newLines = append(newLines, "", "# Added by UWAS for chroot SFTP", "Subsystem sftp internal-sftp")
+		}
+		content = strings.Join(newLines, "\n")
+		changed = true
 	}
 
-	block := fmt.Sprintf(`
+	// Add Match User block if not present
+	marker := fmt.Sprintf("Match User %s", username)
+	if !strings.Contains(content, marker) {
+		block := fmt.Sprintf(`
 # UWAS SFTP user: %s
 Match User %s
     ChrootDirectory %s
@@ -208,14 +234,32 @@ Match User %s
     AllowTcpForwarding no
     X11Forwarding no
 `, username, username, chrootDir)
+		content += block
+		changed = true
+	}
 
-	f, err := os.OpenFile(sshdConfig, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
+	if !changed {
 		return
 	}
-	defer f.Close()
-	f.WriteString(block)
 
-	// Reload sshd
-	exec.Command("systemctl", "reload", "sshd").Run()
+	os.WriteFile(sshdConfig, []byte(content), 0644)
+
+	// Reload sshd — try both service names
+	if err := exec.Command("systemctl", "reload", "ssh").Run(); err != nil {
+		exec.Command("systemctl", "reload", "sshd").Run()
+	}
+}
+
+// GetServerIP returns the server's primary non-loopback IP.
+func GetServerIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "your-server-ip"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP.String()
+		}
+	}
+	return "your-server-ip"
 }
