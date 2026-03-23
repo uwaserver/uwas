@@ -70,6 +70,15 @@ func (s *ServeCommand) Run(args []string) error {
 		fmt.Println("  No configuration file found. Let's set up your server.")
 		fmt.Println()
 
+		// Check for conflicting web servers
+		if conflicts := DetectConflicts(); len(conflicts) > 0 {
+			if PrintConflicts(conflicts) {
+				OfferStopConflicts(conflicts)
+			} else {
+				fmt.Println()
+			}
+		}
+
 		hp := *httpPort
 		ap := *adminPort
 
