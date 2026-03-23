@@ -454,7 +454,7 @@ func (m *Manager) Detect() error {
 	patterns := candidatePaths()
 
 	var found []PHPInstall
-	seen := make(map[string]bool)
+	seen := make(map[string]bool) // resolved real path → already added
 
 	for _, pattern := range patterns {
 		matches, err := filepath.Glob(pattern)
@@ -466,10 +466,16 @@ func (m *Manager) Detect() error {
 			if err != nil {
 				continue
 			}
-			if seen[abs] {
+
+			// Resolve symlinks to deduplicate identical binaries.
+			real, err := filepath.EvalSymlinks(abs)
+			if err != nil {
+				real = abs
+			}
+			if seen[real] {
 				continue
 			}
-			seen[abs] = true
+			seen[real] = true
 
 			install, err := m.probe(abs)
 			if err != nil {

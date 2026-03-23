@@ -596,9 +596,17 @@ export default function PHP() {
                   onChange={e => setAssignVersion(e.target.value)}
                   className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
-                  {installs.map(i => (
-                    <option key={i.version} value={i.version}>PHP {i.version}</option>
-                  ))}
+                  {installs.filter(i => i.sapi !== 'cli').map(i => {
+                    const sapiLabel = i.sapi === 'cgi-fcgi' ? 'FastCGI' : i.sapi === 'fpm-fcgi' ? 'FPM' : i.sapi;
+                    return (
+                      <option key={i.binary} value={i.version}>
+                        PHP {i.version} ({sapiLabel}) — {i.binary.split('/').pop()}
+                      </option>
+                    );
+                  })}
+                  {installs.every(i => i.sapi === 'cli') && (
+                    <option value="" disabled>No FastCGI/FPM binaries found — install php-cgi or php-fpm</option>
+                  )}
                 </select>
               </div>
 
