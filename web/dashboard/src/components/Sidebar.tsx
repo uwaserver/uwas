@@ -19,6 +19,10 @@ import {
   Shield,
   ShieldAlert,
   Users,
+  FolderOpen,
+  Clock,
+  ShieldCheck,
+  Download,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -35,8 +39,12 @@ const links = [
   { to: '/php', label: 'PHP', icon: Cpu },
   { to: '/backups', label: 'Backups', icon: Archive },
   { to: '/users', label: 'SFTP Users', icon: Users },
+  { to: '/file-manager', label: 'File Manager', icon: FolderOpen },
+  { to: '/cron', label: 'Cron Jobs', icon: Clock },
+  { to: '/firewall', label: 'Firewall', icon: ShieldCheck },
   { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert },
   { to: '/audit', label: 'Audit Log', icon: Shield },
+  { to: '/updates', label: 'Updates', icon: Download },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

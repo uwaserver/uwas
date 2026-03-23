@@ -343,6 +343,46 @@ export const createUser = (domain: string) =>
 export const deleteUser = (domain: string) =>
   api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
+// WordPress
+export const installWordPress = (domain: string, dbHost?: string) =>
+  api<{ status: string }>('/api/v1/wordpress/install', { method: 'POST', body: JSON.stringify({ domain, db_host: dbHost || 'localhost' }) });
+export const fetchWPInstallStatus = () => api<{ status: string; domain?: string; admin_url?: string; db_name?: string; db_user?: string; db_pass?: string; output?: string; error?: string }>('/api/v1/wordpress/install/status');
+
+// File manager
+export interface FileEntry { name: string; path: string; is_dir: boolean; size: number; mod_time: string; mode: string; }
+export const fetchFiles = (domain: string, path?: string) => api<FileEntry[]>(`/api/v1/files/${encodeURIComponent(domain)}/list?path=${encodeURIComponent(path || '.')}`);
+export const readFile = (domain: string, path: string) => api<{ content: string }>(`/api/v1/files/${encodeURIComponent(domain)}/read?path=${encodeURIComponent(path)}`);
+export const writeFile = (domain: string, path: string, content: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/write`, { method: 'PUT', body: JSON.stringify({ path, content }) });
+export const deleteFile = (domain: string, path: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+export const createDir = (domain: string, path: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/mkdir`, { method: 'POST', body: JSON.stringify({ path }) });
+export const fetchDiskUsage = (domain: string) => api<{ domain: string; bytes: number; human: string }>(`/api/v1/files/${encodeURIComponent(domain)}/disk-usage`);
+
+// Cron
+export interface CronJob { schedule: string; command: string; domain: string; comment: string; }
+export const fetchCronJobs = () => api<CronJob[]>('/api/v1/cron');
+export const addCronJob = (job: { schedule: string; command: string; domain?: string; comment?: string }) => api<{ status: string }>('/api/v1/cron', { method: 'POST', body: JSON.stringify(job) });
+export const deleteCronJob = (schedule: string, command: string) => api<{ status: string }>('/api/v1/cron', { method: 'DELETE', body: JSON.stringify({ schedule, command }) });
+
+// Firewall
+export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; }
+export interface FirewallStatus { active: boolean; backend: string; rules: FirewallRule[]; }
+export const fetchFirewall = () => api<FirewallStatus>('/api/v1/firewall');
+export const firewallAllow = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto }) });
+export const firewallDeny = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto }) });
+export const firewallDeleteRule = (number: number) => api<{ status: string }>(`/api/v1/firewall/${number}`, { method: 'DELETE' });
+export const firewallEnable = () => api<{ status: string }>('/api/v1/firewall/enable', { method: 'POST' });
+export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });
+
+// SSH Keys
+export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`);
+export const addSSHKey = (domain: string, publicKey: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'POST', body: JSON.stringify({ public_key: publicKey }) });
+export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'DELETE', body: JSON.stringify({ fingerprint }) });
+
+// Self-update
+export interface UpdateInfo { current_version: string; latest_version: string; update_available: boolean; release_url: string; published_at: string; release_notes: string; download_url: string; }
+export const checkUpdate = () => api<UpdateInfo>('/api/v1/system/update-check');
+export const performUpdate = () => api<{ status: string; from: string; to: string; message: string }>('/api/v1/system/update', { method: 'POST' });
+
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {
   const params = token ? `?token=${encodeURIComponent(token)}` : '';

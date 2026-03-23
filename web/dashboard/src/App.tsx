@@ -17,6 +17,10 @@ import Backups from '@/pages/Backups';
 import AuditLog from '@/pages/AuditLog';
 import UnknownDomains from '@/pages/UnknownDomains';
 import Users from '@/pages/Users';
+import FileManager from '@/pages/FileManager';
+import CronJobs from '@/pages/CronJobs';
+import Firewall from '@/pages/Firewall';
+import Updates from '@/pages/Updates';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -63,6 +67,10 @@ export default function App() {
         <Route path="/audit" element={<AuditLog />} />
         <Route path="/unknown-domains" element={<UnknownDomains />} />
         <Route path="/users" element={<Users />} />
+        <Route path="/file-manager" element={<FileManager />} />
+        <Route path="/cron" element={<CronJobs />} />
+        <Route path="/firewall" element={<Firewall />} />
+        <Route path="/updates" element={<Updates />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 
