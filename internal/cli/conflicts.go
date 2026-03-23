@@ -189,12 +189,14 @@ func OfferPHPInstall() {
 	fmt.Println("    PHP is needed to serve WordPress, Laravel, and other PHP sites.")
 	fmt.Println()
 
-	versions := []string{"8.4", "8.3", "8.2"}
+	versions := []string{"8.5", "8.4", "8.3", "8.2"}
 	fmt.Println("    Available versions to install:")
 	for i, v := range versions {
 		tag := ""
-		if v == "8.4" {
+		if v == "8.5" {
 			tag = " \033[32m(latest)\033[0m"
+		} else if v == "8.4" {
+			tag = " \033[36m(stable)\033[0m"
 		} else if v == "8.3" {
 			tag = " \033[36m(LTS)\033[0m"
 		}
@@ -207,11 +209,13 @@ func OfferPHPInstall() {
 
 	var version string
 	switch strings.TrimSpace(choice) {
-	case "1", "8.4":
+	case "1", "8.5":
+		version = "8.5"
+	case "2", "8.4":
 		version = "8.4"
-	case "2", "8.3":
+	case "3", "8.3":
 		version = "8.3"
-	case "3", "8.2":
+	case "4", "8.2":
 		version = "8.2"
 	case "s", "S", "":
 		fmt.Println("  Skipped. You can install later with: uwas php install 8.3")
