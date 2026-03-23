@@ -48,6 +48,15 @@ type LogEntry struct {
 
 const maxLogEntries = 1000
 
+// phpInstallState tracks a background PHP installation.
+type phpInstallState struct {
+	Version  string `json:"version"`
+	Status   string `json:"status"` // "running", "done", "error"
+	Output   string `json:"output"`
+	Error    string `json:"error,omitempty"`
+	Distro   string `json:"distro"`
+}
+
 // Server is the admin REST API server.
 type Server struct {
 	config         *config.Config
@@ -69,6 +78,10 @@ type Server struct {
 	mcpSrv    *mcp.Server
 	tlsMgr    *uwastls.Manager
 	unknownHT *router.UnknownHostTracker
+
+	// PHP install state
+	phpInstallMu     sync.Mutex
+	phpInstallStatus *phpInstallState
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -128,6 +141,8 @@ func (s *Server) registerRoutes() {
 	// PHP manager
 	s.mux.HandleFunc("GET /api/v1/php", s.handlePHPList)
 	s.mux.HandleFunc("GET /api/v1/php/install-info", s.handlePHPInstallInfo)
+	s.mux.HandleFunc("POST /api/v1/php/install", s.handlePHPInstall)
+	s.mux.HandleFunc("GET /api/v1/php/install/status", s.handlePHPInstallStatus)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/config", s.handlePHPConfig)
 	s.mux.HandleFunc("PUT /api/v1/php/{version}/config", s.handlePHPConfigUpdate)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/extensions", s.handlePHPExtensions)
@@ -459,6 +474,76 @@ func (s *Server) handlePHPInstallInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info := phpmanager.GetInstallInfo(version)
 	jsonResponse(w, info)
+}
+
+func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Version == "" {
+		req.Version = "8.3"
+	}
+
+	s.phpInstallMu.Lock()
+	if s.phpInstallStatus != nil && s.phpInstallStatus.Status == "running" {
+		s.phpInstallMu.Unlock()
+		jsonError(w, "install already in progress: PHP "+s.phpInstallStatus.Version, http.StatusConflict)
+		return
+	}
+
+	info := phpmanager.GetInstallInfo(req.Version)
+	s.phpInstallStatus = &phpInstallState{
+		Version: req.Version,
+		Status:  "running",
+		Distro:  info.Distro,
+	}
+	s.phpInstallMu.Unlock()
+
+	s.logger.Info("starting PHP install", "version", req.Version, "distro", info.Distro)
+
+	// Run in background
+	go func() {
+		output, err := phpmanager.RunInstall(req.Version)
+
+		s.phpInstallMu.Lock()
+		s.phpInstallStatus.Output = output
+		if err != nil {
+			s.phpInstallStatus.Status = "error"
+			s.phpInstallStatus.Error = err.Error()
+			s.logger.Error("PHP install failed", "version", req.Version, "error", err)
+		} else {
+			s.phpInstallStatus.Status = "done"
+			s.logger.Info("PHP install complete", "version", req.Version)
+			// Re-detect PHP binaries
+			if s.phpMgr != nil {
+				s.phpMgr.Detect()
+			}
+		}
+		s.phpInstallMu.Unlock()
+	}()
+
+	jsonResponse(w, map[string]string{
+		"status":  "started",
+		"version": req.Version,
+		"distro":  info.Distro,
+	})
+}
+
+func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) {
+	s.phpInstallMu.Lock()
+	state := s.phpInstallStatus
+	s.phpInstallMu.Unlock()
+
+	if state == nil {
+		jsonResponse(w, map[string]string{"status": "idle"})
+		return
+	}
+	jsonResponse(w, state)
 }
 
 func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {
