@@ -30,6 +30,7 @@ import (
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/siteuser"
 	"github.com/uwaserver/uwas/internal/router"
+	"github.com/uwaserver/uwas/internal/serverip"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 )
 
@@ -224,6 +225,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyList)
 	s.mux.HandleFunc("POST /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyAdd)
 	s.mux.HandleFunc("DELETE /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyDelete)
+
+	// Server IPs
+	s.mux.HandleFunc("GET /api/v1/system/ips", s.handleServerIPs)
 
 	// Self-update
 	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
@@ -1384,7 +1388,7 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		"password":  password,
 		"home_dir":  user.HomeDir,
 		"web_dir":   user.WebDir,
-		"server_ip": siteuser.GetServerIP(),
+		"server_ip": serverip.PublicIP(),
 		"port":      "22",
 	})
 }

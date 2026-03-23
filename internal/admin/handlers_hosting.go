@@ -12,6 +12,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/dnschecker"
+	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/middleware"
@@ -568,6 +569,17 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	result := dnschecker.Check(domain)
 	jsonResponse(w, result)
+}
+
+// ============ Server IPs ============
+
+func (s *Server) handleServerIPs(w http.ResponseWriter, r *http.Request) {
+	ips := serverip.DetectAll()
+	pub := serverip.PublicIP()
+	jsonResponse(w, map[string]any{
+		"ips":       ips,
+		"public_ip": pub,
+	})
 }
 
 // ============ Security Stats ============
