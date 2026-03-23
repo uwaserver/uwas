@@ -185,6 +185,20 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			s.tlsMgr.UpdateDomains(s.config.Domains)
 			// Obtain certs for any new auto-SSL domains.
 			go s.tlsMgr.ObtainCerts(s.ctx)
+
+			// Start HTTPS listener dynamically if a new SSL domain was added
+			// and HTTPS isn't running yet.
+			if s.httpsSrv == nil {
+				for _, d := range s.config.Domains {
+					if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
+						s.logger.Info("SSL domain added — starting HTTPS listener")
+						if err := s.startHTTPS(); err != nil {
+							s.logger.Error("failed to start HTTPS", "error", err)
+						}
+						break
+					}
+				}
+			}
 		})
 	}
 
@@ -369,6 +383,7 @@ func (s *Server) Start() error {
 	s.tlsMgr.LoadExistingCerts()
 	s.tlsMgr.LoadManualCerts()
 
+	// Start HTTPS if any domain has SSL or HTTPS listen is explicitly configured.
 	hasSSL := false
 	for _, d := range s.config.Domains {
 		if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
