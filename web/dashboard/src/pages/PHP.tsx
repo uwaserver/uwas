@@ -401,8 +401,8 @@ export default function PHP() {
                 <div className="flex items-start justify-between">
                   <div>
                     <span className="text-2xl font-bold text-slate-100">{inst.version}</span>
-                    <span className="ml-2 rounded bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-400">
-                      {inst.sapi}
+                    <span className="ml-2 rounded bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-400" title={inst.sapi}>
+                      {inst.sapi === 'cgi-fcgi' ? 'FastCGI' : inst.sapi === 'fpm-fcgi' ? 'FPM' : inst.sapi === 'cli' ? 'CLI (not usable)' : inst.sapi}
                     </span>
                   </div>
                   <span className="flex items-center gap-1.5">
