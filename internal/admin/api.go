@@ -180,6 +180,41 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/users", s.handleUserCreate)
 	s.mux.HandleFunc("DELETE /api/v1/users/{domain}", s.handleUserDelete)
 
+	// WordPress installer
+	s.mux.HandleFunc("POST /api/v1/wordpress/install", s.handleWPInstall)
+	s.mux.HandleFunc("GET /api/v1/wordpress/install/status", s.handleWPInstallStatus)
+
+	// File manager
+	s.mux.HandleFunc("GET /api/v1/files/{domain}/list", s.handleFileList)
+	s.mux.HandleFunc("GET /api/v1/files/{domain}/read", s.handleFileRead)
+	s.mux.HandleFunc("PUT /api/v1/files/{domain}/write", s.handleFileWrite)
+	s.mux.HandleFunc("DELETE /api/v1/files/{domain}/delete", s.handleFileDelete)
+	s.mux.HandleFunc("POST /api/v1/files/{domain}/mkdir", s.handleFileMkdir)
+	s.mux.HandleFunc("POST /api/v1/files/{domain}/upload", s.handleFileUpload)
+	s.mux.HandleFunc("GET /api/v1/files/{domain}/disk-usage", s.handleDiskUsage)
+
+	// Cron jobs
+	s.mux.HandleFunc("GET /api/v1/cron", s.handleCronList)
+	s.mux.HandleFunc("POST /api/v1/cron", s.handleCronAdd)
+	s.mux.HandleFunc("DELETE /api/v1/cron", s.handleCronDelete)
+
+	// Firewall
+	s.mux.HandleFunc("GET /api/v1/firewall", s.handleFirewallStatus)
+	s.mux.HandleFunc("POST /api/v1/firewall/allow", s.handleFirewallAllow)
+	s.mux.HandleFunc("POST /api/v1/firewall/deny", s.handleFirewallDeny)
+	s.mux.HandleFunc("DELETE /api/v1/firewall/{number}", s.handleFirewallDelete)
+	s.mux.HandleFunc("POST /api/v1/firewall/enable", s.handleFirewallEnable)
+	s.mux.HandleFunc("POST /api/v1/firewall/disable", s.handleFirewallDisable)
+
+	// SSH keys
+	s.mux.HandleFunc("GET /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyList)
+	s.mux.HandleFunc("POST /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyAdd)
+	s.mux.HandleFunc("DELETE /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyDelete)
+
+	// Self-update
+	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
+	s.mux.HandleFunc("POST /api/v1/system/update", s.handleUpdate)
+
 	// MCP endpoints
 	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
 	s.mux.HandleFunc("POST /api/v1/mcp/call", s.handleMCPCall)
