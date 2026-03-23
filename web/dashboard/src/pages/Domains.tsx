@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from
 import {
   Globe, X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
-  AlertTriangle, Layers, Settings, Link,
+  AlertTriangle, Layers, Settings, Link, Pencil,
 } from 'lucide-react';
 import {
-  fetchDomains, addDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
-  type DomainData, type DomainDetail, type CertInfo,
+  fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
+  fetchPHP, type DomainData, type DomainDetail, type CertInfo, type PHPInstall,
 } from '@/lib/api';
 
 /* ------------------------------------------------------------------ */
@@ -224,11 +224,16 @@ export default function Domains() {
   /* delete confirmation */
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  /* add form state */
+  /* add/edit form state */
   const [showAdd, setShowAdd] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateName>(null);
   const [form, setForm] = useState<DomainFormState>({ ...emptyForm });
   const [submitting, setSubmitting] = useState(false);
+  const [editingHost, setEditingHost] = useState<string | null>(null);
+
+  /* PHP installs for FPM dropdown */
+  const [phpInstalls, setPhpInstalls] = useState<PHPInstall[]>([]);
+  const [phpCustomInput, setPhpCustomInput] = useState(false);
 
   /* purge state */
   const [purgingHost, setPurgingHost] = useState<string | null>(null);
@@ -252,10 +257,17 @@ export default function Domains() {
       .catch(() => {});
   }, []);
 
+  const loadPHP = useCallback(() => {
+    fetchPHP()
+      .then(setPhpInstalls)
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadDomains();
     loadCerts();
-  }, [loadDomains, loadCerts]);
+    loadPHP();
+  }, [loadDomains, loadCerts, loadPHP]);
 
   /* -------- expand row -------- */
 
@@ -325,9 +337,44 @@ export default function Domains() {
 
   const openAddModal = () => {
     setShowAdd(true);
+    setEditingHost(null);
     setSelectedTemplate(null);
     setForm({ ...emptyForm });
+    setPhpCustomInput(false);
     setStatus(null);
+  };
+
+  const startEdit = async (host: string) => {
+    setStatus(null);
+    try {
+      const d = await fetchDomainDetail(host);
+      const editForm: DomainFormState = {
+        host: d.host,
+        type: d.type,
+        root: d.root || '',
+        ssl: d.ssl,
+        cacheEnabled: d.cache?.enabled ?? false,
+        cacheTTL: String(d.cache?.ttl ?? 3600),
+        phpFpmAddress: d.php?.fpm_address ?? '',
+        phpIndexFiles: d.php?.index_files?.join(', ') ?? 'index.php,index.html',
+        proxyUpstreams: d.proxy?.upstreams?.join(', ') ?? '',
+        proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
+        redirectTarget: d.redirect?.target ?? '',
+        redirectCode: String(d.redirect?.status_code ?? 301),
+        blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
+        wafEnabled: d.security?.waf ?? false,
+        htaccessEnabled: d.htaccess?.enabled ?? false,
+      };
+      /* Determine if the PHP address matches a known install */
+      const knownAddr = phpInstalls.some(p => p.listen_addr === editForm.phpFpmAddress);
+      setPhpCustomInput(!knownAddr && editForm.phpFpmAddress !== '');
+      setForm(editForm);
+      setEditingHost(host);
+      setSelectedTemplate(editForm.type === 'php' ? 'wordpress' : editForm.type === 'proxy' ? 'proxy' : editForm.type === 'redirect' ? 'redirect' : 'static');
+      setShowAdd(true);
+    } catch (e) {
+      setStatus({ ok: false, message: `Failed to load domain details: ${(e as Error).message}` });
+    }
   };
 
   /* -------- add domain -------- */
@@ -387,10 +434,17 @@ export default function Domains() {
     }
 
     try {
-      await addDomain(payload);
-      setStatus({ ok: true, message: `Domain "${form.host.trim()}" added successfully` });
+      if (editingHost) {
+        await updateDomain(editingHost, payload);
+        setStatus({ ok: true, message: `Domain "${editingHost}" updated successfully` });
+      } else {
+        await addDomain(payload);
+        setStatus({ ok: true, message: `Domain "${form.host.trim()}" added successfully` });
+      }
       setForm({ ...emptyForm });
       setSelectedTemplate(null);
+      setEditingHost(null);
+      setPhpCustomInput(false);
       setShowAdd(false);
       loadDomains();
     } catch (e) {
@@ -466,6 +520,7 @@ export default function Domains() {
                     confirmDelete={confirmDelete}
                     purgingHost={purgingHost}
                     onToggle={() => toggleExpand(d.host)}
+                    onEdit={startEdit}
                     onDelete={handleDelete}
                     onConfirmDelete={setConfirmDelete}
                     onPurge={handlePurgeDomain}
@@ -480,18 +535,18 @@ export default function Domains() {
       {/* ============ Add Domain Modal ============ */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-10">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setShowAdd(false)} />
+          <div className="absolute inset-0 bg-black/60" onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }} />
           <div className="relative z-10 w-full max-w-2xl rounded-xl border border-[#334155] bg-[#0f172a] p-6 shadow-2xl">
             {/* Modal header */}
             <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-100">Add Domain</h2>
-              <button onClick={() => setShowAdd(false)} className="rounded-md p-1 text-slate-400 hover:text-slate-200">
+              <h2 className="text-lg font-bold text-slate-100">{editingHost ? 'Edit Domain' : 'Add Domain'}</h2>
+              <button onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }} className="rounded-md p-1 text-slate-400 hover:text-slate-200">
                 <X size={18} />
               </button>
             </div>
 
-            {/* Template quick-add */}
-            {!selectedTemplate && (
+            {/* Template quick-add (hidden when editing) */}
+            {!selectedTemplate && !editingHost && (
               <>
                 <p className="mb-4 text-sm text-slate-400">Quick Add &mdash; choose a template or start from scratch</p>
                 <div className="mb-6 grid grid-cols-2 gap-3">
@@ -524,14 +579,19 @@ export default function Domains() {
                 {/* Template indicator */}
                 <div className="flex items-center gap-2 rounded-md bg-[#1e293b] px-3 py-2 text-xs text-slate-400">
                   <Settings size={12} />
-                  Template: <span className="font-medium text-slate-200">{templates[selectedTemplate]?.label ?? 'Custom'}</span>
-                  <button type="button" onClick={() => { setSelectedTemplate(null); setForm({ ...emptyForm }); }} className="ml-auto text-slate-500 hover:text-slate-300">Change</button>
+                  {editingHost ? (
+                    <>Editing: <span className="font-mono font-medium text-slate-200">{editingHost}</span></>
+                  ) : (
+                    <>Template: <span className="font-medium text-slate-200">{templates[selectedTemplate]?.label ?? 'Custom'}</span>
+                    <button type="button" onClick={() => { setSelectedTemplate(null); setForm({ ...emptyForm }); }} className="ml-auto text-slate-500 hover:text-slate-300">Change</button></>
+                  )}
                 </div>
 
                 {/* Host */}
                 <FormField label="Host" htmlFor="add-host">
                   <input id="add-host" type="text" value={form.host} onChange={e => patchField('host', e.target.value)}
-                    placeholder="example.com" required autoFocus className={inputCls} />
+                    placeholder="example.com" required autoFocus disabled={!!editingHost}
+                    className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
                 </FormField>
 
                 {/* Type + SSL row */}
@@ -578,8 +638,35 @@ export default function Domains() {
                     <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-purple-400"><FileCode size={14} /> PHP Configuration</h3>
                     <div className="space-y-3">
                       <FormField label="FPM Address" htmlFor="add-php-fpm">
-                        <input id="add-php-fpm" type="text" value={form.phpFpmAddress} onChange={e => patchField('phpFpmAddress', e.target.value)}
-                          placeholder="127.0.0.1:9000" className={inputCls} />
+                        {phpCustomInput ? (
+                          <div className="flex gap-2">
+                            <input id="add-php-fpm" type="text" value={form.phpFpmAddress} onChange={e => patchField('phpFpmAddress', e.target.value)}
+                              placeholder="127.0.0.1:9000" className={inputCls} />
+                            {phpInstalls.length > 0 && (
+                              <button type="button" onClick={() => { setPhpCustomInput(false); patchField('phpFpmAddress', phpInstalls[0]?.listen_addr ?? ''); }}
+                                className="shrink-0 rounded-md bg-[#334155] px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-[#475569]">
+                                List
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <select id="add-php-fpm" value={form.phpFpmAddress} onChange={e => {
+                            if (e.target.value === '__custom__') {
+                              setPhpCustomInput(true);
+                              patchField('phpFpmAddress', '');
+                            } else {
+                              patchField('phpFpmAddress', e.target.value);
+                            }
+                          }} className={selectCls}>
+                            {phpInstalls.length === 0 && <option value="">No PHP detected</option>}
+                            {phpInstalls.map(p => (
+                              <option key={p.listen_addr} value={p.listen_addr}>
+                                PHP {p.version} ({p.listen_addr})
+                              </option>
+                            ))}
+                            <option value="__custom__">Custom...</option>
+                          </select>
+                        )}
                       </FormField>
                       <FormField label="Index Files (comma-separated)" htmlFor="add-php-index">
                         <input id="add-php-index" type="text" value={form.phpIndexFiles} onChange={e => patchField('phpIndexFiles', e.target.value)}
@@ -648,13 +735,13 @@ export default function Domains() {
 
                 {/* Submit */}
                 <div className="flex justify-end gap-3 pt-2">
-                  <button type="button" onClick={() => setShowAdd(false)}
+                  <button type="button" onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }}
                     className="rounded-md bg-[#334155] px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-[#475569]">
                     Cancel
                   </button>
                   <button type="submit" disabled={submitting || !form.host.trim()}
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
-                    {submitting ? 'Adding...' : 'Add Domain'}
+                    {submitting ? (editingHost ? 'Updating...' : 'Adding...') : (editingHost ? 'Update Domain' : 'Add Domain')}
                   </button>
                 </div>
               </form>
@@ -679,6 +766,7 @@ interface DomainRowProps {
   confirmDelete: string | null;
   purgingHost: string | null;
   onToggle: () => void;
+  onEdit: (host: string) => void;
   onDelete: (host: string) => void;
   onConfirmDelete: (host: string | null) => void;
   onPurge: (host: string) => void;
@@ -693,6 +781,7 @@ function DomainRow({
   confirmDelete,
   purgingHost,
   onToggle,
+  onEdit,
   onDelete,
   onConfirmDelete,
   onPurge,
@@ -724,13 +813,22 @@ function DomainRow({
               <button onClick={() => onConfirmDelete(null)} className="rounded bg-[#334155] px-2 py-1 text-xs font-medium text-slate-300 transition hover:bg-[#475569]">Cancel</button>
             </div>
           ) : (
-            <button
-              onClick={e => { e.stopPropagation(); onConfirmDelete(d.host); }}
-              className="rounded p-1.5 text-slate-500 transition hover:bg-red-500/10 hover:text-red-400"
-              title="Delete domain"
-            >
-              <Trash2 size={14} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={e => { e.stopPropagation(); onEdit(d.host); }}
+                className="rounded p-1.5 text-slate-500 transition hover:bg-blue-500/10 hover:text-blue-400"
+                title="Edit domain"
+              >
+                <Pencil size={14} />
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); onConfirmDelete(d.host); }}
+                className="rounded p-1.5 text-slate-500 transition hover:bg-red-500/10 hover:text-red-400"
+                title="Delete domain"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           )}
         </td>
       </tr>

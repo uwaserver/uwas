@@ -119,6 +119,7 @@ export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/c
 
 export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
 export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
+export const updateDomain = (host: string, domain: Record<string, unknown>) => api<DomainData>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'PUT', body: JSON.stringify(domain) });
 export const deleteDomain = (host: string) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
 
 export interface DomainDetail {
