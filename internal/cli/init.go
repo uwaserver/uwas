@@ -71,7 +71,7 @@ func generateAPIKey() string {
 
 // ensureDefaultConfig creates the default config directory and file if they
 // don't exist. Returns the config path.
-func ensureDefaultConfig(httpPort, adminPort, adminBind string) (string, error) {
+func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot string) (string, error) {
 	dir := uwasDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create config dir: %w", err)
@@ -82,10 +82,9 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind string) (string, error) 
 		os.MkdirAll(filepath.Join(dir, sub), 0755)
 	}
 
-	// Create www directory with a default page
-	wwwDir := filepath.Join(dir, "www")
-	os.MkdirAll(wwwDir, 0755)
-	indexPath := filepath.Join(wwwDir, "index.html")
+	// Create web root with a default page
+	os.MkdirAll(webRoot, 0755)
+	indexPath := filepath.Join(webRoot, "index.html")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 		os.WriteFile(indexPath, []byte(defaultIndexHTML), 0644)
 	}
@@ -97,7 +96,8 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind string) (string, error) 
 
 	// Generate config with provided ports
 	apiKey := generateAPIKey()
-	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, dir)
+
+	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, dir, webRoot)
 
 	if err := os.WriteFile(cfgPath, []byte(configContent), 0644); err != nil {
 		return "", fmt.Errorf("write default config: %w", err)
@@ -111,7 +111,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind string) (string, error) 
 	fmt.Printf("\n  %s Created default configuration\n", colorize("*", "green"))
 	fmt.Printf("    Config:    %s\n", cfgPath)
 	fmt.Printf("    API Key:   %s\n", apiKey)
-	fmt.Printf("    Web Root:  %s\n", wwwDir)
+	fmt.Printf("    Web Root:  %s\n", webRoot)
 	dashHost := adminBind
 	if dashHost == "0.0.0.0" {
 		dashHost = "127.0.0.1"
@@ -121,9 +121,9 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind string) (string, error) 
 	return cfgPath, nil
 }
 
-func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, baseDir string) string {
+func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, baseDir, webRoot string) string {
 	// Normalize paths for the config (use forward slashes)
-	wwwDir := filepath.ToSlash(filepath.Join(baseDir, "www"))
+	wwwDir := filepath.ToSlash(webRoot)
 	certsDir := filepath.ToSlash(filepath.Join(baseDir, "certs"))
 	cacheDir := filepath.ToSlash(filepath.Join(baseDir, "cache"))
 	backupsDir := filepath.ToSlash(filepath.Join(baseDir, "backups"))
@@ -139,6 +139,7 @@ global:
   worker_count: auto
   max_connections: 65536
   http_listen: "%s"
+  web_root: "%s"
   log_level: info
   log_format: text
 
@@ -190,7 +191,7 @@ domains:
       blocked_paths:
         - ".git"
         - ".env"
-`, listenAddr, adminAddr, apiKey,
+`, listenAddr, wwwDir, adminAddr, apiKey,
 		certsDir, cacheDir, backupsDir,
 		httpPort, httpPort, wwwDir)) + "\n"
 }

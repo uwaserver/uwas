@@ -20,6 +20,7 @@ type GlobalConfig struct {
 	HTTPSListen    string         `yaml:"https_listen"`
 	HTTP3Enabled   bool           `yaml:"http3"`
 	PIDFile        string         `yaml:"pid_file"`
+	WebRoot        string         `yaml:"web_root"`
 	LogLevel       string         `yaml:"log_level"`
 	LogFormat      string         `yaml:"log_format"`
 	TrustedProxies []string       `yaml:"trusted_proxies"`

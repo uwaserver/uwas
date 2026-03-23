@@ -20,6 +20,9 @@ func applyDefaults(cfg *Config) {
 	if g.PIDFile == "" {
 		g.PIDFile = "/var/run/uwas.pid"
 	}
+	if g.WebRoot == "" {
+		g.WebRoot = "/var/www"
+	}
 	if g.LogLevel == "" {
 		g.LogLevel = "info"
 	}
