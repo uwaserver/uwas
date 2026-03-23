@@ -98,11 +98,11 @@ func TestHandleDomainDetailWithFullDomain(t *testing.T) {
 
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["Host"] != "detailed.com" {
-		t.Errorf("host = %v, want detailed.com", body["Host"])
+	if body["host"] != "detailed.com" {
+		t.Errorf("host = %v, want detailed.com", body["host"])
 	}
-	if body["Root"] != "/var/www/detailed" {
-		t.Errorf("root = %v, want /var/www/detailed", body["Root"])
+	if body["root"] != "/var/www/detailed" {
+		t.Errorf("root = %v, want /var/www/detailed", body["root"])
 	}
 }
 

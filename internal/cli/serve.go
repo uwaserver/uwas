@@ -80,10 +80,34 @@ func (s *ServeCommand) Run(args []string) error {
 			ap = promptWithDefault("  Admin port", "9443")
 		}
 
+		// Ask about admin bind address
+		adminBind := "0.0.0.0"
+		fmt.Println()
+		fmt.Println("  The admin dashboard lets you manage domains, view logs, and monitor your server.")
+		fmt.Println("  Binding to \033[1m0.0.0.0\033[0m makes it accessible from any IP (for remote servers).")
+		fmt.Println("  Binding to \033[1m127.0.0.1\033[0m restricts it to localhost only.")
+		adminBind = promptWithDefault("  Admin bind address", "0.0.0.0")
+
+		// Explain the API key
+		fmt.Println()
+		fmt.Println("  \033[33m!\033[0m An API key will be generated to protect your dashboard and API.")
+		fmt.Println("    \033[1mSave this key\033[0m — you'll need it to log into the dashboard and make API calls.")
+		fmt.Println("    It will also be stored in \033[1m~/.uwas/.env\033[0m as UWAS_ADMIN_KEY.")
+
 		var err error
-		cfgFile, err = ensureDefaultConfig(hp, ap)
+		cfgFile, err = ensureDefaultConfig(hp, ap, adminBind)
 		if err != nil {
 			return fmt.Errorf("setup: %w", err)
+		}
+
+		// Ask about daemon mode
+		if !*daemon {
+			fmt.Println()
+			daemonChoice := promptWithDefault("  Run as background daemon? (y/n)", "n")
+			if strings.EqualFold(daemonChoice, "y") || strings.EqualFold(daemonChoice, "yes") {
+				fmt.Println("  Starting UWAS in background...")
+				return daemonize(filterArg(os.Args[1:], "-d"))
+			}
 		}
 	}
 
@@ -109,6 +133,16 @@ func (s *ServeCommand) Run(args []string) error {
 	srv := server.New(cfg, log)
 	srv.SetConfigPath(cfgFile)
 	return srv.Start()
+}
+
+// filterArg ensures the given flag is present in args, appending it if missing.
+func filterArg(args []string, flag string) []string {
+	for _, a := range args {
+		if a == flag {
+			return args
+		}
+	}
+	return append(args, flag)
 }
 
 // promptWithDefault reads a line from stdin with a default value.

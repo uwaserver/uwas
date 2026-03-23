@@ -345,11 +345,10 @@ func TestAddDomain(t *testing.T) {
 		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount+1)
 	}
 	// Verify the response body contains the new host.
-	// config.Domain uses yaml tags only; json encodes with Go field names.
 	var created map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &created)
-	if created["Host"] != "new.com" {
-		t.Errorf("created host = %v, want new.com", created["Host"])
+	if created["host"] != "new.com" {
+		t.Errorf("created host = %v, want new.com", created["host"])
 	}
 }
 
@@ -737,8 +736,8 @@ func TestDomainDetailFound(t *testing.T) {
 
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["Host"] != "example.com" {
-		t.Errorf("host = %v, want example.com", body["Host"])
+	if body["host"] != "example.com" {
+		t.Errorf("host = %v, want example.com", body["host"])
 	}
 }
 

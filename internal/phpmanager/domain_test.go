@@ -255,7 +255,7 @@ func TestStopDomainNotRunning(t *testing.T) {
 func TestStartDomainAlreadyRunning(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 	m.AssignDomain("blog.com", "8.4")
 
@@ -362,7 +362,7 @@ func TestBuildDomainINIOverridesOnly(t *testing.T) {
 func TestDomainChangeCallback(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	var calledDomain, calledAddr string
@@ -408,7 +408,7 @@ func TestAutoStartAllEmpty(t *testing.T) {
 func TestAutoStartAllErrors(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/nonexistent/php-cgi"},
+		{Version: "8.4.19", Binary: "/nonexistent/php-cgi", SAPI: "cgi-fcgi"},
 	}
 
 	m.AssignDomain("blog.com", "8.4")

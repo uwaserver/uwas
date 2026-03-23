@@ -181,6 +181,10 @@ func (m *Manager) StartDomain(domain string) error {
 		m.domainMu.Unlock()
 		return fmt.Errorf("PHP %s not found", inst.version)
 	}
+	if phpInst.SAPI != "cgi-fcgi" && phpInst.SAPI != "fpm-fcgi" {
+		m.domainMu.Unlock()
+		return fmt.Errorf("PHP %s binary %s is %s, not cgi-fcgi — install php-cgi or php-fpm", inst.version, phpInst.Binary, phpInst.SAPI)
+	}
 
 	// Build command args.
 	args := []string{"-b", inst.listenAddr}
@@ -623,12 +627,23 @@ func parseExtensions(output string) []string {
 func (m *Manager) findInstall(version string) (PHPInstall, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	var fallback PHPInstall
+	hasFallback := false
+
 	for _, inst := range m.installations {
 		if inst.Version == version || strings.HasPrefix(inst.Version, version) {
-			return inst, true
+			// Prefer cgi-fcgi or fpm-fcgi over cli.
+			if inst.SAPI == "cgi-fcgi" || inst.SAPI == "fpm-fcgi" {
+				return inst, true
+			}
+			if !hasFallback {
+				fallback = inst
+				hasFallback = true
+			}
 		}
 	}
-	return PHPInstall{}, false
+	return fallback, hasFallback
 }
 
 // GetConfig reads key php.ini settings for the given PHP version.
@@ -753,6 +768,9 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	inst, ok := m.findInstall(version)
 	if !ok {
 		return fmt.Errorf("PHP %s not found", version)
+	}
+	if inst.SAPI != "cgi-fcgi" && inst.SAPI != "fpm-fcgi" {
+		return fmt.Errorf("PHP %s binary %s is %s, not cgi-fcgi — install php-cgi or php-fpm", version, inst.Binary, inst.SAPI)
 	}
 
 	cmd := m.execCommand(inst.Binary, "-b", listenAddr)

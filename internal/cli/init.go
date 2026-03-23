@@ -71,7 +71,7 @@ func generateAPIKey() string {
 
 // ensureDefaultConfig creates the default config directory and file if they
 // don't exist. Returns the config path.
-func ensureDefaultConfig(httpPort, adminPort string) (string, error) {
+func ensureDefaultConfig(httpPort, adminPort, adminBind string) (string, error) {
 	dir := uwasDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create config dir: %w", err)
@@ -97,7 +97,7 @@ func ensureDefaultConfig(httpPort, adminPort string) (string, error) {
 
 	// Generate config with provided ports
 	apiKey := generateAPIKey()
-	configContent := generateDefaultConfig(httpPort, adminPort, apiKey, dir)
+	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, dir)
 
 	if err := os.WriteFile(cfgPath, []byte(configContent), 0644); err != nil {
 		return "", fmt.Errorf("write default config: %w", err)
@@ -112,12 +112,16 @@ func ensureDefaultConfig(httpPort, adminPort string) (string, error) {
 	fmt.Printf("    Config:    %s\n", cfgPath)
 	fmt.Printf("    API Key:   %s\n", apiKey)
 	fmt.Printf("    Web Root:  %s\n", wwwDir)
-	fmt.Printf("    Dashboard: http://127.0.0.1:%s/_uwas/dashboard/\n\n", adminPort)
+	dashHost := adminBind
+	if dashHost == "0.0.0.0" {
+		dashHost = "127.0.0.1"
+	}
+	fmt.Printf("    Dashboard: http://%s:%s/_uwas/dashboard/\n\n", dashHost, adminPort)
 
 	return cfgPath, nil
 }
 
-func generateDefaultConfig(httpPort, adminPort, apiKey, baseDir string) string {
+func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, baseDir string) string {
 	// Normalize paths for the config (use forward slashes)
 	wwwDir := filepath.ToSlash(filepath.Join(baseDir, "www"))
 	certsDir := filepath.ToSlash(filepath.Join(baseDir, "certs"))
@@ -125,7 +129,7 @@ func generateDefaultConfig(httpPort, adminPort, apiKey, baseDir string) string {
 	backupsDir := filepath.ToSlash(filepath.Join(baseDir, "backups"))
 
 	listenAddr := ":" + httpPort
-	adminAddr := "127.0.0.1:" + adminPort
+	adminAddr := adminBind + ":" + adminPort
 
 	return strings.TrimSpace(fmt.Sprintf(`# UWAS — Unified Web Application Server
 # Auto-generated configuration — edit as needed

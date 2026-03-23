@@ -137,31 +137,90 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 }
 
 // ObtainCerts requests ACME certificates for all auto-SSL domains.
+// Failed domains are retried up to 3 times with exponential backoff.
 func (m *Manager) ObtainCerts(ctx context.Context) {
 	if m.acme == nil {
 		return
 	}
 
+	// Collect domains that need certificates.
+	var pending []string
 	for _, d := range m.domains {
 		if d.SSL.Mode != "auto" {
 			continue
 		}
-
 		host := strings.ToLower(d.Host)
-
-		// Skip if already loaded
 		if _, ok := m.certs.Load(host); ok {
 			continue
 		}
-
-		m.logger.Info("obtaining certificate", "host", host)
-		cert, err := m.obtainCert(ctx, host)
-		if err != nil {
-			m.logger.Error("failed to obtain cert", "host", host, "error", err)
-			continue
-		}
-		_ = cert // already stored in obtainCert
+		pending = append(pending, host)
 	}
+
+	backoff := 30 * time.Second
+	for attempt := 0; attempt < 3 && len(pending) > 0; attempt++ {
+		if attempt > 0 {
+			m.logger.Info("retrying failed certificates", "count", len(pending), "attempt", attempt+1)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+
+		var failed []string
+		for _, host := range pending {
+			m.logger.Info("obtaining certificate", "host", host)
+			_, err := m.obtainCert(ctx, host)
+			if err != nil {
+				m.logger.Error("failed to obtain cert", "host", host, "error", err)
+				failed = append(failed, host)
+				continue
+			}
+		}
+		pending = failed
+	}
+
+	if len(pending) > 0 {
+		m.logger.Warn("some certificates could not be obtained after retries", "hosts", pending)
+	}
+}
+
+// RenewCert forces renewal of a certificate for the given host.
+func (m *Manager) RenewCert(ctx context.Context, host string) error {
+	if m.acme == nil {
+		return fmt.Errorf("ACME client not configured (set acme.email in config)")
+	}
+	host = strings.ToLower(host)
+	_, err := m.obtainCert(ctx, host)
+	return err
+}
+
+// CertStatus returns metadata for a loaded certificate, or nil if not loaded.
+func (m *Manager) CertStatus(host string) *CertStatusInfo {
+	host = strings.ToLower(host)
+	val, ok := m.certs.Load(host)
+	if !ok {
+		return nil
+	}
+	cert := val.(*tls.Certificate)
+	leaf, err := leafCert(cert)
+	if err != nil {
+		return nil
+	}
+	remaining := time.Until(leaf.NotAfter)
+	return &CertStatusInfo{
+		Issuer:   leaf.Issuer.CommonName,
+		Expiry:   leaf.NotAfter,
+		DaysLeft: int(remaining.Hours() / 24),
+	}
+}
+
+// CertStatusInfo holds certificate status details.
+type CertStatusInfo struct {
+	Issuer   string
+	Expiry   time.Time
+	DaysLeft int
 }
 
 func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate, error) {
