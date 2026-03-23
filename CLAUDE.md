@@ -49,7 +49,7 @@ go test ./internal/cache/            # Single package
 go test -v -run TestWordPress ./...  # Specific test
 ```
 
-1,718 tests across 27 packages (~88.8% coverage). No race detector on Windows (CGO_ENABLED=0).
+1,718 tests across 27 packages (~88.6% coverage). No race detector on Windows (CGO_ENABLED=0).
 Use `make test-coverage` for coverage report.
 
 ## Common Tasks

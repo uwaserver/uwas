@@ -5,6 +5,65 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-03-23
+
+### Highlights
+
+**Dead code audit & feature activation.** 2,500+ lines of dead code removed, 9 config-backed features activated, 8 bugs fixed, daemon mode added.
+
+### New Features
+
+- **Daemon mode** — `uwas serve -d` starts server as background process (cross-platform)
+- **Per-domain CORS** — `cors.enabled`, allowed origins/methods/headers per domain
+- **Per-domain BasicAuth** — `basic_auth.enabled`, username/password per domain
+- **Per-domain IP ACL** — `security.ip_whitelist` / `ip_blacklist` now enforced
+- **Per-domain header transforms** — `headers.response_add` / `request_add` applied per request
+- **Circuit breaker** — `proxy.circuit_breaker.threshold` trips after N failures, auto-recovery
+- **Canary routing** — `proxy.canary.enabled` routes % of traffic to canary upstreams
+- **Image optimization** — `image_optimization.enabled` serves pre-converted WebP/AVIF
+- **Custom error pages** — `error_pages.404: /404.html` serves per-domain error pages
+- **MCP API endpoints** — `GET /api/v1/mcp/tools`, `POST /api/v1/mcp/call` in admin API
+- **Domain edit** — Edit button in dashboard domain table, pre-filled form with updateDomain API
+- **PHP dropdown** — FPM address field auto-detects installed PHP versions
+
+### Bug Fixes
+
+- **Proxy retry bug** — `netErr.Timeout() || true` always retried; fixed to `return true` for all net.Error
+- **Config editor crash** — Raw config API returned YAML but frontend expected JSON; wrapped in `{"content": "..."}`
+- **Rate limiter blocked dashboard** — Public endpoints (health, dashboard) now exempt from rate limiting
+- **SSE auth** — EventSource token via query param support added (browser can't set headers)
+- **Dashboard toFixed crash** — Latency cards null-safe when stats fields undefined
+- **Response header timing** — Per-domain headers set before handler dispatch, not deferred
+- **E2e test locators** — Strict mode violations fixed with exact text matchers
+
+### Dead Code Removed (~2,500 LOC)
+
+- `internal/server/upgrade.go` — Unused GracefulRestart/DrainAndWait (duplicated shutdown logic)
+- `internal/logger/accesslog.go` — Unused AccessLogger subsystem (server uses slog middleware)
+- Old nginx migration code in `internal/cli/migrate.go` (superseded by `internal/migrate/`)
+- Alerter methods DomainDown/CertExpiry/RecordRateLimit (implemented but never wired)
+- Handler Name()/Description()/CanHandle() methods (never called from server dispatch)
+- Analytics Record() wrapper, requestsInWindow, ActiveDomains() (test-only)
+- Dead constants: StatusBypass, shardCount, ToolList struct
+- Redundant CustomHeaders middleware (HeaderTransform already covers it)
+- Frontend: unused PHP API functions, phantom react-router-dom dependency
+
+### Improvements
+
+- `go mod tidy` fixed mislabeled indirect deps (brotli, quic-go, x/crypto)
+- All API wrapper functions exported in frontend api.ts (monitor, alerts, MCP, cache stats)
+- Cache page uses api.ts wrapper instead of direct fetch
+- CacheStatsData interface moved to shared api.ts
+- CLAUDE.md updated with per-domain middleware docs, coverage stats
+- 21+ new backend tests, 29 e2e tests passing
+
+### Stats
+
+- **1,718 tests** across 27 packages, 88.6% coverage
+- **29/29 Playwright e2e tests** passing
+- **0 JS errors** in dashboard
+- **0 TODO/FIXME** remaining in codebase
+
 ## [1.3.0] - 2026-03-22
 
 ### Highlights
