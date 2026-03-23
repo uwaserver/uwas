@@ -902,8 +902,8 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           {certInfo ? (
             <>
               <DetailRow label="Status" value={
-                <span className={`inline-flex items-center gap-1 text-xs ${certInfo.status === 'valid' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {certInfo.status === 'valid' ? <CheckCircle size={10} /> : <AlertTriangle size={10} />}
+                <span className={`inline-flex items-center gap-1 text-xs ${certInfo.status === 'active' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {certInfo.status === 'active' ? <CheckCircle size={10} /> : <AlertTriangle size={10} />}
                   {certInfo.status}
                 </span>
               } />
