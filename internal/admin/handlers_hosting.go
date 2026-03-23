@@ -512,9 +512,17 @@ func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) {
+	// Check if MySQL is available before querying
+	st := database.GetStatus()
+	if !st.Installed || !st.Running {
+		jsonResponse(w, []database.DBInfo{})
+		return
+	}
 	dbs, err := database.ListDatabases()
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		// Don't error — just return empty list with a log
+		s.logger.Debug("database list failed", "error", err)
+		jsonResponse(w, []database.DBInfo{})
 		return
 	}
 	if dbs == nil {

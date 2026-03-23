@@ -11,12 +11,14 @@ import (
 )
 
 // Known malicious bot signatures.
+// Malicious bot signatures — these are always blocked.
+// Note: curl, wget, go-http-client, python-requests are NOT blocked
+// because they are commonly used for legitimate monitoring, health checks,
+// and API access (including UWAS's own internal requests).
 var maliciousBots = []string{
 	"sqlmap", "nikto", "nmap", "masscan", "zgrab",
 	"dirbuster", "gobuster", "wfuzz", "ffuf",
 	"nuclei", "httpx", "subfinder",
-	"python-requests/", "go-http-client/",
-	"curl/", "wget/",
 	"scrapy", "ahrefsbot", "semrushbot", "dotbot",
 	"mj12bot", "blexbot", "seekport",
 	"censys", "shodan", "internetmeasurement",
@@ -129,14 +131,27 @@ func (s *SecurityStats) RecentBlocked() []BlockedRequest {
 }
 
 // BotGuard blocks known malicious bots and scanners.
+// Localhost requests are always allowed (internal health checks, API calls).
 func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip bot check for localhost/loopback (internal requests)
+			remoteIP := r.RemoteAddr
+			if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
+				remoteIP = remoteIP[:idx]
+			}
+			if remoteIP == "127.0.0.1" || remoteIP == "::1" || remoteIP == "localhost" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			ua := strings.ToLower(r.Header.Get("User-Agent"))
 
-			// Empty UA is suspicious
+			// Empty UA from external IPs is suspicious
 			if ua == "" {
-				stats.Record(r.RemoteAddr, r.URL.Path, "bot", "")
+				if stats != nil {
+					stats.Record(r.RemoteAddr, r.URL.Path, "bot", "")
+				}
 				log.Warn("blocked empty user-agent", "remote", r.RemoteAddr, "path", r.URL.Path)
 				http.Error(w, "403 Forbidden", http.StatusForbidden)
 				return
@@ -145,7 +160,9 @@ func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 			// Check malicious bots
 			for _, bot := range maliciousBots {
 				if strings.Contains(ua, bot) {
-					stats.Record(r.RemoteAddr, r.URL.Path, "bot", ua)
+					if stats != nil {
+						stats.Record(r.RemoteAddr, r.URL.Path, "bot", ua)
+					}
 					log.Warn("blocked malicious bot", "bot", bot, "remote", r.RemoteAddr, "path", r.URL.Path)
 					http.Error(w, "403 Forbidden", http.StatusForbidden)
 					return
