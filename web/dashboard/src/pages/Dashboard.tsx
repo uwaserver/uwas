@@ -29,7 +29,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDomains()
-      .then(setDomains)
+      .then(d => setDomains(d ?? []))
       .catch(() => {});
   }, []);
 

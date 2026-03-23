@@ -242,7 +242,7 @@ export default function Domains() {
 
   const loadDomains = useCallback(() => {
     fetchDomains()
-      .then(setDomains)
+      .then(d => setDomains(d ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -251,7 +251,7 @@ export default function Domains() {
     fetchCerts()
       .then(certs => {
         const map: Record<string, CertInfo> = {};
-        for (const c of certs) map[c.host] = c;
+        for (const c of (certs ?? [])) map[c.host] = c;
         setCertMap(map);
       })
       .catch(() => {});
@@ -259,7 +259,7 @@ export default function Domains() {
 
   const loadPHP = useCallback(() => {
     fetchPHP()
-      .then(setPhpInstalls)
+      .then(d => setPhpInstalls(d ?? []))
       .catch(() => {});
   }, []);
 

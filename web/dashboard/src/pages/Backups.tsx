@@ -202,7 +202,7 @@ export default function Backups() {
   const load = useCallback(async () => {
     try {
       const [b, s] = await Promise.all([fetchBackups(), fetchBackupSchedule()]);
-      setBackups(b);
+      setBackups(b ?? []);
       setSchedule(s);
       setScheduleForm({ enabled: s.enabled, interval: s.interval, keep: s.keep });
       setError('');

@@ -139,9 +139,9 @@ export default function PHP() {
         fetchDomainPHPInstances(),
         fetchDomains(),
       ]);
-      setInstalls(phpData);
-      setInstances(instanceData);
-      setDomains(domainData);
+      setInstalls(phpData ?? []);
+      setInstances(instanceData ?? []);
+      setDomains(domainData ?? []);
     } catch {
       // ignore
     } finally {

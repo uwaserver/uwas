@@ -162,7 +162,7 @@ export default function Certificates() {
   const load = useCallback(async () => {
     try {
       const result = await fetchCerts();
-      setCerts(result);
+      setCerts(result ?? []);
       setError('');
     } catch (e) {
       setError((e as Error).message);
