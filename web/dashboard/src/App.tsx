@@ -24,6 +24,7 @@ import CronJobs from '@/pages/CronJobs';
 import Firewall from '@/pages/Firewall';
 import Updates from '@/pages/Updates';
 import Security from '@/pages/Security';
+import EmailGuide from '@/pages/EmailGuide';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/cron" element={<CronJobs />} />
         <Route path="/firewall" element={<Firewall />} />
         <Route path="/security" element={<Security />} />
+        <Route path="/email" element={<EmailGuide />} />
         <Route path="/updates" element={<Updates />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
