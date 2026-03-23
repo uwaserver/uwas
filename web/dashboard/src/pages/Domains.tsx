@@ -393,7 +393,6 @@ export default function Domains() {
     const payload: Record<string, unknown> = {
       host: form.host.trim(),
       type: form.type,
-      root: form.root.trim() || undefined,
       ssl: { mode: form.ssl },
     };
 
@@ -608,11 +607,13 @@ export default function Domains() {
                   </FormField>
                 </div>
 
-                {/* Root */}
-                <FormField label="Root Directory" htmlFor="add-root">
-                  <input id="add-root" type="text" value={form.root} onChange={e => patchField('root', e.target.value)}
-                    placeholder="/var/www/html" className={inputCls} />
-                </FormField>
+                {/* Root — auto-generated, shown as info */}
+                {form.host.trim() && form.type !== 'proxy' && form.type !== 'redirect' && (
+                  <div className="rounded-md bg-[#1e293b] border border-[#334155] px-3 py-2.5 text-sm">
+                    <span className="text-xs text-slate-500">Web Root (auto-created)</span>
+                    <p className="font-mono text-slate-300 text-xs mt-0.5">/var/www/{form.host.trim()}/public_html/</p>
+                  </div>
+                )}
 
                 {/* Cache */}
                 <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
