@@ -335,6 +335,8 @@ export interface SiteUser {
 
 export interface SiteUserCreated extends SiteUser {
   password: string;
+  server_ip: string;
+  port: string;
 }
 
 export const fetchUsers = () => api<SiteUser[]>('/api/v1/users');

@@ -90,7 +90,8 @@ export default function Users() {
           <h3 className="text-sm font-semibold text-emerald-400 mb-3">SFTP User Created</h3>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {([
-              ['Domain', created.domain],
+              ['Host', created.server_ip || 'your-server-ip'],
+              ['Port', created.port || '22'],
               ['Username', created.username],
               ['Password', created.password],
               ['Web Root', created.web_dir],
@@ -110,6 +111,26 @@ export default function Users() {
               </div>
             ))}
           </div>
+
+          {/* Quick connect commands */}
+          <div className="mt-3 rounded bg-[#0f172a] p-3">
+            <p className="text-xs text-slate-500 mb-2">Quick connect:</p>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs font-mono text-slate-300 select-all">
+                  sftp {created.username}@{created.server_ip || 'your-server-ip'}
+                </code>
+                <button onClick={() => copyToClipboard(`sftp ${created.username}@${created.server_ip}`, 'sftp-cmd')}
+                  className="rounded p-1 text-slate-500 hover:text-slate-300">
+                  {copied === 'sftp-cmd' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-600">
+                Or use FileZilla / WinSCP / Cyberduck — Protocol: SFTP, Host: {created.server_ip}, Port: 22
+              </p>
+            </div>
+          </div>
+
           <p className="mt-3 text-xs text-amber-400">Save these credentials — the password cannot be recovered.</p>
           <button onClick={() => setCreated(null)} className="mt-2 text-xs text-slate-500 hover:text-slate-300">Dismiss</button>
         </div>
