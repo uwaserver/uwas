@@ -168,6 +168,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetAlerter(alerter)
 	}
 
+	// TLS manager → admin
+	if s.admin != nil {
+		s.admin.SetTLSManager(s.tlsMgr)
+	}
+
 	// Uptime monitor
 	s.monitor = monitor.New(cfg.Domains, log)
 	if s.admin != nil {

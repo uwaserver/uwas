@@ -27,6 +27,7 @@ import (
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
+	uwastls "github.com/uwaserver/uwas/internal/tls"
 )
 
 // ReloadFunc is called when a config reload is requested.
@@ -64,6 +65,7 @@ type Server struct {
 	phpMgr    *phpmanager.Manager
 	backupMgr *backup.BackupManager
 	mcpSrv    *mcp.Server
+	tlsMgr    *uwastls.Manager
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -111,6 +113,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/sse/stats", s.handleSSEStats)
 	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
 	s.mux.HandleFunc("GET /api/v1/certs", s.handleCerts)
+	s.mux.HandleFunc("POST /api/v1/certs/{host}/renew", s.handleCertRenew)
 	s.mux.HandleFunc("GET /api/v1/domains/{host}", s.handleDomainDetail)
 	s.mux.HandleFunc("GET /api/v1/config/raw", s.handleConfigRawGet)
 	s.mux.HandleFunc("PUT /api/v1/config/raw", s.handleConfigRawPut)
@@ -339,7 +342,7 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.configMu.RLock()
-	var domains []domainInfo
+	domains := make([]domainInfo, 0)
 	for _, d := range s.config.Domains {
 		domains = append(domains, domainInfo{
 			Host:    d.Host,
@@ -713,7 +716,7 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain cache info
 	s.configMu.RLock()
-	var domainCache []map[string]any
+	domainCache := make([]map[string]any, 0)
 	for _, d := range s.config.Domains {
 		dc := map[string]any{
 			"host":    d.Host,
@@ -1025,6 +1028,9 @@ func isAllowedOrigin(origin string, r *http.Request) bool {
 
 // --- Certificates ---
 
+// SetTLSManager sets the TLS manager for certificate status and renewal.
+func (s *Server) SetTLSManager(m *uwastls.Manager) { s.tlsMgr = m }
+
 func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
@@ -1032,13 +1038,13 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 	type certInfo struct {
 		Host     string `json:"host"`
 		SSLMode  string `json:"ssl_mode"`
-		Status   string `json:"status"`  // "active", "pending", "expired", "none"
+		Status   string `json:"status"`
 		Issuer   string `json:"issuer"`
-		Expiry   string `json:"expiry"`
+		Expiry   string `json:"expiry,omitempty"`
 		DaysLeft int    `json:"days_left"`
 	}
 
-	var certs []certInfo
+	certs := make([]certInfo, 0)
 	for _, d := range s.config.Domains {
 		ci := certInfo{
 			Host:    d.Host,
@@ -1048,15 +1054,51 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 		case "off":
 			ci.Status = "none"
 		case "auto":
-			ci.Status = "pending"
-			ci.Issuer = "Let's Encrypt"
+			// Check real cert status from TLS manager.
+			if s.tlsMgr != nil {
+				if info := s.tlsMgr.CertStatus(d.Host); info != nil {
+					ci.Status = "active"
+					ci.Issuer = info.Issuer
+					ci.Expiry = info.Expiry.Format(time.RFC3339)
+					ci.DaysLeft = info.DaysLeft
+					if info.DaysLeft <= 0 {
+						ci.Status = "expired"
+					}
+				} else {
+					ci.Status = "pending"
+					ci.Issuer = "Let's Encrypt"
+				}
+			} else {
+				ci.Status = "pending"
+				ci.Issuer = "Let's Encrypt"
+			}
 		case "manual":
 			ci.Status = "active"
 			ci.Issuer = "Manual"
+			if s.tlsMgr != nil {
+				if info := s.tlsMgr.CertStatus(d.Host); info != nil {
+					ci.Issuer = info.Issuer
+					ci.Expiry = info.Expiry.Format(time.RFC3339)
+					ci.DaysLeft = info.DaysLeft
+				}
+			}
 		}
 		certs = append(certs, ci)
 	}
 	jsonResponse(w, certs)
+}
+
+func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.tlsMgr == nil {
+		jsonError(w, "TLS manager not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.tlsMgr.RenewCert(r.Context(), host); err != nil {
+		jsonError(w, "renewal failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "renewed", "host": host})
 }
 
 // --- Domain detail ---

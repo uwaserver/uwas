@@ -165,7 +165,7 @@ func TestEnsureDefaultConfig(t *testing.T) {
 	_, w, _ := os.Pipe()
 	os.Stdout = w
 
-	cfgPath, err := ensureDefaultConfig("8080", "9443")
+	cfgPath, err := ensureDefaultConfig("8080", "9443", "0.0.0.0")
 
 	w.Close()
 	os.Stdout = old
@@ -222,7 +222,7 @@ func TestEnsureDefaultConfigIdempotent(t *testing.T) {
 	os.Stdout = w
 
 	// First call creates everything.
-	path1, err := ensureDefaultConfig("8080", "9443")
+	path1, err := ensureDefaultConfig("8080", "9443", "0.0.0.0")
 
 	w.Close()
 	os.Stdout = old
@@ -242,7 +242,7 @@ func TestEnsureDefaultConfigIdempotent(t *testing.T) {
 	os.Stdout = w
 
 	// Second call should return existing path without overwriting.
-	path2, err := ensureDefaultConfig("9999", "1111")
+	path2, err := ensureDefaultConfig("9999", "1111", "0.0.0.0")
 
 	w.Close()
 	os.Stdout = old
@@ -286,7 +286,7 @@ func TestGenerateAPIKey(t *testing.T) {
 }
 
 func TestGenerateDefaultConfigValidYAML(t *testing.T) {
-	content := generateDefaultConfig("8080", "9443", "abcdef1234567890abcdef1234567890", "/tmp/uwas")
+	content := generateDefaultConfig("8080", "9443", "0.0.0.0", "abcdef1234567890abcdef1234567890", "/tmp/uwas")
 
 	// Should be parseable as YAML.
 	var parsed map[string]any
@@ -315,7 +315,7 @@ func TestGenerateDefaultConfigValidYAML(t *testing.T) {
 
 func TestGenerateDefaultConfigContainsAPIKey(t *testing.T) {
 	apiKey := "deadbeef12345678deadbeef12345678"
-	content := generateDefaultConfig("80", "9443", apiKey, "/tmp/uwas")
+	content := generateDefaultConfig("80", "9443", "0.0.0.0", apiKey, "/tmp/uwas")
 
 	if !strings.Contains(content, apiKey) {
 		t.Error("generated config should contain the API key")
@@ -323,7 +323,7 @@ func TestGenerateDefaultConfigContainsAPIKey(t *testing.T) {
 }
 
 func TestGenerateDefaultConfigContainsPorts(t *testing.T) {
-	content := generateDefaultConfig("8888", "7777", "key", "/tmp/uwas")
+	content := generateDefaultConfig("8888", "7777", "0.0.0.0", "key", "/tmp/uwas")
 
 	if !strings.Contains(content, ":8888") {
 		t.Error("should contain HTTP port")

@@ -15,7 +15,7 @@ import (
 func TestStartFPMInvalidBinary(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/nonexistent/path/php-cgi"},
+		{Version: "8.4.19", Binary: "/nonexistent/path/php-cgi", SAPI: "cgi-fcgi"},
 	}
 
 	// Override execCommand to use the real (invalid) binary path.
@@ -226,7 +226,7 @@ func TestStartDomainVersionRemovedAfterAssign(t *testing.T) {
 func TestStartFPMWithMockBinary(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	// Use echo as a mock that starts and exits.
@@ -397,7 +397,7 @@ func TestStopDomainNotRunningCov(t *testing.T) {
 func TestStopDomainRunning(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	// Use a long-running mock process (sleep)
@@ -429,7 +429,7 @@ func TestStopDomainRunning(t *testing.T) {
 func TestStartDomainAlreadyRunningCov(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -479,7 +479,7 @@ func TestStartDomainNotAssigned(t *testing.T) {
 func TestStartDomainExecFailure(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -505,7 +505,7 @@ func TestStartDomainExecFailure(t *testing.T) {
 func TestStartDomainWithChangeCallback(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -545,7 +545,7 @@ func TestStartDomainWithChangeCallback(t *testing.T) {
 func TestUnassignDomainWithRunningProcess(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -586,7 +586,7 @@ func TestUnassignDomainNonExistentCov(t *testing.T) {
 func TestStopFPMRunningProcess(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -616,7 +616,7 @@ func TestStopFPMRunningProcess(t *testing.T) {
 func TestStartFPMAlreadyRunningCov(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -657,8 +657,8 @@ func TestStartFPMVersionNotFound(t *testing.T) {
 func TestStatusWithRunningProcess(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
-		{Version: "8.3.0", Binary: "/usr/bin/php-cgi8.3"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
+		{Version: "8.3.0", Binary: "/usr/bin/php-cgi8.3", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -727,7 +727,7 @@ func TestStatusNoRunning(t *testing.T) {
 func TestStopAllWithProcesses(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -982,7 +982,7 @@ func TestRunPHPError(t *testing.T) {
 func TestAutoStartAllWithError(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -1008,7 +1008,7 @@ func TestAutoStartAllWithError(t *testing.T) {
 func TestAutoStartAllSuccess(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
@@ -1035,7 +1035,7 @@ func TestAutoStartAllSuccess(t *testing.T) {
 func TestGetDomainInstancesWithRunning(t *testing.T) {
 	m := New(testLogger())
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"},
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
