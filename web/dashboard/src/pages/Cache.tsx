@@ -8,27 +8,8 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts';
 import { useStats } from '@/hooks/useStats';
-import { triggerPurge, getToken } from '@/lib/api';
+import { triggerPurge, fetchCacheStats as fetchCacheStatsAPI, type CacheStatsData } from '@/lib/api';
 import Card from '@/components/Card';
-
-const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
-
-interface CacheStatsData {
-  enabled: boolean;
-  hits: number;
-  misses: number;
-  stales: number;
-  entries: number;
-  used_bytes: number;
-  hit_rate: string;
-  domains: {
-    host: string;
-    enabled: boolean;
-    ttl: number;
-    tags: string[] | null;
-    rules?: { match: string; ttl: number; bypass: boolean }[];
-  }[];
-}
 
 function formatBytes(b: number): string {
   if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
@@ -51,11 +32,8 @@ export default function Cache() {
 
   const fetchCacheStats = useCallback(async () => {
     try {
-      const headers: Record<string, string> = {};
-      const token = getToken();
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`${BASE}/api/v1/cache/stats`, { headers });
-      if (res.ok) setCacheStats(await res.json());
+      const data = await fetchCacheStatsAPI();
+      setCacheStats(data);
     } catch { /* ignore */ }
   }, []);
 

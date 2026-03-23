@@ -116,6 +116,50 @@ export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/c
   method: 'POST',
   body: JSON.stringify(tag ? { tag } : {}),
 });
+export interface CacheStatsData {
+  enabled: boolean;
+  hits: number;
+  misses: number;
+  stales: number;
+  entries: number;
+  used_bytes: number;
+  hit_rate: string;
+  domains: {
+    host: string;
+    enabled: boolean;
+    ttl: number;
+    tags: string[] | null;
+    rules?: { match: string; ttl: number; bypass: boolean }[];
+  }[];
+}
+export const fetchCacheStats = () => api<CacheStatsData>('/api/v1/cache/stats');
+
+export interface MonitorResult {
+  host: string;
+  status: string;
+  latency_ms: number;
+  checks: { timestamp: string; status: string; latency_ms: number }[];
+  uptime_percent: number;
+}
+export const fetchMonitor = () => api<MonitorResult[]>('/api/v1/monitor');
+
+export interface AlertData {
+  time: string;
+  level: string;
+  type: string;
+  host: string;
+  message: string;
+}
+export const fetchAlerts = () => api<AlertData[]>('/api/v1/alerts');
+
+export interface MCPTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+export const fetchMCPTools = () => api<MCPTool[]>('/api/v1/mcp/tools');
+export const callMCPTool = (name: string, input?: Record<string, unknown>) =>
+  api<unknown>('/api/v1/mcp/call', { method: 'POST', body: JSON.stringify({ name, input: input ?? {} }) });
 
 export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
 export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
