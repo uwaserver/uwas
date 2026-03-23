@@ -125,7 +125,7 @@ export default function Footer() {
             &copy; {new Date().getFullYear()} UWAS. Released under the Apache-2.0 License.
           </p>
           <p className="flex items-center gap-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Made with <Heart className="h-3.5 w-3.5 text-red-500" /> by the UWAS community
+            Made with <Heart className="h-3.5 w-3.5 text-red-500" /> by Ersin KOÇ
           </p>
         </div>
       </div>
