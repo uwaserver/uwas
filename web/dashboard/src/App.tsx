@@ -16,6 +16,7 @@ import PHP from '@/pages/PHP';
 import Backups from '@/pages/Backups';
 import AuditLog from '@/pages/AuditLog';
 import UnknownDomains from '@/pages/UnknownDomains';
+import Users from '@/pages/Users';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/backups" element={<Backups />} />
         <Route path="/audit" element={<AuditLog />} />
         <Route path="/unknown-domains" element={<UnknownDomains />} />
+        <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

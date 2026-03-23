@@ -186,8 +186,11 @@ export interface CertInfo {
   status: string;
   issuer: string;
   expiry?: string;
-  days_remaining?: number;
+  days_left?: number;
 }
+
+export const renewCert = (host: string) =>
+  api<{ status: string }>(`/api/v1/certs/${encodeURIComponent(host)}/renew`, { method: 'POST' });
 
 export interface DomainAnalytics {
   host: string;
@@ -309,6 +312,23 @@ export const unblockUnknownDomain = (host: string) =>
   api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/unblock`, { method: 'POST' });
 export const dismissUnknownDomain = (host: string) =>
   api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
+
+export interface SiteUser {
+  username: string;
+  domain: string;
+  home_dir: string;
+  web_dir: string;
+}
+
+export interface SiteUserCreated extends SiteUser {
+  password: string;
+}
+
+export const fetchUsers = () => api<SiteUser[]>('/api/v1/users');
+export const createUser = (domain: string) =>
+  api<SiteUserCreated>('/api/v1/users', { method: 'POST', body: JSON.stringify({ domain }) });
+export const deleteUser = (domain: string) =>
+  api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
 /** SSE stats endpoint URL (with auth token as query param for EventSource). */
 export function sseStatsURL(): string {

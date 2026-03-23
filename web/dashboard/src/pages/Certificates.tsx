@@ -3,7 +3,7 @@ import {
   Lock, Shield, RefreshCw, CheckCircle, XCircle, Clock, AlertTriangle,
   Calendar, Eye, ChevronDown,
 } from 'lucide-react';
-import { fetchCerts, type CertInfo } from '@/lib/api';
+import { fetchCerts, renewCert, type CertInfo } from '@/lib/api';
 
 function sslModeBadge(mode: string) {
   switch (mode) {
@@ -84,9 +84,9 @@ function formatExpiry(expiry?: string): string {
   }
 }
 
-function CertCard({ cert, onViewDetails }: { cert: CertInfo; onViewDetails: () => void }) {
-  const progressPercent = cert.days_remaining !== undefined
-    ? Math.min(100, Math.max(0, (cert.days_remaining / 90) * 100))
+function CertCard({ cert, onViewDetails, onRenew, renewing }: { cert: CertInfo; onViewDetails: () => void; onRenew: () => void; renewing: boolean }) {
+  const progressPercent = cert.days_left !== undefined
+    ? Math.min(100, Math.max(0, (cert.days_left / 90) * 100))
     : 0;
 
   return (
@@ -112,21 +112,21 @@ function CertCard({ cert, onViewDetails }: { cert: CertInfo; onViewDetails: () =
         </div>
         <div className="flex items-center justify-between text-xs">
           <span className="text-slate-400">Expires</span>
-          <span className={expiryTextColor(cert.days_remaining)}>
+          <span className={expiryTextColor(cert.days_left)}>
             {formatExpiry(cert.expiry)}
           </span>
         </div>
-        {cert.days_remaining !== undefined && (
+        {cert.days_left !== undefined && (
           <div>
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="text-slate-400">Days Remaining</span>
-              <span className={`font-medium ${expiryTextColor(cert.days_remaining)}`}>
-                {cert.days_remaining}d
+              <span className={`font-medium ${expiryTextColor(cert.days_left)}`}>
+                {cert.days_left}d
               </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#334155]">
               <div
-                className={`h-full rounded-full transition-all ${expiryColor(cert.days_remaining)}`}
+                className={`h-full rounded-full transition-all ${expiryColor(cert.days_left)}`}
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
@@ -141,13 +141,16 @@ function CertCard({ cert, onViewDetails }: { cert: CertInfo; onViewDetails: () =
         >
           <Eye size={12} /> View Details
         </button>
-        <button
-          disabled
-          title="Coming soon"
-          className="flex items-center gap-1.5 rounded-md bg-blue-600/15 px-3 py-1.5 text-xs text-blue-400 opacity-50 cursor-not-allowed"
-        >
-          <RefreshCw size={12} /> Force Renew
-        </button>
+        {cert.ssl_mode === 'auto' && (
+          <button
+            onClick={onRenew}
+            disabled={renewing}
+            className="flex items-center gap-1.5 rounded-md bg-blue-600/15 px-3 py-1.5 text-xs text-blue-400 hover:bg-blue-600/25 disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={renewing ? 'animate-spin' : ''} />
+            {renewing ? 'Renewing...' : 'Force Renew'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -158,6 +161,22 @@ export default function Certificates() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [detailHost, setDetailHost] = useState<string | null>(null);
+  const [renewingHost, setRenewingHost] = useState<string | null>(null);
+  const [renewStatus, setRenewStatus] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleRenew = async (host: string) => {
+    setRenewingHost(host);
+    setRenewStatus(null);
+    try {
+      await renewCert(host);
+      setRenewStatus({ ok: true, message: `Certificate for ${host} renewed` });
+      load();
+    } catch (e) {
+      setRenewStatus({ ok: false, message: `Renewal failed: ${(e as Error).message}` });
+    } finally {
+      setRenewingHost(null);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -177,10 +196,10 @@ export default function Certificates() {
 
   const detailCert = detailHost ? certs.find((c) => c.host === detailHost) : null;
 
-  // Upcoming renewals: certs with days_remaining, sorted ascending
+  // Upcoming renewals: certs with days_left, sorted ascending
   const upcomingRenewals = certs
-    .filter((c) => c.days_remaining !== undefined && c.status === 'active')
-    .sort((a, b) => (a.days_remaining ?? 0) - (b.days_remaining ?? 0));
+    .filter((c) => c.days_left !== undefined && c.status === 'active')
+    .sort((a, b) => (a.days_left ?? 0) - (b.days_left ?? 0));
 
   return (
     <div className="space-y-6">
@@ -204,6 +223,12 @@ export default function Certificates() {
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
       )}
 
+      {renewStatus && (
+        <div className={`rounded-md px-4 py-3 text-sm ${renewStatus.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+          {renewStatus.message}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-16 text-sm text-slate-500">
           Loading certificates...
@@ -219,6 +244,8 @@ export default function Certificates() {
                 onViewDetails={() =>
                   setDetailHost(detailHost === cert.host ? null : cert.host)
                 }
+                onRenew={() => handleRenew(cert.host)}
+                renewing={renewingHost === cert.host}
               />
             ))}
             {certs.length === 0 && (
@@ -265,9 +292,9 @@ export default function Certificates() {
                 </div>
                 <div>
                   <span className="text-xs text-slate-400">Days Remaining</span>
-                  <p className={`font-medium ${expiryTextColor(detailCert.days_remaining)}`}>
-                    {detailCert.days_remaining !== undefined
-                      ? `${detailCert.days_remaining} days`
+                  <p className={`font-medium ${expiryTextColor(detailCert.days_left)}`}>
+                    {detailCert.days_left !== undefined
+                      ? `${detailCert.days_left} days`
                       : '--'}
                   </p>
                 </div>
@@ -288,23 +315,23 @@ export default function Certificates() {
                     className="flex items-center gap-4 rounded-md bg-[#0f172a]/50 px-4 py-3"
                   >
                     <div
-                      className={`h-3 w-3 shrink-0 rounded-full ${expiryColor(cert.days_remaining)}`}
+                      className={`h-3 w-3 shrink-0 rounded-full ${expiryColor(cert.days_left)}`}
                     />
                     <div className="flex-1">
                       <span className="font-mono text-sm text-slate-200">{cert.host}</span>
                     </div>
                     <div className="text-right">
-                      <span className={`text-sm font-medium ${expiryTextColor(cert.days_remaining)}`}>
-                        {cert.days_remaining}d remaining
+                      <span className={`text-sm font-medium ${expiryTextColor(cert.days_left)}`}>
+                        {cert.days_left}d remaining
                       </span>
                       <p className="text-xs text-slate-500">{formatExpiry(cert.expiry)}</p>
                     </div>
                     <div className="w-24">
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#334155]">
                         <div
-                          className={`h-full rounded-full ${expiryColor(cert.days_remaining)}`}
+                          className={`h-full rounded-full ${expiryColor(cert.days_left)}`}
                           style={{
-                            width: `${Math.min(100, Math.max(0, ((cert.days_remaining ?? 0) / 90) * 100))}%`,
+                            width: `${Math.min(100, Math.max(0, ((cert.days_left ?? 0) / 90) * 100))}%`,
                           }}
                         />
                       </div>

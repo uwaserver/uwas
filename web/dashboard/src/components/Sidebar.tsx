@@ -18,6 +18,7 @@ import {
   Archive,
   Shield,
   ShieldAlert,
+  Users,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -33,6 +34,7 @@ const links = [
   { to: '/certificates', label: 'Certificates', icon: Lock },
   { to: '/php', label: 'PHP', icon: Cpu },
   { to: '/backups', label: 'Backups', icon: Archive },
+  { to: '/users', label: 'SFTP Users', icon: Users },
   { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert },
   { to: '/audit', label: 'Audit Log', icon: Shield },
   { to: '/settings', label: 'Settings', icon: Settings },

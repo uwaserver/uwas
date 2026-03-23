@@ -27,6 +27,7 @@ import (
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
+	"github.com/uwaserver/uwas/internal/siteuser"
 	"github.com/uwaserver/uwas/internal/router"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 )
@@ -158,6 +159,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/block", s.handleUnknownDomainsBlock)
 	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/unblock", s.handleUnknownDomainsUnblock)
 	s.mux.HandleFunc("DELETE /api/v1/unknown-domains/{host}", s.handleUnknownDomainsDismiss)
+
+	// SFTP user management
+	s.mux.HandleFunc("GET /api/v1/users", s.handleUserList)
+	s.mux.HandleFunc("POST /api/v1/users", s.handleUserCreate)
+	s.mux.HandleFunc("DELETE /api/v1/users/{domain}", s.handleUserDelete)
 
 	// MCP endpoints
 	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
@@ -1162,6 +1168,63 @@ func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Requ
 	}
 	s.unknownHT.Dismiss(host)
 	jsonResponse(w, map[string]string{"status": "dismissed", "host": host})
+}
+
+// --- SFTP Users ---
+
+func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
+	users := siteuser.ListUsers()
+	if users == nil {
+		users = []siteuser.User{}
+	}
+	jsonResponse(w, users)
+}
+
+func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Domain == "" {
+		jsonError(w, "domain is required", http.StatusBadRequest)
+		return
+	}
+
+	webRoot := "/var/www"
+	s.configMu.RLock()
+	if s.config.Global.WebRoot != "" {
+		webRoot = s.config.Global.WebRoot
+	}
+	s.configMu.RUnlock()
+
+	user, password, err := siteuser.CreateUser(webRoot, req.Domain)
+	if err != nil {
+		jsonError(w, "create user: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("SFTP user created", "domain", req.Domain, "username", user.Username)
+	jsonResponse(w, map[string]string{
+		"username": user.Username,
+		"domain":   user.Domain,
+		"password": password,
+		"home_dir": user.HomeDir,
+		"web_dir":  user.WebDir,
+	})
+}
+
+func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	if err := siteuser.DeleteUser(domain); err != nil {
+		jsonError(w, "delete user: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("SFTP user deleted", "domain", domain)
+	jsonResponse(w, map[string]string{"status": "deleted", "domain": domain})
 }
 
 // --- Domain detail ---
