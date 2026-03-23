@@ -266,7 +266,9 @@ func (s *Server) registerRoutes() {
 
 // Start starts the admin API server.
 func (s *Server) Start() error {
+	s.configMu.RLock()
 	addr := s.config.Global.Admin.Listen
+	s.configMu.RUnlock()
 	if addr == "" {
 		addr = "127.0.0.1:9443"
 	}
@@ -287,7 +289,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	s.configMu.RLock()
 	apiKey := s.config.Global.Admin.APIKey
+	s.configMu.RUnlock()
 	if apiKey == "" {
 		return next // no auth if no key configured
 	}
@@ -668,7 +672,9 @@ func (s *Server) handlePHPStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ListenAddr string `json:"listen_addr"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req) // optional body
+	}
 	if req.ListenAddr == "" {
 		req.ListenAddr = "127.0.0.1:9000"
 	}
@@ -854,7 +860,10 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Tag string `json:"tag"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	// Body is optional — nil/empty means "purge all"
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req) // ignore error; empty body = purge all
+	}
 
 	if req.Tag != "" {
 		count := s.cache.PurgeByTag(req.Tag)
@@ -1049,6 +1058,12 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
 	}
+	if d.Type == "" {
+		d.Type = "static"
+	}
+	if d.SSL.Mode == "" {
+		d.SSL.Mode = "off"
+	}
 
 	s.configMu.Lock()
 	// Check for duplicates.
@@ -1065,7 +1080,9 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		d.Root = filepath.Join(s.config.Global.WebRoot, d.Host, "public_html")
 	}
 	if d.Root != "" {
-		os.MkdirAll(d.Root, 0755)
+		if err := os.MkdirAll(d.Root, 0755); err != nil {
+			s.logger.Warn("failed to create web root", "path", d.Root, "error", err)
+		}
 		idx := filepath.Join(d.Root, "index.html")
 		if _, err := os.Stat(idx); os.IsNotExist(err) {
 			placeholder := fmt.Sprintf(`<!DOCTYPE html>
@@ -1073,7 +1090,9 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0">
 <div style="text-align:center"><h1>%s</h1><p style="color:#94a3b8">Site is ready. Upload your files via SFTP or place them in:<br><code>%s</code></p></div>
 </body></html>`, d.Host, d.Host, d.Root)
-			os.WriteFile(idx, []byte(placeholder), 0644)
+			if err := os.WriteFile(idx, []byte(placeholder), 0644); err != nil {
+				s.logger.Warn("failed to write placeholder index", "path", idx, "error", err)
+			}
 		}
 	}
 
