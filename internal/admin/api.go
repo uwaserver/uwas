@@ -126,6 +126,7 @@ func (s *Server) registerRoutes() {
 
 	// PHP manager
 	s.mux.HandleFunc("GET /api/v1/php", s.handlePHPList)
+	s.mux.HandleFunc("GET /api/v1/php/install-info", s.handlePHPInstallInfo)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/config", s.handlePHPConfig)
 	s.mux.HandleFunc("PUT /api/v1/php/{version}/config", s.handlePHPConfigUpdate)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/extensions", s.handlePHPExtensions)
@@ -443,6 +444,15 @@ func (s *Server) handlePHPList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, s.phpMgr.Status())
+}
+
+func (s *Server) handlePHPInstallInfo(w http.ResponseWriter, r *http.Request) {
+	version := r.URL.Query().Get("version")
+	if version == "" {
+		version = "8.3"
+	}
+	info := phpmanager.GetInstallInfo(version)
+	jsonResponse(w, info)
 }
 
 func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {
