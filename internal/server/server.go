@@ -177,8 +177,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetUnknownHostTracker(s.unknownHosts)
 		s.admin.SetOnDomainChange(func() {
 			// Admin and server share the same *config.Config pointer,
-			// so config.Domains is already updated. Sync the vhost router.
+			// so config.Domains is already updated. Sync all subsystems.
 			s.vhosts.Update(s.config.Domains)
+			s.tlsMgr.UpdateDomains(s.config.Domains)
+			// Obtain certs for any new auto-SSL domains.
+			go s.tlsMgr.ObtainCerts(s.ctx)
 		})
 	}
 
