@@ -50,7 +50,7 @@ export default function Logs() {
   const load = useCallback(async () => {
     try {
       const data = await fetchLogs();
-      setLogs(data.slice(-100));
+      setLogs((data ?? []).slice(-100));
       setError('');
     } catch (e) {
       setError((e as Error).message);

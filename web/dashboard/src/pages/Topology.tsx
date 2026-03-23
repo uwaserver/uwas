@@ -143,7 +143,7 @@ export default function Topology() {
 
   const loadDomains = useCallback(() => {
     fetchDomains()
-      .then(setDomains)
+      .then(d => setDomains(d ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
