@@ -21,6 +21,7 @@ func main() {
 	app.Register(&cli.StopCommand{})
 	app.Register(&cli.RestartCommand{})
 	app.Register(&cli.PHPCommand{})
+	app.Register(&cli.UserCommand{})
 	app.Register(cli.NewHelpCommand(app))
 
 	app.Run(os.Args[1:])

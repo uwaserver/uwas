@@ -165,7 +165,8 @@ func TestEnsureDefaultConfig(t *testing.T) {
 	_, w, _ := os.Pipe()
 	os.Stdout = w
 
-	cfgPath, err := ensureDefaultConfig("8080", "9443", "0.0.0.0")
+	webRoot := filepath.Join(tmpDir, "www")
+	cfgPath, err := ensureDefaultConfig("8080", "9443", "0.0.0.0", webRoot)
 
 	w.Close()
 	os.Stdout = old
@@ -185,15 +186,18 @@ func TestEnsureDefaultConfig(t *testing.T) {
 
 	// Verify subdirectories were created.
 	uwas := filepath.Join(tmpDir, ".uwas")
-	for _, sub := range []string{"domains.d", "certs", "cache", "logs", "backups", "www"} {
+	for _, sub := range []string{"domains.d", "certs", "cache", "logs", "backups"} {
 		subDir := filepath.Join(uwas, sub)
 		if info, err := os.Stat(subDir); err != nil || !info.IsDir() {
 			t.Errorf("expected directory %s to exist", subDir)
 		}
 	}
 
-	// Verify index.html was created.
-	indexPath := filepath.Join(uwas, "www", "index.html")
+	// Verify web root and index.html were created.
+	if info, err := os.Stat(webRoot); err != nil || !info.IsDir() {
+		t.Errorf("expected web root %s to exist", webRoot)
+	}
+	indexPath := filepath.Join(webRoot, "index.html")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 		t.Error("index.html should exist")
 	}
@@ -222,7 +226,7 @@ func TestEnsureDefaultConfigIdempotent(t *testing.T) {
 	os.Stdout = w
 
 	// First call creates everything.
-	path1, err := ensureDefaultConfig("8080", "9443", "0.0.0.0")
+	path1, err := ensureDefaultConfig("8080", "9443", "0.0.0.0", "/var/www")
 
 	w.Close()
 	os.Stdout = old
@@ -242,7 +246,7 @@ func TestEnsureDefaultConfigIdempotent(t *testing.T) {
 	os.Stdout = w
 
 	// Second call should return existing path without overwriting.
-	path2, err := ensureDefaultConfig("9999", "1111", "0.0.0.0")
+	path2, err := ensureDefaultConfig("9999", "1111", "0.0.0.0", "/var/www")
 
 	w.Close()
 	os.Stdout = old
@@ -286,7 +290,7 @@ func TestGenerateAPIKey(t *testing.T) {
 }
 
 func TestGenerateDefaultConfigValidYAML(t *testing.T) {
-	content := generateDefaultConfig("8080", "9443", "0.0.0.0", "abcdef1234567890abcdef1234567890", "/tmp/uwas")
+	content := generateDefaultConfig("8080", "9443", "0.0.0.0", "abcdef1234567890abcdef1234567890", "/tmp/uwas", "/var/www")
 
 	// Should be parseable as YAML.
 	var parsed map[string]any
@@ -315,7 +319,7 @@ func TestGenerateDefaultConfigValidYAML(t *testing.T) {
 
 func TestGenerateDefaultConfigContainsAPIKey(t *testing.T) {
 	apiKey := "deadbeef12345678deadbeef12345678"
-	content := generateDefaultConfig("80", "9443", "0.0.0.0", apiKey, "/tmp/uwas")
+	content := generateDefaultConfig("80", "9443", "0.0.0.0", apiKey, "/tmp/uwas", "/var/www")
 
 	if !strings.Contains(content, apiKey) {
 		t.Error("generated config should contain the API key")
@@ -323,7 +327,7 @@ func TestGenerateDefaultConfigContainsAPIKey(t *testing.T) {
 }
 
 func TestGenerateDefaultConfigContainsPorts(t *testing.T) {
-	content := generateDefaultConfig("8888", "7777", "0.0.0.0", "key", "/tmp/uwas")
+	content := generateDefaultConfig("8888", "7777", "0.0.0.0", "key", "/tmp/uwas", "/var/www")
 
 	if !strings.Contains(content, ":8888") {
 		t.Error("should contain HTTP port")

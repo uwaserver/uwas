@@ -100,6 +100,12 @@ func (s *ServeCommand) Run(args []string) error {
 		fmt.Println("  Binding to \033[1m127.0.0.1\033[0m restricts it to localhost only.")
 		adminBind = promptWithDefault("  Admin bind address", "0.0.0.0")
 
+		// Ask about web root
+		fmt.Println()
+		fmt.Println("  Domain web files will be stored under the web root directory.")
+		fmt.Println("  Each domain gets its own subdirectory (e.g. /var/www/example.com/public_html).")
+		webRoot := promptWithDefault("  Web root base directory", "/var/www")
+
 		// Explain the API key
 		fmt.Println()
 		fmt.Println("  \033[33m!\033[0m An API key will be generated to protect your dashboard and API.")
@@ -107,7 +113,7 @@ func (s *ServeCommand) Run(args []string) error {
 		fmt.Println("    It will also be stored in \033[1m~/.uwas/.env\033[0m as UWAS_ADMIN_KEY.")
 
 		var err error
-		cfgFile, err = ensureDefaultConfig(hp, ap, adminBind)
+		cfgFile, err = ensureDefaultConfig(hp, ap, adminBind, webRoot)
 		if err != nil {
 			return fmt.Errorf("setup: %w", err)
 		}
