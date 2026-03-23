@@ -920,14 +920,21 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Auto-create web root directory if root is set.
+	// Auto-create web root directory with a placeholder page.
+	if d.Root == "" && s.config.Global.WebRoot != "" {
+		d.Root = filepath.Join(s.config.Global.WebRoot, d.Host, "public_html")
+	}
 	if d.Root != "" {
 		os.MkdirAll(d.Root, 0755)
-	} else if s.config.Global.WebRoot != "" {
-		// Default: {web_root}/{hostname}/public_html
-		root := filepath.Join(s.config.Global.WebRoot, d.Host, "public_html")
-		os.MkdirAll(root, 0755)
-		d.Root = root
+		idx := filepath.Join(d.Root, "index.html")
+		if _, err := os.Stat(idx); os.IsNotExist(err) {
+			placeholder := fmt.Sprintf(`<!DOCTYPE html>
+<html><head><title>%s</title></head>
+<body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0">
+<div style="text-align:center"><h1>%s</h1><p style="color:#94a3b8">Site is ready. Upload your files via SFTP or place them in:<br><code>%s</code></p></div>
+</body></html>`, d.Host, d.Host, d.Root)
+			os.WriteFile(idx, []byte(placeholder), 0644)
+		}
 	}
 
 	s.config.Domains = append(s.config.Domains, d)
