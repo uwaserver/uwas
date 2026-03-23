@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -463,6 +464,13 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (d Duration) MarshalYAML() (any, error) {
+	if d.Duration == 0 {
+		return "0s", nil
+	}
+	return d.Duration.String(), nil
+}
+
 func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
 	if err := unmarshal(&s); err != nil {
@@ -517,6 +525,22 @@ const (
 	MB ByteSize = 1024 * KB
 	GB ByteSize = 1024 * MB
 )
+
+func (b ByteSize) MarshalYAML() (any, error) {
+	if b == 0 {
+		return 0, nil
+	}
+	if b%GB == 0 {
+		return fmt.Sprintf("%dGB", b/GB), nil
+	}
+	if b%MB == 0 {
+		return fmt.Sprintf("%dMB", b/MB), nil
+	}
+	if b%KB == 0 {
+		return fmt.Sprintf("%dKB", b/KB), nil
+	}
+	return int64(b), nil
+}
 
 func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
