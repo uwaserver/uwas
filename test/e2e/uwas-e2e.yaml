@@ -1,0 +1,87 @@
+# UWAS E2E Test Configuration
+global:
+  worker_count: auto
+  max_connections: 1024
+  http_listen: "127.0.0.1:19080"
+  log_level: info
+  log_format: text
+
+  timeouts:
+    read: 30s
+    write: 60s
+    idle: 120s
+    shutdown_grace: 5s
+    read_header: 10s
+    max_header_bytes: 1048576
+
+  admin:
+    enabled: true
+    listen: "127.0.0.1:19443"
+    api_key: "e2e-test-key"
+
+  cache:
+    enabled: true
+    memory_limit: 64MB
+    default_ttl: 300
+    grace_ttl: 600
+
+  mcp:
+    enabled: true
+
+  backup:
+    enabled: true
+    provider: local
+    keep: 5
+    local:
+      path: ./test/e2e/backups
+
+  alerting:
+    enabled: true
+
+domains:
+  # Static site with all features
+  - host: "127.0.0.1:19080"
+    aliases:
+      - "localhost:19080"
+    root: ./demo/www/static
+    type: static
+    ssl:
+      mode: "off"
+    compression:
+      enabled: true
+      algorithms:
+        - gzip
+        - br
+      min_size: 256
+    cache:
+      enabled: true
+      ttl: 300
+    security:
+      blocked_paths:
+        - ".git"
+        - ".env"
+    headers:
+      response_add:
+        X-Powered-By: "UWAS"
+        X-E2E-Test: "true"
+    cors:
+      enabled: true
+      allowed_origins:
+        - "http://localhost:3000"
+        - "https://example.com"
+      allowed_methods:
+        - GET
+        - POST
+        - OPTIONS
+      allowed_headers:
+        - Content-Type
+        - Authorization
+      max_age: 3600
+    index_files:
+      - index.html
+    image_optimization:
+      enabled: true
+      formats:
+        - webp
+    error_pages:
+      404: /404.html

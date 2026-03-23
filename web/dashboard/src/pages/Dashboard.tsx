@@ -116,27 +116,27 @@ export default function Dashboard() {
         <Card
           icon={<Gauge size={20} />}
           label="p50 Latency"
-          value={stats ? `${stats.latency_p50_ms.toFixed(1)}ms` : '--'}
+          value={stats?.latency_p50_ms != null ? `${stats.latency_p50_ms.toFixed(1)}ms` : '--'}
         />
         <Card
           icon={<Gauge size={20} />}
           label="p95 Latency"
-          value={stats ? `${stats.latency_p95_ms.toFixed(1)}ms` : '--'}
+          value={stats?.latency_p95_ms != null ? `${stats.latency_p95_ms.toFixed(1)}ms` : '--'}
         />
         <Card
           icon={<Gauge size={20} />}
           label="p99 Latency"
-          value={stats ? `${stats.latency_p99_ms.toFixed(1)}ms` : '--'}
+          value={stats?.latency_p99_ms != null ? `${stats.latency_p99_ms.toFixed(1)}ms` : '--'}
         />
         <Card
           icon={<Gauge size={20} />}
           label="Max Latency"
-          value={stats ? `${stats.latency_max_ms.toFixed(1)}ms` : '--'}
+          value={stats?.latency_max_ms != null ? `${stats.latency_max_ms.toFixed(1)}ms` : '--'}
         />
         <Card
           icon={<AlertCircle size={20} />}
           label="Slow Requests"
-          value={stats?.slow_requests.toLocaleString() ?? '--'}
+          value={stats?.slow_requests?.toLocaleString() ?? '--'}
         />
       </div>
 

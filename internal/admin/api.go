@@ -3,7 +3,6 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -222,6 +221,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Public endpoints: health check and dashboard UI (no auth or rate limit needed)
+		if r.URL.Path == "/api/v1/health" || strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Rate limiting: check if IP is blocked before auth check.
 		ip := requestIP(r)
 		if s.checkRateLimit(ip) {
@@ -229,12 +234,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return
 		}
-		// Public endpoints: health check and dashboard UI
-		if r.URL.Path == "/api/v1/health" || strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		auth := r.Header.Get("Authorization")
+		// Also check token query param for SSE (EventSource can't set headers)
+		if auth == "" {
+			if token := r.URL.Query().Get("token"); token != "" {
+				auth = "Bearer " + token
+			}
+		}
 		if auth != "Bearer "+apiKey {
 			s.recordAuthFailure(ip)
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
@@ -1090,8 +1096,7 @@ func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-yaml")
-	w.Write(data)
+	jsonResponse(w, map[string]string{"content": string(data)})
 }
 
 // handleConfigRawPut validates and writes raw YAML content to the main config
@@ -1103,11 +1108,14 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		jsonError(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	data := []byte(req.Content)
 
 	// Validate YAML syntax.
 	var probe config.Config
@@ -1165,8 +1173,7 @@ func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		data, err := os.ReadFile(path)
 		if err == nil {
-			w.Header().Set("Content-Type", "application/x-yaml")
-			w.Write(data)
+			jsonResponse(w, map[string]string{"content": string(data)})
 			return
 		}
 	}
@@ -1194,8 +1201,7 @@ func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-yaml")
-	w.Write(data)
+	jsonResponse(w, map[string]string{"content": string(data)})
 }
 
 // handleDomainRawPut validates and writes raw YAML content for a single
@@ -1210,11 +1216,14 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		jsonError(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	data := []byte(req.Content)
 
 	// Validate YAML syntax by parsing as a domain.
 	var probe config.Domain

@@ -673,21 +673,19 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if h := domain.Headers; len(h.Add) > 0 || len(h.Remove) > 0 ||
 		len(h.ResponseAdd) > 0 || len(h.ResponseRemove) > 0 {
-		defer func() {
-			w := ctx.Response.Header()
-			for k, v := range h.Add {
-				w.Set(k, v)
-			}
-			for k, v := range h.ResponseAdd {
-				w.Set(k, v)
-			}
-			for _, k := range h.Remove {
-				w.Del(k)
-			}
-			for _, k := range h.ResponseRemove {
-				w.Del(k)
-			}
-		}()
+		w := ctx.Response.Header()
+		for k, v := range h.Add {
+			w.Set(k, v)
+		}
+		for k, v := range h.ResponseAdd {
+			w.Set(k, v)
+		}
+		for _, k := range h.Remove {
+			w.Del(k)
+		}
+		for _, k := range h.ResponseRemove {
+			w.Del(k)
+		}
 	}
 
 	// Cache lookup — check global bypass + per-domain bypass rules
