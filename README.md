@@ -12,10 +12,10 @@ Apache + Nginx + Varnish + Caddy → UWAS
   <img src="assets/banner.jpeg" alt="UWAS Logo" width="100%">
 </p>
 
-[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1728_passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1718_passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-88.6%25-brightgreen)]()
 
 ## What is UWAS?
 
@@ -47,6 +47,11 @@ One binary. Zero hassle. Production ready.
 - **Audit Logging** — Track all admin actions with timestamps and IPs
 - **AI-Native** — MCP server for LLM-driven management
 - **Secure** — WAF rules, rate limiting, security headers, blocked paths
+- **Per-domain CORS** — Cross-Origin Resource Sharing per domain
+- **Basic Authentication** — Per-domain HTTP Basic Auth
+- **IP Access Control** — Per-domain IP whitelist/blacklist
+- **Custom Error Pages** — Per-domain 404/500 error pages
+- **Daemon Mode** — `uwas serve -d` for background operation
 - **First-Run UX** — Auto-config creation, interactive setup, startup banner
 - **Single Binary** — No dependencies, just download and run
 
@@ -125,7 +130,7 @@ domains:
 
 | Component | Minimum | Recommended | Notes |
 |-----------|---------|-------------|-------|
-| Go | 1.23+ | 1.26+ | For building from source |
+| Go | 1.26+ | 1.26+ | For building from source |
 | PHP | 7.4+ | 8.3+ / 8.4+ | Only needed for PHP sites |
 | PHP-FPM | Any | 8.3-fpm | Linux/macOS: `php-fpm`, Windows: `php-cgi -b` |
 
@@ -142,6 +147,7 @@ domains:
 ```
 uwas                         Start server (auto-setup if no config)
 uwas serve    -c uwas.yaml   Start with specific config
+uwas serve    -d             Start as background daemon
 uwas version                 Print version info
 uwas config   validate       Validate config file
 uwas domain   list           List domains
@@ -168,8 +174,9 @@ Request Flow:
       → Middleware Chain:
           Recovery → Request ID → Security Headers → Access Log
         → Virtual Host Lookup
-          → Security Guard (blocked paths, WAF)
-            → Rewrite Engine (mod_rewrite compatible)
+          → Per-domain: IP ACL → BasicAuth → CORS → Header Transform
+            → Security Guard (blocked paths, WAF)
+              → Rewrite Engine (mod_rewrite compatible)
               → Cache Lookup (L1 memory + L2 disk)
                 → Handler:
                     ├── Static File  (ETag, Range, pre-compressed, SPA)
@@ -302,6 +309,8 @@ GET  /api/v1/backups         → Backup list
 POST /api/v1/backups         → Create backup
 POST /api/v1/backups/restore → Restore backup
 GET  /api/v1/sse/stats       → Server-Sent Events stream
+GET  /api/v1/mcp/tools       → MCP tool listing
+POST /api/v1/mcp/call        → Invoke MCP tool
 ```
 
 Protected with `Authorization: Bearer <api_key>` when `admin.api_key` is set.

@@ -10,7 +10,7 @@ const metrics: Metric[] = [
   { value: '75M', label: 'cache ops/sec', sub: 'Cache engine', color: 'var(--accent-cyan)' },
   { value: '<1ms', label: 'p99 latency', sub: 'Overhead', color: 'var(--accent-green)' },
   { value: '18MB', label: 'Binary', sub: 'Statically linked', color: 'var(--accent-purple)' },
-  { value: '1,780', label: 'Tests', sub: '100% pass', color: 'var(--accent-orange)' },
+  { value: '1,718', label: 'Tests', sub: '100% pass', color: 'var(--accent-orange)' },
   { value: '<2s', label: 'Cold Start', sub: 'Ready to serve', color: 'var(--accent-pink)' },
 ]
 
