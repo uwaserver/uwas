@@ -179,7 +179,7 @@ func TestSecurityGuardCustomPaths(t *testing.T) {
 	log := logger.New("error", "text")
 
 	customBlocked := []string{"/admin/secret", "/internal"}
-	handler := SecurityGuard(log, customBlocked, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := SecurityGuard(log, customBlocked, false, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -206,7 +206,7 @@ func TestSecurityGuardCustomPaths(t *testing.T) {
 func TestSecurityGuardWAFEncodedAttacks(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 

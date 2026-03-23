@@ -3,7 +3,6 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
+	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/selfupdate"
 	"github.com/uwaserver/uwas/internal/siteuser"
 	"github.com/uwaserver/uwas/internal/wordpress"
@@ -490,5 +490,26 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Ensure io import is used (for file upload)
-var _ = io.EOF
+// ============ Security Stats ============
+
+// SetSecurityStats sets the security stats tracker for the API.
+func (s *Server) SetSecurityStats(st *middleware.SecurityStats) { s.securityStats = st }
+
+func (s *Server) handleSecurityStats(w http.ResponseWriter, r *http.Request) {
+	if s.securityStats == nil {
+		jsonResponse(w, map[string]any{
+			"waf_blocked": 0, "bot_blocked": 0, "rate_blocked": 0,
+			"hotlink_blocked": 0, "total_blocked": 0,
+		})
+		return
+	}
+	jsonResponse(w, s.securityStats.Snapshot())
+}
+
+func (s *Server) handleSecurityBlocked(w http.ResponseWriter, r *http.Request) {
+	if s.securityStats == nil {
+		jsonResponse(w, []any{})
+		return
+	}
+	jsonResponse(w, s.securityStats.RecentBlocked())
+}

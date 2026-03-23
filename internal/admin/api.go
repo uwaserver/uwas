@@ -24,6 +24,7 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
+	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
@@ -76,8 +77,9 @@ type Server struct {
 	phpMgr    *phpmanager.Manager
 	backupMgr *backup.BackupManager
 	mcpSrv    *mcp.Server
-	tlsMgr    *uwastls.Manager
-	unknownHT *router.UnknownHostTracker
+	tlsMgr        *uwastls.Manager
+	unknownHT     *router.UnknownHostTracker
+	securityStats *middleware.SecurityStats
 
 	// PHP install state
 	phpInstallMu     sync.Mutex
@@ -120,6 +122,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
 	s.mux.HandleFunc("POST /api/v1/reload", s.handleReload)
 	s.mux.HandleFunc("POST /api/v1/cache/purge", s.handleCachePurge)
+	s.mux.HandleFunc("GET /api/v1/security/stats", s.handleSecurityStats)
+	s.mux.HandleFunc("GET /api/v1/security/blocked", s.handleSecurityBlocked)
 	s.mux.HandleFunc("GET /api/v1/cache/stats", s.handleCacheStats)
 	s.mux.Handle("GET /api/v1/metrics", s.metrics.Handler())
 	s.mux.HandleFunc("POST /api/v1/domains", s.handleAddDomain)

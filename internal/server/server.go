@@ -76,7 +76,8 @@ type Server struct {
 	proxyBreakers  map[string]*proxyhandler.CircuitBreaker
 	proxyCanaries  map[string]*proxyhandler.CanaryRouter
 
-	unknownHosts *router.UnknownHostTracker
+	unknownHosts  *router.UnknownHostTracker
+	securityStats *middleware.SecurityStats
 
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
 	// Invalidated on config reload.
@@ -138,6 +139,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		proxyBreakers:  make(map[string]*proxyhandler.CircuitBreaker),
 		proxyCanaries:  make(map[string]*proxyhandler.CanaryRouter),
 		unknownHosts:   router.NewUnknownHostTracker(),
+		securityStats:  middleware.NewSecurityStats(),
 		htaccessCache:  make(map[string][]*rewrite.Rule),
 		rewriteCache:   make(map[string]*rewrite.Engine),
 	}
@@ -175,6 +177,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	if s.admin != nil {
 		s.admin.SetTLSManager(s.tlsMgr)
 		s.admin.SetUnknownHostTracker(s.unknownHosts)
+		s.admin.SetSecurityStats(s.securityStats)
 		s.admin.SetOnDomainChange(func() {
 			// Admin and server share the same *config.Config pointer,
 			// so config.Domains is already updated. Sync all subsystems.
@@ -339,7 +342,8 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 		}
 	}
 	if len(blockedPaths) > 0 || wafEnabled {
-		mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, wafEnabled))
+		mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, wafEnabled, s.securityStats))
+	mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
 	}
 
 	mws = append(mws, middleware.AccessLog(s.logger))

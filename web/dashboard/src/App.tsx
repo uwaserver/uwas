@@ -21,6 +21,7 @@ import FileManager from '@/pages/FileManager';
 import CronJobs from '@/pages/CronJobs';
 import Firewall from '@/pages/Firewall';
 import Updates from '@/pages/Updates';
+import Security from '@/pages/Security';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/file-manager" element={<FileManager />} />
         <Route path="/cron" element={<CronJobs />} />
         <Route path="/firewall" element={<Firewall />} />
+        <Route path="/security" element={<Security />} />
         <Route path="/updates" element={<Updates />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
