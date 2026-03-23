@@ -42,6 +42,7 @@ const links = [
   { to: '/file-manager', label: 'File Manager', icon: FolderOpen },
   { to: '/cron', label: 'Cron Jobs', icon: Clock },
   { to: '/firewall', label: 'Firewall', icon: ShieldCheck },
+  { to: '/security', label: 'Security', icon: Shield },
   { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert },
   { to: '/audit', label: 'Audit Log', icon: Shield },
   { to: '/updates', label: 'Updates', icon: Download },

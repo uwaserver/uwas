@@ -378,6 +378,12 @@ export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${e
 export const addSSHKey = (domain: string, publicKey: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'POST', body: JSON.stringify({ public_key: publicKey }) });
 export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'DELETE', body: JSON.stringify({ fingerprint }) });
 
+// Security
+export interface SecurityStats { waf_blocked: number; bot_blocked: number; rate_blocked: number; hotlink_blocked: number; total_blocked: number; }
+export interface BlockedRequest { time: string; ip: string; path: string; reason: string; ua: string; }
+export const fetchSecurityStats = () => api<SecurityStats>('/api/v1/security/stats');
+export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked');
+
 // Self-update
 export interface UpdateInfo { current_version: string; latest_version: string; update_available: boolean; release_url: string; published_at: string; release_notes: string; download_url: string; }
 export const checkUpdate = () => api<UpdateInfo>('/api/v1/system/update-check');
