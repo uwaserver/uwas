@@ -147,9 +147,9 @@ func TestHandleHTTPUnknownHostServes404(t *testing.T) {
 	req.Host = "unknown.com"
 	s.handleHTTP(rec, req)
 
-	// Should go through middleware chain -> handleRequest -> 404 (unknown host)
-	if rec.Code != 404 {
-		t.Errorf("status = %d, want 404 for unknown host", rec.Code)
+	// Unknown host gets 421 Misdirected Request
+	if rec.Code != 421 {
+		t.Errorf("status = %d, want 421 for unknown host", rec.Code)
 	}
 }
 

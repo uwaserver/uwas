@@ -76,6 +76,8 @@ type Server struct {
 	proxyBreakers  map[string]*proxyhandler.CircuitBreaker
 	proxyCanaries  map[string]*proxyhandler.CanaryRouter
 
+	unknownHosts *router.UnknownHostTracker
+
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
 	// Invalidated on config reload.
 	htaccessCacheMu sync.RWMutex
@@ -135,6 +137,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		proxyMirrors:   make(map[string]*proxyhandler.Mirror),
 		proxyBreakers:  make(map[string]*proxyhandler.CircuitBreaker),
 		proxyCanaries:  make(map[string]*proxyhandler.CanaryRouter),
+		unknownHosts:   router.NewUnknownHostTracker(),
 		htaccessCache:  make(map[string][]*rewrite.Rule),
 		rewriteCache:   make(map[string]*rewrite.Engine),
 	}
@@ -168,9 +171,10 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetAlerter(alerter)
 	}
 
-	// TLS manager → admin
+	// TLS manager + unknown host tracker → admin
 	if s.admin != nil {
 		s.admin.SetTLSManager(s.tlsMgr)
+		s.admin.SetUnknownHostTracker(s.unknownHosts)
 	}
 
 	// Uptime monitor
@@ -598,6 +602,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		renderErrorPage(ctx.Response, http.StatusNotFound)
 		return
 	}
+
+	// Track and reject unconfigured hosts hitting the fallback domain.
+	if !s.vhosts.IsConfigured(r.Host) {
+		blocked := s.unknownHosts.Record(r.Host)
+		if blocked {
+			ctx.Response.Header().Set("Connection", "close")
+			renderErrorPage(ctx.Response, http.StatusForbidden)
+			return
+		}
+		// Not blocked but unconfigured — serve 421 Misdirected Request.
+		renderErrorPage(ctx.Response, 421)
+		return
+	}
+
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
 

@@ -27,6 +27,7 @@ import (
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
+	"github.com/uwaserver/uwas/internal/router"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 )
 
@@ -66,6 +67,7 @@ type Server struct {
 	backupMgr *backup.BackupManager
 	mcpSrv    *mcp.Server
 	tlsMgr    *uwastls.Manager
+	unknownHT *router.UnknownHostTracker
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -149,6 +151,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/backups/{name}", s.handleBackupDelete)
 	s.mux.HandleFunc("GET /api/v1/backups/schedule", s.handleBackupScheduleGet)
 	s.mux.HandleFunc("PUT /api/v1/backups/schedule", s.handleBackupSchedulePut)
+
+	// Unknown domains
+	s.mux.HandleFunc("GET /api/v1/unknown-domains", s.handleUnknownDomainsList)
+	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/block", s.handleUnknownDomainsBlock)
+	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/unblock", s.handleUnknownDomainsUnblock)
+	s.mux.HandleFunc("DELETE /api/v1/unknown-domains/{host}", s.handleUnknownDomainsDismiss)
 
 	// MCP endpoints
 	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
@@ -1099,6 +1107,51 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "renewed", "host": host})
+}
+
+// --- Unknown domains ---
+
+// SetUnknownHostTracker sets the unknown host tracker for the API.
+func (s *Server) SetUnknownHostTracker(t *router.UnknownHostTracker) { s.unknownHT = t }
+
+func (s *Server) handleUnknownDomainsList(w http.ResponseWriter, r *http.Request) {
+	if s.unknownHT == nil {
+		jsonResponse(w, []any{})
+		return
+	}
+	jsonResponse(w, s.unknownHT.List())
+}
+
+func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.unknownHT == nil {
+		jsonError(w, "tracker not available", http.StatusServiceUnavailable)
+		return
+	}
+	s.unknownHT.Block(host)
+	s.logger.Info("blocked unknown domain", "host", host)
+	jsonResponse(w, map[string]string{"status": "blocked", "host": host})
+}
+
+func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.unknownHT == nil {
+		jsonError(w, "tracker not available", http.StatusServiceUnavailable)
+		return
+	}
+	s.unknownHT.Unblock(host)
+	s.logger.Info("unblocked unknown domain", "host", host)
+	jsonResponse(w, map[string]string{"status": "unblocked", "host": host})
+}
+
+func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.unknownHT == nil {
+		jsonError(w, "tracker not available", http.StatusServiceUnavailable)
+		return
+	}
+	s.unknownHT.Dismiss(host)
+	jsonResponse(w, map[string]string{"status": "dismissed", "host": host})
 }
 
 // --- Domain detail ---
