@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 type Config struct {
 	Global    GlobalConfig `yaml:"global"`
@@ -309,9 +313,44 @@ type RedirectConfig struct {
 	PreservePath bool   `yaml:"preserve_path" json:"preserve_path"`
 }
 
-// Duration wraps time.Duration for YAML unmarshaling of strings like "30s", "5m".
+// Duration wraps time.Duration for YAML/JSON unmarshaling of strings like "30s", "5m"
+// or plain numbers (interpreted as seconds).
 type Duration struct {
 	time.Duration
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	if d.Duration == 0 {
+		return []byte("0"), nil
+	}
+	return []byte(`"` + d.Duration.String() + `"`), nil
+}
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	// Try number (seconds)
+	s := strings.TrimSpace(string(b))
+	if s == "null" || s == "" {
+		return nil
+	}
+	if s[0] >= '0' && s[0] <= '9' || s[0] == '-' {
+		var secs float64
+		if err := json.Unmarshal(b, &secs); err != nil {
+			return err
+		}
+		d.Duration = time.Duration(secs * float64(time.Second))
+		return nil
+	}
+	// Try string like "30s"
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
+	}
+	dur, err := time.ParseDuration(str)
+	if err != nil {
+		return err
+	}
+	d.Duration = dur
+	return nil
 }
 
 func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
@@ -334,6 +373,34 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 
 // ByteSize represents a size in bytes, parsed from strings like "512MB", "10GB".
 type ByteSize int64
+
+func (b ByteSize) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int64(b))
+}
+
+func (b *ByteSize) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "null" {
+		return nil
+	}
+	// Try number
+	var n int64
+	if err := json.Unmarshal(data, &n); err == nil {
+		*b = ByteSize(n)
+		return nil
+	}
+	// Try string like "512MB"
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	size, err := parseByteSize(str)
+	if err != nil {
+		return err
+	}
+	*b = size
+	return nil
+}
 
 const (
 	KB ByteSize = 1024
