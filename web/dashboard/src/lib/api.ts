@@ -401,6 +401,10 @@ export interface BlockedRequest { time: string; ip: string; path: string; reason
 export const fetchSecurityStats = () => api<SecurityStats>('/api/v1/security/stats');
 export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked');
 
+// Server IPs
+export interface ServerIPInfo { ip: string; version: number; interface: string; primary: boolean; }
+export const fetchServerIPs = () => api<{ ips: ServerIPInfo[]; public_ip: string }>('/api/v1/system/ips');
+
 // Self-update
 export interface UpdateInfo { current_version: string; latest_version: string; update_available: boolean; release_url: string; published_at: string; release_notes: string; download_url: string; }
 export const checkUpdate = () => api<UpdateInfo>('/api/v1/system/update-check');
