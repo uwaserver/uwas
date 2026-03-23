@@ -247,6 +247,19 @@ export interface PHPInstallInfo {
 export const fetchPHPInstallInfo = (version?: string) =>
   api<PHPInstallInfo>(`/api/v1/php/install-info${version ? `?version=${version}` : ''}`);
 
+export interface PHPInstallStatus {
+  version?: string;
+  status: string; // "idle", "running", "done", "error"
+  output?: string;
+  error?: string;
+  distro?: string;
+}
+
+export const installPHP = (version: string) =>
+  api<{ status: string; version: string }>('/api/v1/php/install', { method: 'POST', body: JSON.stringify({ version }) });
+
+export const fetchPHPInstallStatus = () => api<PHPInstallStatus>('/api/v1/php/install/status');
+
 export interface DomainPHP {
   domain: string;
   version: string;

@@ -16,6 +16,8 @@ import {
 import {
   fetchPHP,
   fetchPHPInstallInfo,
+  installPHP,
+  fetchPHPInstallStatus,
   fetchDomains,
   fetchDomainPHPInstances,
   assignDomainPHP,
@@ -26,6 +28,7 @@ import {
   updateDomainPHPConfig,
   type PHPInstall,
   type PHPInstallInfo,
+  type PHPInstallStatus,
   type DomainPHP,
   type DomainData,
 } from '@/lib/api';
@@ -124,9 +127,11 @@ export default function PHP() {
   const [stoppingAll, setStoppingAll] = useState(false);
   const [wpSetup, setWpSetup] = useState(false);
 
-  /* Install help */
+  /* Install */
   const [installInfo, setInstallInfo] = useState<PHPInstallInfo | null>(null);
   const [showInstall, setShowInstall] = useState(false);
+  const [installVer, setInstallVer] = useState('8.4');
+  const [installJob, setInstallJob] = useState<PHPInstallStatus | null>(null);
 
   /* -------- helpers -------- */
 
@@ -392,13 +397,13 @@ export default function PHP() {
         {installs.length === 0 ? (
           <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-8 text-center">
             <Cpu size={40} className="mx-auto mb-3 text-slate-500" />
-            <p className="text-sm text-slate-400">No PHP installations detected.</p>
-            <p className="mt-1 text-xs text-slate-500">Click below to see install instructions for your OS.</p>
+            <p className="text-sm text-slate-400">No PHP (FastCGI/FPM) detected.</p>
+            <p className="mt-1 text-xs text-slate-500">Install PHP directly from here — pick a version below.</p>
             <button
-              onClick={() => { fetchPHPInstallInfo('8.3').then(setInstallInfo).catch(() => {}); setShowInstall(true); }}
-              className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              onClick={() => { setShowInstall(true); fetchPHPInstallInfo('8.4').then(setInstallInfo).catch(() => {}); }}
+              className="mt-4 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
             >
-              How to Install PHP
+              Install PHP
             </button>
           </div>
         ) : (
@@ -430,58 +435,108 @@ export default function PHP() {
           </div>
         )}
 
-        {/* Install another version button */}
-        {installs.length > 0 && (
-          <button
-            onClick={() => { fetchPHPInstallInfo('8.4').then(setInstallInfo).catch(() => {}); setShowInstall(true); }}
-            className="mt-3 text-xs text-blue-400 hover:text-blue-300"
-          >
-            + Install another PHP version
-          </button>
-        )}
+        {/* Install button */}
+        <button
+          onClick={() => setShowInstall(!showInstall)}
+          className="mt-3 text-xs text-blue-400 hover:text-blue-300"
+        >
+          + Install {installs.filter(i => i.sapi !== 'cli').length > 0 ? 'another' : ''} PHP version
+        </button>
       </div>
 
-      {/* ============ Install Instructions Panel ============ */}
-      {showInstall && installInfo && (
+      {/* ============ Install Panel ============ */}
+      {showInstall && (
         <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-5">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-sm font-semibold text-blue-400">
-              Install PHP {installInfo.version} — {installInfo.distro}
-            </h2>
+          <div className="flex items-start justify-between mb-4">
+            <h2 className="text-sm font-semibold text-blue-400">Install PHP</h2>
             <button onClick={() => setShowInstall(false)} className="text-slate-500 hover:text-slate-300">
               <X size={16} />
             </button>
           </div>
-          <p className="text-xs text-slate-400 mb-3">Run these commands on your server (requires root):</p>
-          <div className="space-y-1.5">
-            {installInfo.commands.map((cmd, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className="shrink-0 mt-0.5 text-xs text-slate-500">{i + 1}.</span>
-                <code className="flex-1 rounded bg-[#0f172a] px-3 py-2 text-xs font-mono text-slate-200 select-all">
-                  {cmd}
-                </code>
+
+          {/* Version picker + install button */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex items-center gap-1.5">
+              {['8.2', '8.3', '8.4', '8.5'].map(v => (
+                <button
+                  key={v}
+                  onClick={() => { setInstallVer(v); fetchPHPInstallInfo(v).then(setInstallInfo).catch(() => {}); }}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                    installVer === v
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-[#334155] text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {v}
+                  {v === '8.5' && <span className="ml-1 text-[10px] opacity-70">new</span>}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  await installPHP(installVer);
+                  setInstallJob({ status: 'running', version: installVer });
+                  // Poll for completion
+                  const poll = setInterval(async () => {
+                    try {
+                      const st = await fetchPHPInstallStatus();
+                      setInstallJob(st);
+                      if (st.status !== 'running') {
+                        clearInterval(poll);
+                        if (st.status === 'done') loadAll();
+                      }
+                    } catch { clearInterval(poll); }
+                  }, 2000);
+                } catch (e) {
+                  setInstallJob({ status: 'error', error: (e as Error).message });
+                }
+              }}
+              disabled={installJob?.status === 'running'}
+              className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {installJob?.status === 'running' ? (
+                <><RefreshCw size={13} className="animate-spin" /> Installing...</>
+              ) : (
+                <><Plus size={13} /> Install PHP {installVer}</>
+              )}
+            </button>
+          </div>
+
+          {/* Progress / result */}
+          {installJob && installJob.status === 'running' && (
+            <div className="rounded-md bg-[#0f172a] p-3 text-xs">
+              <p className="text-blue-400 mb-1">Installing PHP {installJob.version}... This may take a minute.</p>
+              <div className="h-1 w-full bg-[#334155] rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '60%' }} />
               </div>
-            ))}
-          </div>
-          {installInfo.notes && (
-            <p className="mt-3 text-xs text-slate-500">{installInfo.notes}</p>
+            </div>
           )}
-          <p className="mt-3 text-xs text-slate-400">
-            After installing, click <strong>Refresh</strong> above to detect the new PHP version.
-          </p>
-          {/* Version quick-switch */}
-          <div className="mt-3 flex items-center gap-2">
-            <span className="text-xs text-slate-500">Other versions:</span>
-            {['8.1', '8.2', '8.3', '8.4', '8.5'].map(v => (
-              <button
-                key={v}
-                onClick={() => fetchPHPInstallInfo(v).then(setInstallInfo).catch(() => {})}
-                className={`rounded px-2 py-0.5 text-xs ${installInfo.version === v ? 'bg-blue-600 text-white' : 'bg-[#334155] text-slate-400 hover:text-slate-200'}`}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
+
+          {installJob && installJob.status === 'done' && (
+            <div className="rounded-md bg-emerald-500/10 p-3 text-xs text-emerald-400">
+              PHP {installJob.version} installed successfully. PHP list has been refreshed.
+            </div>
+          )}
+
+          {installJob && installJob.status === 'error' && (
+            <div className="rounded-md bg-red-500/10 p-3 text-xs">
+              <p className="text-red-400 mb-1">Installation failed: {installJob.error}</p>
+              {installJob.output && (
+                <pre className="mt-2 max-h-40 overflow-auto text-[10px] text-slate-500 whitespace-pre-wrap">{installJob.output}</pre>
+              )}
+            </div>
+          )}
+
+          {/* Show commands for reference */}
+          {installInfo && !installJob && (
+            <div className="text-xs text-slate-500">
+              <p className="mb-1">Will run on {installInfo.distro}:</p>
+              {installInfo.commands.map((cmd, i) => (
+                <code key={i} className="block rounded bg-[#0f172a] px-2 py-1 mb-1 font-mono text-slate-400">{cmd}</code>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
