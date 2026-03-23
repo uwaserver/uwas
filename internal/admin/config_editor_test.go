@@ -43,11 +43,15 @@ func TestConfigRawGetSuccess(t *testing.T) {
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	if rec.Header().Get("Content-Type") != "application/x-yaml" {
-		t.Errorf("Content-Type = %q, want application/x-yaml", rec.Header().Get("Content-Type"))
+	if rec.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", rec.Header().Get("Content-Type"))
 	}
-	if rec.Body.String() != content {
-		t.Errorf("body = %q, want %q", rec.Body.String(), content)
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse JSON response: %v", err)
+	}
+	if resp["content"] != content {
+		t.Errorf("content = %q, want %q", resp["content"], content)
 	}
 }
 
@@ -86,7 +90,8 @@ func TestConfigRawPutSuccess(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 
 	newContent := "global:\n  log_level: debug\n"
-	body := strings.NewReader(newContent)
+	jsonBody, _ := json.Marshal(map[string]string{"content": newContent})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
 
@@ -115,7 +120,8 @@ func TestConfigRawPutInvalidYAML(t *testing.T) {
 	s := testServer()
 	s.SetConfigPath(cfgPath)
 
-	body := strings.NewReader("{{invalid yaml}}")
+	jsonBody, _ := json.Marshal(map[string]string{"content": "{{invalid yaml}}"})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
 
@@ -150,7 +156,8 @@ func TestConfigRawPutTriggersReload(t *testing.T) {
 		return nil
 	})
 
-	body := strings.NewReader("global:\n  log_level: debug\n")
+	jsonBody, _ := json.Marshal(map[string]string{"content": "global:\n  log_level: debug\n"})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
 
@@ -171,7 +178,8 @@ func TestConfigRawPutReloadError(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 	s.SetReloadFunc(func() error { return errors.New("reload boom") })
 
-	body := strings.NewReader("global:\n  log_level: debug\n")
+	jsonBody, _ := json.Marshal(map[string]string{"content": "global:\n  log_level: debug\n"})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
 
@@ -197,8 +205,15 @@ func TestDomainRawGetNoConfigPath(t *testing.T) {
 		t.Errorf("status = %d, want 200 (in-memory fallback)", rec.Code)
 	}
 	ct := rec.Header().Get("Content-Type")
-	if ct != "application/x-yaml" {
-		t.Errorf("Content-Type = %q, want application/x-yaml", ct)
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse JSON response: %v", err)
+	}
+	if resp["content"] == "" {
+		t.Error("expected non-empty content field in JSON response")
 	}
 }
 
@@ -231,11 +246,15 @@ func TestDomainRawGetSuccess(t *testing.T) {
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	if rec.Header().Get("Content-Type") != "application/x-yaml" {
-		t.Errorf("Content-Type = %q, want application/x-yaml", rec.Header().Get("Content-Type"))
+	if rec.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", rec.Header().Get("Content-Type"))
 	}
-	if rec.Body.String() != domainContent {
-		t.Errorf("body = %q, want %q", rec.Body.String(), domainContent)
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse JSON response: %v", err)
+	}
+	if resp["content"] != domainContent {
+		t.Errorf("content = %q, want %q", resp["content"], domainContent)
 	}
 }
 
@@ -267,7 +286,8 @@ func TestDomainRawPutSuccess(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 
 	domainYAML := "host: newsite.com\nroot: /var/www/new\ntype: static\n"
-	body := strings.NewReader(domainYAML)
+	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/newsite.com/raw", body))
 
@@ -300,7 +320,8 @@ func TestDomainRawPutInvalidYAML(t *testing.T) {
 	s := testServer()
 	s.SetConfigPath(cfgPath)
 
-	body := strings.NewReader("{{invalid yaml}}")
+	jsonBody, _ := json.Marshal(map[string]string{"content": "{{invalid yaml}}"})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/example.com/raw", body))
 
@@ -330,7 +351,8 @@ func TestDomainRawPutTriggersReload(t *testing.T) {
 	})
 
 	domainYAML := "host: example.com\ntype: static\n"
-	body := strings.NewReader(domainYAML)
+	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/example.com/raw", body))
 
@@ -364,7 +386,8 @@ func TestDomainRawPutWithDomainsDir(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 
 	domainYAML := "host: example.com\ntype: static\n"
-	body := strings.NewReader(domainYAML)
+	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/example.com/raw", body))
 

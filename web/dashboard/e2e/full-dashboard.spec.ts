@@ -18,10 +18,10 @@ test.describe('Dashboard - All Pages', () => {
 
   // --- Dashboard Overview ---
   test('dashboard shows latency metrics', async ({ page }) => {
-    await expect(page.locator('text=p50 Latency')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=p95 Latency')).toBeVisible();
-    await expect(page.locator('text=p99 Latency')).toBeVisible();
-    await expect(page.locator('text=Slow Requests')).toBeVisible();
+    await expect(page.getByText('p50 Latency', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('p95 Latency', { exact: true })).toBeVisible();
+    await expect(page.getByText('p99 Latency', { exact: true })).toBeVisible();
+    await expect(page.getByText('Slow Requests', { exact: true })).toBeVisible();
   });
 
   test('dashboard shows request chart', async ({ page }) => {
@@ -29,7 +29,7 @@ test.describe('Dashboard - All Pages', () => {
   });
 
   test('dashboard shows domains table', async ({ page }) => {
-    await expect(page.locator('text=Domains')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: /Domains/ })).toBeVisible({ timeout: 5000 });
     await expect(page.locator('table')).toBeVisible();
   });
 
@@ -40,7 +40,7 @@ test.describe('Dashboard - All Pages', () => {
     await expect(page.locator('text=Real-time traffic analytics')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('text=Total Page Views')).toBeVisible();
     await expect(page.locator('text=Unique Visitors')).toBeVisible();
-    await expect(page.locator('text=Bandwidth')).toBeVisible();
+    await expect(page.getByRole('paragraph').filter({ hasText: 'Bandwidth' })).toBeVisible();
   });
 
   // --- Config Editor ---

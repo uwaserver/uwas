@@ -407,7 +407,8 @@ func TestConfigRawPutWithNoReloadFunc(t *testing.T) {
 	// reloadFn is nil
 
 	newContent := "global:\n  log_level: debug\n"
-	body := strings.NewReader(newContent)
+	jsonBody, _ := json.Marshal(map[string]string{"content": newContent})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
 
@@ -434,7 +435,8 @@ func TestDomainRawPutNoConfigPath(t *testing.T) {
 	s := testServer()
 	// configPath is empty
 
-	body := strings.NewReader("host: example.com\ntype: static\n")
+	jsonBody, _ := json.Marshal(map[string]string{"content": "host: example.com\ntype: static\n"})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/example.com/raw", body))
 
@@ -453,7 +455,8 @@ func TestDomainRawPutReloadError(t *testing.T) {
 	s.SetReloadFunc(func() error { return errors.New("domain reload boom") })
 
 	domainYAML := "host: example.com\ntype: static\n"
-	body := strings.NewReader(domainYAML)
+	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/example.com/raw", body))
 
@@ -477,7 +480,8 @@ func TestDomainRawPutWithNoReloadFunc(t *testing.T) {
 	// reloadFn is nil
 
 	domainYAML := "host: newsite.com\ntype: static\n"
-	body := strings.NewReader(domainYAML)
+	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
+	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/domains/newsite.com/raw", body))
 
