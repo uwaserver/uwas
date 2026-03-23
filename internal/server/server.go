@@ -171,10 +171,15 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetAlerter(alerter)
 	}
 
-	// TLS manager + unknown host tracker → admin
+	// TLS manager + unknown host tracker + domain change callback → admin
 	if s.admin != nil {
 		s.admin.SetTLSManager(s.tlsMgr)
 		s.admin.SetUnknownHostTracker(s.unknownHosts)
+		s.admin.SetOnDomainChange(func() {
+			// Admin and server share the same *config.Config pointer,
+			// so config.Domains is already updated. Sync the vhost router.
+			s.vhosts.Update(s.config.Domains)
+		})
 	}
 
 	// Uptime monitor
