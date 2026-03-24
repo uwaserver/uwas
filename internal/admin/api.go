@@ -1107,12 +1107,24 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		phpStatus := s.phpMgr.Status()
 		if len(phpStatus) > 0 {
 			version := phpStatus[0].Version
-			if _, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
+			if inst, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
 				if err := s.phpMgr.StartDomain(d.Host); err != nil {
 					s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
 				} else {
-					s.logger.Info("auto-assigned PHP to domain", "domain", d.Host, "version", version)
+					s.logger.Info("auto-assigned PHP to domain", "domain", d.Host, "version", version, "listen", inst.ListenAddr)
+					// Update domain FPM address to match the assigned port.
+					s.configMu.Lock()
+					for i := range s.config.Domains {
+						if s.config.Domains[i].Host == d.Host {
+							s.config.Domains[i].PHP.FPMAddress = inst.ListenAddr
+							break
+						}
+					}
+					s.configMu.Unlock()
+					s.persistConfig()
 				}
+			} else {
+				s.logger.Warn("PHP auto-assign failed", "domain", d.Host, "error", err)
 			}
 		}
 	}
@@ -1199,6 +1211,38 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	s.RecordAudit("domain.update", "domain: "+host, ip, true)
 	s.notifyDomainChange()
+
+	// Auto-assign PHP if domain type changed to php and no assignment exists.
+	if d.Type == "php" && s.phpMgr != nil {
+		instances := s.phpMgr.GetDomainInstances()
+		hasAssign := false
+		for _, inst := range instances {
+			if inst.Domain == d.Host {
+				hasAssign = true
+				break
+			}
+		}
+		if !hasAssign {
+			phpStatus := s.phpMgr.Status()
+			if len(phpStatus) > 0 {
+				version := phpStatus[0].Version
+				if inst, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
+					s.phpMgr.StartDomain(d.Host)
+					s.configMu.Lock()
+					for i := range s.config.Domains {
+						if s.config.Domains[i].Host == d.Host {
+							s.config.Domains[i].PHP.FPMAddress = inst.ListenAddr
+							break
+						}
+					}
+					s.configMu.Unlock()
+					s.persistConfig()
+					s.logger.Info("auto-assigned PHP on update", "domain", d.Host, "version", version)
+				}
+			}
+		}
+	}
+
 	jsonResponse(w, d)
 }
 
