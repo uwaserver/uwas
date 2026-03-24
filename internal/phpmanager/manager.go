@@ -202,6 +202,11 @@ func (m *Manager) StartDomain(domain string) error {
 	}
 
 	cmd := m.execCommand(phpInst.Binary, args...)
+	// Spawn worker children for parallel request handling
+	cmd.Env = append(os.Environ(),
+		"PHP_FCGI_CHILDREN=8",
+		"PHP_FCGI_MAX_REQUESTS=500",
+	)
 	cmd.Stdout = m.logger.Writer(4) // slog.LevelInfo
 	cmd.Stderr = m.logger.Writer(8) // slog.LevelError
 
@@ -864,7 +869,19 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 		return fmt.Errorf("PHP %s binary %s is %s, not cgi-fcgi — install php-cgi or php-fpm", version, inst.Binary, inst.SAPI)
 	}
 
+	// If php-fpm binary exists, prefer it (proper process manager)
+	fpmBinary := strings.Replace(inst.Binary, "php-cgi", "php-fpm", 1)
+	if inst.SAPI == "fpm-fcgi" || fileExists(fpmBinary) {
+		return m.startFPMDaemon(version, fpmBinary, listenAddr)
+	}
+
 	cmd := m.execCommand(inst.Binary, "-b", listenAddr)
+	// PHP_FCGI_CHILDREN: spawn N worker children for parallel requests.
+	// Without this, php-cgi handles only 1 request at a time!
+	cmd.Env = append(os.Environ(),
+		"PHP_FCGI_CHILDREN=8",
+		"PHP_FCGI_MAX_REQUESTS=500",
+	)
 	cmd.Stdout = m.logger.Writer(4) // slog.LevelInfo
 	cmd.Stderr = m.logger.Writer(8) // slog.LevelError
 
@@ -891,6 +908,64 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	}()
 
 	return nil
+}
+
+// startFPMDaemon starts php-fpm as a proper daemon with worker pool.
+func (m *Manager) startFPMDaemon(version, binary, listenAddr string) error {
+	// Generate a minimal php-fpm config for this listen address
+	confDir := filepath.Join(os.TempDir(), "uwas-fpm")
+	os.MkdirAll(confDir, 0755)
+	confPath := filepath.Join(confDir, fmt.Sprintf("php%s-fpm.conf", strings.ReplaceAll(version, ".", "")))
+
+	conf := fmt.Sprintf(`[global]
+pid = %s/php%s-fpm.pid
+error_log = /dev/stderr
+daemonize = no
+
+[www]
+listen = %s
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 4
+pm.min_spare_servers = 2
+pm.max_spare_servers = 6
+pm.max_requests = 500
+`, confDir, strings.ReplaceAll(version, ".", ""), listenAddr)
+
+	if err := os.WriteFile(confPath, []byte(conf), 0644); err != nil {
+		return fmt.Errorf("write fpm config: %w", err)
+	}
+
+	cmd := m.execCommand(binary, "--fpm-config", confPath, "--nodaemonize")
+	cmd.Stdout = m.logger.Writer(4)
+	cmd.Stderr = m.logger.Writer(8)
+
+	if err := cmd.Start(); err != nil {
+		// Fallback: try as php-cgi
+		return fmt.Errorf("start php-fpm: %w", err)
+	}
+
+	m.processes.Store(version, &processInfo{
+		cmd:        cmd,
+		listenAddr: listenAddr,
+	})
+
+	m.logger.Info("started PHP-FPM", "version", version, "listen", listenAddr, "pid", cmd.Process.Pid, "workers", 10)
+
+	go func() {
+		err := cmd.Wait()
+		m.processes.Delete(version)
+		if err != nil {
+			m.logger.Warn("PHP-FPM exited", "version", version, "error", err)
+		}
+	}()
+
+	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // StopFPM stops the PHP-CGI process for the given version.
