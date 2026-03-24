@@ -410,6 +410,13 @@ export interface BlockedRequest { time: string; ip: string; path: string; reason
 export const fetchSecurityStats = () => api<SecurityStats>('/api/v1/security/stats');
 export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked');
 
+// System resources
+export const fetchSystemResources = () => api<{ cpus: number; goroutines: number; memory_alloc_mb: number; memory_sys_mb: number; disk_used_mb?: number }>('/api/v1/system/resources');
+
+// Domain health
+export interface DomainHealth { host: string; status: string; code: number; ms: number; error?: string; }
+export const fetchDomainHealth = () => api<DomainHealth[]>('/api/v1/domains/health');
+
 // Server IPs
 export interface ServerIPInfo { ip: string; version: number; interface: string; primary: boolean; }
 export const fetchServerIPs = () => api<{ ips: ServerIPInfo[]; public_ip: string }>('/api/v1/system/ips');

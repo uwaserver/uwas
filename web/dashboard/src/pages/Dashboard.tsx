@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Activity, Zap, HardDrive, Clock, CheckCircle, AlertTriangle,
   Gauge, AlertCircle, Shield, Globe, Lock, Cpu, ShieldAlert,
+  MemoryStick, Server,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -10,7 +11,9 @@ import {
 import { useStats } from '@/hooks/useStats';
 import {
   fetchDomains, fetchCerts, fetchSecurityStats, fetchPHP,
+  fetchSystemResources, fetchDomainHealth,
   type DomainData, type CertInfo, type SecurityStats, type PHPInstall,
+  type DomainHealth,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -20,12 +23,27 @@ export default function Dashboard() {
   const [certs, setCerts] = useState<CertInfo[]>([]);
   const [security, setSecurity] = useState<SecurityStats | null>(null);
   const [php, setPhp] = useState<PHPInstall[]>([]);
+  const [resources, setResources] = useState<{ cpus: number; goroutines: number; memory_alloc_mb: number; memory_sys_mb: number; disk_used_mb?: number } | null>(null);
+  const [domainHealth, setDomainHealth] = useState<DomainHealth[]>([]);
+  const resourcesInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
     fetchCerts().then(c => setCerts(c ?? [])).catch(() => {});
     fetchSecurityStats().then(setSecurity).catch(() => {});
     fetchPHP().then(p => setPhp(p ?? [])).catch(() => {});
+    fetchDomainHealth().then(h => setDomainHealth(h ?? [])).catch(() => {});
+  }, []);
+
+  // Fetch system resources every 5 seconds
+  useEffect(() => {
+    fetchSystemResources().then(setResources).catch(() => {});
+    resourcesInterval.current = setInterval(() => {
+      fetchSystemResources().then(setResources).catch(() => {});
+    }, 5000);
+    return () => {
+      if (resourcesInterval.current) clearInterval(resourcesInterval.current);
+    };
   }, []);
 
   const hitRate =
@@ -64,6 +82,14 @@ export default function Dashboard() {
         <Card icon={<HardDrive size={18} />} label="Connections" value={stats?.active_conns.toLocaleString() ?? '--'} />
         <Card icon={<Shield size={18} />} label="Blocked" value={security?.total_blocked.toLocaleString() ?? '0'} />
         <Card icon={<Clock size={18} />} label="Uptime" value={stats?.uptime ?? '--'} />
+      </div>
+
+      {/* System Resources */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Card icon={<Cpu size={18} />} label="CPU Cores" value={resources ? String(resources.cpus) : '--'} />
+        <Card icon={<Server size={18} />} label="Goroutines" value={resources ? resources.goroutines.toLocaleString() : '--'} />
+        <Card icon={<MemoryStick size={18} />} label="Memory Used" value={resources ? `${resources.memory_alloc_mb.toFixed(1)} MB` : '--'} />
+        <Card icon={<HardDrive size={18} />} label="Disk Used" value={resources?.disk_used_mb != null ? `${resources.disk_used_mb.toFixed(1)} MB` : '--'} />
       </div>
 
       {/* Status panels */}
@@ -181,6 +207,7 @@ export default function Dashboard() {
                 <th className="px-5 py-3 font-medium">Host</th>
                 <th className="px-5 py-3 font-medium">Type</th>
                 <th className="px-5 py-3 font-medium">SSL</th>
+                <th className="px-5 py-3 font-medium">Status</th>
                 <th className="px-5 py-3 font-medium">IP</th>
               </tr>
             </thead>
@@ -203,11 +230,27 @@ export default function Dashboard() {
                       'bg-red-500/15 text-red-400'
                     }`}>{d.ssl}</span>
                   </td>
+                  <td className="px-5 py-3">
+                    {(() => {
+                      const h = domainHealth.find(dh => dh.host === d.host);
+                      if (!h) return <span className="text-xs text-slate-500">--</span>;
+                      const isUp = h.status === 'up';
+                      return (
+                        <span className="flex items-center gap-1.5" title={!isUp && h.error ? h.error : undefined}>
+                          <span className={`inline-block h-2 w-2 rounded-full ${isUp ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                          <span className={`text-xs font-medium ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {h.status}
+                          </span>
+                          <span className="text-[10px] text-slate-500">{h.ms}ms</span>
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-5 py-3 font-mono text-xs text-slate-500">{d.ip || 'shared'}</td>
                 </tr>
               ))}
               {domains.length === 0 && (
-                <tr><td colSpan={4} className="px-5 py-8 text-center text-slate-500">No domains configured</td></tr>
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">No domains configured</td></tr>
               )}
             </tbody>
           </table>

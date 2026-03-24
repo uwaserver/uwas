@@ -23,6 +23,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/mcp"
@@ -231,7 +232,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyDelete)
 
 	// Server IPs
+	s.mux.HandleFunc("GET /api/v1/system/resources", s.handleSystemResources)
 	s.mux.HandleFunc("GET /api/v1/system/ips", s.handleServerIPs)
+	s.mux.HandleFunc("GET /api/v1/domains/health", s.handleDomainHealth)
 
 	// Self-update
 	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
@@ -392,18 +395,53 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	jsonResponse(w, map[string]any{
+	hostname, _ := os.Hostname()
+
+	result := map[string]any{
 		"version":      build.Version,
 		"commit":       build.Commit,
 		"go_version":   runtime.Version(),
 		"os":           runtime.GOOS,
 		"arch":         runtime.GOARCH,
+		"hostname":     hostname,
 		"cpus":         runtime.NumCPU(),
 		"goroutines":   runtime.NumGoroutine(),
 		"memory_alloc": memStats.Alloc,
 		"memory_sys":   memStats.Sys,
 		"gc_cycles":    memStats.NumGC,
-	})
+		"pid":          os.Getpid(),
+	}
+
+	// Disk usage of web root
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	domainCount := len(s.config.Domains)
+	s.configMu.RUnlock()
+
+	result["web_root"] = webRoot
+	result["domain_count"] = domainCount
+
+	if webRoot != "" {
+		if du, err := filemanager.DiskUsage(webRoot); err == nil {
+			result["disk_used_bytes"] = du
+			result["disk_used_human"] = formatDiskSize(du)
+		}
+	}
+
+	jsonResponse(w, result)
+}
+
+func formatDiskSize(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
