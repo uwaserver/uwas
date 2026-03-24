@@ -102,24 +102,32 @@ func TestBuildEnvPOST(t *testing.T) {
 
 func TestSplitScriptPath(t *testing.T) {
 	tests := []struct {
-		uri        string
-		wantScript string
-		wantPath   string
+		name         string
+		originalURI  string
+		resolvedPath string
+		wantScript   string
+		wantPath     string
 	}{
-		{"/index.php", "/index.php", ""},
-		{"/index.php/controller/action", "/index.php", "/controller/action"},
-		{"/about", "/index.php", "/about"},
-		{"/", "/index.php", ""},
+		{"direct php", "/index.php", "/var/www/index.php", "/index.php", ""},
+		{"path info", "/index.php/controller/action", "", "/index.php", "/controller/action"},
+		{"front-controller rewrite", "/about", "/var/www/index.php", "/index.php", "/about"},
+		{"root", "/", "/var/www/index.php", "/index.php", ""},
+		{"wp-admin", "/wp-admin/admin.php", "/var/www/wp-admin/admin.php", "/wp-admin/admin.php", ""},
+		{"wordpress pretty", "/blog/my-post/", "/var/www/index.php", "/index.php", "/blog/my-post/"},
+		{"rest api", "/wp-json/wp/v2/posts", "/var/www/index.php", "/index.php", "/wp-json/wp/v2/posts"},
+		{"query string stripped", "/page?id=5", "/var/www/index.php", "/index.php", "/page"},
 	}
 
 	for _, tt := range tests {
-		script, pathInfo := SplitScriptPath(tt.uri, "/var/www", []string{"index.php"})
-		if script != tt.wantScript {
-			t.Errorf("SplitScriptPath(%q) script = %q, want %q", tt.uri, script, tt.wantScript)
-		}
-		if pathInfo != tt.wantPath {
-			t.Errorf("SplitScriptPath(%q) pathInfo = %q, want %q", tt.uri, pathInfo, tt.wantPath)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			script, pathInfo := SplitScriptPath(tt.originalURI, tt.resolvedPath, "/var/www", []string{"index.php"})
+			if script != tt.wantScript {
+				t.Errorf("script = %q, want %q", script, tt.wantScript)
+			}
+			if pathInfo != tt.wantPath {
+				t.Errorf("pathInfo = %q, want %q", pathInfo, tt.wantPath)
+			}
+		})
 	}
 }
 
@@ -171,7 +179,7 @@ func TestSplitScriptPathNoIndexFiles(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		script, pathInfo := SplitScriptPath(tt.uri, "/var/www", nil)
+		script, pathInfo := SplitScriptPath(tt.uri, "", "/var/www", nil)
 		if script != tt.wantScript {
 			t.Errorf("SplitScriptPath(%q, nil) script = %q, want %q", tt.uri, script, tt.wantScript)
 		}
