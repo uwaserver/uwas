@@ -183,7 +183,9 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		return true
 	}
 
-	// Last candidate might be a named route (e.g. /index.php)
+	// Last candidate might be a named route (e.g. /index.php for WordPress).
+	// PHP frameworks use this as a front-controller: all unmatched URLs route to
+	// index.php which handles routing internally.
 	if len(candidates) > 0 {
 		last := candidates[len(candidates)-1]
 		if !strings.HasPrefix(last, "$") {
