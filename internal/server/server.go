@@ -383,6 +383,9 @@ func (s *Server) Start() error {
 	}
 	runtime.GOMAXPROCS(workers)
 
+	// Apply sane timeout defaults to prevent resource exhaustion
+	s.applyTimeoutDefaults()
+
 	if err := s.writePID(); err != nil {
 		s.logger.Warn("failed to write pid file", "error", err)
 	}
@@ -1444,6 +1447,30 @@ func isAddrReachable(addr string) bool {
 	}
 	conn.Close()
 	return true
+}
+
+// applyTimeoutDefaults sets sane timeout defaults to prevent resource exhaustion.
+// These only apply when the user hasn't configured explicit values.
+func (s *Server) applyTimeoutDefaults() {
+	t := &s.config.Global.Timeouts
+	if t.Read.Duration == 0 {
+		t.Read.Duration = 30 * time.Second
+	}
+	if t.ReadHeader.Duration == 0 {
+		t.ReadHeader.Duration = 10 * time.Second
+	}
+	if t.Write.Duration == 0 {
+		t.Write.Duration = 120 * time.Second // PHP can be slow
+	}
+	if t.Idle.Duration == 0 {
+		t.Idle.Duration = 120 * time.Second
+	}
+	if t.ShutdownGrace.Duration == 0 {
+		t.ShutdownGrace.Duration = 15 * time.Second
+	}
+	if t.MaxHeaderBytes == 0 {
+		t.MaxHeaderBytes = 1 << 20 // 1MB
+	}
 }
 
 func (s *Server) writePID() error {
