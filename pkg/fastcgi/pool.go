@@ -89,11 +89,15 @@ create:
 		return p.create(ctx)
 	}
 
-	// 3. Wait for idle connection or context cancel
+	// 3. Wait for idle connection with timeout
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
 	select {
 	case c := <-p.idle:
 		c.usedAt = time.Now()
 		return c, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("connection pool exhausted (max %d)", p.maxOpen)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

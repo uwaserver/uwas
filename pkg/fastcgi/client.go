@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"strconv"
+	"time"
 )
 
 // Client sends requests to a FastCGI server via a connection pool.
@@ -37,6 +38,13 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 	if err != nil {
 		return nil, fmt.Errorf("get connection: %w", err)
 	}
+
+	// Set read/write deadline to prevent hanging forever
+	deadline := time.Now().Add(60 * time.Second)
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
+	cn.netConn.SetDeadline(deadline)
 
 	// Use a buffered writer for efficiency
 	bw := bufio.NewWriter(cn.netConn)

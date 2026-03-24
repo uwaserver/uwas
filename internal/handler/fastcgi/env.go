@@ -17,7 +17,7 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 	env := map[string]string{
 		"GATEWAY_INTERFACE": "CGI/1.1",
 		"SERVER_PROTOCOL":   r.Proto,
-		"SERVER_SOFTWARE":   "UWAS",
+		"SERVER_SOFTWARE":   "Apache/2.4 (UWAS)",
 		"SERVER_NAME":       r.Host,
 		"REQUEST_METHOD":    r.Method,
 		"REQUEST_URI":       ctx.OriginalURI,
