@@ -497,11 +497,22 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 	domainInst, _ := m.domainMap[domain]
 	m.domainMu.RUnlock()
 	if domainInst != nil {
-		// Find domain root from the listen addr — we'll use a safe default
+		// Security: UWAS enforced
 		lines = append(lines, "; Security: UWAS enforced")
 		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_multi_exec,parse_ini_file,show_source,pcntl_exec")
 		lines = append(lines, "allow_url_include = Off")
 		lines = append(lines, "expose_php = Off")
+		lines = append(lines, "")
+
+		// Performance: sane defaults (overridable via per-domain config)
+		lines = append(lines, "; Performance: UWAS defaults")
+		lines = append(lines, "realpath_cache_size = 4096K")
+		lines = append(lines, "realpath_cache_ttl = 600")
+		lines = append(lines, "opcache.enable = 1")
+		lines = append(lines, "opcache.memory_consumption = 128")
+		lines = append(lines, "opcache.max_accelerated_files = 10000")
+		lines = append(lines, "opcache.revalidate_freq = 2")
+		lines = append(lines, "opcache.validate_timestamps = 1")
 		lines = append(lines, "")
 	}
 
