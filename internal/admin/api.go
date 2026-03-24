@@ -142,6 +142,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/domains/{host}", s.handleDomainDetail)
 	s.mux.HandleFunc("GET /api/v1/config/raw", s.handleConfigRawGet)
 	s.mux.HandleFunc("PUT /api/v1/config/raw", s.handleConfigRawPut)
+	s.mux.HandleFunc("GET /api/v1/settings", s.handleSettingsGet)
+	s.mux.HandleFunc("PUT /api/v1/settings", s.handleSettingsPut)
 	s.mux.HandleFunc("GET /api/v1/config/domains/{host}/raw", s.handleDomainRawGet)
 	s.mux.HandleFunc("PUT /api/v1/config/domains/{host}/raw", s.handleDomainRawPut)
 	s.mux.HandleFunc("GET /api/v1/monitor", s.handleMonitor)
@@ -1781,6 +1783,180 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// handleSettingsGet returns all global config fields as flat key-value pairs.
+func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
+	s.configMu.RLock()
+	g := s.config.Global
+	s.configMu.RUnlock()
+
+	result := map[string]any{
+		// Server
+		"global.http_listen":    g.HTTPListen,
+		"global.https_listen":   g.HTTPSListen,
+		"global.http3":          g.HTTP3Enabled,
+		"global.worker_count":   g.WorkerCount,
+		"global.max_connections": g.MaxConnections,
+		"global.pid_file":       g.PIDFile,
+		"global.web_root":       g.WebRoot,
+		"global.log_level":      g.LogLevel,
+		"global.log_format":     g.LogFormat,
+		// Timeouts
+		"global.timeouts.read":             g.Timeouts.Read.String(),
+		"global.timeouts.read_header":      g.Timeouts.ReadHeader.String(),
+		"global.timeouts.write":            g.Timeouts.Write.String(),
+		"global.timeouts.idle":             g.Timeouts.Idle.String(),
+		"global.timeouts.shutdown_grace":   g.Timeouts.ShutdownGrace.String(),
+		"global.timeouts.max_header_bytes": g.Timeouts.MaxHeaderBytes,
+		// Admin
+		"global.admin.enabled": g.Admin.Enabled,
+		"global.admin.listen":  g.Admin.Listen,
+		"global.admin.api_key": g.Admin.APIKey,
+		// MCP
+		"global.mcp.enabled": g.MCP.Enabled,
+		// ACME
+		"global.acme.email":        g.ACME.Email,
+		"global.acme.ca_url":       g.ACME.CAURL,
+		"global.acme.storage":      g.ACME.Storage,
+		"global.acme.dns_provider": g.ACME.DNSProvider,
+		// Cache
+		"global.cache.enabled":      g.Cache.Enabled,
+		"global.cache.memory_limit": byteSizeStr(g.Cache.MemoryLimit),
+		"global.cache.disk_path":    g.Cache.DiskPath,
+		"global.cache.default_ttl":  g.Cache.DefaultTTL,
+		// Alerting
+		"global.alerting.enabled":          g.Alerting.Enabled,
+		"global.alerting.webhook_url":      g.Alerting.WebhookURL,
+		"global.alerting.slack_url":        g.Alerting.SlackURL,
+		"global.alerting.telegram_token":   g.Alerting.TelegramToken,
+		"global.alerting.telegram_chat_id": g.Alerting.TelegramChatID,
+		// Backup
+		"global.backup.enabled":  g.Backup.Enabled,
+		"global.backup.provider": g.Backup.Provider,
+		"global.backup.schedule": g.Backup.Schedule,
+		"global.backup.keep":     g.Backup.Keep,
+		"global.backup.local.path":   g.Backup.Local.Path,
+		"global.backup.s3.endpoint":  g.Backup.S3.Endpoint,
+		"global.backup.s3.bucket":    g.Backup.S3.Bucket,
+		"global.backup.s3.region":    g.Backup.S3.Region,
+		"global.backup.sftp.host":    g.Backup.SFTP.Host,
+		"global.backup.sftp.port":    g.Backup.SFTP.Port,
+		"global.backup.sftp.user":    g.Backup.SFTP.User,
+	}
+	jsonResponse(w, result)
+}
+
+// handleSettingsPut accepts flat key-value pairs and updates the global config.
+func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var updates map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.configMu.Lock()
+	g := &s.config.Global
+
+	for key, val := range updates {
+		sv := fmt.Sprintf("%v", val)
+		switch key {
+		// Server
+		case "global.http_listen":    g.HTTPListen = sv
+		case "global.https_listen":   g.HTTPSListen = sv
+		case "global.http3":          g.HTTP3Enabled = sv == "true"
+		case "global.worker_count":   g.WorkerCount = sv
+		case "global.max_connections": g.MaxConnections = toInt(val)
+		case "global.pid_file":       g.PIDFile = sv
+		case "global.web_root":       g.WebRoot = sv
+		case "global.log_level":      g.LogLevel = sv
+		case "global.log_format":     g.LogFormat = sv
+		// Timeouts
+		case "global.timeouts.read":             g.Timeouts.Read = parseDur(sv)
+		case "global.timeouts.read_header":      g.Timeouts.ReadHeader = parseDur(sv)
+		case "global.timeouts.write":            g.Timeouts.Write = parseDur(sv)
+		case "global.timeouts.idle":             g.Timeouts.Idle = parseDur(sv)
+		case "global.timeouts.shutdown_grace":   g.Timeouts.ShutdownGrace = parseDur(sv)
+		case "global.timeouts.max_header_bytes": g.Timeouts.MaxHeaderBytes = toInt(val)
+		// Admin
+		case "global.admin.enabled": g.Admin.Enabled = sv == "true"
+		case "global.admin.listen":  g.Admin.Listen = sv
+		case "global.admin.api_key": g.Admin.APIKey = sv
+		// MCP
+		case "global.mcp.enabled": g.MCP.Enabled = sv == "true"
+		// ACME
+		case "global.acme.email":        g.ACME.Email = sv
+		case "global.acme.ca_url":       g.ACME.CAURL = sv
+		case "global.acme.storage":      g.ACME.Storage = sv
+		case "global.acme.dns_provider": g.ACME.DNSProvider = sv
+		// Cache
+		case "global.cache.enabled":      g.Cache.Enabled = sv == "true"
+		case "global.cache.memory_limit": g.Cache.MemoryLimit = parseBS(sv)
+		case "global.cache.disk_path":    g.Cache.DiskPath = sv
+		case "global.cache.default_ttl":  g.Cache.DefaultTTL = toInt(val)
+		// Alerting
+		case "global.alerting.enabled":          g.Alerting.Enabled = sv == "true"
+		case "global.alerting.webhook_url":      g.Alerting.WebhookURL = sv
+		case "global.alerting.slack_url":        g.Alerting.SlackURL = sv
+		case "global.alerting.telegram_token":   g.Alerting.TelegramToken = sv
+		case "global.alerting.telegram_chat_id": g.Alerting.TelegramChatID = sv
+		// Backup
+		case "global.backup.enabled":     g.Backup.Enabled = sv == "true"
+		case "global.backup.provider":    g.Backup.Provider = sv
+		case "global.backup.schedule":    g.Backup.Schedule = sv
+		case "global.backup.keep":        g.Backup.Keep = toInt(val)
+		case "global.backup.local.path":  g.Backup.Local.Path = sv
+		case "global.backup.s3.endpoint": g.Backup.S3.Endpoint = sv
+		case "global.backup.s3.bucket":   g.Backup.S3.Bucket = sv
+		case "global.backup.s3.region":   g.Backup.S3.Region = sv
+		case "global.backup.sftp.host":   g.Backup.SFTP.Host = sv
+		case "global.backup.sftp.port":   g.Backup.SFTP.Port = toInt(val)
+		case "global.backup.sftp.user":   g.Backup.SFTP.User = sv
+		}
+	}
+	s.configMu.Unlock()
+
+	s.persistConfig()
+	ip := requestIP(r)
+	s.RecordAudit("settings.update", fmt.Sprintf("%d fields", len(updates)), ip, true)
+	jsonResponse(w, map[string]any{"status": "saved", "updated": len(updates)})
+}
+
+func toInt(v any) int {
+	switch n := v.(type) {
+	case float64: return int(n)
+	case int:     return n
+	case string:
+		var i int
+		fmt.Sscanf(n, "%d", &i)
+		return i
+	}
+	return 0
+}
+
+func parseDur(s string) config.Duration {
+	d, _ := time.ParseDuration(s)
+	return config.Duration{Duration: d}
+}
+
+func byteSizeStr(b config.ByteSize) string {
+	v, _ := b.MarshalYAML()
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%d", int64(b))
+}
+
+func parseBS(s string) config.ByteSize {
+	// Reuse YAML unmarshal logic by creating a temporary wrapper.
+	var b config.ByteSize
+	data := []byte(fmt.Sprintf("val: %s", s))
+	var tmp struct{ Val config.ByteSize `yaml:"val"` }
+	if err := yaml.Unmarshal(data, &tmp); err == nil {
+		b = tmp.Val
+	}
+	return b
 }
 
 // handleDomainRawGet returns the raw YAML content of a single domain file

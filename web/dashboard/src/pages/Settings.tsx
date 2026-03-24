@@ -23,11 +23,12 @@ import {
 } from 'lucide-react';
 import {
   fetchConfigRaw,
-  saveConfigRaw,
   triggerReload,
   fetchConfigExport,
   fetchHealth,
   fetchSystem,
+  fetchSettings,
+  saveSettings,
   fetch2FAStatus,
   setup2FA,
   verify2FA,
@@ -82,230 +83,6 @@ function yamlGet(yaml: string, path: string): string {
     }
   }
   return '';
-}
-
-/** Set a simple scalar value in YAML given a dot-separated key path.
- *  If the key exists, its value is replaced in-place. If not, the key line
- *  is inserted under the parent (creating parent sections as needed). */
-function yamlSet(yaml: string, path: string, value: string): string {
-  const parts = path.split('.');
-  const lines = yaml.split('\n');
-  let depth = 0;
-  let partIdx = 0;
-  let insertAfter = -1; // Track last matched parent line for insertion
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trimStart();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
-
-    const indent = line.length - trimmed.length;
-
-    while (depth > 0 && indent <= (depth - 1) * 2 && partIdx > 0) {
-      partIdx--;
-      depth--;
-    }
-
-    const key = parts[partIdx];
-    const regex = new RegExp(`^${key}\\s*:`);
-    if (indent === partIdx * 2 && regex.test(trimmed)) {
-      if (partIdx === parts.length - 1) {
-        // Replace value
-        const colonIdx = line.indexOf(':');
-        const prefix = line.slice(0, colonIdx + 1);
-        // Determine if we need to quote the value
-        const formatted = formatYamlValue(value);
-        lines[i] = `${prefix} ${formatted}`;
-        return lines.join('\n');
-      }
-      insertAfter = i;
-      partIdx++;
-      depth = partIdx;
-    }
-  }
-
-  // Key not found — insert it
-  if (insertAfter >= 0 && partIdx === parts.length - 1) {
-    const indent = '  '.repeat(parts.length - 1);
-    const formatted = formatYamlValue(value);
-    const newLine = `${indent}${parts[parts.length - 1]}: ${formatted}`;
-    lines.splice(insertAfter + 1, 0, newLine);
-    return lines.join('\n');
-  }
-
-  // Need to create parent sections too
-  let insertAt = lines.length;
-  let currentIndent = 0;
-  for (let p = partIdx; p < parts.length; p++) {
-    const prefix = '  '.repeat(currentIndent);
-    if (p === parts.length - 1) {
-      const formatted = formatYamlValue(value);
-      lines.splice(insertAt, 0, `${prefix}${parts[p]}: ${formatted}`);
-    } else {
-      lines.splice(insertAt, 0, `${prefix}${parts[p]}:`);
-    }
-    insertAt++;
-    currentIndent++;
-  }
-  return lines.join('\n');
-}
-
-/** Format a value for YAML: quote strings that could be misinterpreted. */
-function formatYamlValue(value: string): string {
-  if (value === '') return '""';
-  if (value === 'true' || value === 'false') return value;
-  if (/^\d+$/.test(value)) return value;
-  // If it looks like a duration or path or URL, quote it
-  if (value.includes(':') || value.includes('/') || value.includes('@') || value.includes(' ')) {
-    return `"${value}"`;
-  }
-  return value;
-}
-
-/** Read a YAML array (block sequence) at a given dot-separated key path.
- *  Returns items joined by newlines. Handles both block ("- item") and
- *  flow ("[item1, item2]") formats. */
-function yamlGetArray(yaml: string, path: string): string {
-  const parts = path.split('.');
-  const lines = yaml.split('\n');
-  let depth = 0;
-  let partIdx = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trimStart();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
-
-    const indent = line.length - trimmed.length;
-
-    while (depth > 0 && indent <= (depth - 1) * 2 && partIdx > 0) {
-      partIdx--;
-      depth--;
-    }
-
-    const key = parts[partIdx];
-    const regex = new RegExp(`^${key}\\s*:`);
-    if (indent === partIdx * 2 && regex.test(trimmed)) {
-      if (partIdx === parts.length - 1) {
-        const colonIdx = trimmed.indexOf(':');
-        const afterColon = trimmed.slice(colonIdx + 1).trim();
-        // Flow format: [a, b, c]
-        if (afterColon.startsWith('[')) {
-          const inner = afterColon.slice(1, afterColon.lastIndexOf(']'));
-          return inner.split(',').map(s => {
-            s = s.trim();
-            if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-              s = s.slice(1, -1);
-            }
-            return s;
-          }).filter(Boolean).join('\n');
-        }
-        // Block format: lines starting with "- "
-        const items: string[] = [];
-        const expectedIndent = indent + 2;
-        for (let j = i + 1; j < lines.length; j++) {
-          const jLine = lines[j];
-          const jTrimmed = jLine.trimStart();
-          if (jTrimmed === '' || jTrimmed.startsWith('#')) continue;
-          const jIndent = jLine.length - jTrimmed.length;
-          if (jIndent < expectedIndent) break;
-          if (jIndent === expectedIndent && jTrimmed.startsWith('- ')) {
-            let val = jTrimmed.slice(2).trim();
-            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-              val = val.slice(1, -1);
-            }
-            items.push(val);
-          }
-        }
-        return items.join('\n');
-      }
-      partIdx++;
-      depth = partIdx;
-    }
-  }
-  return '';
-}
-
-/** Set a YAML array at a given dot-separated key path from newline-separated values. */
-function yamlSetArray(yaml: string, path: string, value: string): string {
-  const items = value.split('\n').map(s => s.trim()).filter(Boolean);
-  const parts = path.split('.');
-  const lines = yaml.split('\n');
-  let depth = 0;
-  let partIdx = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trimStart();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
-
-    const indent = line.length - trimmed.length;
-
-    while (depth > 0 && indent <= (depth - 1) * 2 && partIdx > 0) {
-      partIdx--;
-      depth--;
-    }
-
-    const key = parts[partIdx];
-    const regex = new RegExp(`^${key}\\s*:`);
-    if (indent === partIdx * 2 && regex.test(trimmed)) {
-      if (partIdx === parts.length - 1) {
-        const colonIdx = trimmed.indexOf(':');
-        const afterColon = trimmed.slice(colonIdx + 1).trim();
-
-        // Remove existing array items (block or flow)
-        let removeEnd = i;
-        if (afterColon.startsWith('[')) {
-          // Flow format — just this line
-          removeEnd = i;
-        } else if (afterColon === '' || afterColon.startsWith('#')) {
-          // Block format — remove subsequent "- " lines
-          const expectedIndent = indent + 2;
-          removeEnd = i;
-          for (let j = i + 1; j < lines.length; j++) {
-            const jLine = lines[j];
-            const jTrimmed = jLine.trimStart();
-            if (jTrimmed === '' || jTrimmed.startsWith('#')) { removeEnd = j; continue; }
-            const jIndent = jLine.length - jTrimmed.length;
-            if (jIndent >= expectedIndent) {
-              removeEnd = j;
-            } else {
-              break;
-            }
-          }
-        }
-
-        // Build replacement
-        const prefix = '  '.repeat(parts.length - 1);
-        const itemIndent = '  '.repeat(parts.length);
-        const newLines: string[] = [];
-        if (items.length === 0) {
-          newLines.push(`${prefix}${parts[parts.length - 1]}: []`);
-        } else {
-          newLines.push(`${prefix}${parts[parts.length - 1]}:`);
-          for (const item of items) {
-            const formatted = item.includes(':') || item.includes('/') ? `"${item}"` : item;
-            newLines.push(`${itemIndent}- ${formatted}`);
-          }
-        }
-        lines.splice(i, removeEnd - i + 1, ...newLines);
-        return lines.join('\n');
-      }
-      partIdx++;
-      depth = partIdx;
-    }
-  }
-
-  // Key not found — append
-  const prefix = '  '.repeat(parts.length - 1);
-  const itemIndent = '  '.repeat(parts.length);
-  if (items.length === 0) return yaml;
-  const newLines = [`${prefix}${parts[parts.length - 1]}:`];
-  for (const item of items) {
-    const formatted = item.includes(':') || item.includes('/') ? `"${item}"` : item;
-    newLines.push(`${itemIndent}- ${formatted}`);
-  }
-  return [...lines, ...newLines].join('\n');
 }
 
 function formatBytes(b: number): string {
@@ -531,8 +308,7 @@ const ALL_DYNAMIC_FIELDS: FieldDef[] = [
 // ---------------------------------------------------------------------------
 
 export default function Settings() {
-  const [rawYaml, setRawYaml] = useState('');
-  const [originalYaml, setOriginalYaml] = useState('');
+  const [rawYaml, setRawYaml] = useState(''); // raw YAML for dynamic fields (DNS creds)
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [health, setHealth] = useState<HealthData | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
@@ -554,35 +330,27 @@ export default function Settings() {
   // Gather all field keys
   const allFields = SECTIONS.flatMap(s => s.fields);
 
-  /** Parse raw YAML into form values. */
-  const parseYaml = useCallback((yaml: string) => {
-    const values: Record<string, string> = {};
-    for (const f of allFields) {
-      if (f.type === 'textarea') {
-        values[f.key] = yamlGetArray(yaml, f.key);
-      } else {
-        values[f.key] = yamlGet(yaml, f.key);
-      }
-    }
-    // Also parse dynamic fields (backup sub-sections, DNS credentials)
-    for (const f of ALL_DYNAMIC_FIELDS) {
-      values[f.key] = yamlGet(yaml, f.key);
-    }
-    setFormValues(values);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /** Load raw config + health + system info. */
+  /** Load structured settings + raw config + health + system info. */
   const load = useCallback(async () => {
     try {
-      const [raw, h, s, tfa] = await Promise.all([
+      const [settings, raw, h, s, tfa] = await Promise.all([
+        fetchSettings().catch(() => ({})),
         fetchConfigRaw(),
         fetchHealth(),
         fetchSystem(),
         fetch2FAStatus().catch(() => ({ enabled: false })),
       ]);
       setRawYaml(raw.content);
-      setOriginalYaml(raw.content);
-      parseYaml(raw.content);
+      // Prefer structured API values over YAML parsing
+      const values: Record<string, string> = {};
+      for (const [k, v] of Object.entries(settings)) {
+        values[k] = v === null || v === undefined ? '' : String(v);
+      }
+      // Also parse dynamic fields from YAML (DNS credentials etc.)
+      for (const f of ALL_DYNAMIC_FIELDS) {
+        if (!values[f.key]) values[f.key] = yamlGet(rawYaml || raw.content, f.key);
+      }
+      setFormValues(values);
       setHealth(h);
       setSystem(s);
       setTwoFA(tfa);
@@ -591,7 +359,7 @@ export default function Settings() {
     } finally {
       setLoading(false);
     }
-  }, [parseYaml]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -602,27 +370,38 @@ export default function Settings() {
     statusTimeout.current = setTimeout(() => setStatus(null), 5000);
   };
 
-  /** Update a single form value and synchronise back to raw YAML. */
+  // Track which fields were changed
+  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
+
+  /** Update a single form value. */
   const updateField = (key: string, value: string) => {
     setFormValues(prev => ({ ...prev, [key]: value }));
-    // Check if this is an array-type field (textarea)
-    const field = allFields.find(f => f.key === key);
-    if (field?.type === 'textarea') {
-      setRawYaml(prev => yamlSetArray(prev, key, value));
-    } else {
-      setRawYaml(prev => yamlSet(prev, key, value));
-    }
+    setDirtyKeys(prev => new Set(prev).add(key));
   };
 
-  const isDirty = rawYaml !== originalYaml;
+  const isDirty = dirtyKeys.size > 0;
 
-  /** Save all settings. */
+  /** Save changed settings via structured API. */
   const handleSave = async () => {
     setSaving(true);
     try {
-      await saveConfigRaw(rawYaml);
-      setOriginalYaml(rawYaml);
-      showStatus(true, 'Settings saved successfully');
+      // Build updates from dirty keys
+      const updates: Record<string, any> = {};
+      for (const key of dirtyKeys) {
+        const val = formValues[key] ?? '';
+        // Detect field type for proper serialization
+        const field = allFields.find(f => f.key === key);
+        if (field?.type === 'toggle') {
+          updates[key] = val === 'true';
+        } else if (field?.type === 'number') {
+          updates[key] = Number(val) || 0;
+        } else {
+          updates[key] = val;
+        }
+      }
+      await saveSettings(updates);
+      setDirtyKeys(new Set());
+      showStatus(true, `Saved ${Object.keys(updates).length} settings`);
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {
@@ -635,8 +414,19 @@ export default function Settings() {
     setSaving(true);
     setReloading(true);
     try {
-      await saveConfigRaw(rawYaml);
-      setOriginalYaml(rawYaml);
+      // Save via structured API first
+      if (dirtyKeys.size > 0) {
+        const updates: Record<string, any> = {};
+        for (const key of dirtyKeys) {
+          const val = formValues[key] ?? '';
+          const field = allFields.find(f => f.key === key);
+          if (field?.type === 'toggle') updates[key] = val === 'true';
+          else if (field?.type === 'number') updates[key] = Number(val) || 0;
+          else updates[key] = val;
+        }
+        await saveSettings(updates);
+        setDirtyKeys(new Set());
+      }
       await triggerReload();
       showStatus(true, 'Settings saved and configuration reloaded');
       await load();
@@ -674,8 +464,8 @@ export default function Settings() {
   };
 
   const handleDiscard = () => {
-    setRawYaml(originalYaml);
-    parseYaml(originalYaml);
+    setDirtyKeys(new Set());
+    load(); // re-fetch from server
     setStatus(null);
   };
 
@@ -709,18 +499,20 @@ export default function Settings() {
       'global.backup.keep': '7',
     };
 
-    let yaml = rawYaml;
     let count = 0;
+    const newDirty = new Set(dirtyKeys);
+    const newValues = { ...formValues };
     for (const [key, def] of Object.entries(defaults)) {
-      if (!formValues[key] || formValues[key] === '') {
-        yaml = yamlSet(yaml, key, def);
+      if (!formValues[key] || formValues[key] === '' || formValues[key] === '0' || formValues[key] === '0s') {
+        newValues[key] = def;
+        newDirty.add(key);
         count++;
       }
     }
     if (count > 0) {
-      setRawYaml(yaml);
-      parseYaml(yaml);
-      showStatus(true, `Applied ${count} default values`);
+      setFormValues(newValues);
+      setDirtyKeys(newDirty);
+      showStatus(true, `Applied ${count} default values — click Save to persist`);
     } else {
       showStatus(true, 'All fields already have values');
     }
