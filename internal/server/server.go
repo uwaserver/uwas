@@ -524,22 +524,35 @@ func (s *Server) startHTTPS() error {
 }
 
 // handleHTTP handles port 80: ACME challenges, HTTPS redirect, or serve non-SSL domains.
+// Unknown/blocked domains are rejected immediately — they never touch the middleware chain.
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	// ACME challenges must pass through (for cert issuance).
 	if s.tlsMgr.HandleHTTPChallenge(w, r) {
 		return
 	}
 
-	// Only redirect configured domains to HTTPS — don't redirect unknown hosts.
-	if s.vhosts.IsConfigured(r.Host) {
-		domain := s.vhosts.Lookup(r.Host)
-		if domain != nil && (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") {
-			target := "https://" + r.Host + r.URL.RequestURI()
-			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-			http.Redirect(w, r, target, http.StatusMovedPermanently)
-			return
+	// Unknown domains: track + reject immediately.
+	if !s.vhosts.IsConfigured(r.Host) {
+		blocked := s.unknownHosts.Record(r.Host)
+		if blocked {
+			w.Header().Set("Connection", "close")
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+		} else {
+			renderErrorPage(w, 421)
 		}
+		return
 	}
 
+	// Configured domain — redirect to HTTPS if SSL enabled.
+	domain := s.vhosts.Lookup(r.Host)
+	if domain != nil && (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") {
+		target := "https://" + r.Host + r.URL.RequestURI()
+		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return
+	}
+
+	// Non-SSL configured domain — serve normally.
 	s.handler.ServeHTTP(w, r)
 }
 
