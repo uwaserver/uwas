@@ -547,12 +547,13 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if err := database.CreateDatabase(req.Name, req.User, req.Password, req.Host); err != nil {
+	result, err := database.CreateDatabase(req.Name, req.User, req.Password, req.Host)
+	if err != nil {
 		jsonError(w, "create database: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("database created", "name", req.Name, "user", req.User)
-	jsonResponse(w, map[string]string{"status": "created", "name": req.Name, "user": req.User})
+	s.logger.Info("database created", "name", result.Name, "user", result.User)
+	jsonResponse(w, result)
 }
 
 func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {

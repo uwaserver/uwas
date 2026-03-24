@@ -206,7 +206,7 @@ export default function Database() {
       setCredentials({
         name: result.name,
         user: result.user,
-        password: (result as unknown as { password?: string }).password || result.user,
+        password: result.password,
       });
       setNewDbName('');
       setStatus({ ok: true, message: `Database "${result.name}" created successfully` });

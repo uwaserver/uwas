@@ -72,11 +72,11 @@ func GetStatus() Status {
 func ListDatabases() ([]DBInfo, error) {
 	sql := `SELECT
 		SCHEMA_NAME,
-		ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) AS size_mb,
+		ROUND(COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH), 0) / 1024 / 1024, 2) AS size_mb,
 		COUNT(TABLE_NAME) AS table_count
 	FROM information_schema.SCHEMATA
 	LEFT JOIN information_schema.TABLES ON TABLE_SCHEMA = SCHEMA_NAME
-	WHERE SCHEMA_NAME LIKE 'wp\\_%' OR SCHEMA_NAME LIKE 'uwas\\_%'
+	WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
 	GROUP BY SCHEMA_NAME
 	ORDER BY SCHEMA_NAME`
 
@@ -106,10 +106,18 @@ func ListDatabases() ([]DBInfo, error) {
 	return dbs, nil
 }
 
-// CreateDatabase creates a new MySQL database and user.
-func CreateDatabase(name, user, password, host string) error {
+// CreateResult contains the created database credentials.
+type CreateResult struct {
+	Name     string `json:"name"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+	Host     string `json:"host"`
+}
+
+// CreateDatabase creates a new MySQL database and user. Returns credentials.
+func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	if name == "" {
-		return fmt.Errorf("database name required")
+		return nil, fmt.Errorf("database name required")
 	}
 	if user == "" {
 		user = name
@@ -129,7 +137,10 @@ func CreateDatabase(name, user, password, host string) error {
 	`, backtick(name), user, host, escapeSQL(password), backtick(name), user, host)
 
 	_, err := runMySQL(sql)
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return &CreateResult{Name: name, User: user, Password: password, Host: host}, nil
 }
 
 // DropDatabase removes a database and its user.
