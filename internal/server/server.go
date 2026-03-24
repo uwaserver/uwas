@@ -54,6 +54,7 @@ type Server struct {
 	php        *fcgihandler.Handler
 	proxy      *proxyhandler.Handler
 	tlsMgr     *uwastls.Manager
+	phpMgr     *phpmanager.Manager
 	cache      *cache.Engine
 	metrics    *metrics.Collector
 	analytics  *analytics.Collector
@@ -209,11 +210,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	}
 
 	// PHP Manager — detect, auto-assign to PHP domains, start all
-	phpMgr := phpmanager.New(log)
-	phpMgr.Detect()
-	s.autoAssignPHP(phpMgr, cfg)
+	s.phpMgr = phpmanager.New(log)
+	s.phpMgr.Detect()
+	s.autoAssignPHP(s.phpMgr, cfg)
 	if s.admin != nil {
-		s.admin.SetPHPManager(phpMgr)
+		s.admin.SetPHPManager(s.phpMgr)
 	}
 
 	// Backup manager
@@ -889,6 +890,19 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 	}
 
 	if domain.Type == "php" && strings.HasSuffix(resolved, ".php") {
+		// Ensure FPM address is set — fall back to phpMgr's actual listen addr.
+		if domain.PHP.FPMAddress == "" && s.phpMgr != nil {
+			for _, inst := range s.phpMgr.GetDomainInstances() {
+				if inst.Domain == domain.Host && inst.Running {
+					domain.PHP.FPMAddress = inst.ListenAddr
+					break
+				}
+			}
+			// Still empty? Try global default.
+			if domain.PHP.FPMAddress == "" {
+				domain.PHP.FPMAddress = "127.0.0.1:9000"
+			}
+		}
 		s.php.Serve(ctx, domain)
 		return
 	}
