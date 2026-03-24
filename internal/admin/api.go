@@ -235,6 +235,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/system/resources", s.handleSystemResources)
 	s.mux.HandleFunc("GET /api/v1/system/ips", s.handleServerIPs)
 	s.mux.HandleFunc("GET /api/v1/domains/health", s.handleDomainHealth)
+	s.mux.HandleFunc("GET /api/v1/domains/{host}/debug", s.handleDomainDebug)
 
 	// Self-update
 	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
