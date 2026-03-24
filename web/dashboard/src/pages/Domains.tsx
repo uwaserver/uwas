@@ -449,6 +449,15 @@ export default function Domains() {
       };
     }
 
+    if (form.type === 'php') {
+      const php: Record<string, unknown> = {};
+      if (form.phpFpmAddress.trim()) php.fpm_address = form.phpFpmAddress.trim();
+      const idx = form.phpIndexFiles.split(',').map(s => s.trim()).filter(Boolean);
+      if (idx.length > 0) php.index_files = idx;
+      if (Object.keys(php).length > 0) payload.php = php;
+      payload.htaccess = { mode: 'import' };
+    }
+
     try {
       if (editingHost) {
         await updateDomain(editingHost, payload);

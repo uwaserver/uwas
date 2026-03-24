@@ -221,7 +221,7 @@ export default function Sidebar() {
             UWAS
           </span>
           <span className="ml-auto rounded bg-blue-600/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
-            v1.3
+            v1.4
           </span>
         </div>
 
