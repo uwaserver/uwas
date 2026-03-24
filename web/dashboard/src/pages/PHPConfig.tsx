@@ -174,12 +174,12 @@ export default function PHPConfig() {
             <Settings size={14} /> Quick Presets
           </h2>
           <div className="flex flex-wrap gap-2">
-            {[
+            {([
               { name: 'WordPress', values: { memory_limit: '256M', max_execution_time: '300', upload_max_filesize: '64M', post_max_size: '64M', 'opcache.enable': '1' }},
               { name: 'Laravel', values: { memory_limit: '512M', max_execution_time: '120', upload_max_filesize: '32M', post_max_size: '32M', 'opcache.enable': '1' }},
               { name: 'Development', values: { memory_limit: '512M', max_execution_time: '0', display_errors: 'On', error_reporting: 'E_ALL', 'opcache.enable': '0' }},
               { name: 'Production', values: { memory_limit: '256M', max_execution_time: '30', display_errors: 'Off', error_reporting: 'E_ALL & ~E_DEPRECATED & ~E_STRICT', 'opcache.enable': '1' }},
-            ].map(preset => (
+            ] as { name: string; values: Record<string, string> }[]).map(preset => (
               <button
                 key={preset.name}
                 onClick={async () => {

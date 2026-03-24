@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FileText, Search, Pause, Play, RefreshCw } from 'lucide-react';
+import { FileText, Search, Pause, Play, RefreshCw, Filter } from 'lucide-react';
 import { fetchLogs, type LogEntry } from '@/lib/api';
 
 const statusColor = (status: number): string => {
@@ -11,6 +11,7 @@ const statusColor = (status: number): string => {
 };
 
 type StatusFilter = 'all' | '2xx' | '3xx' | '4xx' | '5xx';
+type MethodFilter = 'all' | 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 const statusFilters: { label: string; value: StatusFilter }[] = [
   { label: 'All', value: 'all' },
@@ -18,6 +19,14 @@ const statusFilters: { label: string; value: StatusFilter }[] = [
   { label: '3xx', value: '3xx' },
   { label: '4xx', value: '4xx' },
   { label: '5xx', value: '5xx' },
+];
+
+const methodFilters: { label: string; value: MethodFilter }[] = [
+  { label: 'All', value: 'all' },
+  { label: 'GET', value: 'GET' },
+  { label: 'POST', value: 'POST' },
+  { label: 'PUT', value: 'PUT' },
+  { label: 'DELETE', value: 'DELETE' },
 ];
 
 function matchesFilter(status: number, filter: StatusFilter): boolean {
@@ -45,6 +54,8 @@ export default function Logs() {
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
+  const [domainFilter, setDomainFilter] = useState('');
+  const [methodFilter, setMethodFilter] = useState<MethodFilter>('all');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -83,6 +94,8 @@ export default function Logs() {
   const filtered = logs.filter((entry) => {
     if (!matchesFilter(entry.status, filter)) return false;
     if (search && !entry.path.toLowerCase().includes(search.toLowerCase())) return false;
+    if (domainFilter && !entry.host.toLowerCase().includes(domainFilter.toLowerCase())) return false;
+    if (methodFilter !== 'all' && entry.method !== methodFilter) return false;
     return true;
   });
 
@@ -125,42 +138,73 @@ export default function Logs() {
       )}
 
       {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        {/* Status filter */}
-        <div className="flex gap-1 rounded-md border border-[#334155] bg-[#1e293b] p-1">
-          {statusFilters.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={`rounded px-3 py-1.5 text-xs font-medium transition ${
-                filter === f.value
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-400 hover:bg-[#334155] hover:text-slate-200'
-              }`}
+      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-1">
+          <Filter size={13} /> Filters
+          <span className="ml-auto text-slate-500 font-normal">
+            {filtered.length} of {logs.length} entries
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Domain filter */}
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-slate-500">Domain</label>
+            <input
+              type="text"
+              value={domainFilter}
+              onChange={(e) => setDomainFilter(e.target.value)}
+              placeholder="Filter by host..."
+              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 px-3 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Path search */}
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-slate-500">Path</label>
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter by path..."
+                className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 pr-3 pl-9 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Status filter */}
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-slate-500">Status</label>
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as StatusFilter)}
+              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 px-3 text-sm text-slate-200 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             >
-              {f.label}
-            </button>
-          ))}
-        </div>
+              {statusFilters.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          </div>
 
-        {/* Search */}
-        <div className="relative flex-1">
-          <Search
-            size={14}
-            className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500"
-          />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter by path..."
-            className="w-full rounded-md border border-[#334155] bg-[#1e293b] py-2 pr-3 pl-9 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          />
+          {/* Method filter */}
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-slate-500">Method</label>
+            <select
+              value={methodFilter}
+              onChange={(e) => setMethodFilter(e.target.value as MethodFilter)}
+              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 px-3 text-sm text-slate-200 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            >
+              {methodFilters.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
-
-        <span className="text-xs text-slate-500">
-          {filtered.length} of {logs.length} entries
-        </span>
       </div>
 
       {/* Log table */}
@@ -171,6 +215,7 @@ export default function Logs() {
               <tr className="border-b border-[#334155] text-slate-400">
                 <th className="px-5 py-3 font-medium">Time</th>
                 <th className="px-5 py-3 font-medium">Method</th>
+                <th className="px-5 py-3 font-medium">Host</th>
                 <th className="px-5 py-3 font-medium">Path</th>
                 <th className="px-5 py-3 font-medium">Status</th>
                 <th className="px-5 py-3 font-medium">Bytes</th>
@@ -182,7 +227,7 @@ export default function Logs() {
               {loading && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-5 py-8 text-center text-slate-500"
                   >
                     Loading...
@@ -192,7 +237,7 @@ export default function Logs() {
               {!loading && filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-5 py-8 text-center text-slate-500"
                   >
                     <FileText size={20} className="mx-auto mb-2 opacity-50" />
@@ -212,6 +257,9 @@ export default function Logs() {
                     <span className="rounded bg-slate-500/15 px-2 py-0.5 font-mono text-xs font-medium text-slate-300">
                       {entry.method}
                     </span>
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-400">
+                    {entry.host}
                   </td>
                   <td className="max-w-xs truncate px-5 py-2.5 font-mono text-xs">
                     {entry.path}

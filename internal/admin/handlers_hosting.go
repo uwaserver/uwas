@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
+	"time"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/uwaserver/uwas/internal/build"
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/dnschecker"
@@ -598,7 +601,83 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result)
 }
 
-// ============ Server IPs ============
+// ============ System Resources ============
+
+func (s *Server) handleSystemResources(w http.ResponseWriter, r *http.Request) {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	result := map[string]any{
+		"cpus":            runtime.NumCPU(),
+		"goroutines":      runtime.NumGoroutine(),
+		"memory_alloc_mb": float64(memStats.Alloc) / 1024 / 1024,
+		"memory_sys_mb":   float64(memStats.Sys) / 1024 / 1024,
+		"gc_cycles":       memStats.NumGC,
+	}
+
+	// Disk usage of web root
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	if webRoot != "" {
+		if du, err := filemanager.DiskUsage(webRoot); err == nil {
+			result["disk_used_bytes"] = du
+			result["disk_used_mb"] = float64(du) / 1024 / 1024
+		}
+	}
+
+	jsonResponse(w, result)
+}
+
+// ============ Domain Health ============
+
+func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	domains := make([]config.Domain, len(s.config.Domains))
+	copy(domains, s.config.Domains)
+	s.configMu.RUnlock()
+
+	type healthResult struct {
+		Host   string `json:"host"`
+		Status string `json:"status"` // "up", "down", "error"
+		Code   int    `json:"code"`
+		Ms     int64  `json:"ms"`
+		Error  string `json:"error,omitempty"`
+	}
+
+	results := make([]healthResult, len(domains))
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for i, d := range domains {
+		hr := healthResult{Host: d.Host}
+		scheme := "http"
+		if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
+			scheme = "https"
+		}
+		url := fmt.Sprintf("%s://%s/", scheme, d.Host)
+
+		start := time.Now()
+		resp, err := client.Get(url)
+		hr.Ms = time.Since(start).Milliseconds()
+
+		if err != nil {
+			hr.Status = "down"
+			hr.Error = err.Error()
+		} else {
+			resp.Body.Close()
+			hr.Code = resp.StatusCode
+			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+				hr.Status = "up"
+			} else {
+				hr.Status = "error"
+			}
+		}
+		results[i] = hr
+	}
+
+	jsonResponse(w, results)
+}
 
 func (s *Server) handleServerIPs(w http.ResponseWriter, r *http.Request) {
 	ips := serverip.DetectAll()
