@@ -2098,8 +2098,11 @@ func TestParseHtaccessNoFile(t *testing.T) {
 	s := New(cfg, log)
 
 	entry := s.parseHtaccessFull(dir)
-	if entry != nil {
-		t.Errorf("parseHtaccessFull should return nil for dir without .htaccess, got non-nil")
+	if entry == nil {
+		t.Fatalf("parseHtaccessFull should return empty entry for dir without .htaccess, got nil")
+	}
+	if entry.raw != nil {
+		t.Errorf("parseHtaccessFull should return empty ruleSet for dir without .htaccess")
 	}
 }
 

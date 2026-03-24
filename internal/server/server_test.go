@@ -1367,10 +1367,13 @@ func TestApplyHtaccessNoFile(t *testing.T) {
 	s.htaccessCacheMu.RUnlock()
 
 	if !cached {
-		t.Error("should still cache nil result for missing .htaccess")
+		t.Error("should still cache result for missing .htaccess")
 	}
-	if entry != nil {
-		t.Errorf("entry should be nil for missing .htaccess, got non-nil")
+	if entry == nil {
+		t.Fatal("entry should be non-nil (empty cache entry), got nil")
+	}
+	if entry.raw != nil {
+		t.Errorf("entry.raw should be nil for missing .htaccess")
 	}
 }
 

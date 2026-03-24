@@ -1040,7 +1040,7 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 // Parsed rules are cached per domain root and invalidated on config reload.
 func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) {
 	ruleSet := s.getHtaccessRuleSet(domain.Root)
-	if ruleSet == nil {
+	if ruleSet == nil || ruleSet.raw == nil {
 		return
 	}
 
@@ -1155,12 +1155,35 @@ func parseExpiresDuration(expr string) string {
 type htaccessCacheEntry struct {
 	raw           *htaccess.RuleSet
 	compiledRules []*rewrite.Rule
+	modTime       time.Time // file modification time for auto-invalidation
 }
 
 func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
+	htPath := filepath.Join(root, ".htaccess")
+
 	s.htaccessCacheMu.RLock()
 	if entry, ok := s.htaccessCacheV2[root]; ok {
 		s.htaccessCacheMu.RUnlock()
+		// Check if file changed since last parse
+		if info, err := os.Stat(htPath); err == nil {
+			if !info.ModTime().Equal(entry.modTime) {
+				// File changed — re-parse
+				newEntry := s.parseHtaccessFull(root)
+				s.htaccessCacheMu.Lock()
+				s.htaccessCacheV2[root] = newEntry
+				s.htaccessCacheMu.Unlock()
+				return newEntry
+			}
+		} else if entry.raw == nil {
+			// File still doesn't exist and cache is nil — that's fine
+			return entry
+		} else {
+			// File was deleted — invalidate
+			s.htaccessCacheMu.Lock()
+			delete(s.htaccessCacheV2, root)
+			s.htaccessCacheMu.Unlock()
+			return nil
+		}
 		return entry
 	}
 	s.htaccessCacheMu.RUnlock()
@@ -1181,18 +1204,23 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 	htPath := filepath.Join(root, ".htaccess")
 	f, err := os.Open(htPath)
 	if err != nil {
-		return nil
+		return &htaccessCacheEntry{} // cache "no file" to avoid repeated stat
 	}
 	defer f.Close()
+
+	info, _ := f.Stat()
 
 	directives, err := htaccess.Parse(f)
 	if err != nil {
 		s.logger.Warn("htaccess parse error", "path", htPath, "error", err)
-		return nil
+		return &htaccessCacheEntry{}
 	}
 
 	ruleSet := htaccess.Convert(directives)
 	entry := &htaccessCacheEntry{raw: ruleSet}
+	if info != nil {
+		entry.modTime = info.ModTime()
+	}
 
 	// Compile rewrite rules
 	if ruleSet.RewriteEnabled {
@@ -1234,9 +1262,10 @@ func (s *Server) reload() error {
 	// Update TLS domains
 	s.tlsMgr.UpdateDomains(newCfg.Domains)
 
-	// Invalidate htaccess cache
+	// Invalidate htaccess cache (both v1 and v2)
 	s.htaccessCacheMu.Lock()
 	s.htaccessCache = make(map[string][]*rewrite.Rule)
+	s.htaccessCacheV2 = make(map[string]*htaccessCacheEntry)
 	s.htaccessCacheMu.Unlock()
 
 	// Rebuild rewrite cache for new domains
