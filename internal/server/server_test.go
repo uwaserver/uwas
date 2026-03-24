@@ -1325,7 +1325,7 @@ RewriteRule ^old-page$ /new-page [L]
 
 	// Verify cache was populated
 	s.htaccessCacheMu.RLock()
-	_, cached := s.htaccessCache[dir]
+	_, cached := s.htaccessCacheV2[dir]
 	s.htaccessCacheMu.RUnlock()
 
 	if !cached {
@@ -1361,16 +1361,16 @@ func TestApplyHtaccessNoFile(t *testing.T) {
 	req.Host = "nohtaccess.local"
 	s.handleRequest(rec, req)
 
-	// Should complete without error (nil rules cached for missing file)
+	// Should complete without error (nil entry cached for missing file)
 	s.htaccessCacheMu.RLock()
-	rules, cached := s.htaccessCache[dir]
+	entry, cached := s.htaccessCacheV2[dir]
 	s.htaccessCacheMu.RUnlock()
 
 	if !cached {
 		t.Error("should still cache nil result for missing .htaccess")
 	}
-	if len(rules) != 0 {
-		t.Errorf("rules should be nil/empty for missing .htaccess, got %d", len(rules))
+	if entry != nil {
+		t.Errorf("entry should be nil for missing .htaccess, got non-nil")
 	}
 }
 

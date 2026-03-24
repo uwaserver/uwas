@@ -1099,16 +1099,16 @@ func TestParseHtaccessRewriteDisabled(t *testing.T) {
 	req.Host = "norewrite.local"
 	s.handleRequest(rec, req)
 
-	// Verify rules were parsed and cached (as empty)
+	// Verify rules were parsed and cached
 	s.htaccessCacheMu.RLock()
-	rules, ok := s.htaccessCache[dir]
+	entry, ok := s.htaccessCacheV2[dir]
 	s.htaccessCacheMu.RUnlock()
 
 	if !ok {
 		t.Error("htaccess cache should have entry for dir")
 	}
-	if len(rules) != 0 {
-		t.Errorf("rules should be empty for htaccess without RewriteEngine, got %d", len(rules))
+	if entry != nil && len(entry.compiledRules) != 0 {
+		t.Errorf("rules should be empty for htaccess without RewriteEngine, got %d", len(entry.compiledRules))
 	}
 }
 
@@ -2097,9 +2097,9 @@ func TestParseHtaccessNoFile(t *testing.T) {
 	log := logger.New("error", "text")
 	s := New(cfg, log)
 
-	rules := s.parseHtaccess(dir)
-	if rules != nil {
-		t.Errorf("parseHtaccess should return nil for dir without .htaccess, got %d rules", len(rules))
+	entry := s.parseHtaccessFull(dir)
+	if entry != nil {
+		t.Errorf("parseHtaccessFull should return nil for dir without .htaccess, got non-nil")
 	}
 }
 
@@ -2120,10 +2120,10 @@ RewriteRule ^/other$ /elsewhere [L]
 	log := logger.New("error", "text")
 	s := New(cfg, log)
 
-	rules := s.parseHtaccess(dir)
+	entry := s.parseHtaccessFull(dir)
 	// Should not panic even with bad condition syntax
 	// At least some rules should parse (the ones without bad conditions)
-	_ = rules
+	_ = entry
 }
 
 // --- handleFileRequest: directory listing enabled for root ---
