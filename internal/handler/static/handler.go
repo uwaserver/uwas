@@ -155,11 +155,18 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		resolved := expandTryFileVar(candidate, cleanURI)
 		fullPath := filepath.Join(docRoot, filepath.Clean("/"+resolved))
 
-		// Security: path must stay within document root
+		// Security: path must stay within document root (resolve symlinks)
 		absRoot, _ := filepath.Abs(docRoot)
 		absPath, _ := filepath.Abs(fullPath)
 		if !strings.HasPrefix(absPath, absRoot) {
 			continue
+		}
+		// Resolve symlinks to prevent cross-domain access
+		if realPath, err := filepath.EvalSymlinks(fullPath); err == nil {
+			realRoot, _ := filepath.EvalSymlinks(docRoot)
+			if realRoot != "" && !strings.HasPrefix(realPath, realRoot) {
+				continue // symlink points outside document root
+			}
 		}
 
 		stat, err := os.Stat(fullPath)

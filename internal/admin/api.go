@@ -894,7 +894,17 @@ func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dp, err := s.phpMgr.AssignDomain(req.Domain, req.Version)
+	// Find domain root from config for open_basedir isolation
+	var domRoot string
+	s.configMu.RLock()
+	for _, dom := range s.config.Domains {
+		if dom.Host == req.Domain {
+			domRoot = dom.Root
+			break
+		}
+	}
+	s.configMu.RUnlock()
+	dp, err := s.phpMgr.AssignDomainWithRoot(req.Domain, req.Version, domRoot)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
@@ -1398,7 +1408,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		phpStatus := s.phpMgr.Status()
 		if len(phpStatus) > 0 {
 			version := phpStatus[0].Version
-			if inst, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
+			if inst, err := s.phpMgr.AssignDomainWithRoot(d.Host, version, d.Root); err == nil {
 				d.PHP.FPMAddress = inst.ListenAddr
 				if err := s.phpMgr.StartDomain(d.Host); err != nil {
 					s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
@@ -1576,7 +1586,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			phpStatus := s.phpMgr.Status()
 			if len(phpStatus) > 0 {
 				version := phpStatus[0].Version
-				if inst, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
+				if inst, err := s.phpMgr.AssignDomainWithRoot(d.Host, version, d.Root); err == nil {
 					s.phpMgr.StartDomain(d.Host)
 					s.configMu.Lock()
 					for i := range s.config.Domains {
