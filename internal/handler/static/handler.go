@@ -144,7 +144,11 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 
 	indexFiles := domain.IndexFiles
 	if len(indexFiles) == 0 {
-		indexFiles = []string{"index.html", "index.htm"}
+		if domain.Type == "php" {
+			indexFiles = []string{"index.php", "index.html", "index.htm"}
+		} else {
+			indexFiles = []string{"index.html", "index.htm"}
+		}
 	}
 
 	for _, candidate := range candidates {
