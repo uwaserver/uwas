@@ -148,9 +148,16 @@ func SplitScriptPath(originalURI, resolvedPath, docRoot string, indexFiles []str
 	}
 
 	// If resolved to a .php file and original URI is different → front-controller
+	// But NOT if it's a directory index resolution (e.g., /wp-admin/ → /wp-admin/index.php)
 	if strings.HasSuffix(scriptName, ".php") && scriptName != origPath && origPath != "/" {
-		// Original URI didn't point to a .php file; this is a rewrite/try_files fallback
-		// PHP apps expect PATH_INFO = original URI
+		// Check if this is a directory index (origPath is a prefix of scriptName)
+		cleanOrig := strings.TrimSuffix(origPath, "/")
+		if cleanOrig != "" && strings.HasPrefix(scriptName, cleanOrig+"/") {
+			// Directory index resolution: /wp-admin/ → /wp-admin/index.php
+			// No PATH_INFO needed
+			return scriptName, ""
+		}
+		// Front-controller: /blog/my-post → /index.php
 		pathInfo = origPath
 		return scriptName, pathInfo
 	}
