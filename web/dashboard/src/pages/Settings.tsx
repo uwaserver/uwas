@@ -18,6 +18,7 @@ import {
   Activity,
   Cpu,
   AlertTriangle,
+  Globe,
 } from 'lucide-react';
 import {
   fetchConfigRaw,
@@ -156,6 +157,152 @@ function formatYamlValue(value: string): string {
   return value;
 }
 
+/** Read a YAML array (block sequence) at a given dot-separated key path.
+ *  Returns items joined by newlines. Handles both block ("- item") and
+ *  flow ("[item1, item2]") formats. */
+function yamlGetArray(yaml: string, path: string): string {
+  const parts = path.split('.');
+  const lines = yaml.split('\n');
+  let depth = 0;
+  let partIdx = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trimStart();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+
+    const indent = line.length - trimmed.length;
+
+    while (depth > 0 && indent <= (depth - 1) * 2 && partIdx > 0) {
+      partIdx--;
+      depth--;
+    }
+
+    const key = parts[partIdx];
+    const regex = new RegExp(`^${key}\\s*:`);
+    if (indent === partIdx * 2 && regex.test(trimmed)) {
+      if (partIdx === parts.length - 1) {
+        const colonIdx = trimmed.indexOf(':');
+        const afterColon = trimmed.slice(colonIdx + 1).trim();
+        // Flow format: [a, b, c]
+        if (afterColon.startsWith('[')) {
+          const inner = afterColon.slice(1, afterColon.lastIndexOf(']'));
+          return inner.split(',').map(s => {
+            s = s.trim();
+            if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+              s = s.slice(1, -1);
+            }
+            return s;
+          }).filter(Boolean).join('\n');
+        }
+        // Block format: lines starting with "- "
+        const items: string[] = [];
+        const expectedIndent = indent + 2;
+        for (let j = i + 1; j < lines.length; j++) {
+          const jLine = lines[j];
+          const jTrimmed = jLine.trimStart();
+          if (jTrimmed === '' || jTrimmed.startsWith('#')) continue;
+          const jIndent = jLine.length - jTrimmed.length;
+          if (jIndent < expectedIndent) break;
+          if (jIndent === expectedIndent && jTrimmed.startsWith('- ')) {
+            let val = jTrimmed.slice(2).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            items.push(val);
+          }
+        }
+        return items.join('\n');
+      }
+      partIdx++;
+      depth = partIdx;
+    }
+  }
+  return '';
+}
+
+/** Set a YAML array at a given dot-separated key path from newline-separated values. */
+function yamlSetArray(yaml: string, path: string, value: string): string {
+  const items = value.split('\n').map(s => s.trim()).filter(Boolean);
+  const parts = path.split('.');
+  const lines = yaml.split('\n');
+  let depth = 0;
+  let partIdx = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trimStart();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+
+    const indent = line.length - trimmed.length;
+
+    while (depth > 0 && indent <= (depth - 1) * 2 && partIdx > 0) {
+      partIdx--;
+      depth--;
+    }
+
+    const key = parts[partIdx];
+    const regex = new RegExp(`^${key}\\s*:`);
+    if (indent === partIdx * 2 && regex.test(trimmed)) {
+      if (partIdx === parts.length - 1) {
+        const colonIdx = trimmed.indexOf(':');
+        const afterColon = trimmed.slice(colonIdx + 1).trim();
+
+        // Remove existing array items (block or flow)
+        let removeEnd = i;
+        if (afterColon.startsWith('[')) {
+          // Flow format — just this line
+          removeEnd = i;
+        } else if (afterColon === '' || afterColon.startsWith('#')) {
+          // Block format — remove subsequent "- " lines
+          const expectedIndent = indent + 2;
+          removeEnd = i;
+          for (let j = i + 1; j < lines.length; j++) {
+            const jLine = lines[j];
+            const jTrimmed = jLine.trimStart();
+            if (jTrimmed === '' || jTrimmed.startsWith('#')) { removeEnd = j; continue; }
+            const jIndent = jLine.length - jTrimmed.length;
+            if (jIndent >= expectedIndent) {
+              removeEnd = j;
+            } else {
+              break;
+            }
+          }
+        }
+
+        // Build replacement
+        const prefix = '  '.repeat(parts.length - 1);
+        const itemIndent = '  '.repeat(parts.length);
+        const newLines: string[] = [];
+        if (items.length === 0) {
+          newLines.push(`${prefix}${parts[parts.length - 1]}: []`);
+        } else {
+          newLines.push(`${prefix}${parts[parts.length - 1]}:`);
+          for (const item of items) {
+            const formatted = item.includes(':') || item.includes('/') ? `"${item}"` : item;
+            newLines.push(`${itemIndent}- ${formatted}`);
+          }
+        }
+        lines.splice(i, removeEnd - i + 1, ...newLines);
+        return lines.join('\n');
+      }
+      partIdx++;
+      depth = partIdx;
+    }
+  }
+
+  // Key not found — append
+  const prefix = '  '.repeat(parts.length - 1);
+  const itemIndent = '  '.repeat(parts.length);
+  if (items.length === 0) return yaml;
+  const newLines = [`${prefix}${parts[parts.length - 1]}:`];
+  for (const item of items) {
+    const formatted = item.includes(':') || item.includes('/') ? `"${item}"` : item;
+    newLines.push(`${itemIndent}- ${formatted}`);
+  }
+  return [...lines, ...newLines].join('\n');
+}
+
 function formatBytes(b: number): string {
   if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
   if (b >= 1 << 20) return `${(b / (1 << 20)).toFixed(1)} MB`;
@@ -170,10 +317,11 @@ function formatBytes(b: number): string {
 interface FieldDef {
   key: string;       // dot-path in YAML, e.g. "global.http_listen"
   label: string;
-  type: 'text' | 'number' | 'toggle' | 'select' | 'secret';
+  type: 'text' | 'number' | 'toggle' | 'select' | 'secret' | 'textarea';
   placeholder?: string;
   options?: { value: string; label: string }[];
   help?: string;
+  fullWidth?: boolean; // span all columns
 }
 
 interface SectionDef {
@@ -276,6 +424,15 @@ const SECTIONS: SectionDef[] = [
     ],
   },
   {
+    id: 'trusted_proxies',
+    title: 'Trusted Proxies',
+    icon: <Globe size={18} />,
+    iconColor: 'text-teal-400',
+    fields: [
+      { key: 'global.trusted_proxies', label: 'Trusted Proxy CIDRs', type: 'textarea', placeholder: '10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16', help: 'One CIDR per line. Used to trust X-Forwarded-For headers from these sources.', fullWidth: true },
+    ],
+  },
+  {
     id: 'logging',
     title: 'Logging',
     icon: <FileText size={18} />,
@@ -316,6 +473,55 @@ const SECTIONS: SectionDef[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Dynamic / conditional field definitions (not in SECTIONS — rendered inline)
+// ---------------------------------------------------------------------------
+
+const BACKUP_LOCAL_FIELDS: FieldDef[] = [
+  { key: 'global.backup.local.path', label: 'Local Path', type: 'text', placeholder: '/var/backups/uwas' },
+];
+
+const BACKUP_S3_FIELDS: FieldDef[] = [
+  { key: 'global.backup.s3.endpoint', label: 'Endpoint', type: 'text', placeholder: 'https://s3.amazonaws.com' },
+  { key: 'global.backup.s3.bucket', label: 'Bucket', type: 'text', placeholder: 'my-uwas-backups' },
+  { key: 'global.backup.s3.access_key', label: 'Access Key', type: 'secret' },
+  { key: 'global.backup.s3.secret_key', label: 'Secret Key', type: 'secret' },
+  { key: 'global.backup.s3.region', label: 'Region', type: 'text', placeholder: 'us-east-1' },
+];
+
+const BACKUP_SFTP_FIELDS: FieldDef[] = [
+  { key: 'global.backup.sftp.host', label: 'Host', type: 'text', placeholder: 'backup.example.com' },
+  { key: 'global.backup.sftp.port', label: 'Port', type: 'number', placeholder: '22' },
+  { key: 'global.backup.sftp.user', label: 'User', type: 'text', placeholder: 'backup' },
+  { key: 'global.backup.sftp.key_file', label: 'Key File', type: 'text', placeholder: '/root/.ssh/id_rsa' },
+  { key: 'global.backup.sftp.password', label: 'Password', type: 'secret' },
+  { key: 'global.backup.sftp.remote_path', label: 'Remote Path', type: 'text', placeholder: '/backups/uwas' },
+];
+
+/** DNS credential fields by provider name. */
+const DNS_CREDENTIAL_FIELDS: Record<string, FieldDef[]> = {
+  cloudflare: [
+    { key: 'global.acme.dns_credentials.api_token', label: 'API Token', type: 'secret' },
+  ],
+  route53: [
+    { key: 'global.acme.dns_credentials.access_key_id', label: 'Access Key ID', type: 'secret' },
+    { key: 'global.acme.dns_credentials.secret_access_key', label: 'Secret Access Key', type: 'secret' },
+  ],
+  digitalocean: [
+    { key: 'global.acme.dns_credentials.api_token', label: 'API Token', type: 'secret' },
+  ],
+};
+
+/** Collect all dynamic field keys so parseYaml can read them. */
+const ALL_DYNAMIC_FIELDS: FieldDef[] = [
+  ...BACKUP_LOCAL_FIELDS,
+  ...BACKUP_S3_FIELDS,
+  ...BACKUP_SFTP_FIELDS,
+  ...Object.values(DNS_CREDENTIAL_FIELDS).flat(),
+  // Generic DNS credential fallback keys
+  { key: 'global.acme.dns_credentials.api_key', label: 'API Key', type: 'secret' },
+];
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -340,6 +546,14 @@ export default function Settings() {
   const parseYaml = useCallback((yaml: string) => {
     const values: Record<string, string> = {};
     for (const f of allFields) {
+      if (f.type === 'textarea') {
+        values[f.key] = yamlGetArray(yaml, f.key);
+      } else {
+        values[f.key] = yamlGet(yaml, f.key);
+      }
+    }
+    // Also parse dynamic fields (backup sub-sections, DNS credentials)
+    for (const f of ALL_DYNAMIC_FIELDS) {
       values[f.key] = yamlGet(yaml, f.key);
     }
     setFormValues(values);
@@ -377,7 +591,13 @@ export default function Settings() {
   /** Update a single form value and synchronise back to raw YAML. */
   const updateField = (key: string, value: string) => {
     setFormValues(prev => ({ ...prev, [key]: value }));
-    setRawYaml(prev => yamlSet(prev, key, value));
+    // Check if this is an array-type field (textarea)
+    const field = allFields.find(f => f.key === key);
+    if (field?.type === 'textarea') {
+      setRawYaml(prev => yamlSetArray(prev, key, value));
+    } else {
+      setRawYaml(prev => yamlSet(prev, key, value));
+    }
   };
 
   const isDirty = rawYaml !== originalYaml;
@@ -589,6 +809,99 @@ export default function Settings() {
               />
             ))}
           </div>
+
+          {/* ACME: DNS Credentials conditional sub-section */}
+          {section.id === 'acme' && formValues['global.acme.dns_provider'] && (
+            <div className="mt-5 border-t border-[#334155] pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                DNS Credentials
+                <span className="ml-2 font-normal normal-case text-slate-600">
+                  ({formValues['global.acme.dns_provider']})
+                </span>
+              </h3>
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                {(DNS_CREDENTIAL_FIELDS[formValues['global.acme.dns_provider']] ?? [
+                  // Generic fallback: show key/value pair inputs
+                  { key: 'global.acme.dns_credentials.api_token', label: 'API Token', type: 'secret' as const },
+                  { key: 'global.acme.dns_credentials.api_key', label: 'API Key', type: 'secret' as const },
+                ]).map(field => (
+                  <FieldInput
+                    key={field.key}
+                    field={field}
+                    value={formValues[field.key] ?? ''}
+                    onChange={(v) => updateField(field.key, v)}
+                    revealed={revealedSecrets[field.key] ?? false}
+                    onToggleReveal={() => toggleSecret(field.key)}
+                    onCopy={() => copyToClipboard(formValues[field.key] ?? '')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Backup: Provider-specific sub-sections */}
+          {section.id === 'backup' && formValues['global.backup.provider'] === 'local' && (
+            <div className="mt-5 border-t border-[#334155] pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Local Storage
+              </h3>
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                {BACKUP_LOCAL_FIELDS.map(field => (
+                  <FieldInput
+                    key={field.key}
+                    field={field}
+                    value={formValues[field.key] ?? ''}
+                    onChange={(v) => updateField(field.key, v)}
+                    revealed={revealedSecrets[field.key] ?? false}
+                    onToggleReveal={() => toggleSecret(field.key)}
+                    onCopy={() => copyToClipboard(formValues[field.key] ?? '')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {section.id === 'backup' && formValues['global.backup.provider'] === 's3' && (
+            <div className="mt-5 border-t border-[#334155] pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                S3 Configuration
+              </h3>
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                {BACKUP_S3_FIELDS.map(field => (
+                  <FieldInput
+                    key={field.key}
+                    field={field}
+                    value={formValues[field.key] ?? ''}
+                    onChange={(v) => updateField(field.key, v)}
+                    revealed={revealedSecrets[field.key] ?? false}
+                    onToggleReveal={() => toggleSecret(field.key)}
+                    onCopy={() => copyToClipboard(formValues[field.key] ?? '')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {section.id === 'backup' && formValues['global.backup.provider'] === 'sftp' && (
+            <div className="mt-5 border-t border-[#334155] pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                SFTP Configuration
+              </h3>
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                {BACKUP_SFTP_FIELDS.map(field => (
+                  <FieldInput
+                    key={field.key}
+                    field={field}
+                    value={formValues[field.key] ?? ''}
+                    onChange={(v) => updateField(field.key, v)}
+                    revealed={revealedSecrets[field.key] ?? false}
+                    onToggleReveal={() => toggleSecret(field.key)}
+                    onCopy={() => copyToClipboard(formValues[field.key] ?? '')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ))}
 
@@ -723,6 +1036,24 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
             <Copy size={14} />
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (field.type === 'textarea') {
+    return (
+      <div className={field.fullWidth ? 'sm:col-span-2 lg:col-span-3' : ''}>
+        <label className="mb-1.5 block text-sm text-slate-300">{field.label}</label>
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          rows={5}
+          className={inputClasses + ' resize-y font-mono text-xs'}
+        />
+        {field.help && (
+          <p className="mt-1 text-xs text-slate-500">{field.help}</p>
+        )}
       </div>
     );
   }
