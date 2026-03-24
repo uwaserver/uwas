@@ -1271,10 +1271,11 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		d.Type = "static"
 	}
 	if d.SSL.Mode == "" {
-		d.SSL.Mode = "off"
+		d.SSL.Mode = "auto"
 	}
 
 	s.configMu.Lock()
+
 	// Check for duplicates.
 	for _, existing := range s.config.Domains {
 		if existing.Host == d.Host {
@@ -1284,13 +1285,45 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Auto-create web root directory with a placeholder page.
+
+	// ── Auto-fill defaults based on domain type ──
+
+	// Web root: always auto-created
+	webRoot := s.config.Global.WebRoot
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
 	if d.Root == "" {
-		webRoot := s.config.Global.WebRoot
-		if webRoot == "" {
-			webRoot = "/var/www"
-		}
 		d.Root = filepath.Join(webRoot, d.Host, "public_html")
+	}
+
+	// PHP defaults
+	if d.Type == "php" {
+		if len(d.PHP.IndexFiles) == 0 {
+			d.PHP.IndexFiles = []string{"index.php", "index.html"}
+		}
+		// FPM address will be set by auto-assign after unlock
+		d.Htaccess = config.HtaccessConfig{Mode: "import"}
+		if !d.Security.WAF.Enabled {
+			d.Security.WAF.Enabled = true
+		}
+		if len(d.Security.BlockedPaths) == 0 {
+			d.Security.BlockedPaths = []string{".git", ".env", "wp-config.php"}
+		}
+	}
+
+	// Static defaults
+	if d.Type == "static" {
+		d.Compression = config.CompressionConfig{
+			Enabled:    true,
+			Algorithms: []string{"gzip", "br"},
+		}
+	}
+
+	// Cache defaults (all types except redirect)
+	if d.Type != "redirect" && !d.Cache.Enabled {
+		d.Cache.Enabled = true
+		d.Cache.TTL = 3600
 	}
 	if d.Root != "" {
 		if err := os.MkdirAll(d.Root, 0755); err != nil {
