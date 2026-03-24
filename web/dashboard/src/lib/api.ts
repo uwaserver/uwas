@@ -381,9 +381,19 @@ export const deleteUser = (domain: string) =>
   api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
 // WordPress
+export interface WPInstallStatus {
+  status: string;
+  domain?: string;
+  admin_url?: string;
+  db_name?: string;
+  db_user?: string;
+  db_pass?: string;
+  output?: string;
+  error?: string;
+}
 export const installWordPress = (domain: string, dbHost?: string) =>
   api<{ status: string }>('/api/v1/wordpress/install', { method: 'POST', body: JSON.stringify({ domain, db_host: dbHost || 'localhost' }) });
-export const fetchWPInstallStatus = () => api<{ status: string; domain?: string; admin_url?: string; db_name?: string; db_user?: string; db_pass?: string; output?: string; error?: string }>('/api/v1/wordpress/install/status');
+export const fetchWPInstallStatus = () => api<WPInstallStatus>('/api/v1/wordpress/install/status');
 
 // File manager
 export interface FileEntry { name: string; path: string; is_dir: boolean; size: number; mod_time: string; mode: string; }
