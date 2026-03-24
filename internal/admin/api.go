@@ -1342,6 +1342,24 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Auto-create .htaccess for PHP domains (WordPress/Laravel friendly)
+	if d.Type == "php" && d.Root != "" {
+		htaccessPath := filepath.Join(d.Root, ".htaccess")
+		if _, err := os.Stat(htaccessPath); os.IsNotExist(err) {
+			htContent := "# UWAS — PHP front-controller rewrite\n" +
+				"# Works with WordPress, Laravel, Drupal, etc.\n" +
+				"<IfModule mod_rewrite.c>\n" +
+				"RewriteEngine On\n" +
+				"RewriteBase /\n" +
+				"RewriteRule ^index\\.php$ - [L]\n" +
+				"RewriteCond %{REQUEST_FILENAME} !-f\n" +
+				"RewriteCond %{REQUEST_FILENAME} !-d\n" +
+				"RewriteRule . /index.php [L]\n" +
+				"</IfModule>\n"
+			os.WriteFile(htaccessPath, []byte(htContent), 0644)
+		}
+	}
+
 	// Auto-set per-domain access log path if not configured.
 	if d.AccessLog.Path == "" && d.Root != "" {
 		logDir := filepath.Join(filepath.Dir(d.Root), "logs")
