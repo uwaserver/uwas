@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -73,6 +74,13 @@ func StartService() error {
 	if runtime.GOOS == "windows" {
 		return fmt.Errorf("not supported on Windows")
 	}
+
+	// Ensure socket directory exists (common issue after reboot).
+	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
+		os.MkdirAll(dir, 0755)
+		exec.Command("chown", "mysql:mysql", dir).Run()
+	}
+
 	// Try mariadb first, then mysql
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
 		if err := exec.Command("systemctl", "start", svc).Run(); err == nil {
