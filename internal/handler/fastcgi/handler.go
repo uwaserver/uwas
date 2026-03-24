@@ -24,21 +24,25 @@ func New(log *logger.Logger) *Handler {
 func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	client := h.getClient(domain.PHP.FPMAddress)
 
-	// Split script name and path info
+	// Split script name and path info using both original URI and resolved path
 	scriptName, pathInfo := SplitScriptPath(
-		ctx.Request.URL.Path,
+		ctx.OriginalURI,
+		ctx.ResolvedPath,
 		domain.Root,
 		domain.PHP.IndexFiles,
 	)
-	scriptFilename := ScriptFilename(domain.Root, scriptName)
+	scriptFilename := ScriptFilenameFromResolved(ctx.ResolvedPath, domain.Root, scriptName)
 
 	// Build CGI environment
 	env := BuildEnv(ctx, scriptFilename, scriptName, pathInfo, domain.PHP.Env)
 
-	// Execute FastCGI request
+	// Execute FastCGI request — forward request body for POST/PUT/PATCH
+	// Always forward body if Content-Length > 0 or Transfer-Encoding is chunked
 	var stdin io.Reader
-	if ctx.Request.Body != nil && ctx.Request.ContentLength != 0 {
-		stdin = ctx.Request.Body
+	if ctx.Request.Body != nil {
+		if ctx.Request.ContentLength > 0 || ctx.Request.TransferEncoding != nil {
+			stdin = ctx.Request.Body
+		}
 	}
 
 	resp, err := client.Execute(ctx.Request.Context(), env, stdin)
