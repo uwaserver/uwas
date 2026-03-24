@@ -83,6 +83,15 @@ func Install(req InstallRequest) InstallResult {
 		log.WriteString("You can create the database manually and WordPress will use it.\n")
 	}
 
+	// Step 1.5: Remove placeholder index.html (UWAS auto-generated)
+	placeholderIndex := filepath.Join(req.WebRoot, "index.html")
+	if data, err := os.ReadFile(placeholderIndex); err == nil {
+		if strings.Contains(string(data), "Site is ready") || strings.Contains(string(data), "UWAS") {
+			os.Remove(placeholderIndex)
+			log.WriteString("Removed placeholder index.html\n")
+		}
+	}
+
 	// Step 2: Download WordPress
 	log.WriteString("\n=== Downloading WordPress ===\n")
 	if err := downloadAndExtract(req.WebRoot, &log); err != nil {
