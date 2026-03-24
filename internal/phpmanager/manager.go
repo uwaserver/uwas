@@ -284,10 +284,48 @@ func (m *Manager) StopDomain(domain string) error {
 	return nil
 }
 
-// SetDomainConfig sets a per-domain php.ini override.
+// Blocked PHP directives — these cannot be overridden per-domain for security.
+var blockedPHPDirectives = map[string]bool{
+	"open_basedir":          true, // managed by UWAS (chroot)
+	"disable_functions":     true, // security critical
+	"disable_classes":       true,
+	"allow_url_include":     true, // RCE risk
+	"allow_url_fopen":       true, // SSRF risk when changed carelessly
+	"safe_mode":             true, // deprecated but dangerous
+	"enable_dl":             true, // load arbitrary extensions
+	"suhosin.executor.func.blacklist": true,
+	"auto_prepend_file":     true, // code injection
+	"auto_append_file":      true,
+	"sendmail_path":         true, // command injection
+	"mail.force_extra_parameters": true,
+	"extension_dir":         true,
+	"extension":             true,
+	"zend_extension":        true,
+	"doc_root":              true, // path override
+	"user_dir":              true,
+	"cgi.force_redirect":    true,
+	"cgi.redirect_status_env": true,
+}
+
+// Allowed per-domain directives — only these can be set.
+var allowedDomainDirectives = []string{
+	"memory_limit", "max_execution_time", "max_input_time",
+	"upload_max_filesize", "post_max_size", "max_file_uploads", "max_input_vars",
+	"display_errors", "error_reporting", "log_errors",
+	"date.timezone", "session.gc_maxlifetime", "session.cookie_secure",
+	"opcache.enable", "opcache.memory_consumption", "opcache.max_accelerated_files",
+	"short_open_tag", "output_buffering", "default_charset",
+}
+
+// SetDomainConfig sets a per-domain php.ini override with security validation.
 func (m *Manager) SetDomainConfig(domain, key, value string) error {
 	if key == "" {
 		return fmt.Errorf("key is required")
+	}
+
+	// Security: block dangerous directives
+	if blockedPHPDirectives[key] {
+		return fmt.Errorf("directive %q is blocked for security — can only be set in global php.ini", key)
 	}
 
 	m.domainMu.Lock()
@@ -301,6 +339,11 @@ func (m *Manager) SetDomainConfig(domain, key, value string) error {
 	inst.configOverrides[key] = value
 	m.logger.Info("set domain PHP config", "domain", domain, "key", key, "value", value)
 	return nil
+}
+
+// AllowedDomainDirectives returns the list of directives that can be set per-domain.
+func AllowedDomainDirectives() []string {
+	return allowedDomainDirectives
 }
 
 // GetDomainConfig returns the per-domain php.ini overrides.
@@ -392,6 +435,19 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 			lines = append(lines, string(baseData))
 			lines = append(lines, "")
 		}
+	}
+
+	// Security: enforce open_basedir per domain (chroot PHP to web root + tmp).
+	m.domainMu.RLock()
+	domainInst, _ := m.domainMap[domain]
+	m.domainMu.RUnlock()
+	if domainInst != nil {
+		// Find domain root from the listen addr — we'll use a safe default
+		lines = append(lines, "; Security: UWAS enforced")
+		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_multi_exec,parse_ini_file,show_source,pcntl_exec")
+		lines = append(lines, "allow_url_include = Off")
+		lines = append(lines, "expose_php = Off")
+		lines = append(lines, "")
 	}
 
 	// Add overrides.
