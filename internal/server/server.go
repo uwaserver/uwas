@@ -84,6 +84,7 @@ type Server struct {
 	// Invalidated on config reload.
 	htaccessCacheMu sync.RWMutex
 	htaccessCache   map[string][]*rewrite.Rule
+	htaccessCacheV2 map[string]*htaccessCacheEntry
 
 	// rewriteCache caches pre-compiled rewrite rules keyed by domain host.
 	// Invalidated on config reload.
@@ -1038,52 +1039,134 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 // applyHtaccess reads and applies .htaccess rewrite rules from the document root.
 // Parsed rules are cached per domain root and invalidated on config reload.
 func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) {
-	rules := s.getHtaccessRules(domain.Root)
-	if len(rules) == 0 {
+	ruleSet := s.getHtaccessRuleSet(domain.Root)
+	if ruleSet == nil {
 		return
 	}
 
-	engine := rewrite.NewEngine(rules)
-	// Construct filesystem path for -f/-d condition checks
-	requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
-	vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
-	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
+	// 1. Apply rewrite rules
+	if ruleSet.raw.RewriteEnabled && len(ruleSet.compiledRules) > 0 {
+		engine := rewrite.NewEngine(ruleSet.compiledRules)
+		requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
+		vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
+		result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
-	if result.Modified {
-		ctx.Request.URL.Path = result.URI
-		if result.Query != "" {
-			ctx.Request.URL.RawQuery = result.Query
+		if result.Modified {
+			ctx.Request.URL.Path = result.URI
+			if result.Query != "" {
+				ctx.Request.URL.RawQuery = result.Query
+			}
+			ctx.RewrittenURI = result.URI
 		}
-		ctx.RewrittenURI = result.URI
+	}
+
+	// 2. Apply Header directives
+	for _, h := range ruleSet.raw.Headers {
+		switch h.Action {
+		case "set":
+			ctx.Response.Header().Set(h.Name, h.Value)
+		case "unset":
+			ctx.Response.Header().Del(h.Name)
+		case "append":
+			ctx.Response.Header().Add(h.Name, h.Value)
+		case "add":
+			ctx.Response.Header().Add(h.Name, h.Value)
+		}
+	}
+
+	// 3. Apply ExpiresByType as Cache-Control headers
+	if ruleSet.raw.ExpiresActive {
+		ct := ctx.Response.Header().Get("Content-Type")
+		if ct != "" {
+			// Strip charset: "text/html; charset=utf-8" → "text/html"
+			if idx := strings.Index(ct, ";"); idx != -1 {
+				ct = strings.TrimSpace(ct[:idx])
+			}
+			if dur, ok := ruleSet.raw.ExpiresByType[ct]; ok {
+				ctx.Response.Header().Set("Cache-Control", "max-age="+parseExpiresDuration(dur))
+			}
+		}
+	}
+
+	// 4. Apply ErrorDocument — merge into domain's ErrorPages
+	// (ErrorPages from .htaccess override domain-config ErrorPages at runtime)
+	for code, page := range ruleSet.raw.ErrorDocuments {
+		if domain.ErrorPages == nil {
+			domain.ErrorPages = make(map[int]string)
+		}
+		if _, exists := domain.ErrorPages[code]; !exists {
+			domain.ErrorPages[code] = page
+		}
 	}
 }
 
-// getHtaccessRules returns cached htaccess rules for the given root, parsing
-// the .htaccess file on first access.
-func (s *Server) getHtaccessRules(root string) []*rewrite.Rule {
+// parseExpiresDuration converts Apache Expires format to seconds.
+// e.g. "access plus 1 month" → "2592000", "access plus 1 year" → "31536000"
+func parseExpiresDuration(expr string) string {
+	expr = strings.ToLower(expr)
+	expr = strings.Replace(expr, "access plus ", "", 1)
+	expr = strings.Replace(expr, "modification plus ", "", 1)
+
+	seconds := 0
+	parts := strings.Fields(expr)
+	for i := 0; i+1 < len(parts); i += 2 {
+		n := 0
+		fmt.Sscanf(parts[i], "%d", &n)
+		unit := parts[i+1]
+		switch {
+		case strings.HasPrefix(unit, "second"):
+			seconds += n
+		case strings.HasPrefix(unit, "minute"):
+			seconds += n * 60
+		case strings.HasPrefix(unit, "hour"):
+			seconds += n * 3600
+		case strings.HasPrefix(unit, "day"):
+			seconds += n * 86400
+		case strings.HasPrefix(unit, "week"):
+			seconds += n * 604800
+		case strings.HasPrefix(unit, "month"):
+			seconds += n * 2592000
+		case strings.HasPrefix(unit, "year"):
+			seconds += n * 31536000
+		}
+	}
+	if seconds == 0 {
+		seconds = 3600 // 1 hour default
+	}
+	return fmt.Sprintf("%d", seconds)
+}
+
+// htaccessCacheEntry holds both raw and compiled htaccess rules.
+type htaccessCacheEntry struct {
+	raw           *htaccess.RuleSet
+	compiledRules []*rewrite.Rule
+}
+
+func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 	s.htaccessCacheMu.RLock()
-	if rules, ok := s.htaccessCache[root]; ok {
+	if entry, ok := s.htaccessCacheV2[root]; ok {
 		s.htaccessCacheMu.RUnlock()
-		return rules
+		return entry
 	}
 	s.htaccessCacheMu.RUnlock()
 
-	// Parse .htaccess and cache the result (including nil for missing files).
-	rules := s.parseHtaccess(root)
+	entry := s.parseHtaccessFull(root)
 
 	s.htaccessCacheMu.Lock()
-	s.htaccessCache[root] = rules
+	if s.htaccessCacheV2 == nil {
+		s.htaccessCacheV2 = make(map[string]*htaccessCacheEntry)
+	}
+	s.htaccessCacheV2[root] = entry
 	s.htaccessCacheMu.Unlock()
 
-	return rules
+	return entry
 }
 
-// parseHtaccess reads and parses .htaccess rules from the given document root.
-func (s *Server) parseHtaccess(root string) []*rewrite.Rule {
+func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 	htPath := filepath.Join(root, ".htaccess")
 	f, err := os.Open(htPath)
 	if err != nil {
-		return nil // no .htaccess file, skip silently
+		return nil
 	}
 	defer f.Close()
 
@@ -1094,29 +1177,30 @@ func (s *Server) parseHtaccess(root string) []*rewrite.Rule {
 	}
 
 	ruleSet := htaccess.Convert(directives)
-	if !ruleSet.RewriteEnabled || len(ruleSet.Rewrites) == 0 {
-		return nil
-	}
+	entry := &htaccessCacheEntry{raw: ruleSet}
 
-	var rules []*rewrite.Rule
-	for _, rw := range ruleSet.Rewrites {
-		rule, err := rewrite.ParseRule(rw.Pattern, rw.Target, rw.Flags)
-		if err != nil {
-			continue
-		}
-		for _, cond := range rw.Conditions {
-			c, err := rewrite.ParseCondition(cond.Variable, cond.Pattern, cond.Flags)
+	// Compile rewrite rules
+	if ruleSet.RewriteEnabled {
+		for _, rw := range ruleSet.Rewrites {
+			rule, err := rewrite.ParseRule(rw.Pattern, rw.Target, rw.Flags)
 			if err != nil {
 				continue
 			}
-			rule.Conditions = append(rule.Conditions, *c)
+			for _, cond := range rw.Conditions {
+				c, err := rewrite.ParseCondition(cond.Variable, cond.Pattern, cond.Flags)
+				if err != nil {
+					continue
+				}
+				rule.Conditions = append(rule.Conditions, *c)
+			}
+			rule.Flags.Last = true
+			entry.compiledRules = append(entry.compiledRules, rule)
 		}
-		rule.Flags.Last = true
-		rules = append(rules, rule)
 	}
 
-	return rules
+	return entry
 }
+
 
 // reload re-reads and applies the config file.
 func (s *Server) reload() error {
