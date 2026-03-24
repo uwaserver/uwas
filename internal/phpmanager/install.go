@@ -77,6 +77,8 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 			fmt.Sprintf("php%s-mysql", short),
 			fmt.Sprintf("php%s-curl", short),
 			fmt.Sprintf("php%s-gd", short),
+			fmt.Sprintf("php%s-intl", short),
+			fmt.Sprintf("php%s-imagick", short),
 			fmt.Sprintf("php%s-mbstring", short),
 			fmt.Sprintf("php%s-xml", short),
 			fmt.Sprintf("php%s-zip", short),

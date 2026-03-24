@@ -76,6 +76,10 @@ func Install(req InstallRequest) InstallResult {
 
 	var log strings.Builder
 
+	// Step 0: Ensure PHP MySQL extension is installed
+	log.WriteString("=== Checking PHP extensions ===\n")
+	ensurePHPExtensions(&log)
+
 	// Step 1: Create MySQL database and user
 	log.WriteString("=== Creating database ===\n")
 	if err := createMySQLDB(req.DBName, req.DBUser, req.DBPass, req.DBHost, &log); err != nil {
@@ -255,4 +259,63 @@ func generateSecret(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)
 	return hex.EncodeToString(b)[:length]
+}
+
+// ensurePHPExtensions installs MySQL and other WordPress-required PHP extensions.
+func ensurePHPExtensions(log *strings.Builder) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+
+	// Detect PHP version
+	out, err := exec.Command("php", "-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;").Output()
+	if err != nil {
+		log.WriteString("Could not detect PHP version\n")
+		return
+	}
+	ver := strings.TrimSpace(string(out))
+
+	// Check if mysqli is already loaded
+	check, _ := exec.Command("php", "-m").Output()
+	if strings.Contains(strings.ToLower(string(check)), "mysqli") {
+		log.WriteString("mysqli extension: OK\n")
+		return
+	}
+
+	log.WriteString("mysqli extension missing — installing...\n")
+
+	// Install required extensions
+	pkgs := []string{
+		fmt.Sprintf("php%s-mysql", ver),
+		fmt.Sprintf("php%s-curl", ver),
+		fmt.Sprintf("php%s-gd", ver),
+		fmt.Sprintf("php%s-mbstring", ver),
+		fmt.Sprintf("php%s-xml", ver),
+		fmt.Sprintf("php%s-zip", ver),
+		fmt.Sprintf("php%s-intl", ver),
+	}
+
+	// Try apt
+	if _, err := exec.LookPath("apt"); err == nil {
+		cmd := exec.Command("apt", append([]string{"install", "-y"}, pkgs...)...)
+		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		out, err := cmd.CombinedOutput()
+		log.Write(out)
+		if err != nil {
+			log.WriteString(fmt.Sprintf("apt install failed: %s\n", err))
+		} else {
+			log.WriteString("PHP extensions installed\n")
+		}
+		return
+	}
+
+	// Try dnf
+	if _, err := exec.LookPath("dnf"); err == nil {
+		cmd := exec.Command("dnf", append([]string{"install", "-y"}, pkgs...)...)
+		out, err := cmd.CombinedOutput()
+		log.Write(out)
+		if err != nil {
+			log.WriteString(fmt.Sprintf("dnf install failed: %s\n", err))
+		}
+	}
 }
