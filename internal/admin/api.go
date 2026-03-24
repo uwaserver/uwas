@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1326,6 +1327,8 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		d.Cache.TTL = 3600
 	}
 	if d.Root != "" {
+		// Create web root with parent directory
+		parentDir := filepath.Dir(d.Root) // e.g. /var/www/example.com
 		if err := os.MkdirAll(d.Root, 0755); err != nil {
 			s.logger.Warn("failed to create web root", "path", d.Root, "error", err)
 		}
@@ -1339,6 +1342,14 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			if err := os.WriteFile(idx, []byte(placeholder), 0644); err != nil {
 				s.logger.Warn("failed to write placeholder index", "path", idx, "error", err)
 			}
+		}
+		// Set ownership to www-data so PHP/WordPress can write files
+		// (.htaccess, wp-content/uploads, cache, etc.)
+		if runtime.GOOS == "linux" {
+			exec.Command("chown", "-R", "www-data:www-data", parentDir).Run()
+			exec.Command("chmod", "-R", "755", parentDir).Run()
+			// public_html needs to be writable for WordPress uploads
+			exec.Command("chmod", "-R", "775", d.Root).Run()
 		}
 	}
 
