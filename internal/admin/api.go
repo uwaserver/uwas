@@ -330,7 +330,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	apiKey := s.config.Global.Admin.APIKey
 	s.configMu.RUnlock()
 	if apiKey == "" {
-		return next // no auth if no key configured
+		s.logger.Warn("admin API has no API key — all endpoints are unauthenticated!")
+		return next
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
