@@ -145,6 +145,11 @@ func (w *compressResponseWriter) Write(b []byte) (int, error) {
 			ct = http.DetectContentType(w.buf)
 		}
 
+		// Skip if already compressed by upstream (PHP ob_gzip_handler, etc.)
+		if ce := w.Header().Get("Content-Encoding"); ce != "" {
+			return w.flushUncompressed()
+		}
+
 		if isCompressible(ct) {
 			return w.startCompression()
 		}
