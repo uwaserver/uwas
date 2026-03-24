@@ -12,6 +12,7 @@ import {
   Plus,
   X,
   RotateCcw,
+  Power,
 } from 'lucide-react';
 import {
   fetchPHP,
@@ -26,6 +27,8 @@ import {
   stopDomainPHP,
   fetchDomainPHPConfig,
   updateDomainPHPConfig,
+  enablePHP,
+  disablePHP,
   type PHPInstall,
   type PHPInstallInfo,
   type PHPInstallStatus,
@@ -256,6 +259,29 @@ export default function PHP() {
     patchRow(domain, { configEdits: { ...WP_OPTIMAL }, configDirty: true });
   };
 
+  /* -------- enable/disable toggle -------- */
+
+  const [toggling, setToggling] = useState<Record<string, boolean>>({});
+
+  const handleTogglePHP = async (version: string, currentlyDisabled: boolean) => {
+    setToggling(prev => ({ ...prev, [version]: true }));
+    setStatus(null);
+    try {
+      if (currentlyDisabled) {
+        await enablePHP(version);
+        setStatus({ ok: true, message: `PHP ${version} enabled` });
+      } else {
+        await disablePHP(version);
+        setStatus({ ok: true, message: `PHP ${version} disabled` });
+      }
+      await loadAll();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setToggling(prev => ({ ...prev, [version]: false }));
+    }
+  };
+
   /* -------- assign modal -------- */
 
   const phpDomains = domains.filter(d => d.type === 'php');
@@ -411,25 +437,44 @@ export default function PHP() {
             {installs.filter(i => i.sapi !== 'cli').map(inst => (
               <div
                 key={inst.binary}
-                className="rounded-lg border border-[#334155] bg-[#1e293b] p-4 shadow-md"
+                className={`rounded-lg border border-[#334155] bg-[#1e293b] p-4 shadow-md transition-opacity ${inst.disabled ? 'opacity-50' : ''}`}
               >
                 <div className="flex items-start justify-between">
                   <div>
-                    <span className="text-2xl font-bold text-slate-100">{inst.version}</span>
-                    <span className="ml-2 rounded bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-400">
+                    <span className={`text-2xl font-bold ${inst.disabled ? 'text-slate-500' : 'text-slate-100'}`}>{inst.version}</span>
+                    <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${inst.disabled ? 'bg-slate-500/15 text-slate-500' : 'bg-purple-500/15 text-purple-400'}`}>
                       {inst.sapi === 'cgi-fcgi' ? 'FastCGI' : inst.sapi === 'fpm-fcgi' ? 'FPM' : inst.sapi}
                     </span>
+                    {inst.disabled && (
+                      <span className="ml-2 rounded bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400">
+                        Disabled
+                      </span>
+                    )}
                   </div>
                   <span className="flex items-center gap-1.5">
-                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${inst.running ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                    <span className={`text-xs ${inst.running ? 'text-emerald-400' : 'text-slate-500'}`}>
-                      {inst.running ? `Running (${inst.listen_addr})` : 'Ready'}
+                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${inst.disabled ? 'bg-slate-600' : inst.running ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                    <span className={`text-xs ${inst.disabled ? 'text-slate-600' : inst.running ? 'text-emerald-400' : 'text-slate-500'}`}>
+                      {inst.disabled ? 'Disabled' : inst.running ? `Running (${inst.listen_addr})` : 'Ready'}
                     </span>
                   </span>
                 </div>
                 <p className="mt-2 truncate text-xs text-slate-500" title={inst.binary}>
                   {inst.binary}
                 </p>
+                <button
+                  onClick={() => void handleTogglePHP(inst.version, !!inst.disabled)}
+                  disabled={toggling[inst.version]}
+                  className={`mt-3 flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                    inst.disabled
+                      ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                  }`}
+                >
+                  <Power size={12} />
+                  {toggling[inst.version]
+                    ? (inst.disabled ? 'Enabling...' : 'Disabling...')
+                    : (inst.disabled ? 'Enable' : 'Disable')}
+                </button>
               </div>
             ))}
           </div>

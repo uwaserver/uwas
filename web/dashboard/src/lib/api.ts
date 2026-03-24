@@ -234,9 +234,12 @@ export interface PHPInstall {
   sapi: string;
   running: boolean;
   listen_addr: string;
+  disabled?: boolean;
 }
 
 export const fetchPHP = () => api<PHPInstall[]>('/api/v1/php');
+export const enablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/enable`, { method: 'POST' });
+export const disablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/disable`, { method: 'POST' });
 
 export interface PHPInstallInfo {
   distro: string;
