@@ -1476,10 +1476,65 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	found := false
 	for i, existing := range s.config.Domains {
 		if existing.Host == host {
-			if d.Host == "" {
-				d.Host = host
+			// Merge: preserve existing values when incoming field is zero/empty
+			merged := existing
+			if d.Host != "" {
+				merged.Host = d.Host
 			}
-			s.config.Domains[i] = d
+			if d.Type != "" {
+				merged.Type = d.Type
+			}
+			if d.IP != "" {
+				merged.IP = d.IP
+			}
+			if d.Root != "" {
+				merged.Root = d.Root
+			}
+			if d.SSL.Mode != "" {
+				merged.SSL = d.SSL
+			}
+			if len(d.Aliases) > 0 {
+				merged.Aliases = d.Aliases
+			}
+			// PHP: only override if provided (preserve existing FPM address)
+			if d.PHP.FPMAddress != "" {
+				merged.PHP.FPMAddress = d.PHP.FPMAddress
+			}
+			if len(d.PHP.IndexFiles) > 0 {
+				merged.PHP.IndexFiles = d.PHP.IndexFiles
+			}
+			if d.PHP.MaxUpload > 0 {
+				merged.PHP.MaxUpload = d.PHP.MaxUpload
+			}
+			if len(d.PHP.Env) > 0 {
+				merged.PHP.Env = d.PHP.Env
+			}
+			// Proxy
+			if len(d.Proxy.Upstreams) > 0 {
+				merged.Proxy = d.Proxy
+			}
+			// Redirect
+			if d.Redirect.Target != "" {
+				merged.Redirect = d.Redirect
+			}
+			// Htaccess
+			if d.Htaccess.Mode != "" {
+				merged.Htaccess = d.Htaccess
+			}
+			// Cache: merge if provided
+			if d.Cache.TTL > 0 {
+				merged.Cache = d.Cache
+			}
+			// Security: merge if provided
+			if len(d.Security.BlockedPaths) > 0 || d.Security.WAF.Enabled {
+				merged.Security = d.Security
+			}
+			// Compression
+			if d.Compression.Enabled {
+				merged.Compression = d.Compression
+			}
+			s.config.Domains[i] = merged
+			d = merged // use merged for subsequent operations
 			found = true
 			break
 		}
@@ -1519,6 +1574,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 					}
 					s.configMu.Unlock()
 					s.persistConfig()
+					s.notifyDomainChange() // sync VHost router with new FPM address
 					s.logger.Info("auto-assigned PHP on update", "domain", d.Host, "version", version)
 				}
 			}
