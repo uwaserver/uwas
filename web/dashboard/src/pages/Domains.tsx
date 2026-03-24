@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
-  fetchPHP, fetchServerIPs, type DomainData, type DomainDetail, type CertInfo, type PHPInstall, type ServerIPInfo,
+  fetchPHP, fetchServerIPs, fetchDomainHealth,
+  type DomainData, type DomainDetail, type CertInfo, type PHPInstall, type ServerIPInfo, type DomainHealth,
 } from '@/lib/api';
 
 /* ------------------------------------------------------------------ */
@@ -243,6 +244,9 @@ export default function Domains() {
   /* server IPs for IP dropdown */
   const [serverIPs, setServerIPs] = useState<ServerIPInfo[]>([]);
 
+  /* domain health status */
+  const [healthMap, setHealthMap] = useState<Record<string, DomainHealth>>({});
+
   /* -------- data loading -------- */
 
   const loadDomains = useCallback(() => {
@@ -274,12 +278,25 @@ export default function Domains() {
       .catch(() => {});
   }, []);
 
+  const loadHealth = useCallback(() => {
+    fetchDomainHealth()
+      .then(results => {
+        const map: Record<string, DomainHealth> = {};
+        for (const h of (results ?? [])) map[h.host] = h;
+        setHealthMap(map);
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadDomains();
     loadCerts();
     loadPHP();
     loadIPs();
-  }, [loadDomains, loadCerts, loadPHP, loadIPs]);
+    loadHealth();
+    const hInterval = setInterval(loadHealth, 30000); // refresh health every 30s
+    return () => clearInterval(hInterval);
+  }, [loadDomains, loadCerts, loadPHP, loadIPs, loadHealth]);
 
   /* -------- expand row -------- */
 
@@ -536,6 +553,7 @@ export default function Domains() {
                     detail={isExpanded ? detail : null}
                     detailLoading={isExpanded && detailLoading}
                     certInfo={certMap[d.host] ?? null}
+                    health={healthMap[d.host] ?? null}
                     confirmDelete={confirmDelete}
                     purgingHost={purgingHost}
                     cleanupOnDelete={cleanupOnDelete}
@@ -800,6 +818,7 @@ function DomainRow({
   detail,
   detailLoading,
   certInfo,
+  health,
   confirmDelete,
   purgingHost,
   cleanupOnDelete,
@@ -829,7 +848,16 @@ function DomainRow({
         <td className="px-5 py-3"><TypeBadge type={d.type} /></td>
         <td className="px-5 py-3"><SslBadge ssl={d.ssl} /></td>
         <td className="px-5 py-3 font-mono text-xs text-slate-400">{d.ip || 'shared'}</td>
-        <td className="px-5 py-3"><StatusDot active={true} /></td>
+        <td className="px-5 py-3">
+          {health ? (
+            <div className="flex items-center gap-1.5">
+              <StatusDot active={health.status === 'up'} />
+              {health.ms > 0 && <span className="text-[10px] text-slate-500">{health.ms}ms</span>}
+            </div>
+          ) : (
+            <span className="inline-block h-2 w-2 rounded-full bg-slate-600" title="Checking..." />
+          )}
+        </td>
         <td className="px-5 py-3">
           {confirmDelete === d.host ? (
             <div className="flex flex-col items-end gap-1.5" onClick={e => e.stopPropagation()}>

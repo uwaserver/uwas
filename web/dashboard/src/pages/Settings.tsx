@@ -679,6 +679,53 @@ export default function Settings() {
     setStatus(null);
   };
 
+  /** Fill all empty fields with their placeholder (default) values. */
+  const applyDefaults = () => {
+    const defaults: Record<string, string> = {
+      'global.http_listen': ':80',
+      'global.https_listen': ':443',
+      'global.http3': 'true',
+      'global.worker_count': 'auto',
+      'global.max_connections': '65536',
+      'global.pid_file': '/var/run/uwas.pid',
+      'global.web_root': '/var/www',
+      'global.log_level': 'info',
+      'global.log_format': 'text',
+      'global.timeouts.read': '30s',
+      'global.timeouts.read_header': '10s',
+      'global.timeouts.write': '60s',
+      'global.timeouts.idle': '120s',
+      'global.timeouts.shutdown_grace': '15s',
+      'global.timeouts.max_header_bytes': '1048576',
+      'global.admin.enabled': 'true',
+      'global.admin.listen': '0.0.0.0:9443',
+      'global.mcp.enabled': 'true',
+      'global.cache.enabled': 'true',
+      'global.cache.memory_limit': '256MB',
+      'global.cache.default_ttl': '3600',
+      'global.backup.enabled': 'true',
+      'global.backup.provider': 'local',
+      'global.backup.schedule': '24h',
+      'global.backup.keep': '7',
+    };
+
+    let yaml = rawYaml;
+    let count = 0;
+    for (const [key, def] of Object.entries(defaults)) {
+      if (!formValues[key] || formValues[key] === '') {
+        yaml = yamlSet(yaml, key, def);
+        count++;
+      }
+    }
+    if (count > 0) {
+      setRawYaml(yaml);
+      parseYaml(yaml);
+      showStatus(true, `Applied ${count} default values`);
+    } else {
+      showStatus(true, 'All fields already have values');
+    }
+  };
+
   const toggleSecret = (key: string) => {
     setRevealedSecrets(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -708,6 +755,13 @@ export default function Settings() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={applyDefaults}
+            className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/20"
+          >
+            <CheckCircle size={14} />
+            Apply Defaults
+          </button>
           <button
             onClick={handleExport}
             disabled={exporting}
