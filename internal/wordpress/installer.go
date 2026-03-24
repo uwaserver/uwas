@@ -146,6 +146,25 @@ RewriteRule . /index.php [L]
 		log.WriteString(".htaccess created (pretty permalinks ready)\n")
 	}
 
+	// Step 6: Create mu-plugin to tell WordPress that mod_rewrite is available.
+	// WordPress checks apache_get_modules() which only works under Apache SAPI.
+	// Under PHP-CGI/FPM, got_mod_rewrite() returns false → WordPress uses
+	// ugly /index.php/hello-world/ PATHINFO permalinks. This mu-plugin fixes it.
+	muDir := filepath.Join(req.WebRoot, "wp-content", "mu-plugins")
+	os.MkdirAll(muDir, 0755)
+	muPlugin := `<?php
+// UWAS: Tell WordPress that URL rewriting is available.
+// UWAS handles rewrite rules via .htaccess parsing + built-in try_files.
+add_filter('got_url_rewrite', '__return_true');
+add_filter('got_rewrite', '__return_true');
+`
+	muPath := filepath.Join(muDir, "uwas-rewrite.php")
+	if err := os.WriteFile(muPath, []byte(muPlugin), 0644); err != nil {
+		log.WriteString(fmt.Sprintf("Warning: failed to create mu-plugin: %s\n", err))
+	} else {
+		log.WriteString("mu-plugin created (mod_rewrite compatibility)\n")
+	}
+
 	result.Status = "done"
 	result.AdminURL = fmt.Sprintf("https://%s/wp-admin/install.php", req.Domain)
 	result.Output = log.String()
