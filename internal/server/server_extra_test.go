@@ -227,10 +227,10 @@ RewriteRule ^/old$ /new [L]
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{
 			{
-				Host: "htaccess.test",
-				Root: dir,
-				Type: "static",
-				SSL:  config.SSLConfig{Mode: "off"},
+				Host:     "htaccess.test",
+				Root:     dir,
+				Type:     "static",
+				SSL:      config.SSLConfig{Mode: "off"},
 				Htaccess: config.HtaccessConfig{Mode: "import"},
 			},
 		},

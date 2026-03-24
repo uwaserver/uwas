@@ -208,7 +208,7 @@ type fakeHijackWriter struct {
 	headerMap http.Header
 }
 
-func (w *fakeHijackWriter) Header() http.Header        { return w.headerMap }
+func (w *fakeHijackWriter) Header() http.Header         { return w.headerMap }
 func (w *fakeHijackWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (w *fakeHijackWriter) WriteHeader(int)             {}
 func (w *fakeHijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -240,7 +240,7 @@ type nonFlusherWriter struct {
 	headerMap http.Header
 }
 
-func (w *nonFlusherWriter) Header() http.Header        { return w.headerMap }
+func (w *nonFlusherWriter) Header() http.Header         { return w.headerMap }
 func (w *nonFlusherWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (w *nonFlusherWriter) WriteHeader(int)             {}
 

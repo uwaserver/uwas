@@ -135,7 +135,7 @@ func TestHeaderTransformVariableSubstitution(t *testing.T) {
 func TestHeaderTransformResponseVariableSubstitution(t *testing.T) {
 	cfg := config.HeadersConfig{
 		ResponseAdd: map[string]string{
-			"X-Served-For": "$remote_addr",
+			"X-Served-For":  "$remote_addr",
 			"X-Served-Host": "$host",
 		},
 	}

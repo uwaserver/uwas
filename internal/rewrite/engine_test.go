@@ -136,7 +136,7 @@ func TestWordPressRewrites(t *testing.T) {
 
 func TestSkipFlag(t *testing.T) {
 	rule1, _ := ParseRule("^/admin", "-", "S=1") // skip 1 rule
-	rule2, _ := ParseRule(".*", "/public", "L")   // this should be skipped
+	rule2, _ := ParseRule(".*", "/public", "L")  // this should be skipped
 	rule3, _ := ParseRule(".*", "/admin-panel", "L")
 
 	engine := NewEngine([]*Rule{rule1, rule2, rule3})

@@ -213,7 +213,7 @@ func TestStaticSiteE2E(t *testing.T) {
 
 		checks := map[string]string{
 			"X-Content-Type-Options": "nosniff",
-			"X-Frame-Options":       "SAMEORIGIN",
+			"X-Frame-Options":        "SAMEORIGIN",
 		}
 		for k, want := range checks {
 			if got := resp.Header.Get(k); got != want {

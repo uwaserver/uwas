@@ -951,9 +951,9 @@ func TestResponseAccessors(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type errReader struct {
-	data    []byte
-	pos     int
-	failAt  int
+	data   []byte
+	pos    int
+	failAt int
 }
 
 func (r *errReader) Read(p []byte) (int, error) {

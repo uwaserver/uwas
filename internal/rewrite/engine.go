@@ -264,4 +264,3 @@ type ConfigRewrite struct {
 	Conditions []string
 	Flags      []string
 }
-

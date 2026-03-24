@@ -569,8 +569,8 @@ func TestExtractIPFormats(t *testing.T) {
 	}{
 		{"1.2.3.4:8080", "1.2.3.4"},
 		{"[::1]:8080", "::1"},
-		{"192.168.1.1", "192.168.1.1"},  // no port
-		{"not-an-address", "not-an-address"},  // fallback
+		{"192.168.1.1", "192.168.1.1"},       // no port
+		{"not-an-address", "not-an-address"}, // fallback
 	}
 
 	for _, tt := range tests {

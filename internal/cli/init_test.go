@@ -478,12 +478,12 @@ func TestPHPListCommand(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode([]map[string]any{
 			{
-				"version":    "8.4",
-				"binary":     "/usr/bin/php8.4",
-				"sapi":       "cgi",
-				"running":    true,
+				"version":     "8.4",
+				"binary":      "/usr/bin/php8.4",
+				"sapi":        "cgi",
+				"running":     true,
 				"listen_addr": "127.0.0.1:9000",
-				"pid":        1234,
+				"pid":         1234,
 			},
 			{
 				"version": "8.3",

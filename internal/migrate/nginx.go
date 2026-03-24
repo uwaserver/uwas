@@ -27,12 +27,12 @@ type NginxConfig struct {
 
 // NginxLocation holds parsed data from a location block.
 type NginxLocation struct {
-	Path       string
-	Modifier   string // ~, ~*, =, or empty
-	ProxyPass  string
-	FastCGI    string // fastcgi_pass value
-	TryFiles   []string
-	Return     string
+	Path      string
+	Modifier  string // ~, ~*, =, or empty
+	ProxyPass string
+	FastCGI   string // fastcgi_pass value
+	TryFiles  []string
+	Return    string
 }
 
 // ParseNginx reads Nginx config from a reader and returns parsed server blocks.

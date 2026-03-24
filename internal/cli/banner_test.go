@@ -37,8 +37,8 @@ func TestPrintBannerDoesNotPanicEmpty(t *testing.T) {
 func TestPrintBannerFullFeatures(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
-			HTTPListen:  ":8080",
-			HTTPSListen: ":8443",
+			HTTPListen:   ":8080",
+			HTTPSListen:  ":8443",
 			HTTP3Enabled: true,
 			Admin: config.AdminConfig{
 				Enabled: true,
@@ -167,8 +167,8 @@ func TestPrintBannerNoAdmin(t *testing.T) {
 func TestPrintBannerHTTPSWithoutH3(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
-			HTTPListen:  ":80",
-			HTTPSListen: ":443",
+			HTTPListen:   ":80",
+			HTTPSListen:  ":443",
 			HTTP3Enabled: false,
 		},
 	}

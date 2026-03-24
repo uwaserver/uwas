@@ -15,8 +15,10 @@ import (
 // PHPCommand manages PHP installations via the admin API.
 type PHPCommand struct{}
 
-func (p *PHPCommand) Name() string        { return "php" }
-func (p *PHPCommand) Description() string { return "Manage PHP installations (list, start, stop, config, extensions)" }
+func (p *PHPCommand) Name() string { return "php" }
+func (p *PHPCommand) Description() string {
+	return "Manage PHP installations (list, start, stop, config, extensions)"
+}
 
 func (p *PHPCommand) Help() string {
 	return `Subcommands:

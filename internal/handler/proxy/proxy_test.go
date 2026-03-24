@@ -330,7 +330,7 @@ func TestHealthCheckerTransitions(t *testing.T) {
 	// Track request count to alternate between healthy and unhealthy
 	var mu sync.Mutex
 	requestCount := 0
-	failAfter := 0   // start healthy
+	failAfter := 0 // start healthy
 	recoverAt := 0
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -784,8 +784,8 @@ func TestProxyRetryOnConnectionRefused(t *testing.T) {
 	defer upstream.Close()
 
 	pool := NewUpstreamPool([]UpstreamConfig{
-		{Address: "http://127.0.0.1:1", Weight: 1},   // will refuse
-		{Address: upstream.URL, Weight: 1},             // will succeed
+		{Address: "http://127.0.0.1:1", Weight: 1}, // will refuse
+		{Address: upstream.URL, Weight: 1},         // will succeed
 	})
 	balancer := NewBalancer("round_robin")
 	log := newTestLogger()
@@ -1206,7 +1206,7 @@ func TestProxyRetryWithBodyReplay(t *testing.T) {
 
 	pool := NewUpstreamPool([]UpstreamConfig{
 		{Address: "http://127.0.0.1:1", Weight: 1}, // will refuse
-		{Address: upstream.URL, Weight: 1},          // will succeed
+		{Address: upstream.URL, Weight: 1},         // will succeed
 	})
 	balancer := NewBalancer("round_robin")
 	log := newTestLogger()

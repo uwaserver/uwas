@@ -17,7 +17,7 @@ type VHostRouter struct {
 }
 
 type wildcardEntry struct {
-	suffix string         // e.g. ".example.com" for "*.example.com"
+	suffix string // e.g. ".example.com" for "*.example.com"
 	domain *config.Domain
 }
 
@@ -138,4 +138,3 @@ func (r *VHostRouter) IsConfigured(host string) bool {
 func (r *VHostRouter) Update(domains []config.Domain) {
 	r.load(domains)
 }
-

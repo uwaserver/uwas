@@ -13,17 +13,17 @@ import (
 
 // Channel is a notification destination.
 type Channel struct {
-	Type    string            `json:"type" yaml:"type"`       // "webhook", "slack", "telegram", "email"
+	Type    string            `json:"type" yaml:"type"` // "webhook", "slack", "telegram", "email"
 	Enabled bool              `json:"enabled" yaml:"enabled"`
 	Config  map[string]string `json:"config" yaml:"config"`
 }
 
 // Message is the notification payload.
 type Message struct {
-	Level   string `json:"level"`   // "info", "warning", "critical"
-	Title   string `json:"title"`
-	Body    string `json:"body"`
-	Source  string `json:"source"`  // "cert_expiry", "domain_down", "backup_failed", etc.
+	Level  string `json:"level"` // "info", "warning", "critical"
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Source string `json:"source"` // "cert_expiry", "domain_down", "backup_failed", etc.
 }
 
 // Send dispatches a message to a channel.

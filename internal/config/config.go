@@ -8,10 +8,10 @@ import (
 )
 
 type Config struct {
-	Global    GlobalConfig `yaml:"global"`
-	Domains   []Domain     `yaml:"domains"`
-	Include   []string     `yaml:"include"`    // glob patterns: ["domains.d/*.yaml"]
-	DomainsDir string     `yaml:"domains_dir"` // directory of per-domain YAML files
+	Global     GlobalConfig `yaml:"global"`
+	Domains    []Domain     `yaml:"domains"`
+	Include    []string     `yaml:"include"`     // glob patterns: ["domains.d/*.yaml"]
+	DomainsDir string       `yaml:"domains_dir"` // directory of per-domain YAML files
 }
 
 type GlobalConfig struct {
@@ -35,13 +35,13 @@ type GlobalConfig struct {
 }
 
 type BackupConfig struct {
-	Enabled  bool             `yaml:"enabled"`
-	Provider string           `yaml:"provider"` // local | s3 | sftp
-	Schedule string           `yaml:"schedule"` // duration string e.g. "24h"
-	Keep     int              `yaml:"keep"`      // keep last N backups
+	Enabled  bool              `yaml:"enabled"`
+	Provider string            `yaml:"provider"` // local | s3 | sftp
+	Schedule string            `yaml:"schedule"` // duration string e.g. "24h"
+	Keep     int               `yaml:"keep"`     // keep last N backups
 	Local    BackupLocalConfig `yaml:"local"`
-	S3       BackupS3Config   `yaml:"s3"`
-	SFTP     BackupSFTPConfig `yaml:"sftp"`
+	S3       BackupS3Config    `yaml:"s3"`
+	SFTP     BackupSFTPConfig  `yaml:"sftp"`
 }
 
 type BackupLocalConfig struct {
@@ -66,12 +66,12 @@ type BackupSFTPConfig struct {
 }
 
 type TimeoutConfig struct {
-	Read          Duration `yaml:"read"`
-	ReadHeader    Duration `yaml:"read_header"`
-	Write         Duration `yaml:"write"`
-	Idle          Duration `yaml:"idle"`
-	ShutdownGrace Duration `yaml:"shutdown_grace"`
-	MaxHeaderBytes int     `yaml:"max_header_bytes"`
+	Read           Duration `yaml:"read"`
+	ReadHeader     Duration `yaml:"read_header"`
+	Write          Duration `yaml:"write"`
+	Idle           Duration `yaml:"idle"`
+	ShutdownGrace  Duration `yaml:"shutdown_grace"`
+	MaxHeaderBytes int      `yaml:"max_header_bytes"`
 }
 
 type AdminConfig struct {
@@ -97,19 +97,25 @@ type ACMEConfig struct {
 }
 
 type CacheConfig struct {
-	Enabled               bool     `yaml:"enabled"`
-	MemoryLimit           ByteSize `yaml:"memory_limit"`
-	DiskPath              string   `yaml:"disk_path"`
-	DiskLimit             ByteSize `yaml:"disk_limit"`
-	DefaultTTL            int      `yaml:"default_ttl"`
-	GraceTTL              int      `yaml:"grace_ttl"`
-	StaleWhileRevalidate  bool     `yaml:"stale_while_revalidate"`
-	PurgeKey              string   `yaml:"purge_key"`
+	Enabled              bool     `yaml:"enabled"`
+	MemoryLimit          ByteSize `yaml:"memory_limit"`
+	DiskPath             string   `yaml:"disk_path"`
+	DiskLimit            ByteSize `yaml:"disk_limit"`
+	DefaultTTL           int      `yaml:"default_ttl"`
+	GraceTTL             int      `yaml:"grace_ttl"`
+	StaleWhileRevalidate bool     `yaml:"stale_while_revalidate"`
+	PurgeKey             string   `yaml:"purge_key"`
 }
 
 type AlertingConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	WebhookURL string `yaml:"webhook_url"`
+	Enabled        bool   `yaml:"enabled"`
+	WebhookURL     string `yaml:"webhook_url"`
+	SlackURL       string `yaml:"slack_url"`
+	TelegramToken  string `yaml:"telegram_token"`
+	TelegramChatID string `yaml:"telegram_chat_id"`
+	EmailSMTP      string `yaml:"email_smtp"`
+	EmailFrom      string `yaml:"email_from"`
+	EmailTo        string `yaml:"email_to"`
 }
 
 type MirrorConfig struct {
@@ -119,23 +125,23 @@ type MirrorConfig struct {
 }
 
 type Domain struct {
-	Host        string           `yaml:"host" json:"host"`
-	IP          string           `yaml:"ip,omitempty" json:"ip,omitempty"` // dedicated IP for this domain
-	Aliases     []string         `yaml:"aliases,omitempty" json:"aliases,omitempty"`
-	Root        string           `yaml:"root,omitempty" json:"root,omitempty"`
-	Type        string           `yaml:"type" json:"type"`
-	SSL         SSLConfig        `yaml:"ssl" json:"ssl"`
-	PHP         PHPConfig        `yaml:"php,omitempty" json:"php,omitempty"`
-	Cache       DomainCache      `yaml:"cache,omitempty" json:"cache,omitempty"`
-	Rewrites    []RewriteRule    `yaml:"rewrites,omitempty" json:"rewrites,omitempty"`
-	Htaccess    HtaccessConfig   `yaml:"htaccess,omitempty" json:"htaccess,omitempty"`
-	Security    SecurityConfig   `yaml:"security,omitempty" json:"security,omitempty"`
-	Headers     HeadersConfig    `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Compression CompressionConfig `yaml:"compression,omitempty" json:"compression,omitempty"`
-	AccessLog   AccessLogConfig  `yaml:"access_log,omitempty" json:"access_log,omitempty"`
-	ErrorPages  map[int]string   `yaml:"error_pages,omitempty" json:"error_pages,omitempty"`
-	Proxy       ProxyConfig      `yaml:"proxy,omitempty" json:"proxy,omitempty"`
-	Redirect    RedirectConfig   `yaml:"redirect,omitempty" json:"redirect,omitempty"`
+	Host              string                  `yaml:"host" json:"host"`
+	IP                string                  `yaml:"ip,omitempty" json:"ip,omitempty"` // dedicated IP for this domain
+	Aliases           []string                `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	Root              string                  `yaml:"root,omitempty" json:"root,omitempty"`
+	Type              string                  `yaml:"type" json:"type"`
+	SSL               SSLConfig               `yaml:"ssl" json:"ssl"`
+	PHP               PHPConfig               `yaml:"php,omitempty" json:"php,omitempty"`
+	Cache             DomainCache             `yaml:"cache,omitempty" json:"cache,omitempty"`
+	Rewrites          []RewriteRule           `yaml:"rewrites,omitempty" json:"rewrites,omitempty"`
+	Htaccess          HtaccessConfig          `yaml:"htaccess,omitempty" json:"htaccess,omitempty"`
+	Security          SecurityConfig          `yaml:"security,omitempty" json:"security,omitempty"`
+	Headers           HeadersConfig           `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Compression       CompressionConfig       `yaml:"compression,omitempty" json:"compression,omitempty"`
+	AccessLog         AccessLogConfig         `yaml:"access_log,omitempty" json:"access_log,omitempty"`
+	ErrorPages        map[int]string          `yaml:"error_pages,omitempty" json:"error_pages,omitempty"`
+	Proxy             ProxyConfig             `yaml:"proxy,omitempty" json:"proxy,omitempty"`
+	Redirect          RedirectConfig          `yaml:"redirect,omitempty" json:"redirect,omitempty"`
 	TryFiles          []string                `yaml:"try_files,omitempty" json:"try_files,omitempty"`
 	SPAMode           bool                    `yaml:"spa_mode,omitempty" json:"spa_mode,omitempty"`
 	IndexFiles        []string                `yaml:"index_files,omitempty" json:"index_files,omitempty"`
@@ -289,11 +295,11 @@ type PHPConfig struct {
 }
 
 type DomainCache struct {
-	Enabled bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	TTL     int              `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-	Rules   []CacheRule      `yaml:"rules,omitempty" json:"rules,omitempty"`
-	Tags    []string         `yaml:"tags,omitempty" json:"tags,omitempty"`
-	ESI     bool             `yaml:"esi,omitempty" json:"esi,omitempty"`
+	Enabled bool        `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	TTL     int         `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	Rules   []CacheRule `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Tags    []string    `yaml:"tags,omitempty" json:"tags,omitempty"`
+	ESI     bool        `yaml:"esi,omitempty" json:"esi,omitempty"`
 }
 
 type CacheRule struct {
@@ -315,12 +321,12 @@ type HtaccessConfig struct {
 }
 
 type SecurityConfig struct {
-	BlockedPaths      []string           `yaml:"blocked_paths,omitempty" json:"blocked_paths,omitempty"`
-	HotlinkProtection HotlinkConfig      `yaml:"hotlink_protection,omitempty" json:"hotlink_protection,omitempty"`
-	RateLimit         RateLimitConfig    `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
-	WAF               WAFConfig          `yaml:"waf,omitempty" json:"waf,omitempty"`
-	IPWhitelist       []string           `yaml:"ip_whitelist,omitempty" json:"ip_whitelist,omitempty"`
-	IPBlacklist       []string           `yaml:"ip_blacklist,omitempty" json:"ip_blacklist,omitempty"`
+	BlockedPaths      []string        `yaml:"blocked_paths,omitempty" json:"blocked_paths,omitempty"`
+	HotlinkProtection HotlinkConfig   `yaml:"hotlink_protection,omitempty" json:"hotlink_protection,omitempty"`
+	RateLimit         RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+	WAF               WAFConfig       `yaml:"waf,omitempty" json:"waf,omitempty"`
+	IPWhitelist       []string        `yaml:"ip_whitelist,omitempty" json:"ip_whitelist,omitempty"`
+	IPBlacklist       []string        `yaml:"ip_blacklist,omitempty" json:"ip_blacklist,omitempty"`
 }
 
 type HotlinkConfig struct {
@@ -357,10 +363,10 @@ type CompressionConfig struct {
 }
 
 type AccessLogConfig struct {
-	Path       string          `yaml:"path,omitempty" json:"path,omitempty"`
-	Format     string          `yaml:"format,omitempty" json:"format,omitempty"`
-	BufferSize int             `yaml:"buffer_size,omitempty" json:"buffer_size,omitempty"`
-	Rotate     RotateConfig    `yaml:"rotate,omitempty" json:"rotate,omitempty"`
+	Path       string       `yaml:"path,omitempty" json:"path,omitempty"`
+	Format     string       `yaml:"format,omitempty" json:"format,omitempty"`
+	BufferSize int          `yaml:"buffer_size,omitempty" json:"buffer_size,omitempty"`
+	Rotate     RotateConfig `yaml:"rotate,omitempty" json:"rotate,omitempty"`
 }
 
 type RotateConfig struct {
@@ -370,16 +376,16 @@ type RotateConfig struct {
 }
 
 type ProxyConfig struct {
-	Upstreams      []Upstream         `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Algorithm      string             `yaml:"algorithm,omitempty" json:"algorithm,omitempty"`
-	HealthCheck    HealthCheckConfig  `yaml:"health_check,omitempty" json:"health_check,omitempty"`
-	Sticky         StickyConfig       `yaml:"sticky,omitempty" json:"sticky,omitempty"`
-	CircuitBreaker CircuitConfig      `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
-	WebSocket      bool               `yaml:"websocket,omitempty" json:"websocket,omitempty"`
-	Timeouts       ProxyTimeouts      `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
-	MaxRetries     int                `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
-	Canary         CanaryConfig       `yaml:"canary,omitempty" json:"canary,omitempty"`
-	Mirror         MirrorConfig       `yaml:"mirror,omitempty" json:"mirror,omitempty"`
+	Upstreams      []Upstream        `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Algorithm      string            `yaml:"algorithm,omitempty" json:"algorithm,omitempty"`
+	HealthCheck    HealthCheckConfig `yaml:"health_check,omitempty" json:"health_check,omitempty"`
+	Sticky         StickyConfig      `yaml:"sticky,omitempty" json:"sticky,omitempty"`
+	CircuitBreaker CircuitConfig     `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
+	WebSocket      bool              `yaml:"websocket,omitempty" json:"websocket,omitempty"`
+	Timeouts       ProxyTimeouts     `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
+	MaxRetries     int               `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
+	Canary         CanaryConfig      `yaml:"canary,omitempty" json:"canary,omitempty"`
+	Mirror         MirrorConfig      `yaml:"mirror,omitempty" json:"mirror,omitempty"`
 }
 
 type CanaryConfig struct {

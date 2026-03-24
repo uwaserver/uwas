@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -359,7 +359,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	}
 	if len(blockedPaths) > 0 || wafEnabled {
 		mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, wafEnabled, s.securityStats))
-	mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
+		mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
 	}
 
 	mws = append(mws, middleware.AccessLog(s.logger))

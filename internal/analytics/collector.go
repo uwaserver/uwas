@@ -24,7 +24,7 @@ type DomainStats struct {
 	Paths       map[string]int64 `json:"paths"`
 	HourlyViews [24]int64        `json:"hourly_views"`
 	Referrers   map[string]int64 `json:"referrers"`
-	UserAgents  map[string]int64 `json:"user_agents"`  // browser family → count
+	UserAgents  map[string]int64 `json:"user_agents"` // browser family → count
 
 	// Rolling window: minute-level buckets for last 7 days.
 	// Each bucket stores the count of views for that minute.
@@ -197,18 +197,18 @@ func classifyUA(ua string) string {
 
 // Snapshot holds a point-in-time analytics snapshot for a domain.
 type Snapshot struct {
-	Host         string           `json:"host"`
-	PageViews    int64            `json:"page_views"`
-	UniqueIPs    int              `json:"unique_ips"`
-	BytesSent    int64            `json:"bytes_sent"`
-	StatusCodes  map[int]int64    `json:"status_codes"`
-	TopPaths     map[string]int64 `json:"top_paths"`
-	HourlyViews  [24]int64        `json:"hourly_views"`
-	ViewsLastHour int64           `json:"views_last_hour"`
-	ViewsLast24h  int64           `json:"views_last_24h"`
-	ViewsLast7d   int64           `json:"views_last_7d"`
-	TopReferrers map[string]int64 `json:"top_referrers"`
-	UserAgents   map[string]int64 `json:"user_agents"`
+	Host          string           `json:"host"`
+	PageViews     int64            `json:"page_views"`
+	UniqueIPs     int              `json:"unique_ips"`
+	BytesSent     int64            `json:"bytes_sent"`
+	StatusCodes   map[int]int64    `json:"status_codes"`
+	TopPaths      map[string]int64 `json:"top_paths"`
+	HourlyViews   [24]int64        `json:"hourly_views"`
+	ViewsLastHour int64            `json:"views_last_hour"`
+	ViewsLast24h  int64            `json:"views_last_24h"`
+	ViewsLast7d   int64            `json:"views_last_7d"`
+	TopReferrers  map[string]int64 `json:"top_referrers"`
+	UserAgents    map[string]int64 `json:"user_agents"`
 }
 
 // GetAll returns snapshots for all tracked domains.
@@ -361,4 +361,3 @@ func writeJSON(w http.ResponseWriter, data any) {
 	// Use a local import to keep the package lightweight.
 	jsonEncode(w, data)
 }
-

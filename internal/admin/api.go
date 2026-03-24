@@ -17,21 +17,21 @@ import (
 
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/alerting"
-	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/backup"
+	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
-	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/filemanager"
+	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
-	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
-	"github.com/uwaserver/uwas/internal/siteuser"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/serverip"
+	"github.com/uwaserver/uwas/internal/siteuser"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 )
 
@@ -53,11 +53,11 @@ const maxLogEntries = 1000
 
 // phpInstallState tracks a background PHP installation.
 type phpInstallState struct {
-	Version  string `json:"version"`
-	Status   string `json:"status"` // "running", "done", "error"
-	Output   string `json:"output"`
-	Error    string `json:"error,omitempty"`
-	Distro   string `json:"distro"`
+	Version string `json:"version"`
+	Status  string `json:"status"` // "running", "done", "error"
+	Output  string `json:"output"`
+	Error   string `json:"error,omitempty"`
+	Distro  string `json:"distro"`
 }
 
 // Server is the admin REST API server.
@@ -74,11 +74,11 @@ type Server struct {
 	mux            *http.ServeMux
 	httpSrv        *http.Server
 
-	monitor   *monitor.Monitor
-	alerter   *alerting.Alerter
-	phpMgr    *phpmanager.Manager
-	backupMgr *backup.BackupManager
-	mcpSrv    *mcp.Server
+	monitor       *monitor.Monitor
+	alerter       *alerting.Alerter
+	phpMgr        *phpmanager.Manager
+	backupMgr     *backup.BackupManager
+	mcpSrv        *mcp.Server
 	tlsMgr        *uwastls.Manager
 	unknownHT     *router.UnknownHostTracker
 	securityStats *middleware.SecurityStats
@@ -498,17 +498,17 @@ func formatDiskSize(b int64) string {
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	p50, p95, p99, max := s.metrics.Percentiles()
 	jsonResponse(w, map[string]any{
-		"requests_total":   s.metrics.RequestsTotal.Load(),
-		"cache_hits":       s.metrics.CacheHits.Load(),
-		"cache_misses":     s.metrics.CacheMisses.Load(),
-		"active_conns":     s.metrics.ActiveConns.Load(),
-		"bytes_sent":       s.metrics.BytesSent.Load(),
-		"uptime":           time.Since(s.metrics.StartTime).String(),
-		"slow_requests":    s.metrics.SlowRequests.Load(),
-		"latency_p50_ms":   p50 * 1000,
-		"latency_p95_ms":   p95 * 1000,
-		"latency_p99_ms":   p99 * 1000,
-		"latency_max_ms":   max * 1000,
+		"requests_total": s.metrics.RequestsTotal.Load(),
+		"cache_hits":     s.metrics.CacheHits.Load(),
+		"cache_misses":   s.metrics.CacheMisses.Load(),
+		"active_conns":   s.metrics.ActiveConns.Load(),
+		"bytes_sent":     s.metrics.BytesSent.Load(),
+		"uptime":         time.Since(s.metrics.StartTime).String(),
+		"slow_requests":  s.metrics.SlowRequests.Load(),
+		"latency_p50_ms": p50 * 1000,
+		"latency_p95_ms": p95 * 1000,
+		"latency_p99_ms": p99 * 1000,
+		"latency_max_ms": max * 1000,
 	})
 }
 
@@ -1030,8 +1030,8 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	if s.cache == nil {
 		jsonResponse(w, map[string]any{
-			"enabled":  false,
-			"message":  "cache not enabled",
+			"enabled": false,
+			"message": "cache not enabled",
 		})
 		return
 	}

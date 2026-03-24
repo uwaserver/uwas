@@ -17,17 +17,17 @@ type Rule struct {
 
 // Flags represents parsed RewriteRule flags like [L,R=301,QSA,NC].
 type Flags struct {
-	Last             bool // [L] — stop processing after match
-	Redirect         int  // [R=301] — redirect with status code (0 = no redirect)
-	QSAppend         bool // [QSA] — append query string
-	NoCase           bool // [NC] — case-insensitive match
-	Forbidden        bool // [F] — return 403
-	Gone             bool // [G] — return 410
-	Chain            bool // [C] — chain with next rule
-	Skip             int  // [S=N] — skip N rules
-	PassThrough      bool // [PT] — pass through to next handler
-	NoEscape         bool // [NE] — don't escape special chars
-	EnvironmentVar   string // [E=VAR:VAL]
+	Last           bool   // [L] — stop processing after match
+	Redirect       int    // [R=301] — redirect with status code (0 = no redirect)
+	QSAppend       bool   // [QSA] — append query string
+	NoCase         bool   // [NC] — case-insensitive match
+	Forbidden      bool   // [F] — return 403
+	Gone           bool   // [G] — return 410
+	Chain          bool   // [C] — chain with next rule
+	Skip           int    // [S=N] — skip N rules
+	PassThrough    bool   // [PT] — pass through to next handler
+	NoEscape       bool   // [NE] — don't escape special chars
+	EnvironmentVar string // [E=VAR:VAL]
 }
 
 // ParseRule parses a rewrite rule from pattern, target, and optional flags string.

@@ -524,8 +524,8 @@ func TestCalculateUptimeMixedAge(t *testing.T) {
 	checks := []Check{
 		{Time: now.Add(-48 * time.Hour), StatusCode: 500}, // old, excluded
 		{Time: now.Add(-48 * time.Hour), StatusCode: 200}, // old, excluded
-		{Time: now, StatusCode: 200},                       // recent, up
-		{Time: now, StatusCode: 500},                       // recent, down
+		{Time: now, StatusCode: 200},                      // recent, up
+		{Time: now, StatusCode: 500},                      // recent, down
 	}
 	got := calculateUptime(checks)
 	if got != 50.0 {

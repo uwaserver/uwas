@@ -47,9 +47,9 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 
 	// Build ordered list of candidate formats.
 	type candidate struct {
-		format    string // "webp", "avif"
-		ext       string // ".webp", ".avif"
-		accept    string // "image/webp", "image/avif"
+		format string // "webp", "avif"
+		ext    string // ".webp", ".avif"
+		accept string // "image/webp", "image/avif"
 	}
 	var candidates []candidate
 	for _, f := range cfg.Formats {
