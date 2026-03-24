@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -108,9 +109,11 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
 	root := s.domainRoot(domain)
 	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+		jsonError(w, fmt.Sprintf("domain %q not configured or has no web root", domain), http.StatusNotFound)
 		return
 	}
+	// Auto-create root if it doesn't exist
+	os.MkdirAll(root, 0755)
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		path = "."
@@ -119,6 +122,9 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if entries == nil {
+		entries = []filemanager.Entry{}
 	}
 	jsonResponse(w, entries)
 }

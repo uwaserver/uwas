@@ -25,6 +25,7 @@ import Firewall from '@/pages/Firewall';
 import Updates from '@/pages/Updates';
 import Security from '@/pages/Security';
 import EmailGuide from '@/pages/EmailGuide';
+import WordPress from '@/pages/WordPress';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/php" element={<PHP />} />
         <Route path="/backups" element={<Backups />} />
         <Route path="/database" element={<Database />} />
+        <Route path="/wordpress" element={<WordPress />} />
         <Route path="/dns" element={<DNS />} />
         <Route path="/audit" element={<AuditLog />} />
         <Route path="/unknown-domains" element={<UnknownDomains />} />
