@@ -1183,38 +1183,74 @@ func (s *Server) notifyDomainChange() {
 	s.persistConfig()
 }
 
-// persistConfig writes the current in-memory config to the YAML file.
-// Clears domains_dir individual files to prevent duplicates on reload.
+// persistConfig writes the global config to the main YAML file and each domain
+// to its own file in domains.d/. Main config never contains domain definitions.
 func (s *Server) persistConfig() {
 	if s.configPath == "" {
 		return
 	}
+
 	s.configMu.RLock()
 	cfg := *s.config
-	domainsDir := s.config.DomainsDir
-	// Clear include/domains_dir to prevent duplicate loading — all domains are in main file now.
-	cfg.Include = nil
-	cfg.DomainsDir = ""
-	data, err := yaml.Marshal(&cfg)
+	domains := make([]config.Domain, len(s.config.Domains))
+	copy(domains, s.config.Domains)
 	s.configMu.RUnlock()
+
+	// 1. Write main config WITHOUT domains (global settings only)
+	mainCfg := cfg
+	mainCfg.Domains = nil
+	if mainCfg.DomainsDir == "" {
+		mainCfg.DomainsDir = "domains.d"
+	}
+	mainData, err := yaml.Marshal(&mainCfg)
 	if err != nil {
 		s.logger.Error("failed to marshal config", "error", err)
 		return
 	}
-	if err := os.WriteFile(s.configPath, data, 0644); err != nil {
+	if err := os.WriteFile(s.configPath, mainData, 0644); err != nil {
 		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
 		return
 	}
-	// Remove individual domain files to prevent duplicates on next load.
-	if domainsDir != "" {
-		entries, err := os.ReadDir(domainsDir)
-		if err == nil {
-			for _, e := range entries {
-				if !e.IsDir() && (strings.HasSuffix(e.Name(), ".yaml") || strings.HasSuffix(e.Name(), ".yml")) {
+
+	// 2. Write each domain to its own file in domains.d/
+	domainsDir := mainCfg.DomainsDir
+	if !filepath.IsAbs(domainsDir) {
+		domainsDir = filepath.Join(filepath.Dir(s.configPath), domainsDir)
+	}
+	if err := os.MkdirAll(domainsDir, 0755); err != nil {
+		s.logger.Error("failed to create domains dir", "path", domainsDir, "error", err)
+		return
+	}
+
+	// Track which files should exist
+	activeFiles := make(map[string]bool)
+	for _, d := range domains {
+		clean := strings.ReplaceAll(d.Host, ":", "_")
+		clean = filepath.Base(clean)
+		fname := clean + ".yaml"
+		fpath := filepath.Join(domainsDir, fname)
+		activeFiles[fname] = true
+
+		domData, err := yaml.Marshal(&d)
+		if err != nil {
+			s.logger.Error("failed to marshal domain", "host", d.Host, "error", err)
+			continue
+		}
+		if err := os.WriteFile(fpath, domData, 0644); err != nil {
+			s.logger.Error("failed to write domain file", "path", fpath, "error", err)
+		}
+	}
+
+	// 3. Remove orphan domain files (deleted domains)
+	entries, err := os.ReadDir(domainsDir)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && (strings.HasSuffix(e.Name(), ".yaml") || strings.HasSuffix(e.Name(), ".yml")) {
+				if !activeFiles[e.Name()] {
 					os.Remove(filepath.Join(domainsDir, e.Name()))
+					s.logger.Debug("removed orphan domain file", "file", e.Name())
 				}
 			}
-			s.logger.Debug("cleared domains_dir to prevent duplicates", "dir", domainsDir)
 		}
 	}
 }

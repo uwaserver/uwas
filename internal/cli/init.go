@@ -103,6 +103,32 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 		return "", fmt.Errorf("write default config: %w", err)
 	}
 
+	// Create domains.d/ with default localhost domain
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+	localhostDomain := fmt.Sprintf(`host: "localhost:%s"
+aliases:
+  - "127.0.0.1:%s"
+root: %s
+type: static
+ssl:
+  mode: "off"
+compression:
+  enabled: true
+  algorithms:
+    - gzip
+    - br
+cache:
+  enabled: true
+  ttl: 300
+security:
+  blocked_paths:
+    - ".git"
+    - ".env"
+`, httpPort, httpPort, filepath.ToSlash(webRoot))
+	localhostFile := filepath.Join(domainsDir, fmt.Sprintf("localhost_%s.yaml", httpPort))
+	os.WriteFile(localhostFile, []byte(localhostDomain), 0644)
+
 	// Write .env file
 	envPath := filepath.Join(dir, ".env")
 	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, generateAPIKey())
@@ -189,29 +215,9 @@ global:
     local:
       path: %s
 
-domains:
-  - host: "localhost:%s"
-    aliases:
-      - "127.0.0.1:%s"
-    root: %s
-    type: static
-    ssl:
-      mode: "off"
-    compression:
-      enabled: true
-      algorithms:
-        - gzip
-        - br
-    cache:
-      enabled: true
-      ttl: 300
-    security:
-      blocked_paths:
-        - ".git"
-        - ".env"
+domains_dir: domains.d
 `, listenAddr, wwwDir, adminAddr, apiKey,
-		acmeEmail, certsDir, cacheDir, backupsDir,
-		httpPort, httpPort, wwwDir)) + "\n"
+		acmeEmail, certsDir, cacheDir, backupsDir)) + "\n"
 }
 
 const defaultIndexHTML = `<!DOCTYPE html>

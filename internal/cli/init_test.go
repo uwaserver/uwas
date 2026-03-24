@@ -308,12 +308,12 @@ func TestGenerateDefaultConfigValidYAML(t *testing.T) {
 		t.Errorf("http_listen = %v", global["http_listen"])
 	}
 
-	domains, ok := parsed["domains"].([]any)
-	if !ok {
-		t.Fatal("expected domains key")
+	domainsDir, ok := parsed["domains_dir"].(string)
+	if !ok || domainsDir == "" {
+		t.Fatal("expected domains_dir key")
 	}
-	if len(domains) == 0 {
-		t.Error("expected at least one domain")
+	if domainsDir != "domains.d" {
+		t.Errorf("domains_dir = %q, want domains.d", domainsDir)
 	}
 }
 
