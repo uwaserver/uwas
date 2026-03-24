@@ -75,9 +75,10 @@ type TimeoutConfig struct {
 }
 
 type AdminConfig struct {
-	Listen  string `yaml:"listen"`
-	Enabled bool   `yaml:"enabled"`
-	APIKey  string `yaml:"api_key"`
+	Listen     string `yaml:"listen"`
+	Enabled    bool   `yaml:"enabled"`
+	APIKey     string `yaml:"api_key"`
+	TOTPSecret string `yaml:"totp_secret,omitempty"` // base32-encoded TOTP secret for 2FA
 }
 
 type MCPConfig struct {

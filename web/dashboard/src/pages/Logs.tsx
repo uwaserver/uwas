@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FileText, Search, Pause, Play, RefreshCw, Filter } from 'lucide-react';
+import { FileText, Search, Pause, Play, RefreshCw, Filter, Download } from 'lucide-react';
 import { fetchLogs, type LogEntry } from '@/lib/api';
 
 const statusColor = (status: number): string => {
@@ -128,6 +128,41 @@ export default function Logs() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
+          <div className="relative group">
+            <button
+              className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-300 transition hover:bg-[#334155]"
+            >
+              <Download size={14} />
+              Export
+            </button>
+            <div className="absolute right-0 top-full mt-1 hidden group-hover:block rounded-md border border-[#334155] bg-[#1e293b] shadow-lg z-10">
+              <button
+                onClick={() => {
+                  const csv = ['Time,Host,Method,Path,Status,Duration_ms,Remote'].concat(
+                    filtered.map(e => `${e.time},${e.host},${e.method},"${e.path}",${e.status},${e.duration_ms},${e.remote}`)
+                  ).join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.csv';
+                  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                }}
+                className="block w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-[#334155]"
+              >
+                CSV
+              </button>
+              <button
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.json';
+                  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                }}
+                className="block w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-[#334155]"
+              >
+                JSON
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
