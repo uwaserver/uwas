@@ -432,17 +432,34 @@ func TestRecordRequestPrunesOldEntries(t *testing.T) {
 // --- Webhook delivery tests ---
 
 func TestWebhookDeliveryViaAlert(t *testing.T) {
+	var mu sync.Mutex
 	var received []byte
+	done := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received, _ = io.ReadAll(r.Body)
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		received = body
+		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer srv.Close()
 
 	a := New(true, srv.URL, testLogger())
 	a.Alert(Alert{Level: "warning", Type: "test_alert", Host: "webhook.com", Message: "test delivery"})
-	time.Sleep(100 * time.Millisecond) // sendWebhook runs in goroutine
 
+	// Wait for the async webhook goroutine to complete
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook was not received within timeout")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
 	if len(received) == 0 {
 		t.Fatal("webhook did not receive any payload")
 	}
@@ -452,11 +469,20 @@ func TestWebhookDeliveryViaAlert(t *testing.T) {
 }
 
 func TestWebhookDeliveryFailure(t *testing.T) {
-	// Point to a non-existent server
+	// Point to a non-existent server — use a short timeout so test doesn't hang
 	a := New(true, "http://127.0.0.1:1/nonexistent", testLogger())
+	a.client.Timeout = 500 * time.Millisecond
 	// Should not panic
 	a.Alert(Alert{Level: "critical", Type: "fail_test", Message: "should not crash"})
-	time.Sleep(100 * time.Millisecond)
+
+	// Poll until alert is recorded (the webhook goroutine will fail fast on connection refused)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(a.Alerts()) == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	alerts := a.Alerts()
 	if len(alerts) != 1 {
