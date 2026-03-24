@@ -126,6 +126,26 @@ func Install(req InstallRequest) InstallResult {
 	log.WriteString("\n=== Setting permissions ===\n")
 	setWordPressPermissions(req.WebRoot, &log)
 
+	// Step 5: Create .htaccess for WordPress pretty permalinks
+	log.WriteString("\n=== Creating .htaccess ===\n")
+	htaccess := `# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+`
+	htaccessPath := filepath.Join(req.WebRoot, ".htaccess")
+	if err := os.WriteFile(htaccessPath, []byte(htaccess), 0644); err != nil {
+		log.WriteString(fmt.Sprintf("Warning: failed to create .htaccess: %s\n", err))
+	} else {
+		log.WriteString(".htaccess created (pretty permalinks ready)\n")
+	}
+
 	result.Status = "done"
 	result.AdminURL = fmt.Sprintf("https://%s/wp-admin/install.php", req.Domain)
 	result.Output = log.String()
