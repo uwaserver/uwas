@@ -98,6 +98,9 @@ type Server struct {
 
 	// imageOptChains holds pre-compiled per-domain image optimization middleware.
 	imageOptChains map[string]middleware.Middleware
+
+	// domainLogs writes per-domain access log files.
+	domainLogs *domainLogManager
 }
 
 // New creates a fully initialized server from config.
@@ -143,6 +146,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		securityStats:  middleware.NewSecurityStats(),
 		htaccessCache:  make(map[string][]*rewrite.Rule),
 		rewriteCache:   make(map[string]*rewrite.Engine),
+		domainLogs:     newDomainLogManager(),
 	}
 
 	// Pre-compile rewrite rules for each domain.
@@ -859,6 +863,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 		}
 	}
+
+	// Per-domain access log file
+	if domain.AccessLog.Path != "" {
+		s.domainLogs.Write(
+			r.Host, domain.AccessLog.Path,
+			r.Method, r.URL.Path,
+			r.RemoteAddr, r.UserAgent(),
+			ctx.Response.StatusCode(), int(ctx.Response.BytesWritten()),
+			time.Since(start),
+		)
+	}
 }
 
 func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Domain) {
@@ -1223,6 +1238,11 @@ func (s *Server) shutdown() {
 			}
 		}
 		s.logger.Info("all PHP processes stopped")
+	}
+
+	// Close per-domain log files.
+	if s.domainLogs != nil {
+		s.domainLogs.Close()
 	}
 
 	// Stop the backup scheduler if running.

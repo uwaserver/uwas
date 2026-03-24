@@ -1273,6 +1273,13 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Auto-set per-domain access log path if not configured.
+	if d.AccessLog.Path == "" && d.Root != "" {
+		logDir := filepath.Join(filepath.Dir(d.Root), "logs")
+		os.MkdirAll(logDir, 0755)
+		d.AccessLog.Path = filepath.Join(logDir, "access.log")
+	}
+
 	s.config.Domains = append(s.config.Domains, d)
 	s.configMu.Unlock()
 
