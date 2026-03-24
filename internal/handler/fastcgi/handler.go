@@ -2,6 +2,8 @@ package fastcgi
 
 import (
 	"io"
+	"net/http"
+	"os"
 	"sync"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -67,6 +69,39 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 
 	// Parse HTTP response from FastCGI
 	statusCode, headers, body := resp.ParseHTTP()
+
+	// X-Accel-Redirect / X-Sendfile: serve file directly instead of PHP body
+	if accel := headers.Get("X-Accel-Redirect"); accel != "" {
+		headers.Del("X-Accel-Redirect")
+		filePath := domain.Root + accel
+		if f, err := os.Open(filePath); err == nil {
+			defer f.Close()
+			if info, err := f.Stat(); err == nil {
+				for key, vals := range headers {
+					for _, v := range vals {
+						ctx.Response.Header().Add(key, v)
+					}
+				}
+				http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
+				return
+			}
+		}
+		// Fall through to normal response if file not found
+	} else if sendfile := headers.Get("X-Sendfile"); sendfile != "" {
+		headers.Del("X-Sendfile")
+		if f, err := os.Open(sendfile); err == nil {
+			defer f.Close()
+			if info, err := f.Stat(); err == nil {
+				for key, vals := range headers {
+					for _, v := range vals {
+						ctx.Response.Header().Add(key, v)
+					}
+				}
+				http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
+				return
+			}
+		}
+	}
 
 	// Forward response headers
 	for key, vals := range headers {

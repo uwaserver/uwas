@@ -22,6 +22,8 @@ type RuleSet struct {
 	AuthUserFile     string
 	Require          string
 	FilesMatch       []FilesMatchBlock
+	PHPValues        map[string]string // php_value directives
+	PHPFlags         map[string]string // php_flag directives (on/off → 1/0)
 }
 
 // RewriteRule is a converted rewrite rule.
@@ -65,6 +67,8 @@ func NewRuleSet() *RuleSet {
 	return &RuleSet{
 		ErrorDocuments: make(map[int]string),
 		ExpiresByType:  make(map[string]string),
+		PHPValues:      make(map[string]string),
+		PHPFlags:       make(map[string]string),
 	}
 }
 
@@ -183,6 +187,21 @@ func Convert(directives []Directive) *RuleSet {
 		case "require":
 			rules.Require = strings.Join(d.Args, " ")
 
+		case "php_value":
+			if len(d.Args) >= 2 {
+				rules.PHPValues[d.Args[0]] = strings.Join(d.Args[1:], " ")
+			}
+
+		case "php_flag":
+			if len(d.Args) >= 2 {
+				val := strings.ToLower(d.Args[1])
+				if val == "on" || val == "1" || val == "true" {
+					rules.PHPFlags[d.Args[0]] = "1"
+				} else {
+					rules.PHPFlags[d.Args[0]] = "0"
+				}
+			}
+
 		default:
 			// Block directives: <IfModule>, <FilesMatch>, etc.
 			if len(d.Block) > 0 {
@@ -243,6 +262,12 @@ func (rs *RuleSet) Merge(other *RuleSet) {
 		rs.ExpiresByType[k] = v
 	}
 	rs.FilesMatch = append(rs.FilesMatch, other.FilesMatch...)
+	for k, v := range other.PHPValues {
+		rs.PHPValues[k] = v
+	}
+	for k, v := range other.PHPFlags {
+		rs.PHPFlags[k] = v
+	}
 }
 
 func parseRedirect(d Directive, isRegex bool) RedirectRule {
