@@ -267,6 +267,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/auth/2fa/verify", s.handle2FAVerify)
 	s.mux.HandleFunc("POST /api/v1/auth/2fa/disable", s.handle2FADisable)
 
+	// Doctor
+	s.mux.HandleFunc("GET /api/v1/doctor", s.handleDoctor)
+	s.mux.HandleFunc("POST /api/v1/doctor/fix", s.handleDoctorFix)
+
 	// Self-update
 	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
 	s.mux.HandleFunc("POST /api/v1/system/update", s.handleUpdate)

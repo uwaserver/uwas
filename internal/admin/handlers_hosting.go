@@ -13,6 +13,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/doctor"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/dnschecker"
@@ -1008,4 +1009,41 @@ func (s *Server) handleSecurityBlocked(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, s.securityStats.RecentBlocked())
+}
+
+// ── Doctor ─────────────────────────────────────────────────
+
+func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	report := doctor.Run(doctor.Options{
+		ConfigPath: s.configPath,
+		WebRoot:    webRoot,
+		AutoFix:    false,
+	})
+	jsonResponse(w, report)
+}
+
+func (s *Server) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	report := doctor.Run(doctor.Options{
+		ConfigPath: s.configPath,
+		WebRoot:    webRoot,
+		AutoFix:    true,
+	})
+
+	ip := requestIP(r)
+	fixed := 0
+	for _, c := range report.Checks {
+		if c.Status == "fixed" {
+			fixed++
+		}
+	}
+	s.RecordAudit("doctor.fix", fmt.Sprintf("%d issues fixed", fixed), ip, true)
+	jsonResponse(w, report)
 }
