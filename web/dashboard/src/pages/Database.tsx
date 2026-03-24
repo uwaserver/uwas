@@ -10,6 +10,9 @@ import {
   Download,
   X,
   AlertTriangle,
+  Play,
+  Square,
+  RotateCw,
 } from 'lucide-react';
 import {
   fetchDBStatus,
@@ -17,6 +20,9 @@ import {
   createDatabase,
   dropDatabase,
   installDatabase,
+  startDB,
+  stopDB,
+  restartDB,
   type DBStatus,
   type DBInfo,
 } from '@/lib/api';
@@ -163,6 +169,9 @@ export default function Database() {
   // Install
   const [installing, setInstalling] = useState(false);
 
+  // DB service action
+  const [dbAction, setDbAction] = useState('');
+
   const load = useCallback(async () => {
     try {
       const [s, dbs] = await Promise.all([fetchDBStatus(), fetchDatabases()]);
@@ -193,6 +202,22 @@ export default function Database() {
       setStatus({ ok: false, message: (e as Error).message });
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const handleDBAction = async (action: 'start' | 'stop' | 'restart') => {
+    setDbAction(action);
+    setStatus(null);
+    try {
+      if (action === 'start') await startDB();
+      else if (action === 'stop') await stopDB();
+      else await restartDB();
+      setStatus({ ok: true, message: `MariaDB ${action} succeeded` });
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setDbAction('');
     }
   };
 
@@ -311,6 +336,53 @@ export default function Database() {
           value={dbStatus?.version || '--'}
         />
       </div>
+
+      {/* DB Service Controls — shown when installed */}
+      {dbStatus?.installed && (
+        <div className="flex items-center gap-3">
+          {!dbStatus.running ? (
+            <button
+              onClick={() => handleDBAction('start')}
+              disabled={!!dbAction}
+              className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {dbAction === 'start' ? (
+                <RefreshCw size={14} className="animate-spin" />
+              ) : (
+                <Play size={14} />
+              )}
+              Start MariaDB
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => handleDBAction('stop')}
+                disabled={!!dbAction}
+                className="flex items-center gap-1.5 rounded-md bg-red-600/15 px-4 py-2 text-sm font-medium text-red-400 transition hover:bg-red-600/25 disabled:opacity-50"
+              >
+                {dbAction === 'stop' ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Square size={14} />
+                )}
+                Stop
+              </button>
+              <button
+                onClick={() => handleDBAction('restart')}
+                disabled={!!dbAction}
+                className="flex items-center gap-1.5 rounded-md bg-blue-600/15 px-4 py-2 text-sm font-medium text-blue-400 transition hover:bg-blue-600/25 disabled:opacity-50"
+              >
+                {dbAction === 'restart' ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <RotateCw size={14} />
+                )}
+                Restart
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Install MariaDB (if not installed) */}
       {dbStatus && !dbStatus.installed && (

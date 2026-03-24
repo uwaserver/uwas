@@ -18,6 +18,7 @@ import (
 	"github.com/uwaserver/uwas/internal/dnschecker"
 	"github.com/uwaserver/uwas/internal/dnsmanager"
 	"github.com/uwaserver/uwas/internal/notify"
+	"github.com/uwaserver/uwas/internal/services"
 	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
@@ -601,6 +602,75 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	result := dnschecker.Check(domain)
 	jsonResponse(w, result)
+}
+
+// ============ System Services ============
+
+func (s *Server) handleServicesList(w http.ResponseWriter, r *http.Request) {
+	svcs := services.ListServices()
+	if svcs == nil {
+		svcs = []services.Service{}
+	}
+	jsonResponse(w, svcs)
+}
+
+func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := services.StartService(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("service started", "name", name)
+	jsonResponse(w, map[string]string{"status": "started", "name": name})
+}
+
+func (s *Server) handleServiceStop(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := services.StopService(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("service stopped", "name", name)
+	jsonResponse(w, map[string]string{"status": "stopped", "name": name})
+}
+
+func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := services.RestartService(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("service restarted", "name", name)
+	jsonResponse(w, map[string]string{"status": "restarted", "name": name})
+}
+
+// ============ Database Service Control ============
+
+func (s *Server) handleDBStart(w http.ResponseWriter, r *http.Request) {
+	if err := database.StartService(); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("MySQL/MariaDB started")
+	jsonResponse(w, map[string]string{"status": "started"})
+}
+
+func (s *Server) handleDBStop(w http.ResponseWriter, r *http.Request) {
+	if err := database.StopService(); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("MySQL/MariaDB stopped")
+	jsonResponse(w, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) handleDBRestart(w http.ResponseWriter, r *http.Request) {
+	if err := database.RestartService(); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("MySQL/MariaDB restarted")
+	jsonResponse(w, map[string]string{"status": "restarted"})
 }
 
 // ============ Notifications ============
