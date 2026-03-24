@@ -1527,17 +1527,24 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			if d.Htaccess.Mode != "" {
 				merged.Htaccess = d.Htaccess
 			}
-			// Cache: merge if provided
-			if d.Cache.TTL > 0 {
+			// Cache, Security, Compression:
+			// ?replace=true → full replace (allows disabling features)
+			// default → merge (only override non-zero fields)
+			if r.URL.Query().Get("replace") == "true" {
 				merged.Cache = d.Cache
-			}
-			// Security: merge if provided
-			if len(d.Security.BlockedPaths) > 0 || d.Security.WAF.Enabled {
 				merged.Security = d.Security
-			}
-			// Compression
-			if d.Compression.Enabled {
 				merged.Compression = d.Compression
+			} else {
+				if d.Cache.TTL > 0 || d.Cache.Enabled {
+					merged.Cache = d.Cache
+				}
+				if len(d.Security.BlockedPaths) > 0 || d.Security.WAF.Enabled ||
+					len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
+					merged.Security = d.Security
+				}
+				if d.Compression.Enabled || len(d.Compression.Algorithms) > 0 {
+					merged.Compression = d.Compression
+				}
 			}
 			s.config.Domains[i] = merged
 			d = merged // use merged for subsequent operations
