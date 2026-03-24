@@ -528,3 +528,13 @@ export function verify2FA(code: string): Promise<{ status: string }> {
 export function disable2FA(code: string): Promise<{ status: string }> {
   return api('/api/v1/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ code }) });
 }
+
+// ── Settings (structured key-value) ──────────────────
+
+export function fetchSettings(): Promise<Record<string, any>> {
+  return api('/api/v1/settings');
+}
+
+export function saveSettings(updates: Record<string, any>): Promise<{ status: string; updated: number }> {
+  return api('/api/v1/settings', { method: 'PUT', body: JSON.stringify(updates) });
+}
