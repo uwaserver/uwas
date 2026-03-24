@@ -16,6 +16,8 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/dnschecker"
+	"github.com/uwaserver/uwas/internal/dnsmanager"
+	"github.com/uwaserver/uwas/internal/notify"
 	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
@@ -599,6 +601,141 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	result := dnschecker.Check(domain)
 	jsonResponse(w, result)
+}
+
+// ============ Notifications ============
+
+func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var ch notify.Channel
+	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	ch.Enabled = true
+	msg := notify.Message{
+		Level:  "info",
+		Title:  "UWAS Test Notification",
+		Body:   "This is a test notification from your UWAS server.",
+		Source: "uwas_test",
+	}
+	if err := notify.Send(ch, msg); err != nil {
+		jsonError(w, "send failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "sent"})
+}
+
+// ============ DNS Records Management ============
+
+func (s *Server) getDNSProvider() *dnsmanager.CloudflareProvider {
+	s.configMu.RLock()
+	provider := s.config.Global.ACME.DNSProvider
+	creds := s.config.Global.ACME.DNSCredentials
+	s.configMu.RUnlock()
+
+	if provider != "cloudflare" || creds == nil {
+		return nil
+	}
+	token := creds["api_token"]
+	if token == "" {
+		token = creds["token"]
+	}
+	if token == "" {
+		return nil
+	}
+	return dnsmanager.NewCloudflare(token)
+}
+
+func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	cf := s.getDNSProvider()
+	if cf == nil {
+		jsonError(w, "DNS provider not configured — set dns_provider and credentials in Settings → ACME", http.StatusNotImplemented)
+		return
+	}
+	zone, err := cf.FindZoneByDomain(domain)
+	if err != nil {
+		jsonError(w, "zone not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	records, err := cf.ListRecords(zone.ID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"zone_id": zone.ID, "zone": zone.Name, "records": records})
+}
+
+func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	cf := s.getDNSProvider()
+	if cf == nil {
+		jsonError(w, "DNS provider not configured", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var rec dnsmanager.Record
+	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	zone, err := cf.FindZoneByDomain(domain)
+	if err != nil {
+		jsonError(w, "zone not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	created, err := cf.CreateRecord(zone.ID, rec)
+	if err != nil {
+		jsonError(w, "create record: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("DNS record created", "domain", domain, "type", rec.Type, "name", rec.Name, "content", rec.Content)
+	jsonResponse(w, created)
+}
+
+func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	recordID := r.PathValue("id")
+	cf := s.getDNSProvider()
+	if cf == nil {
+		jsonError(w, "DNS provider not configured", http.StatusNotImplemented)
+		return
+	}
+	zone, err := cf.FindZoneByDomain(domain)
+	if err != nil {
+		jsonError(w, "zone not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := cf.DeleteRecord(zone.ID, recordID); err != nil {
+		jsonError(w, "delete record: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("DNS record deleted", "domain", domain, "record_id", recordID)
+	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleDNSSync(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	cf := s.getDNSProvider()
+	if cf == nil {
+		jsonError(w, "DNS provider not configured", http.StatusNotImplemented)
+		return
+	}
+
+	// Get server's public IP
+	ip := serverip.PublicIP()
+	if ip == "" {
+		jsonError(w, "could not detect server IP", http.StatusInternalServerError)
+		return
+	}
+
+	if err := cf.SyncDomainToIP(domain, ip); err != nil {
+		jsonError(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("DNS synced", "domain", domain, "ip", ip)
+	jsonResponse(w, map[string]string{"status": "synced", "domain": domain, "ip": ip})
 }
 
 // ============ Domain Debug ============

@@ -8,8 +8,23 @@ import {
   Globe,
   Server,
   AlertTriangle,
+  Plus,
+  Trash2,
+  Cloud,
+  Settings,
+  Shield,
 } from 'lucide-react';
-import { fetchDomains, checkDNS, type DomainData, type DNSResult } from '@/lib/api';
+import {
+  fetchDomains,
+  checkDNS,
+  fetchDNSRecords,
+  createDNSRecord,
+  deleteDNSRecord,
+  syncDNS,
+  type DomainData,
+  type DNSResult,
+  type DNSRecord,
+} from '@/lib/api';
 
 /* -- Record Row ---------------------------------------------------------- */
 
@@ -48,6 +63,18 @@ export default function DNS() {
   const [domainsLoading, setDomainsLoading] = useState(true);
   const [error, setError] = useState('');
 
+  /* -- DNS Record Management State ---------------------------------------- */
+  const [cfRecords, setCfRecords] = useState<DNSRecord[]>([]);
+  const [cfLoading, setCfLoading] = useState(false);
+  const [cfError, setCfError] = useState('');
+  const [cfNotConfigured, setCfNotConfigured] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newRec, setNewRec] = useState({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
+  const [addLoading, setAddLoading] = useState(false);
+
   const loadDomains = useCallback(async () => {
     try {
       const data = await fetchDomains();
@@ -78,6 +105,87 @@ export default function DNS() {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  /* -- DNS Record Management Handlers ------------------------------------- */
+
+  const handleLoadRecords = async () => {
+    if (!selectedDomain) return;
+    setCfLoading(true);
+    setCfError('');
+    setCfNotConfigured(false);
+    setCfRecords([]);
+    setSyncMsg('');
+    try {
+      const data = await fetchDNSRecords(selectedDomain);
+      setCfRecords(data.records ?? []);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes('501') || msg.toLowerCase().includes('not configured') || msg.toLowerCase().includes('no dns provider')) {
+        setCfNotConfigured(true);
+      } else {
+        setCfError(msg);
+      }
+    } finally {
+      setCfLoading(false);
+    }
+  };
+
+  const handleSyncDNS = async () => {
+    if (!selectedDomain) return;
+    setSyncLoading(true);
+    setSyncMsg('');
+    setCfError('');
+    try {
+      const data = await syncDNS(selectedDomain);
+      setSyncMsg(`A record synced to ${data.ip}`);
+      await handleLoadRecords();
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes('501') || msg.toLowerCase().includes('not configured') || msg.toLowerCase().includes('no dns provider')) {
+        setCfNotConfigured(true);
+      } else {
+        setCfError(msg);
+      }
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const handleDeleteRecord = async (id: string) => {
+    if (!selectedDomain) return;
+    setDeleteLoading(id);
+    setCfError('');
+    try {
+      await deleteDNSRecord(selectedDomain, id);
+      setCfRecords((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) {
+      setCfError((e as Error).message);
+    } finally {
+      setDeleteLoading(null);
+    }
+  };
+
+  const handleCreateRecord = async () => {
+    if (!selectedDomain || !newRec.name || !newRec.content) return;
+    setAddLoading(true);
+    setCfError('');
+    try {
+      const rec = await createDNSRecord(selectedDomain, {
+        type: newRec.type,
+        name: newRec.name,
+        content: newRec.content,
+        ttl: Number(newRec.ttl) || 1,
+        proxied: newRec.proxied,
+      });
+      setCfRecords((prev) => [...prev, rec]);
+      setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
+      setShowAddForm(false);
+    } catch (e) {
+      setCfError((e as Error).message);
+    } finally {
+      setAddLoading(false);
     }
   };
 
@@ -292,6 +400,259 @@ export default function DNS() {
             </div>
           )}
         </>
+      )}
+
+      {/* ================================================================== */}
+      {/* DNS Records (Cloudflare)                                           */}
+      {/* ================================================================== */}
+      {selectedDomain && (
+        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Cloud size={18} className="text-orange-400" />
+              <h2 className="text-sm font-semibold text-slate-300">
+                DNS Records (Cloudflare)
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSyncDNS}
+                disabled={syncLoading || cfNotConfigured}
+                className="flex items-center gap-1.5 rounded-md bg-orange-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-orange-700 disabled:opacity-50"
+              >
+                {syncLoading ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Shield size={14} />
+                )}
+                Sync A Record
+              </button>
+              <button
+                onClick={handleLoadRecords}
+                disabled={cfLoading}
+                className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+              >
+                {cfLoading ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                Load Records
+              </button>
+            </div>
+          </div>
+
+          {/* Sync success message */}
+          {syncMsg && (
+            <div className="mb-4 flex items-center gap-2 rounded-md bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-400">
+              <CheckCircle size={16} className="shrink-0" />
+              {syncMsg}
+            </div>
+          )}
+
+          {/* Not configured message */}
+          {cfNotConfigured && (
+            <div className="flex items-start gap-3 rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+              <Settings size={16} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium">DNS provider not configured</p>
+                <p className="mt-1 text-slate-400">
+                  Configure your Cloudflare API token in{' '}
+                  <a
+                    href="/_uwas/dashboard/settings"
+                    className="font-medium text-blue-400 underline hover:text-blue-300"
+                  >
+                    Settings &rarr; ACME
+                  </a>{' '}
+                  to manage DNS records from here.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* CF error */}
+          {cfError && (
+            <div className="mb-4 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+              {cfError}
+            </div>
+          )}
+
+          {/* Records table */}
+          {cfRecords.length > 0 && (
+            <div className="mb-4 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#334155] text-xs uppercase text-slate-500">
+                    <th className="pb-2 pr-4">Type</th>
+                    <th className="pb-2 pr-4">Name</th>
+                    <th className="pb-2 pr-4">Content</th>
+                    <th className="pb-2 pr-4">TTL</th>
+                    <th className="pb-2 pr-4">Proxied</th>
+                    <th className="pb-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cfRecords.map((rec) => (
+                    <tr key={rec.id} className="border-b border-[#334155]/50">
+                      <td className="py-2.5 pr-4">
+                        <span className="rounded bg-slate-700 px-1.5 py-0.5 font-mono text-xs text-slate-300">
+                          {rec.type}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-4 font-mono text-slate-300">
+                        {rec.name}
+                      </td>
+                      <td className="max-w-[200px] truncate py-2.5 pr-4 font-mono text-slate-300" title={rec.content}>
+                        {rec.content}
+                      </td>
+                      <td className="py-2.5 pr-4 text-slate-400">
+                        {rec.ttl === 1 ? 'Auto' : `${rec.ttl}s`}
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        {rec.proxied ? (
+                          <span className="text-orange-400">Yes</span>
+                        ) : (
+                          <span className="text-slate-500">No</span>
+                        )}
+                      </td>
+                      <td className="py-2.5">
+                        <button
+                          onClick={() => handleDeleteRecord(rec.id)}
+                          disabled={deleteLoading === rec.id}
+                          className="flex items-center gap-1 rounded px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          {deleteLoading === rec.id ? (
+                            <RefreshCw size={12} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={12} />
+                          )}
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Empty state after loading */}
+          {!cfLoading && !cfNotConfigured && !cfError && cfRecords.length === 0 && (
+            <div className="py-6 text-center text-sm text-slate-500">
+              Click &ldquo;Load Records&rdquo; to fetch DNS records from Cloudflare
+            </div>
+          )}
+
+          {/* Add record form */}
+          {!cfNotConfigured && (
+            <div>
+              {!showAddForm ? (
+                <button
+                  onClick={() => setShowAddForm(true)}
+                  className="flex items-center gap-1.5 rounded-md border border-dashed border-[#334155] px-3 py-2 text-xs text-slate-400 transition hover:border-slate-400 hover:text-slate-300"
+                >
+                  <Plus size={14} />
+                  Add Record
+                </button>
+              ) : (
+                <div className="rounded-md border border-[#334155] bg-[#0f172a] p-4">
+                  <h4 className="mb-3 text-xs font-medium uppercase text-slate-500">
+                    New DNS Record
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                    {/* Type */}
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">Type</label>
+                      <select
+                        value={newRec.type}
+                        onChange={(e) => setNewRec({ ...newRec, type: e.target.value })}
+                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                      >
+                        <option value="A">A</option>
+                        <option value="AAAA">AAAA</option>
+                        <option value="CNAME">CNAME</option>
+                        <option value="MX">MX</option>
+                        <option value="TXT">TXT</option>
+                      </select>
+                    </div>
+
+                    {/* Name */}
+                    <div className="lg:col-span-2">
+                      <label className="mb-1 block text-xs text-slate-500">Name</label>
+                      <input
+                        type="text"
+                        value={newRec.name}
+                        onChange={(e) => setNewRec({ ...newRec, name: e.target.value })}
+                        placeholder="@ or subdomain"
+                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    {/* Content */}
+                    <div className="lg:col-span-2">
+                      <label className="mb-1 block text-xs text-slate-500">Content</label>
+                      <input
+                        type="text"
+                        value={newRec.content}
+                        onChange={(e) => setNewRec({ ...newRec, content: e.target.value })}
+                        placeholder="IP address or value"
+                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    {/* TTL */}
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">TTL</label>
+                      <input
+                        type="text"
+                        value={newRec.ttl}
+                        onChange={(e) => setNewRec({ ...newRec, ttl: e.target.value })}
+                        placeholder="1 = Auto"
+                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Proxied toggle + action buttons */}
+                  <div className="mt-3 flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-sm text-slate-400">
+                      <input
+                        type="checkbox"
+                        checked={newRec.proxied}
+                        onChange={(e) => setNewRec({ ...newRec, proxied: e.target.checked })}
+                        className="rounded border-[#334155] bg-[#1e293b]"
+                      />
+                      Proxied (orange cloud)
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setShowAddForm(false);
+                          setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
+                        }}
+                        className="rounded-md px-3 py-1.5 text-xs text-slate-400 transition hover:text-slate-200"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleCreateRecord}
+                        disabled={addLoading || !newRec.name || !newRec.content}
+                        className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {addLoading ? (
+                          <RefreshCw size={12} className="animate-spin" />
+                        ) : (
+                          <Plus size={12} />
+                        )}
+                        Create Record
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
