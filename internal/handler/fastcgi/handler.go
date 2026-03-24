@@ -38,13 +38,10 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	// Build CGI environment
 	env := BuildEnv(ctx, scriptFilename, scriptName, pathInfo, domain.PHP.Env)
 
-	// Execute FastCGI request — forward request body for POST/PUT/PATCH
-	// Always forward body if Content-Length > 0 or Transfer-Encoding is chunked
+	// Execute FastCGI request — ALWAYS forward body for POST/PUT/PATCH/DELETE
 	var stdin io.Reader
-	if ctx.Request.Body != nil {
-		if ctx.Request.ContentLength > 0 || ctx.Request.TransferEncoding != nil {
-			stdin = ctx.Request.Body
-		}
+	if ctx.Request.Body != nil && ctx.Request.Method != "GET" && ctx.Request.Method != "HEAD" {
+		stdin = ctx.Request.Body
 	}
 
 	resp, err := client.Execute(ctx.Request.Context(), env, stdin)
