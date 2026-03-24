@@ -1291,6 +1291,46 @@ func (s *Server) reload() error {
 	}
 	s.rewriteCache = newRewriteCache
 
+	// Rebuild per-domain middleware chains
+	newDomainChains := make(map[string]middleware.Middleware)
+	for _, d := range newCfg.Domains {
+		if len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
+			newDomainChains[d.Host] = middleware.IPACL(middleware.IPACLConfig{
+				Whitelist: d.Security.IPWhitelist,
+				Blacklist: d.Security.IPBlacklist,
+			})
+		}
+	}
+	s.domainChains = newDomainChains
+
+	// Rebuild image optimization chains
+	newImageOpt := make(map[string]middleware.Middleware)
+	for _, d := range newCfg.Domains {
+		if d.ImageOptimization.Enabled && d.Root != "" {
+			newImageOpt[d.Host] = middleware.ImageOptimization(middleware.ImageOptConfig{
+				Enabled: true,
+				Formats: d.ImageOptimization.Formats,
+			}, d.Root)
+		}
+	}
+	s.imageOptChains = newImageOpt
+
+	// Rebuild proxy pools and balancers
+	newPools := make(map[string]*proxyhandler.UpstreamPool)
+	newBalancers := make(map[string]proxyhandler.Balancer)
+	for _, d := range newCfg.Domains {
+		if d.Type == "proxy" && len(d.Proxy.Upstreams) > 0 {
+			var ups []proxyhandler.UpstreamConfig
+			for _, u := range d.Proxy.Upstreams {
+				ups = append(ups, proxyhandler.UpstreamConfig{Address: u.Address, Weight: u.Weight})
+			}
+			newPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
+			newBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
+		}
+	}
+	s.proxyPools = newPools
+	s.proxyBalancers = newBalancers
+
 	// Update stored config under write lock
 	s.configMu.Lock()
 	s.config = newCfg
