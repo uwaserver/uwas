@@ -208,9 +208,10 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetMonitor(s.monitor)
 	}
 
-	// PHP Manager
+	// PHP Manager — detect, auto-assign to PHP domains, start all
 	phpMgr := phpmanager.New(log)
 	phpMgr.Detect()
+	s.autoAssignPHP(phpMgr, cfg)
 	if s.admin != nil {
 		s.admin.SetPHPManager(phpMgr)
 	}
@@ -1204,6 +1205,40 @@ func (s *Server) shutdown() {
 	}
 
 	s.logger.Info("shutdown complete")
+}
+
+// autoAssignPHP assigns and starts PHP for all PHP-type domains on server boot.
+func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
+	status := phpMgr.Status()
+	if len(status) == 0 {
+		return
+	}
+	version := status[0].Version
+
+	for _, d := range cfg.Domains {
+		if d.Type != "php" {
+			continue
+		}
+		inst, err := phpMgr.AssignDomain(d.Host, version)
+		if err != nil {
+			// Already assigned or other issue — skip
+			continue
+		}
+		if err := phpMgr.StartDomain(d.Host); err != nil {
+			s.logger.Warn("PHP auto-start failed on boot", "domain", d.Host, "error", err)
+			continue
+		}
+		// Update FPM address in config if different
+		if inst.ListenAddr != d.PHP.FPMAddress {
+			for i := range cfg.Domains {
+				if cfg.Domains[i].Host == d.Host {
+					cfg.Domains[i].PHP.FPMAddress = inst.ListenAddr
+					break
+				}
+			}
+		}
+		s.logger.Info("PHP auto-started on boot", "domain", d.Host, "version", version, "listen", inst.ListenAddr)
+	}
 }
 
 func (s *Server) writePID() error {
