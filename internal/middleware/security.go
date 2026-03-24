@@ -103,8 +103,8 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, wafEnabled bool, s
 				if r.Body != nil && (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") {
 					bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyScan))
 					if err == nil && len(bodyBytes) > 0 {
-						// Restore body for downstream handlers
-						r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+						// Restore FULL body: scanned prefix + unread remainder
+						r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), r.Body))
 						body := string(bodyBytes)
 						decodedBody, _ := url.QueryUnescape(body)
 

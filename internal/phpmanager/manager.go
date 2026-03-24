@@ -286,11 +286,12 @@ func (m *Manager) StartDomain(domain string) error {
 		changeFn(domain, listenAddr)
 	}
 
-	// Reap the process in the background.
+	// Reap the process in the background and auto-restart on crash.
 	go func() {
 		waitErr := cmd.Wait()
 		m.domainMu.Lock()
-		if di, ok := m.domainMap[domain]; ok && di.proc != nil && di.proc.cmd == cmd {
+		di, stillAssigned := m.domainMap[domain]
+		if stillAssigned && di.proc != nil && di.proc.cmd == cmd {
 			di.proc = nil
 			if di.tmpINI != "" {
 				os.Remove(di.tmpINI)
@@ -298,10 +299,21 @@ func (m *Manager) StartDomain(domain string) error {
 			}
 		}
 		m.domainMu.Unlock()
+
 		if waitErr != nil {
 			m.logger.Warn("PHP-CGI for domain exited", "domain", domain, "error", waitErr)
 		} else {
-			m.logger.Info("PHP-CGI for domain exited", "domain", domain)
+			m.logger.Info("PHP-CGI for domain exited normally", "domain", domain)
+		}
+
+		// Auto-restart if the domain is still assigned (crash or max-requests reached)
+		if stillAssigned {
+			time.Sleep(500 * time.Millisecond) // brief backoff
+			if err := m.StartDomain(domain); err != nil {
+				m.logger.Error("PHP-CGI auto-restart failed", "domain", domain, "error", err)
+			} else {
+				m.logger.Info("PHP-CGI auto-restarted", "domain", domain)
+			}
 		}
 	}()
 
@@ -327,6 +339,11 @@ func (m *Manager) StopDomain(domain string) error {
 	inst.tmpINI = ""
 	m.domainMu.Unlock()
 
+	// System FPM socket: no process to kill (managed by systemd)
+	if proc.cmd == nil || proc.cmd.Process == nil {
+		m.logger.Info("detached from system php-fpm", "domain", domain)
+		return nil
+	}
 	if err := proc.cmd.Process.Kill(); err != nil {
 		return fmt.Errorf("kill php-cgi for domain %s: %w", domain, err)
 	}
