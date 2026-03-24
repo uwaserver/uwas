@@ -146,6 +146,8 @@ func (s *Server) registerRoutes() {
 	// PHP manager
 	s.mux.HandleFunc("GET /api/v1/php", s.handlePHPList)
 	s.mux.HandleFunc("GET /api/v1/php/install-info", s.handlePHPInstallInfo)
+	s.mux.HandleFunc("GET /api/v1/php/{version}/config/raw", s.handlePHPConfigRawGet)
+	s.mux.HandleFunc("PUT /api/v1/php/{version}/config/raw", s.handlePHPConfigRawPut)
 	s.mux.HandleFunc("POST /api/v1/php/{version}/enable", s.handlePHPEnable)
 	s.mux.HandleFunc("POST /api/v1/php/{version}/disable", s.handlePHPDisable)
 	s.mux.HandleFunc("POST /api/v1/php/install", s.handlePHPInstall)
@@ -700,6 +702,42 @@ func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
+}
+
+func (s *Server) handlePHPConfigRawGet(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+	content, err := s.phpMgr.GetConfigRaw(version)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, map[string]string{"content": content, "version": version})
+}
+
+func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20) // 2MB
+	version := r.PathValue("version")
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.phpMgr.SetConfigRaw(version, req.Content); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("PHP config raw updated", "version", version)
+	jsonResponse(w, map[string]string{"status": "saved", "version": version})
 }
 
 func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {

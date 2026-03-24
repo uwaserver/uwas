@@ -712,6 +712,34 @@ func parseINIConfig(path string) (PHPConfig, error) {
 	return cfg, scanner.Err()
 }
 
+// GetConfigRaw returns the raw php.ini file content.
+func (m *Manager) GetConfigRaw(version string) (string, error) {
+	inst, ok := m.findInstall(version)
+	if !ok {
+		return "", fmt.Errorf("PHP %s not found", version)
+	}
+	if inst.ConfigFile == "" {
+		return "", fmt.Errorf("no config file for PHP %s", version)
+	}
+	data, err := os.ReadFile(inst.ConfigFile)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// SetConfigRaw writes the entire php.ini file content.
+func (m *Manager) SetConfigRaw(version, content string) error {
+	inst, ok := m.findInstall(version)
+	if !ok {
+		return fmt.Errorf("PHP %s not found", version)
+	}
+	if inst.ConfigFile == "" {
+		return fmt.Errorf("no config file for PHP %s", version)
+	}
+	return os.WriteFile(inst.ConfigFile, []byte(content), 0644)
+}
+
 // SetConfig updates a single php.ini directive for the given PHP version.
 // It rewrites the ini file in place.
 func (m *Manager) SetConfig(version, key, value string) error {

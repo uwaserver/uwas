@@ -26,6 +26,7 @@ import Updates from '@/pages/Updates';
 import Security from '@/pages/Security';
 import EmailGuide from '@/pages/EmailGuide';
 import WordPress from '@/pages/WordPress';
+import PHPConfig from '@/pages/PHPConfig';
 import IPManagement from '@/pages/IPManagement';
 
 function RequireAuth() {
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/config-editor" element={<ConfigEditor />} />
         <Route path="/certificates" element={<Certificates />} />
         <Route path="/php" element={<PHP />} />
+        <Route path="/php-config" element={<PHPConfig />} />
         <Route path="/backups" element={<Backups />} />
         <Route path="/database" element={<Database />} />
         <Route path="/wordpress" element={<WordPress />} />

@@ -239,6 +239,10 @@ export interface PHPInstall {
 
 export const fetchPHP = () => api<PHPInstall[]>('/api/v1/php');
 export const enablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/enable`, { method: 'POST' });
+export const fetchPHPConfigRaw = (version: string) => api<{ content: string }>(`/api/v1/php/${version}/config/raw`);
+export const savePHPConfigRaw = (version: string, content: string) => api<{ status: string }>(`/api/v1/php/${version}/config/raw`, { method: 'PUT', body: JSON.stringify({ content }) });
+export const fetchPHPConfig = (version: string) => api<Record<string, string>>(`/api/v1/php/${version}/config`);
+export const updatePHPConfigKey = (version: string, key: string, value: string) => api<{ status: string }>(`/api/v1/php/${version}/config`, { method: 'PUT', body: JSON.stringify({ key, value }) });
 export const disablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/disable`, { method: 'POST' });
 
 export interface PHPInstallInfo {
