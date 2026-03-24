@@ -45,6 +45,7 @@ const links = [
   { to: '/ip-management', label: 'IP Management', icon: Server },
   { to: '/email', label: 'Email Guide', icon: Mail },
   { to: '/php', label: 'PHP', icon: Cpu },
+  { to: '/php-config', label: 'PHP Config', icon: Settings },
   { to: '/backups', label: 'Backups', icon: Archive },
   { to: '/database', label: 'Database', icon: HardDrive },
   { to: '/wordpress', label: 'WordPress', icon: Zap },
