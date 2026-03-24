@@ -601,6 +601,97 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result)
 }
 
+// ============ Domain Debug ============
+
+func (s *Server) handleDomainDebug(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	result := map[string]any{"host": host}
+
+	// Config lookup
+	s.configMu.RLock()
+	var domainCfg *config.Domain
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == host {
+			domainCfg = &s.config.Domains[i]
+			break
+		}
+	}
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	if domainCfg == nil {
+		result["error"] = "domain not found in config"
+		result["configured"] = false
+		jsonResponse(w, result)
+		return
+	}
+
+	result["configured"] = true
+	result["type"] = domainCfg.Type
+	result["root"] = domainCfg.Root
+	result["ssl_mode"] = domainCfg.SSL.Mode
+	result["php_fpm_address"] = domainCfg.PHP.FPMAddress
+	result["web_root_global"] = webRoot
+
+	// Check if root directory exists
+	if domainCfg.Root != "" {
+		if info, err := os.Stat(domainCfg.Root); err != nil {
+			result["root_exists"] = false
+			result["root_error"] = err.Error()
+		} else {
+			result["root_exists"] = true
+			result["root_is_dir"] = info.IsDir()
+			// List files in root
+			entries, _ := os.ReadDir(domainCfg.Root)
+			var files []string
+			for _, e := range entries {
+				files = append(files, e.Name())
+			}
+			result["root_files"] = files
+		}
+	} else {
+		result["root_exists"] = false
+		result["root_error"] = "root is empty"
+	}
+
+	// Config match check
+	result["in_config"] = true
+
+	// PHP status
+	if domainCfg.Type == "php" && s.phpMgr != nil {
+		instances := s.phpMgr.GetDomainInstances()
+		for _, inst := range instances {
+			if inst.Domain == host {
+				result["php_assigned"] = true
+				result["php_version"] = inst.Version
+				result["php_listen"] = inst.ListenAddr
+				result["php_running"] = inst.Running
+				result["php_pid"] = inst.PID
+				break
+			}
+		}
+		if result["php_assigned"] == nil {
+			result["php_assigned"] = false
+		}
+	}
+
+	// SSL/cert status
+	if s.tlsMgr != nil {
+		if certInfo := s.tlsMgr.CertStatus(host); certInfo != nil {
+			result["cert_active"] = true
+			result["cert_issuer"] = certInfo.Issuer
+			result["cert_days_left"] = certInfo.DaysLeft
+		} else {
+			result["cert_active"] = false
+		}
+	} else {
+		result["cert_active"] = false
+	}
+
+	jsonResponse(w, result)
+}
+
 // ============ System Resources ============
 
 func (s *Server) handleSystemResources(w http.ResponseWriter, r *http.Request) {
