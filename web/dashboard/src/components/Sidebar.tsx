@@ -31,6 +31,7 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
+  Stethoscope,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -104,6 +105,7 @@ const groups: NavGroup[] = [
       { to: '/config-editor', label: 'Config Editor', icon: Code },
       { to: '/backups', label: 'Backups', icon: Archive },
       { to: '/updates', label: 'Updates', icon: Download },
+      { to: '/doctor', label: 'Doctor', icon: Stethoscope },
       { to: '/settings', label: 'Settings', icon: Settings },
     ],
   },

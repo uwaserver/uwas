@@ -23,6 +23,8 @@ func main() {
 	app.Register(&cli.RestartCommand{})
 	app.Register(&cli.PHPCommand{})
 	app.Register(&cli.UserCommand{})
+	app.Register(&cli.InstallCmd{})
+	app.Register(&cli.DoctorCmd{})
 	app.Register(cli.NewHelpCommand(app))
 
 	app.Run(os.Args[1:])
