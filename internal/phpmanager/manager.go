@@ -22,6 +22,7 @@ type PHPInstall struct {
 	ConfigFile string   `json:"config_file"` // php.ini path
 	Extensions []string `json:"extensions"`  // enabled extensions
 	SAPI       string   `json:"sapi"`        // "cgi-fcgi" or "fpm-fcgi"
+	Disabled   bool     `json:"disabled"`    // user disabled this version
 }
 
 // PHPConfig holds commonly tuned php.ini directives.
@@ -859,6 +860,30 @@ func (m *Manager) Status() []PHPStatus {
 		statuses = append(statuses, st)
 	}
 	return statuses
+}
+
+// EnableVersion enables a PHP version for use.
+func (m *Manager) EnableVersion(version string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.installations {
+		if m.installations[i].Version == version {
+			m.installations[i].Disabled = false
+			return
+		}
+	}
+}
+
+// DisableVersion disables a PHP version — it won't be selectable for domains.
+func (m *Manager) DisableVersion(version string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.installations {
+		if m.installations[i].Version == version {
+			m.installations[i].Disabled = true
+			return
+		}
+	}
 }
 
 // StopAll stops all running PHP-CGI subprocesses (both global and per-domain).

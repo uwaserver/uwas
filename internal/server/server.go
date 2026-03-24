@@ -1207,37 +1207,45 @@ func (s *Server) shutdown() {
 	s.logger.Info("shutdown complete")
 }
 
-// autoAssignPHP assigns and starts PHP for all PHP-type domains on server boot.
+// autoAssignPHP starts a default global PHP process and assigns all PHP domains to it.
 func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 	status := phpMgr.Status()
 	if len(status) == 0 {
+		s.logger.Warn("no PHP-CGI/FPM detected — PHP sites will not work")
 		return
 	}
-	version := status[0].Version
 
+	// Start the default global PHP on port 9000.
+	defaultVer := status[0].Version
+	defaultAddr := "127.0.0.1:9000"
+	if err := phpMgr.StartFPM(defaultVer, defaultAddr); err != nil {
+		// Already running or other issue — try to continue
+		s.logger.Debug("default PHP start", "version", defaultVer, "error", err)
+	} else {
+		s.logger.Info("default PHP started", "version", defaultVer, "listen", defaultAddr)
+	}
+
+	// Assign all PHP-type domains.
 	for _, d := range cfg.Domains {
 		if d.Type != "php" {
 			continue
 		}
-		inst, err := phpMgr.AssignDomain(d.Host, version)
+		inst, err := phpMgr.AssignDomain(d.Host, defaultVer)
 		if err != nil {
-			// Already assigned or other issue — skip
-			continue
+			continue // already assigned
 		}
 		if err := phpMgr.StartDomain(d.Host); err != nil {
-			s.logger.Warn("PHP auto-start failed on boot", "domain", d.Host, "error", err)
+			s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
 			continue
 		}
-		// Update FPM address in config if different
-		if inst.ListenAddr != d.PHP.FPMAddress {
-			for i := range cfg.Domains {
-				if cfg.Domains[i].Host == d.Host {
-					cfg.Domains[i].PHP.FPMAddress = inst.ListenAddr
-					break
-				}
+		// Sync FPM address in config.
+		for i := range cfg.Domains {
+			if cfg.Domains[i].Host == d.Host {
+				cfg.Domains[i].PHP.FPMAddress = inst.ListenAddr
+				break
 			}
 		}
-		s.logger.Info("PHP auto-started on boot", "domain", d.Host, "version", version, "listen", inst.ListenAddr)
+		s.logger.Info("PHP assigned to domain", "domain", d.Host, "version", defaultVer, "listen", inst.ListenAddr)
 	}
 }
 

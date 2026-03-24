@@ -146,6 +146,8 @@ func (s *Server) registerRoutes() {
 	// PHP manager
 	s.mux.HandleFunc("GET /api/v1/php", s.handlePHPList)
 	s.mux.HandleFunc("GET /api/v1/php/install-info", s.handlePHPInstallInfo)
+	s.mux.HandleFunc("POST /api/v1/php/{version}/enable", s.handlePHPEnable)
+	s.mux.HandleFunc("POST /api/v1/php/{version}/disable", s.handlePHPDisable)
 	s.mux.HandleFunc("POST /api/v1/php/install", s.handlePHPInstall)
 	s.mux.HandleFunc("GET /api/v1/php/install/status", s.handlePHPInstallStatus)
 	s.mux.HandleFunc("GET /api/v1/php/{version}/config", s.handlePHPConfig)
@@ -698,6 +700,28 @@ func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
+}
+
+func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+	s.phpMgr.EnableVersion(version)
+	s.logger.Info("PHP version enabled", "version", version)
+	jsonResponse(w, map[string]string{"status": "enabled", "version": version})
+}
+
+func (s *Server) handlePHPDisable(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+	s.phpMgr.DisableVersion(version)
+	s.logger.Info("PHP version disabled", "version", version)
+	jsonResponse(w, map[string]string{"status": "disabled", "version": version})
 }
 
 // --- Per-domain PHP endpoints ---

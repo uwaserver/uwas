@@ -27,6 +27,7 @@ import {
   Clock,
   ShieldCheck,
   Download,
+  Server,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -41,6 +42,7 @@ const links = [
   { to: '/config-editor', label: 'Config Editor', icon: Code },
   { to: '/certificates', label: 'Certificates', icon: Lock },
   { to: '/dns', label: 'DNS Checker', icon: Waypoints },
+  { to: '/ip-management', label: 'IP Management', icon: Server },
   { to: '/email', label: 'Email Guide', icon: Mail },
   { to: '/php', label: 'PHP', icon: Cpu },
   { to: '/backups', label: 'Backups', icon: Archive },
