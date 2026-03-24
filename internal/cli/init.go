@@ -139,24 +139,34 @@ global:
   worker_count: auto
   max_connections: 65536
   http_listen: "%s"
+  https_listen: ":443"
+  http3: true
   web_root: "%s"
+  pid_file: /var/run/uwas.pid
   log_level: info
   log_format: text
+  trusted_proxies: []
 
   timeouts:
     read: 30s
     write: 60s
     idle: 120s
     shutdown_grace: 10s
+    max_header_bytes: 1048576
 
   admin:
     enabled: true
     listen: "%s"
     api_key: "%s"
 
+  mcp:
+    enabled: true
+
   acme:
     email: "%s"
+    ca_url: ""
     storage: %s
+    dns_provider: ""
 
   cache:
     enabled: true
@@ -164,9 +174,17 @@ global:
     disk_path: %s
     default_ttl: 3600
 
+  alerting:
+    enabled: false
+    webhook_url: ""
+    slack_url: ""
+    telegram_token: ""
+    telegram_chat_id: ""
+
   backup:
     enabled: true
     provider: local
+    schedule: 24h
     keep: 7
     local:
       path: %s
