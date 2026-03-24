@@ -306,12 +306,18 @@ export default function Domains() {
 
   /* -------- delete -------- */
 
+  const [cleanupOnDelete, setCleanupOnDelete] = useState(true);
+
   const handleDelete = async (host: string) => {
     setStatus(null);
     try {
-      await deleteDomain(host);
-      setStatus({ ok: true, message: `Domain "${host}" deleted successfully` });
+      await deleteDomain(host, cleanupOnDelete);
+      const msg = cleanupOnDelete
+        ? `Domain "${host}" deleted with all files, PHP, and SFTP user`
+        : `Domain "${host}" deleted (files kept)`;
+      setStatus({ ok: true, message: msg });
       setConfirmDelete(null);
+      setCleanupOnDelete(true);
       if (expandedHost === host) { setExpandedHost(null); setDetail(null); }
       loadDomains();
     } catch (e) {
@@ -532,11 +538,13 @@ export default function Domains() {
                     certInfo={certMap[d.host] ?? null}
                     confirmDelete={confirmDelete}
                     purgingHost={purgingHost}
+                    cleanupOnDelete={cleanupOnDelete}
                     onToggle={() => toggleExpand(d.host)}
                     onEdit={startEdit}
                     onDelete={handleDelete}
                     onConfirmDelete={setConfirmDelete}
                     onPurge={handlePurgeDomain}
+                    onCleanupChange={setCleanupOnDelete}
                   />
                 );
               })}
@@ -786,21 +794,6 @@ export default function Domains() {
 /*  Domain row + inline detail                                         */
 /* ------------------------------------------------------------------ */
 
-interface DomainRowProps {
-  domain: DomainData;
-  isExpanded: boolean;
-  detail: DomainDetail | null;
-  detailLoading: boolean;
-  certInfo: CertInfo | null;
-  confirmDelete: string | null;
-  purgingHost: string | null;
-  onToggle: () => void;
-  onEdit: (host: string) => void;
-  onDelete: (host: string) => void;
-  onConfirmDelete: (host: string | null) => void;
-  onPurge: (host: string) => void;
-}
-
 function DomainRow({
   domain: d,
   isExpanded,
@@ -809,12 +802,14 @@ function DomainRow({
   certInfo,
   confirmDelete,
   purgingHost,
+  cleanupOnDelete,
   onToggle,
   onEdit,
   onDelete,
   onConfirmDelete,
   onPurge,
-}: DomainRowProps) {
+  onCleanupChange,
+}: any) {
   return (
     <>
       {/* Main row */}
@@ -837,9 +832,16 @@ function DomainRow({
         <td className="px-5 py-3"><StatusDot active={true} /></td>
         <td className="px-5 py-3">
           {confirmDelete === d.host ? (
-            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-              <button onClick={() => onDelete(d.host)} className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-red-700">Confirm</button>
-              <button onClick={() => onConfirmDelete(null)} className="rounded bg-[#334155] px-2 py-1 text-xs font-medium text-slate-300 transition hover:bg-[#475569]">Cancel</button>
+            <div className="flex flex-col items-end gap-1.5" onClick={e => e.stopPropagation()}>
+              <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                <input type="checkbox" checked={cleanupOnDelete} onChange={e => onCleanupChange(e.target.checked)}
+                  className="rounded border-[#334155] bg-[#1e293b] text-red-600" />
+                Delete files + PHP + SFTP user
+              </label>
+              <div className="flex items-center gap-2">
+                <button onClick={() => onDelete(d.host)} className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-red-700">Delete</button>
+                <button onClick={() => onConfirmDelete(null)} className="rounded bg-[#334155] px-2 py-1 text-xs font-medium text-slate-300 transition hover:bg-[#475569]">Cancel</button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center gap-1">

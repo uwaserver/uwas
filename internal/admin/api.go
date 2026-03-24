@@ -1101,6 +1101,22 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 
 	s.RecordAudit("domain.create", "domain: "+d.Host, ip, true)
 	s.notifyDomainChange()
+
+	// Auto-assign and start PHP for PHP-type domains.
+	if d.Type == "php" && s.phpMgr != nil {
+		phpStatus := s.phpMgr.Status()
+		if len(phpStatus) > 0 {
+			version := phpStatus[0].Version
+			if _, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
+				if err := s.phpMgr.StartDomain(d.Host); err != nil {
+					s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
+				} else {
+					s.logger.Info("auto-assigned PHP to domain", "domain", d.Host, "version", version)
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(d)
@@ -1109,11 +1125,14 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	host := r.PathValue("host")
+	cleanup := r.URL.Query().Get("cleanup") == "true"
 
 	s.configMu.Lock()
 	found := false
+	var domainRoot string
 	for i, d := range s.config.Domains {
 		if d.Host == host {
+			domainRoot = d.Root
 			s.config.Domains = append(s.config.Domains[:i], s.config.Domains[i+1:]...)
 			found = true
 			break
@@ -1126,9 +1145,27 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
+
+	// Cleanup: stop PHP, remove SFTP user, delete files
+	if cleanup {
+		if s.phpMgr != nil {
+			s.phpMgr.StopDomain(host)
+			s.phpMgr.UnassignDomain(host)
+		}
+		siteuser.DeleteUser(host)
+		// Delete web root (go up one level from public_html)
+		if domainRoot != "" {
+			parent := filepath.Dir(domainRoot) // /var/www/domain.com
+			if parent != "" && parent != "/" && parent != "." {
+				os.RemoveAll(parent)
+				s.logger.Info("deleted domain files", "domain", host, "path", parent)
+			}
+		}
+	}
+
 	s.RecordAudit("domain.delete", "domain: "+host, ip, true)
 	s.notifyDomainChange()
-	jsonResponse(w, map[string]string{"status": "deleted"})
+	jsonResponse(w, map[string]string{"status": "deleted", "cleanup": fmt.Sprintf("%v", cleanup)})
 }
 
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {

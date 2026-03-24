@@ -165,7 +165,7 @@ export const callMCPTool = (name: string, input?: Record<string, unknown>) =>
 export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
 export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
 export const updateDomain = (host: string, domain: Record<string, unknown>) => api<DomainData>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'PUT', body: JSON.stringify(domain) });
-export const deleteDomain = (host: string) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
+export const deleteDomain = (host: string, cleanup = false) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}${cleanup ? '?cleanup=true' : ''}`, { method: 'DELETE' });
 
 export interface DomainDetail {
   host: string;
