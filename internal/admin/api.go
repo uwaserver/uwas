@@ -98,6 +98,9 @@ type Server struct {
 	auditPos     int
 	auditFull    bool
 
+	// 2FA pending setup (not yet verified)
+	pendingTOTP string
+
 	// Rate limiting for auth failures
 	rlMu      sync.Mutex
 	rateLimit map[string]*rateLimitEntry
@@ -255,6 +258,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/domains/health", s.handleDomainHealth)
 	s.mux.HandleFunc("GET /api/v1/domains/{host}/debug", s.handleDomainDebug)
 
+	// 2FA / TOTP
+	s.mux.HandleFunc("GET /api/v1/auth/2fa/status", s.handle2FAStatus)
+	s.mux.HandleFunc("POST /api/v1/auth/2fa/setup", s.handle2FASetup)
+	s.mux.HandleFunc("POST /api/v1/auth/2fa/verify", s.handle2FAVerify)
+	s.mux.HandleFunc("POST /api/v1/auth/2fa/disable", s.handle2FADisable)
+
 	// Self-update
 	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
 	s.mux.HandleFunc("POST /api/v1/system/update", s.handleUpdate)
@@ -362,6 +371,29 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+
+		// 2FA check: if TOTP is enabled, require valid code.
+		// Exempt 2FA management endpoints so user can set up/verify/disable.
+		s.configMu.RLock()
+		totpSecret := s.config.Global.Admin.TOTPSecret
+		s.configMu.RUnlock()
+		if totpSecret != "" && !strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") {
+			totpCode := r.Header.Get("X-TOTP-Code")
+			if totpCode == "" {
+				totpCode = r.URL.Query().Get("totp")
+			}
+			if totpCode == "" {
+				w.Header().Set("X-2FA-Required", "true")
+				jsonError(w, "2fa_required", http.StatusForbidden)
+				return
+			}
+			if !ValidateTOTP(totpSecret, totpCode) {
+				s.recordAuthFailure(ip)
+				jsonError(w, "invalid 2FA code", http.StatusForbidden)
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -2097,4 +2129,117 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 		"interval": d.String(),
 		"active":   true,
 	})
+}
+
+// ── 2FA / TOTP ──────────────────────────────────────────────────────────────
+
+func (s *Server) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	enabled := s.config.Global.Admin.TOTPSecret != ""
+	s.configMu.RUnlock()
+	jsonResponse(w, map[string]bool{"enabled": enabled})
+}
+
+func (s *Server) handle2FASetup(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	existing := s.config.Global.Admin.TOTPSecret
+	s.configMu.RUnlock()
+	if existing != "" {
+		jsonError(w, "2FA is already enabled; disable it first to reconfigure", http.StatusConflict)
+		return
+	}
+
+	secret, err := GenerateTOTPSecret()
+	if err != nil {
+		jsonError(w, "failed to generate secret", http.StatusInternalServerError)
+		return
+	}
+
+	uri := TOTPProvisioningURI(secret, "admin", "UWAS")
+	// Don't save yet — user must verify with a valid code first.
+	// Store in a temporary field so verify can pick it up.
+	s.configMu.Lock()
+	s.pendingTOTP = secret
+	s.configMu.Unlock()
+
+	jsonResponse(w, map[string]string{
+		"secret": secret,
+		"uri":    uri,
+	})
+}
+
+func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	s.configMu.Lock()
+	secret := s.pendingTOTP
+	if secret == "" {
+		// Already enabled — validate against active secret
+		secret = s.config.Global.Admin.TOTPSecret
+	}
+	s.configMu.Unlock()
+
+	if secret == "" {
+		jsonError(w, "no 2FA setup pending; call /auth/2fa/setup first", http.StatusBadRequest)
+		return
+	}
+
+	if !ValidateTOTP(secret, req.Code) {
+		jsonError(w, "invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	// If this was a pending setup, activate it.
+	s.configMu.Lock()
+	if s.pendingTOTP != "" {
+		s.config.Global.Admin.TOTPSecret = s.pendingTOTP
+		s.pendingTOTP = ""
+	}
+	s.configMu.Unlock()
+
+	s.persistConfig()
+	ip := requestIP(r)
+	s.RecordAudit("2fa.enabled", "TOTP activated", ip, true)
+
+	jsonResponse(w, map[string]any{"status": "2fa_enabled"})
+}
+
+func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	s.configMu.RLock()
+	secret := s.config.Global.Admin.TOTPSecret
+	s.configMu.RUnlock()
+
+	if secret == "" {
+		jsonError(w, "2FA is not enabled", http.StatusBadRequest)
+		return
+	}
+
+	if !ValidateTOTP(secret, req.Code) {
+		jsonError(w, "invalid code", http.StatusUnauthorized)
+		return
+	}
+
+	s.configMu.Lock()
+	s.config.Global.Admin.TOTPSecret = ""
+	s.configMu.Unlock()
+
+	s.persistConfig()
+	ip := requestIP(r)
+	s.RecordAudit("2fa.disabled", "TOTP deactivated", ip, true)
+
+	jsonResponse(w, map[string]any{"status": "2fa_disabled"})
 }

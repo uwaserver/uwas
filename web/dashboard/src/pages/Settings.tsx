@@ -19,6 +19,7 @@ import {
   Cpu,
   AlertTriangle,
   Globe,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   fetchConfigRaw,
@@ -27,6 +28,10 @@ import {
   fetchConfigExport,
   fetchHealth,
   fetchSystem,
+  fetch2FAStatus,
+  setup2FA,
+  verify2FA,
+  disable2FA,
   type HealthData,
   type SystemInfo,
 } from '@/lib/api';
@@ -539,6 +544,13 @@ export default function Settings() {
   const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
   const statusTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 2FA state
+  const [twoFA, setTwoFA] = useState<{ enabled: boolean } | null>(null);
+  const [twoFASetup, setTwoFASetup] = useState<{ secret: string; uri: string } | null>(null);
+  const [twoFACode, setTwoFACode] = useState('');
+  const [twoFALoading, setTwoFALoading] = useState(false);
+  const [twoFAError, setTwoFAError] = useState('');
+
   // Gather all field keys
   const allFields = SECTIONS.flatMap(s => s.fields);
 
@@ -562,16 +574,18 @@ export default function Settings() {
   /** Load raw config + health + system info. */
   const load = useCallback(async () => {
     try {
-      const [raw, h, s] = await Promise.all([
+      const [raw, h, s, tfa] = await Promise.all([
         fetchConfigRaw(),
         fetchHealth(),
         fetchSystem(),
+        fetch2FAStatus().catch(() => ({ enabled: false })),
       ]);
       setRawYaml(raw.content);
       setOriginalYaml(raw.content);
       parseYaml(raw.content);
       setHealth(h);
       setSystem(s);
+      setTwoFA(tfa);
     } catch {
       // ignore
     } finally {
@@ -809,6 +823,154 @@ export default function Settings() {
               />
             ))}
           </div>
+
+          {/* Admin: 2FA Section */}
+          {section.id === 'admin' && twoFA && (
+            <div className="mt-5 border-t border-[#334155] pt-5">
+              <h3 className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <ShieldCheck size={14} />
+                Two-Factor Authentication (TOTP)
+                {twoFA.enabled ? (
+                  <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-medium normal-case text-emerald-400">Enabled</span>
+                ) : (
+                  <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium normal-case text-slate-400">Disabled</span>
+                )}
+              </h3>
+
+              {twoFAError && (
+                <div className="mb-3 rounded bg-red-500/10 px-3 py-2 text-sm text-red-400">{twoFAError}</div>
+              )}
+
+              {!twoFA.enabled && !twoFASetup && (
+                <button
+                  onClick={async () => {
+                    setTwoFALoading(true);
+                    setTwoFAError('');
+                    try {
+                      const data = await setup2FA();
+                      setTwoFASetup(data);
+                    } catch (err: unknown) {
+                      setTwoFAError(err instanceof Error ? err.message : 'Setup failed');
+                    } finally {
+                      setTwoFALoading(false);
+                    }
+                  }}
+                  disabled={twoFALoading}
+                  className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {twoFALoading ? 'Setting up...' : 'Enable 2FA'}
+                </button>
+              )}
+
+              {!twoFA.enabled && twoFASetup && (
+                <div className="space-y-4">
+                  <div className="rounded bg-[#0f172a] p-4">
+                    <p className="mb-2 text-sm text-slate-300">
+                      Add this secret to your authenticator app (Google Authenticator, Authy, etc.):
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 rounded bg-[#334155] px-3 py-2 text-xs font-mono text-emerald-400 break-all">
+                        {twoFASetup.secret}
+                      </code>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(twoFASetup.secret)}
+                        className="rounded bg-[#334155] p-2 text-slate-400 hover:text-white"
+                        title="Copy secret"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      Or use this URI: <code className="break-all text-slate-400">{twoFASetup.uri}</code>
+                    </p>
+                  </div>
+
+                  <div className="flex items-end gap-3">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-300">
+                        Verify Code
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={twoFACode}
+                        onChange={e => setTwoFACode(e.target.value.replace(/\D/g, ''))}
+                        placeholder="000000"
+                        className="w-32 rounded border border-[#334155] bg-[#0f172a] px-3 py-2 text-center font-mono text-lg tracking-widest text-slate-200 outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setTwoFALoading(true);
+                        setTwoFAError('');
+                        try {
+                          await verify2FA(twoFACode);
+                          setTwoFA({ enabled: true });
+                          setTwoFASetup(null);
+                          setTwoFACode('');
+                          showStatus(true, '2FA enabled successfully');
+                        } catch (err: unknown) {
+                          setTwoFAError(err instanceof Error ? err.message : 'Invalid code');
+                        } finally {
+                          setTwoFALoading(false);
+                        }
+                      }}
+                      disabled={twoFALoading || twoFACode.length !== 6}
+                      className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {twoFALoading ? 'Verifying...' : 'Confirm & Enable'}
+                    </button>
+                    <button
+                      onClick={() => { setTwoFASetup(null); setTwoFACode(''); setTwoFAError(''); }}
+                      className="rounded px-3 py-2 text-sm text-slate-400 hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {twoFA.enabled && (
+                <div className="flex items-end gap-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">
+                      Current Code (to disable)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={twoFACode}
+                      onChange={e => setTwoFACode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="000000"
+                      className="w-32 rounded border border-[#334155] bg-[#0f172a] px-3 py-2 text-center font-mono text-lg tracking-widest text-slate-200 outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setTwoFALoading(true);
+                      setTwoFAError('');
+                      try {
+                        await disable2FA(twoFACode);
+                        setTwoFA({ enabled: false });
+                        setTwoFACode('');
+                        showStatus(true, '2FA disabled');
+                      } catch (err: unknown) {
+                        setTwoFAError(err instanceof Error ? err.message : 'Invalid code');
+                      } finally {
+                        setTwoFALoading(false);
+                      }
+                    }}
+                    disabled={twoFALoading || twoFACode.length !== 6}
+                    className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {twoFALoading ? 'Disabling...' : 'Disable 2FA'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ACME: DNS Credentials conditional sub-section */}
           {section.id === 'acme' && formValues['global.acme.dns_provider'] && (

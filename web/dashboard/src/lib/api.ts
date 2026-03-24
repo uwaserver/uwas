@@ -1,6 +1,7 @@
 const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
 let token = localStorage.getItem('uwas_token') || '';
+let totpCode = '';
 
 export function setToken(t: string) {
   token = t;
@@ -13,7 +14,18 @@ export function getToken() {
 
 export function clearToken() {
   token = '';
+  totpCode = '';
   localStorage.removeItem('uwas_token');
+  localStorage.removeItem('uwas_totp_verified');
+}
+
+export function setTOTPCode(code: string) {
+  totpCode = code;
+  localStorage.setItem('uwas_totp_verified', 'true');
+}
+
+export function isTOTPVerified() {
+  return localStorage.getItem('uwas_totp_verified') === 'true';
 }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -23,6 +35,9 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
+  if (totpCode) {
+    headers['X-TOTP-Code'] = totpCode;
+  }
 
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
 
@@ -30,6 +45,18 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     clearToken();
     window.location.href = '/_uwas/dashboard/login';
     throw new Error('Unauthorized');
+  }
+
+  // 2FA required — redirect to login with 2FA prompt
+  if (res.status === 403) {
+    const body = await res.json().catch(() => ({ error: '' }));
+    if (body.error === '2fa_required') {
+      localStorage.removeItem('uwas_totp_verified');
+      totpCode = '';
+      window.location.href = '/_uwas/dashboard/login?2fa=required';
+      throw new Error('2FA required');
+    }
+    throw new Error(body.error || 'Forbidden');
   }
 
   if (!res.ok) {
@@ -482,4 +509,22 @@ export async function fetchConfigExport(): Promise<void> {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ── 2FA / TOTP ────────────────────────────────────────
+
+export function fetch2FAStatus(): Promise<{ enabled: boolean }> {
+  return api('/api/v1/auth/2fa/status');
+}
+
+export function setup2FA(): Promise<{ secret: string; uri: string }> {
+  return api('/api/v1/auth/2fa/setup', { method: 'POST' });
+}
+
+export function verify2FA(code: string): Promise<{ status: string }> {
+  return api('/api/v1/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+export function disable2FA(code: string): Promise<{ status: string }> {
+  return api('/api/v1/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ code }) });
 }
