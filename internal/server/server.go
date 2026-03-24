@@ -529,12 +529,15 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domain := s.vhosts.Lookup(r.Host)
-	if domain != nil && (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") {
-		target := "https://" + domain.Host + r.URL.RequestURI()
-		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-		http.Redirect(w, r, target, http.StatusMovedPermanently)
-		return
+	// Only redirect configured domains to HTTPS — don't redirect unknown hosts.
+	if s.vhosts.IsConfigured(r.Host) {
+		domain := s.vhosts.Lookup(r.Host)
+		if domain != nil && (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") {
+			target := "https://" + r.Host + r.URL.RequestURI()
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
 	}
 
 	s.handler.ServeHTTP(w, r)
