@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -374,7 +375,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				auth = "Bearer " + token
 			}
 		}
-		if auth != "Bearer "+apiKey {
+		if subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+apiKey)) != 1 {
 			s.recordAuthFailure(ip)
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -1212,8 +1213,14 @@ func (s *Server) persistConfig() {
 		s.logger.Error("failed to marshal config", "error", err)
 		return
 	}
-	if err := os.WriteFile(s.configPath, mainData, 0644); err != nil {
+	// Atomic write: temp file + rename to prevent corruption on crash
+	tmpMain := s.configPath + ".tmp"
+	if err := os.WriteFile(tmpMain, mainData, 0644); err != nil {
 		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
+		return
+	}
+	if err := os.Rename(tmpMain, s.configPath); err != nil {
+		s.logger.Error("failed to rename config", "path", s.configPath, "error", err)
 		return
 	}
 
@@ -1270,6 +1277,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.Host == "" {
 		jsonError(w, "host is required", http.StatusBadRequest)
+		return
+	}
+	if !isValidHostname(d.Host) {
+		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
 		return
 	}
 	if d.Type == "" {
@@ -1382,38 +1393,29 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		d.AccessLog.Path = filepath.Join(logDir, "access.log")
 	}
 
-	s.config.Domains = append(s.config.Domains, d)
-	s.configMu.Unlock()
-
-	s.RecordAudit("domain.create", "domain: "+d.Host, ip, true)
-	s.notifyDomainChange()
-
-	// Auto-assign and start PHP for PHP-type domains.
+	// Auto-assign PHP BEFORE persisting so config on disk has FPM address.
 	if d.Type == "php" && s.phpMgr != nil {
 		phpStatus := s.phpMgr.Status()
 		if len(phpStatus) > 0 {
 			version := phpStatus[0].Version
 			if inst, err := s.phpMgr.AssignDomain(d.Host, version); err == nil {
+				d.PHP.FPMAddress = inst.ListenAddr
 				if err := s.phpMgr.StartDomain(d.Host); err != nil {
 					s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
 				} else {
 					s.logger.Info("auto-assigned PHP to domain", "domain", d.Host, "version", version, "listen", inst.ListenAddr)
-					// Update domain FPM address to match the assigned port.
-					s.configMu.Lock()
-					for i := range s.config.Domains {
-						if s.config.Domains[i].Host == d.Host {
-							s.config.Domains[i].PHP.FPMAddress = inst.ListenAddr
-							break
-						}
-					}
-					s.configMu.Unlock()
-					s.persistConfig()
 				}
 			} else {
 				s.logger.Warn("PHP auto-assign failed", "domain", d.Host, "error", err)
 			}
 		}
 	}
+
+	s.config.Domains = append(s.config.Domains, d)
+	s.configMu.Unlock()
+
+	s.RecordAudit("domain.create", "domain: "+d.Host, ip, true)
+	s.notifyDomainChange()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1978,7 +1980,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 		// Admin
 		"global.admin.enabled": g.Admin.Enabled,
 		"global.admin.listen":  g.Admin.Listen,
-		"global.admin.api_key": g.Admin.APIKey,
+		"global.admin.api_key": maskSecret(g.Admin.APIKey),
 		// MCP
 		"global.mcp.enabled": g.MCP.Enabled,
 		// ACME
@@ -1994,8 +1996,8 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 		// Alerting
 		"global.alerting.enabled":          g.Alerting.Enabled,
 		"global.alerting.webhook_url":      g.Alerting.WebhookURL,
-		"global.alerting.slack_url":        g.Alerting.SlackURL,
-		"global.alerting.telegram_token":   g.Alerting.TelegramToken,
+		"global.alerting.slack_url":        maskSecret(g.Alerting.SlackURL),
+		"global.alerting.telegram_token":   maskSecret(g.Alerting.TelegramToken),
 		"global.alerting.telegram_chat_id": g.Alerting.TelegramChatID,
 		// Backup
 		"global.backup.enabled":  g.Backup.Enabled,
@@ -2104,6 +2106,30 @@ func toInt(v any) int {
 func parseDur(s string) config.Duration {
 	d, _ := time.ParseDuration(s)
 	return config.Duration{Duration: d}
+}
+
+// isValidHostname checks if s is a valid domain name (no path traversal, no injection).
+func isValidHostname(s string) bool {
+	if len(s) == 0 || len(s) > 253 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '*') {
+			return false
+		}
+	}
+	return !strings.Contains(s, "..") && s[0] != '-' && s[0] != '.'
+}
+
+// maskSecret returns "****" + last 4 chars for non-empty secrets, "" for empty.
+func maskSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 4 {
+		return "****"
+	}
+	return "****" + s[len(s)-4:]
 }
 
 func byteSizeStr(b config.ByteSize) string {

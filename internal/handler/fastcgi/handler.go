@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -70,32 +72,42 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	// X-Accel-Redirect / X-Sendfile: serve file directly instead of PHP body
 	if accel := headers.Get("X-Accel-Redirect"); accel != "" {
 		headers.Del("X-Accel-Redirect")
-		filePath := domain.Root + accel
-		if f, err := os.Open(filePath); err == nil {
-			defer f.Close()
-			if info, err := f.Stat(); err == nil {
-				for key, vals := range headers {
-					for _, v := range vals {
-						ctx.Response.Header().Add(key, v)
+		filePath := filepath.Join(domain.Root, filepath.Clean("/"+accel))
+		// Security: prevent path traversal outside document root
+		absRoot, _ := filepath.Abs(domain.Root)
+		absPath, _ := filepath.Abs(filePath)
+		if strings.HasPrefix(absPath, absRoot) {
+			if f, err := os.Open(filePath); err == nil {
+				defer f.Close()
+				if info, err := f.Stat(); err == nil {
+					for key, vals := range headers {
+						for _, v := range vals {
+							ctx.Response.Header().Add(key, v)
+						}
 					}
+					http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
+					return
 				}
-				http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
-				return
 			}
 		}
-		// Fall through to normal response if file not found
+		// Fall through to normal response if file not found or path traversal
 	} else if sendfile := headers.Get("X-Sendfile"); sendfile != "" {
 		headers.Del("X-Sendfile")
-		if f, err := os.Open(sendfile); err == nil {
-			defer f.Close()
-			if info, err := f.Stat(); err == nil {
-				for key, vals := range headers {
-					for _, v := range vals {
-						ctx.Response.Header().Add(key, v)
+		// Security: X-Sendfile must stay within document root
+		absRoot, _ := filepath.Abs(domain.Root)
+		absSend, _ := filepath.Abs(sendfile)
+		if strings.HasPrefix(absSend, absRoot) {
+			if f, err := os.Open(sendfile); err == nil {
+				defer f.Close()
+				if info, err := f.Stat(); err == nil {
+					for key, vals := range headers {
+						for _, v := range vals {
+							ctx.Response.Header().Add(key, v)
+						}
 					}
+					http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
+					return
 				}
-				http.ServeContent(ctx.Response, ctx.Request, info.Name(), info.ModTime(), f)
-				return
 			}
 		}
 	}
