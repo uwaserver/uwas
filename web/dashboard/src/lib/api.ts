@@ -404,6 +404,17 @@ export const installDatabase = () => api<{ status: string }>('/api/v1/database/i
 export interface DNSResult { domain: string; a: string[]; aaaa: string[]; cname?: string; mx: string[]; ns: string[]; txt: string[]; points_here: boolean; server_ips: string[]; error?: string; }
 export const checkDNS = (domain: string) => api<DNSResult>(`/api/v1/dns/${encodeURIComponent(domain)}`);
 
+// DNS record management (Cloudflare)
+export interface DNSRecord { id: string; type: string; name: string; content: string; ttl: number; proxied: boolean; priority: number; }
+export const fetchDNSRecords = (domain: string) => api<{ zone_id: string; zone: string; records: DNSRecord[] }>(`/api/v1/dns/${encodeURIComponent(domain)}/records`);
+export const createDNSRecord = (domain: string, rec: Partial<DNSRecord>) => api<DNSRecord>(`/api/v1/dns/${encodeURIComponent(domain)}/records`, { method: 'POST', body: JSON.stringify(rec) });
+export const deleteDNSRecord = (domain: string, id: string) => api<{ status: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${id}`, { method: 'DELETE' });
+export const syncDNS = (domain: string) => api<{ status: string; ip: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/sync`, { method: 'POST' });
+
+// Notification test
+export const testNotification = (channel: { type: string; config: Record<string, string> }) =>
+  api<{ status: string }>('/api/v1/notify/test', { method: 'POST', body: JSON.stringify(channel) });
+
 // Security
 export interface SecurityStats { waf_blocked: number; bot_blocked: number; rate_blocked: number; hotlink_blocked: number; total_blocked: number; }
 export interface BlockedRequest { time: string; ip: string; path: string; reason: string; ua: string; }
