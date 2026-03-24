@@ -131,6 +131,10 @@ domains:
 }
 
 func TestValidationMissingRoot(t *testing.T) {
+	// When web_root is set (default /var/www), root is auto-filled.
+	// When web_root is empty AND root is empty, it should error.
+	// But since defaults always set web_root=/var/www, root auto-fill works.
+	// This test verifies that a PHP domain gets root auto-filled.
 	yaml := `
 domains:
   - host: "example.com"
@@ -138,9 +142,12 @@ domains:
     ssl:
       mode: off
 `
-	_, err := loadStringConfig(yaml)
-	if err == nil {
-		t.Fatal("expected validation error for missing root")
+	cfg, err := loadStringConfig(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Domains[0].Root == "" {
+		t.Fatal("root should be auto-filled from web_root default")
 	}
 }
 
@@ -731,6 +738,7 @@ domains:
 }
 
 func TestValidationStaticMissingRoot(t *testing.T) {
+	// Static domain with missing root gets auto-filled from web_root default.
 	yaml := `
 domains:
   - host: "example.com"
@@ -738,11 +746,14 @@ domains:
     ssl:
       mode: off
 `
-	_, err := loadStringConfig(yaml)
-	if err == nil {
-		t.Fatal("expected validation error for missing root in static")
+	cfg, err := loadStringConfig(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !contains(err.Error(), "root is required") {
+	if cfg.Domains[0].Root == "" {
+		t.Fatal("root should be auto-filled")
+	}
+	if !contains(cfg.Domains[0].Root, "example.com") {
 		t.Errorf("error = %q, want to contain 'root is required'", err.Error())
 	}
 }

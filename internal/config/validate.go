@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -156,9 +157,13 @@ func validate(cfg *Config) error {
 			}
 		}
 
-		// Root required for static and php
+		// Root: auto-fill from web_root if empty, only error if still empty
 		if (d.Type == "static" || d.Type == "php") && d.Root == "" {
-			errs = append(errs, fmt.Sprintf("%s: root is required for type %q", prefix, d.Type))
+			if cfg.Global.WebRoot != "" {
+				cfg.Domains[i].Root = filepath.Join(cfg.Global.WebRoot, d.Host, "public_html")
+			} else {
+				errs = append(errs, fmt.Sprintf("%s: root is required for type %q", prefix, d.Type))
+			}
 		}
 
 		// Proxy validation

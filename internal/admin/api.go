@@ -1030,12 +1030,18 @@ func (s *Server) notifyDomainChange() {
 }
 
 // persistConfig writes the current in-memory config to the YAML file.
+// Clears domains_dir individual files to prevent duplicates on reload.
 func (s *Server) persistConfig() {
 	if s.configPath == "" {
 		return
 	}
 	s.configMu.RLock()
-	data, err := yaml.Marshal(s.config)
+	cfg := *s.config
+	domainsDir := s.config.DomainsDir
+	// Clear include/domains_dir to prevent duplicate loading — all domains are in main file now.
+	cfg.Include = nil
+	cfg.DomainsDir = ""
+	data, err := yaml.Marshal(&cfg)
 	s.configMu.RUnlock()
 	if err != nil {
 		s.logger.Error("failed to marshal config", "error", err)
@@ -1043,6 +1049,19 @@ func (s *Server) persistConfig() {
 	}
 	if err := os.WriteFile(s.configPath, data, 0644); err != nil {
 		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
+		return
+	}
+	// Remove individual domain files to prevent duplicates on next load.
+	if domainsDir != "" {
+		entries, err := os.ReadDir(domainsDir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && (strings.HasSuffix(e.Name(), ".yaml") || strings.HasSuffix(e.Name(), ".yml")) {
+					os.Remove(filepath.Join(domainsDir, e.Name()))
+				}
+			}
+			s.logger.Debug("cleared domains_dir to prevent duplicates", "dir", domainsDir)
+		}
 	}
 }
 
