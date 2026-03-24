@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Zap, RefreshCw, Check, Copy, ExternalLink } from 'lucide-react';
 import {
   fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus,
-  type DomainData,
+  type DomainData, type WPInstallStatus,
 } from '@/lib/api';
 
 export default function WordPress() {
@@ -10,7 +10,7 @@ export default function WordPress() {
   const [selectedDomain, setSelectedDomain] = useState('');
   const [dbHost, setDbHost] = useState('localhost');
   const [installing, setInstalling] = useState(false);
-  const [status, setStatus] = useState<any>(null);
+  const [status, setStatus] = useState<WPInstallStatus | null>(null);
   const [error, setError] = useState('');
   const [mysqlOk, setMysqlOk] = useState(false);
   const [copied, setCopied] = useState('');
