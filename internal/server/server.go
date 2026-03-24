@@ -1213,6 +1213,18 @@ func (s *Server) shutdown() {
 		}
 	}
 
+	// Stop all PHP processes.
+	if s.phpMgr != nil {
+		for _, inst := range s.phpMgr.GetDomainInstances() {
+			if inst.Running {
+				if err := s.phpMgr.StopDomain(inst.Domain); err != nil {
+					s.logger.Warn("failed to stop PHP", "domain", inst.Domain, "error", err)
+				}
+			}
+		}
+		s.logger.Info("all PHP processes stopped")
+	}
+
 	// Stop the backup scheduler if running.
 	if s.backupMgr != nil {
 		s.backupMgr.Stop()
