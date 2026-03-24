@@ -544,9 +544,15 @@ func (m *Manager) domainPHPFromInstance(inst *domainInstance) *DomainPHP {
 	for k, v := range inst.configOverrides {
 		dp.ConfigOverrides[k] = v
 	}
-	if inst.proc != nil && inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
-		dp.Running = true
-		dp.PID = inst.proc.cmd.Process.Pid
+	if inst.proc != nil {
+		if inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
+			dp.Running = true
+			dp.PID = inst.proc.cmd.Process.Pid
+		} else if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
+			// System php-fpm — no cmd but still running
+			dp.Running = true
+			dp.PID = -1 // system-managed
+		}
 	}
 	return dp
 }
@@ -1041,13 +1047,15 @@ func (m *Manager) StopFPM(version string) error {
 // PHPStatus represents the status of a single PHP installation.
 type PHPStatus struct {
 	PHPInstall
-	Running    bool   `json:"running"`
-	ListenAddr string `json:"listen_addr,omitempty"`
-	PID        int    `json:"pid,omitempty"`
+	Running      bool   `json:"running"`
+	ListenAddr   string `json:"listen_addr,omitempty"`
+	SocketPath   string `json:"socket_path,omitempty"` // system php-fpm socket if detected
+	PID          int    `json:"pid,omitempty"`
+	SystemManaged bool  `json:"system_managed,omitempty"` // true if using system php-fpm
 }
 
 // Status returns the status of all detected PHP installations, including
-// whether each one has a running subprocess.
+// whether each one has a running subprocess or system php-fpm socket.
 func (m *Manager) Status() []PHPStatus {
 	m.mu.RLock()
 	installs := make([]PHPInstall, len(m.installations))
@@ -1061,14 +1069,28 @@ func (m *Manager) Status() []PHPStatus {
 			continue
 		}
 		st := PHPStatus{PHPInstall: inst}
+
+		// Check for UWAS-managed process
 		if val, ok := m.processes.Load(inst.Version); ok {
 			info := val.(*processInfo)
 			st.Running = true
 			st.ListenAddr = info.listenAddr
-			if info.cmd.Process != nil {
+			if info.cmd != nil && info.cmd.Process != nil {
 				st.PID = info.cmd.Process.Pid
 			}
 		}
+
+		// Check for system php-fpm socket
+		sock := m.detectSystemFPMSocket(inst.Version)
+		if sock != "" {
+			st.SocketPath = sock
+			st.Running = true
+			st.SystemManaged = true
+			if st.ListenAddr == "" {
+				st.ListenAddr = sock
+			}
+		}
+
 		statuses = append(statuses, st)
 	}
 	return statuses

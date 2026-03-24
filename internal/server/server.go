@@ -1352,7 +1352,8 @@ func (s *Server) shutdown() {
 	s.logger.Info("shutdown complete")
 }
 
-// autoAssignPHP starts a default global PHP process and assigns all PHP domains to it.
+// autoAssignPHP assigns PHP to all PHP-type domains on server startup.
+// Uses system php-fpm socket if available (shared), otherwise starts per-domain processes.
 func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 	status := phpMgr.Status()
 	if len(status) == 0 {
@@ -1360,21 +1361,24 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		return
 	}
 
-	// Start the default global PHP on port 9000.
 	defaultVer := status[0].Version
-	defaultAddr := "127.0.0.1:9000"
-	if err := phpMgr.StartFPM(defaultVer, defaultAddr); err != nil {
-		// Already running or other issue — try to continue
-		s.logger.Debug("default PHP start", "version", defaultVer, "error", err)
-	} else {
-		s.logger.Info("default PHP started", "version", defaultVer, "listen", defaultAddr)
-	}
 
 	// Assign all PHP-type domains.
 	for _, d := range cfg.Domains {
 		if d.Type != "php" {
 			continue
 		}
+
+		// If domain already has a working FPM address (from config file), use it
+		if d.PHP.FPMAddress != "" {
+			// Verify it's actually reachable
+			if isAddrReachable(d.PHP.FPMAddress) {
+				s.logger.Info("using configured PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
+				continue
+			}
+			s.logger.Warn("configured PHP address unreachable, re-assigning", "domain", d.Host, "address", d.PHP.FPMAddress)
+		}
+
 		inst, err := phpMgr.AssignDomain(d.Host, defaultVer)
 		if err != nil {
 			continue // already assigned
@@ -1392,6 +1396,25 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		}
 		s.logger.Info("PHP assigned to domain", "domain", d.Host, "version", defaultVer, "listen", inst.ListenAddr)
 	}
+}
+
+// isAddrReachable checks if an FPM address (tcp or unix socket) is reachable.
+func isAddrReachable(addr string) bool {
+	network := "tcp"
+	dialAddr := addr
+	if strings.HasPrefix(addr, "unix:") {
+		network = "unix"
+		dialAddr = addr[5:]
+	} else if strings.HasPrefix(addr, "/") {
+		network = "unix"
+		dialAddr = addr
+	}
+	conn, err := net.DialTimeout(network, dialAddr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (s *Server) writePID() error {
