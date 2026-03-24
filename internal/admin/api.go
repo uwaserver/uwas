@@ -1246,8 +1246,12 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Auto-create web root directory with a placeholder page.
-	if d.Root == "" && s.config.Global.WebRoot != "" {
-		d.Root = filepath.Join(s.config.Global.WebRoot, d.Host, "public_html")
+	if d.Root == "" {
+		webRoot := s.config.Global.WebRoot
+		if webRoot == "" {
+			webRoot = "/var/www"
+		}
+		d.Root = filepath.Join(webRoot, d.Host, "public_html")
 	}
 	if d.Root != "" {
 		if err := os.MkdirAll(d.Root, 0755); err != nil {
