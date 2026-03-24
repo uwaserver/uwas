@@ -386,8 +386,9 @@ export interface DBStatus { installed: boolean; running: boolean; version: strin
 export interface DBInfo { name: string; user: string; password?: string; host: string; size?: string; tables?: number; }
 export const fetchDBStatus = () => api<DBStatus>('/api/v1/database/status');
 export const fetchDatabases = () => api<DBInfo[]>('/api/v1/database/list');
+export interface DBCreateResult { name: string; user: string; password: string; host: string; }
 export const createDatabase = (name: string, user?: string, password?: string) =>
-  api<{ status: string; name: string; user: string }>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password }) });
+  api<DBCreateResult>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password }) });
 export const dropDatabase = (name: string) =>
   api<{ status: string }>(`/api/v1/database/${encodeURIComponent(name)}`, { method: 'DELETE' });
 export const installDatabase = () => api<{ status: string }>('/api/v1/database/install', { method: 'POST' });
