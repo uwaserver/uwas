@@ -1089,7 +1089,6 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 	}
 
 	// 4. Apply ErrorDocument — merge into domain's ErrorPages
-	// (ErrorPages from .htaccess override domain-config ErrorPages at runtime)
 	for code, page := range ruleSet.raw.ErrorDocuments {
 		if domain.ErrorPages == nil {
 			domain.ErrorPages = make(map[int]string)
@@ -1097,6 +1096,22 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		if _, exists := domain.ErrorPages[code]; !exists {
 			domain.ErrorPages[code] = page
 		}
+	}
+
+	// 5. Apply php_value / php_flag — pass as PHP_VALUE env var
+	// PHP-FPM reads PHP_VALUE and PHP_ADMIN_VALUE from FastCGI env to override ini settings.
+	if len(ruleSet.raw.PHPValues) > 0 || len(ruleSet.raw.PHPFlags) > 0 {
+		var phpValues []string
+		for k, v := range ruleSet.raw.PHPValues {
+			phpValues = append(phpValues, k+" = "+v)
+		}
+		for k, v := range ruleSet.raw.PHPFlags {
+			phpValues = append(phpValues, k+" = "+v)
+		}
+		if domain.PHP.Env == nil {
+			domain.PHP.Env = make(map[string]string)
+		}
+		domain.PHP.Env["PHP_VALUE"] = strings.Join(phpValues, "\n")
 	}
 }
 
