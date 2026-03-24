@@ -785,7 +785,7 @@ func TestBuildDomainINIOverridesOnlyCov(t *testing.T) {
 	inst := PHPInstall{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", ConfigFile: ""}
 
 	overrides := map[string]string{
-		"memory_limit":      "256M",
+		"memory_limit":       "256M",
 		"max_execution_time": "60",
 	}
 

@@ -15,8 +15,8 @@ const maxAlertHistory = 100
 // Alert represents a single alert event.
 type Alert struct {
 	Time    time.Time `json:"time"`
-	Level   string    `json:"level"`   // "info", "warning", "critical"
-	Type    string    `json:"type"`    // "domain_down", "cert_expiry", "rate_limit", "error_spike"
+	Level   string    `json:"level"` // "info", "warning", "critical"
+	Type    string    `json:"type"`  // "domain_down", "cert_expiry", "rate_limit", "error_spike"
 	Host    string    `json:"host"`
 	Message string    `json:"message"`
 }
@@ -36,7 +36,6 @@ type Alerter struct {
 	// Rate limit tracking for error_spike detection.
 	errorWindow   []errorEntry
 	errorWindowMu sync.Mutex
-
 }
 
 type errorEntry struct {

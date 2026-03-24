@@ -14,14 +14,21 @@ import (
 	"strings"
 )
 
+// escSQL escapes a string for use inside SQL single-quoted literals.
+func escSQL(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	return s
+}
+
 // InstallRequest contains WordPress installation parameters.
 type InstallRequest struct {
-	Domain   string `json:"domain"`
-	WebRoot  string `json:"web_root"`
-	DBName   string `json:"db_name"`
-	DBUser   string `json:"db_user"`
-	DBPass   string `json:"db_pass"`
-	DBHost   string `json:"db_host"`
+	Domain    string `json:"domain"`
+	WebRoot   string `json:"web_root"`
+	DBName    string `json:"db_name"`
+	DBUser    string `json:"db_user"`
+	DBPass    string `json:"db_pass"`
+	DBHost    string `json:"db_host"`
 	SiteTitle string `json:"site_title"`
 }
 
@@ -132,9 +139,9 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	}
 
 	cmds := []string{
-		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", dbName),
-		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';", dbUser, dbHost, dbPass),
-		fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s';", dbName, dbUser, dbHost),
+		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", escSQL(dbName)),
+		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';", escSQL(dbUser), escSQL(dbHost), escSQL(dbPass)),
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s';", escSQL(dbName), escSQL(dbUser), escSQL(dbHost)),
 		"FLUSH PRIVILEGES;",
 	}
 

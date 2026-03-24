@@ -81,4 +81,3 @@ func TestWriter(t *testing.T) {
 		t.Errorf("Writer.Write returned %d, want %d", n2, len(msg2))
 	}
 }
-

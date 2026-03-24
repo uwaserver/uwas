@@ -190,8 +190,8 @@ func TestSecurityGuardCustomPaths(t *testing.T) {
 		{"/admin/secret/page", 403},
 		{"/internal/api", 403},
 		{"/normal/page", 200},
-		{"/.env", 403},        // default blocked
-		{"/.git/HEAD", 403},   // default blocked
+		{"/.env", 403},      // default blocked
+		{"/.git/HEAD", 403}, // default blocked
 	}
 
 	for _, tt := range tests {

@@ -299,8 +299,8 @@ func TestSecurityHeaders(t *testing.T) {
 
 	checks := map[string]string{
 		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":       "SAMEORIGIN",
-		"Referrer-Policy":       "strict-origin-when-cross-origin",
+		"X-Frame-Options":        "SAMEORIGIN",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	}
 	for k, want := range checks {
 		if got := rec.Header().Get(k); got != want {
@@ -1109,10 +1109,10 @@ func TestTransformWriteHeaderCalledTwice(t *testing.T) {
 func TestTransformResponseAllVariables(t *testing.T) {
 	cfg := config.HeadersConfig{
 		ResponseAdd: map[string]string{
-			"X-Client":    "$remote_addr",
-			"X-Host":      "$host",
-			"X-URI":       "$uri",
-			"X-ReqID":     "$request_id",
+			"X-Client": "$remote_addr",
+			"X-Host":   "$host",
+			"X-URI":    "$uri",
+			"X-ReqID":  "$request_id",
 		},
 	}
 

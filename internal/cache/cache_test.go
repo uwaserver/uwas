@@ -336,10 +336,10 @@ func TestEngineStats(t *testing.T) {
 
 func TestIsCacheable(t *testing.T) {
 	tests := []struct {
-		method string
-		status int
+		method    string
+		status    int
 		setCookie bool
-		want   bool
+		want      bool
 	}{
 		{"GET", 200, false, true},
 		{"GET", 301, false, true},
@@ -530,8 +530,8 @@ func TestMemoryCacheGetStale(t *testing.T) {
 	mc.Set("stale-key", &CachedResponse{
 		Body:     []byte("stale data"),
 		Created:  time.Now().Add(-5 * time.Second),
-		TTL:      1 * time.Second,    // expired 4 seconds ago
-		GraceTTL: 10 * time.Second,   // but within grace period
+		TTL:      1 * time.Second,  // expired 4 seconds ago
+		GraceTTL: 10 * time.Second, // but within grace period
 	})
 
 	got, status := mc.Get("stale-key")
@@ -871,8 +871,8 @@ func TestEngineGetDiskPromotionStale(t *testing.T) {
 		StatusCode: 200,
 		Body:       []byte("stale disk entry"),
 		Created:    time.Now().Add(-10 * time.Second),
-		TTL:        1 * time.Second,  // expired
-		GraceTTL:   1 * time.Minute,  // but within grace
+		TTL:        1 * time.Second, // expired
+		GraceTTL:   1 * time.Minute, // but within grace
 	}
 	if err := e.disk.Set(key, staleResp); err != nil {
 		t.Fatalf("disk.Set: %v", err)

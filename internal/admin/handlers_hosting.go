@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"runtime"
-	"time"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/config"
@@ -17,13 +17,13 @@ import (
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/dnschecker"
 	"github.com/uwaserver/uwas/internal/dnsmanager"
-	"github.com/uwaserver/uwas/internal/notify"
-	"github.com/uwaserver/uwas/internal/services"
-	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/middleware"
+	"github.com/uwaserver/uwas/internal/notify"
 	"github.com/uwaserver/uwas/internal/selfupdate"
+	"github.com/uwaserver/uwas/internal/serverip"
+	"github.com/uwaserver/uwas/internal/services"
 	"github.com/uwaserver/uwas/internal/siteuser"
 	"github.com/uwaserver/uwas/internal/wordpress"
 )
@@ -259,10 +259,10 @@ func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]any{
-		"domain":     domain,
-		"bytes":      bytes,
-		"human":      formatBytes(bytes),
-		"root":       root,
+		"domain": domain,
+		"bytes":  bytes,
+		"human":  formatBytes(bytes),
+		"root":   root,
 	})
 }
 

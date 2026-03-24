@@ -34,26 +34,26 @@ var goodBots = []string{
 
 // SecurityStats tracks blocked requests for the security dashboard.
 type SecurityStats struct {
-	WAFBlocked    atomic.Int64
-	BotBlocked    atomic.Int64
-	RateBlocked   atomic.Int64
+	WAFBlocked     atomic.Int64
+	BotBlocked     atomic.Int64
+	RateBlocked    atomic.Int64
 	HotlinkBlocked atomic.Int64
-	TotalBlocked  atomic.Int64
+	TotalBlocked   atomic.Int64
 
 	// Recent blocked IPs (ring buffer)
-	mu          sync.Mutex
-	recentIPs   []BlockedRequest
-	recentPos   int
-	recentFull  bool
+	mu         sync.Mutex
+	recentIPs  []BlockedRequest
+	recentPos  int
+	recentFull bool
 }
 
 // BlockedRequest represents a single blocked request.
 type BlockedRequest struct {
-	Time    time.Time `json:"time"`
-	IP      string    `json:"ip"`
-	Path    string    `json:"path"`
-	Reason  string    `json:"reason"`
-	UA      string    `json:"ua,omitempty"`
+	Time   time.Time `json:"time"`
+	IP     string    `json:"ip"`
+	Path   string    `json:"path"`
+	Reason string    `json:"reason"`
+	UA     string    `json:"ua,omitempty"`
 }
 
 const maxRecentBlocked = 200

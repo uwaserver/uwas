@@ -18,11 +18,11 @@ type RequestContext struct {
 	Response *ResponseWriter
 
 	// Routing
-	VHostName    string
-	RemoteIP     string
-	RemotePort   string
-	ServerPort   string
-	IsHTTPS      bool
+	VHostName  string
+	RemoteIP   string
+	RemotePort string
+	ServerPort string
+	IsHTTPS    bool
 
 	// Path Resolution
 	OriginalURI  string

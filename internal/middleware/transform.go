@@ -39,9 +39,9 @@ func HeaderTransform(cfg config.HeadersConfig) Middleware {
 // transforms when WriteHeader is called.
 type transformWriter struct {
 	http.ResponseWriter
-	cfg            config.HeadersConfig
-	req            *http.Request
-	headerWritten  bool
+	cfg           config.HeadersConfig
+	req           *http.Request
+	headerWritten bool
 }
 
 func (tw *transformWriter) WriteHeader(code int) {

@@ -46,8 +46,8 @@ type processInfo struct {
 // DomainPHP describes a per-domain PHP-CGI instance.
 type DomainPHP struct {
 	Domain          string            `json:"domain"`
-	Version         string            `json:"version"`          // "8.4" or "8.4.19"
-	ListenAddr      string            `json:"listen_addr"`      // auto-assigned "127.0.0.1:9001"
+	Version         string            `json:"version"`     // "8.4" or "8.4.19"
+	ListenAddr      string            `json:"listen_addr"` // auto-assigned "127.0.0.1:9001"
 	Running         bool              `json:"running"`
 	PID             int               `json:"pid"`
 	ConfigOverrides map[string]string `json:"config_overrides"` // per-domain php.ini overrides
@@ -286,25 +286,25 @@ func (m *Manager) StopDomain(domain string) error {
 
 // Blocked PHP directives — these cannot be overridden per-domain for security.
 var blockedPHPDirectives = map[string]bool{
-	"open_basedir":          true, // managed by UWAS (chroot)
-	"disable_functions":     true, // security critical
-	"disable_classes":       true,
-	"allow_url_include":     true, // RCE risk
-	"allow_url_fopen":       true, // SSRF risk when changed carelessly
-	"safe_mode":             true, // deprecated but dangerous
-	"enable_dl":             true, // load arbitrary extensions
+	"open_basedir":                    true, // managed by UWAS (chroot)
+	"disable_functions":               true, // security critical
+	"disable_classes":                 true,
+	"allow_url_include":               true, // RCE risk
+	"allow_url_fopen":                 true, // SSRF risk when changed carelessly
+	"safe_mode":                       true, // deprecated but dangerous
+	"enable_dl":                       true, // load arbitrary extensions
 	"suhosin.executor.func.blacklist": true,
-	"auto_prepend_file":     true, // code injection
-	"auto_append_file":      true,
-	"sendmail_path":         true, // command injection
-	"mail.force_extra_parameters": true,
-	"extension_dir":         true,
-	"extension":             true,
-	"zend_extension":        true,
-	"doc_root":              true, // path override
-	"user_dir":              true,
-	"cgi.force_redirect":    true,
-	"cgi.redirect_status_env": true,
+	"auto_prepend_file":               true, // code injection
+	"auto_append_file":                true,
+	"sendmail_path":                   true, // command injection
+	"mail.force_extra_parameters":     true,
+	"extension_dir":                   true,
+	"extension":                       true,
+	"zend_extension":                  true,
+	"doc_root":                        true, // path override
+	"user_dir":                        true,
+	"cgi.force_redirect":              true,
+	"cgi.redirect_status_env":         true,
 }
 
 // Allowed per-domain directives — only these can be set.

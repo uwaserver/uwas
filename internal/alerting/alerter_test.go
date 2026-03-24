@@ -480,4 +480,3 @@ func TestWebhookErrorStatus(t *testing.T) {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
 }
-

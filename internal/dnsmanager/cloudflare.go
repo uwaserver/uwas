@@ -12,13 +12,13 @@ import (
 
 // Record represents a DNS record.
 type Record struct {
-	ID      string `json:"id,omitempty"`
-	Type    string `json:"type"`    // A, AAAA, CNAME, MX, TXT, NS
-	Name    string `json:"name"`
-	Content string `json:"content"`
-	TTL     int    `json:"ttl"`
-	Proxied bool   `json:"proxied,omitempty"`
-	Priority int   `json:"priority,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type"` // A, AAAA, CNAME, MX, TXT, NS
+	Name     string `json:"name"`
+	Content  string `json:"content"`
+	TTL      int    `json:"ttl"`
+	Proxied  bool   `json:"proxied,omitempty"`
+	Priority int    `json:"priority,omitempty"`
 }
 
 // Zone represents a DNS zone.

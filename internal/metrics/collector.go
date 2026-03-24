@@ -23,17 +23,17 @@ type Collector struct {
 	StartTime      time.Time
 
 	// Latency tracking: rolling window of recent request durations.
-	latencyMu      sync.Mutex
-	latencyBuf     []float64 // ring buffer of last N durations (seconds)
-	latencyPos     int
-	latencyFull    bool
-	SlowThreshold  time.Duration // log requests slower than this
-	SlowRequests   atomic.Int64  // count of slow requests
+	latencyMu     sync.Mutex
+	latencyBuf    []float64 // ring buffer of last N durations (seconds)
+	latencyPos    int
+	latencyFull   bool
+	SlowThreshold time.Duration // log requests slower than this
+	SlowRequests  atomic.Int64  // count of slow requests
 
 	// Per-handler type counters
-	StaticRequests  atomic.Int64
-	PHPRequests     atomic.Int64
-	ProxyRequests   atomic.Int64
+	StaticRequests   atomic.Int64
+	PHPRequests      atomic.Int64
+	ProxyRequests    atomic.Int64
 	RedirectRequests atomic.Int64
 }
 

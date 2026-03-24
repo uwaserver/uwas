@@ -2703,4 +2703,3 @@ func TestSFTPProviderDialConnRefused(t *testing.T) {
 		t.Fatal("expected error for non-SSH server")
 	}
 }
-

@@ -287,7 +287,7 @@ func TestBuildDomainINI(t *testing.T) {
 	}
 
 	overrides := map[string]string{
-		"memory_limit":      "512M",
+		"memory_limit":       "512M",
 		"max_execution_time": "60",
 	}
 

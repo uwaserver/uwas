@@ -44,7 +44,7 @@ func (w *ResponseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (w *ResponseWriter) StatusCode() int    { return w.statusCode }
+func (w *ResponseWriter) StatusCode() int     { return w.statusCode }
 func (w *ResponseWriter) BytesWritten() int64 { return w.bytesWritten }
 func (w *ResponseWriter) TTFB() time.Duration { return w.ttfb }
 

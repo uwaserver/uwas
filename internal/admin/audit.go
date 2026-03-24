@@ -9,9 +9,9 @@ import (
 // AuditEntry represents a single admin API audit log entry.
 type AuditEntry struct {
 	Time    time.Time `json:"time"`
-	Action  string    `json:"action"`  // e.g., "config.reload", "domain.create"
-	Detail  string    `json:"detail"`  // e.g., "domain: example.com"
-	IP      string    `json:"ip"`      // requester IP
+	Action  string    `json:"action"` // e.g., "config.reload", "domain.create"
+	Detail  string    `json:"detail"` // e.g., "domain: example.com"
+	IP      string    `json:"ip"`     // requester IP
 	Success bool      `json:"success"`
 }
 
@@ -19,10 +19,10 @@ const maxAuditEntries = 500
 
 // rateLimitEntry tracks failed auth attempts for a single IP.
 type rateLimitEntry struct {
-	count       int
-	firstFail   time.Time
-	blockedAt   time.Time
-	blocked     bool
+	count     int
+	firstFail time.Time
+	blockedAt time.Time
+	blocked   bool
 }
 
 const (
@@ -208,4 +208,3 @@ func (s *Server) RateLimitMap() map[string]*rateLimitEntry {
 
 // AuditMu is exported for testing to allow direct field access is not needed;
 // we use exported accessors instead.
-

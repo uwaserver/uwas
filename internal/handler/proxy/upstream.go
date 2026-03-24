@@ -10,19 +10,19 @@ import (
 type BackendState int
 
 const (
-	StateHealthy   BackendState = iota
+	StateHealthy BackendState = iota
 	StateUnhealthy
 	StateDraining
 )
 
 // Backend is a single upstream server.
 type Backend struct {
-	URL          *url.URL
-	Weight       int
-	State        atomic.Int32 // BackendState
-	ActiveConns  atomic.Int64
-	TotalReqs    atomic.Int64
-	TotalFails   atomic.Int64
+	URL         *url.URL
+	Weight      int
+	State       atomic.Int32 // BackendState
+	ActiveConns atomic.Int64
+	TotalReqs   atomic.Int64
+	TotalFails  atomic.Int64
 }
 
 func (b *Backend) GetState() BackendState {

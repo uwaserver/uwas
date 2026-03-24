@@ -8,11 +8,11 @@ import (
 
 // Condition represents a RewriteCond (evaluated before a RewriteRule).
 type Condition struct {
-	Variable  string         // e.g., "%{REQUEST_URI}", "%{HTTP_HOST}"
-	Pattern   *regexp.Regexp // regex pattern (nil for special tests)
-	Negated   bool           // "!" prefix
-	OrNext    bool           // [OR] flag — OR with next condition
-	TestType  string         // "", "-f", "-d", "-l", "-s" (special file tests)
+	Variable   string         // e.g., "%{REQUEST_URI}", "%{HTTP_HOST}"
+	Pattern    *regexp.Regexp // regex pattern (nil for special tests)
+	Negated    bool           // "!" prefix
+	OrNext     bool           // [OR] flag — OR with next condition
+	TestType   string         // "", "-f", "-d", "-l", "-s" (special file tests)
 	RawPattern string
 }
 

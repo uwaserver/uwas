@@ -47,11 +47,11 @@ type Directory struct {
 
 type Order struct {
 	URL            string
-	Status         string   `json:"status"`
+	Status         string       `json:"status"`
 	Identifiers    []Identifier `json:"identifiers"`
-	Authorizations []string `json:"authorizations"`
-	Finalize       string   `json:"finalize"`
-	Certificate    string   `json:"certificate"`
+	Authorizations []string     `json:"authorizations"`
+	Finalize       string       `json:"finalize"`
+	Certificate    string       `json:"certificate"`
 }
 
 type Identifier struct {

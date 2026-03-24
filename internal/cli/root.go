@@ -98,7 +98,7 @@ func NewHelpCommand(c *CLI) *HelpCommand {
 }
 
 func (h *HelpCommand) Name() string        { return "help" }
-func (h *HelpCommand) Description() string  { return "Show help information" }
+func (h *HelpCommand) Description() string { return "Show help information" }
 
 func (h *HelpCommand) Run(args []string) error {
 	if len(args) > 0 {

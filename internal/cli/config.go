@@ -11,7 +11,7 @@ import (
 type ConfigCommand struct{}
 
 func (c *ConfigCommand) Name() string        { return "config" }
-func (c *ConfigCommand) Description() string  { return "Validate configuration file" }
+func (c *ConfigCommand) Description() string { return "Validate configuration file" }
 
 func (c *ConfigCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)

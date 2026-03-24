@@ -26,13 +26,13 @@ type Monitor struct {
 
 // HealthResult holds the health status of a single domain.
 type HealthResult struct {
-	Host       string  `json:"host"`
-	Status     string  `json:"status"`      // "up", "down", "degraded"
-	StatusCode int     `json:"status_code"`
-	ResponseMs int64   `json:"response_ms"`
+	Host       string    `json:"host"`
+	Status     string    `json:"status"` // "up", "down", "degraded"
+	StatusCode int       `json:"status_code"`
+	ResponseMs int64     `json:"response_ms"`
 	LastCheck  time.Time `json:"last_check"`
-	Uptime     float64 `json:"uptime"`      // percentage over last 24h
-	Checks     []Check `json:"checks"`      // last 100 checks
+	Uptime     float64   `json:"uptime"` // percentage over last 24h
+	Checks     []Check   `json:"checks"` // last 100 checks
 }
 
 // Check records a single health check result.
