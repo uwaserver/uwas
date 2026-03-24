@@ -491,14 +491,25 @@ func TestWebhookDeliveryFailure(t *testing.T) {
 }
 
 func TestWebhookErrorStatus(t *testing.T) {
+	done := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500) // server error
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer srv.Close()
 
 	a := New(true, srv.URL, testLogger())
 	a.Alert(Alert{Level: "info", Type: "status_test", Message: "server returns 500"})
-	time.Sleep(100 * time.Millisecond)
+
+	// Wait for the async webhook goroutine to hit the server
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook was not received within timeout")
+	}
 
 	// Alert should still be recorded
 	alerts := a.Alerts()

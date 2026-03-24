@@ -71,6 +71,7 @@ func TestMirrorSend(t *testing.T) {
 	var receivedPath string
 	var receivedBody string
 	var receivedMirrorHeader string
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received.Add(1)
@@ -82,6 +83,10 @@ func TestMirrorSend(t *testing.T) {
 		receivedMirrorHeader = r.Header.Get("X-Mirror")
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -94,7 +99,11 @@ func TestMirrorSend(t *testing.T) {
 	m.Send(req, []byte("hello"))
 
 	// Wait for async mirror
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	if received.Load() != 1 {
 		t.Fatalf("expected 1 mirror request, got %d", received.Load())
@@ -130,24 +139,30 @@ func TestMirrorSendNoBackend(t *testing.T) {
 
 func TestMirrorSendBadBackend(t *testing.T) {
 	m := NewMirror(MirrorConfig{Enabled: true, Backend: "http://127.0.0.1:1", Percent: 100}, testLogger())
+	m.transport.ResponseHeaderTimeout = 500 * time.Millisecond
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	// Should not panic with unreachable backend
 	m.Send(req, nil)
 
-	// Give time for goroutine to run
-	time.Sleep(200 * time.Millisecond)
+	// Give time for goroutine to run and fail (connection refused is near-instant)
+	time.Sleep(500 * time.Millisecond)
 }
 
 func TestMirrorSendPreservesHeaders(t *testing.T) {
 	var mu sync.Mutex
 	var receivedHeaders http.Header
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		receivedHeaders = r.Header.Clone()
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -159,7 +174,11 @@ func TestMirrorSendPreservesHeaders(t *testing.T) {
 
 	m.Send(req, nil)
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()

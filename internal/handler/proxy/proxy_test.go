@@ -1484,17 +1484,24 @@ func TestHealthCheckerStartPerformsCheck(t *testing.T) {
 	}, log)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	hc.Start(ctx)
 
-	// Let a few ticks fire
-	time.Sleep(80 * time.Millisecond)
-	cancel()
-	time.Sleep(20 * time.Millisecond)
+	// Poll until at least one health check has been performed
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := requestCount
+		mu.Unlock()
+		if count > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	mu.Lock()
 	count := requestCount
 	mu.Unlock()
-
 	if count == 0 {
 		t.Error("Start should have triggered at least one health check")
 	}
@@ -1505,12 +1512,17 @@ func TestHealthCheckerStartPerformsCheck(t *testing.T) {
 func TestMirrorSendGETMethod(t *testing.T) {
 	var receivedMethod string
 	var mu sync.Mutex
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		receivedMethod = r.Method
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -1518,7 +1530,11 @@ func TestMirrorSendGETMethod(t *testing.T) {
 	req := httptest.NewRequest("GET", "/page", nil)
 	m.Send(req, nil)
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1531,6 +1547,7 @@ func TestMirrorSendPUTMethod(t *testing.T) {
 	var receivedMethod string
 	var receivedBody string
 	var mu sync.Mutex
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -1539,6 +1556,10 @@ func TestMirrorSendPUTMethod(t *testing.T) {
 		receivedBody = string(body)
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -1546,7 +1567,11 @@ func TestMirrorSendPUTMethod(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/resource", strings.NewReader("update data"))
 	m.Send(req, []byte("update data"))
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1561,12 +1586,17 @@ func TestMirrorSendPUTMethod(t *testing.T) {
 func TestMirrorSendDELETEMethod(t *testing.T) {
 	var receivedMethod string
 	var mu sync.Mutex
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		receivedMethod = r.Method
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -1574,7 +1604,11 @@ func TestMirrorSendDELETEMethod(t *testing.T) {
 	req := httptest.NewRequest("DELETE", "/resource/123", nil)
 	m.Send(req, nil)
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1586,9 +1620,14 @@ func TestMirrorSendDELETEMethod(t *testing.T) {
 // --- mirror.go: doMirror with 500 response (logs at debug) ---
 
 func TestMirrorSend500Response(t *testing.T) {
+	done := make(chan struct{}, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		w.Write([]byte("internal error"))
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -1597,7 +1636,11 @@ func TestMirrorSend500Response(t *testing.T) {
 	m.Send(req, nil)
 
 	// Wait for async mirror — should not panic, just log
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 }
 
 // --- mirror.go: doMirror with nil body ---
@@ -1605,6 +1648,7 @@ func TestMirrorSend500Response(t *testing.T) {
 func TestMirrorSendNilBody(t *testing.T) {
 	var receivedBody string
 	var mu sync.Mutex
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -1612,6 +1656,10 @@ func TestMirrorSendNilBody(t *testing.T) {
 		receivedBody = string(body)
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -1619,7 +1667,11 @@ func TestMirrorSendNilBody(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	m.Send(req, nil)
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1837,12 +1889,17 @@ func TestProxyResponseBodyCopyError(t *testing.T) {
 func TestMirrorRemovesHopByHop(t *testing.T) {
 	var mu sync.Mutex
 	var receivedHeaders http.Header
+	done := make(chan struct{}, 1)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		receivedHeaders = r.Header.Clone()
 		mu.Unlock()
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -1855,7 +1912,11 @@ func TestMirrorRemovesHopByHop(t *testing.T) {
 
 	m.Send(req, nil)
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror request was not received within timeout")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1991,20 +2052,31 @@ func TestProxyServeInvalidMethod(t *testing.T) {
 // --- mirror.go: doMirror NewRequestWithContext error ---
 
 func TestMirrorSendInvalidMethod(t *testing.T) {
+	done := make(chan struct{}, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
 	m := NewMirror(MirrorConfig{Enabled: true, Backend: ts.URL, Percent: 100}, testLogger())
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Method = "INVALID METHOD" // contains space → NewRequestWithContext will fail
+	req.Method = "INVALID METHOD" // contains space -> NewRequestWithContext will fail
 
 	m.Send(req, nil)
 
-	// Wait for async mirror — should not panic
-	time.Sleep(200 * time.Millisecond)
+	// The request should fail in NewRequestWithContext and never reach the server.
+	// Wait briefly to ensure the goroutine has had time to run and not panic.
+	select {
+	case <-done:
+		t.Fatal("request should not have reached server with invalid method")
+	case <-time.After(500 * time.Millisecond):
+		// Expected: goroutine failed early, no request reached server
+	}
 }
 
 // --- health.go: checkOne with invalid URL (NewRequestWithContext error) ---
