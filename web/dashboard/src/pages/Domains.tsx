@@ -425,48 +425,28 @@ export default function Domains() {
     setSubmitting(true);
     setStatus(null);
 
-    /* Build API payload */
+    /* Build API payload — minimal fields, backend fills defaults */
     const payload: Record<string, unknown> = {
       host: form.host.trim(),
-      ip: form.ip || undefined,
       type: form.type,
       ssl: { mode: form.ssl },
     };
 
-    if (form.cacheEnabled) {
-      payload.cache = { enabled: true, ttl: parseInt(form.cacheTTL, 10) || 3600 };
-    }
+    if (form.ip) payload.ip = form.ip;
 
-    if (form.type === 'php') {
-      payload.php = {
-        fpm_address: form.phpFpmAddress.trim() || '127.0.0.1:9000',
-        index_files: form.phpIndexFiles.split(',').map(s => s.trim()).filter(Boolean),
-      };
-    }
-
-    if (form.type === 'proxy') {
+    // Only send type-specific fields
+    if (form.type === 'proxy' && form.proxyUpstreams.trim()) {
       payload.proxy = {
         upstreams: form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean).map(addr => ({ address: addr, weight: 1 })),
-        algorithm: form.proxyAlgorithm,
+        algorithm: form.proxyAlgorithm || 'round-robin',
       };
     }
 
-    if (form.type === 'redirect') {
+    if (form.type === 'redirect' && form.redirectTarget.trim()) {
       payload.redirect = {
         target: form.redirectTarget.trim(),
         status: parseInt(form.redirectCode, 10) || 301,
       };
-    }
-
-    if (form.wafEnabled || form.blockedPaths.trim()) {
-      payload.security = {
-        waf: { enabled: form.wafEnabled },
-        blocked_paths: form.blockedPaths.split(',').map(s => s.trim()).filter(Boolean),
-      };
-    }
-
-    if (form.htaccessEnabled) {
-      payload.htaccess = { mode: "import" };
     }
 
     try {
