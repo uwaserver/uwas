@@ -146,5 +146,12 @@ func safePath(baseDir, relPath string) string {
 	if !strings.HasPrefix(absFull, absBase) {
 		return ""
 	}
+	// Resolve symlinks to prevent cross-domain escape
+	if realFull, err := filepath.EvalSymlinks(absFull); err == nil {
+		realBase, _ := filepath.EvalSymlinks(absBase)
+		if realBase != "" && !strings.HasPrefix(realFull, realBase) {
+			return "" // symlink points outside base directory
+		}
+	}
 	return absFull
 }

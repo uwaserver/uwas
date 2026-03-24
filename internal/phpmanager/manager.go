@@ -64,6 +64,7 @@ type domainInstance struct {
 	domain          string
 	version         string
 	listenAddr      string
+	webRoot         string // domain document root for open_basedir
 	configOverrides map[string]string
 	proc            *processInfo
 	tmpINI          string // path to temp ini file, cleaned up on stop
@@ -103,6 +104,21 @@ func (m *Manager) SetDomainChangeFunc(fn DomainChangeFunc) {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
 	m.onDomainChange = fn
+}
+
+// AssignDomain assigns a PHP version to a domain.
+// AssignDomainWithRoot assigns PHP to a domain with a known web root for open_basedir.
+func (m *Manager) AssignDomainWithRoot(domain, version, webRoot string) (*DomainPHP, error) {
+	dp, err := m.AssignDomain(domain, version)
+	if err != nil {
+		return dp, err
+	}
+	m.domainMu.Lock()
+	if inst, ok := m.domainMap[domain]; ok {
+		inst.webRoot = webRoot
+	}
+	m.domainMu.Unlock()
+	return dp, nil
 }
 
 // AssignDomain assigns a PHP version to a domain.
@@ -514,11 +530,22 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 	domainInst, _ := m.domainMap[domain]
 	m.domainMu.RUnlock()
 	if domainInst != nil {
-		// Security: UWAS enforced
-		lines = append(lines, "; Security: UWAS enforced")
+		// Security: UWAS enforced — domain isolation
+		lines = append(lines, "; Security: UWAS enforced — domain isolation")
 		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_multi_exec,parse_ini_file,show_source,pcntl_exec")
 		lines = append(lines, "allow_url_include = Off")
 		lines = append(lines, "expose_php = Off")
+
+		// open_basedir: restrict PHP to domain's web root + tmp
+		if domainInst.webRoot != "" {
+			// Per-domain tmp directory for session/upload isolation
+			domainTmp := filepath.Join(domainInst.webRoot, ".tmp")
+			os.MkdirAll(domainTmp, 0770)
+			lines = append(lines, fmt.Sprintf("open_basedir = %s:%s:/usr/share/php:/usr/share/pear", domainInst.webRoot, domainTmp))
+			lines = append(lines, fmt.Sprintf("upload_tmp_dir = %s", domainTmp))
+			lines = append(lines, fmt.Sprintf("session.save_path = %s", domainTmp))
+			lines = append(lines, fmt.Sprintf("sys_temp_dir = %s", domainTmp))
+		}
 		lines = append(lines, "")
 
 		// Performance: sane defaults (overridable via per-domain config)
