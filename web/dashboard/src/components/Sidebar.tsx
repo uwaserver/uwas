@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   Download,
   Server,
+  Activity,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -57,6 +58,7 @@ const links = [
   { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert },
   { to: '/audit', label: 'Audit Log', icon: Shield },
   { to: '/updates', label: 'Updates', icon: Download },
+  { to: '/services', label: 'Services', icon: Activity },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

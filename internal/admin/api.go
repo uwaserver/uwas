@@ -204,6 +204,17 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/dns/{domain}/records/{id}", s.handleDNSRecordDelete)
 	s.mux.HandleFunc("POST /api/v1/dns/{domain}/sync", s.handleDNSSync)
 
+	// System services
+	s.mux.HandleFunc("GET /api/v1/services", s.handleServicesList)
+	s.mux.HandleFunc("POST /api/v1/services/{name}/start", s.handleServiceStart)
+	s.mux.HandleFunc("POST /api/v1/services/{name}/stop", s.handleServiceStop)
+	s.mux.HandleFunc("POST /api/v1/services/{name}/restart", s.handleServiceRestart)
+
+	// Database service control
+	s.mux.HandleFunc("POST /api/v1/database/start", s.handleDBStart)
+	s.mux.HandleFunc("POST /api/v1/database/stop", s.handleDBStop)
+	s.mux.HandleFunc("POST /api/v1/database/restart", s.handleDBRestart)
+
 	// Notifications
 	s.mux.HandleFunc("POST /api/v1/notify/test", s.handleNotifyTest)
 

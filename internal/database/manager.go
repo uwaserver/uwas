@@ -68,6 +68,47 @@ func GetStatus() Status {
 	return st
 }
 
+// StartService starts MySQL/MariaDB service.
+func StartService() error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("not supported on Windows")
+	}
+	// Try mariadb first, then mysql
+	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
+		if err := exec.Command("systemctl", "start", svc).Run(); err == nil {
+			exec.Command("systemctl", "enable", svc).Run()
+			return nil
+		}
+	}
+	return fmt.Errorf("could not start MySQL/MariaDB service")
+}
+
+// StopService stops MySQL/MariaDB service.
+func StopService() error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("not supported on Windows")
+	}
+	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
+		if err := exec.Command("systemctl", "stop", svc).Run(); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("could not stop MySQL/MariaDB service")
+}
+
+// RestartService restarts MySQL/MariaDB service.
+func RestartService() error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("not supported on Windows")
+	}
+	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
+		if err := exec.Command("systemctl", "restart", svc).Run(); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("could not restart MySQL/MariaDB service")
+}
+
 // ListDatabases returns all UWAS-managed databases.
 func ListDatabases() ([]DBInfo, error) {
 	sql := `SELECT

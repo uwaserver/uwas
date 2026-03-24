@@ -28,6 +28,7 @@ import EmailGuide from '@/pages/EmailGuide';
 import WordPress from '@/pages/WordPress';
 import PHPConfig from '@/pages/PHPConfig';
 import IPManagement from '@/pages/IPManagement';
+import Services from '@/pages/Services';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -85,6 +86,7 @@ export default function App() {
         <Route path="/security" element={<Security />} />
         <Route path="/email" element={<EmailGuide />} />
         <Route path="/updates" element={<Updates />} />
+        <Route path="/services" element={<Services />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
 

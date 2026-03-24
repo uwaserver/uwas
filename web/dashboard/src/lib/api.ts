@@ -388,8 +388,18 @@ export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${e
 export const addSSHKey = (domain: string, publicKey: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'POST', body: JSON.stringify({ public_key: publicKey }) });
 export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'DELETE', body: JSON.stringify({ fingerprint }) });
 
+// System Services
+export interface SystemService { name: string; display: string; running: boolean; enabled: boolean; active: string; }
+export const fetchServices = () => api<SystemService[]>('/api/v1/services');
+export const startService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/start`, { method: 'POST' });
+export const stopService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+export const restartService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/restart`, { method: 'POST' });
+
 // Database
 export interface DBStatus { installed: boolean; running: boolean; version: string; backend: string; }
+export const startDB = () => api<{ status: string }>('/api/v1/database/start', { method: 'POST' });
+export const stopDB = () => api<{ status: string }>('/api/v1/database/stop', { method: 'POST' });
+export const restartDB = () => api<{ status: string }>('/api/v1/database/restart', { method: 'POST' });
 export interface DBInfo { name: string; user: string; password?: string; host: string; size?: string; tables?: number; }
 export const fetchDBStatus = () => api<DBStatus>('/api/v1/database/status');
 export const fetchDatabases = () => api<DBInfo[]>('/api/v1/database/list');
