@@ -3,6 +3,7 @@ package phpmanager
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -103,7 +105,8 @@ func (m *Manager) SetDomainChangeFunc(fn DomainChangeFunc) {
 	m.onDomainChange = fn
 }
 
-// AssignDomain assigns a PHP version to a domain, auto-assigning a listen port.
+// AssignDomain assigns a PHP version to a domain.
+// Priority: 1) system php-fpm socket 2) running shared php-fpm 3) per-domain port
 func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	if domain == "" {
 		return nil, fmt.Errorf("domain is required")
@@ -124,8 +127,13 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 		return nil, fmt.Errorf("domain %s already has a PHP assignment", domain)
 	}
 
-	addr := fmt.Sprintf("127.0.0.1:%d", m.nextPort)
-	m.nextPort++
+	// Try system php-fpm socket first (best performance, shared workers)
+	addr := m.detectSystemFPMSocket(version)
+	if addr == "" {
+		// Fallback to per-domain TCP port
+		addr = fmt.Sprintf("127.0.0.1:%d", m.nextPort)
+		m.nextPort++
+	}
 
 	inst := &domainInstance{
 		domain:          domain,
@@ -138,6 +146,39 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	m.logger.Info("assigned PHP to domain", "domain", domain, "version", version, "listen", addr)
 
 	return m.domainPHPFromInstance(inst), nil
+}
+
+// detectSystemFPMSocket checks if system php-fpm is running and returns its socket path.
+func (m *Manager) detectSystemFPMSocket(version string) string {
+	// Extract major.minor from version (e.g., "8.3.6" → "8.3")
+	parts := strings.SplitN(version, ".", 3)
+	shortVer := version
+	if len(parts) >= 2 {
+		shortVer = parts[0] + "." + parts[1]
+	}
+
+	// Check common php-fpm socket paths
+	socketPaths := []string{
+		fmt.Sprintf("/run/php/php%s-fpm.sock", shortVer),
+		fmt.Sprintf("/var/run/php/php%s-fpm.sock", shortVer),
+		"/run/php/php-fpm.sock",
+		"/var/run/php-fpm.sock",
+		fmt.Sprintf("/tmp/php%s-fpm.sock", shortVer),
+	}
+
+	for _, sock := range socketPaths {
+		if _, err := os.Stat(sock); err == nil {
+			// Socket exists — verify it's actually listening
+			conn, err := net.DialTimeout("unix", sock, 2*time.Second)
+			if err == nil {
+				conn.Close()
+				m.logger.Info("detected system php-fpm socket", "version", shortVer, "socket", sock)
+				return "unix:" + sock
+			}
+		}
+	}
+
+	return ""
 }
 
 // UnassignDomain removes a PHP assignment for a domain. Stops the process
@@ -164,7 +205,8 @@ func (m *Manager) UnassignDomain(domain string) {
 	m.logger.Info("unassigned PHP from domain", "domain", domain)
 }
 
-// StartDomain starts the PHP-CGI process for the given domain.
+// StartDomain starts the PHP process for the given domain.
+// If using a system php-fpm socket, no process is started (already running).
 func (m *Manager) StartDomain(domain string) error {
 	m.domainMu.Lock()
 	inst, exists := m.domainMap[domain]
@@ -175,6 +217,14 @@ func (m *Manager) StartDomain(domain string) error {
 	if inst.proc != nil {
 		m.domainMu.Unlock()
 		return fmt.Errorf("PHP for domain %s is already running", domain)
+	}
+
+	// If using system php-fpm socket, no process to start — mark as running
+	if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
+		inst.proc = &processInfo{listenAddr: inst.listenAddr} // no cmd — system managed
+		m.domainMu.Unlock()
+		m.logger.Info("using system php-fpm", "domain", domain, "socket", inst.listenAddr)
+		return nil
 	}
 
 	phpInst, ok := m.findInstall(inst.version)
@@ -563,9 +613,12 @@ func candidatePaths() []string {
 	case "linux":
 		return []string{
 			"/usr/bin/php-cgi*",
-			"/usr/bin/php[0-9]*",
+			"/usr/bin/php-fpm*",
 			"/usr/sbin/php-fpm*",
+			"/usr/bin/php[0-9]*",
 			"/usr/lib/cgi-bin/php*",
+			"/usr/local/bin/php-cgi*",
+			"/usr/local/sbin/php-fpm*",
 		}
 	case "darwin":
 		return []string{
