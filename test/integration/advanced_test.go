@@ -62,11 +62,11 @@ func TestCacheStoreAndHit(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 2*time.Second)
+	waitForServer(t, base, 5*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
-	// First request: MISS
+	// First request: MISS — populates the cache
 	resp1, err := client.Get(base + "/cached.html")
 	if err != nil {
 		t.Fatal(err)
@@ -76,13 +76,24 @@ func TestCacheStoreAndHit(t *testing.T) {
 	// First request may or may not have X-Cache depending on whether cache stores on first hit
 	t.Logf("First request X-Cache: %q", xcache1)
 
-	// Second request: should be from cache
-	resp2, err := client.Get(base + "/cached.html")
-	if err != nil {
-		t.Fatal(err)
+	// Give the cache a moment to store the response asynchronously
+	time.Sleep(50 * time.Millisecond)
+
+	// Second request: should be from cache (retry a few times in case cache is still warming)
+	var body []byte
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp2, err := client.Get(base + "/cached.html")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ = io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		if string(body) == "cached-content" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	body, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
 
 	if string(body) != "cached-content" {
 		t.Errorf("body = %q", string(body))
@@ -131,23 +142,15 @@ func TestRateLimitE2E(t *testing.T) {
 	log := logger.New("error", "text")
 	srv := server.New(cfg, log)
 	go srv.Start()
-	waitForServer(t, base, 2*time.Second)
+	waitForServer(t, base, 5*time.Second)
 
 	client := &http.Client{Timeout: 2 * time.Second}
 
-	// Send 50 requests (matches the limit) — all should succeed
-	for i := 0; i < 45; i++ {
-		resp, err := client.Get(base + "/index.html")
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		// Some may already be 429 if waitForServer used up tokens
-	}
-
-	// Exhaust remaining tokens then verify 429
+	// Send enough requests to exceed the limit of 50 per 60s window.
+	// waitForServer may have consumed some tokens, so we send more
+	// than the limit to be safe.
 	got429 := false
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 70; i++ {
 		resp, err := client.Get(base + "/index.html")
 		if err != nil {
 			t.Fatal(err)

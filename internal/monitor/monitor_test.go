@@ -265,8 +265,15 @@ func TestStartStopsOnCancel(t *testing.T) {
 		close(done)
 	}()
 
-	// Give it time to run the initial check
-	time.Sleep(100 * time.Millisecond)
+	// Poll until at least one result is available (initial check completes)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		results := m.Results()
+		if len(results) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// Verify it ran at least once
 	results := m.Results()
@@ -573,8 +580,14 @@ func TestStartImmediateCheck(t *testing.T) {
 		close(done)
 	}()
 
-	// Start does an immediate check before the ticker
-	time.Sleep(50 * time.Millisecond)
+	// Poll until the immediate check has run
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&requestCount) >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	count := atomic.LoadInt32(&requestCount)
 	if count < 1 {
