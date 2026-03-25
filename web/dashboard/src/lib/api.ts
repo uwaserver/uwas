@@ -285,7 +285,11 @@ export interface PHPInstall {
   sapi: string;
   running: boolean;
   listen_addr: string;
+  socket_path?: string;
+  system_managed?: boolean;
   disabled?: boolean;
+  domain_count: number;
+  domains?: string[];
 }
 
 export const fetchPHP = () => api<PHPInstall[]>('/api/v1/php');

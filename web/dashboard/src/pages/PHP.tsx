@@ -433,50 +433,86 @@ export default function PHP() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {installs.filter(i => i.sapi !== 'cli').map(inst => (
-              <div
-                key={inst.binary}
-                className={`rounded-lg border border-[#334155] bg-[#1e293b] p-4 shadow-md transition-opacity ${inst.disabled ? 'opacity-50' : ''}`}
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <span className={`text-2xl font-bold ${inst.disabled ? 'text-slate-500' : 'text-slate-100'}`}>{inst.version}</span>
-                    <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${inst.disabled ? 'bg-slate-500/15 text-slate-500' : 'bg-purple-500/15 text-purple-400'}`}>
-                      {inst.sapi === 'cgi-fcgi' ? 'FastCGI' : inst.sapi === 'fpm-fcgi' ? 'FPM' : inst.sapi}
-                    </span>
-                    {inst.disabled && (
-                      <span className="ml-2 rounded bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400">
-                        Disabled
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {/* Group by short version (8.2, 8.3, 8.4, 8.5) */}
+            {Object.entries(
+              installs.filter(i => i.sapi !== 'cli').reduce((acc, inst) => {
+                const short = inst.version.split('.').slice(0, 2).join('.');
+                if (!acc[short]) acc[short] = [];
+                acc[short].push(inst);
+                return acc;
+              }, {} as Record<string, typeof installs>)
+            ).sort(([a], [b]) => b.localeCompare(a)).map(([shortVer, variants]) => {
+              const isDisabled = variants.every(v => v.disabled);
+              const anyRunning = variants.some(v => v.running);
+              const domainCount = Math.max(...variants.map(v => v.domain_count || 0));
+              const domains = [...new Set(variants.flatMap(v => v.domains ?? []))];
+              const fpmVariant = variants.find(v => v.sapi === 'fpm-fcgi');
+              const cgiVariant = variants.find(v => v.sapi === 'cgi-fcgi');
+              const bestVariant = fpmVariant || cgiVariant || variants[0];
+              const fullVer = variants[0].version;
+
+              return (
+                <div key={shortVer}
+                  className={`rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md transition-opacity ${isDisabled ? 'opacity-50' : ''}`}>
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <span className={`text-3xl font-bold ${isDisabled ? 'text-slate-500' : 'text-slate-100'}`}>{shortVer}</span>
+                      <span className="ml-2 text-xs text-slate-500">{fullVer}</span>
+                      {isDisabled && <span className="ml-2 rounded bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400">Disabled</span>}
+                    </div>
+                    <span className="flex items-center gap-1.5">
+                      <span className={`h-2.5 w-2.5 rounded-full ${isDisabled ? 'bg-slate-600' : anyRunning ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                      <span className={`text-xs ${isDisabled ? 'text-slate-600' : anyRunning ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {isDisabled ? 'Disabled' : anyRunning ? 'Running' : 'Stopped'}
                       </span>
-                    )}
-                  </div>
-                  <span className="flex items-center gap-1.5">
-                    <span className={`inline-block h-2.5 w-2.5 rounded-full ${inst.disabled ? 'bg-slate-600' : inst.running ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                    <span className={`text-xs ${inst.disabled ? 'text-slate-600' : inst.running ? 'text-emerald-400' : 'text-slate-500'}`}>
-                      {inst.disabled ? 'Disabled' : inst.running ? `Running (${inst.listen_addr})` : 'Ready'}
                     </span>
-                  </span>
+                  </div>
+
+                  {/* Binaries */}
+                  <div className="space-y-1 mb-3">
+                    {variants.map(v => (
+                      <div key={v.binary} className="flex items-center gap-2 text-xs">
+                        <span className={`rounded px-1.5 py-0.5 font-medium ${v.sapi === 'fpm-fcgi' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'}`}>
+                          {v.sapi === 'fpm-fcgi' ? 'FPM' : 'CGI'}
+                        </span>
+                        <span className="text-slate-500 truncate" title={v.binary}>{v.binary.split('/').pop()}</span>
+                        {v.running && v.listen_addr && (
+                          <span className="text-emerald-400 truncate text-[10px]" title={v.listen_addr}>
+                            {v.listen_addr.length > 30 ? '...' + v.listen_addr.slice(-25) : v.listen_addr}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Domain count */}
+                  {domainCount > 0 && (
+                    <div className="mb-3 rounded bg-blue-500/10 px-3 py-2">
+                      <p className="text-xs text-blue-400 font-medium">{domainCount} domain{domainCount > 1 ? 's' : ''} attached</p>
+                      <p className="text-[10px] text-blue-300/60 truncate">{domains.join(', ')}</p>
+                    </div>
+                  )}
+
+                  {/* Disable/Enable */}
+                  <button
+                    onClick={() => void handleTogglePHP(bestVariant.version, isDisabled)}
+                    disabled={toggling[bestVariant.version] || (!isDisabled && domainCount > 0)}
+                    title={!isDisabled && domainCount > 0 ? `Cannot disable — ${domainCount} domain(s) attached` : ''}
+                    className={`flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isDisabled
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                    }`}
+                  >
+                    <Power size={12} />
+                    {toggling[bestVariant.version]
+                      ? (isDisabled ? 'Enabling...' : 'Disabling...')
+                      : (isDisabled ? 'Enable' : (domainCount > 0 ? `${domainCount} domains — can't disable` : 'Disable'))}
+                  </button>
                 </div>
-                <p className="mt-2 truncate text-xs text-slate-500" title={inst.binary}>
-                  {inst.binary}
-                </p>
-                <button
-                  onClick={() => void handleTogglePHP(inst.version, !!inst.disabled)}
-                  disabled={toggling[inst.version]}
-                  className={`mt-3 flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
-                    inst.disabled
-                      ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                      : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                  }`}
-                >
-                  <Power size={12} />
-                  {toggling[inst.version]
-                    ? (inst.disabled ? 'Enabling...' : 'Disabling...')
-                    : (inst.disabled ? 'Enable' : 'Disable')}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
