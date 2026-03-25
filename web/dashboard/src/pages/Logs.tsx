@@ -36,13 +36,15 @@ function matchesFilter(status: number, filter: StatusFilter): boolean {
 }
 
 function formatBytes(bytes: number): string {
+  if (bytes == null || isNaN(bytes)) return '—';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1) return `${(ms * 1000).toFixed(0)} us`;
+  if (ms == null || isNaN(ms)) return '—';
+  if (ms < 1) return `${(ms * 1000).toFixed(0)} µs`;
   if (ms < 1000) return `${ms.toFixed(1)} ms`;
   return `${(ms / 1000).toFixed(2)} s`;
 }
