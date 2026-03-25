@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -791,6 +792,69 @@ func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "installed"})
+}
+
+func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := database.ListUsers()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if users == nil {
+		users = []database.DBUser{}
+	}
+	jsonResponse(w, users)
+}
+
+func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		User     string `json:"user"`
+		Host     string `json:"host"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.User == "" || req.Password == "" {
+		jsonError(w, "user and password required", http.StatusBadRequest)
+		return
+	}
+	if err := database.ChangePassword(req.User, req.Host, req.Password); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("database.password_change", "user: "+req.User, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "changed"})
+}
+
+func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	data, err := database.ExportDatabase(name)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/sql")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.sql", name))
+	w.Write(data)
+}
+
+func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<20) // 256MB max
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := database.ImportDatabase(name, data); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("database.import", "db: "+name, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "imported", "database": name})
 }
 
 func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {

@@ -8,11 +8,15 @@ import {
   XCircle,
   Copy,
   Download,
+  Upload,
   X,
   AlertTriangle,
   Play,
   Square,
   RotateCw,
+  Stethoscope,
+  Container,
+  Key,
 } from 'lucide-react';
 import {
   fetchDBStatus,
@@ -20,11 +24,24 @@ import {
   createDatabase,
   dropDatabase,
   installDatabase,
+  uninstallDatabase,
+  diagnoseDatabase,
+  fetchDBUsers,
+  changeDBPassword,
+  exportDatabase,
+  importDatabase,
   startDB,
   stopDB,
   restartDB,
+  fetchDockerDBs,
+  createDockerDB,
+  startDockerDB,
+  stopDockerDB,
+  removeDockerDB,
   type DBStatus,
   type DBInfo,
+  type DBUser,
+  type DockerDBContainer,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -172,12 +189,41 @@ export default function Database() {
   // DB service action
   const [dbAction, setDbAction] = useState('');
 
+  // Users
+  const [dbUsers, setDbUsers] = useState<DBUser[]>([]);
+  const [pwUser, setPwUser] = useState<DBUser | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [changingPw, setChangingPw] = useState(false);
+
+  // Docker
+  const [dockerAvailable, setDockerAvailable] = useState(false);
+  const [dockerContainers, setDockerContainers] = useState<DockerDBContainer[]>([]);
+  const [dockerVersion, setDockerVersion] = useState('');
+  const [showDockerForm, setShowDockerForm] = useState(false);
+  const [dockerForm, setDockerForm] = useState({ engine: 'mariadb', name: '', port: '3307', root_pass: '' });
+  const [dockerAction, setDockerAction] = useState('');
+
+  // Diagnose
+  const [diagData, setDiagData] = useState<Record<string, any> | null>(null);
+
+  // Import
+  const [importTarget, setImportTarget] = useState('');
+  const [importing, setImporting] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const [s, dbs] = await Promise.all([fetchDBStatus(), fetchDatabases()]);
       setDbStatus(s);
       setDatabases(dbs ?? []);
       setError('');
+      // Load users (may fail if DB not running)
+      fetchDBUsers().then(u => setDbUsers(u ?? [])).catch(() => {});
+      // Load Docker containers
+      fetchDockerDBs().then(d => {
+        setDockerAvailable(d.docker);
+        setDockerVersion(d.version || '');
+        setDockerContainers(d.containers ?? []);
+      }).catch(() => {});
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -499,6 +545,34 @@ export default function Database() {
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-2">
+                      <a
+                        href={exportDatabase(db.name)}
+                        className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent"
+                        title="Export SQL dump"
+                      >
+                        <Download size={12} /> Export
+                      </a>
+                      <label
+                        className="flex cursor-pointer items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent"
+                        title="Import SQL file"
+                      >
+                        <Upload size={12} /> Import
+                        <input type="file" accept=".sql" className="hidden" onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setImporting(true);
+                          try {
+                            await importDatabase(db.name, file);
+                            setStatus({ ok: true, message: `Imported ${file.name} into ${db.name}` });
+                            await load();
+                          } catch (err) {
+                            setStatus({ ok: false, message: (err as Error).message });
+                          } finally {
+                            setImporting(false);
+                            e.target.value = '';
+                          }
+                        }} />
+                      </label>
                       <button
                         onClick={() => setDropTarget(db)}
                         className="flex items-center gap-1 rounded-md bg-red-600/15 px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-600/25"
@@ -558,6 +632,226 @@ export default function Database() {
           )}
         </div>
       </ConfirmModal>
+
+      {/* Database Users */}
+      {dbUsers.length > 0 && (
+        <div className="rounded-lg border border-border bg-card shadow-md">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+              <Key size={14} /> Database Users ({dbUsers.length})
+            </h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="px-5 py-3 font-medium">User</th>
+                  <th className="px-5 py-3 font-medium">Host</th>
+                  <th className="px-5 py-3 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dbUsers.map(u => (
+                  <tr key={u.user + u.host} className="border-b border-border/50 text-card-foreground hover:bg-accent/30">
+                    <td className="px-5 py-3 font-mono text-xs">{u.user}</td>
+                    <td className="px-5 py-3 text-muted-foreground">{u.host}</td>
+                    <td className="px-5 py-3 text-right">
+                      {pwUser?.user === u.user && pwUser?.host === u.host ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                            placeholder="New password" className="w-40 rounded border border-border bg-background px-2 py-1 text-xs text-foreground outline-none" />
+                          <button disabled={changingPw || !newPassword} onClick={async () => {
+                            setChangingPw(true);
+                            try {
+                              await changeDBPassword(u.user, u.host, newPassword);
+                              setStatus({ ok: true, message: `Password changed for ${u.user}` });
+                              setPwUser(null); setNewPassword('');
+                            } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                            finally { setChangingPw(false); }
+                          }} className="rounded bg-blue-600 px-2 py-1 text-xs text-white disabled:opacity-50">
+                            {changingPw ? '...' : 'Save'}
+                          </button>
+                          <button onClick={() => { setPwUser(null); setNewPassword(''); }} className="text-xs text-muted-foreground">Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setPwUser(u)} className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs text-card-foreground hover:bg-accent">
+                          <Key size={12} /> Change Password
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Docker Database Containers */}
+      {dockerAvailable && (
+        <div className="rounded-lg border border-border bg-card shadow-md">
+          <div className="border-b border-border px-5 py-4 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+              <Container size={14} /> Docker Containers
+              {dockerVersion && <span className="text-xs font-normal text-muted-foreground">v{dockerVersion}</span>}
+            </h2>
+            <button onClick={() => setShowDockerForm(!showDockerForm)}
+              className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700">
+              <Plus size={12} /> New Container
+            </button>
+          </div>
+
+          {showDockerForm && (
+            <div className="border-b border-border p-5">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Engine</label>
+                  <select value={dockerForm.engine} onChange={e => setDockerForm({ ...dockerForm, engine: e.target.value })}
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none">
+                    <option value="mariadb">MariaDB</option>
+                    <option value="mysql">MySQL</option>
+                    <option value="postgresql">PostgreSQL</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Name</label>
+                  <input type="text" value={dockerForm.name} onChange={e => setDockerForm({ ...dockerForm, name: e.target.value })}
+                    placeholder="mydb" className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Port</label>
+                  <input type="text" value={dockerForm.port} onChange={e => setDockerForm({ ...dockerForm, port: e.target.value })}
+                    placeholder="3307" className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Root Password</label>
+                  <input type="password" value={dockerForm.root_pass} onChange={e => setDockerForm({ ...dockerForm, root_pass: e.target.value })}
+                    placeholder="password" className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none" />
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button disabled={dockerAction === 'create' || !dockerForm.name || !dockerForm.root_pass}
+                  onClick={async () => {
+                    setDockerAction('create');
+                    try {
+                      await createDockerDB(dockerForm.engine, dockerForm.name, Number(dockerForm.port) || 3307, dockerForm.root_pass);
+                      setStatus({ ok: true, message: `Docker ${dockerForm.engine} container created` });
+                      setShowDockerForm(false);
+                      setDockerForm({ engine: 'mariadb', name: '', port: '3307', root_pass: '' });
+                      await load();
+                    } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                    finally { setDockerAction(''); }
+                  }}
+                  className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700 disabled:opacity-50">
+                  {dockerAction === 'create' ? <RefreshCw size={12} className="animate-spin" /> : <Plus size={12} />}
+                  Create
+                </button>
+                <button onClick={() => setShowDockerForm(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {dockerContainers.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="px-5 py-3 font-medium">Name</th>
+                    <th className="px-5 py-3 font-medium">Engine</th>
+                    <th className="px-5 py-3 font-medium">Image</th>
+                    <th className="px-5 py-3 font-medium">Status</th>
+                    <th className="px-5 py-3 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dockerContainers.map(c => {
+                    const shortName = c.name.replace('uwas-db-', '');
+                    return (
+                      <tr key={c.id} className="border-b border-border/50 text-card-foreground hover:bg-accent/30">
+                        <td className="px-5 py-3 font-mono text-xs">{c.name}</td>
+                        <td className="px-5 py-3 text-muted-foreground">{c.engine}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{c.image}</td>
+                        <td className="px-5 py-3">
+                          <span className={`inline-flex items-center gap-1 text-xs ${c.running ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${c.running ? 'bg-emerald-400' : 'bg-muted-foreground'}`} />
+                            {c.running ? 'Running' : 'Stopped'}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {c.running ? (
+                              <button disabled={!!dockerAction} onClick={async () => {
+                                setDockerAction('stop-' + shortName);
+                                try { await stopDockerDB(shortName); await load(); } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                                finally { setDockerAction(''); }
+                              }} className="rounded bg-red-600/15 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/25 disabled:opacity-50">
+                                <Square size={11} />
+                              </button>
+                            ) : (
+                              <button disabled={!!dockerAction} onClick={async () => {
+                                setDockerAction('start-' + shortName);
+                                try { await startDockerDB(shortName); await load(); } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                                finally { setDockerAction(''); }
+                              }} className="rounded bg-emerald-600/15 px-2.5 py-1.5 text-xs text-emerald-400 hover:bg-emerald-600/25 disabled:opacity-50">
+                                <Play size={11} />
+                              </button>
+                            )}
+                            <button disabled={!!dockerAction} onClick={async () => {
+                              if (!confirm(`Remove container ${c.name}?`)) return;
+                              setDockerAction('rm-' + shortName);
+                              try { await removeDockerDB(shortName); await load(); } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                              finally { setDockerAction(''); }
+                            }} className="rounded bg-red-600/15 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/25 disabled:opacity-50">
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : !showDockerForm && (
+            <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+              No Docker database containers. Click "New Container" to create one.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Diagnostics */}
+      {dbStatus?.installed && (
+        <div className="rounded-lg border border-border bg-card p-5 shadow-md">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+              <Stethoscope size={14} /> Diagnostics
+            </h2>
+            <div className="flex gap-2">
+              <button onClick={async () => {
+                try { const d = await diagnoseDatabase(); setDiagData(d); } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+              }} className="flex items-center gap-1 rounded-md bg-accent/50 px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">
+                <Stethoscope size={12} /> Run Diagnostics
+              </button>
+              <button onClick={async () => {
+                if (!confirm('This will completely remove MariaDB/MySQL including all data. Are you sure?')) return;
+                try {
+                  const res = await uninstallDatabase();
+                  setStatus({ ok: true, message: 'Database uninstalled: ' + res.output?.slice(0, 100) });
+                  await load();
+                } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+              }} className="flex items-center gap-1 rounded-md bg-red-600/15 px-3 py-1.5 text-xs text-red-400 hover:bg-red-600/25">
+                <Trash2 size={12} /> Uninstall
+              </button>
+            </div>
+          </div>
+          {diagData && (
+            <pre className="max-h-48 overflow-auto rounded bg-background p-4 font-mono text-xs text-muted-foreground whitespace-pre-wrap">
+              {JSON.stringify(diagData, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }
