@@ -145,6 +145,134 @@ func RestartService() error {
 	return fmt.Errorf("could not restart MySQL/MariaDB: %s\n%s", lastErr, diag)
 }
 
+// RepairService attempts to fix a broken MariaDB/MySQL installation:
+// 1. Fix dpkg/apt broken state
+// 2. Recreate data directory with proper ownership
+// 3. Run mariadb-install-db / mysql_install_db
+// 4. Start the service
+func RepairService() (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", fmt.Errorf("not supported on Windows")
+	}
+
+	var log strings.Builder
+
+	// Step 1: Fix broken dpkg/apt state
+	if _, err := exec.LookPath("dpkg"); err == nil {
+		out, _ := exec.Command("dpkg", "--configure", "-a").CombinedOutput()
+		log.WriteString("dpkg --configure -a:\n" + string(out) + "\n")
+
+		out, _ = exec.Command("apt", "--fix-broken", "install", "-y").CombinedOutput()
+		log.WriteString("apt --fix-broken install:\n" + string(out) + "\n")
+	}
+
+	// Step 2: Stop any stuck processes
+	exec.Command("systemctl", "stop", "mariadb").Run()
+	exec.Command("systemctl", "stop", "mysql").Run()
+	exec.Command("pkill", "-9", "mysqld").Run()
+	exec.Command("pkill", "-9", "mariadbd").Run()
+	log.WriteString("Killed any running DB processes\n")
+
+	// Step 3: Recreate data directory
+	for _, dir := range []string{"/var/lib/mysql", "/run/mysqld", "/var/run/mysqld", "/var/log/mysql"} {
+		os.MkdirAll(dir, 0755)
+		exec.Command("chown", "mysql:mysql", dir).Run()
+	}
+	log.WriteString("Created /var/lib/mysql + socket dirs with mysql:mysql ownership\n")
+
+	// Step 4: Initialize database (mariadb-install-db or mysql_install_db)
+	for _, bin := range []string{"mariadb-install-db", "mysql_install_db"} {
+		path, err := exec.LookPath(bin)
+		if err != nil {
+			continue
+		}
+		out, err := exec.Command(path, "--user=mysql", "--datadir=/var/lib/mysql").CombinedOutput()
+		log.WriteString(bin + ":\n" + string(out) + "\n")
+		if err == nil {
+			log.WriteString("Database initialized successfully\n")
+			break
+		}
+	}
+
+	// Step 5: Start service
+	for _, svc := range []string{"mariadb", "mysql"} {
+		out, err := exec.Command("systemctl", "start", svc).CombinedOutput()
+		if err == nil {
+			exec.Command("systemctl", "enable", svc).Run()
+			log.WriteString("Service " + svc + " started\n")
+
+			// Step 6: Secure installation
+			runMySQL("DELETE FROM mysql.user WHERE User='';")
+			runMySQL("FLUSH PRIVILEGES;")
+			log.WriteString("Basic security applied\n")
+			return log.String(), nil
+		}
+		log.WriteString("start " + svc + ": " + string(out) + "\n")
+	}
+
+	return log.String(), fmt.Errorf("repair completed but service could not start — check output for details")
+}
+
+// ForceUninstall does a more aggressive uninstall when normal uninstall fails:
+// kills processes, removes packages with dpkg --force, cleans all data.
+func ForceUninstall() (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", fmt.Errorf("not supported on Windows")
+	}
+
+	var log strings.Builder
+
+	// Kill everything
+	exec.Command("systemctl", "stop", "mariadb").Run()
+	exec.Command("systemctl", "stop", "mysql").Run()
+	exec.Command("pkill", "-9", "mysqld").Run()
+	exec.Command("pkill", "-9", "mariadbd").Run()
+	log.WriteString("Killed all DB processes\n")
+
+	// Force remove with dpkg
+	if _, err := exec.LookPath("dpkg"); err == nil {
+		// Find all mariadb/mysql packages
+		out, _ := exec.Command("dpkg", "-l").Output()
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && (strings.Contains(fields[1], "mariadb") || strings.Contains(fields[1], "mysql")) {
+				pkg := fields[1]
+				o, _ := exec.Command("dpkg", "--force-all", "--purge", pkg).CombinedOutput()
+				log.WriteString("purge " + pkg + ": " + strings.TrimSpace(string(o)) + "\n")
+			}
+		}
+	}
+
+	// Clean up everything
+	for _, path := range []string{
+		"/var/lib/mysql",
+		"/var/log/mysql",
+		"/run/mysqld",
+		"/var/run/mysqld",
+		"/etc/mysql",
+		"/etc/my.cnf",
+		"/etc/my.cnf.d",
+	} {
+		if _, err := os.Stat(path); err == nil {
+			os.RemoveAll(path)
+			log.WriteString("Removed " + path + "\n")
+		}
+	}
+
+	// Remove user
+	exec.Command("userdel", "-f", "mysql").Run()
+	exec.Command("groupdel", "mysql").Run()
+	log.WriteString("Removed mysql user/group\n")
+
+	// Clean apt cache
+	exec.Command("apt", "autoremove", "-y").Run()
+	exec.Command("apt", "clean").Run()
+	exec.Command("systemctl", "daemon-reload").Run()
+	log.WriteString("Cleaned apt cache + daemon-reload\n")
+
+	return log.String(), nil
+}
+
 // UninstallService completely removes MySQL/MariaDB packages and data.
 func UninstallService() (string, error) {
 	if runtime.GOOS == "windows" {
