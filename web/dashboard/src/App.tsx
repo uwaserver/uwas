@@ -33,6 +33,8 @@ import Packages from '@/pages/Packages';
 import Doctor from '@/pages/Doctor';
 import CloneStaging from '@/pages/CloneStaging';
 import Migration from '@/pages/Migration';
+import Webhooks from '@/pages/Webhooks';
+import AdminUsers from '@/pages/AdminUsers';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -81,6 +83,8 @@ export default function App() {
         <Route path="/wordpress" element={<WordPress />} />
         <Route path="/clone" element={<CloneStaging />} />
         <Route path="/migrate" element={<Migration />} />
+        <Route path="/webhooks" element={<Webhooks />} />
+        <Route path="/admin-users" element={<AdminUsers />} />
         <Route path="/dns" element={<DNS />} />
         <Route path="/ip-management" element={<IPManagement />} />
         <Route path="/audit" element={<AuditLog />} />

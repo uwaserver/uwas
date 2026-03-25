@@ -6,13 +6,20 @@ import {
   RefreshCw,
   Terminal,
   Globe,
+  Activity,
+  Play,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
 import {
   fetchCronJobs,
   addCronJob,
   deleteCronJob,
   fetchDomains,
+  fetchCronMonitor,
+  executeCron,
   type CronJob,
+  type CronJobStatus,
   type DomainData,
 } from '@/lib/api';
 
@@ -34,6 +41,9 @@ export default function CronJobs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [monitorData, setMonitorData] = useState<CronJobStatus[]>([]);
+  const [showMonitor, setShowMonitor] = useState(false);
+  const [executing, setExecuting] = useState('');
 
   // Form state
   const [preset, setPreset] = useState(SCHEDULE_PRESETS[0].value);
@@ -53,6 +63,7 @@ export default function CronJobs() {
       setJobs(j ?? []);
       setDomains(d ?? []);
       setError('');
+      fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {});
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -313,6 +324,58 @@ export default function CronJobs() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Execution Monitor */}
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+            <Activity size={14} /> Execution Monitor
+          </h2>
+          <button onClick={() => { setShowMonitor(!showMonitor); if (!showMonitor) fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {}); }}
+            className="text-xs text-muted-foreground hover:text-foreground">{showMonitor ? 'Hide' : 'Show'}</button>
+        </div>
+        {showMonitor && (
+          monitorData.length > 0 ? (
+            <div className="divide-y divide-border">
+              {monitorData.map((job, i) => (
+                <div key={i} className="px-5 py-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {job.consecutive_fail > 0 ? <XCircle size={14} className="text-red-400" /> : <CheckCircle size={14} className="text-emerald-400" />}
+                      <span className="font-mono text-xs text-foreground truncate max-w-[300px]">{job.command}</span>
+                      <span className="text-[10px] text-muted-foreground">{job.domain}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="text-emerald-400">{job.success_count} ok</span>
+                      <span className="text-red-400">{job.failure_count} fail</span>
+                      <button disabled={!!executing} onClick={async () => {
+                        setExecuting(job.command);
+                        try {
+                          await executeCron(job.domain, job.schedule, job.command);
+                          setStatus('Executed: ' + job.command);
+                          fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {});
+                        } catch (e) { setError((e as Error).message); }
+                        finally { setExecuting(''); }
+                      }} className="flex items-center gap-1 rounded bg-accent/50 px-2 py-1 text-muted-foreground hover:text-foreground disabled:opacity-50">
+                        {executing === job.command ? <RefreshCw size={10} className="animate-spin" /> : <Play size={10} />} Run
+                      </button>
+                    </div>
+                  </div>
+                  {job.last_run && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Last: {new Date(job.last_run.started_at).toLocaleString()} — exit {job.last_run.exit_code} — {Math.round(job.last_run.duration / 1e6)}ms
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+              No execution history yet. Cron jobs will appear here after they run.
+            </div>
+          )
+        )}
       </div>
     </div>
   );
