@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -49,6 +50,9 @@ type BackupManager struct {
 
 	configPath string
 	certsDir   string
+	webRoot    string   // base dir for all domain web roots
+	domainsDir string   // domains.d/ config directory
+	domainRoots []string // individual domain web roots to backup
 }
 
 // New creates a BackupManager from the given config. It registers the
@@ -111,6 +115,15 @@ func (m *BackupManager) SetPaths(configPath, certsDir string) {
 	m.certsDir = certsDir
 }
 
+// SetDomainPaths configures domain web roots and domains.d directory for backup.
+func (m *BackupManager) SetDomainPaths(webRoot, domainsDir string, domainRoots []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webRoot = webRoot
+	m.domainsDir = domainsDir
+	m.domainRoots = domainRoots
+}
+
 // Provider returns the named provider, or nil.
 func (m *BackupManager) Provider(name string) StorageProvider {
 	return m.providers[name]
@@ -156,6 +169,21 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 		return nil, fmt.Errorf("add config to archive: %w", err)
 	}
 
+	// Add domains.d/ config directory if it exists.
+	m.mu.Lock()
+	domainsDir := m.domainsDir
+	domainRoots := make([]string, len(m.domainRoots))
+	copy(domainRoots, m.domainRoots)
+	m.mu.Unlock()
+
+	if domainsDir != "" {
+		if info, err := os.Stat(domainsDir); err == nil && info.IsDir() {
+			if err := addDirToTar(tw, domainsDir, "domains.d"); err != nil {
+				m.logger.Warn("backup: failed to add domains.d", "error", err)
+			}
+		}
+	}
+
 	// Add certificates directory if it exists.
 	if certsDir != "" {
 		if info, err := os.Stat(certsDir); err == nil && info.IsDir() {
@@ -165,6 +193,33 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 				tmpFile.Close()
 				return nil, fmt.Errorf("add certs to archive: %w", err)
 			}
+		}
+	}
+
+	// Add domain web content (each domain's web root).
+	for _, root := range domainRoots {
+		if root == "" {
+			continue
+		}
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			// Use the last two path components as archive name: e.g. "sites/example.com"
+			dirName := filepath.Base(filepath.Dir(root)) + "/" + filepath.Base(root)
+			if err := addDirToTar(tw, root, "sites/"+dirName); err != nil {
+				m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
+			}
+		}
+	}
+
+	// MySQL/MariaDB database dump (if mysqldump available).
+	if dbDump, err := dumpAllDatabases(); err == nil && len(dbDump) > 0 {
+		hdr := &tar.Header{
+			Name:    "databases/all-databases.sql",
+			Size:    int64(len(dbDump)),
+			Mode:    0644,
+			ModTime: time.Now(),
+		}
+		if err := tw.WriteHeader(hdr); err == nil {
+			tw.Write(dbDump)
 		}
 	}
 
@@ -440,6 +495,21 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 	}
 	_, err = io.Copy(tw, f)
 	return err
+}
+
+// dumpAllDatabases runs mysqldump --all-databases and returns the SQL dump.
+// Returns nil if mysqldump is not available or MySQL is not running.
+func dumpAllDatabases() ([]byte, error) {
+	mysqldump, err := exec.LookPath("mysqldump")
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(mysqldump, "--all-databases", "--single-transaction", "--quick", "--lock-tables=false")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
