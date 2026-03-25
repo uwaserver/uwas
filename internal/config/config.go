@@ -19,6 +19,7 @@ type GlobalConfig struct {
 	MaxConnections int            `yaml:"max_connections"`
 	HTTPListen     string         `yaml:"http_listen"`
 	HTTPSListen    string         `yaml:"https_listen"`
+	SFTPListen     string         `yaml:"sftp_listen"`     // e.g. ":2222", empty = disabled
 	HTTP3Enabled   bool           `yaml:"http3"`
 	PIDFile        string         `yaml:"pid_file"`
 	WebRoot        string         `yaml:"web_root"`
