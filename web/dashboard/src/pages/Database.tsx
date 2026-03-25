@@ -207,7 +207,6 @@ export default function Database() {
   const [diagData, setDiagData] = useState<Record<string, any> | null>(null);
 
   // Import
-  const [importTarget, setImportTarget] = useState('');
   const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
@@ -553,10 +552,10 @@ export default function Database() {
                         <Download size={12} /> Export
                       </a>
                       <label
-                        className="flex cursor-pointer items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent"
+                        className={`flex cursor-pointer items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent ${importing ? 'opacity-50 pointer-events-none' : ''}`}
                         title="Import SQL file"
                       >
-                        <Upload size={12} /> Import
+                        {importing ? <RefreshCw size={12} className="animate-spin" /> : <Upload size={12} />} Import
                         <input type="file" accept=".sql" className="hidden" onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;

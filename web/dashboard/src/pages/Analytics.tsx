@@ -6,7 +6,7 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis,
 } from 'recharts';
-import { fetchAnalytics, type DomainAnalytics } from '@/lib/api';
+import { fetchAnalytics, fetchBandwidth, resetBandwidth, type DomainAnalytics, type BandwidthStatus } from '@/lib/api';
 import Card from '@/components/Card';
 
 function formatBytes(b: number): string {
@@ -132,13 +132,16 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
 
 export default function Analytics() {
   const [domains, setDomains] = useState<DomainAnalytics[]>([]);
+  const [bwData, setBwData] = useState<BandwidthStatus[]>([]);
   const [error, setError] = useState('');
+  const [resetting, setResetting] = useState('');
 
   const load = useCallback(async () => {
     try {
       const result = await fetchAnalytics();
       setDomains(result || []);
       setError('');
+      fetchBandwidth().then(b => setBwData(b ?? [])).catch(() => {});
     } catch (e) { setError((e as Error).message); }
   }, []);
 
@@ -192,6 +195,70 @@ export default function Analytics() {
           </table>
         </div>
       </div>
+
+      {/* Bandwidth Limits */}
+      {bwData.length > 0 && (
+        <div className="rounded-lg border border-border bg-card shadow-md">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold text-card-foreground flex items-center gap-2">
+              <HardDrive size={14} /> Bandwidth Usage
+            </h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs text-muted-foreground uppercase">
+                  <th className="px-5 py-3">Domain</th>
+                  <th className="px-5 py-3">Monthly</th>
+                  <th className="px-5 py-3">Daily</th>
+                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bwData.map(bw => (
+                  <tr key={bw.host} className="border-b border-border/50 hover:bg-accent/30">
+                    <td className="px-5 py-3 font-mono text-xs text-foreground">{bw.host}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-20 rounded-full bg-accent overflow-hidden">
+                          <div className={`h-full rounded-full ${bw.monthly_pct > 90 ? 'bg-red-500' : bw.monthly_pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                            style={{ width: `${Math.min(bw.monthly_pct, 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {formatBytes(bw.monthly_bytes)}{bw.monthly_limit > 0 ? ` / ${formatBytes(bw.monthly_limit)}` : ''}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className="text-xs text-muted-foreground">
+                        {formatBytes(bw.daily_bytes)}{bw.daily_limit > 0 ? ` / ${formatBytes(bw.daily_limit)}` : ''}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      {bw.blocked ? (
+                        <span className="rounded bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-400">Blocked</span>
+                      ) : bw.throttled ? (
+                        <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">Throttled</span>
+                      ) : (
+                        <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">OK</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <button disabled={!!resetting} onClick={async () => {
+                        setResetting(bw.host);
+                        try { await resetBandwidth(bw.host); load(); } catch {} finally { setResetting(''); }
+                      }} className="rounded bg-accent/50 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">
+                        {resetting === bw.host ? <RefreshCw size={10} className="animate-spin inline" /> : null} Reset
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

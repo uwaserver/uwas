@@ -705,7 +705,7 @@ export default function DNS() {
                       <button
                         onClick={() => {
                           setShowAddForm(false);
-                          setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
+                          setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false, priority: 0 });
                         }}
                         className="rounded-md px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground"
                       >
