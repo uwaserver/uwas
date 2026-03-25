@@ -271,10 +271,26 @@ define('DB_COLLATE', '');
 
 $table_prefix = 'wp_';
 define('WP_DEBUG', false);
-define('FORCE_SSL_ADMIN', true);
 define('DISALLOW_FILE_EDIT', true);
 define('FS_METHOD', 'direct');
 define('WP_TEMP_DIR', __DIR__ . '/.tmp');
+
+/** UWAS: SSL handling — prevent redirect loops.
+ * UWAS terminates SSL and forwards as HTTP internally.
+ * Tell WordPress the connection is HTTPS via the forwarded proto header. */
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+    $_SERVER['HTTPS'] = 'on';
+}
+if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
+    define('FORCE_SSL_ADMIN', true);
+}
+
+/** UWAS: Set home/siteurl dynamically to avoid DB mismatch redirect loops. */
+if (!defined('WP_HOME')) {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    define('WP_HOME', $scheme . '://' . $_SERVER['HTTP_HOST']);
+    define('WP_SITEURL', $scheme . '://' . $_SERVER['HTTP_HOST']);
+}
 
 if ( ! defined('ABSPATH') ) {
     define('ABSPATH', __DIR__ . '/');

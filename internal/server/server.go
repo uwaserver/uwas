@@ -624,9 +624,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
 		s.metrics.RecordDomain(r.Host, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 
-		// Record to admin log ring buffer
-		if s.admin != nil {
+		// Record to admin log ring buffer (skip internal health checks)
+		if s.admin != nil && r.Host != "localhost:80" && r.Host != "localhost" {
 			elapsed := time.Since(start)
+			// Use real client IP from X-Forwarded-For or X-Real-IP
+			remoteIP := r.RemoteAddr
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				if parts := strings.SplitN(xff, ",", 2); len(parts) > 0 {
+					remoteIP = strings.TrimSpace(parts[0])
+				}
+			} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
+				remoteIP = xri
+			}
 			s.admin.RecordLog(admin.LogEntry{
 				Time:       start,
 				Host:       r.Host,
@@ -637,7 +646,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				DurationMS: float64(elapsed.Microseconds()) / 1000.0,
 				Duration:   elapsed.Round(time.Millisecond).String(),
 				RemoteAddr: r.RemoteAddr,
-				Remote:     r.RemoteAddr,
+				Remote:     remoteIP,
 				UserAgent:  r.UserAgent(),
 			})
 		}

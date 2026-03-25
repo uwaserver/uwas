@@ -57,17 +57,36 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 		return
 	}
 
-	// Log stderr if any
-	if stderr := resp.Stderr(); len(stderr) > 0 {
+	// Log stderr if any (PHP errors)
+	if stderrBytes := resp.Stderr(); len(stderrBytes) > 0 {
 		h.logger.Warn("php stderr",
 			"host", domain.Host,
 			"script", scriptFilename,
-			"stderr", string(stderr),
+			"stderr", string(stderrBytes),
 		)
 	}
 
 	// Parse HTTP response from FastCGI
 	statusCode, headers, body := resp.ParseHTTP()
+
+	// If PHP returned nothing (blank page), check if stdout is empty
+	stdoutBytes := resp.Stdout()
+	if len(stdoutBytes) == 0 {
+		stderrStr := string(resp.Stderr())
+		if stderrStr != "" {
+			h.logger.Error("PHP returned empty response with errors",
+				"host", domain.Host,
+				"script", scriptFilename,
+				"stderr", stderrStr,
+			)
+			// Show error in development or when WP_DEBUG might help
+			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			ctx.Response.WriteHeader(500)
+			ctx.Response.Write([]byte("<!-- PHP Error: " + stderrStr + " -->\n"))
+			ctx.Response.Write([]byte("<h1>500 Internal Server Error</h1><p>PHP returned an empty response. Check server logs.</p>"))
+			return
+		}
+	}
 
 	// X-Accel-Redirect / X-Sendfile: serve file directly instead of PHP body
 	if accel := headers.Get("X-Accel-Redirect"); accel != "" {
