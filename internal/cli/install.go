@@ -121,6 +121,66 @@ WantedBy=multi-user.target
 	return nil
 }
 
+// UninstallCmd removes UWAS service and binary.
+type UninstallCmd struct{}
+
+func (c *UninstallCmd) Name() string        { return "uninstall" }
+func (c *UninstallCmd) Description() string { return "Remove UWAS service and binary (keeps config and data)" }
+func (c *UninstallCmd) Run(args []string) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("uninstall is only supported on Linux")
+	}
+	if os.Getuid() != 0 {
+		return fmt.Errorf("uninstall requires root — run with sudo")
+	}
+
+	fmt.Println("UWAS Uninstaller")
+	fmt.Println()
+	fmt.Println("This will remove:")
+	fmt.Println("  - /usr/local/bin/uwas (binary)")
+	fmt.Println("  - /usr/bin/uwas (symlink)")
+	fmt.Println("  - /etc/systemd/system/uwas.service")
+	fmt.Println()
+	fmt.Println("Config (/etc/uwas/) and data (/var/www/) will be preserved.")
+	fmt.Println()
+	fmt.Print("Continue? [y/N] ")
+
+	var reply string
+	fmt.Scanln(&reply)
+	if reply != "y" && reply != "Y" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Stop and disable service
+	exec.Command("systemctl", "stop", "uwas").Run()
+	exec.Command("systemctl", "disable", "uwas").Run()
+	fmt.Println("  - Service stopped and disabled")
+
+	// Remove files
+	os.Remove("/etc/systemd/system/uwas.service")
+	fmt.Println("  - Removed systemd service")
+
+	os.Remove("/usr/bin/uwas")
+	fmt.Println("  - Removed /usr/bin/uwas symlink")
+
+	self, _ := os.Executable()
+	if self != "/usr/local/bin/uwas" {
+		os.Remove("/usr/local/bin/uwas")
+		fmt.Println("  - Removed /usr/local/bin/uwas")
+	} else {
+		// Can't delete ourselves while running — schedule deletion
+		fmt.Println("  - Binary will be removed on next reboot (currently running)")
+	}
+
+	exec.Command("systemctl", "daemon-reload").Run()
+
+	fmt.Println()
+	fmt.Println("UWAS uninstalled. Config preserved at /etc/uwas/")
+	fmt.Println("To remove everything: rm -rf /etc/uwas /var/www")
+	return nil
+}
+
 // DoctorCommand runs diagnostics on the system.
 func DoctorCommand(args []string) error {
 	fmt.Println("UWAS Doctor — System Diagnostics")
