@@ -47,8 +47,12 @@ type LogEntry struct {
 	Method     string    `json:"method"`
 	Path       string    `json:"path"`
 	Status     int       `json:"status"`
+	Bytes      int64     `json:"bytes"`
+	DurationMS float64   `json:"duration_ms"`
 	Duration   string    `json:"duration"`
 	RemoteAddr string    `json:"remote_addr"`
+	Remote     string    `json:"remote"`
+	UserAgent  string    `json:"user_agent,omitempty"`
 }
 
 const maxLogEntries = 1000
@@ -444,7 +448,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{
 		"status":       overallStatus,
-		"uptime":       time.Since(s.metrics.StartTime).String(),
+		"uptime":       humanDuration(time.Since(s.metrics.StartTime)),
 		"uptime_secs":  time.Since(s.metrics.StartTime).Seconds(),
 		"domains":      domainCount,
 		"requests":     s.metrics.RequestsTotal.Load(),
@@ -517,7 +521,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"cache_misses":   s.metrics.CacheMisses.Load(),
 		"active_conns":   s.metrics.ActiveConns.Load(),
 		"bytes_sent":     s.metrics.BytesSent.Load(),
-		"uptime":         time.Since(s.metrics.StartTime).String(),
+		"uptime":         humanDuration(time.Since(s.metrics.StartTime)),
 		"slow_requests":  s.metrics.SlowRequests.Load(),
 		"latency_p50_ms": p50 * 1000,
 		"latency_p95_ms": p95 * 1000,
@@ -1144,7 +1148,7 @@ func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
 		"cache_misses":   s.metrics.CacheMisses.Load(),
 		"active_conns":   s.metrics.ActiveConns.Load(),
 		"bytes_sent":     s.metrics.BytesSent.Load(),
-		"uptime":         time.Since(s.metrics.StartTime).String(),
+		"uptime":         humanDuration(time.Since(s.metrics.StartTime)),
 	}
 	data, _ := json.Marshal(stats)
 	fmt.Fprintf(w, "data: %s\n\n", data)
@@ -2128,6 +2132,31 @@ func toInt(v any) int {
 func parseDur(s string) config.Duration {
 	d, _ := time.ParseDuration(s)
 	return config.Duration{Duration: d}
+}
+
+// humanDuration formats a duration as "2d 5h 30m 12s" (no nanoseconds).
+func humanDuration(d time.Duration) string {
+	if d < time.Second {
+		return "0s"
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	secs := int(d.Seconds()) % 60
+	var parts []string
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if mins > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", mins))
+	}
+	if secs > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%ds", secs))
+	}
+	return strings.Join(parts, " ")
 }
 
 // isValidHostname checks if s is a valid domain name (no path traversal, no injection).

@@ -612,14 +612,19 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// Record to admin log ring buffer
 		if s.admin != nil {
+			elapsed := time.Since(start)
 			s.admin.RecordLog(admin.LogEntry{
 				Time:       start,
 				Host:       r.Host,
 				Method:     r.Method,
 				Path:       r.URL.Path,
 				Status:     ctx.Response.StatusCode(),
-				Duration:   time.Since(start).String(),
+				Bytes:      ctx.Response.BytesWritten(),
+				DurationMS: float64(elapsed.Microseconds()) / 1000.0,
+				Duration:   elapsed.Round(time.Millisecond).String(),
 				RemoteAddr: r.RemoteAddr,
+				Remote:     r.RemoteAddr,
+				UserAgent:  r.UserAgent(),
 			})
 		}
 
