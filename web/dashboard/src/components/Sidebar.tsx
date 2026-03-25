@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { fetchSystem } from '@/lib/api';
 import {
   LayoutDashboard,
   Globe,
@@ -166,7 +167,12 @@ function CollapsibleGroup({ group, onNavClick }: { group: NavGroup; onNavClick?:
 
 export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [version, setVersion] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    fetchSystem().then(s => setVersion(s?.version || '')).catch(() => {});
+  }, []);
 
   const handleLogout = () => {
     clearToken();
@@ -223,7 +229,7 @@ export default function Sidebar() {
             UWAS
           </span>
           <span className="ml-auto rounded bg-blue-600/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
-            v1.4
+            {version || '...'}
           </span>
         </div>
 
