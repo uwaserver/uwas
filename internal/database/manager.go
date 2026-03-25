@@ -95,13 +95,18 @@ func StartService() error {
 	}
 
 	// Try mariadb first, then mysql
+	var lastErr string
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		if err := exec.Command("systemctl", "start", svc).Run(); err == nil {
+		out, err := exec.Command("systemctl", "start", svc).CombinedOutput()
+		if err == nil {
 			exec.Command("systemctl", "enable", svc).Run()
 			return nil
 		}
+		lastErr = strings.TrimSpace(string(out))
 	}
-	return fmt.Errorf("could not start MySQL/MariaDB service")
+	// Collect journal for diagnosis
+	diag := collectDBDiagnostics()
+	return fmt.Errorf("could not start MySQL/MariaDB: %s\n%s", lastErr, diag)
 }
 
 // StopService stops MySQL/MariaDB service.
@@ -109,12 +114,18 @@ func StopService() error {
 	if runtime.GOOS == "windows" {
 		return fmt.Errorf("not supported on Windows")
 	}
+	var lastErr string
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		if err := exec.Command("systemctl", "stop", svc).Run(); err == nil {
+		out, err := exec.Command("systemctl", "stop", svc).CombinedOutput()
+		if err == nil {
 			return nil
 		}
+		lastErr = strings.TrimSpace(string(out))
 	}
-	return fmt.Errorf("could not stop MySQL/MariaDB service")
+	// Force kill as fallback
+	exec.Command("pkill", "-9", "mysqld").Run()
+	exec.Command("pkill", "-9", "mariadbd").Run()
+	return fmt.Errorf("could not stop MySQL/MariaDB (force killed): %s", lastErr)
 }
 
 // RestartService restarts MySQL/MariaDB service.
@@ -122,12 +133,139 @@ func RestartService() error {
 	if runtime.GOOS == "windows" {
 		return fmt.Errorf("not supported on Windows")
 	}
+	var lastErr string
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		if err := exec.Command("systemctl", "restart", svc).Run(); err == nil {
+		out, err := exec.Command("systemctl", "restart", svc).CombinedOutput()
+		if err == nil {
 			return nil
 		}
+		lastErr = strings.TrimSpace(string(out))
 	}
-	return fmt.Errorf("could not restart MySQL/MariaDB service")
+	diag := collectDBDiagnostics()
+	return fmt.Errorf("could not restart MySQL/MariaDB: %s\n%s", lastErr, diag)
+}
+
+// UninstallService completely removes MySQL/MariaDB packages and data.
+func UninstallService() (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", fmt.Errorf("not supported on Windows")
+	}
+
+	var log strings.Builder
+
+	// Stop first
+	StopService()
+	log.WriteString("Service stopped\n")
+
+	// Purge packages
+	if _, err := exec.LookPath("apt"); err == nil {
+		out, _ := exec.Command("apt", "purge", "-y",
+			"mariadb-server", "mariadb-client", "mariadb-common",
+			"mysql-server", "mysql-client", "mysql-common",
+		).CombinedOutput()
+		log.WriteString(string(out))
+		exec.Command("apt", "autoremove", "-y").CombinedOutput()
+	} else if _, err := exec.LookPath("dnf"); err == nil {
+		out, _ := exec.Command("dnf", "remove", "-y",
+			"mariadb-server", "mariadb", "mysql-server", "mysql",
+		).CombinedOutput()
+		log.WriteString(string(out))
+	}
+
+	// Clean up leftover data and sockets
+	for _, path := range []string{
+		"/var/lib/mysql",
+		"/var/log/mysql",
+		"/run/mysqld",
+		"/var/run/mysqld",
+		"/etc/mysql",
+	} {
+		if _, err := os.Stat(path); err == nil {
+			os.RemoveAll(path)
+			log.WriteString("Removed " + path + "\n")
+		}
+	}
+
+	// Remove system user
+	exec.Command("userdel", "mysql").Run()
+	exec.Command("groupdel", "mysql").Run()
+	log.WriteString("Removed mysql user/group\n")
+
+	exec.Command("systemctl", "daemon-reload").Run()
+	log.WriteString("systemctl daemon-reload done\n")
+
+	return log.String(), nil
+}
+
+// DiagnoseService returns diagnostic info about the database service.
+func DiagnoseService() map[string]any {
+	diag := map[string]any{}
+
+	// Service status
+	for _, svc := range []string{"mariadb", "mysql"} {
+		out, err := exec.Command("systemctl", "is-active", svc).Output()
+		status := strings.TrimSpace(string(out))
+		if err == nil || status != "" {
+			diag["service_name"] = svc
+			diag["service_status"] = status
+			break
+		}
+	}
+
+	// Journal errors (last 20 lines)
+	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
+		out, err := exec.Command("journalctl", "-u", svc, "-n", "20", "--no-pager", "-q").Output()
+		if err == nil && len(out) > 0 {
+			diag["journal"] = strings.TrimSpace(string(out))
+			break
+		}
+	}
+
+	// Socket check
+	for _, sock := range []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"} {
+		if _, err := os.Stat(sock); err == nil {
+			diag["socket"] = sock
+			break
+		}
+	}
+
+	// PID file check
+	for _, pid := range []string{"/run/mysqld/mysqld.pid", "/var/run/mysqld/mysqld.pid"} {
+		if data, err := os.ReadFile(pid); err == nil {
+			diag["pid_file"] = pid
+			diag["pid"] = strings.TrimSpace(string(data))
+			break
+		}
+	}
+
+	// Disk space
+	out, err := exec.Command("df", "-h", "/var/lib/mysql").Output()
+	if err == nil {
+		diag["disk"] = strings.TrimSpace(string(out))
+	}
+
+	// Data directory permissions
+	if info, err := os.Stat("/var/lib/mysql"); err == nil {
+		diag["data_dir_mode"] = info.Mode().String()
+	} else {
+		diag["data_dir"] = "missing"
+	}
+
+	return diag
+}
+
+func collectDBDiagnostics() string {
+	var sb strings.Builder
+	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
+		out, err := exec.Command("journalctl", "-u", svc, "-n", "10", "--no-pager", "-q").Output()
+		if err == nil && len(out) > 10 {
+			sb.WriteString("--- journalctl -u " + svc + " ---\n")
+			sb.WriteString(strings.TrimSpace(string(out)))
+			sb.WriteString("\n")
+			break
+		}
+	}
+	return sb.String()
 }
 
 // ListDatabases returns all UWAS-managed databases.

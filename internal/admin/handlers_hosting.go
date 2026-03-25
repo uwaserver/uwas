@@ -793,6 +793,23 @@ func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "installed"})
 }
 
+func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	out, err := database.UninstallService()
+	if err != nil {
+		s.RecordAudit("database.uninstall", "error: "+err.Error(), ip, false)
+		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("database.uninstall", "success", ip, true)
+	s.logger.Info("MySQL/MariaDB uninstalled")
+	jsonResponse(w, map[string]string{"status": "uninstalled", "output": out})
+}
+
+func (s *Server) handleDBDiagnose(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, database.DiagnoseService())
+}
+
 // ============ Docker Database Containers ============
 
 func (s *Server) handleDockerDBList(w http.ResponseWriter, r *http.Request) {
