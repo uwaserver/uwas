@@ -952,7 +952,10 @@ func (s *Server) handlePHPDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	version := r.PathValue("version")
-	s.phpMgr.DisableVersion(version)
+	if err := s.phpMgr.DisableVersion(version); err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
 	s.logger.Info("PHP version disabled", "version", version)
 	jsonResponse(w, map[string]string{"status": "disabled", "version": version})
 }

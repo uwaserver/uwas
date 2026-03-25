@@ -1198,11 +1198,13 @@ func (m *Manager) StopFPM(version string) error {
 // PHPStatus represents the status of a single PHP installation.
 type PHPStatus struct {
 	PHPInstall
-	Running      bool   `json:"running"`
-	ListenAddr   string `json:"listen_addr,omitempty"`
-	SocketPath   string `json:"socket_path,omitempty"` // system php-fpm socket if detected
-	PID          int    `json:"pid,omitempty"`
-	SystemManaged bool  `json:"system_managed,omitempty"` // true if using system php-fpm
+	Running       bool     `json:"running"`
+	ListenAddr    string   `json:"listen_addr,omitempty"`
+	SocketPath    string   `json:"socket_path,omitempty"`
+	PID           int      `json:"pid,omitempty"`
+	SystemManaged bool     `json:"system_managed,omitempty"`
+	DomainCount   int      `json:"domain_count"`            // number of domains using this version
+	Domains       []string `json:"domains,omitempty"`        // domain names using this version
 }
 
 // Status returns the status of all detected PHP installations, including
@@ -1242,33 +1244,77 @@ func (m *Manager) Status() []PHPStatus {
 			}
 		}
 
+		// Count domains using this PHP version (match by short version e.g. "8.3")
+		short := inst.Version
+		if parts := strings.SplitN(inst.Version, ".", 3); len(parts) >= 2 {
+			short = parts[0] + "." + parts[1]
+		}
+		m.domainMu.RLock()
+		for domain, di := range m.domainMap {
+			diShort := di.version
+			if parts := strings.SplitN(di.version, ".", 3); len(parts) >= 2 {
+				diShort = parts[0] + "." + parts[1]
+			}
+			if diShort == short {
+				st.DomainCount++
+				st.Domains = append(st.Domains, domain)
+			}
+		}
+		m.domainMu.RUnlock()
+
 		statuses = append(statuses, st)
 	}
 	return statuses
 }
 
-// EnableVersion enables a PHP version for use.
+// EnableVersion enables all binaries of a PHP version for use.
 func (m *Manager) EnableVersion(version string) {
+	short := shortVersion(version)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.installations {
-		if m.installations[i].Version == version {
+		if shortVersion(m.installations[i].Version) == short {
 			m.installations[i].Disabled = false
-			return
 		}
 	}
 }
 
-// DisableVersion disables a PHP version — it won't be selectable for domains.
-func (m *Manager) DisableVersion(version string) {
+// DisableVersion disables all binaries of a PHP version.
+// Returns error if any domains are still using this version.
+func (m *Manager) DisableVersion(version string) error {
+	short := shortVersion(version)
+
+	// Check if any domains are assigned to this version
+	m.domainMu.RLock()
+	var attached []string
+	for domain, di := range m.domainMap {
+		if shortVersion(di.version) == short {
+			attached = append(attached, domain)
+		}
+	}
+	m.domainMu.RUnlock()
+
+	if len(attached) > 0 {
+		return fmt.Errorf("cannot disable PHP %s — %d domain(s) attached: %s", version, len(attached), strings.Join(attached, ", "))
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.installations {
-		if m.installations[i].Version == version {
+		if shortVersion(m.installations[i].Version) == short {
 			m.installations[i].Disabled = true
-			return
 		}
 	}
+	return nil
+}
+
+// shortVersion extracts "8.3" from "8.3.30".
+func shortVersion(v string) string {
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) >= 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return v
 }
 
 // StopAll stops all running PHP-CGI subprocesses (both global and per-domain).
