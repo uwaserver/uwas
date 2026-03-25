@@ -532,7 +532,10 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 	if domainInst != nil {
 		// Security: UWAS enforced — domain isolation
 		lines = append(lines, "; Security: UWAS enforced — domain isolation")
-		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_multi_exec,parse_ini_file,show_source,pcntl_exec")
+		// Note: curl_multi_exec is needed by WordPress HTTP API.
+		// proc_open is needed by WordPress/Composer for updates.
+		// parse_ini_file is needed by some plugins for reading configs.
+		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,popen,show_source,pcntl_exec")
 		lines = append(lines, "allow_url_include = Off")
 		lines = append(lines, "expose_php = Off")
 		// UWAS handles compression — disable PHP's to prevent double-compress
@@ -544,7 +547,14 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 			// Per-domain tmp directory for session/upload isolation
 			domainTmp := filepath.Join(domainInst.webRoot, ".tmp")
 			os.MkdirAll(domainTmp, 0770)
-			lines = append(lines, fmt.Sprintf("open_basedir = %s:%s:/usr/share/php:/usr/share/pear", domainInst.webRoot, domainTmp))
+			// open_basedir paths:
+			// - domain web root (site files)
+			// - domain .tmp (sessions, uploads, temp)
+			// - /usr/share/php, /usr/share/pear (PHP libraries)
+			// - /etc/ssl/certs, /usr/share/ca-certificates (HTTPS/curl)
+			// - /usr/share/zoneinfo (timezone data)
+			// - /dev/urandom (random for sessions/tokens)
+			lines = append(lines, fmt.Sprintf("open_basedir = %s:%s:/usr/share/php:/usr/share/pear:/etc/ssl/certs:/usr/share/ca-certificates:/usr/share/zoneinfo:/dev/urandom:/tmp", domainInst.webRoot, domainTmp))
 			lines = append(lines, fmt.Sprintf("upload_tmp_dir = %s", domainTmp))
 			lines = append(lines, fmt.Sprintf("session.save_path = %s", domainTmp))
 			lines = append(lines, fmt.Sprintf("sys_temp_dir = %s", domainTmp))
