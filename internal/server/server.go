@@ -25,6 +25,7 @@ import (
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/backup"
+	"github.com/uwaserver/uwas/internal/sftpserver"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -71,6 +72,7 @@ type Server struct {
 
 	alerter        *alerting.Alerter
 	backupMgr      *backup.BackupManager
+	sftpSrv        *sftpserver.Server
 	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
 	proxyMirrors   map[string]*proxyhandler.Mirror
@@ -462,6 +464,27 @@ func (s *Server) Start() error {
 				s.backupMgr.ScheduleBackup(d)
 				s.logger.Info("backup scheduler started", "interval", d)
 			}
+		}
+	}
+
+	// Built-in SFTP server
+	if s.config.Global.SFTPListen != "" {
+		users := make(map[string]sftpserver.User)
+		for _, d := range s.config.Domains {
+			if d.Root != "" {
+				// Create an SFTP user per domain: username = hostname
+				users[d.Host] = sftpserver.User{
+					Password: s.config.Global.Admin.APIKey, // use API key as default password
+					Root:     d.Root,
+				}
+			}
+		}
+		s.sftpSrv = sftpserver.New(sftpserver.Config{
+			Listen: s.config.Global.SFTPListen,
+			Users:  users,
+		}, s.logger)
+		if err := s.sftpSrv.Start(); err != nil {
+			s.logger.Warn("SFTP server start failed", "error", err)
 		}
 	}
 
@@ -1452,6 +1475,11 @@ func (s *Server) shutdown() {
 	// Stop the backup scheduler if running.
 	if s.backupMgr != nil {
 		s.backupMgr.Stop()
+	}
+
+	// Stop built-in SFTP server.
+	if s.sftpSrv != nil {
+		s.sftpSrv.Stop()
 	}
 
 	s.logger.Info("shutdown complete")
