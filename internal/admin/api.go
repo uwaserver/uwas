@@ -187,6 +187,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/backups", s.handleBackupList)
 	s.mux.HandleFunc("POST /api/v1/backups", s.handleBackupCreate)
 	s.mux.HandleFunc("POST /api/v1/backups/restore", s.handleBackupRestore)
+	s.mux.HandleFunc("POST /api/v1/backups/domain", s.handleBackupDomain)
 	s.mux.HandleFunc("DELETE /api/v1/backups/{name}", s.handleBackupDelete)
 	s.mux.HandleFunc("GET /api/v1/backups/schedule", s.handleBackupScheduleGet)
 	s.mux.HandleFunc("PUT /api/v1/backups/schedule", s.handleBackupSchedulePut)
@@ -2510,6 +2511,65 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.RecordAudit("backup.create", "provider: "+req.Provider, ip, true)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(info)
+}
+
+func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	if s.backupMgr == nil {
+		jsonError(w, "backup not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Domain   string `json:"domain"`
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Domain == "" {
+		jsonError(w, "domain is required", http.StatusBadRequest)
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "local"
+	}
+
+	// Find domain root and DB name from config
+	var webRoot, dbName string
+	s.configMu.RLock()
+	for _, d := range s.config.Domains {
+		if d.Host == req.Domain {
+			webRoot = d.Root
+			break
+		}
+	}
+	s.configMu.RUnlock()
+
+	// Try to detect DB name from wp-config.php
+	wpConfig := filepath.Join(webRoot, "wp-config.php")
+	if data, err := os.ReadFile(wpConfig); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, "DB_NAME") {
+				parts := strings.Split(line, "'")
+				if len(parts) >= 4 {
+					dbName = parts[3]
+				}
+			}
+		}
+	}
+
+	info, err := s.backupMgr.CreateDomainBackup(req.Domain, webRoot, dbName, req.Provider)
+	if err != nil {
+		s.RecordAudit("backup.domain", req.Domain+": "+err.Error(), ip, false)
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("backup.domain", req.Domain, ip, true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(info)
