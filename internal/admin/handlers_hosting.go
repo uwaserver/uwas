@@ -23,6 +23,7 @@ import (
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/middleware"
+	"github.com/uwaserver/uwas/internal/migrate"
 	"github.com/uwaserver/uwas/internal/notify"
 	"github.com/uwaserver/uwas/internal/selfupdate"
 	"github.com/uwaserver/uwas/internal/serverip"
@@ -1406,4 +1407,90 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	jsonResponse(w, map[string]string{"status": action + "ing", "package": pkg.name})
+}
+
+// ============ Site Migration + Clone ============
+
+func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req migrate.MigrateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourceHost == "" || req.Domain == "" {
+		jsonError(w, "source_host and domain required", http.StatusBadRequest)
+		return
+	}
+	if req.LocalRoot == "" {
+		req.LocalRoot = s.domainRoot(req.Domain)
+	}
+	if req.LocalRoot == "" {
+		jsonError(w, "domain not found or no web root", http.StatusBadRequest)
+		return
+	}
+	s.RecordAudit("migrate.start", req.SourceHost+" → "+req.Domain, ip, true)
+	result := migrate.Migrate(req)
+	jsonResponse(w, result)
+}
+
+func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req migrate.CloneRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourceDomain == "" || req.TargetDomain == "" {
+		jsonError(w, "source_domain and target_domain required", http.StatusBadRequest)
+		return
+	}
+	if req.SourceRoot == "" {
+		req.SourceRoot = s.domainRoot(req.SourceDomain)
+	}
+	if req.SourceRoot == "" {
+		jsonError(w, "source domain not found", http.StatusBadRequest)
+		return
+	}
+	if req.TargetRoot == "" {
+		s.configMu.RLock()
+		webRoot := s.config.Global.WebRoot
+		s.configMu.RUnlock()
+		if webRoot == "" {
+			webRoot = "/var/www"
+		}
+		req.TargetRoot = filepath.Join(webRoot, req.TargetDomain, "public_html")
+	}
+	// Auto-detect source DB from wp-config
+	if req.SourceDB == "" {
+		wpCfg := filepath.Join(req.SourceRoot, "wp-config.php")
+		if data, err := os.ReadFile(wpCfg); err == nil {
+			content := string(data)
+			for _, line := range strings.Split(content, "\n") {
+				if strings.Contains(line, "DB_NAME") {
+					parts := strings.Split(line, "'")
+					if len(parts) >= 4 {
+						req.SourceDB = parts[3]
+					}
+				}
+				if strings.Contains(line, "DB_USER") && req.DBUser == "" {
+					parts := strings.Split(line, "'")
+					if len(parts) >= 4 {
+						req.DBUser = parts[3]
+					}
+				}
+				if strings.Contains(line, "DB_PASSWORD") && req.DBPass == "" {
+					parts := strings.Split(line, "'")
+					if len(parts) >= 4 {
+						req.DBPass = parts[3]
+					}
+				}
+			}
+		}
+	}
+	s.RecordAudit("clone.start", req.SourceDomain+" → "+req.TargetDomain, ip, true)
+	result := migrate.Clone(req)
+	jsonResponse(w, result)
 }
