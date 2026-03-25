@@ -29,6 +29,7 @@ import WordPress from '@/pages/WordPress';
 import PHPConfig from '@/pages/PHPConfig';
 import IPManagement from '@/pages/IPManagement';
 import Services from '@/pages/Services';
+import Packages from '@/pages/Packages';
 import Doctor from '@/pages/Doctor';
 
 function RequireAuth() {
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/email" element={<EmailGuide />} />
         <Route path="/updates" element={<Updates />} />
         <Route path="/services" element={<Services />} />
+        <Route path="/packages" element={<Packages />} />
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/settings" element={<Settings />} />
       </Route>

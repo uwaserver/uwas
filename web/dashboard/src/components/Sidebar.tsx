@@ -33,6 +33,7 @@ import {
   ChevronDown,
   ChevronRight,
   Stethoscope,
+  Package,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 
@@ -75,6 +76,7 @@ const groups: NavGroup[] = [
       { to: '/users', label: 'SFTP Users', icon: Users },
       { to: '/cron', label: 'Cron Jobs', icon: Clock },
       { to: '/services', label: 'Services', icon: Activity },
+      { to: '/packages', label: 'Packages', icon: Package },
       { to: '/ip-management', label: 'IP Management', icon: Server },
       { to: '/email', label: 'Email Guide', icon: Mail },
     ],
