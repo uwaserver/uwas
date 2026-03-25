@@ -289,6 +289,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/system/update-check", s.handleUpdateCheck)
 	s.mux.HandleFunc("POST /api/v1/system/update", s.handleUpdate)
 
+	// Package installer
+	s.mux.HandleFunc("GET /api/v1/packages", s.handlePackageList)
+	s.mux.HandleFunc("POST /api/v1/packages/install", s.handlePackageInstall)
+
 	// MCP endpoints
 	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
 	s.mux.HandleFunc("POST /api/v1/mcp/call", s.handleMCPCall)

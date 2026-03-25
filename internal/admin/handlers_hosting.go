@@ -1167,3 +1167,180 @@ func (s *Server) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
 	s.RecordAudit("doctor.fix", fmt.Sprintf("%d issues fixed", fixed), ip, true)
 	jsonResponse(w, report)
 }
+
+// ============ Package Installer ============
+
+// PackageInfo describes an installable system package.
+type PackageInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Installed   bool   `json:"installed"`
+	Version     string `json:"version,omitempty"`
+	Category    string `json:"category"`
+	InstallCmd  string `json:"install_cmd,omitempty"`
+}
+
+var knownPackages = []struct {
+	id          string
+	name        string
+	description string
+	category    string
+	binaries    []string // check if installed via which/command -v
+	aptPkgs     []string // apt install packages
+	dnfPkgs     []string // dnf install packages
+}{
+	{"mariadb", "MariaDB", "MySQL-compatible database server", "Database", []string{"mariadbd", "mysqld"}, []string{"mariadb-server", "mariadb-client"}, []string{"mariadb-server"}},
+	{"redis", "Redis", "In-memory cache and message broker", "Database", []string{"redis-server"}, []string{"redis-server"}, []string{"redis"}},
+	{"webp", "WebP Tools", "Image conversion to WebP format (cwebp)", "Image", []string{"cwebp"}, []string{"webp"}, []string{"libwebp-tools"}},
+	{"avif", "AVIF Tools", "Image conversion to AVIF format (avifenc)", "Image", []string{"avifenc"}, []string{"libavif-bin"}, []string{"libavif-tools"}},
+	{"imagemagick", "ImageMagick", "Image processing suite (convert, identify)", "Image", []string{"convert", "magick"}, []string{"imagemagick"}, []string{"ImageMagick"}},
+	{"certbot", "Certbot", "Let's Encrypt certificate tool (standalone)", "SSL", []string{"certbot"}, []string{"certbot"}, []string{"certbot"}},
+	{"ufw", "UFW", "Uncomplicated Firewall", "Security", []string{"ufw"}, []string{"ufw"}, []string{"ufw"}},
+	{"fail2ban", "Fail2Ban", "Intrusion prevention (brute-force protection)", "Security", []string{"fail2ban-client"}, []string{"fail2ban"}, []string{"fail2ban"}},
+	{"git", "Git", "Version control system", "Dev Tools", []string{"git"}, []string{"git"}, []string{"git"}},
+	{"wp-cli", "WP-CLI", "WordPress command-line tool", "WordPress", []string{"wp"}, nil, nil}, // special install
+	{"docker", "Docker", "Container runtime", "Containers", []string{"docker"}, []string{"docker.io"}, []string{"docker"}},
+	{"docker-compose", "Docker Compose", "Multi-container orchestration", "Containers", []string{"docker-compose", "docker"}, []string{"docker-compose"}, []string{"docker-compose"}},
+	{"postfix", "Postfix", "Mail Transfer Agent (SMTP server)", "Email", []string{"postfix"}, []string{"postfix"}, []string{"postfix"}},
+	{"dovecot", "Dovecot", "IMAP/POP3 mail server", "Email", []string{"dovecot"}, []string{"dovecot-imapd", "dovecot-pop3d"}, []string{"dovecot"}},
+	{"rsync", "Rsync", "Fast file synchronization", "Utilities", []string{"rsync"}, []string{"rsync"}, []string{"rsync"}},
+	{"htop", "htop", "Interactive process viewer", "Utilities", []string{"htop"}, []string{"htop"}, []string{"htop"}},
+	{"curl", "cURL", "HTTP client tool", "Utilities", []string{"curl"}, []string{"curl"}, []string{"curl"}},
+	{"unzip", "Unzip", "ZIP archive extraction", "Utilities", []string{"unzip"}, []string{"unzip"}, []string{"unzip"}},
+}
+
+func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
+	pkgs := make([]PackageInfo, 0, len(knownPackages))
+	for _, kp := range knownPackages {
+		pi := PackageInfo{
+			ID:          kp.id,
+			Name:        kp.name,
+			Description: kp.description,
+			Category:    kp.category,
+		}
+		// Check if installed
+		for _, bin := range kp.binaries {
+			if path, err := exec.LookPath(bin); err == nil {
+				pi.Installed = true
+				// Try to get version
+				if out, err := exec.Command(path, "--version").CombinedOutput(); err == nil {
+					lines := strings.SplitN(string(out), "\n", 2)
+					if len(lines) > 0 {
+						v := strings.TrimSpace(lines[0])
+						if len(v) > 60 {
+							v = v[:60]
+						}
+						pi.Version = v
+					}
+				}
+				break
+			}
+		}
+		// Build install command
+		if !pi.Installed {
+			if len(kp.aptPkgs) > 0 {
+				pi.InstallCmd = "apt install -y " + strings.Join(kp.aptPkgs, " ")
+			}
+			if kp.id == "wp-cli" {
+				pi.InstallCmd = "curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp"
+			}
+		}
+		pkgs = append(pkgs, pi)
+	}
+	jsonResponse(w, pkgs)
+}
+
+// packageInstallState tracks background package installation.
+var (
+	pkgInstallMu     sync.Mutex
+	pkgInstallStatus struct {
+		Package string `json:"package"`
+		Status  string `json:"status"` // idle, running, done, error
+		Output  string `json:"output"`
+		Error   string `json:"error,omitempty"`
+	}
+)
+
+func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Find package
+	var found *struct {
+		id, name, description, category string
+		binaries, aptPkgs, dnfPkgs      []string
+	}
+	for i := range knownPackages {
+		if knownPackages[i].id == req.ID {
+			kp := knownPackages[i]
+			found = &struct {
+				id, name, description, category string
+				binaries, aptPkgs, dnfPkgs      []string
+			}{kp.id, kp.name, kp.description, kp.category, kp.binaries, kp.aptPkgs, kp.dnfPkgs}
+			break
+		}
+	}
+	if found == nil {
+		jsonError(w, "unknown package: "+req.ID, http.StatusBadRequest)
+		return
+	}
+
+	pkgInstallMu.Lock()
+	if pkgInstallStatus.Status == "running" {
+		pkgInstallMu.Unlock()
+		jsonError(w, "another installation in progress: "+pkgInstallStatus.Package, http.StatusConflict)
+		return
+	}
+	pkgInstallStatus.Package = found.name
+	pkgInstallStatus.Status = "running"
+	pkgInstallStatus.Output = ""
+	pkgInstallStatus.Error = ""
+	pkgInstallMu.Unlock()
+
+	s.RecordAudit("package.install", found.name, ip, true)
+
+	go func() {
+		var cmd *exec.Cmd
+		if found.id == "wp-cli" {
+			cmd = exec.Command("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
+		} else if len(found.aptPkgs) > 0 {
+			args := append([]string{"install", "-y"}, found.aptPkgs...)
+			cmd = exec.Command("apt", args...)
+		} else if len(found.dnfPkgs) > 0 {
+			args := append([]string{"install", "-y"}, found.dnfPkgs...)
+			cmd = exec.Command("dnf", args...)
+		} else {
+			pkgInstallMu.Lock()
+			pkgInstallStatus.Status = "error"
+			pkgInstallStatus.Error = "no install method for " + found.name
+			pkgInstallMu.Unlock()
+			return
+		}
+
+		// Set DEBIAN_FRONTEND to avoid interactive prompts
+		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		out, err := cmd.CombinedOutput()
+
+		pkgInstallMu.Lock()
+		pkgInstallStatus.Output = string(out)
+		if err != nil {
+			pkgInstallStatus.Status = "error"
+			pkgInstallStatus.Error = err.Error()
+		} else {
+			pkgInstallStatus.Status = "done"
+		}
+		pkgInstallMu.Unlock()
+
+		s.logger.Info("package installed", "package", found.name, "status", pkgInstallStatus.Status)
+	}()
+
+	jsonResponse(w, map[string]string{"status": "installing", "package": found.name})
+}

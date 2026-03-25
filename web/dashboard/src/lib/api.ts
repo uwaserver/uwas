@@ -620,3 +620,19 @@ export function fetchSettings(): Promise<Record<string, any>> {
 export function saveSettings(updates: Record<string, any>): Promise<{ status: string; updated: number }> {
   return api('/api/v1/settings', { method: 'PUT', body: JSON.stringify(updates) });
 }
+
+// ── Package Installer ─────────────────────────────────
+
+export interface PackageInfo {
+  id: string;
+  name: string;
+  description: string;
+  installed: boolean;
+  version?: string;
+  category: string;
+  install_cmd?: string;
+}
+
+export const fetchPackages = () => api<PackageInfo[]>('/api/v1/packages');
+export const installPackage = (id: string) =>
+  api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id }) });
