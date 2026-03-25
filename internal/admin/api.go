@@ -130,6 +130,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/system", s.handleSystem)
 	s.mux.HandleFunc("GET /api/v1/stats", s.handleStats)
+	s.mux.HandleFunc("GET /api/v1/stats/domains", s.handleStatsDomains)
 	s.mux.HandleFunc("GET /api/v1/domains", s.handleDomains)
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
 	s.mux.HandleFunc("POST /api/v1/reload", s.handleReload)
@@ -143,6 +144,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/v1/domains/{host}", s.handleUpdateDomain)
 	s.mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
 	s.mux.HandleFunc("GET /api/v1/sse/stats", s.handleSSEStats)
+	s.mux.HandleFunc("GET /api/v1/sse/logs", s.handleSSELogs)
 	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
 	s.mux.HandleFunc("GET /api/v1/certs", s.handleCerts)
 	s.mux.HandleFunc("POST /api/v1/certs/{host}/renew", s.handleCertRenew)
@@ -610,6 +612,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"latency_p99_ms": p99 * 1000,
 		"latency_max_ms": max * 1000,
 	})
+}
+
+func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.metrics.DomainStatsSnapshot())
 }
 
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
@@ -1235,6 +1241,68 @@ func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
 	data, _ := json.Marshal(stats)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
+}
+
+// handleSSELogs streams new log entries as Server-Sent Events.
+func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Time{})
+
+	// Optional domain filter
+	domainFilter := r.URL.Query().Get("domain")
+
+	// Track last seen position
+	var lastSeen int
+	s.logMu.Lock()
+	lastSeen = s.logPos
+	s.logMu.Unlock()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			s.logMu.Lock()
+			pos := s.logPos
+			entries := s.logEntries
+			s.logMu.Unlock()
+
+			if entries == nil || pos == lastSeen {
+				continue
+			}
+
+			// Collect new entries since lastSeen
+			for lastSeen != pos {
+				if entries[lastSeen%len(entries)].Host == "" {
+					lastSeen++
+					continue
+				}
+				e := entries[lastSeen%len(entries)]
+				lastSeen++
+
+				if domainFilter != "" && e.Host != domainFilter {
+					continue
+				}
+
+				data, _ := json.Marshal(e)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // handleConfigExport returns the current configuration as a YAML file download.

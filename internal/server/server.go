@@ -622,6 +622,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RecordRequest(ctx.Response.StatusCode())
 		s.metrics.RecordLatency(time.Since(start))
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
+		s.metrics.RecordDomain(r.Host, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 
 		// Record to admin log ring buffer
 		if s.admin != nil {
