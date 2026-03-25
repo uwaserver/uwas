@@ -204,6 +204,26 @@ func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, map[string]string{"status": "fixed", "output": out})
 }
 
+// handleWPReinstall re-downloads WordPress core files without touching wp-content or DB.
+func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	if !wordpress.IsWordPress(root) {
+		jsonError(w, "not a WordPress site", http.StatusBadRequest)
+		return
+	}
+	out, err := wordpress.ReinstallWordPress(root)
+	if err != nil {
+		jsonError(w, "reinstall failed: "+out, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "reinstalled", "output": out})
+}
+
 // ============ File Manager ============
 
 func (s *Server) domainRoot(domain string) string {

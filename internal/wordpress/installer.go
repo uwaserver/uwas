@@ -713,9 +713,98 @@ func countUpdates2(themes []ThemeInfo) int {
 
 // --- WP-CLI Actions ---
 
-// UpdateCore updates WordPress core via WP-CLI.
+// UpdateCore updates WordPress core. Uses WP-CLI if available, otherwise
+// downloads latest WordPress and overwrites core files (preserves wp-content).
 func UpdateCore(webRoot string) (string, error) {
-	return wpCLI(webRoot, "core", "update")
+	if hasWPCLI() {
+		return wpCLI(webRoot, "core", "update")
+	}
+
+	// Fallback: download latest WP and overwrite core files
+	var log strings.Builder
+	log.WriteString("WP-CLI not found — using direct download method\n")
+
+	// Download latest WordPress
+	tarURL := "https://wordpress.org/latest.tar.gz"
+	tarPath := filepath.Join(os.TempDir(), "wordpress-update.tar.gz")
+	defer os.Remove(tarPath)
+
+	resp, err := http.Get(tarURL)
+	if err != nil {
+		return log.String(), fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	f, err := os.Create(tarPath)
+	if err != nil {
+		return log.String(), err
+	}
+	io.Copy(f, resp.Body)
+	f.Close()
+	log.WriteString("Downloaded latest WordPress\n")
+
+	// Extract to temp dir
+	tmpDir, _ := os.MkdirTemp("", "wp-update-*")
+	defer os.RemoveAll(tmpDir)
+
+	cmd := exec.Command("tar", "xzf", tarPath, "-C", tmpDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return log.String(), fmt.Errorf("extract failed: %s — %w", string(out), err)
+	}
+
+	wpDir := filepath.Join(tmpDir, "wordpress")
+
+	// Copy core files (NOT wp-content, NOT wp-config.php, NOT .htaccess)
+	skipDirs := map[string]bool{"wp-content": true}
+	skipFiles := map[string]bool{"wp-config.php": true, ".htaccess": true, "wp-config-sample.php": true}
+
+	err = filepath.Walk(wpDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(wpDir, path)
+		if rel == "." {
+			return nil
+		}
+		// Skip wp-content directory
+		topDir := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+		if skipDirs[topDir] {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Skip protected files in root
+		if !strings.Contains(rel, string(filepath.Separator)) && skipFiles[rel] {
+			return nil
+		}
+
+		dst := filepath.Join(webRoot, rel)
+		if info.IsDir() {
+			return os.MkdirAll(dst, 0755)
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		return os.WriteFile(dst, data, info.Mode())
+	})
+
+	if err != nil {
+		return log.String(), fmt.Errorf("copy failed: %w", err)
+	}
+
+	// Fix ownership
+	exec.Command("chown", "-R", "www-data:www-data", webRoot).Run()
+	log.WriteString("WordPress core updated (wp-content preserved)\n")
+
+	return log.String(), nil
+}
+
+// ReinstallWordPress re-downloads WordPress core files without touching
+// wp-content, wp-config.php, or the database. Useful for fixing corrupted installs.
+func ReinstallWordPress(webRoot string) (string, error) {
+	return UpdateCore(webRoot) // Same logic — overwrite core, preserve content
 }
 
 // UpdatePlugin updates a specific plugin.
