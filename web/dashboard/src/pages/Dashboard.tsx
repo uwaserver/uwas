@@ -11,9 +11,9 @@ import {
 import { useStats } from '@/hooks/useStats';
 import {
   fetchDomains, fetchCerts, fetchSecurityStats, fetchPHP,
-  fetchSystemResources, fetchDomainHealth,
+  fetchSystem, fetchDomainHealth,
   type DomainData, type CertInfo, type SecurityStats, type PHPInstall,
-  type DomainHealth,
+  type DomainHealth, type SystemInfo,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -23,9 +23,9 @@ export default function Dashboard() {
   const [certs, setCerts] = useState<CertInfo[]>([]);
   const [security, setSecurity] = useState<SecurityStats | null>(null);
   const [php, setPhp] = useState<PHPInstall[]>([]);
-  const [resources, setResources] = useState<{ cpus: number; goroutines: number; memory_alloc_mb: number; memory_sys_mb: number; disk_used_mb?: number } | null>(null);
+  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
   const [domainHealth, setDomainHealth] = useState<DomainHealth[]>([]);
-  const resourcesInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sysInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
@@ -35,15 +35,12 @@ export default function Dashboard() {
     fetchDomainHealth().then(h => setDomainHealth(h ?? [])).catch(() => {});
   }, []);
 
-  // Fetch system resources every 5 seconds
   useEffect(() => {
-    fetchSystemResources().then(setResources).catch(() => {});
-    resourcesInterval.current = setInterval(() => {
-      fetchSystemResources().then(setResources).catch(() => {});
-    }, 5000);
-    return () => {
-      if (resourcesInterval.current) clearInterval(resourcesInterval.current);
-    };
+    fetchSystem().then(setSysInfo).catch(() => {});
+    sysInterval.current = setInterval(() => {
+      fetchSystem().then(setSysInfo).catch(() => {});
+    }, 10000);
+    return () => { if (sysInterval.current) clearInterval(sysInterval.current); };
   }, []);
 
   const hitRate =
@@ -86,10 +83,10 @@ export default function Dashboard() {
 
       {/* System Resources */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card icon={<Cpu size={18} />} label="CPU Cores" value={resources ? String(resources.cpus) : '--'} />
-        <Card icon={<Server size={18} />} label="Goroutines" value={resources ? resources.goroutines.toLocaleString() : '--'} />
-        <Card icon={<MemoryStick size={18} />} label="Memory Used" value={resources ? `${resources.memory_alloc_mb.toFixed(1)} MB` : '--'} />
-        <Card icon={<HardDrive size={18} />} label="Disk Used" value={resources?.disk_used_mb != null ? `${resources.disk_used_mb.toFixed(1)} MB` : '--'} />
+        <Card icon={<Cpu size={18} />} label={sysInfo?.os_name ? 'Server' : 'CPU Cores'} value={sysInfo?.os_name || (sysInfo ? String(sysInfo.cpus) + ' cores' : '--')} sub={sysInfo?.load_1m ? `Load: ${sysInfo.load_1m} / ${sysInfo.load_5m} / ${sysInfo.load_15m}` : undefined} />
+        <Card icon={<MemoryStick size={18} />} label="RAM" value={sysInfo?.ram_total_human || '--'} sub={sysInfo?.ram_available_human ? `${sysInfo.ram_available_human} available` : undefined} />
+        <Card icon={<HardDrive size={18} />} label="Disk" value={sysInfo?.disk_total_human || '--'} sub={sysInfo?.disk_free_human ? `${sysInfo.disk_free_human} free` : undefined} />
+        <Card icon={<Server size={18} />} label="UWAS" value={sysInfo?.version || '--'} sub={sysInfo ? `${sysInfo.uptime} uptime` : undefined} />
       </div>
 
       {/* Status panels */}
