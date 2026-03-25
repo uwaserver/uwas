@@ -499,6 +499,11 @@ export const startDockerDB = (name: string) => api<{ status: string }>(`/api/v1/
 export const stopDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}/stop`, { method: 'POST' });
 export const removeDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
+// User Login (multi-user auth)
+export interface LoginResult { status: string; token: string; user_id: string; username: string; role: string; domains: string[]; expires_at: string; }
+export const loginUser = (username: string, password: string) =>
+  api<LoginResult>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+
 // Webhooks
 export interface WebhookEntry { url: string; events: string[]; headers: Record<string, string>; secret: string; retry: number; timeout: number; enabled: boolean; }
 export const fetchWebhooks = () => api<WebhookEntry[]>('/api/v1/webhooks');

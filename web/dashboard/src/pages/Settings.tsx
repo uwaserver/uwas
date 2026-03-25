@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Globe,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 import {
   fetchConfigRaw,
@@ -240,6 +241,9 @@ const SECTIONS: SectionDef[] = [
     fields: [
       { key: 'global.alerting.enabled', label: 'Enabled', type: 'toggle' },
       { key: 'global.alerting.webhook_url', label: 'Webhook URL', type: 'text', placeholder: 'https://hooks.slack.com/...' },
+      { key: 'global.alerting.slack_url', label: 'Slack Webhook URL', type: 'text', placeholder: 'https://hooks.slack.com/services/...' },
+      { key: 'global.alerting.telegram_token', label: 'Telegram Bot Token', type: 'secret', placeholder: '123456:ABC-DEF...' },
+      { key: 'global.alerting.telegram_chat_id', label: 'Telegram Chat ID', type: 'text', placeholder: '-1001234567890' },
     ],
   },
   {
@@ -250,6 +254,16 @@ const SECTIONS: SectionDef[] = [
     fields: [
       { key: 'global.mcp.enabled', label: 'Enabled', type: 'toggle' },
       { key: 'global.mcp.listen', label: 'Listen Address', type: 'text', placeholder: ':9444' },
+    ],
+  },
+  {
+    id: 'users',
+    title: 'Multi-User Auth',
+    icon: <Users size={18} />,
+    iconColor: 'text-cyan-400',
+    fields: [
+      { key: 'global.users.enabled', label: 'Enable Multi-User Auth', type: 'toggle' },
+      { key: 'global.users.allow_reseller', label: 'Allow Resellers', type: 'toggle' },
     ],
   },
 ];
