@@ -870,6 +870,32 @@ func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "uninstalled", "output": out})
 }
 
+func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	out, err := database.RepairService()
+	if err != nil {
+		s.RecordAudit("database.repair", "error: "+err.Error(), ip, false)
+		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("database.repair", "success", ip, true)
+	s.logger.Info("MySQL/MariaDB repaired")
+	jsonResponse(w, map[string]string{"status": "repaired", "output": out})
+}
+
+func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	out, err := database.ForceUninstall()
+	if err != nil {
+		s.RecordAudit("database.force_uninstall", "error: "+err.Error(), ip, false)
+		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("database.force_uninstall", "success", ip, true)
+	s.logger.Info("MySQL/MariaDB force uninstalled")
+	jsonResponse(w, map[string]string{"status": "force_uninstalled", "output": out})
+}
+
 func (s *Server) handleDBDiagnose(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, database.DiagnoseService())
 }

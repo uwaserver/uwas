@@ -240,6 +240,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/database/{name}", s.handleDBDrop)
 	s.mux.HandleFunc("POST /api/v1/database/install", s.handleDBInstall)
 	s.mux.HandleFunc("POST /api/v1/database/uninstall", s.handleDBUninstall)
+	s.mux.HandleFunc("POST /api/v1/database/force-uninstall", s.handleDBForceUninstall)
+	s.mux.HandleFunc("POST /api/v1/database/repair", s.handleDBRepair)
 	s.mux.HandleFunc("GET /api/v1/database/diagnose", s.handleDBDiagnose)
 	s.mux.HandleFunc("GET /api/v1/database/users", s.handleDBUsers)
 	s.mux.HandleFunc("POST /api/v1/database/users/password", s.handleDBChangePassword)
