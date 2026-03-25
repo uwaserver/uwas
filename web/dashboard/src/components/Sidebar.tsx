@@ -38,6 +38,8 @@ import {
   Moon,
   Copy,
   ArrowDownToLine,
+  Webhook,
+  UserCog,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 import { useTheme } from '@/hooks/useTheme';
@@ -106,6 +108,7 @@ const groups: NavGroup[] = [
       { to: '/firewall', label: 'Firewall', icon: ShieldCheck },
       { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert },
       { to: '/audit', label: 'Audit Log', icon: Shield },
+      { to: '/admin-users', label: 'Admin Users', icon: UserCog },
     ],
   },
   {
@@ -113,6 +116,7 @@ const groups: NavGroup[] = [
     icon: Settings,
     items: [
       { to: '/config-editor', label: 'Config Editor', icon: Code },
+      { to: '/webhooks', label: 'Webhooks', icon: Webhook },
       { to: '/backups', label: 'Backups', icon: Archive },
       { to: '/updates', label: 'Updates', icon: Download },
       { to: '/doctor', label: 'Doctor', icon: Stethoscope },

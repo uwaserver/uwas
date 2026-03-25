@@ -499,6 +499,44 @@ export const startDockerDB = (name: string) => api<{ status: string }>(`/api/v1/
 export const stopDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}/stop`, { method: 'POST' });
 export const removeDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
+// Webhooks
+export interface WebhookEntry { url: string; events: string[]; headers: Record<string, string>; secret: string; retry: number; timeout: number; enabled: boolean; }
+export const fetchWebhooks = () => api<WebhookEntry[]>('/api/v1/webhooks');
+export const createWebhook = (wh: Partial<WebhookEntry>) => api<{ success: boolean }>('/api/v1/webhooks', { method: 'POST', body: JSON.stringify(wh) });
+export const deleteWebhook = (id: number) => api<{ success: boolean }>(`/api/v1/webhooks/${id}`, { method: 'DELETE' });
+export const testWebhook = (url: string) => api<{ success: boolean; message: string }>('/api/v1/webhooks/test', { method: 'POST', body: JSON.stringify({ url }) });
+
+// Admin Users (multi-user auth)
+export interface AdminUser { username: string; role: string; email: string; domains: string[]; created_at: string; api_key?: string; }
+export interface AdminUserCreated extends AdminUser { password: string; api_key: string; }
+export const fetchAdminUsers = () => api<AdminUser[]>('/api/v1/auth/users');
+export const createAdminUser = (user: { username: string; password: string; role: string; email?: string; domains?: string[] }) =>
+  api<AdminUserCreated>('/api/v1/auth/users', { method: 'POST', body: JSON.stringify(user) });
+export const updateAdminUser = (username: string, updates: Partial<AdminUser>) =>
+  api<AdminUser>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'PUT', body: JSON.stringify(updates) });
+export const deleteAdminUser = (username: string) => api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+export const changeAdminPassword = (username: string, password: string) =>
+  api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ password }) });
+export const regenAdminApiKey = (username: string) =>
+  api<{ api_key: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/apikey`, { method: 'POST' });
+
+// Bandwidth
+export interface BandwidthStatus { host: string; monthly_bytes: number; daily_bytes: number; monthly_limit: number; daily_limit: number; monthly_pct: number; daily_pct: number; blocked: boolean; throttled: boolean; }
+export const fetchBandwidth = () => api<BandwidthStatus[]>('/api/v1/bandwidth');
+export const fetchBandwidthHost = (host: string) => api<BandwidthStatus>(`/api/v1/bandwidth/${encodeURIComponent(host)}`);
+export const resetBandwidth = (host: string) => api<{ status: string }>(`/api/v1/bandwidth/${encodeURIComponent(host)}/reset`, { method: 'POST' });
+
+// Cron Monitoring
+export interface CronExecution { id: string; domain: string; command: string; schedule: string; started_at: string; ended_at: string; duration: number; exit_code: number; success: boolean; output: string; error?: string; }
+export interface CronJobStatus { domain: string; command: string; schedule: string; last_run?: CronExecution; last_success?: CronExecution; last_failure?: CronExecution; success_count: number; failure_count: number; consecutive_fail: number; history: CronExecution[]; }
+export const fetchCronMonitor = () => api<CronJobStatus[]>('/api/v1/cron/monitor');
+export const fetchCronMonitorHost = (host: string) => api<CronJobStatus[]>(`/api/v1/cron/monitor/${encodeURIComponent(host)}`);
+export const executeCron = (domain: string, schedule: string, command: string) =>
+  api<CronExecution>('/api/v1/cron/execute', { method: 'POST', body: JSON.stringify({ domain, schedule, command }) });
+
+// Domain Debug
+export const debugDomain = (host: string) => api<Record<string, any>>(`/api/v1/domains/${encodeURIComponent(host)}/debug`);
+
 // DNS
 export interface DNSResult { domain: string; a: string[]; aaaa: string[]; cname?: string; mx: string[]; ns: string[]; txt: string[]; points_here: boolean; server_ips: string[]; error?: string; }
 export const checkDNS = (domain: string) => api<DNSResult>(`/api/v1/dns/${encodeURIComponent(domain)}`);
