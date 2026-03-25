@@ -727,6 +727,10 @@ func (m *Manager) probe(binary string) (PHPInstall, error) {
 	if err == nil {
 		install.ConfigFile = parseConfigPath(info)
 	}
+	// If no config file found, try common locations and create if needed
+	if install.ConfigFile == "" {
+		install.ConfigFile = findOrCreatePHPConfig(install.Version, info)
+	}
 
 	// Get extensions
 	modules, err := m.runPHP(binary, "-m")
@@ -759,6 +763,66 @@ func parseVersion(output string) string {
 }
 
 // parseSAPI extracts the SAPI type from `php -v` output.
+// findOrCreatePHPConfig locates or creates a php.ini for the given version.
+// PHP installations sometimes have no loaded config file (Loaded Configuration File => (none)).
+// We check the scan directory from php -i output, then common paths, and create one if needed.
+func findOrCreatePHPConfig(version, phpInfo string) string {
+	// Extract short version: "8.3.6" → "8.3"
+	short := version
+	if parts := strings.SplitN(version, ".", 3); len(parts) >= 2 {
+		short = parts[0] + "." + parts[1]
+	}
+
+	// 1. Check "Scan this dir for additional .ini files" from php -i
+	for _, line := range strings.Split(phpInfo, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Scan this dir") {
+			if parts := strings.SplitN(line, "=>", 2); len(parts) == 2 {
+				dir := strings.TrimSpace(parts[1])
+				if dir != "(none)" && dir != "" {
+					// The scan dir parent usually has php.ini
+					parent := filepath.Dir(dir)
+					candidate := filepath.Join(parent, "php.ini")
+					if _, err := os.Stat(candidate); err == nil {
+						return candidate
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Try common paths
+	candidates := []string{
+		fmt.Sprintf("/etc/php/%s/cgi/php.ini", short),
+		fmt.Sprintf("/etc/php/%s/fpm/php.ini", short),
+		fmt.Sprintf("/etc/php/%s/cli/php.ini", short),
+		fmt.Sprintf("/etc/php/%s/php.ini", short),
+		"/etc/php.ini",
+		"/usr/local/etc/php.ini",
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+
+	// 3. Create a minimal php.ini in the expected location
+	iniDir := fmt.Sprintf("/etc/php/%s/cgi", short)
+	os.MkdirAll(iniDir, 0755)
+	iniPath := filepath.Join(iniDir, "php.ini")
+	content := "; PHP configuration managed by UWAS\n; Edit via dashboard or uwas php config\n\n[PHP]\n"
+	if err := os.WriteFile(iniPath, []byte(content), 0644); err != nil {
+		// Fallback: try cli path
+		iniDir = fmt.Sprintf("/etc/php/%s/cli", short)
+		iniPath = filepath.Join(iniDir, "php.ini")
+		if _, err := os.Stat(iniPath); err == nil {
+			return iniPath
+		}
+		return "" // give up
+	}
+	return iniPath
+}
+
 func parseSAPI(output string) string {
 	lower := strings.ToLower(output)
 	if strings.Contains(lower, "fpm-fcgi") {
@@ -839,7 +903,17 @@ func (m *Manager) GetConfig(version string) (PHPConfig, error) {
 	}
 
 	if inst.ConfigFile == "" {
-		return PHPConfig{}, fmt.Errorf("no config file for PHP %s", version)
+		// No config file — return sensible defaults
+		return PHPConfig{
+			MemoryLimit:      "128M",
+			MaxExecutionTime: "30",
+			PostMaxSize:      "8M",
+			UploadMaxSize:    "2M",
+			DisplayErrors:    "Off",
+			ErrorReporting:   "E_ALL & ~E_DEPRECATED & ~E_STRICT",
+			OPcacheEnabled:   "1",
+			Timezone:         "UTC",
+		}, nil
 	}
 
 	return parseINIConfig(inst.ConfigFile)
@@ -897,7 +971,7 @@ func (m *Manager) GetConfigRaw(version string) (string, error) {
 		return "", fmt.Errorf("PHP %s not found", version)
 	}
 	if inst.ConfigFile == "" {
-		return "", fmt.Errorf("no config file for PHP %s", version)
+		return "; No php.ini found for PHP " + version + "\n; Use the form below to create one, or install php.ini:\n;   sudo apt install php" + version + "-common\n\n[PHP]\nmemory_limit = 128M\nupload_max_filesize = 64M\npost_max_size = 64M\nmax_execution_time = 300\n", nil
 	}
 	data, err := os.ReadFile(inst.ConfigFile)
 	if err != nil {
@@ -913,7 +987,12 @@ func (m *Manager) SetConfigRaw(version, content string) error {
 		return fmt.Errorf("PHP %s not found", version)
 	}
 	if inst.ConfigFile == "" {
-		return fmt.Errorf("no config file for PHP %s", version)
+		// Create config file via findOrCreatePHPConfig
+		info, _ := m.runPHP(inst.Binary, "-i")
+		inst.ConfigFile = findOrCreatePHPConfig(inst.Version, info)
+		if inst.ConfigFile == "" {
+			return fmt.Errorf("cannot create php.ini for PHP %s", version)
+		}
 	}
 	return os.WriteFile(inst.ConfigFile, []byte(content), 0644)
 }
@@ -926,7 +1005,11 @@ func (m *Manager) SetConfig(version, key, value string) error {
 		return fmt.Errorf("PHP %s not found", version)
 	}
 	if inst.ConfigFile == "" {
-		return fmt.Errorf("no config file for PHP %s", version)
+		info, _ := m.runPHP(inst.Binary, "-i")
+		inst.ConfigFile = findOrCreatePHPConfig(inst.Version, info)
+		if inst.ConfigFile == "" {
+			return fmt.Errorf("cannot create php.ini for PHP %s", version)
+		}
 	}
 
 	return updateINI(inst.ConfigFile, key, value)
