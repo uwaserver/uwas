@@ -1,17 +1,21 @@
-// Package wordpress provides one-click WordPress installation.
+// Package wordpress provides one-click WordPress installation and management.
 package wordpress
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // escSQL escapes a string for use inside SQL single-quoted literals.
@@ -364,4 +368,390 @@ func ensurePHPExtensions(log *strings.Builder) {
 			log.WriteString(fmt.Sprintf("dnf install failed: %s\n", err))
 		}
 	}
+}
+
+// --- WordPress Site Detection & Management ---
+
+// SiteInfo describes a detected WordPress installation.
+type SiteInfo struct {
+	Domain      string            `json:"domain"`
+	WebRoot     string            `json:"web_root"`
+	Version     string            `json:"version"`
+	DBName      string            `json:"db_name"`
+	DBUser      string            `json:"db_user"`
+	DBHost      string            `json:"db_host"`
+	SiteURL     string            `json:"site_url"`
+	AdminURL    string            `json:"admin_url"`
+	Plugins     []PluginInfo      `json:"plugins"`
+	Themes      []ThemeInfo       `json:"themes"`
+	Health      SiteHealth        `json:"health"`
+	Permissions PermissionsReport `json:"permissions"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// PluginInfo describes a WordPress plugin.
+type PluginInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Status  string `json:"status"` // active, inactive, must-use
+	Update  string `json:"update"` // available update version, "" if none
+}
+
+// ThemeInfo describes a WordPress theme.
+type ThemeInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Status  string `json:"status"` // active, inactive
+	Update  string `json:"update"`
+}
+
+// SiteHealth summarizes WordPress site health.
+type SiteHealth struct {
+	CoreUpdate    bool   `json:"core_update"`    // WP core update available
+	PluginUpdates int    `json:"plugin_updates"` // number of plugin updates
+	ThemeUpdates  int    `json:"theme_updates"`
+	PHPVersion    string `json:"php_version"`
+	Debug         bool   `json:"debug"`          // WP_DEBUG enabled
+	SSL           bool   `json:"ssl"`            // FORCE_SSL_ADMIN
+	FileEdit      bool   `json:"file_edit"`      // DISALLOW_FILE_EDIT
+}
+
+// PermissionsReport shows file/directory permission status.
+type PermissionsReport struct {
+	WPConfig    string `json:"wp_config"`    // e.g. "0644 www-data:www-data"
+	WPContent   string `json:"wp_content"`
+	Uploads     string `json:"uploads"`
+	Htaccess    string `json:"htaccess"`
+	Owner       string `json:"owner"`        // detected owner user
+	Writable    bool   `json:"writable"`     // wp-content writable by PHP
+}
+
+// DetectSites scans domain web roots for WordPress installations.
+func DetectSites(domains []DomainInfo) []SiteInfo {
+	var sites []SiteInfo
+	for _, d := range domains {
+		if d.WebRoot == "" {
+			continue
+		}
+		wpConfig := filepath.Join(d.WebRoot, "wp-config.php")
+		if _, err := os.Stat(wpConfig); err != nil {
+			continue
+		}
+		site := SiteInfo{
+			Domain:    d.Host,
+			WebRoot:   d.WebRoot,
+			AdminURL:  fmt.Sprintf("https://%s/wp-admin/", d.Host),
+			UpdatedAt: time.Now(),
+		}
+
+		// Parse wp-config.php for DB info
+		site.DBName, site.DBUser, site.DBHost = parseWPConfig(wpConfig)
+
+		// Detect WP version from wp-includes/version.php
+		site.Version = detectWPVersion(d.WebRoot)
+
+		// Detect site URL
+		site.SiteURL = fmt.Sprintf("https://%s", d.Host)
+
+		// Check health indicators from wp-config
+		site.Health = checkWPHealth(wpConfig, d.WebRoot)
+
+		// Check permissions
+		site.Permissions = checkPermissions(d.WebRoot)
+
+		// Try WP-CLI for detailed plugin/theme info
+		if hasWPCLI() {
+			site.Plugins = listPlugins(d.WebRoot)
+			site.Themes = listThemes(d.WebRoot)
+			site.Health.PluginUpdates = countUpdates(site.Plugins)
+			site.Health.ThemeUpdates = countUpdates2(site.Themes)
+		} else {
+			// Fallback: scan wp-content/plugins directory
+			site.Plugins = scanPluginDirs(d.WebRoot)
+		}
+
+		sites = append(sites, site)
+	}
+	return sites
+}
+
+// DomainInfo is a minimal domain descriptor for WordPress detection.
+type DomainInfo struct {
+	Host    string
+	WebRoot string
+}
+
+// IsWordPress checks if the given web root contains a WordPress installation.
+func IsWordPress(webRoot string) bool {
+	_, err := os.Stat(filepath.Join(webRoot, "wp-config.php"))
+	return err == nil
+}
+
+// parseWPConfig extracts DB_NAME, DB_USER, DB_HOST from wp-config.php.
+func parseWPConfig(path string) (dbName, dbUser, dbHost string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	re := regexp.MustCompile(`define\s*\(\s*'(DB_NAME|DB_USER|DB_HOST)'\s*,\s*'([^']*)'\s*\)`)
+	for _, m := range re.FindAllStringSubmatch(content, -1) {
+		switch m[1] {
+		case "DB_NAME":
+			dbName = m[2]
+		case "DB_USER":
+			dbUser = m[2]
+		case "DB_HOST":
+			dbHost = m[2]
+		}
+	}
+	return
+}
+
+// detectWPVersion reads $wp_version from wp-includes/version.php.
+func detectWPVersion(webRoot string) string {
+	data, err := os.ReadFile(filepath.Join(webRoot, "wp-includes", "version.php"))
+	if err != nil {
+		return "unknown"
+	}
+	re := regexp.MustCompile(`\$wp_version\s*=\s*'([^']+)'`)
+	m := re.FindStringSubmatch(string(data))
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return "unknown"
+}
+
+// checkWPHealth reads wp-config.php for health indicators.
+func checkWPHealth(wpConfigPath, webRoot string) SiteHealth {
+	data, _ := os.ReadFile(wpConfigPath)
+	content := string(data)
+	h := SiteHealth{}
+	h.Debug = strings.Contains(content, "'WP_DEBUG', true") || strings.Contains(content, "'WP_DEBUG',true")
+	h.SSL = strings.Contains(content, "FORCE_SSL_ADMIN")
+	h.FileEdit = strings.Contains(content, "DISALLOW_FILE_EDIT")
+	return h
+}
+
+// checkPermissions reports file ownership and permission status.
+func checkPermissions(webRoot string) PermissionsReport {
+	r := PermissionsReport{}
+	r.WPConfig = permString(filepath.Join(webRoot, "wp-config.php"))
+	r.WPContent = permString(filepath.Join(webRoot, "wp-content"))
+	r.Uploads = permString(filepath.Join(webRoot, "wp-content", "uploads"))
+	r.Htaccess = permString(filepath.Join(webRoot, ".htaccess"))
+
+	// Check owner (Linux only)
+	if runtime.GOOS != "windows" {
+		out, err := exec.Command("stat", "-c", "%U:%G", webRoot).Output()
+		if err == nil {
+			r.Owner = strings.TrimSpace(string(out))
+		}
+	}
+
+	// Check if wp-content is writable
+	testFile := filepath.Join(webRoot, "wp-content", ".uwas-write-test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
+		os.Remove(testFile)
+		r.Writable = true
+	}
+	return r
+}
+
+func permString(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "missing"
+	}
+	mode := info.Mode().Perm()
+	// Get owner on Linux
+	if runtime.GOOS != "windows" {
+		out, err := exec.Command("stat", "-c", "%U:%G", path).Output()
+		if err == nil {
+			return fmt.Sprintf("%04o %s", mode, strings.TrimSpace(string(out)))
+		}
+	}
+	return fmt.Sprintf("%04o", mode)
+}
+
+// --- WP-CLI Integration ---
+
+// hasWPCLI checks if wp-cli is installed.
+func hasWPCLI() bool {
+	_, err := exec.LookPath("wp")
+	return err == nil
+}
+
+// wpCLI runs a WP-CLI command in the given web root.
+func wpCLI(webRoot string, args ...string) (string, error) {
+	allArgs := append([]string{"--path=" + webRoot, "--allow-root", "--no-color"}, args...)
+	cmd := exec.Command("wp", allArgs...)
+	cmd.Dir = webRoot
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// listPlugins uses WP-CLI to get plugin info.
+func listPlugins(webRoot string) []PluginInfo {
+	out, err := wpCLI(webRoot, "plugin", "list", "--format=json")
+	if err != nil {
+		return scanPluginDirs(webRoot) // fallback
+	}
+	var raw []struct {
+		Name    string `json:"name"`
+		Status  string `json:"status"`
+		Version string `json:"version"`
+		Update  string `json:"update"`
+	}
+	if json.Unmarshal([]byte(out), &raw) != nil {
+		return scanPluginDirs(webRoot)
+	}
+	plugins := make([]PluginInfo, len(raw))
+	for i, p := range raw {
+		plugins[i] = PluginInfo{Name: p.Name, Version: p.Version, Status: p.Status, Update: p.Update}
+	}
+	return plugins
+}
+
+// listThemes uses WP-CLI to get theme info.
+func listThemes(webRoot string) []ThemeInfo {
+	out, err := wpCLI(webRoot, "theme", "list", "--format=json")
+	if err != nil {
+		return nil
+	}
+	var raw []struct {
+		Name    string `json:"name"`
+		Status  string `json:"status"`
+		Version string `json:"version"`
+		Update  string `json:"update"`
+	}
+	if json.Unmarshal([]byte(out), &raw) != nil {
+		return nil
+	}
+	themes := make([]ThemeInfo, len(raw))
+	for i, t := range raw {
+		themes[i] = ThemeInfo{Name: t.Name, Version: t.Version, Status: t.Status, Update: t.Update}
+	}
+	return themes
+}
+
+// scanPluginDirs is a fallback when WP-CLI is not available.
+func scanPluginDirs(webRoot string) []PluginInfo {
+	pluginDir := filepath.Join(webRoot, "wp-content", "plugins")
+	entries, err := os.ReadDir(pluginDir)
+	if err != nil {
+		return nil
+	}
+	var plugins []PluginInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == "." || name == ".." {
+			continue
+		}
+		p := PluginInfo{Name: name, Status: "unknown"}
+		// Try to read version from plugin header
+		mainFile := filepath.Join(pluginDir, name, name+".php")
+		if data, err := os.ReadFile(mainFile); err == nil {
+			p.Version = parsePluginVersion(string(data))
+		}
+		plugins = append(plugins, p)
+	}
+	return plugins
+}
+
+func parsePluginVersion(content string) string {
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "* Version:") || strings.HasPrefix(line, " * Version:") {
+			return strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, " * Version:"), "* Version:"))
+		}
+	}
+	return ""
+}
+
+func countUpdates(plugins []PluginInfo) int {
+	n := 0
+	for _, p := range plugins {
+		if p.Update != "" && p.Update != "none" {
+			n++
+		}
+	}
+	return n
+}
+
+func countUpdates2(themes []ThemeInfo) int {
+	n := 0
+	for _, t := range themes {
+		if t.Update != "" && t.Update != "none" {
+			n++
+		}
+	}
+	return n
+}
+
+// --- WP-CLI Actions ---
+
+// UpdateCore updates WordPress core via WP-CLI.
+func UpdateCore(webRoot string) (string, error) {
+	return wpCLI(webRoot, "core", "update")
+}
+
+// UpdatePlugin updates a specific plugin.
+func UpdatePlugin(webRoot, plugin string) (string, error) {
+	return wpCLI(webRoot, "plugin", "update", plugin)
+}
+
+// UpdateAllPlugins updates all plugins.
+func UpdateAllPlugins(webRoot string) (string, error) {
+	return wpCLI(webRoot, "plugin", "update", "--all")
+}
+
+// ActivatePlugin activates a plugin.
+func ActivatePlugin(webRoot, plugin string) (string, error) {
+	return wpCLI(webRoot, "plugin", "activate", plugin)
+}
+
+// DeactivatePlugin deactivates a plugin.
+func DeactivatePlugin(webRoot, plugin string) (string, error) {
+	return wpCLI(webRoot, "plugin", "deactivate", plugin)
+}
+
+// DeletePlugin deletes a plugin.
+func DeletePlugin(webRoot, plugin string) (string, error) {
+	return wpCLI(webRoot, "plugin", "delete", plugin)
+}
+
+// UpdateTheme updates a specific theme.
+func UpdateTheme(webRoot, theme string) (string, error) {
+	return wpCLI(webRoot, "theme", "update", theme)
+}
+
+// FixPermissions sets correct WordPress file permissions.
+func FixPermissions(webRoot string) (string, error) {
+	var log strings.Builder
+	// Directories: 755, files: 644
+	if out, err := exec.Command("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").CombinedOutput(); err != nil {
+		log.WriteString(fmt.Sprintf("chmod dirs: %s\n", string(out)))
+	} else {
+		log.WriteString("Directories set to 755\n")
+	}
+	if out, err := exec.Command("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").CombinedOutput(); err != nil {
+		log.WriteString(fmt.Sprintf("chmod files: %s\n", string(out)))
+	} else {
+		log.WriteString("Files set to 644\n")
+	}
+	// wp-content writable
+	exec.Command("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")).Run()
+	log.WriteString("wp-content set to 775\n")
+	// wp-config.php locked
+	exec.Command("chmod", "600", filepath.Join(webRoot, "wp-config.php")).Run()
+	log.WriteString("wp-config.php set to 600\n")
+	// Owner
+	exec.Command("chown", "-R", "www-data:www-data", webRoot).Run()
+	log.WriteString("Owner set to www-data:www-data\n")
+	return log.String(), nil
 }
