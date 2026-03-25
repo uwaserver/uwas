@@ -4,7 +4,7 @@
 
 One binary to serve them all.
 
-Apache + Nginx + Varnish + Caddy → UWAS
+Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ---
 
@@ -14,46 +14,59 @@ Apache + Nginx + Varnish + Caddy → UWAS
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1718_passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-88.6%25-brightgreen)]()
+[![CI](https://github.com/uwaserver/uwas/actions/workflows/ci.yml/badge.svg)](https://github.com/uwaserver/uwas/actions/workflows/ci.yml)
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack — Apache, Nginx, Varnish, Certbot — with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy with load balancing, and an AI-ready MCP interface.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 31-page React dashboard with 120+ API endpoints.
 
 One binary. Zero hassle. Production ready.
 
 ## Features
 
+### Web Server
 - **Auto HTTPS** — Let's Encrypt certificates with zero configuration
 - **HTTP/3 (QUIC)** — Via quic-go with Alt-Svc header advertisement
 - **Built-in Cache** — Varnish-level caching with grace mode, tag-based purge
 - **PHP Ready** — FastCGI with connection pooling and .htaccess support
-- **Per-domain PHP** — Multiple PHP versions per domain with auto-port assignment
-- **Load Balancer** — 5 algorithms, health checks, circuit breaker
-- **WebSocket Proxy** — TCP hijack with bidirectional tunneling
+- **Per-domain PHP** — Multiple PHP versions per domain with auto-port assignment, crash auto-restart
+- **Load Balancer** — 5 algorithms, health checks, circuit breaker, canary routing
+- **WebSocket Proxy** — Transparent TCP tunnel with hijack + bidirectional pipe
 - **URL Rewrite** — Apache mod_rewrite compatible engine
 - **Brotli + Gzip** — Dual compression with Accept-Encoding negotiation
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
-- **Dashboard** — 15-page React 19 admin dashboard with real-time stats
-- **Analytics** — Per-domain traffic analytics, referrer tracking, user agent breakdown
-- **Observable** — Prometheus metrics with p50/p95/p99 latency percentiles
-- **Distributed Tracing** — W3C Trace Context (traceparent) propagation
+
+### Hosting Control Panel
+- **31-page Dashboard** — React 19 admin panel with dark/light theme
+- **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
+- **WordPress Management** — One-click install, plugin updates, debug mode, error log viewer
+- **DNS Zone Editor** — Full CRUD for Cloudflare, Hetzner, DigitalOcean, Route53
+- **File Manager** — Browse, edit, upload, delete files via dashboard
+- **SFTP Server** — Built-in pure Go SFTP with chroot per domain + SSH key management
+- **Database Management** — MySQL/MariaDB + Docker containers (MariaDB/MySQL/PostgreSQL)
+- **Site Migration** — SSH wizard: rsync files + dump/import database
+- **Clone/Staging** — One-click domain clone with DB duplication
+- **Backup/Restore** — Local, S3, SFTP providers with scheduling + webhook notifications
+- **Cron Jobs** — Per-domain cron management with execution monitoring and failure alerts
+
+### Security & Monitoring
+- **WAF** — SQL injection, XSS, shell, RCE detection
+- **Per-domain Rate Limiting** — Sharded token bucket per domain
+- **Bandwidth Limits** — Monthly/daily caps with throttle or block action
+- **Webhook Events** — 11 event types with HMAC-SHA256 signatures and retry
 - **Uptime Monitoring** — Per-domain health checks with alerting
-- **A/B Testing** — Canary routing with cookie stickiness
-- **Request Mirroring** — Shadow traffic to secondary backends
-- **Backup/Restore** — Local, S3, SFTP storage providers with scheduling
-- **Nginx/Apache Migration** — `uwas migrate nginx/apache <file>` CLI converter
+- **Analytics** — Per-domain traffic, referrer tracking, user agent breakdown
+- **Prometheus Metrics** — p50/p95/p99 latency percentiles
 - **Audit Logging** — Track all admin actions with timestamps and IPs
+- **IP Access Control** — Per-domain whitelist/blacklist
+
+### DevOps
 - **AI-Native** — MCP server for LLM-driven management
-- **Secure** — WAF rules, rate limiting, security headers, blocked paths
-- **Per-domain CORS** — Cross-Origin Resource Sharing per domain
-- **Basic Authentication** — Per-domain HTTP Basic Auth
-- **IP Access Control** — Per-domain IP whitelist/blacklist
-- **Custom Error Pages** — Per-domain 404/500 error pages
-- **Daemon Mode** — `uwas serve -d` for background operation
-- **First-Run UX** — Auto-config creation, interactive setup, startup banner
-- **Single Binary** — No dependencies, just download and run
+- **Nginx/Apache Migration** — CLI config converter
+- **Hot-Reload** — All per-domain chains rebuild on SIGHUP (zero downtime)
+- **Self-Update** — Binary auto-update from GitHub releases
+- **CI/CD** — GitHub Actions for build, test, release automation
+- **Single Binary** — ~14MB, no dependencies, just download and run
 
 ## Quick Start
 
@@ -106,7 +119,7 @@ domains:
       ttl: 1800
 ```
 
-### Reverse Proxy
+### Reverse Proxy with WebSocket
 
 ```yaml
 domains:
@@ -121,9 +134,28 @@ domains:
         - address: "http://127.0.0.1:3001"
           weight: 1
       algorithm: least_conn
+      websocket: true
       health_check:
         path: /health
         interval: 10s
+```
+
+### Bandwidth Limits + Rate Limiting
+
+```yaml
+domains:
+  - host: example.com
+    root: /var/www/html
+    type: static
+    bandwidth:
+      enabled: true
+      monthly_limit: 100GB
+      daily_limit: 5GB
+      action: throttle  # or "block"
+    security:
+      rate_limit:
+        requests: 100
+        window: 1m
 ```
 
 ## Requirements
@@ -132,13 +164,7 @@ domains:
 |-----------|---------|-------------|-------|
 | Go | 1.26+ | 1.26+ | For building from source |
 | PHP | 7.4+ | 8.3+ / 8.4+ | Only needed for PHP sites |
-| PHP-FPM | Any | 8.3-fpm | Linux/macOS: `php-fpm`, Windows: `php-cgi -b` |
-
-**PHP compatibility tested with:** PHP 8.1, 8.2, 8.3, 8.4
-
-**Supported PHP connection modes:**
-- Unix socket: `fpm_address: "unix:/var/run/php/php8.3-fpm.sock"` (Linux/macOS)
-- TCP: `fpm_address: "tcp:127.0.0.1:9000"` (all platforms)
+| Docker | 20.10+ | 24+ | Only for Docker database containers |
 
 **No PHP needed** for static sites, reverse proxy, or redirect domains.
 
@@ -161,6 +187,7 @@ uwas backup                  Create config backup
 uwas restore                 Restore from backup
 uwas php      list           List detected PHP versions
 uwas php      start <ver>    Start PHP-FPM for version
+uwas doctor                  System diagnostics + auto-fix
 uwas help                    Show help
 ```
 
@@ -172,66 +199,105 @@ Request Flow:
   TCP → TLS (SNI routing)
     → HTTP Parse
       → Middleware Chain:
-          Recovery → Request ID → Security Headers → Access Log
+          Recovery → Request ID → Security Headers → Rate Limit → Access Log
         → Virtual Host Lookup
-          → Per-domain: IP ACL → BasicAuth → CORS → Header Transform
+          → Per-domain: IP ACL → Rate Limit → BasicAuth → CORS → Header Transform
             → Security Guard (blocked paths, WAF)
+              → Bandwidth Check (throttle/block)
               → Rewrite Engine (mod_rewrite compatible)
               → Cache Lookup (L1 memory + L2 disk)
                 → Handler:
-                    ├── Static File  (ETag, Range, pre-compressed, SPA)
-                    ├── FastCGI/PHP  (connection pool, CGI env)
-                    ├── Reverse Proxy (5 LB algorithms, circuit breaker)
-                    └── Redirect     (301/302/307/308)
+                    ├── Static File    (ETag, Range, pre-compressed, SPA)
+                    ├── FastCGI/PHP    (connection pool, CGI env)
+                    ├── Reverse Proxy  (5 LB algorithms, circuit breaker)
+                    ├── WebSocket      (TCP tunnel, bidirectional pipe)
+                    └── Redirect       (301/302/307/308)
               → Cache Store
+              → Bandwidth Record
     → Response
 ```
 
 ## Project Layout
 
 ```
-cmd/uwas/                → CLI entry point
+cmd/uwas/                → CLI entry point (18 commands)
 internal/
-  admin/                 → REST API (health, stats, domains, metrics)
-  alerting/              → Webhook alerts, error spike detection
+  admin/                 → REST API (120+ routes) + dashboard embed + TOTP auth
+  alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
-  backup/                → Backup/restore with Local, S3, SFTP
-  build/                 → Version info (ldflags)
+  auth/                  → Multi-user RBAC (admin/reseller/user) + session + TOTP 2FA
+  backup/                → Local/S3/SFTP backup + restore + scheduling
+  bandwidth/             → Per-domain bandwidth limits (throttle/block)
   cache/                 → L1 memory (256-shard LRU) + L2 disk cache
   cli/                   → CLI framework and commands
-  config/                → YAML parser, validation, defaults
+  config/                → YAML parser, validation, defaults, ByteSize/Duration types
+  cronjob/               → Cron job management + execution monitoring
+  database/              → MySQL/MariaDB management + Docker container support
+  dnsmanager/            → Cloudflare, Route53, Hetzner, DigitalOcean DNS CRUD
+  dnschecker/            → DNS record verification (A/MX/NS/TXT)
+  doctor/                → System diagnostics + auto-fix
+  filemanager/           → Web file manager (browse/edit/upload/delete)
+  firewall/              → UFW management via API
   handler/
     fastcgi/             → PHP handler, CGI environment builder
-    proxy/               → Reverse proxy, load balancing, health checks
-    static/              → Static files, MIME, ETag, pre-compressed
+    proxy/               → Reverse proxy, load balancing, WebSocket, circuit breaker
+    static/              → Static files, MIME, ETag, pre-compressed, SPA
   logger/                → Structured logger (slog wrapper)
   mcp/                   → MCP server for AI management
   metrics/               → Prometheus-compatible metrics
-  middleware/            → Chain, recovery, request ID, rate limit, gzip, CORS, WAF
-  migrate/               → Nginx/Apache config converter
+  middleware/            → Chain, recovery, rate limit, gzip, CORS, WAF, bot guard
+  migrate/               → Nginx/Apache converter + SSH site migration + clone
   monitor/               → Uptime monitoring per domain
-  phpmanager/            → PHP version management
-  rewrite/               → URL rewrite engine, conditions, variables
+  notify/                → Webhook, Slack, Telegram, Email (SMTP) channels
+  phpmanager/            → PHP detect, install, start/stop, per-domain assign
+  rewrite/               → URL rewrite engine (Apache mod_rewrite compatible)
   router/                → Virtual host routing, request context
-  server/                → HTTP/HTTPS server, dispatch, error pages
-  tls/                   → TLS manager, ACME client, auto-renewal
+  selfupdate/            → Binary self-update from GitHub releases
+  server/                → HTTP/HTTPS/HTTP3 server + request dispatch + log rotation
+  sftpserver/            → Built-in SFTP server (pure Go, chroot per domain)
+  siteuser/              → SFTP user management (chroot jail + SSH keys)
+  tls/                   → TLS manager, ACME client, auto-renewal, cert expiry alerts
     acme/                → RFC 8555 ACME protocol, JWS signing
+  webhook/               → Event-driven webhook delivery (11 events, HMAC, retry)
+  wordpress/             → WordPress install, manage, debug, permissions
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
   htaccess/              → .htaccess parser and converter
+web/dashboard/           → React 19 SPA (31 pages, Vite + TypeScript + Tailwind)
 ```
+
+## Dashboard
+
+UWAS includes a 31-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
+
+**Sites:** Dashboard, Domains, Topology, Certificates, DNS Zone Editor, WordPress, Clone/Staging, Migration, File Manager
+
+**Server:** PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
+
+**Performance:** Cache, Metrics, Analytics, Logs
+
+**Security:** Security, Firewall, Unknown Domains, Audit Log
+
+**System:** Config Editor, Backups, Updates, Doctor, Settings
+
+**Auth:** Login (with 2FA/TOTP support)
 
 ## Comparison
 
-| Feature | UWAS | Nginx | Caddy | Apache | LiteSpeed |
-|---------|------|-------|-------|--------|-----------|
+| Feature | UWAS | Nginx | Caddy | Apache | cPanel |
+|---------|------|-------|-------|--------|--------|
 | Single binary | Yes | No | Yes | No | No |
 | Auto HTTPS | Yes | No | Yes | No | Yes |
-| Built-in cache | Yes | No | No | No | Yes |
+| Built-in cache | Yes | No | No | No | No |
 | PHP FastCGI | Yes | Yes | Yes | Yes | Yes |
 | .htaccess support | Yes | No | No | Yes | Yes |
-| Load balancer | Yes | Yes | No | No | Yes |
-| WAF | Basic | No | No | Mod | Yes |
+| Load balancer | Yes | Yes | No | No | No |
+| WebSocket proxy | Yes | Yes | No | No | No |
+| WAF | Yes | No | No | Mod | Yes |
+| Control panel | Yes (built-in) | No | No | No | Yes |
+| Multi-user auth | Yes | No | No | No | Yes |
+| Webhook events | Yes | No | No | No | No |
+| DNS management | 4 providers | No | No | No | Yes |
 | MCP / AI-native | Yes | No | No | No | No |
 | Open source | Apache 2.0 | BSD | Apache 2.0 | Apache 2.0 | Proprietary |
 
@@ -276,72 +342,9 @@ uwas migrate nginx /etc/nginx/sites-enabled/example.conf > uwas.yaml
 
 # Convert Apache config
 uwas migrate apache /etc/apache2/sites-enabled/example.conf > uwas.yaml
+
+# Or use the dashboard Migration wizard for full site transfer (files + database)
 ```
-
-## Admin API
-
-When `admin.enabled: true`, the REST API is available at `127.0.0.1:9443`:
-
-```
-GET  /api/v1/health          → Health status (public, no auth)
-GET  /api/v1/system          → System info (Go, OS, memory, goroutines)
-GET  /api/v1/stats           → Stats + latency percentiles
-GET  /api/v1/domains         → Domain list
-GET  /api/v1/domains/{host}  → Domain detail
-POST /api/v1/domains         → Create domain
-PUT  /api/v1/domains/{host}  → Update domain
-DELETE /api/v1/domains/{host} → Delete domain
-GET  /api/v1/config          → Sanitized config
-GET  /api/v1/config/raw      → Raw YAML config
-PUT  /api/v1/config/raw      → Update config
-POST /api/v1/reload          → Reload config
-GET  /api/v1/metrics         → Prometheus metrics
-GET  /api/v1/logs            → Access logs
-GET  /api/v1/audit           → Audit log
-GET  /api/v1/certs           → Certificate info
-GET  /api/v1/monitor         → Uptime monitoring
-GET  /api/v1/alerts          → Alert history
-POST /api/v1/cache/purge     → Purge cache
-GET  /api/v1/cache/stats     → Cache statistics
-GET  /api/v1/analytics       → Traffic analytics
-GET  /api/v1/php             → PHP versions
-GET  /api/v1/backups         → Backup list
-POST /api/v1/backups         → Create backup
-POST /api/v1/backups/restore → Restore backup
-GET  /api/v1/sse/stats       → Server-Sent Events stream
-GET  /api/v1/mcp/tools       → MCP tool listing
-POST /api/v1/mcp/call        → Invoke MCP tool
-```
-
-Protected with `Authorization: Bearer <api_key>` when `admin.api_key` is set.
-
-## Dashboard
-
-UWAS includes a built-in React 19 dashboard at `/_uwas/dashboard/`:
-
-- **Overview** — Request stats, cache hit rate, latency percentiles, live chart
-- **Domains** — CRUD with templates (WordPress, Static, Proxy, Redirect)
-- **Topology** — React Flow network diagram
-- **Cache** — Hit/miss/stale breakdown, per-domain rules, tag purge
-- **Metrics** — Prometheus metrics viewer with auto-refresh
-- **Analytics** — Per-domain traffic, referrers, user agent breakdown
-- **Logs** — Real-time access log viewer with status filters
-- **Config Editor** — YAML editor for main + per-domain configs
-- **Certificates** — SSL certificate timeline and expiry tracking
-- **PHP** — Per-domain PHP version management
-- **Backups** — Create/restore/delete with Local/S3/SFTP providers
-- **Audit Log** — Admin action history with filters
-- **Settings** — System info, config reload, export
-
-## MCP Server
-
-UWAS includes a built-in MCP (Model Context Protocol) server for AI-driven management:
-
-**Tools:**
-- `domain_list` — List all configured domains
-- `stats` — Get server statistics
-- `config_show` — Show current configuration
-- `cache_purge` — Purge cache by tag or all
 
 ## Development
 
@@ -350,6 +353,9 @@ make dev        # Build development binary
 make test       # Run all tests
 make lint       # Run go vet + staticcheck
 make clean      # Clean build artifacts
+
+# Dashboard
+cd web/dashboard && npm run build
 ```
 
 ## License
