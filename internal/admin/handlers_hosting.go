@@ -1178,36 +1178,64 @@ type PackageInfo struct {
 	Installed   bool   `json:"installed"`
 	Version     string `json:"version,omitempty"`
 	Category    string `json:"category"`
-	InstallCmd  string `json:"install_cmd,omitempty"`
+	Required    bool   `json:"required"`           // true if UWAS needs this
+	UsedBy      string `json:"used_by,omitempty"`   // what uses it: "WordPress", "Image Optimization", etc
+	Warning     string `json:"warning,omitempty"`    // uninstall warning
+	CanRemove   bool   `json:"can_remove"`           // false if critical dependency
 }
 
-var knownPackages = []struct {
-	id          string
-	name        string
-	description string
-	category    string
-	binaries    []string // check if installed via which/command -v
-	aptPkgs     []string // apt install packages
-	dnfPkgs     []string // dnf install packages
-}{
-	{"mariadb", "MariaDB", "MySQL-compatible database server", "Database", []string{"mariadbd", "mysqld"}, []string{"mariadb-server", "mariadb-client"}, []string{"mariadb-server"}},
-	{"redis", "Redis", "In-memory cache and message broker", "Database", []string{"redis-server"}, []string{"redis-server"}, []string{"redis"}},
-	{"webp", "WebP Tools", "Image conversion to WebP format (cwebp)", "Image", []string{"cwebp"}, []string{"webp"}, []string{"libwebp-tools"}},
-	{"avif", "AVIF Tools", "Image conversion to AVIF format (avifenc)", "Image", []string{"avifenc"}, []string{"libavif-bin"}, []string{"libavif-tools"}},
-	{"imagemagick", "ImageMagick", "Image processing suite (convert, identify)", "Image", []string{"convert", "magick"}, []string{"imagemagick"}, []string{"ImageMagick"}},
-	{"certbot", "Certbot", "Let's Encrypt certificate tool (standalone)", "SSL", []string{"certbot"}, []string{"certbot"}, []string{"certbot"}},
-	{"ufw", "UFW", "Uncomplicated Firewall", "Security", []string{"ufw"}, []string{"ufw"}, []string{"ufw"}},
-	{"fail2ban", "Fail2Ban", "Intrusion prevention (brute-force protection)", "Security", []string{"fail2ban-client"}, []string{"fail2ban"}, []string{"fail2ban"}},
-	{"git", "Git", "Version control system", "Dev Tools", []string{"git"}, []string{"git"}, []string{"git"}},
-	{"wp-cli", "WP-CLI", "WordPress command-line tool", "WordPress", []string{"wp"}, nil, nil}, // special install
-	{"docker", "Docker", "Container runtime", "Containers", []string{"docker"}, []string{"docker.io"}, []string{"docker"}},
-	{"docker-compose", "Docker Compose", "Multi-container orchestration", "Containers", []string{"docker-compose", "docker"}, []string{"docker-compose"}, []string{"docker-compose"}},
-	{"postfix", "Postfix", "Mail Transfer Agent (SMTP server)", "Email", []string{"postfix"}, []string{"postfix"}, []string{"postfix"}},
-	{"dovecot", "Dovecot", "IMAP/POP3 mail server", "Email", []string{"dovecot"}, []string{"dovecot-imapd", "dovecot-pop3d"}, []string{"dovecot"}},
-	{"rsync", "Rsync", "Fast file synchronization", "Utilities", []string{"rsync"}, []string{"rsync"}, []string{"rsync"}},
-	{"htop", "htop", "Interactive process viewer", "Utilities", []string{"htop"}, []string{"htop"}, []string{"htop"}},
-	{"curl", "cURL", "HTTP client tool", "Utilities", []string{"curl"}, []string{"curl"}, []string{"curl"}},
-	{"unzip", "Unzip", "ZIP archive extraction", "Utilities", []string{"unzip"}, []string{"unzip"}, []string{"unzip"}},
+type knownPkg struct {
+	id, name, description, category string
+	required                        bool
+	usedBy                          string
+	warning                         string // shown before uninstall
+	canRemove                       bool
+	binaries                        []string
+	aptPkgs                         []string
+	aptRemove                       []string // packages to remove (may differ from install)
+}
+
+var knownPackages = []knownPkg{
+	// ── Core (UWAS needs these) ──
+	{"mariadb", "MariaDB", "Database for WordPress and web apps", "Database",
+		true, "WordPress, Database page", "ALL databases will be destroyed! Back up first.", true,
+		[]string{"mariadbd", "mysqld"}, []string{"mariadb-server", "mariadb-client"}, []string{"mariadb-server", "mariadb-client"}},
+
+	// ── PHP (managed separately via PHP page) ──
+
+	// ── Image Optimization ──
+	{"webp", "WebP Tools", "Convert images to WebP (smaller, faster loading)", "Performance",
+		false, "Image Optimization (per-domain)", "", true,
+		[]string{"cwebp"}, []string{"webp"}, []string{"webp"}},
+	{"avif", "AVIF Tools", "Convert images to AVIF (next-gen format)", "Performance",
+		false, "Image Optimization (per-domain)", "", true,
+		[]string{"avifenc"}, []string{"libavif-bin"}, []string{"libavif-bin"}},
+
+	// ── Security ──
+	{"ufw", "UFW Firewall", "Manage firewall rules from dashboard", "Security",
+		true, "Firewall page", "All firewall rules will be removed!", true,
+		[]string{"ufw"}, []string{"ufw"}, []string{"ufw"}},
+	{"fail2ban", "Fail2Ban", "Auto-block brute-force attacks on SSH/HTTP", "Security",
+		false, "SSH + admin panel protection", "", true,
+		[]string{"fail2ban-client"}, []string{"fail2ban"}, []string{"fail2ban"}},
+
+	// ── WordPress ──
+	{"wp-cli", "WP-CLI", "Manage WordPress from dashboard (updates, plugins, themes)", "WordPress",
+		false, "WordPress Sites page (plugin/theme management)", "", true,
+		[]string{"wp"}, nil, nil},
+
+	// ── Email ──
+	{"postfix", "Postfix", "Send emails from your server (SMTP)", "Email",
+		false, "WordPress email sending, contact forms", "Server will not be able to send emails!", true,
+		[]string{"postfix"}, []string{"postfix"}, []string{"postfix"}},
+
+	// ── Utilities (required by UWAS internals) ──
+	{"curl", "cURL", "HTTP client (used for ACME, health checks, WP-CLI)", "Required",
+		true, "SSL certificates, health monitoring", "", false,
+		[]string{"curl"}, []string{"curl"}, nil},
+	{"unzip", "Unzip", "Extract archives (used for WordPress install)", "Required",
+		true, "WordPress installer", "", false,
+		[]string{"unzip"}, []string{"unzip"}, nil},
 }
 
 func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
@@ -1218,13 +1246,15 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 			Name:        kp.name,
 			Description: kp.description,
 			Category:    kp.category,
+			Required:    kp.required,
+			UsedBy:      kp.usedBy,
+			Warning:     kp.warning,
+			CanRemove:   kp.canRemove,
 		}
-		// Check if installed
 		for _, bin := range kp.binaries {
-			if path, err := exec.LookPath(bin); err == nil {
+			if p, err := exec.LookPath(bin); err == nil {
 				pi.Installed = true
-				// Try to get version
-				if out, err := exec.Command(path, "--version").CombinedOutput(); err == nil {
+				if out, err := exec.Command(p, "--version").CombinedOutput(); err == nil {
 					lines := strings.SplitN(string(out), "\n", 2)
 					if len(lines) > 0 {
 						v := strings.TrimSpace(lines[0])
@@ -1235,15 +1265,6 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				break
-			}
-		}
-		// Build install command
-		if !pi.Installed {
-			if len(kp.aptPkgs) > 0 {
-				pi.InstallCmd = "apt install -y " + strings.Join(kp.aptPkgs, " ")
-			}
-			if kp.id == "wp-cli" {
-				pi.InstallCmd = "curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp"
 			}
 		}
 		pkgs = append(pkgs, pi)
@@ -1262,70 +1283,92 @@ var (
 	}
 )
 
+func findPkg(id string) *knownPkg {
+	for i := range knownPackages {
+		if knownPackages[i].id == id {
+			return &knownPackages[i]
+		}
+	}
+	return nil
+}
+
 func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Action string `json:"action"` // "install" (default) or "remove"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	if req.Action == "" {
+		req.Action = "install"
+	}
 
-	// Find package
-	var found *struct {
-		id, name, description, category string
-		binaries, aptPkgs, dnfPkgs      []string
-	}
-	for i := range knownPackages {
-		if knownPackages[i].id == req.ID {
-			kp := knownPackages[i]
-			found = &struct {
-				id, name, description, category string
-				binaries, aptPkgs, dnfPkgs      []string
-			}{kp.id, kp.name, kp.description, kp.category, kp.binaries, kp.aptPkgs, kp.dnfPkgs}
-			break
-		}
-	}
-	if found == nil {
+	pkg := findPkg(req.ID)
+	if pkg == nil {
 		jsonError(w, "unknown package: "+req.ID, http.StatusBadRequest)
 		return
+	}
+
+	// Uninstall validation
+	if req.Action == "remove" {
+		if !pkg.canRemove {
+			jsonError(w, pkg.name+" is required by UWAS and cannot be removed", http.StatusForbidden)
+			return
+		}
+		if len(pkg.aptRemove) == 0 && pkg.id != "wp-cli" {
+			jsonError(w, "no removal method for "+pkg.name, http.StatusBadRequest)
+			return
+		}
 	}
 
 	pkgInstallMu.Lock()
 	if pkgInstallStatus.Status == "running" {
 		pkgInstallMu.Unlock()
-		jsonError(w, "another installation in progress: "+pkgInstallStatus.Package, http.StatusConflict)
+		jsonError(w, "another operation in progress: "+pkgInstallStatus.Package, http.StatusConflict)
 		return
 	}
-	pkgInstallStatus.Package = found.name
+	pkgInstallStatus.Package = pkg.name
 	pkgInstallStatus.Status = "running"
 	pkgInstallStatus.Output = ""
 	pkgInstallStatus.Error = ""
 	pkgInstallMu.Unlock()
 
-	s.RecordAudit("package.install", found.name, ip, true)
+	action := req.Action
+	s.RecordAudit("package."+action, pkg.name, ip, true)
 
 	go func() {
 		var cmd *exec.Cmd
-		if found.id == "wp-cli" {
-			cmd = exec.Command("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
-		} else if len(found.aptPkgs) > 0 {
-			args := append([]string{"install", "-y"}, found.aptPkgs...)
-			cmd = exec.Command("apt", args...)
-		} else if len(found.dnfPkgs) > 0 {
-			args := append([]string{"install", "-y"}, found.dnfPkgs...)
-			cmd = exec.Command("dnf", args...)
+
+		if action == "remove" {
+			// Uninstall
+			if pkg.id == "wp-cli" {
+				cmd = exec.Command("rm", "-f", "/usr/local/bin/wp")
+			} else {
+				// Stop service first if applicable
+				exec.Command("systemctl", "stop", pkg.id).Run()
+				args := append([]string{"remove", "-y", "--purge"}, pkg.aptRemove...)
+				cmd = exec.Command("apt", args...)
+			}
 		} else {
-			pkgInstallMu.Lock()
-			pkgInstallStatus.Status = "error"
-			pkgInstallStatus.Error = "no install method for " + found.name
-			pkgInstallMu.Unlock()
-			return
+			// Install
+			if pkg.id == "wp-cli" {
+				cmd = exec.Command("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
+			} else if len(pkg.aptPkgs) > 0 {
+				args := append([]string{"install", "-y"}, pkg.aptPkgs...)
+				cmd = exec.Command("apt", args...)
+			} else {
+				pkgInstallMu.Lock()
+				pkgInstallStatus.Status = "error"
+				pkgInstallStatus.Error = "no install method"
+				pkgInstallMu.Unlock()
+				return
+			}
 		}
 
-		// Set DEBIAN_FRONTEND to avoid interactive prompts
 		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		out, err := cmd.CombinedOutput()
 
@@ -1339,8 +1382,8 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 		}
 		pkgInstallMu.Unlock()
 
-		s.logger.Info("package installed", "package", found.name, "status", pkgInstallStatus.Status)
+		s.logger.Info("package "+action, "package", pkg.name, "status", pkgInstallStatus.Status)
 	}()
 
-	jsonResponse(w, map[string]string{"status": "installing", "package": found.name})
+	jsonResponse(w, map[string]string{"status": action + "ing", "package": pkg.name})
 }

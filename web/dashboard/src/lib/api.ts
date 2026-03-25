@@ -630,9 +630,14 @@ export interface PackageInfo {
   installed: boolean;
   version?: string;
   category: string;
-  install_cmd?: string;
+  required: boolean;
+  used_by?: string;
+  warning?: string;
+  can_remove: boolean;
 }
 
 export const fetchPackages = () => api<PackageInfo[]>('/api/v1/packages');
 export const installPackage = (id: string) =>
   api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id }) });
+export const removePackage = (id: string) =>
+  api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id, action: 'remove' }) });
