@@ -63,6 +63,12 @@ func (s *Server) handleWPInstall(w http.ResponseWriter, r *http.Request) {
 		s.configMu.RUnlock()
 	}
 
+	// Prevent duplicate install on existing WordPress site
+	if req.WebRoot != "" && wordpress.IsWordPress(req.WebRoot) {
+		jsonError(w, "WordPress is already installed at "+req.WebRoot+". Use the Sites tab to manage it.", http.StatusConflict)
+		return
+	}
+
 	wpInstallMu.Lock()
 	if wpInstallResult != nil && wpInstallResult.Status == "running" {
 		wpInstallMu.Unlock()
@@ -94,6 +100,106 @@ func (s *Server) handleWPInstallStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, result)
+}
+
+// handleWPSites detects all WordPress installations across configured domains.
+func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	var domains []wordpress.DomainInfo
+	for _, d := range s.config.Domains {
+		domains = append(domains, wordpress.DomainInfo{Host: d.Host, WebRoot: d.Root})
+	}
+	s.configMu.RUnlock()
+
+	sites := wordpress.DetectSites(domains)
+	if sites == nil {
+		sites = []wordpress.SiteInfo{}
+	}
+	jsonResponse(w, sites)
+}
+
+// handleWPUpdateCore triggers WP core update via WP-CLI.
+func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	if !wordpress.IsWordPress(root) {
+		jsonError(w, "not a WordPress site", http.StatusBadRequest)
+		return
+	}
+	out, err := wordpress.UpdateCore(root)
+	if err != nil {
+		jsonError(w, "update failed: "+out, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "updated", "output": out})
+}
+
+// handleWPUpdatePlugins updates all plugins via WP-CLI.
+func (s *Server) handleWPUpdatePlugins(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	out, err := wordpress.UpdateAllPlugins(root)
+	if err != nil {
+		jsonError(w, "update failed: "+out, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "updated", "output": out})
+}
+
+// handleWPPluginAction activates, deactivates, or deletes a plugin.
+func (s *Server) handleWPPluginAction(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	action := r.PathValue("action")
+	plugin := r.PathValue("plugin")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	var out string
+	var err error
+	switch action {
+	case "activate":
+		out, err = wordpress.ActivatePlugin(root, plugin)
+	case "deactivate":
+		out, err = wordpress.DeactivatePlugin(root, plugin)
+	case "delete":
+		out, err = wordpress.DeletePlugin(root, plugin)
+	case "update":
+		out, err = wordpress.UpdatePlugin(root, plugin)
+	default:
+		jsonError(w, "invalid action: "+action, http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		jsonError(w, action+" failed: "+out, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": action + "d", "output": out})
+}
+
+// handleWPFixPermissions fixes file permissions for a WordPress site.
+func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	out, err := wordpress.FixPermissions(root)
+	if err != nil {
+		jsonError(w, "fix failed: "+out, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "fixed", "output": out})
 }
 
 // ============ File Manager ============

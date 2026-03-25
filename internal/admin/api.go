@@ -225,9 +225,14 @@ func (s *Server) registerRoutes() {
 	// Notifications
 	s.mux.HandleFunc("POST /api/v1/notify/test", s.handleNotifyTest)
 
-	// WordPress installer
+	// WordPress installer + management
 	s.mux.HandleFunc("POST /api/v1/wordpress/install", s.handleWPInstall)
 	s.mux.HandleFunc("GET /api/v1/wordpress/install/status", s.handleWPInstallStatus)
+	s.mux.HandleFunc("GET /api/v1/wordpress/sites", s.handleWPSites)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/update-core", s.handleWPUpdateCore)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/update-plugins", s.handleWPUpdatePlugins)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/plugin/{action}/{plugin}", s.handleWPPluginAction)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/fix-permissions", s.handleWPFixPermissions)
 
 	// File manager
 	s.mux.HandleFunc("GET /api/v1/files/{domain}/list", s.handleFileList)
