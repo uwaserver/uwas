@@ -123,11 +123,35 @@ export interface SystemInfo {
   go_version: string;
   os: string;
   arch: string;
+  hostname: string;
   cpus: number;
   goroutines: number;
   memory_alloc: number;
   memory_sys: number;
   gc_cycles: number;
+  pid: number;
+  uptime: string;
+  uptime_secs: number;
+  os_name?: string;
+  kernel?: string;
+  ram_total_bytes?: number;
+  ram_total_human?: string;
+  ram_available_bytes?: number;
+  ram_available_human?: string;
+  load_1m?: string;
+  load_5m?: string;
+  load_15m?: string;
+  disk_total_bytes?: number;
+  disk_total_human?: string;
+  disk_free_bytes?: number;
+  disk_free_human?: string;
+  disk_root_used_bytes?: number;
+  timezone?: string;
+  package_updates?: string;
+  web_root: string;
+  domain_count: number;
+  disk_used_bytes?: number;
+  disk_used_human?: string;
 }
 
 export const fetchHealth = () => api<HealthData>('/api/v1/health');
@@ -519,6 +543,50 @@ export async function fetchConfigExport(): Promise<void> {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ── WordPress Site Management ──────────────────────────
+
+export interface WPPlugin { name: string; version: string; status: string; update: string; }
+export interface WPTheme { name: string; version: string; status: string; update: string; }
+export interface WPSiteHealth { core_update: boolean; plugin_updates: number; theme_updates: number; php_version: string; debug: boolean; ssl: boolean; file_edit: boolean; }
+export interface WPPermissions { wp_config: string; wp_content: string; uploads: string; htaccess: string; owner: string; writable: boolean; }
+export interface WPSite {
+  domain: string; web_root: string; version: string;
+  db_name: string; db_user: string; db_host: string;
+  site_url: string; admin_url: string;
+  plugins: WPPlugin[]; themes: WPTheme[];
+  health: WPSiteHealth; permissions: WPPermissions;
+  updated_at: string;
+}
+
+export const fetchWPSites = () => api<WPSite[]>('/api/v1/wordpress/sites');
+export const wpUpdateCore = (domain: string) =>
+  api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/update-core`, { method: 'POST' });
+export const wpUpdatePlugins = (domain: string) =>
+  api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/update-plugins`, { method: 'POST' });
+export const wpPluginAction = (domain: string, action: string, plugin: string) =>
+  api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/plugin/${action}/${encodeURIComponent(plugin)}`, { method: 'POST' });
+export const wpFixPermissions = (domain: string) =>
+  api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/fix-permissions`, { method: 'POST' });
+
+// ── Per-domain Stats ──────────────────────────────────
+
+export type DomainStatsMap = Record<string, { requests: number; bytes_out: number; status_2xx: number; status_3xx: number; status_4xx: number; status_5xx: number }>;
+export const fetchDomainStats = () => api<DomainStatsMap>('/api/v1/stats/domains');
+
+// ── Per-domain Backup ─────────────────────────────────
+
+export const createDomainBackup = (domain: string, provider?: string) =>
+  api<BackupInfo>('/api/v1/backups/domain', { method: 'POST', body: JSON.stringify({ domain, provider: provider || 'local' }) });
+
+// ── SSE Logs Stream ───────────────────────────────────
+
+export function sseLogsURL(domain?: string): string {
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  if (domain) params.set('domain', domain);
+  return `${BASE}/api/v1/sse/logs?${params.toString()}`;
 }
 
 // ── 2FA / TOTP ────────────────────────────────────────
