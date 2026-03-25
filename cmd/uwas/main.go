@@ -24,6 +24,7 @@ func main() {
 	app.Register(&cli.PHPCommand{})
 	app.Register(&cli.UserCommand{})
 	app.Register(&cli.InstallCmd{})
+	app.Register(&cli.UninstallCmd{})
 	app.Register(&cli.DoctorCmd{})
 	app.Register(cli.NewHelpCommand(app))
 
