@@ -310,8 +310,16 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		var outPath string
 		switch {
 		case strings.HasPrefix(hdr.Name, "config/"):
-			// Restore config file to configPath.
 			outPath = configPath
+		case strings.HasPrefix(hdr.Name, "domains.d/"):
+			if m.domainsDir == "" {
+				continue
+			}
+			rel := strings.TrimPrefix(hdr.Name, "domains.d/")
+			if rel == "" {
+				continue
+			}
+			outPath = filepath.Join(m.domainsDir, rel)
 		case strings.HasPrefix(hdr.Name, "certs/"):
 			if certsDir == "" {
 				continue
@@ -321,6 +329,25 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			outPath = filepath.Join(certsDir, rel)
+		case strings.HasPrefix(hdr.Name, "sites/"):
+			// Restore domain web content to web root
+			if m.webRoot == "" {
+				continue
+			}
+			rel := strings.TrimPrefix(hdr.Name, "sites/")
+			if rel == "" {
+				continue
+			}
+			outPath = filepath.Join(m.webRoot, rel)
+		case hdr.Name == "databases/all-databases.sql":
+			// Import database dump via mysql
+			if hdr.Typeflag != tar.TypeDir {
+				data, _ := io.ReadAll(tr)
+				if len(data) > 0 {
+					importDatabaseDump(data, m.logger)
+				}
+			}
+			continue
 		default:
 			continue
 		}
@@ -495,6 +522,105 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 	}
 	_, err = io.Copy(tw, f)
 	return err
+}
+
+// importDatabaseDump imports a SQL dump via the mysql command.
+func importDatabaseDump(data []byte, log *logger.Logger) {
+	mysqlBin, err := exec.LookPath("mysql")
+	if err != nil {
+		log.Warn("backup restore: mysql not found, skipping DB import")
+		return
+	}
+	cmd := exec.Command(mysqlBin)
+	cmd.Stdin = strings.NewReader(string(data))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Error("backup restore: mysql import failed", "error", err, "output", string(out))
+		return
+	}
+	log.Info("backup restore: database imported", "size", len(data))
+}
+
+// CreateDomainBackup creates a backup of a single domain (web root + domain config + DB).
+func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider string) (*BackupInfo, error) {
+	p := m.providers[provider]
+	if p == nil {
+		return nil, fmt.Errorf("unknown backup provider %q", provider)
+	}
+
+	ts := time.Now().UTC().Format("20060102-150405")
+	filename := fmt.Sprintf("uwas-domain-%s-%s.tar.gz", domain, ts)
+
+	tmpFile, err := os.CreateTemp("", "uwas-domain-backup-*.tar.gz")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	gw := gzip.NewWriter(tmpFile)
+	tw := tar.NewWriter(gw)
+
+	// Domain web root
+	if webRoot != "" {
+		if info, statErr := os.Stat(webRoot); statErr == nil && info.IsDir() {
+			addDirToTar(tw, webRoot, "site")
+		}
+	}
+
+	// Domain config file (domains.d/domain.yaml)
+	m.mu.Lock()
+	domainsDir := m.domainsDir
+	m.mu.Unlock()
+	if domainsDir != "" {
+		cfgFile := filepath.Join(domainsDir, domain+".yaml")
+		if _, statErr := os.Stat(cfgFile); statErr == nil {
+			addFileToTar(tw, cfgFile, "config/"+domain+".yaml")
+		}
+	}
+
+	// Domain database dump
+	if dbName != "" {
+		if dump, dumpErr := dumpDatabase(dbName); dumpErr == nil && len(dump) > 0 {
+			hdr := &tar.Header{
+				Name: "database/" + dbName + ".sql", Size: int64(len(dump)),
+				Mode: 0644, ModTime: time.Now(),
+			}
+			if tw.WriteHeader(hdr) == nil {
+				tw.Write(dump)
+			}
+		}
+	}
+
+	tw.Close()
+	gw.Close()
+	stat, _ := tmpFile.Stat()
+	size := stat.Size()
+	tmpFile.Close()
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := p.Upload(ctx, filename, f); err != nil {
+		return nil, fmt.Errorf("upload: %w", err)
+	}
+
+	m.logger.Info("domain backup created", "domain", domain, "name", filename, "size", size)
+	return &BackupInfo{Name: filename, Size: size, Created: time.Now().UTC(), Provider: provider}, nil
+}
+
+// dumpDatabase dumps a single MySQL database.
+func dumpDatabase(dbName string) ([]byte, error) {
+	mysqldump, err := exec.LookPath("mysqldump")
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(mysqldump, "--single-transaction", "--quick", dbName).Output()
 }
 
 // dumpAllDatabases runs mysqldump --all-databases and returns the SQL dump.
