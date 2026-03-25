@@ -474,6 +474,30 @@ export const createDatabase = (name: string, user?: string, password?: string) =
 export const dropDatabase = (name: string) =>
   api<{ status: string }>(`/api/v1/database/${encodeURIComponent(name)}`, { method: 'DELETE' });
 export const installDatabase = () => api<{ status: string }>('/api/v1/database/install', { method: 'POST' });
+export const uninstallDatabase = () => api<{ status: string; output: string }>('/api/v1/database/uninstall', { method: 'POST' });
+export const diagnoseDatabase = () => api<Record<string, any>>('/api/v1/database/diagnose');
+export interface DBUser { user: string; host: string; }
+export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users');
+export const changeDBPassword = (user: string, host: string, password: string) =>
+  api<{ status: string }>('/api/v1/database/users/password', { method: 'POST', body: JSON.stringify({ user, host, password }) });
+export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
+export const importDatabase = async (name: string, file: File) => {
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/v1/database/${encodeURIComponent(name)}/import`, { method: 'POST', headers, body: await file.text() });
+  if (!res.ok) { const b = await res.json().catch(() => ({ error: res.statusText })); throw new Error(b.error || res.statusText); }
+  return res.json();
+};
+
+// Docker Database Containers
+export interface DockerDBContainer { id: string; name: string; engine: string; image: string; port: number; status: string; running: boolean; root_pass?: string; }
+export interface DockerDBListResult { docker: boolean; version?: string; containers: DockerDBContainer[]; }
+export const fetchDockerDBs = () => api<DockerDBListResult>('/api/v1/database/docker');
+export const createDockerDB = (engine: string, name: string, port: number, root_pass: string, data_dir?: string) =>
+  api<DockerDBContainer>('/api/v1/database/docker', { method: 'POST', body: JSON.stringify({ engine, name, port, root_pass, data_dir }) });
+export const startDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}/start`, { method: 'POST' });
+export const stopDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+export const removeDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
 // DNS
 export interface DNSResult { domain: string; a: string[]; aaaa: string[]; cname?: string; mx: string[]; ns: string[]; txt: string[]; points_here: boolean; server_ips: string[]; error?: string; }

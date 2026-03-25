@@ -241,6 +241,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/database/install", s.handleDBInstall)
 	s.mux.HandleFunc("POST /api/v1/database/uninstall", s.handleDBUninstall)
 	s.mux.HandleFunc("GET /api/v1/database/diagnose", s.handleDBDiagnose)
+	s.mux.HandleFunc("GET /api/v1/database/users", s.handleDBUsers)
+	s.mux.HandleFunc("POST /api/v1/database/users/password", s.handleDBChangePassword)
+	s.mux.HandleFunc("GET /api/v1/database/{name}/export", s.handleDBExport)
+	s.mux.HandleFunc("POST /api/v1/database/{name}/import", s.handleDBImport)
 
 	// DNS checker + management
 	s.mux.HandleFunc("GET /api/v1/dns/{domain}", s.handleDNSCheck)

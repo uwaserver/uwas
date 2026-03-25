@@ -362,6 +362,85 @@ func DropDatabase(name, user, host string) error {
 	return err
 }
 
+// ChangePassword changes the password for a database user.
+func ChangePassword(user, host, newPassword string) error {
+	if host == "" {
+		host = "localhost"
+	}
+	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", user, host, newPassword)
+	_, err := runMySQL(sql)
+	return err
+}
+
+// ListUsers returns all non-system database users.
+func ListUsers() ([]DBUser, error) {
+	sql := `SELECT User, Host FROM mysql.user WHERE User NOT IN ('root', 'mysql', 'mariadb.sys', 'debian-sys-maint', '') ORDER BY User`
+	out, err := runMySQL(sql)
+	if err != nil {
+		return nil, err
+	}
+	var users []DBUser
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			users = append(users, DBUser{User: parts[0], Host: parts[1]})
+		}
+	}
+	return users, nil
+}
+
+// DBUser represents a MySQL/MariaDB user.
+type DBUser struct {
+	User string `json:"user"`
+	Host string `json:"host"`
+}
+
+// ExportDatabase exports a database to SQL using mysqldump.
+func ExportDatabase(name string) ([]byte, error) {
+	// Try mariadb-dump first, then mysqldump
+	for _, bin := range []string{"mariadb-dump", "mysqldump"} {
+		path, err := exec.LookPath(bin)
+		if err != nil {
+			continue
+		}
+		out, err := exec.Command(path, "-u", "root", "--single-transaction", "--routines", "--triggers", name).Output()
+		if err == nil {
+			return out, nil
+		}
+		// Try with sudo
+		out, err = exec.Command("sudo", path, "--single-transaction", "--routines", "--triggers", name).Output()
+		if err == nil {
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("mysqldump/mariadb-dump not found or failed")
+}
+
+// ImportDatabase imports SQL data into a database.
+func ImportDatabase(name string, sqlData []byte) error {
+	for _, client := range []string{"mariadb", "mysql"} {
+		bin, err := exec.LookPath(client)
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(bin, "-u", "root", name)
+		cmd.Stdin = strings.NewReader(string(sqlData))
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		// Try with sudo
+		cmd = exec.Command("sudo", bin, name)
+		cmd.Stdin = strings.NewReader(string(sqlData))
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		_ = out
+	}
+	return fmt.Errorf("mysql/mariadb client not found or import failed")
+}
+
 // InstallMySQL attempts to install MySQL/MariaDB.
 func InstallMySQL() (string, error) {
 	if runtime.GOOS == "windows" {
