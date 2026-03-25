@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -479,9 +480,89 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		"memory_sys":   memStats.Sys,
 		"gc_cycles":    memStats.NumGC,
 		"pid":          os.Getpid(),
+		"uptime":       humanDuration(time.Since(s.metrics.StartTime)),
+		"uptime_secs":  time.Since(s.metrics.StartTime).Seconds(),
 	}
 
-	// Disk usage of web root
+	// OS-level info (Linux)
+	if runtime.GOOS == "linux" {
+		if data, err := os.ReadFile("/etc/os-release"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "PRETTY_NAME=") {
+					result["os_name"] = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+				}
+			}
+		}
+		if out, err := exec.Command("uname", "-r").Output(); err == nil {
+			result["kernel"] = strings.TrimSpace(string(out))
+		}
+		// Total RAM
+		if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "MemTotal:") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						if kb, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+							result["ram_total_bytes"] = kb * 1024
+							result["ram_total_human"] = formatDiskSize(kb * 1024)
+						}
+					}
+				}
+				if strings.HasPrefix(line, "MemAvailable:") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						if kb, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+							result["ram_available_bytes"] = kb * 1024
+							result["ram_available_human"] = formatDiskSize(kb * 1024)
+						}
+					}
+				}
+			}
+		}
+		// Load average
+		if data, err := os.ReadFile("/proc/loadavg"); err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) >= 3 {
+				result["load_1m"] = fields[0]
+				result["load_5m"] = fields[1]
+				result["load_15m"] = fields[2]
+			}
+		}
+		// Disk total/free for root partition
+		if out, err := exec.Command("df", "-B1", "/").Output(); err == nil {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) >= 2 {
+				fields := strings.Fields(lines[1])
+				if len(fields) >= 4 {
+					if total, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+						result["disk_total_bytes"] = total
+						result["disk_total_human"] = formatDiskSize(total)
+					}
+					if used, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
+						result["disk_root_used_bytes"] = used
+					}
+					if free, err := strconv.ParseInt(fields[3], 10, 64); err == nil {
+						result["disk_free_bytes"] = free
+						result["disk_free_human"] = formatDiskSize(free)
+					}
+				}
+			}
+		}
+		// Timezone
+		if out, err := exec.Command("timedatectl", "show", "--property=Timezone", "--value").Output(); err == nil {
+			result["timezone"] = strings.TrimSpace(string(out))
+		} else if tz, err := os.Readlink("/etc/localtime"); err == nil {
+			if idx := strings.Index(tz, "zoneinfo/"); idx >= 0 {
+				result["timezone"] = tz[idx+9:]
+			}
+		}
+		// Package updates available
+		if out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
+			result["package_updates"] = strings.TrimSpace(string(out))
+		}
+	}
+
+	// Web root and domain count
 	s.configMu.RLock()
 	webRoot := s.config.Global.WebRoot
 	domainCount := len(s.config.Domains)
