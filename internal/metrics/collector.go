@@ -35,6 +35,19 @@ type Collector struct {
 	PHPRequests      atomic.Int64
 	ProxyRequests    atomic.Int64
 	RedirectRequests atomic.Int64
+
+	// Per-domain bandwidth and request tracking
+	domainStats sync.Map // host → *DomainStats
+}
+
+// DomainStats tracks per-domain bandwidth and request counts.
+type DomainStats struct {
+	Requests  atomic.Int64 `json:"requests"`
+	BytesOut  atomic.Int64 `json:"bytes_out"`
+	Status2xx atomic.Int64 `json:"status_2xx"`
+	Status3xx atomic.Int64 `json:"status_3xx"`
+	Status4xx atomic.Int64 `json:"status_4xx"`
+	Status5xx atomic.Int64 `json:"status_5xx"`
 }
 
 const latencyBufSize = 10000 // track last 10K requests for percentile calculation
@@ -126,6 +139,43 @@ func (c *Collector) RecordHandlerType(handlerType string) {
 	case "redirect":
 		c.RedirectRequests.Add(1)
 	}
+}
+
+// RecordDomain tracks per-domain request and bandwidth.
+func (c *Collector) RecordDomain(host string, statusCode int, bytesOut int64) {
+	val, _ := c.domainStats.LoadOrStore(host, &DomainStats{})
+	ds := val.(*DomainStats)
+	ds.Requests.Add(1)
+	ds.BytesOut.Add(bytesOut)
+	switch {
+	case statusCode >= 200 && statusCode < 300:
+		ds.Status2xx.Add(1)
+	case statusCode >= 300 && statusCode < 400:
+		ds.Status3xx.Add(1)
+	case statusCode >= 400 && statusCode < 500:
+		ds.Status4xx.Add(1)
+	case statusCode >= 500:
+		ds.Status5xx.Add(1)
+	}
+}
+
+// DomainStatsSnapshot returns a snapshot of all per-domain stats.
+func (c *Collector) DomainStatsSnapshot() map[string]map[string]int64 {
+	result := make(map[string]map[string]int64)
+	c.domainStats.Range(func(key, value any) bool {
+		host := key.(string)
+		ds := value.(*DomainStats)
+		result[host] = map[string]int64{
+			"requests":   ds.Requests.Load(),
+			"bytes_out":  ds.BytesOut.Load(),
+			"status_2xx": ds.Status2xx.Load(),
+			"status_3xx": ds.Status3xx.Load(),
+			"status_4xx": ds.Status4xx.Load(),
+			"status_5xx": ds.Status5xx.Load(),
+		}
+		return true
+	})
+	return result
 }
 
 func (c *Collector) RecordCache(status string) {
