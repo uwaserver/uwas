@@ -60,6 +60,9 @@ func Run(opts Options) *Report {
 	r.add(checkSSLCerts(opts.ConfigPath))
 	r.add(checkFirewall())
 	r.add(checkDiskSpace())
+	r.add(checkMemory())
+	r.add(checkOpenFiles())
+	r.add(checkTimeSync())
 	r.add(checkDNS())
 
 	// Summary
@@ -190,31 +193,109 @@ func checkPHPModules() Check {
 
 func checkMySQL(autoFix bool) Check {
 	// Check if MySQL/MariaDB is running
-	out, _ := exec.Command("systemctl", "is-active", "mariadb").Output()
-	status := strings.TrimSpace(string(out))
-	if status == "active" {
-		return Check{Name: "MySQL/MariaDB", Status: StatusOK, Message: "Running"}
-	}
-
-	out2, _ := exec.Command("systemctl", "is-active", "mysql").Output()
-	if strings.TrimSpace(string(out2)) == "active" {
-		return Check{Name: "MySQL/MariaDB", Status: StatusOK, Message: "Running (MySQL)"}
+	for _, svc := range []string{"mariadb", "mysql"} {
+		out, _ := exec.Command("systemctl", "is-active", svc).Output()
+		if strings.TrimSpace(string(out)) == "active" {
+			return Check{Name: "MySQL/MariaDB", Status: StatusOK, Message: fmt.Sprintf("Running (%s)", svc)}
+		}
 	}
 
 	// Check if installed
-	if _, err := exec.LookPath("mariadb"); err == nil || func() bool { _, e := exec.LookPath("mysql"); return e == nil }() {
-		if autoFix {
-			// Create socket dir if missing
-			os.MkdirAll("/run/mysqld", 0755)
-			exec.Command("chown", "mysql:mysql", "/run/mysqld").Run()
-			if err := exec.Command("systemctl", "start", "mariadb").Run(); err == nil {
-				return Check{Name: "MySQL/MariaDB", Status: StatusFixed, Message: "Started MariaDB", Fix: "mkdir /run/mysqld && systemctl start mariadb"}
-			}
+	installed := false
+	for _, bin := range []string{"mariadb", "mysql", "mariadbd", "mysqld"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			installed = true
+			break
 		}
-		return Check{Name: "MySQL/MariaDB", Status: StatusFail, Message: "Installed but not running", HowTo: "sudo mkdir -p /run/mysqld && sudo chown mysql:mysql /run/mysqld && sudo systemctl start mariadb"}
 	}
 
-	return Check{Name: "MySQL/MariaDB", Status: StatusWarn, Message: "Not installed (needed for WordPress)", HowTo: "sudo apt install mariadb-server"}
+	if !installed {
+		if autoFix {
+			// Install MariaDB
+			if _, err := exec.LookPath("apt"); err == nil {
+				exec.Command("apt", "install", "-y", "mariadb-server", "mariadb-client").Run()
+				exec.Command("systemctl", "start", "mariadb").Run()
+				exec.Command("systemctl", "enable", "mariadb").Run()
+				out, _ := exec.Command("systemctl", "is-active", "mariadb").Output()
+				if strings.TrimSpace(string(out)) == "active" {
+					return Check{Name: "MySQL/MariaDB", Status: StatusFixed, Message: "Installed and started MariaDB", Fix: "apt install mariadb-server && systemctl start mariadb"}
+				}
+			}
+		}
+		return Check{Name: "MySQL/MariaDB", Status: StatusWarn, Message: "Not installed (needed for WordPress)", HowTo: "sudo apt install mariadb-server"}
+	}
+
+	// Installed but not running — diagnose why
+	issues := []string{}
+
+	// Check data directory
+	if _, err := os.Stat("/var/lib/mysql"); os.IsNotExist(err) {
+		issues = append(issues, "data directory /var/lib/mysql missing")
+	}
+
+	// Check socket directories
+	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			issues = append(issues, fmt.Sprintf("socket directory %s missing", dir))
+		}
+	}
+
+	// Check dpkg state
+	if _, err := exec.LookPath("dpkg"); err == nil {
+		out, _ := exec.Command("dpkg", "--audit").Output()
+		if len(strings.TrimSpace(string(out))) > 0 {
+			issues = append(issues, "dpkg has broken packages")
+		}
+	}
+
+	if !autoFix {
+		msg := "Installed but not running"
+		if len(issues) > 0 {
+			msg += ": " + strings.Join(issues, ", ")
+		}
+		return Check{Name: "MySQL/MariaDB", Status: StatusFail, Message: msg, HowTo: "Run Doctor with auto-fix, or call POST /api/v1/database/repair"}
+	}
+
+	// AUTO-FIX: full repair sequence
+	var fixLog []string
+
+	// 1. Kill stuck processes
+	exec.Command("pkill", "-9", "mysqld").Run()
+	exec.Command("pkill", "-9", "mariadbd").Run()
+
+	// 2. Fix dpkg/apt state
+	if _, err := exec.LookPath("dpkg"); err == nil {
+		exec.Command("dpkg", "--configure", "-a").Run()
+		exec.Command("apt", "--fix-broken", "install", "-y").Run()
+		fixLog = append(fixLog, "dpkg/apt fixed")
+	}
+
+	// 3. Create directories
+	for _, dir := range []string{"/var/lib/mysql", "/run/mysqld", "/var/run/mysqld", "/var/log/mysql"} {
+		os.MkdirAll(dir, 0755)
+		exec.Command("chown", "mysql:mysql", dir).Run()
+	}
+	fixLog = append(fixLog, "created data/socket/log dirs")
+
+	// 4. Init database if data dir was missing
+	for _, bin := range []string{"mariadb-install-db", "mysql_install_db"} {
+		if path, err := exec.LookPath(bin); err == nil {
+			exec.Command(path, "--user=mysql", "--datadir=/var/lib/mysql").Run()
+			fixLog = append(fixLog, "initialized database")
+			break
+		}
+	}
+
+	// 5. Start service
+	for _, svc := range []string{"mariadb", "mysql"} {
+		if err := exec.Command("systemctl", "start", svc).Run(); err == nil {
+			exec.Command("systemctl", "enable", svc).Run()
+			fixLog = append(fixLog, "started "+svc)
+			return Check{Name: "MySQL/MariaDB", Status: StatusFixed, Message: "Fully repaired and started", Fix: strings.Join(fixLog, " → ")}
+		}
+	}
+
+	return Check{Name: "MySQL/MariaDB", Status: StatusFail, Message: "Repair attempted but service still won't start: " + strings.Join(fixLog, ", "), HowTo: "Check journalctl -u mariadb, or use POST /api/v1/database/force-uninstall then POST /api/v1/database/install"}
 }
 
 func checkWebRoot(webRoot string, autoFix bool) Check {
@@ -320,6 +401,48 @@ func checkDNS() Check {
 }
 
 // ── Helpers ──────────────────────────────────────────
+
+func checkMemory() Check {
+	out, err := exec.Command("free", "-m").Output()
+	if err != nil {
+		return Check{Name: "Memory", Status: StatusWarn, Message: "Could not check memory"}
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) >= 2 {
+		fields := strings.Fields(lines[1])
+		if len(fields) >= 4 {
+			return Check{Name: "Memory", Status: StatusOK, Message: fmt.Sprintf("Total: %sMB, Used: %sMB, Available: %sMB", fields[1], fields[2], fields[len(fields)-1])}
+		}
+	}
+	return Check{Name: "Memory", Status: StatusOK, Message: "OK"}
+}
+
+func checkOpenFiles() Check {
+	out, err := exec.Command("ulimit", "-n").Output()
+	if err != nil {
+		// ulimit is a shell builtin, try reading from proc
+		data, err2 := os.ReadFile("/proc/sys/fs/file-max")
+		if err2 != nil {
+			return Check{Name: "Open Files Limit", Status: StatusWarn, Message: "Could not check"}
+		}
+		max := strings.TrimSpace(string(data))
+		return Check{Name: "Open Files Limit", Status: StatusOK, Message: fmt.Sprintf("System max: %s", max)}
+	}
+	limit := strings.TrimSpace(string(out))
+	return Check{Name: "Open Files Limit", Status: StatusOK, Message: fmt.Sprintf("ulimit -n: %s", limit)}
+}
+
+func checkTimeSync() Check {
+	out, err := exec.Command("timedatectl", "show", "--property=NTPSynchronized", "--value").Output()
+	if err != nil {
+		return Check{Name: "Time Sync", Status: StatusWarn, Message: "Could not check NTP status"}
+	}
+	synced := strings.TrimSpace(string(out))
+	if synced == "yes" {
+		return Check{Name: "Time Sync", Status: StatusOK, Message: "NTP synchronized"}
+	}
+	return Check{Name: "Time Sync", Status: StatusWarn, Message: "NTP not synchronized — SSL certificates may fail", HowTo: "sudo timedatectl set-ntp true"}
+}
 
 func extractPHPVersion(socketPath string) string {
 	// /run/php/php8.3-fpm.sock → 8.3
