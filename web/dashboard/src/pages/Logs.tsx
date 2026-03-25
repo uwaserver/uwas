@@ -7,7 +7,7 @@ const statusColor = (status: number): string => {
   if (status >= 400) return 'text-amber-400 bg-amber-500/15';
   if (status >= 300) return 'text-blue-400 bg-blue-500/15';
   if (status >= 200) return 'text-emerald-400 bg-emerald-500/15';
-  return 'text-slate-400 bg-slate-500/15';
+  return 'text-muted-foreground bg-slate-500/15';
 };
 
 type StatusFilter = 'all' | '2xx' | '3xx' | '4xx' | '5xx';
@@ -105,8 +105,8 @@ export default function Logs() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Logs</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Logs</h1>
+          <p className="text-sm text-muted-foreground">
             Real-time request log viewer
           </p>
         </div>
@@ -125,19 +125,19 @@ export default function Logs() {
           <button
             onClick={load}
             disabled={loading}
-            className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-300 transition hover:bg-[#334155] disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground transition hover:bg-accent disabled:opacity-50"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
           <div className="relative group">
             <button
-              className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-300 transition hover:bg-[#334155]"
+              className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground transition hover:bg-accent"
             >
               <Download size={14} />
               Export
             </button>
-            <div className="absolute right-0 top-full mt-1 hidden group-hover:block rounded-md border border-[#334155] bg-[#1e293b] shadow-lg z-10">
+            <div className="absolute right-0 top-full mt-1 hidden group-hover:block rounded-md border border-border bg-card shadow-lg z-10">
               <button
                 onClick={() => {
                   const csv = ['Time,Host,Method,Path,Status,Duration_ms,Remote'].concat(
@@ -148,7 +148,7 @@ export default function Logs() {
                   const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.csv';
                   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                 }}
-                className="block w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-[#334155]"
+                className="block w-full px-4 py-2 text-left text-sm text-card-foreground hover:bg-accent"
               >
                 CSV
               </button>
@@ -159,7 +159,7 @@ export default function Logs() {
                   const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.json';
                   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                 }}
-                className="block w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-[#334155]"
+                className="block w-full px-4 py-2 text-left text-sm text-card-foreground hover:bg-accent"
               >
                 JSON
               </button>
@@ -175,10 +175,10 @@ export default function Logs() {
       )}
 
       {/* Filters */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4 space-y-3">
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-1">
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground mb-1">
           <Filter size={13} /> Filters
-          <span className="ml-auto text-slate-500 font-normal">
+          <span className="ml-auto text-muted-foreground font-normal">
             {filtered.length} of {logs.length} entries
           </span>
         </div>
@@ -186,41 +186,41 @@ export default function Logs() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {/* Domain filter */}
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-slate-500">Domain</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Domain</label>
             <input
               type="text"
               value={domainFilter}
               onChange={(e) => setDomainFilter(e.target.value)}
               placeholder="Filter by host..."
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 px-3 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-md border border-border bg-background py-2 px-3 text-sm text-foreground placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
           {/* Path search */}
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-slate-500">Path</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Path</label>
             <div className="relative">
               <Search
                 size={14}
-                className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500"
+                className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
               />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Filter by path..."
-                className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 pr-3 pl-9 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="w-full rounded-md border border-border bg-background py-2 pr-3 pl-9 text-sm text-foreground placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
               />
             </div>
           </div>
 
           {/* Status filter */}
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-slate-500">Status</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Status</label>
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as StatusFilter)}
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 px-3 text-sm text-slate-200 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-md border border-border bg-background py-2 px-3 text-sm text-foreground outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             >
               {statusFilters.map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
@@ -230,11 +230,11 @@ export default function Logs() {
 
           {/* Method filter */}
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-slate-500">Method</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Method</label>
             <select
               value={methodFilter}
               onChange={(e) => setMethodFilter(e.target.value as MethodFilter)}
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 px-3 text-sm text-slate-200 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-md border border-border bg-background py-2 px-3 text-sm text-foreground outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             >
               {methodFilters.map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
@@ -245,11 +245,11 @@ export default function Logs() {
       </div>
 
       {/* Log table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+      <div className="rounded-lg border border-border bg-card shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Time</th>
                 <th className="px-5 py-3 font-medium">Method</th>
                 <th className="px-5 py-3 font-medium">Host</th>
@@ -265,7 +265,7 @@ export default function Logs() {
                 <tr>
                   <td
                     colSpan={8}
-                    className="px-5 py-8 text-center text-slate-500"
+                    className="px-5 py-8 text-center text-muted-foreground"
                   >
                     Loading...
                   </td>
@@ -275,7 +275,7 @@ export default function Logs() {
                 <tr>
                   <td
                     colSpan={8}
-                    className="px-5 py-8 text-center text-slate-500"
+                    className="px-5 py-8 text-center text-muted-foreground"
                   >
                     <FileText size={20} className="mx-auto mb-2 opacity-50" />
                     No log entries found
@@ -285,17 +285,17 @@ export default function Logs() {
               {filtered.map((entry, i) => (
                 <tr
                   key={`${entry.time}-${i}`}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
-                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-400">
+                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-muted-foreground">
                     {entry.time}
                   </td>
                   <td className="px-5 py-2.5">
-                    <span className="rounded bg-slate-500/15 px-2 py-0.5 font-mono text-xs font-medium text-slate-300">
+                    <span className="rounded bg-slate-500/15 px-2 py-0.5 font-mono text-xs font-medium text-card-foreground">
                       {entry.method}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-400">
+                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-muted-foreground">
                     {entry.host}
                   </td>
                   <td className="max-w-xs truncate px-5 py-2.5 font-mono text-xs">
@@ -308,13 +308,13 @@ export default function Logs() {
                       {entry.status}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-400">
+                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-muted-foreground">
                     {formatBytes(entry.bytes)}
                   </td>
-                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-400">
+                  <td className="whitespace-nowrap px-5 py-2.5 font-mono text-xs text-muted-foreground">
                     {formatDuration(entry.duration_ms)}
                   </td>
-                  <td className="hidden whitespace-nowrap px-5 py-2.5 font-mono text-xs text-slate-500 lg:table-cell">
+                  <td className="hidden whitespace-nowrap px-5 py-2.5 font-mono text-xs text-muted-foreground lg:table-cell">
                     {entry.remote}
                   </td>
                 </tr>

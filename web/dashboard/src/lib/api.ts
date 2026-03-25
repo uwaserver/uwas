@@ -483,6 +483,7 @@ export const checkDNS = (domain: string) => api<DNSResult>(`/api/v1/dns/${encode
 export interface DNSRecord { id: string; type: string; name: string; content: string; ttl: number; proxied: boolean; priority: number; }
 export const fetchDNSRecords = (domain: string) => api<{ zone_id: string; zone: string; records: DNSRecord[] }>(`/api/v1/dns/${encodeURIComponent(domain)}/records`);
 export const createDNSRecord = (domain: string, rec: Partial<DNSRecord>) => api<DNSRecord>(`/api/v1/dns/${encodeURIComponent(domain)}/records`, { method: 'POST', body: JSON.stringify(rec) });
+export const updateDNSRecord = (domain: string, id: string, rec: Partial<DNSRecord>) => api<DNSRecord>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${id}`, { method: 'PUT', body: JSON.stringify(rec) });
 export const deleteDNSRecord = (domain: string, id: string) => api<{ status: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${id}`, { method: 'DELETE' });
 export const syncDNS = (domain: string) => api<{ status: string; ip: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/sync`, { method: 'POST' });
 
@@ -573,6 +574,10 @@ export const wpPluginAction = (domain: string, action: string, plugin: string) =
   api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/plugin/${action}/${encodeURIComponent(plugin)}`, { method: 'POST' });
 export const wpFixPermissions = (domain: string) =>
   api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/fix-permissions`, { method: 'POST' });
+export const wpToggleDebug = (domain: string, enable: boolean) =>
+  api<{ status: string; debug: boolean }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/debug`, { method: 'POST', body: JSON.stringify({ enable }) });
+export const wpErrorLog = (domain: string) =>
+  api<{ log: string; size?: number; message?: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/error-log`);
 
 // ── Per-domain Stats ──────────────────────────────────
 
@@ -641,3 +646,61 @@ export const installPackage = (id: string) =>
   api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id }) });
 export const removePackage = (id: string) =>
   api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id, action: 'remove' }) });
+
+// ── Clone / Staging ─────────────────────────────────
+
+export interface CloneRequest {
+  source_domain: string;
+  target_domain: string;
+  source_root?: string;
+  target_root?: string;
+  source_db?: string;
+  target_db?: string;
+  db_user?: string;
+  db_pass?: string;
+}
+
+export interface CloneResult {
+  status: string;
+  source_domain: string;
+  target_domain: string;
+  target_root: string;
+  target_db?: string;
+  output: string;
+  error?: string;
+  duration?: string;
+}
+
+export const cloneSite = (req: CloneRequest) =>
+  api<CloneResult>('/api/v1/clone', { method: 'POST', body: JSON.stringify(req) });
+
+// ── Site Migration (remote → local) ─────────────────
+
+export interface MigrateRequest {
+  source_host: string;
+  source_port?: string;
+  source_path: string;
+  ssh_key?: string;
+  ssh_pass?: string;
+  domain: string;
+  local_root?: string;
+  db_host?: string;
+  db_name?: string;
+  db_user?: string;
+  db_pass?: string;
+}
+
+export interface MigrateResult {
+  status: string;
+  domain: string;
+  files_sync: string;
+  db_import: string;
+  output: string;
+  error?: string;
+  started_at: string;
+  finished_at?: string;
+  duration?: string;
+}
+
+export const migrateSite = (req: MigrateRequest) =>
+  api<MigrateResult>('/api/v1/migrate', { method: 'POST', body: JSON.stringify(req) });

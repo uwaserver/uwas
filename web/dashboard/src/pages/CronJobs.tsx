@@ -107,7 +107,7 @@ export default function CronJobs() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">Loading cron jobs...</div>
+      <div className="flex h-96 items-center justify-center text-muted-foreground">Loading cron jobs...</div>
     );
   }
 
@@ -116,12 +116,12 @@ export default function CronJobs() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Cron Jobs</h1>
-          <p className="text-sm text-slate-400">Manage scheduled tasks ({jobs.length} jobs)</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Cron Jobs</h1>
+          <p className="text-sm text-muted-foreground">Manage scheduled tasks ({jobs.length} jobs)</p>
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -135,20 +135,20 @@ export default function CronJobs() {
       )}
 
       {/* Add cron job form */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Plus size={18} className="text-blue-400" />
-          <h2 className="text-sm font-semibold text-slate-300">Add Cron Job</h2>
+          <h2 className="text-sm font-semibold text-card-foreground">Add Cron Job</h2>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {/* Schedule preset */}
           <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Schedule</label>
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Schedule</label>
             <select
               value={preset}
               onChange={e => setPreset(e.target.value)}
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
             >
               {SCHEDULE_PRESETS.map(p => (
                 <option key={p.label} value={p.value}>{p.label}</option>
@@ -159,36 +159,36 @@ export default function CronJobs() {
           {/* Custom schedule input */}
           {preset === '' && (
             <div>
-              <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Cron Expression</label>
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Cron Expression</label>
               <input
                 type="text"
                 value={customSchedule}
                 onChange={e => setCustomSchedule(e.target.value)}
                 placeholder="* * * * *"
-                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 font-mono text-sm text-slate-200 outline-none focus:border-blue-500"
+                className="w-full rounded-md border border-border bg-background px-3 py-2.5 font-mono text-sm text-foreground outline-none focus:border-blue-500"
               />
             </div>
           )}
 
           {/* Command */}
           <div className={preset === '' ? '' : 'sm:col-span-1'}>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Command</label>
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Command</label>
             <input
               type="text"
               value={command}
               onChange={e => setCommand(e.target.value)}
               placeholder="/usr/bin/php /home/user/cron.php"
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
             />
           </div>
 
           {/* Domain */}
           <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Domain (optional)</label>
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Domain (optional)</label>
             <select
               value={domain}
               onChange={e => setDomain(e.target.value)}
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
             >
               <option value="">Global</option>
               {domains.map(d => (
@@ -201,13 +201,13 @@ export default function CronJobs() {
         {/* Comment + submit */}
         <div className="mt-4 flex items-end gap-4">
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Comment (optional)</label>
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Comment (optional)</label>
             <input
               type="text"
               value={comment}
               onChange={e => setComment(e.target.value)}
               placeholder="Daily backup cleanup..."
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
             />
           </div>
           <button
@@ -221,20 +221,20 @@ export default function CronJobs() {
         </div>
 
         {/* Schedule hint */}
-        <p className="mt-3 text-xs text-slate-500">
-          Format: minute hour day-of-month month day-of-week (e.g. <code className="text-slate-400">0 3 * * *</code> = daily at 3 AM)
+        <p className="mt-3 text-xs text-muted-foreground">
+          Format: minute hour day-of-month month day-of-week (e.g. <code className="text-muted-foreground">0 3 * * *</code> = daily at 3 AM)
         </p>
       </div>
 
       {/* Jobs table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">Active Jobs ({jobs.length})</h2>
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">Active Jobs ({jobs.length})</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Schedule</th>
                 <th className="px-5 py-3 font-medium">Command</th>
                 <th className="px-5 py-3 font-medium">Domain</th>
@@ -246,31 +246,31 @@ export default function CronJobs() {
               {jobs.map((job, i) => (
                 <tr
                   key={i}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
                       <Clock size={14} className="text-blue-400 shrink-0" />
-                      <code className="font-mono text-xs text-slate-200">{job.schedule}</code>
+                      <code className="font-mono text-xs text-foreground">{job.schedule}</code>
                     </div>
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2 max-w-xs">
-                      <Terminal size={14} className="text-slate-500 shrink-0" />
-                      <span className="font-mono text-xs text-slate-300 truncate">{job.command}</span>
+                      <Terminal size={14} className="text-muted-foreground shrink-0" />
+                      <span className="font-mono text-xs text-card-foreground truncate">{job.command}</span>
                     </div>
                   </td>
                   <td className="px-5 py-3">
                     {job.domain ? (
-                      <span className="flex items-center gap-1 text-xs text-slate-400">
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Globe size={12} />
                         {job.domain}
                       </span>
                     ) : (
-                      <span className="text-xs text-slate-500">Global</span>
+                      <span className="text-xs text-muted-foreground">Global</span>
                     )}
                   </td>
-                  <td className="px-5 py-3 text-xs text-slate-500 max-w-xs truncate">
+                  <td className="px-5 py-3 text-xs text-muted-foreground max-w-xs truncate">
                     {job.comment || '--'}
                   </td>
                   <td className="px-5 py-3 text-right">
@@ -286,7 +286,7 @@ export default function CronJobs() {
                         </button>
                         <button
                           onClick={() => setConfirmDelete(null)}
-                          className="rounded bg-[#334155] px-2 py-1 text-xs text-slate-300"
+                          className="rounded bg-accent px-2 py-1 text-xs text-card-foreground"
                         >
                           No
                         </button>
@@ -304,7 +304,7 @@ export default function CronJobs() {
               ))}
               {jobs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center text-slate-500">
+                  <td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">
                     <Clock size={32} className="mx-auto mb-3 opacity-40" />
                     No cron jobs configured. Add one above.
                   </td>

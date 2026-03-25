@@ -15,24 +15,26 @@ type Config struct {
 }
 
 type GlobalConfig struct {
-	WorkerCount    string         `yaml:"worker_count"`
-	MaxConnections int            `yaml:"max_connections"`
-	HTTPListen     string         `yaml:"http_listen"`
-	HTTPSListen    string         `yaml:"https_listen"`
-	SFTPListen     string         `yaml:"sftp_listen"`     // e.g. ":2222", empty = disabled
-	HTTP3Enabled   bool           `yaml:"http3"`
-	PIDFile        string         `yaml:"pid_file"`
-	WebRoot        string         `yaml:"web_root"`
-	LogLevel       string         `yaml:"log_level"`
-	LogFormat      string         `yaml:"log_format"`
-	TrustedProxies []string       `yaml:"trusted_proxies"`
-	Timeouts       TimeoutConfig  `yaml:"timeouts"`
-	Admin          AdminConfig    `yaml:"admin"`
-	MCP            MCPConfig      `yaml:"mcp"`
-	ACME           ACMEConfig     `yaml:"acme"`
-	Cache          CacheConfig    `yaml:"cache"`
-	Alerting       AlertingConfig `yaml:"alerting"`
-	Backup         BackupConfig   `yaml:"backup"`
+	WorkerCount    string           `yaml:"worker_count"`
+	MaxConnections int              `yaml:"max_connections"`
+	HTTPListen     string           `yaml:"http_listen"`
+	HTTPSListen    string           `yaml:"https_listen"`
+	SFTPListen     string           `yaml:"sftp_listen"` // e.g. ":2222", empty = disabled
+	HTTP3Enabled   bool             `yaml:"http3"`
+	PIDFile        string           `yaml:"pid_file"`
+	WebRoot        string           `yaml:"web_root"`
+	LogLevel       string           `yaml:"log_level"`
+	LogFormat      string           `yaml:"log_format"`
+	TrustedProxies []string         `yaml:"trusted_proxies"`
+	Timeouts       TimeoutConfig    `yaml:"timeouts"`
+	Admin          AdminConfig      `yaml:"admin"`
+	MCP            MCPConfig        `yaml:"mcp"`
+	ACME           ACMEConfig       `yaml:"acme"`
+	Cache          CacheConfig      `yaml:"cache"`
+	Alerting       AlertingConfig   `yaml:"alerting"`
+	Backup         BackupConfig     `yaml:"backup"`
+	Webhooks       []WebhookConfig  `yaml:"webhooks"`
+	Users          UsersConfig      `yaml:"users"`
 }
 
 type BackupConfig struct {
@@ -119,6 +121,22 @@ type AlertingConfig struct {
 	EmailTo        string `yaml:"email_to"`
 }
 
+type WebhookConfig struct {
+	URL     string            `yaml:"url" json:"url"`
+	Events  []string          `yaml:"events" json:"events"`   // empty = all events
+	Headers map[string]string `yaml:"headers" json:"headers"` // custom headers
+	Secret  string            `yaml:"secret" json:"secret"`   // for HMAC signature
+	Retry   int               `yaml:"retry" json:"retry"`     // max retries, default 3
+	Timeout Duration          `yaml:"timeout" json:"timeout"` // default 30s
+	Enabled bool              `yaml:"enabled" json:"enabled"`
+}
+
+type UsersConfig struct {
+	Enabled      bool `yaml:"enabled"`       // Enable multi-user mode
+	AllowResller bool `yaml:"allow_reseller"` // Allow reseller role
+	SessionTTL   int  `yaml:"session_ttl"`   // Session TTL in hours (default 24)
+}
+
 type MirrorConfig struct {
 	Enabled bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
@@ -150,6 +168,7 @@ type Domain struct {
 	ImageOptimization ImageOptimizationConfig `yaml:"image_optimization,omitempty" json:"image_optimization,omitempty"`
 	CORS              CORSConfig              `yaml:"cors,omitempty" json:"cors,omitempty"`
 	BasicAuth         BasicAuthConfig         `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	Bandwidth         BandwidthConfig         `yaml:"bandwidth,omitempty" json:"bandwidth,omitempty"`
 }
 
 // MarshalYAML produces clean YAML by omitting zero-value nested structs.
@@ -256,6 +275,9 @@ func (d Domain) MarshalYAML() (any, error) {
 	}
 	if len(d.ErrorPages) > 0 {
 		m["error_pages"] = d.ErrorPages
+	}
+	if d.Bandwidth.Enabled {
+		m["bandwidth"] = d.Bandwidth
 	}
 	return m, nil
 }
@@ -567,3 +589,12 @@ func (b *ByteSize) UnmarshalYAML(unmarshal func(any) error) error {
 	*b = size
 	return nil
 }
+
+// BandwidthConfig defines bandwidth limits for a domain.
+type BandwidthConfig struct {
+	Enabled      bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	MonthlyLimit ByteSize `yaml:"monthly_limit,omitempty" json:"monthly_limit,omitempty"`
+	DailyLimit   ByteSize `yaml:"daily_limit,omitempty" json:"daily_limit,omitempty"`
+	Action       string   `yaml:"action,omitempty" json:"action,omitempty"` // block | throttle | alert
+}
+

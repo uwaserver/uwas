@@ -227,7 +227,7 @@ export default function Topology() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading topology...
       </div>
     );
@@ -236,13 +236,13 @@ export default function Topology() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-100">Topology</h1>
-        <p className="text-sm text-slate-400">
+        <h1 className="text-xl font-bold sm:text-2xl text-foreground">Topology</h1>
+        <p className="text-sm text-muted-foreground">
           Drag nodes to rearrange. Connections follow automatically.
         </p>
       </div>
 
-      <div className="h-[calc(100vh-12rem)] rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+      <div className="h-[calc(100vh-12rem)] rounded-lg border border-border bg-card shadow-md">
         <ReactFlow
           nodes={nodes}
           edges={initial.edges}
@@ -259,7 +259,7 @@ export default function Topology() {
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" /> Static</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#a855f7]" /> PHP</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#f97316]" /> Proxy</span>

@@ -82,6 +82,7 @@ type Manager struct {
 	domainMap      map[string]*domainInstance // domain → instance
 	nextPort       int                        // next auto-assigned port
 	onDomainChange DomainChangeFunc           // called when a domain PHP starts
+	onCrash        func(domain string)        // called when PHP crashes and auto-restarts
 
 	// execCommand is the function used to create exec.Cmd objects.
 	// It defaults to exec.Command and can be overridden for testing.
@@ -104,6 +105,13 @@ func (m *Manager) SetDomainChangeFunc(fn DomainChangeFunc) {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
 	m.onDomainChange = fn
+}
+
+// SetOnCrash sets a callback that fires when a PHP process crashes and auto-restarts.
+func (m *Manager) SetOnCrash(fn func(domain string)) {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
+	m.onCrash = fn
 }
 
 // AssignDomain assigns a PHP version to a domain.
@@ -324,6 +332,9 @@ func (m *Manager) StartDomain(domain string) error {
 
 		// Auto-restart if the domain is still assigned (crash or max-requests reached)
 		if stillAssigned {
+			if waitErr != nil && m.onCrash != nil {
+				m.onCrash(domain)
+			}
 			time.Sleep(500 * time.Millisecond) // brief backoff
 			if err := m.StartDomain(domain); err != nil {
 				m.logger.Error("PHP-CGI auto-restart failed", "domain", domain, "error", err)

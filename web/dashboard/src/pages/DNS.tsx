@@ -13,12 +13,16 @@ import {
   Cloud,
   Settings,
   Shield,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react';
 import {
   fetchDomains,
   checkDNS,
   fetchDNSRecords,
   createDNSRecord,
+  updateDNSRecord,
   deleteDNSRecord,
   syncDNS,
   type DomainData,
@@ -38,12 +42,12 @@ function RecordSection({
   if (!records || records.length === 0) return null;
   return (
     <div>
-      <h4 className="mb-1.5 text-xs font-medium uppercase text-slate-500">{label}</h4>
+      <h4 className="mb-1.5 text-xs font-medium uppercase text-muted-foreground">{label}</h4>
       <div className="space-y-1">
         {records.map((r, i) => (
           <div
             key={`${label}-${i}`}
-            className="rounded-md bg-[#0f172a] px-3 py-2 font-mono text-sm text-slate-300"
+            className="rounded-md bg-background px-3 py-2 font-mono text-sm text-card-foreground"
           >
             {r}
           </div>
@@ -72,8 +76,11 @@ export default function DNS() {
   const [syncMsg, setSyncMsg] = useState('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newRec, setNewRec] = useState({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
+  const [newRec, setNewRec] = useState({ type: 'A', name: '', content: '', ttl: '1', proxied: false, priority: 0 });
   const [addLoading, setAddLoading] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editRec, setEditRec] = useState({ content: '', ttl: '1', proxied: false });
+  const [editLoading, setEditLoading] = useState(false);
 
   const loadDomains = useCallback(async () => {
     try {
@@ -167,6 +174,31 @@ export default function DNS() {
     }
   };
 
+  const startEdit = (rec: DNSRecord) => {
+    setEditId(rec.id);
+    setEditRec({ content: rec.content, ttl: rec.ttl === 1 ? '1' : String(rec.ttl), proxied: rec.proxied });
+  };
+
+  const handleUpdateRecord = async (id: string, type: string, name: string) => {
+    if (!selectedDomain) return;
+    setEditLoading(true);
+    setCfError('');
+    try {
+      const updated = await updateDNSRecord(selectedDomain, id, {
+        type, name,
+        content: editRec.content,
+        ttl: Number(editRec.ttl) || 1,
+        proxied: editRec.proxied,
+      });
+      setCfRecords(prev => prev.map(r => r.id === id ? updated : r));
+      setEditId(null);
+    } catch (e) {
+      setCfError((e as Error).message);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const handleCreateRecord = async () => {
     if (!selectedDomain || !newRec.name || !newRec.content) return;
     setAddLoading(true);
@@ -178,9 +210,10 @@ export default function DNS() {
         content: newRec.content,
         ttl: Number(newRec.ttl) || 1,
         proxied: newRec.proxied,
+        priority: newRec.type === 'MX' || newRec.type === 'SRV' ? newRec.priority : 0,
       });
       setCfRecords((prev) => [...prev, rec]);
-      setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
+      setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false, priority: 0 });
       setShowAddForm(false);
     } catch (e) {
       setCfError((e as Error).message);
@@ -195,32 +228,32 @@ export default function DNS() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-100">DNS Checker</h1>
-        <p className="text-sm text-slate-400">
+        <h1 className="text-xl font-bold sm:text-2xl text-foreground">DNS Checker</h1>
+        <p className="text-sm text-muted-foreground">
           Verify DNS records and check if domains point to this server
         </p>
       </div>
 
       {/* Domain Selector */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Search size={18} className="text-blue-400" />
-          <h2 className="text-sm font-semibold text-slate-300">Check Domain DNS</h2>
+          <h2 className="text-sm font-semibold text-card-foreground">Check Domain DNS</h2>
         </div>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
               Domain
             </label>
             {domainsLoading ? (
-              <div className="flex h-10 items-center text-sm text-slate-500">
+              <div className="flex h-10 items-center text-sm text-muted-foreground">
                 Loading domains...
               </div>
             ) : (
               <select
                 value={selectedDomain}
                 onChange={(e) => setSelectedDomain(e.target.value)}
-                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
               >
                 {domains.length === 0 && (
                   <option value="">No domains configured</option>
@@ -279,7 +312,7 @@ export default function DNS() {
                   ? 'Points to this server'
                   : 'Does NOT point to this server'}
               </h3>
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 {result.points_here
                   ? `DNS records for ${result.domain} are correctly configured.`
                   : `DNS records for ${result.domain} do not resolve to this server's IP addresses.`}
@@ -296,32 +329,32 @@ export default function DNS() {
           )}
 
           {/* Server IPs */}
-          <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+          <div className="rounded-lg border border-border bg-card p-5 shadow-md">
             <div className="mb-3 flex items-center gap-2">
-              <Server size={16} className="text-slate-400" />
-              <h3 className="text-sm font-semibold text-slate-300">Server IP Addresses</h3>
+              <Server size={16} className="text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-card-foreground">Server IP Addresses</h3>
             </div>
             <div className="flex flex-wrap gap-2">
               {result.server_ips.length > 0 ? (
                 result.server_ips.map((ip) => (
                   <span
                     key={ip}
-                    className="rounded-md bg-[#0f172a] px-3 py-1.5 font-mono text-sm text-slate-300"
+                    className="rounded-md bg-background px-3 py-1.5 font-mono text-sm text-card-foreground"
                   >
                     {ip}
                   </span>
                 ))
               ) : (
-                <span className="text-sm text-slate-500">No server IPs detected</span>
+                <span className="text-sm text-muted-foreground">No server IPs detected</span>
               )}
             </div>
           </div>
 
           {/* DNS Records */}
-          <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+          <div className="rounded-lg border border-border bg-card p-5 shadow-md">
             <div className="mb-4 flex items-center gap-2">
               <Globe size={16} className="text-blue-400" />
-              <h3 className="text-sm font-semibold text-slate-300">
+              <h3 className="text-sm font-semibold text-card-foreground">
                 DNS Records for {result.domain}
               </h3>
             </div>
@@ -330,8 +363,8 @@ export default function DNS() {
               <RecordSection label="AAAA Records" records={result.aaaa} />
               {result.cname && (
                 <div>
-                  <h4 className="mb-1.5 text-xs font-medium uppercase text-slate-500">CNAME</h4>
-                  <div className="rounded-md bg-[#0f172a] px-3 py-2 font-mono text-sm text-slate-300">
+                  <h4 className="mb-1.5 text-xs font-medium uppercase text-muted-foreground">CNAME</h4>
+                  <div className="rounded-md bg-background px-3 py-2 font-mono text-sm text-card-foreground">
                     {result.cname}
                   </div>
                 </div>
@@ -348,7 +381,7 @@ export default function DNS() {
               !result.mx?.length &&
               !result.ns?.length &&
               !result.txt?.length && (
-                <div className="py-8 text-center text-sm text-slate-500">
+                <div className="py-8 text-center text-sm text-muted-foreground">
                   <Waypoints size={32} className="mx-auto mb-3 opacity-40" />
                   No DNS records found for this domain
                 </div>
@@ -357,14 +390,14 @@ export default function DNS() {
 
           {/* Guidance if not pointing here */}
           {!result.points_here && (
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-md">
               <div className="mb-3 flex items-center gap-2">
                 <AlertTriangle size={16} className="text-amber-400" />
-                <h3 className="text-sm font-semibold text-slate-300">How to Fix</h3>
+                <h3 className="text-sm font-semibold text-card-foreground">How to Fix</h3>
               </div>
-              <div className="space-y-2 text-sm text-slate-400">
+              <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
-                  To point <span className="font-mono text-slate-200">{result.domain}</span> to
+                  To point <span className="font-mono text-foreground">{result.domain}</span> to
                   this server, update the DNS records at your domain registrar:
                 </p>
                 <ol className="ml-4 list-decimal space-y-1">
@@ -372,10 +405,10 @@ export default function DNS() {
                     Log in to your domain registrar or DNS provider.
                   </li>
                   <li>
-                    Create or update an <strong className="text-slate-300">A record</strong>{' '}
+                    Create or update an <strong className="text-card-foreground">A record</strong>{' '}
                     pointing to{' '}
                     {result.server_ips.length > 0 ? (
-                      <span className="font-mono text-slate-200">
+                      <span className="font-mono text-foreground">
                         {result.server_ips[0]}
                       </span>
                     ) : (
@@ -385,7 +418,7 @@ export default function DNS() {
                   </li>
                   {result.server_ips.some((ip) => ip.includes(':')) && (
                     <li>
-                      Optionally add an <strong className="text-slate-300">AAAA record</strong>{' '}
+                      Optionally add an <strong className="text-card-foreground">AAAA record</strong>{' '}
                       for IPv6 support.
                     </li>
                   )}
@@ -406,12 +439,12 @@ export default function DNS() {
       {/* DNS Records (Cloudflare)                                           */}
       {/* ================================================================== */}
       {selectedDomain && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+        <div className="rounded-lg border border-border bg-card p-5 shadow-md">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Cloud size={18} className="text-orange-400" />
-              <h2 className="text-sm font-semibold text-slate-300">
-                DNS Records (Cloudflare)
+              <h2 className="text-sm font-semibold text-card-foreground">
+                DNS Zone Editor
               </h2>
             </div>
             <div className="flex items-center gap-2">
@@ -456,8 +489,8 @@ export default function DNS() {
               <Settings size={16} className="mt-0.5 shrink-0" />
               <div>
                 <p className="font-medium">DNS provider not configured</p>
-                <p className="mt-1 text-slate-400">
-                  Configure your Cloudflare API token in{' '}
+                <p className="mt-1 text-muted-foreground">
+                  Configure your DNS provider (Cloudflare, Hetzner, DigitalOcean, or Route53) in{' '}
                   <a
                     href="/_uwas/dashboard/settings"
                     className="font-medium text-blue-400 underline hover:text-blue-300"
@@ -482,7 +515,7 @@ export default function DNS() {
             <div className="mb-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[#334155] text-xs uppercase text-slate-500">
+                  <tr className="border-b border-border text-xs uppercase text-muted-foreground">
                     <th className="pb-2 pr-4">Type</th>
                     <th className="pb-2 pr-4">Name</th>
                     <th className="pb-2 pr-4">Content</th>
@@ -493,41 +526,82 @@ export default function DNS() {
                 </thead>
                 <tbody>
                   {cfRecords.map((rec) => (
-                    <tr key={rec.id} className="border-b border-[#334155]/50">
+                    <tr key={rec.id} className="border-b border-border/50">
                       <td className="py-2.5 pr-4">
-                        <span className="rounded bg-slate-700 px-1.5 py-0.5 font-mono text-xs text-slate-300">
+                        <span className="rounded bg-accent px-1.5 py-0.5 font-mono text-xs text-card-foreground">
                           {rec.type}
                         </span>
                       </td>
-                      <td className="py-2.5 pr-4 font-mono text-slate-300">
+                      <td className="py-2.5 pr-4 font-mono text-card-foreground">
                         {rec.name}
                       </td>
-                      <td className="max-w-[200px] truncate py-2.5 pr-4 font-mono text-slate-300" title={rec.content}>
-                        {rec.content}
-                      </td>
-                      <td className="py-2.5 pr-4 text-slate-400">
-                        {rec.ttl === 1 ? 'Auto' : `${rec.ttl}s`}
+                      <td className="max-w-[200px] py-2.5 pr-4">
+                        {editId === rec.id ? (
+                          <input
+                            type="text" value={editRec.content}
+                            onChange={e => setEditRec({ ...editRec, content: e.target.value })}
+                            className="w-full rounded border border-blue-500 bg-background px-2 py-1 font-mono text-sm text-foreground outline-none"
+                            autoFocus
+                          />
+                        ) : (
+                          <span className="truncate block font-mono text-card-foreground cursor-pointer hover:text-blue-400" title={rec.content} onClick={() => startEdit(rec)}>
+                            {rec.content}
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 pr-4">
-                        {rec.proxied ? (
+                        {editId === rec.id ? (
+                          <input
+                            type="text" value={editRec.ttl}
+                            onChange={e => setEditRec({ ...editRec, ttl: e.target.value })}
+                            className="w-16 rounded border border-border bg-background px-2 py-1 text-sm text-foreground outline-none"
+                          />
+                        ) : (
+                          <span className="text-muted-foreground">{rec.ttl === 1 ? 'Auto' : `${rec.ttl}s`}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        {editId === rec.id ? (
+                          <input type="checkbox" checked={editRec.proxied} onChange={e => setEditRec({ ...editRec, proxied: e.target.checked })} />
+                        ) : rec.proxied ? (
                           <span className="text-orange-400">Yes</span>
                         ) : (
-                          <span className="text-slate-500">No</span>
+                          <span className="text-muted-foreground">No</span>
                         )}
                       </td>
                       <td className="py-2.5">
-                        <button
-                          onClick={() => handleDeleteRecord(rec.id)}
-                          disabled={deleteLoading === rec.id}
-                          className="flex items-center gap-1 rounded px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
-                        >
-                          {deleteLoading === rec.id ? (
-                            <RefreshCw size={12} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={12} />
-                          )}
-                          Delete
-                        </button>
+                        {editId === rec.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleUpdateRecord(rec.id, rec.type, rec.name)}
+                              disabled={editLoading}
+                              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-emerald-400 transition hover:bg-emerald-500/10 disabled:opacity-50"
+                            >
+                              {editLoading ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+                              Save
+                            </button>
+                            <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground">
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => startEdit(rec)}
+                              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-blue-400 transition hover:bg-blue-500/10"
+                            >
+                              <Pencil size={12} /> Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteRecord(rec.id)}
+                              disabled={deleteLoading === rec.id}
+                              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                            >
+                              {deleteLoading === rec.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                              Delete
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -538,8 +612,8 @@ export default function DNS() {
 
           {/* Empty state after loading */}
           {!cfLoading && !cfNotConfigured && !cfError && cfRecords.length === 0 && (
-            <div className="py-6 text-center text-sm text-slate-500">
-              Click &ldquo;Load Records&rdquo; to fetch DNS records from Cloudflare
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              Click &ldquo;Load Records&rdquo; to fetch DNS records from your DNS provider
             </div>
           )}
 
@@ -549,78 +623,81 @@ export default function DNS() {
               {!showAddForm ? (
                 <button
                   onClick={() => setShowAddForm(true)}
-                  className="flex items-center gap-1.5 rounded-md border border-dashed border-[#334155] px-3 py-2 text-xs text-slate-400 transition hover:border-slate-400 hover:text-slate-300"
+                  className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground transition hover:border-slate-400 hover:text-card-foreground"
                 >
                   <Plus size={14} />
                   Add Record
                 </button>
               ) : (
-                <div className="rounded-md border border-[#334155] bg-[#0f172a] p-4">
-                  <h4 className="mb-3 text-xs font-medium uppercase text-slate-500">
+                <div className="rounded-md border border-border bg-background p-4">
+                  <h4 className="mb-3 text-xs font-medium uppercase text-muted-foreground">
                     New DNS Record
                   </h4>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
                     {/* Type */}
                     <div>
-                      <label className="mb-1 block text-xs text-slate-500">Type</label>
+                      <label className="mb-1 block text-xs text-muted-foreground">Type</label>
                       <select
                         value={newRec.type}
                         onChange={(e) => setNewRec({ ...newRec, type: e.target.value })}
-                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                        className="w-full rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground outline-none focus:border-blue-500"
                       >
                         <option value="A">A</option>
                         <option value="AAAA">AAAA</option>
                         <option value="CNAME">CNAME</option>
                         <option value="MX">MX</option>
                         <option value="TXT">TXT</option>
+                        <option value="NS">NS</option>
+                        <option value="SRV">SRV</option>
+                        <option value="CAA">CAA</option>
                       </select>
                     </div>
 
                     {/* Name */}
                     <div className="lg:col-span-2">
-                      <label className="mb-1 block text-xs text-slate-500">Name</label>
+                      <label className="mb-1 block text-xs text-muted-foreground">Name</label>
                       <input
                         type="text"
                         value={newRec.name}
                         onChange={(e) => setNewRec({ ...newRec, name: e.target.value })}
                         placeholder="@ or subdomain"
-                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                        className="w-full rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground outline-none focus:border-blue-500"
                       />
                     </div>
 
                     {/* Content */}
                     <div className="lg:col-span-2">
-                      <label className="mb-1 block text-xs text-slate-500">Content</label>
+                      <label className="mb-1 block text-xs text-muted-foreground">Content</label>
                       <input
                         type="text"
                         value={newRec.content}
                         onChange={(e) => setNewRec({ ...newRec, content: e.target.value })}
                         placeholder="IP address or value"
-                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                        className="w-full rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground outline-none focus:border-blue-500"
                       />
                     </div>
 
                     {/* TTL */}
                     <div>
-                      <label className="mb-1 block text-xs text-slate-500">TTL</label>
+                      <label className="mb-1 block text-xs text-muted-foreground">TTL</label>
                       <input
                         type="text"
                         value={newRec.ttl}
                         onChange={(e) => setNewRec({ ...newRec, ttl: e.target.value })}
                         placeholder="1 = Auto"
-                        className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-2 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+                        className="w-full rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground outline-none focus:border-blue-500"
                       />
                     </div>
                   </div>
 
                   {/* Proxied toggle + action buttons */}
                   <div className="mt-3 flex items-center justify-between">
-                    <label className="flex items-center gap-2 text-sm text-slate-400">
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
                       <input
                         type="checkbox"
                         checked={newRec.proxied}
                         onChange={(e) => setNewRec({ ...newRec, proxied: e.target.checked })}
-                        className="rounded border-[#334155] bg-[#1e293b]"
+                        className="rounded border-border bg-card"
                       />
                       Proxied (orange cloud)
                     </label>
@@ -630,7 +707,7 @@ export default function DNS() {
                           setShowAddForm(false);
                           setNewRec({ type: 'A', name: '', content: '', ttl: '1', proxied: false });
                         }}
-                        className="rounded-md px-3 py-1.5 text-xs text-slate-400 transition hover:text-slate-200"
+                        className="rounded-md px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground"
                       >
                         Cancel
                       </button>

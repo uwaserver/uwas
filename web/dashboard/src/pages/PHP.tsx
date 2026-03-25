@@ -380,7 +380,7 @@ export default function PHP() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading PHP installations...
       </div>
     );
@@ -391,15 +391,15 @@ export default function PHP() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">PHP Manager</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">PHP Manager</h1>
+          <p className="text-sm text-muted-foreground">
             {installs.filter(i => i.sapi !== 'cli').length} PHP engine{installs.filter(i => i.sapi !== 'cli').length !== 1 ? 's' : ''} detected
             {instances.length > 0 && <> &middot; {instances.length} assigned &middot; {runningCount} running</>}
           </p>
         </div>
         <button
           onClick={() => { setLoading(true); void loadAll(); }}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -419,12 +419,12 @@ export default function PHP() {
 
       {/* ============ Section 1: Detected PHP Versions ============ */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">Detected PHP Versions</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Detected PHP Versions</h2>
         {installs.length === 0 ? (
-          <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-8 text-center">
-            <Cpu size={40} className="mx-auto mb-3 text-slate-500" />
-            <p className="text-sm text-slate-400">No PHP (FastCGI/FPM) detected.</p>
-            <p className="mt-1 text-xs text-slate-500">Install PHP directly from here — pick a version below.</p>
+          <div className="rounded-lg border border-border bg-card p-8 text-center">
+            <Cpu size={40} className="mx-auto mb-3 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">No PHP (FastCGI/FPM) detected.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Install PHP directly from here — pick a version below.</p>
             <button
               onClick={() => { setShowInstall(true); fetchPHPInstallInfo('8.4').then(setInstallInfo).catch(() => {}); }}
               className="mt-4 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
@@ -454,16 +454,16 @@ export default function PHP() {
 
               return (
                 <div key={shortVer}
-                  className={`rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md transition-opacity ${isDisabled ? 'opacity-50' : ''}`}>
+                  className={`rounded-lg border border-border bg-card p-5 shadow-md transition-opacity ${isDisabled ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <span className={`text-3xl font-bold ${isDisabled ? 'text-slate-500' : 'text-slate-100'}`}>{shortVer}</span>
-                      <span className="ml-2 text-xs text-slate-500">{fullVer}</span>
+                      <span className={`text-3xl font-bold ${isDisabled ? 'text-muted-foreground' : 'text-foreground'}`}>{shortVer}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">{fullVer}</span>
                       {isDisabled && <span className="ml-2 rounded bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400">Disabled</span>}
                     </div>
                     <span className="flex items-center gap-1.5">
                       <span className={`h-2.5 w-2.5 rounded-full ${isDisabled ? 'bg-slate-600' : anyRunning ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                      <span className={`text-xs ${isDisabled ? 'text-slate-600' : anyRunning ? 'text-emerald-400' : 'text-slate-500'}`}>
+                      <span className={`text-xs ${isDisabled ? 'text-muted-foreground' : anyRunning ? 'text-emerald-400' : 'text-muted-foreground'}`}>
                         {isDisabled ? 'Disabled' : anyRunning ? 'Running' : 'Stopped'}
                       </span>
                     </span>
@@ -476,7 +476,7 @@ export default function PHP() {
                         <span className={`rounded px-1.5 py-0.5 font-medium ${v.sapi === 'fpm-fcgi' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'}`}>
                           {v.sapi === 'fpm-fcgi' ? 'FPM' : 'CGI'}
                         </span>
-                        <span className="text-slate-500 truncate" title={v.binary}>{v.binary.split('/').pop()}</span>
+                        <span className="text-muted-foreground truncate" title={v.binary}>{v.binary.split('/').pop()}</span>
                         {v.running && v.listen_addr && (
                           <span className="text-emerald-400 truncate text-[10px]" title={v.listen_addr}>
                             {v.listen_addr.length > 30 ? '...' + v.listen_addr.slice(-25) : v.listen_addr}
@@ -530,7 +530,7 @@ export default function PHP() {
         <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-5">
           <div className="flex items-start justify-between mb-4">
             <h2 className="text-sm font-semibold text-blue-400">Install PHP</h2>
-            <button onClick={() => setShowInstall(false)} className="text-slate-500 hover:text-slate-300">
+            <button onClick={() => setShowInstall(false)} className="text-muted-foreground hover:text-card-foreground">
               <X size={16} />
             </button>
           </div>
@@ -545,7 +545,7 @@ export default function PHP() {
                   className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
                     installVer === v
                       ? 'bg-blue-600 text-white'
-                      : 'bg-[#334155] text-slate-400 hover:text-slate-200'
+                      : 'bg-accent text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {v}
@@ -586,9 +586,9 @@ export default function PHP() {
 
           {/* Progress / result */}
           {installJob && installJob.status === 'running' && (
-            <div className="rounded-md bg-[#0f172a] p-3 text-xs">
+            <div className="rounded-md bg-background p-3 text-xs">
               <p className="text-blue-400 mb-1">Installing PHP {installJob.version}... This may take a minute.</p>
-              <div className="h-1 w-full bg-[#334155] rounded-full overflow-hidden">
+              <div className="h-1 w-full bg-accent rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '60%' }} />
               </div>
             </div>
@@ -604,17 +604,17 @@ export default function PHP() {
             <div className="rounded-md bg-red-500/10 p-3 text-xs">
               <p className="text-red-400 mb-1">Installation failed: {installJob.error}</p>
               {installJob.output && (
-                <pre className="mt-2 max-h-40 overflow-auto text-[10px] text-slate-500 whitespace-pre-wrap">{installJob.output}</pre>
+                <pre className="mt-2 max-h-40 overflow-auto text-[10px] text-muted-foreground whitespace-pre-wrap">{installJob.output}</pre>
               )}
             </div>
           )}
 
           {/* Show commands for reference */}
           {installInfo && !installJob && (
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-muted-foreground">
               <p className="mb-1">Will run on {installInfo.distro}:</p>
               {installInfo.commands.map((cmd, i) => (
-                <code key={i} className="block rounded bg-[#0f172a] px-2 py-1 mb-1 font-mono text-slate-400">{cmd}</code>
+                <code key={i} className="block rounded bg-background px-2 py-1 mb-1 font-mono text-muted-foreground">{cmd}</code>
               ))}
             </div>
           )}
@@ -625,7 +625,7 @@ export default function PHP() {
       {installs.length > 0 && (
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Per-Domain PHP Assignments</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Per-Domain PHP Assignments</h2>
             <button
               onClick={openAssignModal}
               disabled={availableDomains.length === 0 || installs.length === 0}
@@ -635,11 +635,11 @@ export default function PHP() {
             </button>
           </div>
 
-          <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+          <div className="rounded-lg border border-border bg-card shadow-md">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[#334155] text-slate-400">
+                  <tr className="border-b border-border text-muted-foreground">
                     <th className="px-5 py-3 font-medium">Domain</th>
                     <th className="px-5 py-3 font-medium">PHP Version</th>
                     <th className="px-5 py-3 font-medium">Port</th>
@@ -651,7 +651,7 @@ export default function PHP() {
                 <tbody>
                   {instances.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-5 py-8 text-center text-slate-500">
+                      <td colSpan={6} className="px-5 py-8 text-center text-muted-foreground">
                         No PHP assignments yet. Click "Assign PHP to Domain" to get started.
                       </td>
                     </tr>
@@ -685,15 +685,15 @@ export default function PHP() {
       {/* ============ Section 3: Quick Actions ============ */}
       {installs.length > 0 && (
         <div>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">Quick Actions</h2>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Quick Actions</h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {/* Start All */}
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-md">
               <div className="mb-3 flex items-center gap-2">
                 <Play size={18} className="text-emerald-400" />
-                <h3 className="text-sm font-semibold text-slate-300">Start All PHP</h3>
+                <h3 className="text-sm font-semibold text-card-foreground">Start All PHP</h3>
               </div>
-              <p className="mb-4 text-xs text-slate-500">
+              <p className="mb-4 text-xs text-muted-foreground">
                 Start all stopped PHP instances at once.
               </p>
               <button
@@ -707,12 +707,12 @@ export default function PHP() {
             </div>
 
             {/* Stop All */}
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-md">
               <div className="mb-3 flex items-center gap-2">
                 <Square size={18} className="text-red-400" />
-                <h3 className="text-sm font-semibold text-slate-300">Stop All PHP</h3>
+                <h3 className="text-sm font-semibold text-card-foreground">Stop All PHP</h3>
               </div>
-              <p className="mb-4 text-xs text-slate-500">
+              <p className="mb-4 text-xs text-muted-foreground">
                 Stop all running PHP instances at once.
               </p>
               <button
@@ -726,12 +726,12 @@ export default function PHP() {
             </div>
 
             {/* WordPress Setup */}
-            <div className="rounded-lg border border-amber-500/20 bg-[#1e293b] p-5 shadow-md">
+            <div className="rounded-lg border border-amber-500/20 bg-card p-5 shadow-md">
               <div className="mb-3 flex items-center gap-2">
                 <Zap size={18} className="text-amber-400" />
-                <h3 className="text-sm font-semibold text-slate-300">WordPress Setup</h3>
+                <h3 className="text-sm font-semibold text-card-foreground">WordPress Setup</h3>
               </div>
-              <p className="mb-4 text-xs text-slate-500">
+              <p className="mb-4 text-xs text-muted-foreground">
                 One-click: picks a PHP domain, assigns PHP 8.4, sets optimal config (256M, 300s, 64M), and starts.
               </p>
               <button
@@ -751,13 +751,13 @@ export default function PHP() {
       {showAssignModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-10">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowAssignModal(false)} />
-          <div className="relative z-10 w-full max-w-md rounded-xl border border-[#334155] bg-[#0f172a] p-6 shadow-2xl">
+          <div className="relative z-10 w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-2xl">
             {/* Modal header */}
             <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-100">Assign PHP to Domain</h2>
+              <h2 className="text-lg font-semibold text-foreground">Assign PHP to Domain</h2>
               <button
                 onClick={() => setShowAssignModal(false)}
-                className="rounded-md p-1 text-slate-500 hover:bg-[#1e293b] hover:text-slate-300"
+                className="rounded-md p-1 text-muted-foreground hover:bg-card hover:text-card-foreground"
               >
                 <X size={18} />
               </button>
@@ -766,14 +766,14 @@ export default function PHP() {
             <div className="space-y-4">
               {/* Domain select */}
               <div>
-                <label htmlFor="assign-domain" className="mb-1.5 block text-sm font-medium text-slate-300">
+                <label htmlFor="assign-domain" className="mb-1.5 block text-sm font-medium text-card-foreground">
                   Domain
                 </label>
                 <select
                   id="assign-domain"
                   value={assignDomain}
                   onChange={e => setAssignDomain(e.target.value)}
-                  className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  className="w-full rounded-md border border-border bg-card px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
                   {availableDomains.length === 0 && (
                     <option value="">No PHP domains available</option>
@@ -782,19 +782,19 @@ export default function PHP() {
                     <option key={d.host} value={d.host}>{d.host}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-slate-500">Only domains with type "php" are shown.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Only domains with type "php" are shown.</p>
               </div>
 
               {/* Version select */}
               <div>
-                <label htmlFor="assign-version" className="mb-1.5 block text-sm font-medium text-slate-300">
+                <label htmlFor="assign-version" className="mb-1.5 block text-sm font-medium text-card-foreground">
                   PHP Version
                 </label>
                 <select
                   id="assign-version"
                   value={assignVersion}
                   onChange={e => setAssignVersion(e.target.value)}
-                  className="w-full rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  className="w-full rounded-md border border-border bg-card px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 >
                   {installs.filter(i => i.sapi !== 'cli').map(i => {
                     const sapiLabel = i.sapi === 'cgi-fcgi' ? 'FastCGI' : i.sapi === 'fpm-fcgi' ? 'FPM' : i.sapi;
@@ -814,7 +814,7 @@ export default function PHP() {
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   onClick={() => setShowAssignModal(false)}
-                  className="rounded-md px-4 py-2 text-sm text-slate-400 hover:text-slate-200"
+                  className="rounded-md px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
                 >
                   Cancel
                 </button>
@@ -873,10 +873,10 @@ function InstanceRow({
 
   return (
     <>
-      <tr className="border-b border-[#334155]/50 hover:bg-[#0f172a]/30">
+      <tr className="border-b border-border/50 hover:bg-background/30">
         {/* Domain */}
         <td className="px-5 py-3">
-          <span className="font-semibold text-slate-200">{inst.domain}</span>
+          <span className="font-semibold text-foreground">{inst.domain}</span>
         </td>
 
         {/* PHP Version */}
@@ -885,7 +885,7 @@ function InstanceRow({
             PHP {inst.version}
           </span>
           {installs.length > 1 && (
-            <span className="ml-1 text-xs text-slate-600">
+            <span className="ml-1 text-xs text-muted-foreground">
               ({installs.length} available)
             </span>
           )}
@@ -893,7 +893,7 @@ function InstanceRow({
 
         {/* Port */}
         <td className="px-5 py-3">
-          <span className="font-mono text-xs text-slate-400">
+          <span className="font-mono text-xs text-muted-foreground">
             :{port}
           </span>
         </td>
@@ -902,7 +902,7 @@ function InstanceRow({
         <td className="px-5 py-3">
           <span className="flex items-center gap-1.5">
             <span className={`inline-block h-2 w-2 rounded-full ${inst.running ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-            <span className={`text-xs ${inst.running ? 'text-emerald-400' : 'text-slate-500'}`}>
+            <span className={`text-xs ${inst.running ? 'text-emerald-400' : 'text-muted-foreground'}`}>
               {inst.running ? 'Running' : 'Stopped'}
             </span>
           </span>
@@ -915,7 +915,7 @@ function InstanceRow({
             className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs transition ${
               row.configExpanded
                 ? 'bg-blue-500/15 text-blue-400'
-                : 'bg-[#334155] text-slate-400 hover:bg-[#475569]'
+                : 'bg-accent text-muted-foreground hover:bg-[#475569]'
             }`}
           >
             <Settings size={12} />
@@ -950,7 +950,7 @@ function InstanceRow({
             <button
               onClick={onRemove}
               disabled={row.removing}
-              className="flex items-center gap-1 rounded-md bg-slate-500/10 px-2.5 py-1 text-xs text-slate-400 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-md bg-slate-500/10 px-2.5 py-1 text-xs text-muted-foreground hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
               title="Remove"
             >
               <Trash2 size={12} />
@@ -962,21 +962,21 @@ function InstanceRow({
       {/* Expanded config editor */}
       {row.configExpanded && (
         <tr>
-          <td colSpan={6} className="border-b border-[#334155]/50 bg-[#0f172a]/50 px-5 py-4">
+          <td colSpan={6} className="border-b border-border/50 bg-background/50 px-5 py-4">
             {row.configLoading ? (
-              <p className="text-xs text-slate-500">Loading configuration...</p>
+              <p className="text-xs text-muted-foreground">Loading configuration...</p>
             ) : (
               <div className="space-y-4">
                 {/* Config grid */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                   {CONFIG_KEYS.map(key => (
                     <div key={key}>
-                      <label className="mb-1 block text-xs text-slate-500">{CONFIG_LABELS[key]}</label>
+                      <label className="mb-1 block text-xs text-muted-foreground">{CONFIG_LABELS[key]}</label>
                       <input
                         type="text"
                         value={row.configEdits[key] ?? ''}
                         onChange={e => onConfigEdit(key, e.target.value)}
-                        className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-2.5 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
                   ))}
@@ -993,7 +993,7 @@ function InstanceRow({
                   </button>
                   <button
                     onClick={onResetConfig}
-                    className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+                    className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
                   >
                     <RotateCcw size={12} />
                     Reset to defaults

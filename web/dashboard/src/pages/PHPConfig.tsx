@@ -85,24 +85,24 @@ export default function PHPConfig() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">PHP Configuration</h1>
-          <p className="mt-1 text-sm text-slate-400">Edit php.ini settings — changes take effect after PHP restart.</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">PHP Configuration</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Edit php.ini settings — changes take effect after PHP restart.</p>
         </div>
       </div>
 
       {/* Version selector + tab */}
       <div className="flex items-center gap-4">
         <select value={selectedVer} onChange={e => setSelectedVer(e.target.value)}
-          className="rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
+          className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
           {installs.map(i => <option key={i.version} value={i.version}>PHP {i.version}</option>)}
         </select>
-        <div className="flex rounded-md border border-[#334155] overflow-hidden">
+        <div className="flex rounded-md border border-border overflow-hidden">
           <button onClick={() => setTab('form')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'form' ? 'bg-blue-600 text-white' : 'bg-[#1e293b] text-slate-400 hover:text-slate-200'}`}>
+            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'form' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
             <Sliders size={13} /> Popular Settings
           </button>
           <button onClick={() => setTab('raw')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'raw' ? 'bg-blue-600 text-white' : 'bg-[#1e293b] text-slate-400 hover:text-slate-200'}`}>
+            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'raw' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
             <Code size={13} /> Raw php.ini
           </button>
         </div>
@@ -116,18 +116,18 @@ export default function PHPConfig() {
 
       {/* Form tab */}
       {tab === 'form' && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] divide-y divide-[#334155]">
+        <div className="rounded-lg border border-border bg-card divide-y divide-border">
           {popularSettings.map(s => (
             <div key={s.key} className="flex items-center gap-4 px-5 py-3">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-300">{s.label}</p>
-                <p className="text-[10px] text-slate-500">{s.key} — {s.hint}</p>
+                <p className="text-sm font-medium text-card-foreground">{s.label}</p>
+                <p className="text-[10px] text-muted-foreground">{s.key} — {s.hint}</p>
               </div>
               <input
                 value={formValues[s.key] ?? ''}
                 onChange={e => setFormValues(prev => ({ ...prev, [s.key]: e.target.value }))}
                 placeholder={s.placeholder}
-                className="w-40 rounded-md border border-[#334155] bg-[#0f172a] px-3 py-1.5 text-sm font-mono text-slate-200 outline-none focus:border-blue-500"
+                className="w-40 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono text-foreground outline-none focus:border-blue-500"
               />
               <button
                 onClick={() => handleFormSave(s.key, formValues[s.key] ?? '')}
@@ -146,7 +146,7 @@ export default function PHPConfig() {
       {tab === 'raw' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Full php.ini file — edit with care. <span className="text-amber-400">Restart PHP after saving.</span>
             </p>
             <button
@@ -162,15 +162,15 @@ export default function PHPConfig() {
             value={rawContent}
             onChange={e => { setRawContent(e.target.value); setRawDirty(true); }}
             spellCheck={false}
-            className="w-full h-[60vh] rounded-lg border border-[#334155] bg-[#0f172a] px-4 py-3 font-mono text-xs text-slate-200 outline-none focus:border-blue-500 resize-none leading-relaxed"
+            className="w-full h-[60vh] rounded-lg border border-border bg-background px-4 py-3 font-mono text-xs text-foreground outline-none focus:border-blue-500 resize-none leading-relaxed"
           />
         </div>
       )}
 
       {/* Quick presets */}
       {tab === 'form' && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
-          <h2 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+        <div className="rounded-lg border border-border bg-card p-5">
+          <h2 className="text-sm font-semibold text-card-foreground mb-3 flex items-center gap-2">
             <Settings size={14} /> Quick Presets
           </h2>
           <div className="flex flex-wrap gap-2">
@@ -190,7 +190,7 @@ export default function PHPConfig() {
                   setFormValues(prev => ({ ...prev, ...preset.values }));
                   setStatus({ ok: true, msg: `${preset.name} preset applied` });
                 }}
-                className="rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-xs font-medium text-slate-300 hover:bg-[#334155] hover:text-white transition"
+                className="rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-card-foreground hover:bg-accent hover:text-white transition"
               >
                 {preset.name}
               </button>

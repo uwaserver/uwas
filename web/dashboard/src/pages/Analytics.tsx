@@ -43,9 +43,9 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
 
   return (
     <>
-      <tr className="cursor-pointer border-b border-[#334155]/50 text-slate-300 hover:bg-[#334155]/30" onClick={() => setOpen(!open)}>
+      <tr className="cursor-pointer border-b border-border/50 text-card-foreground hover:bg-accent/30" onClick={() => setOpen(!open)}>
         <td className="px-5 py-3">
-          <span className="mr-2 inline-block text-slate-500">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+          <span className="mr-2 inline-block text-muted-foreground">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
           <span className="font-mono text-xs">{d.host}</span>
         </td>
         <td className="px-5 py-3 text-right">{(d.page_views ?? 0).toLocaleString()}</td>
@@ -54,24 +54,24 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
         <td className="px-5 py-3 text-right">{(d.views_last_hour ?? 0).toLocaleString()}</td>
       </tr>
       {open && (
-        <tr className="border-b border-[#334155]/50 bg-[#0f172a]/40">
+        <tr className="border-b border-border/50 bg-background/40">
           <td colSpan={5} className="px-5 py-4">
             {/* Row 1: Paths, Status Codes, Hourly Traffic */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <div>
-                <h4 className="mb-2 text-xs font-semibold text-slate-400">Top Paths</h4>
+                <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Top Paths</h4>
                 <div className="space-y-1">
                   {topPaths.map(p => (
                     <div key={p.path} className="flex items-center justify-between text-xs">
-                      <span className="truncate font-mono text-slate-300">{p.path}</span>
-                      <span className="ml-2 text-slate-500">{p.views}</span>
+                      <span className="truncate font-mono text-card-foreground">{p.path}</span>
+                      <span className="ml-2 text-muted-foreground">{p.views}</span>
                     </div>
                   ))}
-                  {topPaths.length === 0 && <span className="text-xs text-slate-500">No data</span>}
+                  {topPaths.length === 0 && <span className="text-xs text-muted-foreground">No data</span>}
                 </div>
               </div>
               <div>
-                <h4 className="mb-2 text-xs font-semibold text-slate-400">Status Codes</h4>
+                <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Status Codes</h4>
                 {statusData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={140}>
                     <PieChart>
@@ -81,10 +81,10 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
                       <Tooltip contentStyle={tooltipStyle} />
                     </PieChart>
                   </ResponsiveContainer>
-                ) : <div className="flex h-[140px] items-center justify-center text-xs text-slate-500">No data</div>}
+                ) : <div className="flex h-[140px] items-center justify-center text-xs text-muted-foreground">No data</div>}
               </div>
               <div>
-                <h4 className="mb-2 text-xs font-semibold text-slate-400">Hourly Traffic (24h)</h4>
+                <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Hourly Traffic (24h)</h4>
                 <ResponsiveContainer width="100%" height={140}>
                   <BarChart data={hourlyData}>
                     <XAxis dataKey="hour" tick={{ fill: '#64748b', fontSize: 9 }} interval={3} />
@@ -98,19 +98,19 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
             {/* Row 2: Referrers and User Agents */}
             <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2">
               <div>
-                <h4 className="mb-2 text-xs font-semibold text-slate-400">Top Referrers</h4>
+                <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Top Referrers</h4>
                 <div className="space-y-1">
                   {referrers.map(r => (
                     <div key={r.domain} className="flex items-center justify-between text-xs">
-                      <span className="truncate font-mono text-slate-300">{r.domain}</span>
-                      <span className="ml-2 text-slate-500">{r.count}</span>
+                      <span className="truncate font-mono text-card-foreground">{r.domain}</span>
+                      <span className="ml-2 text-muted-foreground">{r.count}</span>
                     </div>
                   ))}
-                  {referrers.length === 0 && <span className="text-xs text-slate-500">No referrer data</span>}
+                  {referrers.length === 0 && <span className="text-xs text-muted-foreground">No referrer data</span>}
                 </div>
               </div>
               <div>
-                <h4 className="mb-2 text-xs font-semibold text-slate-400">Browsers / User Agents</h4>
+                <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Browsers / User Agents</h4>
                 {uaData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={140}>
                     <BarChart data={uaData} layout="vertical">
@@ -120,7 +120,7 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
                       <Bar dataKey="count" fill="#8b5cf6" radius={[0, 2, 2, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
-                ) : <span className="text-xs text-slate-500">No user agent data</span>}
+                ) : <span className="text-xs text-muted-foreground">No user agent data</span>}
               </div>
             </div>
           </td>
@@ -153,10 +153,10 @@ export default function Analytics() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Analytics</h1>
-          <p className="text-sm text-slate-400">Real-time traffic analytics ({domains.length} domains)</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Analytics</h1>
+          <p className="text-sm text-muted-foreground">Real-time traffic analytics ({domains.length} domains)</p>
         </div>
-        <button onClick={load} className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]">
+        <button onClick={load} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
@@ -170,13 +170,13 @@ export default function Analytics() {
         <Card icon={<Eye size={20} />} label="Last Hour" value={totalLastHour.toLocaleString()} />
       </div>
 
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">Per-Domain Statistics ({domains.length})</h2>
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">Per-Domain Statistics ({domains.length})</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead><tr className="border-b border-[#334155] text-slate-400">
+            <thead><tr className="border-b border-border text-muted-foreground">
               <th className="px-5 py-3">Host</th>
               <th className="px-5 py-3 text-right">Page Views</th>
               <th className="px-5 py-3 text-right">Unique IPs</th>
@@ -186,7 +186,7 @@ export default function Analytics() {
             <tbody>
               {domains.map(d => <DomainRow key={d.host} d={d} />)}
               {domains.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">No analytics data yet</td></tr>
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">No analytics data yet</td></tr>
               )}
             </tbody>
           </table>

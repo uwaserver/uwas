@@ -24,8 +24,12 @@ import (
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
+	"github.com/uwaserver/uwas/internal/bandwidth"
+	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/sftpserver"
+	"github.com/uwaserver/uwas/internal/webhook"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -72,6 +76,10 @@ type Server struct {
 
 	alerter        *alerting.Alerter
 	backupMgr      *backup.BackupManager
+	bwMgr          *bandwidth.Manager
+	cronMonitor    *cronjob.Monitor
+	webhookMgr     *webhook.Manager
+	authMgr        *auth.Manager
 	sftpSrv        *sftpserver.Server
 	proxyPools     map[string]*proxyhandler.UpstreamPool
 	proxyBalancers map[string]proxyhandler.Balancer
@@ -98,6 +106,9 @@ type Server struct {
 
 	// domainChains holds pre-compiled per-domain IP ACL middleware.
 	domainChains map[string]middleware.Middleware
+
+	// domainRateLimiters holds pre-compiled per-domain rate limiters.
+	domainRateLimiters map[string]*middleware.RateLimiter
 
 	// imageOptChains holds pre-compiled per-domain image optimization middleware.
 	imageOptChains map[string]middleware.Middleware
@@ -179,6 +190,13 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetReloadFunc(s.reload)
 		s.admin.SetAnalytics(s.analytics)
 		s.admin.SetAlerter(alerter)
+
+		// Initialize multi-user auth if enabled
+		if cfg.Global.Users.Enabled {
+			s.authMgr = auth.NewManager(cfg.Global.WebRoot, cfg.Global.Admin.APIKey)
+			s.admin.SetAuthManager(s.authMgr)
+			log.Info("multi-user auth enabled", "allow_reseller", cfg.Global.Users.AllowResller)
+		}
 	}
 
 	// TLS manager + unknown host tracker + domain change callback → admin
@@ -191,6 +209,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			// so config.Domains is already updated. Sync all subsystems.
 			s.vhosts.Update(s.config.Domains)
 			s.tlsMgr.UpdateDomains(s.config.Domains)
+			s.bwMgr.UpdateDomains(s.config.Domains)
 			// Obtain certs for any new auto-SSL domains.
 			go s.tlsMgr.ObtainCerts(s.ctx)
 
@@ -230,6 +249,101 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		if s.admin != nil {
 			s.admin.SetBackupManager(s.backupMgr)
 		}
+	}
+
+	// Bandwidth manager
+	s.bwMgr = bandwidth.NewManager(cfg.Domains)
+	if s.admin != nil {
+		s.admin.SetBandwidthManager(s.bwMgr)
+	}
+
+	// Cron job monitor
+	s.cronMonitor = cronjob.NewMonitor(cfg.Global.WebRoot)
+	if s.cronMonitor != nil && s.admin != nil {
+		s.admin.SetCronMonitor(s.cronMonitor)
+	}
+
+	// Webhook manager
+	s.webhookMgr = webhook.NewManager(cfg.Global.WebRoot, log)
+	s.webhookMgr.UpdateWebhooks(toWebhookConfigs(cfg.Global.Webhooks))
+	if s.admin != nil {
+		s.admin.SetWebhookManager(s.webhookMgr)
+	}
+
+	// Wire bandwidth alerts → alerter + webhook
+	s.bwMgr.SetAlertFunc(func(host, limitType string, current, limit int64) {
+		s.alerter.Alert(alerting.Alert{
+			Level:   "warning",
+			Type:    "bandwidth_" + limitType,
+			Host:    host,
+			Message: fmt.Sprintf("bandwidth %s: %d/%d bytes", limitType, current, limit),
+		})
+	})
+
+	// Wire cron failure alerts → alerter + webhook
+	s.cronMonitor.SetAlertFunc(func(domain, command, output string, exitCode int) {
+		s.alerter.Alert(alerting.Alert{
+			Level:   "warning",
+			Type:    "cron_failed",
+			Host:    domain,
+			Message: fmt.Sprintf("cron job failed: %s (exit %d)", command, exitCode),
+		})
+		s.webhookMgr.Fire(webhook.EventCronFailed, map[string]any{
+			"domain":    domain,
+			"command":   command,
+			"exit_code": exitCode,
+			"output":    output,
+		})
+	})
+
+	// Wire TLS cert renewed → webhook
+	s.tlsMgr.SetOnCertRenewed(func(host string) {
+		s.webhookMgr.Fire(webhook.EventCertRenewed, map[string]any{
+			"host": host,
+		})
+	})
+
+	// Wire TLS cert expiry (renewal failed) → alerter + webhook
+	s.tlsMgr.SetOnCertExpiry(func(host string, daysLeft int) {
+		s.alerter.Alert(alerting.Alert{
+			Level:   "critical",
+			Type:    "cert_expiry",
+			Host:    host,
+			Message: fmt.Sprintf("certificate expires in %d days, renewal failed", daysLeft),
+		})
+		s.webhookMgr.Fire(webhook.EventCertExpiry, map[string]any{
+			"host":      host,
+			"days_left": daysLeft,
+		})
+	})
+
+	// Wire PHP crash → alerter + webhook
+	s.phpMgr.SetOnCrash(func(domain string) {
+		s.alerter.Alert(alerting.Alert{
+			Level:   "critical",
+			Type:    "php_crashed",
+			Host:    domain,
+			Message: fmt.Sprintf("PHP process crashed for %s, auto-restarting", domain),
+		})
+		s.webhookMgr.Fire(webhook.EventPHPCrashed, map[string]any{
+			"domain": domain,
+		})
+	})
+
+	// Wire scheduled backup events → webhook
+	if s.backupMgr != nil {
+		s.backupMgr.SetOnBackup(func(info *backup.BackupInfo, err error) {
+			if err != nil {
+				s.webhookMgr.Fire(webhook.EventBackupFailed, map[string]any{
+					"error": err.Error(),
+				})
+			} else if info != nil {
+				s.webhookMgr.Fire(webhook.EventBackupCompleted, map[string]any{
+					"name": info.Name,
+					"size": info.Size,
+				})
+			}
+		})
 	}
 
 	// MCP server
@@ -297,6 +411,18 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				Whitelist: d.Security.IPWhitelist,
 				Blacklist: d.Security.IPBlacklist,
 			})
+		}
+	}
+
+	// Per-domain rate limiters
+	s.domainRateLimiters = make(map[string]*middleware.RateLimiter)
+	for _, d := range cfg.Domains {
+		if d.Security.RateLimit.Requests > 0 {
+			window := d.Security.RateLimit.Window.Duration
+			if window == 0 {
+				window = time.Minute
+			}
+			s.domainRateLimiters[d.Host] = middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
 		}
 	}
 
@@ -497,6 +623,9 @@ func (s *Server) Start() error {
 		}()
 	}
 
+	// Start log rotation cleanup
+	s.domainLogs.StartCleanup()
+
 	<-s.ctx.Done()
 	s.shutdown()
 	s.wg.Wait()
@@ -674,6 +803,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		// Record bandwidth usage (before analytics so bandwidth mgr can block future requests)
+		if s.bwMgr != nil {
+			s.bwMgr.Record(r.Host, ctx.Response.BytesWritten())
+		}
+
 		// Record analytics
 		if s.analytics != nil {
 			s.analytics.RecordFull(r.Host, r.URL.Path, r.RemoteAddr,
@@ -738,6 +872,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			passed = true
 		})).ServeHTTP(ctx.Response, r)
 		if !passed {
+			return
+		}
+	}
+
+	// Per-domain rate limiting
+	if rl := s.domainRateLimiters[domain.Host]; rl != nil {
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
+		if !rl.Allow(ip) {
+			ctx.Response.Header().Set("Retry-After", "60")
+			ctx.Response.WriteHeader(http.StatusTooManyRequests)
+			ctx.Response.Write([]byte("429 Too Many Requests"))
 			return
 		}
 	}
@@ -922,7 +1070,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain access log file
 	if domain.AccessLog.Path != "" {
 		s.domainLogs.Write(
-			r.Host, domain.AccessLog.Path,
+			r.Host, domain.AccessLog.Path, domain.AccessLog.Rotate,
 			r.Method, r.URL.Path,
 			r.RemoteAddr, r.UserAgent(),
 			ctx.Response.StatusCode(), int(ctx.Response.BytesWritten()),
@@ -1359,6 +1507,19 @@ func (s *Server) reload() error {
 	}
 	s.domainChains = newDomainChains
 
+	// Rebuild per-domain rate limiters
+	newRateLimiters := make(map[string]*middleware.RateLimiter)
+	for _, d := range newCfg.Domains {
+		if d.Security.RateLimit.Requests > 0 {
+			window := d.Security.RateLimit.Window.Duration
+			if window == 0 {
+				window = time.Minute
+			}
+			newRateLimiters[d.Host] = middleware.NewRateLimiter(s.ctx, d.Security.RateLimit.Requests, window)
+		}
+	}
+	s.domainRateLimiters = newRateLimiters
+
 	// Rebuild image optimization chains
 	newImageOpt := make(map[string]middleware.Middleware)
 	for _, d := range newCfg.Domains {
@@ -1386,6 +1547,21 @@ func (s *Server) reload() error {
 	}
 	s.proxyPools = newPools
 	s.proxyBalancers = newBalancers
+
+	// Update bandwidth manager with new domain configs
+	if s.bwMgr != nil {
+		s.bwMgr.UpdateDomains(newCfg.Domains)
+	}
+
+	// Update webhook configs
+	if s.webhookMgr != nil {
+		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(newCfg.Global.Webhooks))
+	}
+
+	// Update health monitor domains
+	if s.monitor != nil {
+		s.monitor.UpdateDomains(newCfg.Domains)
+	}
 
 	// Update stored config under write lock
 	s.configMu.Lock()
@@ -1470,6 +1646,11 @@ func (s *Server) shutdown() {
 	// Close per-domain log files.
 	if s.domainLogs != nil {
 		s.domainLogs.Close()
+	}
+
+	// Stop webhook manager.
+	if s.webhookMgr != nil {
+		s.webhookMgr.Close()
 	}
 
 	// Stop the backup scheduler if running.
@@ -1595,4 +1776,25 @@ func (s *Server) removePID() {
 func matchPath(path, pattern string) bool {
 	matched, err := regexp.MatchString(pattern, path)
 	return err == nil && matched
+}
+
+// toWebhookConfigs converts config.WebhookConfig to webhook.WebhookConfig.
+func toWebhookConfigs(cfgs []config.WebhookConfig) []webhook.WebhookConfig {
+	result := make([]webhook.WebhookConfig, len(cfgs))
+	for i, cfg := range cfgs {
+		events := make([]webhook.EventType, len(cfg.Events))
+		for j, e := range cfg.Events {
+			events[j] = webhook.EventType(e)
+		}
+		result[i] = webhook.WebhookConfig{
+			URL:     cfg.URL,
+			Events:  events,
+			Headers: cfg.Headers,
+			Secret:  cfg.Secret,
+			RetryMax: cfg.Retry,
+			Timeout: cfg.Timeout.Duration,
+			Enabled: cfg.Enabled,
+		}
+	}
+	return result
 }

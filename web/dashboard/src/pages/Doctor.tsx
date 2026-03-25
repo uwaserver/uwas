@@ -43,7 +43,7 @@ const statusBg = (s: string) => {
     case 'warn': return 'border-amber-500/20 bg-amber-500/5';
     case 'fail': return 'border-red-500/20 bg-red-500/5';
     case 'fixed': return 'border-blue-500/20 bg-blue-500/5';
-    default: return 'border-[#334155]';
+    default: return 'border-border';
   }
 };
 
@@ -73,12 +73,12 @@ export default function Doctor() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">System Doctor</h1>
-          <p className="text-sm text-slate-400">Diagnose issues and auto-fix problems</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">System Doctor</h1>
+          <p className="text-sm text-muted-foreground">Diagnose issues and auto-fix problems</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={runDiagnose} disabled={loading}
-            className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-4 py-2 text-sm font-medium text-slate-200 hover:bg-[#334155] disabled:opacity-50">
+            className="flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50">
             <Stethoscope size={14} className={loading ? 'animate-pulse' : ''} />
             {loading ? 'Scanning...' : 'Diagnose'}
           </button>
@@ -91,18 +91,18 @@ export default function Doctor() {
       </div>
 
       {!report && !loading && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-12 text-center">
-          <Stethoscope size={48} className="mx-auto mb-4 text-slate-600" />
-          <p className="text-slate-400">Click <strong>Diagnose</strong> to scan your system for issues</p>
-          <p className="mt-1 text-xs text-slate-500">Or <strong>Auto-Fix</strong> to scan and repair automatically</p>
+        <div className="rounded-lg border border-border bg-card p-12 text-center">
+          <Stethoscope size={48} className="mx-auto mb-4 text-muted-foreground" />
+          <p className="text-muted-foreground">Click <strong>Diagnose</strong> to scan your system for issues</p>
+          <p className="mt-1 text-xs text-muted-foreground">Or <strong>Auto-Fix</strong> to scan and repair automatically</p>
         </div>
       )}
 
       {report && (
         <>
           {/* Summary bar */}
-          <div className="flex items-center gap-4 rounded-lg border border-[#334155] bg-[#1e293b] px-5 py-3">
-            <span className="text-sm font-medium text-slate-300">{report.summary}</span>
+          <div className="flex items-center gap-4 rounded-lg border border-border bg-card px-5 py-3">
+            <span className="text-sm font-medium text-card-foreground">{report.summary}</span>
             <div className="ml-auto flex gap-3 text-xs">
               {counts.ok > 0 && <span className="text-emerald-400">{counts.ok} OK</span>}
               {counts.warn > 0 && <span className="text-amber-400">{counts.warn} Warnings</span>}
@@ -117,11 +117,11 @@ export default function Doctor() {
               <div key={i} className={`rounded-lg border p-4 ${statusBg(c.status)}`}>
                 <div className="flex items-center gap-3">
                   {statusIcon(c.status)}
-                  <span className="font-medium text-slate-200">{c.name}</span>
-                  <span className="ml-auto text-sm text-slate-400">{c.message}</span>
+                  <span className="font-medium text-foreground">{c.name}</span>
+                  <span className="ml-auto text-sm text-muted-foreground">{c.message}</span>
                 </div>
                 {c.how_to && (
-                  <div className="mt-2 rounded bg-[#0f172a] px-3 py-2 text-xs font-mono text-slate-400">
+                  <div className="mt-2 rounded bg-background px-3 py-2 text-xs font-mono text-muted-foreground">
                     {c.how_to}
                   </div>
                 )}

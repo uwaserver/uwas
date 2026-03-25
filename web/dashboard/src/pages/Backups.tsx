@@ -64,7 +64,7 @@ function providerBadge(provider: string) {
       );
     default:
       return (
-        <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-xs font-medium text-slate-400">
+        <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-xs font-medium text-muted-foreground">
           {provider}
         </span>
       );
@@ -140,19 +140,19 @@ function ConfirmModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-full max-w-md rounded-lg border border-[#334155] bg-[#1e293b] p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-100">{title}</h3>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-200">
+          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+          <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
             <X size={18} />
           </button>
         </div>
-        <div className="mb-6 text-sm text-slate-300">{children}</div>
+        <div className="mb-6 text-sm text-card-foreground">{children}</div>
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
             disabled={loading}
-            className="rounded-md border border-[#334155] px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-[#334155] disabled:opacity-50"
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
           >
             Cancel
           </button>
@@ -289,7 +289,7 @@ export default function Backups() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading backups...
       </div>
     );
@@ -300,12 +300,12 @@ export default function Backups() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Backups</h1>
-          <p className="text-sm text-slate-400">Backup and restore management</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Backups</h1>
+          <p className="text-sm text-muted-foreground">Backup and restore management</p>
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -353,18 +353,18 @@ export default function Backups() {
       </div>
 
       {/* Section 2: Create Backup */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Plus size={18} className="text-blue-400" />
-          <h2 className="text-sm font-semibold text-slate-300">Create Backup</h2>
+          <h2 className="text-sm font-semibold text-card-foreground">Create Backup</h2>
         </div>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           {/* Provider selector */}
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase text-slate-500">
+            <label className="mb-2 block text-xs font-medium uppercase text-muted-foreground">
               Provider
             </label>
-            <div className="flex gap-1 rounded-lg bg-[#0f172a] p-1">
+            <div className="flex gap-1 rounded-lg bg-background p-1">
               {PROVIDERS.map((p) => (
                 <button
                   key={p.value}
@@ -372,7 +372,7 @@ export default function Backups() {
                   className={`rounded-md px-4 py-2 text-sm font-medium transition ${
                     createProvider === p.value
                       ? 'bg-blue-600 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-200'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {p.label}
@@ -397,16 +397,16 @@ export default function Backups() {
       </div>
 
       {/* Section 3: Backup List */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">
             Backup List ({backups.length})
           </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Name</th>
                 <th className="px-5 py-3 font-medium">Provider</th>
                 <th className="px-5 py-3 font-medium">Size</th>
@@ -418,12 +418,12 @@ export default function Backups() {
               {sortedBackups.map((b) => (
                 <tr
                   key={`${b.provider}-${b.name}`}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-3 font-mono text-xs">{b.name}</td>
                   <td className="px-5 py-3">{providerBadge(b.provider)}</td>
-                  <td className="px-5 py-3 text-slate-400">{formatSize(b.size)}</td>
-                  <td className="px-5 py-3 text-slate-400" title={formatDateTime(b.created)}>
+                  <td className="px-5 py-3 text-muted-foreground">{formatSize(b.size)}</td>
+                  <td className="px-5 py-3 text-muted-foreground" title={formatDateTime(b.created)}>
                     {formatRelativeTime(b.created)}
                   </td>
                   <td className="px-5 py-3">
@@ -456,7 +456,7 @@ export default function Backups() {
               ))}
               {sortedBackups.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center text-slate-500">
+                  <td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">
                     <Archive size={32} className="mx-auto mb-3 opacity-40" />
                     No backups yet. Create your first backup.
                   </td>
@@ -468,10 +468,10 @@ export default function Backups() {
       </div>
 
       {/* Section 4: Auto-Backup Schedule */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Calendar size={18} className="text-purple-400" />
-          <h2 className="text-sm font-semibold text-slate-300">Auto-Backup Schedule</h2>
+          <h2 className="text-sm font-semibold text-card-foreground">Auto-Backup Schedule</h2>
         </div>
 
         <div className="space-y-5">
@@ -482,7 +482,7 @@ export default function Backups() {
                 setScheduleForm((prev) => ({ ...prev, enabled: !prev.enabled }))
               }
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
-                scheduleForm.enabled ? 'bg-blue-600' : 'bg-[#334155]'
+                scheduleForm.enabled ? 'bg-blue-600' : 'bg-accent'
               }`}
             >
               <span
@@ -491,7 +491,7 @@ export default function Backups() {
                 }`}
               />
             </button>
-            <span className="text-sm text-slate-300">
+            <span className="text-sm text-card-foreground">
               {scheduleForm.enabled ? 'Auto-backup enabled' : 'Auto-backup disabled'}
             </span>
           </div>
@@ -500,7 +500,7 @@ export default function Backups() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {/* Interval */}
               <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">
+                <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
                   Interval
                 </label>
                 <select
@@ -508,7 +508,7 @@ export default function Backups() {
                   onChange={(e) =>
                     setScheduleForm((prev) => ({ ...prev, interval: e.target.value }))
                   }
-                  className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
                 >
                   {INTERVAL_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -520,7 +520,7 @@ export default function Backups() {
 
               {/* Keep last N */}
               <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">
+                <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
                   Keep Last N Backups
                 </label>
                 <input
@@ -534,26 +534,26 @@ export default function Backups() {
                       keep: parseInt(e.target.value, 10) || 7,
                     }))
                   }
-                  className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
                 />
               </div>
 
               {/* Last backup */}
               <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">
+                <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
                   Last Backup
                 </label>
-                <p className="py-2 text-sm text-slate-300">
+                <p className="py-2 text-sm text-card-foreground">
                   {schedule?.last_backup ? formatDateTime(schedule.last_backup) : '--'}
                 </p>
               </div>
 
               {/* Next backup */}
               <div>
-                <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">
+                <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
                   Next Backup
                 </label>
-                <p className="py-2 text-sm text-slate-300">
+                <p className="py-2 text-sm text-card-foreground">
                   {schedule?.next_backup ? formatDateTime(schedule.next_backup) : '--'}
                 </p>
               </div>
@@ -593,10 +593,10 @@ export default function Backups() {
             </p>
           </div>
           {restoreTarget && (
-            <div className="space-y-1 text-slate-400">
+            <div className="space-y-1 text-muted-foreground">
               <div className="flex items-center gap-2">
                 <Shield size={14} />
-                <span className="font-mono text-xs text-slate-200">{restoreTarget.name}</span>
+                <span className="font-mono text-xs text-foreground">{restoreTarget.name}</span>
               </div>
               <p className="text-xs">
                 Provider: {restoreTarget.provider} &middot; Size: {formatSize(restoreTarget.size)} &middot; Created: {formatDateTime(restoreTarget.created)}
@@ -619,10 +619,10 @@ export default function Backups() {
         <div className="space-y-3">
           <p>Are you sure you want to permanently delete this backup?</p>
           {deleteTarget && (
-            <div className="space-y-1 text-slate-400">
+            <div className="space-y-1 text-muted-foreground">
               <div className="flex items-center gap-2">
                 <Archive size={14} />
-                <span className="font-mono text-xs text-slate-200">{deleteTarget.name}</span>
+                <span className="font-mono text-xs text-foreground">{deleteTarget.name}</span>
               </div>
               <p className="text-xs">
                 Provider: {deleteTarget.provider} &middot; Size: {formatSize(deleteTarget.size)}

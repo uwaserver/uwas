@@ -34,8 +34,13 @@ import {
   ChevronRight,
   Stethoscope,
   Package,
+  Sun,
+  Moon,
+  Copy,
+  ArrowDownToLine,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
+import { useTheme } from '@/hooks/useTheme';
 
 interface NavItem {
   to: string;
@@ -63,6 +68,8 @@ const groups: NavGroup[] = [
       { to: '/certificates', label: 'Certificates', icon: Lock },
       { to: '/dns', label: 'DNS', icon: Waypoints },
       { to: '/wordpress', label: 'WordPress', icon: Zap },
+      { to: '/clone', label: 'Clone / Staging', icon: Copy },
+      { to: '/migrate', label: 'Migration', icon: ArrowDownToLine },
       { to: '/file-manager', label: 'File Manager', icon: FolderOpen },
     ],
   },
@@ -124,7 +131,7 @@ function NavLinkItem({ to, label, icon: Icon, onClick }: NavItem & { onClick?: (
         `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
           isActive
             ? 'bg-blue-600/20 text-blue-400'
-            : 'text-slate-400 hover:bg-[#334155] hover:text-slate-200'
+            : 'text-muted-foreground hover:bg-accent hover:text-foreground'
         }`
       }
     >
@@ -148,8 +155,8 @@ function CollapsibleGroup({ group, onNavClick }: { group: NavGroup; onNavClick?:
         onClick={() => setOpen(!open)}
         className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
           isActiveGroup
-            ? 'text-slate-200'
-            : 'text-slate-500 hover:text-slate-300'
+            ? 'text-foreground'
+            : 'text-muted-foreground hover:text-foreground'
         }`}
       >
         <Icon size={16} />
@@ -157,7 +164,7 @@ function CollapsibleGroup({ group, onNavClick }: { group: NavGroup; onNavClick?:
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
       </button>
       {open && (
-        <div className="ml-3 flex flex-col gap-0.5 border-l border-[#334155] pl-2">
+        <div className="ml-3 flex flex-col gap-0.5 border-l border-border pl-2">
           {group.items.map(item => (
             <NavLinkItem key={item.to} {...item} onClick={onNavClick} />
           ))}
@@ -171,6 +178,7 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [version, setVersion] = useState('');
   const navigate = useNavigate();
+  const { theme, toggle } = useTheme();
 
   useEffect(() => {
     fetchSystem().then(s => setVersion(s?.version || '')).catch(() => {});
@@ -189,7 +197,7 @@ export default function Sidebar() {
         <NavLinkItem key={item.to} {...item} onClick={closeMobile} />
       ))}
 
-      <div className="my-2 border-t border-[#334155]/50" />
+      <div className="my-2 border-t border-border/50" />
 
       {groups.map(group => (
         <CollapsibleGroup key={group.label} group={group} onNavClick={closeMobile} />
@@ -202,7 +210,7 @@ export default function Sidebar() {
       {/* Mobile toggle */}
       <button
         onClick={() => setMobileOpen(!mobileOpen)}
-        className="fixed top-4 left-4 z-50 rounded-md bg-[#1e293b] p-2 text-slate-300 shadow-lg lg:hidden"
+        className="fixed top-4 left-4 z-50 rounded-md bg-card p-2 text-muted-foreground shadow-lg lg:hidden"
         aria-label="Toggle menu"
       >
         {mobileOpen ? <X size={20} /> : <Menu size={20} />}
@@ -218,16 +226,16 @@ export default function Sidebar() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-40 flex h-full w-60 flex-col border-r border-[#334155] bg-[#0f172a] transition-transform lg:static lg:translate-x-0 ${
+        className={`fixed top-0 left-0 z-40 flex h-full w-60 flex-col border-r border-border bg-background transition-transform lg:static lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         {/* Logo */}
-        <div className="flex items-center gap-2.5 border-b border-[#334155] px-5 py-5">
+        <div className="flex items-center gap-2.5 border-b border-border px-5 py-5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
             U
           </div>
-          <span className="text-lg font-bold tracking-tight text-slate-100">
+          <span className="text-lg font-bold tracking-tight text-foreground">
             UWAS
           </span>
           <span className="ml-auto rounded bg-blue-600/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
@@ -237,11 +245,18 @@ export default function Sidebar() {
 
         {nav}
 
-        {/* Logout */}
-        <div className="border-t border-[#334155] px-3 py-4">
+        {/* Theme toggle + Logout */}
+        <div className="border-t border-border px-3 py-4 space-y-1">
+          <button
+            onClick={toggle}
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+          </button>
           <button
             onClick={handleLogout}
-            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-400 transition-colors hover:bg-[#334155] hover:text-slate-200"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <LogOut size={18} />
             Logout
