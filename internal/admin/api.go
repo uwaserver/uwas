@@ -1462,6 +1462,12 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		d.SSL.Mode = "auto"
 	}
 
+	// ── Pre-save validation ──
+	if err := validateDomainConfig(&d, s); err != nil {
+		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	s.configMu.Lock()
 
 	// Check for duplicates.
@@ -2310,6 +2316,60 @@ func humanDuration(d time.Duration) string {
 		parts = append(parts, fmt.Sprintf("%ds", secs))
 	}
 	return strings.Join(parts, " ")
+}
+
+// validateDomainConfig performs comprehensive pre-save validation.
+func validateDomainConfig(d *config.Domain, s *Server) error {
+	// Type validation
+	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "redirect": true}
+	if !validTypes[d.Type] {
+		return fmt.Errorf("invalid type %q — must be static, php, proxy, or redirect", d.Type)
+	}
+
+	// SSL mode validation
+	validSSL := map[string]bool{"auto": true, "manual": true, "off": true, "": true}
+	if !validSSL[d.SSL.Mode] {
+		return fmt.Errorf("invalid ssl.mode %q — must be auto, manual, or off", d.SSL.Mode)
+	}
+	if d.SSL.Mode == "manual" && (d.SSL.Cert == "" || d.SSL.Key == "") {
+		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
+	}
+
+	// PHP type: verify PHP is available
+	if d.Type == "php" && s.phpMgr != nil {
+		phpStatus := s.phpMgr.Status()
+		activePHP := 0
+		for _, p := range phpStatus {
+			if !p.Disabled {
+				activePHP++
+			}
+		}
+		if activePHP == 0 {
+			return fmt.Errorf("no active PHP versions available — install or enable PHP first")
+		}
+	}
+
+	// Proxy type: must have upstreams
+	if d.Type == "proxy" && len(d.Proxy.Upstreams) == 0 {
+		return fmt.Errorf("proxy type requires at least one upstream")
+	}
+
+	// Redirect type: must have target
+	if d.Type == "redirect" && d.Redirect.Target == "" {
+		return fmt.Errorf("redirect type requires a target URL")
+	}
+
+	// Cache TTL sanity
+	if d.Cache.TTL < 0 {
+		return fmt.Errorf("cache TTL cannot be negative")
+	}
+
+	// Rate limit sanity
+	if d.Security.RateLimit.Requests < 0 {
+		return fmt.Errorf("rate limit requests cannot be negative")
+	}
+
+	return nil
 }
 
 // isValidHostname checks if s is a valid domain name (no path traversal, no injection).

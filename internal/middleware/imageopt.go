@@ -3,8 +3,10 @@ package middleware
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // imageExtensions maps original image extensions to their lowercase form.
@@ -112,8 +114,74 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				return
 			}
 
-			// No optimized version available; serve the original.
+			// No optimized version available — try on-the-fly conversion.
+			for _, c := range candidates {
+				if !strings.Contains(accept, c.accept) {
+					continue
+				}
+				relPath := filepath.FromSlash(r.URL.Path)
+				srcPath := filepath.Join(docRoot, relPath)
+				dstPath := srcPath + c.ext
+
+				if converted := convertImage(srcPath, dstPath, c.format); converted {
+					if f, err := os.Open(dstPath); err == nil {
+						defer f.Close()
+						if info, err := f.Stat(); err == nil {
+							w.Header().Set("Content-Type", c.accept)
+							http.ServeContent(w, r, filepath.Base(dstPath), info.ModTime(), f)
+							return
+						}
+					}
+				}
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// convertImage converts src to dst using cwebp or avifenc.
+// Returns true if conversion succeeded. Thread-safe via file lock.
+var convertMu sync.Mutex
+
+func convertImage(src, dst, format string) bool {
+	// Don't convert if src doesn't exist or dst already exists
+	if _, err := os.Stat(src); err != nil {
+		return false
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return true // already converted
+	}
+
+	convertMu.Lock()
+	defer convertMu.Unlock()
+
+	// Double-check after lock
+	if _, err := os.Stat(dst); err == nil {
+		return true
+	}
+
+	var cmd *exec.Cmd
+	switch format {
+	case "webp":
+		bin, err := exec.LookPath("cwebp")
+		if err != nil {
+			return false
+		}
+		cmd = exec.Command(bin, "-q", "80", "-m", "4", src, "-o", dst)
+	case "avif":
+		bin, err := exec.LookPath("avifenc")
+		if err != nil {
+			return false
+		}
+		cmd = exec.Command(bin, "-s", "6", "--min", "20", "--max", "40", src, dst)
+	default:
+		return false
+	}
+
+	if err := cmd.Run(); err != nil {
+		os.Remove(dst) // cleanup partial file
+		return false
+	}
+	return true
 }
