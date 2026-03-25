@@ -60,10 +60,23 @@ func GetStatus() Status {
 		return st
 	}
 
-	// Check if running
-	out, err := exec.Command("mysqladmin", "ping", "--silent").CombinedOutput()
-	if err == nil && strings.Contains(string(out), "alive") {
-		st.Running = true
+	// Check if running — try multiple methods
+	for _, method := range [][]string{
+		{"mysqladmin", "ping", "--silent"},
+		{"mariadb-admin", "ping", "--silent"},
+		{"mysql", "-u", "root", "-e", "SELECT 1"},
+		{"mariadb", "-u", "root", "-e", "SELECT 1"},
+	} {
+		bin, err := exec.LookPath(method[0])
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(bin, method[1:]...)
+		out, err := cmd.CombinedOutput()
+		if err == nil && (strings.Contains(string(out), "alive") || strings.Contains(string(out), "1")) {
+			st.Running = true
+			break
+		}
 	}
 
 	return st
@@ -248,15 +261,49 @@ func InstallMySQL() (string, error) {
 }
 
 func runMySQL(sql string) (string, error) {
-	// Try without password first (common for root on fresh installs)
-	cmd := exec.Command("mysql", "-u", "root", "-e", sql)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// Try with sudo
-		cmd = exec.Command("sudo", "mysql", "-e", sql)
-		out, err = cmd.CombinedOutput()
+	// Ensure socket directory exists (common issue after reboot)
+	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
+		os.MkdirAll(dir, 0755)
+		exec.Command("chown", "mysql:mysql", dir).Run()
 	}
-	return string(out), err
+
+	// Try mariadb client first (preferred on modern Ubuntu), then mysql
+	for _, client := range []string{"mariadb", "mysql"} {
+		bin, err := exec.LookPath(client)
+		if err != nil {
+			continue
+		}
+
+		// Method 1: Direct as root (unix_socket auth)
+		cmd := exec.Command(bin, "-u", "root", "--batch", "--skip-column-names", "-e", sql)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return string(out), nil
+		}
+
+		// Method 2: With sudo (if not running as root)
+		cmd = exec.Command("sudo", bin, "--batch", "--skip-column-names", "-e", sql)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return string(out), nil
+		}
+
+		// Method 3: Via socket explicitly
+		for _, sock := range []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"} {
+			if _, statErr := os.Stat(sock); statErr != nil {
+				continue
+			}
+			cmd = exec.Command(bin, "-u", "root", "--socket="+sock, "--batch", "--skip-column-names", "-e", sql)
+			out, err = cmd.CombinedOutput()
+			if err == nil {
+				return string(out), nil
+			}
+		}
+
+		return string(out), fmt.Errorf("%s error: %w — output: %s", client, err, string(out))
+	}
+
+	return "", fmt.Errorf("neither mariadb nor mysql client found")
 }
 
 func generateDBPassword() string {
