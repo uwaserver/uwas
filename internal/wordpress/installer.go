@@ -273,6 +273,8 @@ $table_prefix = 'wp_';
 define('WP_DEBUG', false);
 define('FORCE_SSL_ADMIN', true);
 define('DISALLOW_FILE_EDIT', true);
+define('FS_METHOD', 'direct');
+define('WP_TEMP_DIR', __DIR__ . '/.tmp');
 
 if ( ! defined('ABSPATH') ) {
     define('ABSPATH', __DIR__ . '/');
@@ -753,5 +755,35 @@ func FixPermissions(webRoot string) (string, error) {
 	// Owner
 	exec.Command("chown", "-R", "www-data:www-data", webRoot).Run()
 	log.WriteString("Owner set to www-data:www-data\n")
+
+	// Ensure FS_METHOD is set in wp-config.php (prevents FTP prompt for plugin installs)
+	wpConfig := filepath.Join(webRoot, "wp-config.php")
+	if data, err := os.ReadFile(wpConfig); err == nil {
+		content := string(data)
+		if !strings.Contains(content, "FS_METHOD") {
+			// Insert before require_once
+			content = strings.Replace(content,
+				"require_once ABSPATH",
+				"define('FS_METHOD', 'direct');\ndefine('WP_TEMP_DIR', __DIR__ . '/.tmp');\n\nrequire_once ABSPATH",
+				1)
+			os.WriteFile(wpConfig, []byte(content), 0600)
+			log.WriteString("Added FS_METHOD=direct to wp-config.php\n")
+		}
+		if !strings.Contains(content, "WP_TEMP_DIR") {
+			content = strings.Replace(content,
+				"require_once ABSPATH",
+				"define('WP_TEMP_DIR', __DIR__ . '/.tmp');\n\nrequire_once ABSPATH",
+				1)
+			os.WriteFile(wpConfig, []byte(content), 0600)
+			log.WriteString("Added WP_TEMP_DIR to wp-config.php\n")
+		}
+	}
+
+	// Create .tmp directory for WordPress temp operations
+	tmpDir := filepath.Join(webRoot, ".tmp")
+	os.MkdirAll(tmpDir, 0775)
+	exec.Command("chown", "www-data:www-data", tmpDir).Run()
+	log.WriteString(".tmp directory created for WordPress temp operations\n")
+
 	return log.String(), nil
 }
