@@ -12,10 +12,10 @@ interface CardProps {
 export default function Card({ icon, label, value, sub, trend, className = '' }: CardProps) {
   return (
     <div
-      className={`rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md ${className}`}
+      className={`rounded-lg border border-border bg-card p-5 shadow-md ${className}`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-slate-400">{icon}</span>
+        <span className="text-muted-foreground">{icon}</span>
         {trend && (
           <span
             className={`text-xs font-medium ${
@@ -26,9 +26,9 @@ export default function Card({ icon, label, value, sub, trend, className = '' }:
           </span>
         )}
       </div>
-      <p className="mt-3 text-2xl font-bold text-slate-100">{value}</p>
-      <p className="mt-1 text-sm text-slate-400">{label}</p>
-      {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
+      <p className="mt-3 text-2xl font-bold text-foreground">{value}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{label}</p>
+      {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
 }

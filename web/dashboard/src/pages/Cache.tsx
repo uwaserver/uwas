@@ -103,12 +103,12 @@ export default function Cache() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Cache</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Cache</h1>
+          <p className="text-sm text-muted-foreground">
             {cacheStats?.enabled ? `${cacheStats.entries} entries, ${formatBytes(cacheStats.used_bytes)} used` : 'Cache not enabled'}
           </p>
         </div>
-        <button onClick={fetchCacheStats} className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]">
+        <button onClick={fetchCacheStats} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
@@ -124,8 +124,8 @@ export default function Cache() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <h3 className="mb-3 text-sm font-semibold text-slate-300">Cache Hits Over Time</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-semibold text-card-foreground">Cache Hits Over Time</h3>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={chartData}>
               <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 10 }} />
@@ -135,8 +135,8 @@ export default function Cache() {
             </AreaChart>
           </ResponsiveContainer>
         </div>
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <h3 className="mb-3 text-sm font-semibold text-slate-300">Distribution</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-semibold text-card-foreground">Distribution</h3>
           {pieData.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart><Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
@@ -144,7 +144,7 @@ export default function Cache() {
               </Pie><Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: 8 }} /></PieChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex h-[200px] items-center justify-center text-sm text-slate-500">No cache data yet</div>
+            <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">No cache data yet</div>
           )}
           <div className="mt-2 flex justify-center gap-4 text-xs">
             <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" /> Hits</span>
@@ -156,24 +156,24 @@ export default function Cache() {
 
       {/* Per-domain */}
       {cacheStats?.domains && cacheStats.domains.length > 0 && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300"><Globe size={14} /> Per-Domain Cache</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-card-foreground"><Globe size={14} /> Per-Domain Cache</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead><tr className="border-b border-[#334155] text-xs text-slate-500">
+              <thead><tr className="border-b border-border text-xs text-muted-foreground">
                 <th className="pb-2 pr-4">Domain</th><th className="pb-2 pr-4">Status</th><th className="pb-2 pr-4">TTL</th><th className="pb-2 pr-4">Tags</th><th className="pb-2 pr-4">Rules</th><th className="pb-2">Actions</th>
               </tr></thead>
               <tbody>{cacheStats.domains.map(d => (
-                <tr key={d.host} className="border-b border-[#334155]/50 hover:bg-[#0f172a]/30">
-                  <td className="py-2.5 pr-4 font-medium text-slate-200">{d.host}</td>
+                <tr key={d.host} className="border-b border-border/50 hover:bg-background/30">
+                  <td className="py-2.5 pr-4 font-medium text-foreground">{d.host}</td>
                   <td className="py-2.5 pr-4">
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${d.enabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-500/15 text-slate-400'}`}>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${d.enabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-500/15 text-muted-foreground'}`}>
                       {d.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}{d.enabled ? 'On' : 'Off'}
                     </span>
                   </td>
-                  <td className="py-2.5 pr-4 text-slate-400">{d.ttl > 0 ? `${d.ttl}s` : '—'}</td>
-                  <td className="py-2.5 pr-4">{d.tags?.map(t => <span key={t} className="mr-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-xs text-blue-400">{t}</span>) || <span className="text-slate-500">—</span>}</td>
-                  <td className="py-2.5 pr-4 text-slate-400">{d.rules ? (
+                  <td className="py-2.5 pr-4 text-muted-foreground">{d.ttl > 0 ? `${d.ttl}s` : '—'}</td>
+                  <td className="py-2.5 pr-4">{d.tags?.map(t => <span key={t} className="mr-1 rounded bg-blue-500/15 px-1.5 py-0.5 text-xs text-blue-400">{t}</span>) || <span className="text-muted-foreground">—</span>}</td>
+                  <td className="py-2.5 pr-4 text-muted-foreground">{d.rules ? (
                     <span title={d.rules.map(r => `${r.match} ${r.bypass ? '(bypass)' : `TTL:${r.ttl}s`}`).join('\n')}>{d.rules.length} rules</span>
                   ) : '—'}</td>
                   <td className="py-2.5">{d.enabled && d.tags && d.tags.length > 0 && (
@@ -187,45 +187,45 @@ export default function Cache() {
       )}
 
       {/* Purge controls */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
-        <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-300"><Shield size={14} /> Purge Controls</h2>
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-card-foreground"><Shield size={14} /> Purge Controls</h2>
         {status && (
           <div className={`mb-4 flex items-center gap-2 rounded-md px-3 py-2 text-sm ${status.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
             {status.ok ? <CheckCircle size={14} /> : <XCircle size={14} />}{status.message}
           </div>
         )}
         <div className="mb-4">
-          <label className="mb-1.5 block text-xs text-slate-400">Purge by Cache Tag</label>
+          <label className="mb-1.5 block text-xs text-muted-foreground">Purge by Cache Tag</label>
           <div className="flex gap-3">
             <div className="relative flex-1">
-              <Tag size={14} className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500" />
+              <Tag size={14} className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
               <input type="text" value={tag} onChange={e => setTag(e.target.value)} placeholder='e.g., site:blog'
-                className="w-full rounded-md border border-[#334155] bg-[#0f172a] py-2 pr-3 pl-9 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="w-full rounded-md border border-border bg-background py-2 pr-3 pl-9 text-sm text-foreground placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 onKeyDown={e => e.key === 'Enter' && handlePurgeTag()} />
             </div>
             <button onClick={handlePurgeTag} disabled={purging || !tag.trim()} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Purge Tag</button>
           </div>
         </div>
         <div className="mb-4">
-          <label className="mb-1.5 block text-xs text-slate-400">Purge by Domain</label>
+          <label className="mb-1.5 block text-xs text-muted-foreground">Purge by Domain</label>
           <div className="flex gap-3">
-            <select value={purgeHost} onChange={e => setPurgeHost(e.target.value)} className="flex-1 rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500">
+            <select value={purgeHost} onChange={e => setPurgeHost(e.target.value)} className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
               <option value="">Select domain...</option>
               {cacheStats?.domains?.filter(d => d.enabled).map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
             </select>
             <button onClick={handlePurgeDomain} disabled={purging || !purgeHost} className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50">Purge Domain</button>
           </div>
         </div>
-        <div className="border-t border-[#334155] pt-4">
+        <div className="border-t border-border pt-4">
           {!confirmAll ? (
             <button onClick={() => setConfirmAll(true)} className="flex items-center gap-2 rounded-md bg-red-600/15 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-600/25">
               <Trash2 size={14} /> Purge All Cache
             </button>
           ) : (
             <div className="flex items-center gap-3">
-              <span className="text-sm text-slate-400">Clear all {cacheStats?.entries ?? 0} entries?</span>
+              <span className="text-sm text-muted-foreground">Clear all {cacheStats?.entries ?? 0} entries?</span>
               <button onClick={handlePurgeAll} disabled={purging} className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">{purging ? 'Purging...' : 'Yes, Purge All'}</button>
-              <button onClick={() => setConfirmAll(false)} className="rounded-md bg-[#334155] px-4 py-2 text-sm text-slate-300 hover:bg-[#475569]">Cancel</button>
+              <button onClick={() => setConfirmAll(false)} className="rounded-md bg-accent px-4 py-2 text-sm text-card-foreground hover:bg-[#475569]">Cancel</button>
             </div>
           )}
         </div>
@@ -233,14 +233,14 @@ export default function Cache() {
 
       {/* Purge history */}
       {purgeLog.length > 0 && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300"><Clock size={14} /> Purge History</h3>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-card-foreground"><Clock size={14} /> Purge History</h3>
           <div className="space-y-1.5">
             {purgeLog.map((entry, i) => (
               <div key={i} className="flex items-center gap-3 text-xs">
-                <span className="font-mono text-slate-500">{entry.time}</span>
+                <span className="font-mono text-muted-foreground">{entry.time}</span>
                 {entry.ok ? <CheckCircle size={12} className="text-emerald-400" /> : <XCircle size={12} className="text-red-400" />}
-                <span className={entry.ok ? 'text-slate-300' : 'text-red-400'}>{entry.action}</span>
+                <span className={entry.ok ? 'text-card-foreground' : 'text-red-400'}>{entry.action}</span>
               </div>
             ))}
           </div>

@@ -62,7 +62,7 @@ internal/
 pkg/
   fastcgi/           FastCGI protocol implementation + connection pool
   htaccess/          .htaccess parser (IfModule, RewriteCond, Header, Expires, ErrorDocument)
-web/dashboard/       React SPA (29 pages, Vite + TypeScript + Tailwind)
+web/dashboard/       React SPA (31 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Stats
@@ -131,9 +131,9 @@ go test -v -run TestWordPress ./...  # Specific test
 - **Add dashboard page**: Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to sidebar group in `Sidebar.tsx`
 - **Add API function**: Add to `web/dashboard/src/lib/api.ts` with proper TypeScript interface
 
-## Dashboard Pages (29)
+## Dashboard Pages (31)
 
-Sites: Domains, Topology, Certificates, DNS, WordPress, File Manager
+Sites: Domains, Topology, Certificates, DNS, WordPress, Clone/Staging, Migration, File Manager
 Server: PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, IP Management, Email Guide
 Performance: Cache, Metrics, Analytics, Logs
 Security: Security, Firewall, Unknown Domains, Audit Log

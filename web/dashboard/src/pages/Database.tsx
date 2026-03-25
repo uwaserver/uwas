@@ -54,19 +54,19 @@ function ConfirmModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-full max-w-md rounded-lg border border-[#334155] bg-[#1e293b] p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-100">{title}</h3>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-200">
+          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+          <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
             <X size={18} />
           </button>
         </div>
-        <div className="mb-6 text-sm text-slate-300">{children}</div>
+        <div className="mb-6 text-sm text-card-foreground">{children}</div>
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
             disabled={loading}
-            className="rounded-md border border-[#334155] px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-[#334155] disabled:opacity-50"
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
           >
             Cancel
           </button>
@@ -107,11 +107,11 @@ function CredentialsPanel({
         <h3 className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
           <CheckCircle size={16} /> Database Created Successfully
         </h3>
-        <button onClick={onDismiss} className="text-slate-400 hover:text-slate-200">
+        <button onClick={onDismiss} className="text-muted-foreground hover:text-foreground">
           <X size={16} />
         </button>
       </div>
-      <p className="mb-4 text-xs text-slate-400">
+      <p className="mb-4 text-xs text-muted-foreground">
         Save these credentials now. The password will not be shown again.
       </p>
       <div className="space-y-2">
@@ -122,15 +122,15 @@ function CredentialsPanel({
         ].map((item) => (
           <div
             key={item.label}
-            className="flex items-center justify-between rounded-md bg-[#0f172a] px-4 py-2.5"
+            className="flex items-center justify-between rounded-md bg-background px-4 py-2.5"
           >
             <div>
-              <span className="text-xs text-slate-500">{item.label}</span>
-              <p className="font-mono text-sm text-slate-200">{item.value}</p>
+              <span className="text-xs text-muted-foreground">{item.label}</span>
+              <p className="font-mono text-sm text-foreground">{item.value}</p>
             </div>
             <button
               onClick={() => copyToClipboard(item.value)}
-              className="rounded-md p-1.5 text-slate-400 transition hover:bg-[#334155] hover:text-slate-200"
+              className="rounded-md p-1.5 text-muted-foreground transition hover:bg-accent hover:text-foreground"
               title={`Copy ${item.label.toLowerCase()}`}
             >
               <Copy size={14} />
@@ -263,7 +263,7 @@ export default function Database() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading database status...
       </div>
     );
@@ -274,12 +274,12 @@ export default function Database() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Database</h1>
-          <p className="text-sm text-slate-400">MySQL / MariaDB management</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Database</h1>
+          <p className="text-sm text-muted-foreground">MySQL / MariaDB management</p>
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -393,7 +393,7 @@ export default function Database() {
               <h3 className="text-sm font-semibold text-amber-400">
                 MariaDB Not Installed
               </h3>
-              <p className="mt-1 text-sm text-slate-400">
+              <p className="mt-1 text-sm text-muted-foreground">
                 MariaDB is required for database management. Click below to install it automatically.
               </p>
               <button
@@ -425,14 +425,14 @@ export default function Database() {
 
       {/* Create Database Form */}
       {dbStatus?.installed && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+        <div className="rounded-lg border border-border bg-card p-5 shadow-md">
           <div className="mb-4 flex items-center gap-2">
             <Plus size={18} className="text-blue-400" />
-            <h2 className="text-sm font-semibold text-slate-300">Create Database</h2>
+            <h2 className="text-sm font-semibold text-card-foreground">Create Database</h2>
           </div>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
             <div className="flex-1">
-              <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
                 Database Name
               </label>
               <input
@@ -440,12 +440,12 @@ export default function Database() {
                 value={newDbName}
                 onChange={(e) => setNewDbName(e.target.value)}
                 placeholder="my_database"
-                className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleCreate();
                 }}
               />
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-muted-foreground">
                 A user with the same name will be created automatically.
               </p>
             </div>
@@ -466,16 +466,16 @@ export default function Database() {
       )}
 
       {/* Database List */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">
             Databases ({databases.length})
           </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Name</th>
                 <th className="px-5 py-3 font-medium">User</th>
                 <th className="px-5 py-3 font-medium">Host</th>
@@ -488,13 +488,13 @@ export default function Database() {
               {databases.map((db) => (
                 <tr
                   key={db.name}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-3 font-mono text-xs">{db.name}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-slate-400">{db.user}</td>
-                  <td className="px-5 py-3 text-slate-400">{db.host}</td>
-                  <td className="px-5 py-3 text-slate-400">{db.size || '--'}</td>
-                  <td className="px-5 py-3 text-slate-400">
+                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{db.user}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{db.host}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{db.size || '--'}</td>
+                  <td className="px-5 py-3 text-muted-foreground">
                     {db.tables !== undefined ? db.tables : '--'}
                   </td>
                   <td className="px-5 py-3">
@@ -512,7 +512,7 @@ export default function Database() {
               ))}
               {databases.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
+                  <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
                     <HardDrive size={32} className="mx-auto mb-3 opacity-40" />
                     No databases found.{' '}
                     {dbStatus?.installed
@@ -545,10 +545,10 @@ export default function Database() {
             </p>
           </div>
           {dropTarget && (
-            <div className="space-y-1 text-slate-400">
+            <div className="space-y-1 text-muted-foreground">
               <div className="flex items-center gap-2">
                 <HardDrive size={14} />
-                <span className="font-mono text-xs text-slate-200">{dropTarget.name}</span>
+                <span className="font-mono text-xs text-foreground">{dropTarget.name}</span>
               </div>
               <p className="text-xs">
                 User: {dropTarget.user} &middot; Host: {dropTarget.host}

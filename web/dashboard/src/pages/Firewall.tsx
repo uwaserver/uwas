@@ -116,7 +116,7 @@ export default function Firewall() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">Loading firewall status...</div>
+      <div className="flex h-96 items-center justify-center text-muted-foreground">Loading firewall status...</div>
     );
   }
 
@@ -125,14 +125,14 @@ export default function Firewall() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Firewall</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Firewall</h1>
+          <p className="text-sm text-muted-foreground">
             Manage firewall rules{fw?.backend ? ` (backend: ${fw.backend})` : ''}
           </p>
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -150,14 +150,14 @@ export default function Firewall() {
       )}
 
       {/* Status + toggle */}
-      <div className="flex items-center justify-between rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="flex items-center justify-between rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="flex items-center gap-4">
           {fw?.active ? (
             <div className="flex items-center gap-2">
               <ShieldCheck size={24} className="text-emerald-400" />
               <div>
                 <p className="text-sm font-semibold text-emerald-400">Firewall Active</p>
-                <p className="text-xs text-slate-400">{rules.length} rules configured</p>
+                <p className="text-xs text-muted-foreground">{rules.length} rules configured</p>
               </div>
             </div>
           ) : (
@@ -165,7 +165,7 @@ export default function Firewall() {
               <ShieldOff size={24} className="text-red-400" />
               <div>
                 <p className="text-sm font-semibold text-red-400">Firewall Inactive</p>
-                <p className="text-xs text-slate-400">No rules are being enforced</p>
+                <p className="text-xs text-muted-foreground">No rules are being enforced</p>
               </div>
             </div>
           )}
@@ -189,29 +189,29 @@ export default function Firewall() {
       </div>
 
       {/* Add rule form */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Plus size={18} className="text-blue-400" />
-          <h2 className="text-sm font-semibold text-slate-300">Add Rule</h2>
+          <h2 className="text-sm font-semibold text-card-foreground">Add Rule</h2>
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           {/* Port */}
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Port</label>
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Port</label>
             <input
               type="text"
               value={port}
               onChange={e => setPort(e.target.value)}
               placeholder="e.g. 80, 443, 8080:8090"
-              className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
             />
           </div>
 
           {/* Protocol */}
           <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Protocol</label>
-            <div className="flex gap-1 rounded-lg bg-[#0f172a] p-1">
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Protocol</label>
+            <div className="flex gap-1 rounded-lg bg-background p-1">
               {(['tcp', 'udp', 'both'] as const).map(p => (
                 <button
                   key={p}
@@ -219,7 +219,7 @@ export default function Firewall() {
                   className={`rounded-md px-4 py-2 text-sm font-medium transition ${
                     proto === p
                       ? 'bg-blue-600 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-200'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {p.toUpperCase()}
@@ -230,14 +230,14 @@ export default function Firewall() {
 
           {/* Action */}
           <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Action</label>
-            <div className="flex gap-1 rounded-lg bg-[#0f172a] p-1">
+            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Action</label>
+            <div className="flex gap-1 rounded-lg bg-background p-1">
               <button
                 onClick={() => setAction('allow')}
                 className={`rounded-md px-4 py-2 text-sm font-medium transition ${
                   action === 'allow'
                     ? 'bg-emerald-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Allow
@@ -247,7 +247,7 @@ export default function Firewall() {
                 className={`rounded-md px-4 py-2 text-sm font-medium transition ${
                   action === 'deny'
                     ? 'bg-red-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Deny
@@ -268,14 +268,14 @@ export default function Firewall() {
       </div>
 
       {/* Rules table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">Firewall Rules ({rules.length})</h2>
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">Firewall Rules ({rules.length})</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">#</th>
                 <th className="px-5 py-3 font-medium">Action</th>
                 <th className="px-5 py-3 font-medium">Port</th>
@@ -288,9 +288,9 @@ export default function Firewall() {
               {rules.map(rule => (
                 <tr
                   key={rule.number}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
-                  <td className="px-5 py-3 font-mono text-xs text-slate-500">{rule.number}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{rule.number}</td>
                   <td className="px-5 py-3">
                     <span
                       className={`inline-block rounded-md px-2.5 py-0.5 text-xs font-medium ${
@@ -302,9 +302,9 @@ export default function Firewall() {
                       {rule.action}
                     </span>
                   </td>
-                  <td className="px-5 py-3 font-mono text-sm text-slate-200">{rule.port || 'Any'}</td>
-                  <td className="px-5 py-3 text-xs text-slate-400 uppercase">{rule.proto || '--'}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-slate-400">{rule.from || 'Anywhere'}</td>
+                  <td className="px-5 py-3 font-mono text-sm text-foreground">{rule.port || 'Any'}</td>
+                  <td className="px-5 py-3 text-xs text-muted-foreground uppercase">{rule.proto || '--'}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{rule.from || 'Anywhere'}</td>
                   <td className="px-5 py-3 text-right">
                     {confirmDelete === rule.number ? (
                       <span className="flex items-center justify-end gap-2">
@@ -318,7 +318,7 @@ export default function Firewall() {
                         </button>
                         <button
                           onClick={() => setConfirmDelete(null)}
-                          className="rounded bg-[#334155] px-2 py-1 text-xs text-slate-300"
+                          className="rounded bg-accent px-2 py-1 text-xs text-card-foreground"
                         >
                           No
                         </button>
@@ -336,7 +336,7 @@ export default function Firewall() {
               ))}
               {rules.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
+                  <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
                     <ShieldCheck size={32} className="mx-auto mb-3 opacity-40" />
                     No firewall rules configured.
                   </td>

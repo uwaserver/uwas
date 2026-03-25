@@ -120,15 +120,15 @@ export default function ConfigEditor() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-100">Config Editor</h1>
-        <p className="text-sm text-slate-400">Edit YAML configuration files</p>
+        <h1 className="text-xl font-bold sm:text-2xl text-foreground">Config Editor</h1>
+        <p className="text-sm text-muted-foreground">Edit YAML configuration files</p>
       </div>
 
       <div className="flex gap-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
         {/* File sidebar */}
-        <div className="w-56 shrink-0 rounded-lg border border-[#334155] bg-[#1e293b]">
-          <div className="border-b border-[#334155] px-4 py-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <div className="w-56 shrink-0 rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Config Files
             </h3>
           </div>
@@ -140,7 +140,7 @@ export default function ConfigEditor() {
                 className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${
                   activeFile === f.id
                     ? 'bg-blue-600/20 text-blue-400'
-                    : 'text-slate-400 hover:bg-[#334155] hover:text-slate-200'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
                 }`}
               >
                 <FileCode size={14} className="shrink-0" />
@@ -154,11 +154,11 @@ export default function ConfigEditor() {
         </div>
 
         {/* Editor area */}
-        <div className="flex flex-1 flex-col rounded-lg border border-[#334155] bg-[#1e293b]">
+        <div className="flex flex-1 flex-col rounded-lg border border-border bg-card">
           {/* Toolbar */}
-          <div className="flex items-center justify-between border-b border-[#334155] px-4 py-3">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-slate-300">{activeLabel}</span>
+              <span className="text-sm font-medium text-card-foreground">{activeLabel}</span>
               {isDirty && (
                 <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400">
                   Modified
@@ -178,7 +178,7 @@ export default function ConfigEditor() {
               <button
                 onClick={handleReload}
                 disabled={loading}
-                className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569] disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569] disabled:opacity-50"
               >
                 <RotateCcw size={12} /> Reload
               </button>
@@ -195,7 +195,7 @@ export default function ConfigEditor() {
           {/* Status messages */}
           {status && (
             <div
-              className={`flex items-center gap-2 border-b border-[#334155] px-4 py-2 text-sm ${
+              className={`flex items-center gap-2 border-b border-border px-4 py-2 text-sm ${
                 status.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
               }`}
             >
@@ -206,7 +206,7 @@ export default function ConfigEditor() {
 
           {/* Validation error */}
           {validationError && (
-            <div className="flex items-center gap-2 border-b border-[#334155] bg-amber-500/10 px-4 py-2 text-sm text-amber-400">
+            <div className="flex items-center gap-2 border-b border-border bg-amber-500/10 px-4 py-2 text-sm text-amber-400">
               <AlertTriangle size={14} />
               {validationError}
             </div>
@@ -215,7 +215,7 @@ export default function ConfigEditor() {
           {/* Text editor */}
           <div className="relative flex-1">
             {loading ? (
-              <div className="flex h-full items-center justify-center text-sm text-slate-500">
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 Loading configuration...
               </div>
             ) : (
@@ -223,7 +223,7 @@ export default function ConfigEditor() {
                 value={content}
                 onChange={(e) => handleContentChange(e.target.value)}
                 spellCheck={false}
-                className="h-full w-full resize-none rounded-b-lg bg-[#0f172a] p-4 font-mono text-sm leading-relaxed text-slate-200 outline-none placeholder:text-slate-600"
+                className="h-full w-full resize-none rounded-b-lg bg-background p-4 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
                 placeholder="# YAML configuration..."
                 style={{ tabSize: 2 }}
               />

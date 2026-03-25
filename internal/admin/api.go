@@ -21,10 +21,14 @@ import (
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
+	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/cronjob"
+	"github.com/uwaserver/uwas/internal/webhook"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/mcp"
@@ -85,6 +89,9 @@ type Server struct {
 	alerter       *alerting.Alerter
 	phpMgr        *phpmanager.Manager
 	backupMgr     *backup.BackupManager
+	bwMgr         *bandwidth.Manager
+	cronMonitor   *cronjob.Monitor
+	webhookMgr    *webhook.Manager
 	mcpSrv        *mcp.Server
 	tlsMgr        *uwastls.Manager
 	unknownHT     *router.UnknownHostTracker
@@ -112,6 +119,27 @@ type Server struct {
 	rlMu      sync.Mutex
 	rateLimit map[string]*rateLimitEntry
 	rlDone    chan struct{}
+
+	// Auth manager for multi-user support
+	authMgr AuthManager
+}
+
+// AuthManager interface for authentication (implemented by auth.Manager)
+type AuthManager interface {
+	Authenticate(username, password string) (*auth.Session, error)
+	AuthenticateAPIKey(key string) (*auth.User, error)
+	ValidateSession(token string) (*auth.Session, error)
+	Logout(token string)
+	HasPermission(role auth.Role, perm auth.Permission) bool
+	CanManageDomain(user *auth.User, domain string) bool
+	GetUser(username string) (*auth.User, bool)
+	GetUserByID(id string) (*auth.User, bool)
+	ListUsers() []*auth.User
+	CreateUser(username, email, password string, role auth.Role, domains []string) (*auth.User, error)
+	UpdateUser(username string, updates *auth.User) error
+	DeleteUser(username string) error
+	RegenerateAPIKey(username string) (string, error)
+	ChangePassword(username, currentPassword, newPassword string) error
 }
 
 func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
@@ -216,6 +244,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/dns/{domain}", s.handleDNSCheck)
 	s.mux.HandleFunc("GET /api/v1/dns/{domain}/records", s.handleDNSRecords)
 	s.mux.HandleFunc("POST /api/v1/dns/{domain}/records", s.handleDNSRecordCreate)
+	s.mux.HandleFunc("PUT /api/v1/dns/{domain}/records/{id}", s.handleDNSRecordUpdate)
 	s.mux.HandleFunc("DELETE /api/v1/dns/{domain}/records/{id}", s.handleDNSRecordDelete)
 	s.mux.HandleFunc("POST /api/v1/dns/{domain}/sync", s.handleDNSSync)
 
@@ -226,6 +255,13 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/services/{name}/restart", s.handleServiceRestart)
 
 	// Database service control
+	// Docker database containers
+	s.mux.HandleFunc("GET /api/v1/database/docker", s.handleDockerDBList)
+	s.mux.HandleFunc("POST /api/v1/database/docker", s.handleDockerDBCreate)
+	s.mux.HandleFunc("POST /api/v1/database/docker/{name}/start", s.handleDockerDBStart)
+	s.mux.HandleFunc("POST /api/v1/database/docker/{name}/stop", s.handleDockerDBStop)
+	s.mux.HandleFunc("DELETE /api/v1/database/docker/{name}", s.handleDockerDBRemove)
+
 	s.mux.HandleFunc("POST /api/v1/database/start", s.handleDBStart)
 	s.mux.HandleFunc("POST /api/v1/database/stop", s.handleDBStop)
 	s.mux.HandleFunc("POST /api/v1/database/restart", s.handleDBRestart)
@@ -242,6 +278,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/plugin/{action}/{plugin}", s.handleWPPluginAction)
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/fix-permissions", s.handleWPFixPermissions)
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/reinstall", s.handleWPReinstall)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/debug", s.handleWPToggleDebug)
+	s.mux.HandleFunc("GET /api/v1/wordpress/sites/{domain}/error-log", s.handleWPErrorLog)
 
 	// File manager
 	s.mux.HandleFunc("GET /api/v1/files/{domain}/list", s.handleFileList)
@@ -282,6 +320,20 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/auth/2fa/verify", s.handle2FAVerify)
 	s.mux.HandleFunc("POST /api/v1/auth/2fa/disable", s.handle2FADisable)
 
+	// Multi-user auth (login/logout)
+	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /api/v1/auth/me", s.handleAuthMe)
+
+	// User management (admin/reseller only)
+	s.mux.HandleFunc("GET /api/v1/auth/users", s.handleUserListAuth)
+	s.mux.HandleFunc("POST /api/v1/auth/users", s.handleUserCreateAuth)
+	s.mux.HandleFunc("GET /api/v1/auth/users/{username}", s.handleUserGetAuth)
+	s.mux.HandleFunc("PUT /api/v1/auth/users/{username}", s.handleUserUpdateAuth)
+	s.mux.HandleFunc("DELETE /api/v1/auth/users/{username}", s.handleUserDeleteAuth)
+	s.mux.HandleFunc("POST /api/v1/auth/users/{username}/apikey", s.handleUserRegenerateAPIKeyAuth)
+	s.mux.HandleFunc("POST /api/v1/auth/users/{username}/password", s.handleUserChangePasswordAuth)
+
 	// Doctor
 	s.mux.HandleFunc("GET /api/v1/doctor", s.handleDoctor)
 	s.mux.HandleFunc("POST /api/v1/doctor/fix", s.handleDoctorFix)
@@ -297,6 +349,22 @@ func (s *Server) registerRoutes() {
 	// Site migration + clone
 	s.mux.HandleFunc("POST /api/v1/migrate", s.handleMigrate)
 	s.mux.HandleFunc("POST /api/v1/clone", s.handleClone)
+
+	// Bandwidth management
+	s.mux.HandleFunc("GET /api/v1/bandwidth", s.handleBandwidthList)
+	s.mux.HandleFunc("GET /api/v1/bandwidth/{host}", s.handleBandwidthGet)
+	s.mux.HandleFunc("POST /api/v1/bandwidth/{host}/reset", s.handleBandwidthReset)
+
+	// Cron monitoring
+	s.mux.HandleFunc("GET /api/v1/cron/monitor", s.handleCronMonitorList)
+	s.mux.HandleFunc("GET /api/v1/cron/monitor/{host}", s.handleCronMonitorDomain)
+	s.mux.HandleFunc("POST /api/v1/cron/execute", s.handleCronExecute)
+
+	// Webhooks
+	s.mux.HandleFunc("GET /api/v1/webhooks", s.handleWebhookList)
+	s.mux.HandleFunc("POST /api/v1/webhooks", s.handleWebhookCreate)
+	s.mux.HandleFunc("DELETE /api/v1/webhooks/{id}", s.handleWebhookDelete)
+	s.mux.HandleFunc("POST /api/v1/webhooks/test", s.handleWebhookTest)
 
 	// MCP endpoints
 	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
@@ -356,9 +424,12 @@ func (s *Server) Start() error {
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	s.configMu.RLock()
 	apiKey := s.config.Global.Admin.APIKey
+	multiUserEnabled := s.config.Global.Users.Enabled
 	s.configMu.RUnlock()
-	if apiKey == "" {
-		s.logger.Warn("admin API has no API key — all endpoints are unauthenticated!")
+
+	// If no auth configured at all, warn and allow all
+	if apiKey == "" && !multiUserEnabled {
+		s.logger.Warn("admin API has no authentication — all endpoints are unauthenticated!")
 		return next
 	}
 
@@ -367,7 +438,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			if isAllowedOrigin(origin, r) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Session-Token, X-TOTP-Code")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Vary", "Origin")
 			}
@@ -377,8 +448,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Public endpoints: health check and dashboard UI (no auth or rate limit needed)
-		if r.URL.Path == "/api/v1/health" || strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
+		// Public endpoints: health check, dashboard UI, and login (no auth needed)
+		if r.URL.Path == "/api/v1/health" ||
+			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") ||
+			r.URL.Path == "/api/v1/auth/login" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -390,25 +463,86 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		// Also check token query param for SSE (EventSource can't set headers)
-		if auth == "" {
-			if token := r.URL.Query().Get("token"); token != "" {
-				auth = "Bearer " + token
+
+		var authenticated bool
+		var user *auth.User
+
+		// Try multi-user auth first if enabled
+		if multiUserEnabled && s.authMgr != nil {
+			// Try API key (Authorization: Bearer <key>)
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				key := strings.TrimPrefix(authHeader, "Bearer ")
+				if u, err := s.authMgr.AuthenticateAPIKey(key); err == nil {
+					authenticated = true
+					user = u
+				}
+			}
+
+			// Try session token (X-Session-Token header)
+			if !authenticated {
+				if token := r.Header.Get("X-Session-Token"); token != "" {
+					if session, err := s.authMgr.ValidateSession(token); err == nil {
+						if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
+							authenticated = true
+							user = u
+						}
+					}
+				}
+			}
+
+			// Also check token query param for SSE (EventSource can't set headers)
+			if !authenticated {
+				if token := r.URL.Query().Get("token"); token != "" {
+					if session, err := s.authMgr.ValidateSession(token); err == nil {
+						if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
+							authenticated = true
+							user = u
+						}
+					}
+				}
 			}
 		}
-		if subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+apiKey)) != 1 {
+
+		// Fall back to legacy API key auth if multi-user auth failed or not enabled
+		if !authenticated && apiKey != "" {
+			authHeader := r.Header.Get("Authorization")
+			// Also check token query param for SSE
+			if authHeader == "" {
+				if token := r.URL.Query().Get("token"); token != "" {
+					authHeader = "Bearer " + token
+				}
+			}
+			if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1 {
+				authenticated = true
+				// Create a virtual admin user for legacy auth
+				user = &auth.User{
+					ID:       "admin",
+					Username: "admin",
+					Role:     auth.RoleAdmin,
+					Enabled:  true,
+				}
+			}
+		}
+
+		if !authenticated {
 			s.recordAuthFailure(ip)
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		// 2FA check: if TOTP is enabled, require valid code.
-		// Exempt 2FA management endpoints so user can set up/verify/disable.
+		// Store user in context for handlers to access
+		ctx := auth.WithUser(r.Context(), user)
+		r = r.WithContext(ctx)
+
+		// 2FA check for legacy auth: if TOTP is enabled, require valid code.
+		// Skip for multi-user auth (TOTP handled separately) and 2FA management endpoints.
 		s.configMu.RLock()
 		totpSecret := s.config.Global.Admin.TOTPSecret
 		s.configMu.RUnlock()
-		if totpSecret != "" && !strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") {
+		if totpSecret != "" && user.Role == auth.RoleAdmin &&
+			!strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") &&
+			!multiUserEnabled {
 			totpCode := r.Header.Get("X-TOTP-Code")
 			if totpCode == "" {
 				totpCode = r.URL.Query().Get("totp")
@@ -637,9 +771,27 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 		Root    string   `json:"root,omitempty"`
 	}
 
+	// Get current user for domain filtering
+	var allowedDomains map[string]bool
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok {
+			if user.Role != auth.RoleAdmin {
+				// Resellers and users can only see their assigned domains
+				allowedDomains = make(map[string]bool)
+				for _, d := range user.Domains {
+					allowedDomains[d] = true
+				}
+			}
+		}
+	}
+
 	s.configMu.RLock()
 	domains := make([]domainInfo, 0)
 	for _, d := range s.config.Domains {
+		// Filter domains for non-admin users
+		if allowedDomains != nil && !allowedDomains[d.Host] {
+			continue
+		}
 		domains = append(domains, domainInfo{
 			Host:    d.Host,
 			IP:      d.IP,
@@ -1041,6 +1193,17 @@ func (s *Server) handlePHPDomainStart(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := r.PathValue("domain")
 
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, domain) {
+				s.RecordAudit("php.domain_start", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	if err := s.phpMgr.StartDomain(domain); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1055,6 +1218,17 @@ func (s *Server) handlePHPDomainStop(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := r.PathValue("domain")
 
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, domain) {
+				s.RecordAudit("php.domain_stop", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	if err := s.phpMgr.StopDomain(domain); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1068,6 +1242,17 @@ func (s *Server) handlePHPDomainConfigGet(w http.ResponseWriter, r *http.Request
 		return
 	}
 	domain := r.PathValue("domain")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, domain) {
+				s.RecordAudit("php.domain_config_get", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
 
 	cfg := s.phpMgr.GetDomainConfig(domain)
 	if cfg == nil {
@@ -1084,6 +1269,17 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	domain := r.PathValue("domain")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, domain) {
+				s.RecordAudit("php.domain_config_put", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
 
 	var req struct {
 		Key   string `json:"key"`
@@ -1450,6 +1646,20 @@ func (s *Server) persistConfig() {
 
 func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		user, ok := auth.UserFromContext(r.Context())
+		if ok && user.Role != auth.RoleAdmin {
+			// Resellers can only add domains in their allowed list
+			if !s.authMgr.CanManageDomain(user, r.URL.Query().Get("host")) {
+				s.RecordAudit("domain.create", "domain: "+r.URL.Query().Get("host")+" (forbidden)", ip, false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var d config.Domain
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
@@ -1460,6 +1670,19 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
 	}
+
+	// Check domain permissions for resellers
+	if s.authMgr != nil {
+		user, ok := auth.UserFromContext(r.Context())
+		if ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, d.Host) {
+				s.RecordAudit("domain.create", "domain: "+d.Host+" (forbidden)", ip, false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	if !isValidHostname(d.Host) {
 		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
 		return
@@ -1604,6 +1827,15 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	s.RecordAudit("domain.create", "domain: "+d.Host, ip, true)
 	s.notifyDomainChange()
 
+	// Fire webhook event
+	if s.webhookMgr != nil {
+		s.webhookMgr.Fire(webhook.EventDomainAdd, map[string]any{
+			"host": d.Host,
+			"type": d.Type,
+			"root": d.Root,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(d)
@@ -1613,6 +1845,18 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	host := r.PathValue("host")
 	cleanup := r.URL.Query().Get("cleanup") == "true"
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		user, ok := auth.UserFromContext(r.Context())
+		if ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.RecordAudit("domain.delete", "domain: "+host+" (forbidden)", ip, false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
 
 	s.configMu.Lock()
 	found := false
@@ -1652,6 +1896,15 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 
 	s.RecordAudit("domain.delete", "domain: "+host, ip, true)
 	s.notifyDomainChange()
+
+	// Fire webhook event
+	if s.webhookMgr != nil {
+		s.webhookMgr.Fire(webhook.EventDomainDelete, map[string]any{
+			"host":    host,
+			"cleanup": cleanup,
+		})
+	}
+
 	jsonResponse(w, map[string]string{"status": "deleted", "cleanup": fmt.Sprintf("%v", cleanup)})
 }
 
@@ -1659,6 +1912,19 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	host := r.PathValue("host")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		user, ok := auth.UserFromContext(r.Context())
+		if ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.RecordAudit("domain.update", "domain: "+host+" (forbidden)", ip, false)
+				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	var d config.Domain
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -1747,6 +2013,11 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.RecordAudit("domain.update", "domain: "+host, ip, true)
+	if s.webhookMgr != nil {
+		s.webhookMgr.Fire(webhook.EventDomainUpdate, map[string]any{
+			"host": host,
+		})
+	}
 	s.notifyDomainChange()
 
 	// Auto-assign PHP if domain type changed to php and no assignment exists.
@@ -1936,6 +2207,11 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "renewal failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if s.webhookMgr != nil {
+		s.webhookMgr.Fire(webhook.EventCertRenewed, map[string]any{
+			"host": host,
+		})
+	}
 	jsonResponse(w, map[string]string{"status": "renewed", "host": host})
 }
 
@@ -1954,6 +2230,16 @@ func (s *Server) handleUnknownDomainsList(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	// Only admins can block unknown domains (global security setting)
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			s.RecordAudit("unknown_domain.block", "host: "+host+" (forbidden)", requestIP(r), false)
+			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
+			return
+		}
+	}
+
 	if s.unknownHT == nil {
 		jsonError(w, "tracker not available", http.StatusServiceUnavailable)
 		return
@@ -1965,6 +2251,16 @@ func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	// Only admins can unblock unknown domains (global security setting)
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			s.RecordAudit("unknown_domain.unblock", "host: "+host+" (forbidden)", requestIP(r), false)
+			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
+			return
+		}
+	}
+
 	if s.unknownHT == nil {
 		jsonError(w, "tracker not available", http.StatusServiceUnavailable)
 		return
@@ -1976,6 +2272,16 @@ func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	// Only admins can dismiss unknown domains (global security setting)
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			s.RecordAudit("unknown_domain.dismiss", "host: "+host+" (forbidden)", requestIP(r), false)
+			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
+			return
+		}
+	}
+
 	if s.unknownHT == nil {
 		jsonError(w, "tracker not available", http.StatusServiceUnavailable)
 		return
@@ -2047,6 +2353,18 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.RecordAudit("domain.read", "domain: "+host+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot view this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 
@@ -2429,6 +2747,17 @@ func parseBS(s string) config.ByteSize {
 func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.RecordAudit("domain.read_raw", "domain: "+host+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot view this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	// Try reading from domains.d/ file first
 	path, err := s.domainFilePath(host)
 	if err == nil {
@@ -2469,6 +2798,17 @@ func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
 // domain file in domains.d/, then triggers a reload.
 func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.RecordAudit("domain.update_raw", "domain: "+host+" (forbidden)", requestIP(r), false)
+				jsonError(w, "forbidden: cannot modify this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
 
 	path, err := s.domainFilePath(host)
 	if err != nil {
@@ -2612,6 +2952,9 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 // SetBackupManager sets the backup manager for the backup API endpoints.
 func (s *Server) SetBackupManager(m *backup.BackupManager) { s.backupMgr = m }
 
+// SetBandwidthManager sets the bandwidth manager for bandwidth monitoring and limits.
+func (s *Server) SetBandwidthManager(m *bandwidth.Manager) { s.bwMgr = m }
+
 func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 	if s.backupMgr == nil {
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
@@ -2647,10 +2990,23 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	info, err := s.backupMgr.CreateBackup(req.Provider)
 	if err != nil {
 		s.RecordAudit("backup.create", "provider: "+req.Provider+", error: "+err.Error(), ip, false)
+		if s.webhookMgr != nil {
+			s.webhookMgr.Fire(webhook.EventBackupFailed, map[string]any{
+				"provider": req.Provider,
+				"error":    err.Error(),
+			})
+		}
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.RecordAudit("backup.create", "provider: "+req.Provider, ip, true)
+	if s.webhookMgr != nil {
+		s.webhookMgr.Fire(webhook.EventBackupCompleted, map[string]any{
+			"provider": req.Provider,
+			"name":     info.Name,
+			"size":     info.Size,
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(info)
@@ -2946,4 +3302,517 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	s.RecordAudit("2fa.disabled", "TOTP deactivated", ip, true)
 
 	jsonResponse(w, map[string]any{"status": "2fa_disabled"})
+}
+
+// ── Multi-User Authentication ───────────────────────────────────────────────
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if req.Username == "" || req.Password == "" {
+		jsonError(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+
+	session, err := s.authMgr.Authenticate(req.Username, req.Password)
+	if err != nil {
+		ip := requestIP(r)
+		s.recordAuthFailure(ip)
+		if s.webhookMgr != nil {
+			s.webhookMgr.Fire(webhook.EventLoginFailed, map[string]any{
+				"username": req.Username,
+				"ip":       ip,
+			})
+		}
+		jsonError(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.login", req.Username, ip, true)
+	if s.webhookMgr != nil {
+		s.webhookMgr.Fire(webhook.EventLoginSuccess, map[string]any{
+			"username": req.Username,
+			"ip":       ip,
+		})
+	}
+
+	jsonResponse(w, map[string]any{
+		"status":    "authenticated",
+		"token":     session.Token,
+		"user_id":   session.UserID,
+		"username":  session.Username,
+		"role":      session.Role,
+		"domains":   session.Domains,
+		"expires_at": session.ExpiresAt,
+	})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	// Try to get token from header or body
+	token := r.Header.Get("X-Session-Token")
+	if token == "" {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var req struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			token = req.Token
+		}
+	}
+
+	if token != "" {
+		s.authMgr.Logout(token)
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.logout", "", ip, true)
+
+	jsonResponse(w, map[string]string{"status": "logged_out"})
+}
+
+func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	jsonResponse(w, map[string]any{
+		"id":         user.ID,
+		"username":   user.Username,
+		"email":      user.Email,
+		"role":       user.Role,
+		"domains":    user.Domains,
+		"api_key":    maskSecret(user.APIKey),
+		"enabled":    user.Enabled,
+		"created_at": user.CreatedAt,
+		"last_login": user.LastLogin,
+	})
+}
+
+func (s *Server) handleUserListAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Only admin can list all users; resellers can only see themselves
+	if user.Role != auth.RoleAdmin {
+		jsonResponse(w, []*auth.User{user})
+		return
+	}
+
+	users := s.authMgr.ListUsers()
+	if users == nil {
+		users = []*auth.User{}
+	}
+
+	// Mask password hashes
+	for _, u := range users {
+		u.Password = ""
+	}
+
+	jsonResponse(w, users)
+}
+
+func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	currentUser, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := r.PathValue("username")
+
+	// Users can only get their own info unless they're admin
+	if currentUser.Role != auth.RoleAdmin && currentUser.Username != username {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	user, exists := s.authMgr.GetUser(username)
+	if !exists {
+		jsonError(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	user.Password = "" // Mask password hash
+	jsonResponse(w, user)
+}
+
+func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	currentUser, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Username string   `json:"username"`
+		Email    string   `json:"email"`
+		Password string   `json:"password"`
+		Role     string   `json:"role"`
+		Domains  []string `json:"domains"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Only admin can create users; resellers can create users only if allowed
+	if currentUser.Role != auth.RoleAdmin {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	role := auth.Role(req.Role)
+	if role != auth.RoleUser && role != auth.RoleReseller {
+		jsonError(w, "invalid role", http.StatusBadRequest)
+		return
+	}
+
+	// Check if reseller role is allowed
+	s.configMu.RLock()
+	allowReseller := s.config.Global.Users.AllowResller
+	s.configMu.RUnlock()
+	if role == auth.RoleReseller && !allowReseller {
+		jsonError(w, "reseller role not allowed", http.StatusBadRequest)
+		return
+	}
+
+	user, err := s.authMgr.CreateUser(req.Username, req.Email, req.Password, role, req.Domains)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.user.create", req.Username+" ("+req.Role+")", ip, true)
+
+	user.Password = "" // Mask password hash
+	w.WriteHeader(http.StatusCreated)
+	jsonResponse(w, user)
+}
+
+func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	currentUser, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := r.PathValue("username")
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Email    *string  `json:"email,omitempty"`
+		Password *string  `json:"password,omitempty"`
+		Enabled  *bool    `json:"enabled,omitempty"`
+		Domains  []string `json:"domains,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Users can only update themselves unless they're admin
+	if currentUser.Role != auth.RoleAdmin && currentUser.Username != username {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	updates := &auth.User{}
+	if req.Email != nil {
+		updates.Email = *req.Email
+	}
+	if req.Password != nil {
+		updates.Password = *req.Password
+	}
+	if req.Enabled != nil {
+		updates.Enabled = *req.Enabled
+	}
+	if req.Domains != nil {
+		// Only admin can change domains
+		if currentUser.Role != auth.RoleAdmin {
+			jsonError(w, "forbidden: only admin can change domains", http.StatusForbidden)
+			return
+		}
+		updates.Domains = req.Domains
+	}
+
+	if err := s.authMgr.UpdateUser(username, updates); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.user.update", username, ip, true)
+
+	jsonResponse(w, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	currentUser, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := r.PathValue("username")
+
+	// Users cannot delete themselves; only admin can delete other users
+	if currentUser.Username == username {
+		jsonError(w, "cannot delete yourself", http.StatusBadRequest)
+		return
+	}
+	if currentUser.Role != auth.RoleAdmin {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	if err := s.authMgr.DeleteUser(username); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.user.delete", username, ip, true)
+
+	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleUserRegenerateAPIKeyAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	currentUser, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := r.PathValue("username")
+
+	// Users can only regenerate their own API key unless they're admin
+	if currentUser.Role != auth.RoleAdmin && currentUser.Username != username {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	newKey, err := s.authMgr.RegenerateAPIKey(username)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.user.apikey", username, ip, true)
+
+	jsonResponse(w, map[string]string{"api_key": newKey})
+}
+
+func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Request) {
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	currentUser, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := r.PathValue("username")
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Users can only change their own password unless they're admin
+	if currentUser.Role != auth.RoleAdmin && currentUser.Username != username {
+		// Regular users must provide current password
+		if req.CurrentPassword == "" {
+			jsonError(w, "current_password required", http.StatusBadRequest)
+			return
+		}
+		if err := s.authMgr.ChangePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
+			jsonError(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+	} else if currentUser.Role == auth.RoleAdmin {
+		// Admin can change password without current password
+		// Use UpdateUser directly
+		updates := &auth.User{Password: req.NewPassword}
+		if err := s.authMgr.UpdateUser(username, updates); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("auth.user.password", username, ip, true)
+
+	jsonResponse(w, map[string]string{"status": "password_changed"})
+}
+
+// ── Bandwidth Management ────────────────────────────────────────────────────
+
+func (s *Server) handleBandwidthList(w http.ResponseWriter, r *http.Request) {
+	if s.bwMgr == nil {
+		jsonResponse(w, []any{})
+		return
+	}
+	statuses := s.bwMgr.GetAllStatus()
+	jsonResponse(w, statuses)
+}
+
+func (s *Server) handleBandwidthGet(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.bwMgr == nil {
+		jsonError(w, "bandwidth manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	status := s.bwMgr.GetStatus(host)
+	if status == nil {
+		jsonError(w, "domain not found or bandwidth not enabled", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, status)
+}
+
+func (s *Server) handleBandwidthReset(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.bwMgr == nil {
+		jsonError(w, "bandwidth manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	s.bwMgr.Reset(host)
+	ip := requestIP(r)
+	s.RecordAudit("bandwidth.reset", host, ip, true)
+	jsonResponse(w, map[string]string{"status": "reset", "host": host})
+}
+
+// --- Cron Monitoring ---
+
+// SetCronMonitor sets the cron job monitor for execution tracking.
+func (s *Server) SetCronMonitor(m *cronjob.Monitor) { s.cronMonitor = m }
+
+// SetAuthManager sets the auth manager for multi-user authentication.
+func (s *Server) SetAuthManager(m AuthManager) { s.authMgr = m }
+
+// --- Webhook Management ---
+
+// SetWebhookManager sets the webhook manager for event delivery.
+func (s *Server) SetWebhookManager(m *webhook.Manager) { s.webhookMgr = m }
+
+func (s *Server) handleCronMonitorList(w http.ResponseWriter, r *http.Request) {
+	if s.cronMonitor == nil {
+		jsonResponse(w, []any{})
+		return
+	}
+	statuses := s.cronMonitor.GetAllStatus()
+	jsonResponse(w, statuses)
+}
+
+func (s *Server) handleCronMonitorDomain(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	if s.cronMonitor == nil {
+		jsonError(w, "cron monitor not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	statuses := s.cronMonitor.GetDomainStatus(host)
+	if statuses == nil {
+		statuses = []cronjob.JobStatus{}
+	}
+	jsonResponse(w, statuses)
+}
+
+func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Domain   string `json:"domain"`
+		Schedule string `json:"schedule"`
+		Command  string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Domain == "" || req.Command == "" {
+		jsonError(w, "domain and command are required", http.StatusBadRequest)
+		return
+	}
+	if s.cronMonitor == nil {
+		jsonError(w, "cron monitor not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Execute the job asynchronously and return the record
+	record := s.cronMonitor.Execute(req.Domain, req.Schedule, req.Command)
+
+	ip := requestIP(r)
+	s.RecordAudit("cron.execute", req.Domain+": "+req.Command, ip, record.Success)
+
+	w.Header().Set("Content-Type", "application/json")
+	if record.Success {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusOK) // Still 200, but success=false in body
+	}
+	json.NewEncoder(w).Encode(record)
 }

@@ -62,7 +62,7 @@ export default function IPManagement() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading IP information...
       </div>
     );
@@ -73,14 +73,14 @@ export default function IPManagement() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">IP Management</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">IP Management</h1>
+          <p className="text-sm text-muted-foreground">
             Manage server IP addresses and domain IP assignments
           </p>
         </div>
         <button
           onClick={() => { setLoading(true); void loadAll(); }}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -105,7 +105,7 @@ export default function IPManagement() {
             <Globe size={24} className="text-blue-400" />
             <div>
               <p className="text-xs font-medium uppercase text-blue-400/70">Public IP Address</p>
-              <p className="text-2xl font-bold font-mono text-blue-300">{publicIP}</p>
+              <p className="text-xl font-bold sm:text-2xl font-mono text-blue-300">{publicIP}</p>
             </div>
           </div>
         </div>
@@ -113,14 +113,14 @@ export default function IPManagement() {
 
       {/* Server IPs Table */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Server IP Addresses
         </h2>
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+        <div className="rounded-lg border border-border bg-card shadow-md">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-[#334155] text-slate-400">
+                <tr className="border-b border-border text-muted-foreground">
                   <th className="px-5 py-3 font-medium">IP Address</th>
                   <th className="px-5 py-3 font-medium">Version</th>
                   <th className="px-5 py-3 font-medium">Interface</th>
@@ -131,7 +131,7 @@ export default function IPManagement() {
               <tbody>
                 {ips.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-5 py-8 text-center text-slate-500">
+                    <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">
                       No server IPs detected.
                     </td>
                   </tr>
@@ -139,9 +139,9 @@ export default function IPManagement() {
                 {ips.map(ip => {
                   const usedBy = domainsUsingIP(ip.ip);
                   return (
-                    <tr key={`${ip.ip}-${ip.interface}`} className="border-b border-[#334155]/50 hover:bg-[#0f172a]/30">
+                    <tr key={`${ip.ip}-${ip.interface}`} className="border-b border-border/50 hover:bg-background/30">
                       <td className="px-5 py-3">
-                        <span className="font-mono font-semibold text-slate-200">{ip.ip}</span>
+                        <span className="font-mono font-semibold text-foreground">{ip.ip}</span>
                       </td>
                       <td className="px-5 py-3">
                         <span className={`rounded px-2 py-0.5 text-xs font-medium ${
@@ -153,7 +153,7 @@ export default function IPManagement() {
                         </span>
                       </td>
                       <td className="px-5 py-3">
-                        <span className="font-mono text-xs text-slate-400">{ip.interface}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{ip.interface}</span>
                       </td>
                       <td className="px-5 py-3">
                         {ip.primary ? (
@@ -161,7 +161,7 @@ export default function IPManagement() {
                             Primary
                           </span>
                         ) : (
-                          <span className="text-xs text-slate-500">--</span>
+                          <span className="text-xs text-muted-foreground">--</span>
                         )}
                       </td>
                       <td className="px-5 py-3">
@@ -170,14 +170,14 @@ export default function IPManagement() {
                             {usedBy.map(host => (
                               <span
                                 key={host}
-                                className="rounded bg-[#334155] px-2 py-0.5 text-xs text-slate-300"
+                                className="rounded bg-accent px-2 py-0.5 text-xs text-card-foreground"
                               >
                                 {host}
                               </span>
                             ))}
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-500">None</span>
+                          <span className="text-xs text-muted-foreground">None</span>
                         )}
                       </td>
                     </tr>
@@ -191,14 +191,14 @@ export default function IPManagement() {
 
       {/* Domain IP Assignments */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Domain IP Assignments
         </h2>
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+        <div className="rounded-lg border border-border bg-card shadow-md">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-[#334155] text-slate-400">
+                <tr className="border-b border-border text-muted-foreground">
                   <th className="px-5 py-3 font-medium">Domain</th>
                   <th className="px-5 py-3 font-medium">Type</th>
                   <th className="px-5 py-3 font-medium">Current IP</th>
@@ -208,23 +208,23 @@ export default function IPManagement() {
               <tbody>
                 {domains.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-5 py-8 text-center text-slate-500">
+                    <td colSpan={4} className="px-5 py-8 text-center text-muted-foreground">
                       No domains configured.
                     </td>
                   </tr>
                 )}
                 {domains.map(d => (
-                  <tr key={d.host} className="border-b border-[#334155]/50 hover:bg-[#0f172a]/30">
+                  <tr key={d.host} className="border-b border-border/50 hover:bg-background/30">
                     <td className="px-5 py-3">
-                      <span className="font-semibold text-slate-200">{d.host}</span>
+                      <span className="font-semibold text-foreground">{d.host}</span>
                     </td>
                     <td className="px-5 py-3">
-                      <span className="rounded bg-[#334155] px-2 py-0.5 text-xs text-slate-300">
+                      <span className="rounded bg-accent px-2 py-0.5 text-xs text-card-foreground">
                         {d.type}
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <span className="font-mono text-xs text-slate-400">
+                      <span className="font-mono text-xs text-muted-foreground">
                         {d.ip || 'Default'}
                       </span>
                     </td>
@@ -234,7 +234,7 @@ export default function IPManagement() {
                           value={d.ip || ''}
                           onChange={e => void handleIPChange(d.host, e.target.value)}
                           disabled={saving[d.host] || ips.length === 0}
-                          className="rounded-md border border-[#334155] bg-[#0f172a] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                          className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                         >
                           <option value="">Default</option>
                           {ips.map(ip => (
@@ -244,7 +244,7 @@ export default function IPManagement() {
                           ))}
                         </select>
                         {saving[d.host] && (
-                          <RefreshCw size={12} className="animate-spin text-slate-400" />
+                          <RefreshCw size={12} className="animate-spin text-muted-foreground" />
                         )}
                       </div>
                     </td>
@@ -257,12 +257,12 @@ export default function IPManagement() {
       </div>
 
       {/* Info */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-3 flex items-center gap-2">
-          <Server size={16} className="text-slate-400" />
-          <h3 className="text-sm font-semibold text-slate-300">About IP Assignment</h3>
+          <Server size={16} className="text-muted-foreground" />
+          <h3 className="text-sm font-semibold text-card-foreground">About IP Assignment</h3>
         </div>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-muted-foreground">
           Assign a specific server IP to a domain to control which network interface serves its traffic.
           Domains set to "Default" will use the server's primary IP address.
           This is useful for servers with multiple IPs or when you need separate IPs for different SSL certificates.

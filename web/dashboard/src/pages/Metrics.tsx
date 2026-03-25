@@ -82,15 +82,15 @@ export default function Metrics() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Metrics</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Metrics</h1>
+          <p className="text-sm text-muted-foreground">
             Prometheus-format server metrics
           </p>
         </div>
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-2 rounded-md bg-[#1e293b] border border-[#334155] px-3 py-2 text-sm text-slate-300 transition hover:bg-[#334155] disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md bg-card border border-border px-3 py-2 text-sm text-card-foreground transition hover:bg-accent disabled:opacity-50"
         >
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           Refresh
@@ -118,16 +118,16 @@ export default function Metrics() {
       )}
 
       {/* All metrics table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">
             All Metrics ({metrics.length})
           </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Metric</th>
                 <th className="px-5 py-3 font-medium">Value</th>
                 <th className="hidden px-5 py-3 font-medium md:table-cell">
@@ -139,13 +139,13 @@ export default function Metrics() {
               {metrics.map((m, i) => (
                 <tr
                   key={`${m.name}-${i}`}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-2.5 font-mono text-xs">{m.name}</td>
                   <td className="px-5 py-2.5 font-mono text-xs text-blue-400">
                     {m.value}
                   </td>
-                  <td className="hidden px-5 py-2.5 text-xs text-slate-500 md:table-cell">
+                  <td className="hidden px-5 py-2.5 text-xs text-muted-foreground md:table-cell">
                     {m.help}
                   </td>
                 </tr>
@@ -154,7 +154,7 @@ export default function Metrics() {
                 <tr>
                   <td
                     colSpan={3}
-                    className="px-5 py-8 text-center text-slate-500"
+                    className="px-5 py-8 text-center text-muted-foreground"
                   >
                     No metrics available
                   </td>
@@ -166,11 +166,11 @@ export default function Metrics() {
       </div>
 
       {/* Raw output */}
-      <details className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-300">
+      <details className="rounded-lg border border-border bg-card shadow-md">
+        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-card-foreground">
           Raw Prometheus Output
         </summary>
-        <pre className="max-h-96 overflow-auto border-t border-[#334155] p-5 font-mono text-xs text-slate-400">
+        <pre className="max-h-96 overflow-auto border-t border-border p-5 font-mono text-xs text-muted-foreground">
           {raw || 'No data'}
         </pre>
       </details>

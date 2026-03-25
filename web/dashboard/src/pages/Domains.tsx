@@ -119,7 +119,7 @@ const templates: Record<string, TemplateConfig> = {
     label: 'Redirect',
     description: 'Redirect all traffic to another URL',
     icon: <ArrowRight size={20} />,
-    color: 'text-slate-300 bg-slate-500/15 border-slate-500/30',
+    color: 'text-card-foreground bg-slate-500/15 border-slate-500/30',
     form: {
       type: 'redirect',
       ssl: 'auto',
@@ -137,12 +137,12 @@ const typeBadgeStyles: Record<string, string> = {
   static: 'bg-blue-500/15 text-blue-400',
   php: 'bg-purple-500/15 text-purple-400',
   proxy: 'bg-orange-500/15 text-orange-400',
-  redirect: 'bg-slate-500/15 text-slate-400',
+  redirect: 'bg-slate-500/15 text-muted-foreground',
 };
 
 function TypeBadge({ type }: { type: string }) {
   return (
-    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${typeBadgeStyles[type] ?? 'bg-slate-500/15 text-slate-400'}`}>
+    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${typeBadgeStyles[type] ?? 'bg-slate-500/15 text-muted-foreground'}`}>
       {type}
     </span>
   );
@@ -156,7 +156,7 @@ const sslBadgeStyles: Record<string, string> = {
 
 function SslBadge({ ssl }: { ssl: string }) {
   return (
-    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${sslBadgeStyles[ssl] ?? 'bg-slate-500/15 text-slate-400'}`}>
+    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${sslBadgeStyles[ssl] ?? 'bg-slate-500/15 text-muted-foreground'}`}>
       {ssl}
     </span>
   );
@@ -177,10 +177,10 @@ function StatusDot({ active }: { active: boolean }) {
 
 function InfoCard({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-[#334155] bg-[#0f172a] p-4">
+    <div className="rounded-lg border border-border bg-background p-4">
       <div className="mb-3 flex items-center gap-2">
-        <span className="text-slate-400">{icon}</span>
-        <h4 className="text-sm font-semibold text-slate-300">{title}</h4>
+        <span className="text-muted-foreground">{icon}</span>
+        <h4 className="text-sm font-semibold text-card-foreground">{title}</h4>
       </div>
       <div className="space-y-2 text-sm">{children}</div>
     </div>
@@ -190,8 +190,8 @@ function InfoCard({ icon, title, children }: { icon: ReactNode; title: string; c
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4">
-      <span className="shrink-0 text-xs font-medium uppercase text-slate-500">{label}</span>
-      <span className="text-right text-xs text-slate-200">{value}</span>
+      <span className="shrink-0 text-xs font-medium uppercase text-muted-foreground">{label}</span>
+      <span className="text-right text-xs text-foreground">{value}</span>
     </div>
   );
 }
@@ -199,13 +199,13 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
 function FormField({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
     <div>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-sm font-medium text-slate-300">{label}</label>
+      <label htmlFor={htmlFor} className="mb-1.5 block text-sm font-medium text-card-foreground">{label}</label>
       {children}
     </div>
   );
 }
 
-const inputCls = 'w-full rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2.5 text-sm text-slate-200 placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+const inputCls = 'w-full rounded-md border border-border bg-card px-3 py-2.5 text-sm text-foreground placeholder-slate-500 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
 const selectCls = inputCls;
 
 /* ------------------------------------------------------------------ */
@@ -488,8 +488,8 @@ export default function Domains() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Domains</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Domains</h1>
+          <p className="text-sm text-muted-foreground">
             {loading ? 'Loading...' : `${domains.length} domain${domains.length !== 1 ? 's' : ''} configured`}
           </p>
         </div>
@@ -511,11 +511,11 @@ export default function Domains() {
       )}
 
       {/* Domain table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+      <div className="rounded-lg border border-border bg-card shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="w-8 px-3 py-3" />
                 <th className="px-5 py-3 font-medium">Host</th>
                 <th className="px-5 py-3 font-medium">Type</th>
@@ -527,10 +527,10 @@ export default function Domains() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-slate-500">Loading...</td></tr>
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-muted-foreground">Loading...</td></tr>
               )}
               {!loading && domains.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-slate-500">No domains configured</td></tr>
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-muted-foreground">No domains configured</td></tr>
               )}
               {domains.map(d => {
                 const isExpanded = expandedHost === d.host;
@@ -564,11 +564,11 @@ export default function Domains() {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-10">
           <div className="absolute inset-0 bg-black/60" onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }} />
-          <div className="relative z-10 w-full max-w-2xl rounded-xl border border-[#334155] bg-[#0f172a] p-6 shadow-2xl">
+          <div className="relative z-10 w-full max-w-2xl rounded-xl border border-border bg-background p-6 shadow-2xl">
             {/* Modal header */}
             <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-100">{editingHost ? 'Edit Domain' : 'Add Domain'}</h2>
-              <button onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }} className="rounded-md p-1 text-slate-400 hover:text-slate-200">
+              <h2 className="text-lg font-bold text-foreground">{editingHost ? 'Edit Domain' : 'Add Domain'}</h2>
+              <button onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }} className="rounded-md p-1 text-muted-foreground hover:text-foreground">
                 <X size={18} />
               </button>
             </div>
@@ -576,7 +576,7 @@ export default function Domains() {
             {/* Template quick-add (hidden when editing) */}
             {!selectedTemplate && !editingHost && (
               <>
-                <p className="mb-4 text-sm text-slate-400">Quick Add &mdash; choose a template or start from scratch</p>
+                <p className="mb-4 text-sm text-muted-foreground">Quick Add &mdash; choose a template or start from scratch</p>
                 <div className="mb-6 grid grid-cols-2 gap-3">
                   {(Object.entries(templates) as [string, TemplateConfig][]).map(([key, tpl]) => (
                     <button
@@ -594,7 +594,7 @@ export default function Domains() {
                 </div>
                 <button
                   onClick={() => selectTemplate('static')}
-                  className="text-xs text-slate-500 underline hover:text-slate-300"
+                  className="text-xs text-muted-foreground underline hover:text-card-foreground"
                 >
                   Skip template, start with blank form
                 </button>
@@ -605,13 +605,13 @@ export default function Domains() {
             {selectedTemplate !== null && (
               <form onSubmit={handleAdd} className="space-y-5">
                 {/* Template indicator */}
-                <div className="flex items-center gap-2 rounded-md bg-[#1e293b] px-3 py-2 text-xs text-slate-400">
+                <div className="flex items-center gap-2 rounded-md bg-card px-3 py-2 text-xs text-muted-foreground">
                   <Settings size={12} />
                   {editingHost ? (
-                    <>Editing: <span className="font-mono font-medium text-slate-200">{editingHost}</span></>
+                    <>Editing: <span className="font-mono font-medium text-foreground">{editingHost}</span></>
                   ) : (
-                    <>Template: <span className="font-medium text-slate-200">{templates[selectedTemplate]?.label ?? 'Custom'}</span>
-                    <button type="button" onClick={() => { setSelectedTemplate(null); setForm({ ...emptyForm }); }} className="ml-auto text-slate-500 hover:text-slate-300">Change</button></>
+                    <>Template: <span className="font-medium text-foreground">{templates[selectedTemplate]?.label ?? 'Custom'}</span>
+                    <button type="button" onClick={() => { setSelectedTemplate(null); setForm({ ...emptyForm }); }} className="ml-auto text-muted-foreground hover:text-card-foreground">Change</button></>
                   )}
                 </div>
 
@@ -648,19 +648,19 @@ export default function Domains() {
 
                 {/* Root — auto-generated, shown as info */}
                 {form.host.trim() && form.type !== 'proxy' && form.type !== 'redirect' && (
-                  <div className="rounded-md bg-[#1e293b] border border-[#334155] px-3 py-2.5 text-sm">
-                    <span className="text-xs text-slate-500">Web Root (auto-created)</span>
-                    <p className="font-mono text-slate-300 text-xs mt-0.5">/var/www/{form.host.trim()}/public_html/</p>
+                  <div className="rounded-md bg-card border border-border px-3 py-2.5 text-sm">
+                    <span className="text-xs text-muted-foreground">Web Root (auto-created)</span>
+                    <p className="font-mono text-card-foreground text-xs mt-0.5">/var/www/{form.host.trim()}/public_html/</p>
                   </div>
                 )}
 
                 {/* Cache */}
-                <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
+                <div className="rounded-lg border border-border bg-card p-4">
                   <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-2 text-sm font-medium text-slate-300"><Database size={14} /> Cache</span>
+                    <span className="flex items-center gap-2 text-sm font-medium text-card-foreground"><Database size={14} /> Cache</span>
                     <label className="relative inline-flex cursor-pointer items-center">
                       <input type="checkbox" checked={form.cacheEnabled} onChange={e => patchField('cacheEnabled', e.target.checked)} className="peer sr-only" />
-                      <div className="peer h-5 w-9 rounded-full bg-[#334155] after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-slate-400 after:transition-all peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:bg-white" />
+                      <div className="peer h-5 w-9 rounded-full bg-accent after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-slate-400 after:transition-all peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:bg-white" />
                     </label>
                   </div>
                   {form.cacheEnabled && (
@@ -684,7 +684,7 @@ export default function Domains() {
                               placeholder="127.0.0.1:9000" className={inputCls} />
                             {phpInstalls.length > 0 && (
                               <button type="button" onClick={() => { setPhpCustomInput(false); patchField('phpFpmAddress', phpInstalls[0]?.listen_addr ?? ''); }}
-                                className="shrink-0 rounded-md bg-[#334155] px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-[#475569]">
+                                className="shrink-0 rounded-md bg-accent px-3 py-2 text-xs font-medium text-card-foreground transition hover:bg-[#475569]">
                                 List
                               </button>
                             )}
@@ -716,9 +716,9 @@ export default function Domains() {
                         <input id="add-php-index" type="text" value={form.phpIndexFiles} onChange={e => patchField('phpIndexFiles', e.target.value)}
                           placeholder="index.php,index.html" className={inputCls} />
                       </FormField>
-                      <label className="flex items-center gap-2 text-sm text-slate-300">
+                      <label className="flex items-center gap-2 text-sm text-card-foreground">
                         <input type="checkbox" checked={form.htaccessEnabled} onChange={e => patchField('htaccessEnabled', e.target.checked)}
-                          className="rounded border-[#334155] bg-[#1e293b] text-blue-600 focus:ring-blue-500" />
+                          className="rounded border-border bg-card text-blue-600 focus:ring-blue-500" />
                         Import .htaccess rules
                       </label>
                     </div>
@@ -746,7 +746,7 @@ export default function Domains() {
                 {/* Redirect section */}
                 {form.type === 'redirect' && (
                   <div className="rounded-lg border border-slate-500/20 bg-slate-500/5 p-4">
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300"><ArrowRight size={14} /> Redirect Configuration</h3>
+                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-card-foreground"><ArrowRight size={14} /> Redirect Configuration</h3>
                     <div className="space-y-3">
                       <FormField label="Target URL" htmlFor="add-redirect-target">
                         <input id="add-redirect-target" type="text" value={form.redirectTarget} onChange={e => patchField('redirectTarget', e.target.value)}
@@ -762,12 +762,12 @@ export default function Domains() {
                 )}
 
                 {/* Security section */}
-                <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-                  <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300"><Shield size={14} /> Security</h3>
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-card-foreground"><Shield size={14} /> Security</h3>
                   <div className="space-y-3">
-                    <label className="flex items-center gap-2 text-sm text-slate-300">
+                    <label className="flex items-center gap-2 text-sm text-card-foreground">
                       <input type="checkbox" checked={form.wafEnabled} onChange={e => patchField('wafEnabled', e.target.checked)}
-                        className="rounded border-[#334155] bg-[#1e293b] text-blue-600 focus:ring-blue-500" />
+                        className="rounded border-border bg-card text-blue-600 focus:ring-blue-500" />
                       Enable WAF
                     </label>
                     <FormField label="Blocked Paths (comma-separated)" htmlFor="add-blocked-paths">
@@ -780,7 +780,7 @@ export default function Domains() {
                 {/* Submit */}
                 <div className="flex justify-end gap-3 pt-2">
                   <button type="button" onClick={() => { setShowAdd(false); setEditingHost(null); setPhpCustomInput(false); }}
-                    className="rounded-md bg-[#334155] px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-[#475569]">
+                    className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-[#475569]">
                     Cancel
                   </button>
                   <button type="submit" disabled={submitting || !form.host.trim()}
@@ -823,25 +823,25 @@ function DomainRow({
       {/* Main row */}
       <tr
         onClick={onToggle}
-        className={`cursor-pointer border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30 ${isExpanded ? 'bg-[#334155]/20' : ''}`}
+        className={`cursor-pointer border-b border-border/50 text-card-foreground transition hover:bg-accent/30 ${isExpanded ? 'bg-accent/20' : ''}`}
       >
-        <td className="px-3 py-3 text-slate-500">
+        <td className="px-3 py-3 text-muted-foreground">
           {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </td>
         <td className="px-5 py-3">
           <div className="flex items-center gap-2">
-            <Globe size={14} className="text-slate-500" />
+            <Globe size={14} className="text-muted-foreground" />
             <span className="font-mono text-xs">{d.host}</span>
           </div>
         </td>
         <td className="px-5 py-3"><TypeBadge type={d.type} /></td>
         <td className="px-5 py-3"><SslBadge ssl={d.ssl} /></td>
-        <td className="px-5 py-3 font-mono text-xs text-slate-400">{d.ip || 'shared'}</td>
+        <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{d.ip || 'shared'}</td>
         <td className="px-5 py-3">
           {health ? (
             <div className="flex items-center gap-1.5">
               <StatusDot active={health.status === 'up'} />
-              {health.ms > 0 && <span className="text-[10px] text-slate-500">{health.ms}ms</span>}
+              {health.ms > 0 && <span className="text-[10px] text-muted-foreground">{health.ms}ms</span>}
             </div>
           ) : (
             <span className="inline-block h-2 w-2 rounded-full bg-slate-600" title="Checking..." />
@@ -850,28 +850,28 @@ function DomainRow({
         <td className="px-5 py-3">
           {confirmDelete === d.host ? (
             <div className="flex flex-col items-end gap-1.5" onClick={e => e.stopPropagation()}>
-              <label className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                 <input type="checkbox" checked={cleanupOnDelete} onChange={e => onCleanupChange(e.target.checked)}
-                  className="rounded border-[#334155] bg-[#1e293b] text-red-600" />
+                  className="rounded border-border bg-card text-red-600" />
                 Delete files + PHP + SFTP user
               </label>
               <div className="flex items-center gap-2">
                 <button onClick={() => onDelete(d.host)} className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-red-700">Delete</button>
-                <button onClick={() => onConfirmDelete(null)} className="rounded bg-[#334155] px-2 py-1 text-xs font-medium text-slate-300 transition hover:bg-[#475569]">Cancel</button>
+                <button onClick={() => onConfirmDelete(null)} className="rounded bg-accent px-2 py-1 text-xs font-medium text-card-foreground transition hover:bg-[#475569]">Cancel</button>
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-1">
               <button
                 onClick={e => { e.stopPropagation(); onEdit(d.host); }}
-                className="rounded p-1.5 text-slate-500 transition hover:bg-blue-500/10 hover:text-blue-400"
+                className="rounded p-1.5 text-muted-foreground transition hover:bg-blue-500/10 hover:text-blue-400"
                 title="Edit domain"
               >
                 <Pencil size={14} />
               </button>
               <button
                 onClick={e => { e.stopPropagation(); onConfirmDelete(d.host); }}
-                className="rounded p-1.5 text-slate-500 transition hover:bg-red-500/10 hover:text-red-400"
+                className="rounded p-1.5 text-muted-foreground transition hover:bg-red-500/10 hover:text-red-400"
                 title="Delete domain"
               >
                 <Trash2 size={14} />
@@ -884,17 +884,17 @@ function DomainRow({
       {/* Expanded detail panel */}
       {isExpanded && (
         <tr>
-          <td colSpan={7} className="border-b border-[#334155] bg-[#0f172a]/60 p-0">
+          <td colSpan={7} className="border-b border-border bg-background/60 p-0">
             <div className="px-6 py-5">
               {detailLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
                   <RefreshCw size={14} className="animate-spin" />
                   Loading domain details...
                 </div>
               ) : detail ? (
                 <DomainDetailPanel detail={detail} certInfo={certInfo} purgingHost={purgingHost} onPurge={onPurge} onDelete={onDelete} onConfirmDelete={onConfirmDelete} confirmDelete={confirmDelete} />
               ) : (
-                <p className="py-4 text-sm text-slate-500">Could not load domain details.</p>
+                <p className="py-4 text-sm text-muted-foreground">Could not load domain details.</p>
               )}
             </div>
           </td>
@@ -931,9 +931,9 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           <Zap size={12} />
           {purgingHost === detail.host ? 'Purging...' : 'Purge Cache'}
         </button>
-        <span className="text-xs text-slate-500">Host: <span className="font-mono text-slate-300">{detail.host}</span></span>
+        <span className="text-xs text-muted-foreground">Host: <span className="font-mono text-card-foreground">{detail.host}</span></span>
         {detail.aliases && detail.aliases.length > 0 && (
-          <span className="text-xs text-slate-500">Aliases: <span className="font-mono text-slate-400">{detail.aliases.join(', ')}</span></span>
+          <span className="text-xs text-muted-foreground">Aliases: <span className="font-mono text-muted-foreground">{detail.aliases.join(', ')}</span></span>
         )}
       </div>
 
@@ -954,7 +954,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
               <DetailRow label="Issuer" value={certInfo.issuer || '--'} />
             </>
           ) : (
-            <DetailRow label="Certificate" value={<span className="text-slate-500">No cert info</span>} />
+            <DetailRow label="Certificate" value={<span className="text-muted-foreground">No cert info</span>} />
           )}
         </InfoCard>
 
@@ -963,7 +963,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           {detail.cache ? (
             <>
               <DetailRow label="Enabled" value={
-                <span className={`inline-flex items-center gap-1 text-xs ${detail.cache.enabled ? 'text-emerald-400' : 'text-slate-400'}`}>
+                <span className={`inline-flex items-center gap-1 text-xs ${detail.cache.enabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
                   {detail.cache.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
                   {detail.cache.enabled ? 'Yes' : 'No'}
                 </span>
@@ -971,10 +971,10 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
               <DetailRow label="TTL" value={detail.cache.ttl > 0 ? `${detail.cache.ttl}s` : '--'} />
               {detail.cache.rules && detail.cache.rules.length > 0 && (
                 <div className="mt-2 space-y-1">
-                  <span className="text-xs font-medium uppercase text-slate-500">Rules</span>
+                  <span className="text-xs font-medium uppercase text-muted-foreground">Rules</span>
                   {detail.cache.rules.map((r, i) => (
                     <div key={i} className="flex items-center gap-2 text-xs">
-                      <span className="font-mono text-slate-400">{r.match}</span>
+                      <span className="font-mono text-muted-foreground">{r.match}</span>
                       {r.bypass ? (
                         <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-red-400">bypass</span>
                       ) : (
@@ -986,7 +986,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
               )}
             </>
           ) : (
-            <p className="text-xs text-slate-500">Not configured</p>
+            <p className="text-xs text-muted-foreground">Not configured</p>
           )}
         </InfoCard>
 
@@ -995,7 +995,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           {detail.security ? (
             <>
               <DetailRow label="WAF" value={
-                <span className={`inline-flex items-center gap-1 text-xs ${detail.security.waf?.enabled ? 'text-emerald-400' : 'text-slate-400'}`}>
+                <span className={`inline-flex items-center gap-1 text-xs ${detail.security.waf?.enabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
                   {detail.security.waf?.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
                   {detail.security.waf?.enabled ? 'Enabled' : 'Disabled'}
                 </span>
@@ -1005,7 +1005,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
               )}
               {detail.security.blocked_paths && detail.security.blocked_paths.length > 0 && (
                 <div className="mt-2 space-y-1">
-                  <span className="text-xs font-medium uppercase text-slate-500">Blocked Paths</span>
+                  <span className="text-xs font-medium uppercase text-muted-foreground">Blocked Paths</span>
                   <div className="flex flex-wrap gap-1">
                     {detail.security.blocked_paths.map(p => (
                       <span key={p} className="rounded bg-red-500/15 px-1.5 py-0.5 font-mono text-xs text-red-400">{p}</span>
@@ -1015,7 +1015,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
               )}
             </>
           ) : (
-            <p className="text-xs text-slate-500">Not configured</p>
+            <p className="text-xs text-muted-foreground">Not configured</p>
           )}
         </InfoCard>
 
@@ -1030,7 +1030,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
             )}
             {detail.htaccess && (
               <DetailRow label=".htaccess" value={
-                <span className={`text-xs ${detail.htaccess.mode ? 'text-emerald-400' : 'text-slate-400'}`}>
+                <span className={`text-xs ${detail.htaccess.mode ? 'text-emerald-400' : 'text-muted-foreground'}`}>
                   {detail.htaccess.mode || 'Disabled'}
                 </span>
               } />
@@ -1050,11 +1050,11 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
             )}
             {detail.proxy.upstreams && detail.proxy.upstreams.length > 0 && (
               <div className="mt-2 space-y-1">
-                <span className="text-xs font-medium uppercase text-slate-500">Upstreams</span>
+                <span className="text-xs font-medium uppercase text-muted-foreground">Upstreams</span>
                 {detail.proxy.upstreams.map((u, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs">
                     <Server size={10} className="text-orange-400" />
-                    <span className="font-mono text-slate-300">{u}</span>
+                    <span className="font-mono text-card-foreground">{u}</span>
                   </div>
                 ))}
               </div>
@@ -1067,7 +1067,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
           <InfoCard icon={<ArrowRight size={16} />} title="Redirect">
             <DetailRow label="Target" value={<span className="font-mono">{detail.redirect.target}</span>} />
             <DetailRow label="Status Code" value={
-              <span className="rounded bg-slate-500/15 px-1.5 py-0.5 font-mono text-xs text-slate-300">{detail.redirect.status}</span>
+              <span className="rounded bg-slate-500/15 px-1.5 py-0.5 font-mono text-xs text-card-foreground">{detail.redirect.status}</span>
             } />
           </InfoCard>
         )}

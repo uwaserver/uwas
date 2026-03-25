@@ -53,6 +53,9 @@ type BackupManager struct {
 	webRoot    string   // base dir for all domain web roots
 	domainsDir string   // domains.d/ config directory
 	domainRoots []string // individual domain web roots to backup
+
+	// onBackup is called after each backup attempt (scheduled or manual).
+	onBackup func(info *BackupInfo, err error)
 }
 
 // New creates a BackupManager from the given config. It registers the
@@ -122,6 +125,13 @@ func (m *BackupManager) SetDomainPaths(webRoot, domainsDir string, domainRoots [
 	m.webRoot = webRoot
 	m.domainsDir = domainsDir
 	m.domainRoots = domainRoots
+}
+
+// SetOnBackup sets a callback that fires after each backup attempt.
+func (m *BackupManager) SetOnBackup(fn func(info *BackupInfo, err error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onBackup = fn
 }
 
 // Provider returns the named provider, or nil.
@@ -439,8 +449,12 @@ func (m *BackupManager) ScheduleBackup(interval time.Duration) {
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := m.CreateBackup(provider); err != nil {
+				info, err := m.CreateBackup(provider)
+				if err != nil {
 					m.logger.Error("scheduled backup failed", "error", err)
+				}
+				if m.onBackup != nil {
+					m.onBackup(info, err)
 				}
 			case <-ctx.Done():
 				return

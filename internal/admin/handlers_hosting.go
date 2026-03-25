@@ -225,6 +225,65 @@ func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "reinstalled", "output": out})
 }
 
+// handleWPToggleDebug enables or disables WP_DEBUG + display_errors + error logging.
+func (s *Server) handleWPToggleDebug(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	if !wordpress.IsWordPress(root) {
+		jsonError(w, "not a WordPress site", http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Enable bool `json:"enable"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := wordpress.SetDebugMode(root, req.Enable); err != nil {
+		jsonError(w, "toggle debug: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.RecordAudit("wordpress.debug", fmt.Sprintf("domain: %s, enable: %v", domain, req.Enable), requestIP(r), true)
+	jsonResponse(w, map[string]any{"status": "ok", "debug": req.Enable})
+}
+
+// handleWPErrorLog reads the WordPress debug.log file.
+func (s *Server) handleWPErrorLog(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+
+	logPath := filepath.Join(root, "wp-content", "debug.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			jsonResponse(w, map[string]any{"log": "", "message": "No debug.log file — enable WP_DEBUG first, then reproduce the error"})
+			return
+		}
+		jsonError(w, "read error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return last 100KB max
+	content := string(data)
+	if len(content) > 100*1024 {
+		content = content[len(content)-100*1024:]
+	}
+	jsonResponse(w, map[string]any{"log": content, "size": len(data)})
+}
+
 // ============ File Manager ============
 
 func (s *Server) domainRoot(domain string) string {
@@ -734,6 +793,89 @@ func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "installed"})
 }
 
+// ============ Docker Database Containers ============
+
+func (s *Server) handleDockerDBList(w http.ResponseWriter, r *http.Request) {
+	if !database.DockerAvailable() {
+		jsonResponse(w, map[string]any{"docker": false, "containers": []any{}})
+		return
+	}
+	containers, err := database.ListDockerDBs()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if containers == nil {
+		containers = []database.DockerDBContainer{}
+	}
+	jsonResponse(w, map[string]any{
+		"docker":     true,
+		"version":    database.DockerVersion(),
+		"containers": containers,
+	})
+}
+
+func (s *Server) handleDockerDBCreate(w http.ResponseWriter, r *http.Request) {
+	if !database.DockerAvailable() {
+		jsonError(w, "Docker is not installed or not running", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Engine   string `json:"engine"`    // mariadb, mysql, postgresql
+		Name     string `json:"name"`      // container suffix
+		Port     int    `json:"port"`      // host port
+		RootPass string `json:"root_pass"` // root/admin password
+		DataDir  string `json:"data_dir"`  // optional persistent volume
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Engine == "" || req.Port == 0 || req.RootPass == "" {
+		jsonError(w, "name, engine, port, and root_pass are required", http.StatusBadRequest)
+		return
+	}
+
+	engine := database.DockerDBEngine(req.Engine)
+	container, err := database.CreateDockerDB(engine, req.Name, req.Port, req.RootPass, req.DataDir)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("docker_db.create", fmt.Sprintf("engine: %s, name: %s, port: %d", req.Engine, req.Name, req.Port), requestIP(r), true)
+	w.WriteHeader(http.StatusCreated)
+	jsonResponse(w, container)
+}
+
+func (s *Server) handleDockerDBStart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := database.StartDockerDB(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "started"})
+}
+
+func (s *Server) handleDockerDBStop(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := database.StopDockerDB(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := database.RemoveDockerDB(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("docker_db.remove", "name: "+name, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "removed"})
+}
+
 // ============ DNS Checker ============
 
 func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
@@ -840,23 +982,51 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 
 // ============ DNS Records Management ============
 
-func (s *Server) getDNSProvider() *dnsmanager.CloudflareProvider {
+func (s *Server) getDNSProvider() dnsmanager.Provider {
 	s.configMu.RLock()
 	provider := s.config.Global.ACME.DNSProvider
 	creds := s.config.Global.ACME.DNSCredentials
 	s.configMu.RUnlock()
 
-	if provider != "cloudflare" || creds == nil {
+	if creds == nil {
 		return nil
 	}
+
 	token := creds["api_token"]
 	if token == "" {
 		token = creds["token"]
 	}
-	if token == "" {
+
+	switch provider {
+	case "cloudflare":
+		if token == "" {
+			return nil
+		}
+		return dnsmanager.NewCloudflare(token)
+	case "hetzner":
+		if token == "" {
+			return nil
+		}
+		return dnsmanager.NewHetzner(token)
+	case "digitalocean":
+		if token == "" {
+			return nil
+		}
+		return dnsmanager.NewDigitalOcean(token)
+	case "route53":
+		accessKey := creds["access_key"]
+		secretKey := creds["secret_key"]
+		region := creds["region"]
+		if accessKey == "" || secretKey == "" {
+			return nil
+		}
+		if region == "" {
+			region = "us-east-1"
+		}
+		return dnsmanager.NewRoute53(accessKey, secretKey, region)
+	default:
 		return nil
 	}
-	return dnsmanager.NewCloudflare(token)
 }
 
 func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
@@ -927,6 +1097,34 @@ func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
 
+func (s *Server) handleDNSRecordUpdate(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	recordID := r.PathValue("id")
+	prov := s.getDNSProvider()
+	if prov == nil {
+		jsonError(w, "DNS provider not configured", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var rec dnsmanager.Record
+	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	zone, err := prov.FindZoneByDomain(domain)
+	if err != nil {
+		jsonError(w, "zone not found: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	updated, err := prov.UpdateRecord(zone.ID, recordID, rec)
+	if err != nil {
+		jsonError(w, "update record: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("DNS record updated", "domain", domain, "record_id", recordID, "type", rec.Type, "content", rec.Content)
+	jsonResponse(w, updated)
+}
+
 func (s *Server) handleDNSSync(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
 	cf := s.getDNSProvider()
@@ -942,9 +1140,37 @@ func (s *Server) handleDNSSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := cf.SyncDomainToIP(domain, ip); err != nil {
-		jsonError(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
+	// Find zone and sync A record
+	zone, err := cf.FindZoneByDomain(domain)
+	if err != nil {
+		jsonError(w, "zone not found: "+err.Error(), http.StatusNotFound)
 		return
+	}
+	records, err := cf.ListRecords(zone.ID)
+	if err != nil {
+		jsonError(w, "list records: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Find existing A record or create new one
+	found := false
+	for _, rec := range records {
+		if rec.Type == "A" && (rec.Name == domain || rec.Name == "@") {
+			if rec.Content != ip {
+				rec.Content = ip
+				if _, err := cf.UpdateRecord(zone.ID, rec.ID, rec); err != nil {
+					jsonError(w, "update A record: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		if _, err := cf.CreateRecord(zone.ID, dnsmanager.Record{Type: "A", Name: domain, Content: ip, TTL: 1}); err != nil {
+			jsonError(w, "create A record: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	s.logger.Info("DNS synced", "domain", domain, "ip", ip)
 	jsonResponse(w, map[string]string{"status": "synced", "domain": domain, "ip": ip})

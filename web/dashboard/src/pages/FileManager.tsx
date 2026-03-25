@@ -217,12 +217,12 @@ export default function FileManager() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">File Manager</h1>
-          <p className="mt-1 text-sm text-slate-400">Browse and edit domain files.</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">File Manager</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Browse and edit domain files.</p>
         </div>
         <button
           onClick={loadFiles}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -235,7 +235,7 @@ export default function FileManager() {
       {/* Domain selector + disk usage */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
         <div className="flex-1">
-          <label className="mb-1.5 block text-xs font-medium uppercase text-slate-500">Domain</label>
+          <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Domain</label>
           <select
             value={selectedDomain}
             onChange={e => {
@@ -243,7 +243,7 @@ export default function FileManager() {
               setCurrentPath('.');
               setEditingFile(null);
             }}
-            className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+            className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
           >
             {domains.map(d => (
               <option key={d.host} value={d.host}>{d.host}</option>
@@ -251,18 +251,18 @@ export default function FileManager() {
           </select>
         </div>
         {diskUsage && (
-          <div className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-4 py-2.5">
-            <HardDrive size={16} className="text-slate-400" />
-            <span className="text-sm text-slate-300">Disk Usage:</span>
-            <span className="text-sm font-semibold text-slate-100">{diskUsage.human}</span>
+          <div className="flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2.5">
+            <HardDrive size={16} className="text-muted-foreground" />
+            <span className="text-sm text-card-foreground">Disk Usage:</span>
+            <span className="text-sm font-semibold text-foreground">{diskUsage.human}</span>
           </div>
         )}
       </div>
 
       {/* Breadcrumb + actions */}
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-3">
-        <div className="flex items-center gap-1 text-sm text-slate-400 overflow-x-auto">
-          <button onClick={() => navigateTo('.')} className="hover:text-slate-200" title="Home">
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-1 text-sm text-muted-foreground overflow-x-auto">
+          <button onClick={() => navigateTo('.')} className="hover:text-foreground" title="Home">
             <Home size={14} />
           </button>
           {breadcrumbs.slice(1).map((part, i) => {
@@ -272,7 +272,7 @@ export default function FileManager() {
                 <ChevronRight size={12} />
                 <button
                   onClick={() => navigateTo(path)}
-                  className="hover:text-slate-200 whitespace-nowrap"
+                  className="hover:text-foreground whitespace-nowrap"
                 >
                   {part}
                 </button>
@@ -284,14 +284,14 @@ export default function FileManager() {
           {currentPath !== '.' && (
             <button
               onClick={navigateUp}
-              className="flex items-center gap-1 rounded-md bg-[#334155] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+              className="flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
             >
               <ArrowLeft size={12} /> Up
             </button>
           )}
           <button
             onClick={() => setShowNewFolder(true)}
-            className="flex items-center gap-1 rounded-md bg-[#334155] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+            className="flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
           >
             <Plus size={12} /> New Folder
           </button>
@@ -313,7 +313,7 @@ export default function FileManager() {
             value={newFolderName}
             onChange={e => setNewFolderName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleCreateDir()}
-            className="flex-1 rounded-md border border-[#334155] bg-[#0f172a] px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-blue-500"
+            className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-blue-500"
             autoFocus
           />
           <button
@@ -325,7 +325,7 @@ export default function FileManager() {
           </button>
           <button
             onClick={() => { setShowNewFolder(false); setNewFolderName(''); }}
-            className="text-slate-400 hover:text-slate-200"
+            className="text-muted-foreground hover:text-foreground"
           >
             <X size={16} />
           </button>
@@ -334,11 +334,11 @@ export default function FileManager() {
 
       {/* File editor */}
       {editingFile && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-          <div className="flex items-center justify-between border-b border-[#334155] px-5 py-3">
+        <div className="rounded-lg border border-border bg-card shadow-md">
+          <div className="flex items-center justify-between border-b border-border px-5 py-3">
             <div className="flex items-center gap-2">
               <File size={16} className="text-blue-400" />
-              <span className="font-mono text-sm text-slate-200">{editingFile}</span>
+              <span className="font-mono text-sm text-foreground">{editingFile}</span>
               {editDirty && <span className="text-xs text-amber-400">(modified)</span>}
             </div>
             <div className="flex items-center gap-2">
@@ -352,7 +352,7 @@ export default function FileManager() {
               </button>
               <button
                 onClick={() => setEditingFile(null)}
-                className="text-slate-400 hover:text-slate-200"
+                className="text-muted-foreground hover:text-foreground"
               >
                 <X size={16} />
               </button>
@@ -361,7 +361,7 @@ export default function FileManager() {
           <textarea
             value={editContent}
             onChange={e => { setEditContent(e.target.value); setEditDirty(true); }}
-            className="h-96 w-full resize-y bg-[#0f172a] p-4 font-mono text-sm text-slate-200 outline-none"
+            className="h-96 w-full resize-y bg-background p-4 font-mono text-sm text-foreground outline-none"
             spellCheck={false}
           />
         </div>
@@ -369,18 +369,18 @@ export default function FileManager() {
 
       {/* File list */}
       {loading ? (
-        <div className="flex h-48 items-center justify-center text-slate-400">Loading files...</div>
+        <div className="flex h-48 items-center justify-center text-muted-foreground">Loading files...</div>
       ) : files.length === 0 && !editingFile ? (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] px-6 py-12 text-center">
-          <FolderOpen size={40} className="mx-auto mb-3 text-slate-500" />
-          <p className="text-slate-300 font-medium">Empty directory</p>
-          <p className="text-sm text-slate-500 mt-1">Upload a file or create a folder to get started.</p>
+        <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
+          <FolderOpen size={40} className="mx-auto mb-3 text-muted-foreground" />
+          <p className="text-card-foreground font-medium">Empty directory</p>
+          <p className="text-sm text-muted-foreground mt-1">Upload a file or create a folder to get started.</p>
         </div>
       ) : !editingFile && (
-        <div className="overflow-hidden rounded-lg border border-[#334155]">
+        <div className="overflow-hidden rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[#334155] bg-[#1e293b]/50 text-left text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-border bg-card/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Size</th>
                 <th className="px-4 py-3">Modified</th>
@@ -388,29 +388,29 @@ export default function FileManager() {
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#334155]">
+            <tbody className="divide-y divide-border">
               {files.map(entry => (
-                <tr key={entry.path} className="bg-[#0f172a] hover:bg-[#1e293b]/50">
+                <tr key={entry.path} className="bg-background hover:bg-card/50">
                   <td className="px-4 py-3">
                     <button
                       onClick={() => handleOpenFile(entry)}
-                      className="flex items-center gap-2 text-slate-200 hover:text-blue-400"
+                      className="flex items-center gap-2 text-foreground hover:text-blue-400"
                     >
                       {entry.is_dir ? (
                         <Folder size={16} className="text-amber-400" />
                       ) : (
-                        <File size={16} className="text-slate-400" />
+                        <File size={16} className="text-muted-foreground" />
                       )}
                       <span className="font-mono text-sm">{entry.name}</span>
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
                     {entry.is_dir ? '--' : formatSize(entry.size)}
                   </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                  <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">
                     {formatDate(entry.mod_time)}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-500">
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                     {entry.mode}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -426,7 +426,7 @@ export default function FileManager() {
                         </button>
                         <button
                           onClick={() => setConfirmDelete(null)}
-                          className="rounded bg-[#334155] px-2 py-1 text-xs text-slate-300"
+                          className="rounded bg-accent px-2 py-1 text-xs text-card-foreground"
                         >
                           No
                         </button>

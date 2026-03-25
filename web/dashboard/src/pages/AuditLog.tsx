@@ -44,10 +44,10 @@ export default function AuditLog() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Audit Log</h1>
-          <p className="text-sm text-slate-400">Admin action history ({entries.length} entries)</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Audit Log</h1>
+          <p className="text-sm text-muted-foreground">Admin action history ({entries.length} entries)</p>
         </div>
-        <button onClick={load} className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]">
+        <button onClick={load} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
@@ -59,7 +59,7 @@ export default function AuditLog() {
         <button
           onClick={() => setFilter('')}
           className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-            !filter ? 'bg-blue-600 text-white' : 'bg-[#334155] text-slate-400 hover:text-slate-200'
+            !filter ? 'bg-blue-600 text-white' : 'bg-accent text-muted-foreground hover:text-foreground'
           }`}
         >
           All
@@ -69,7 +69,7 @@ export default function AuditLog() {
             key={action}
             onClick={() => setFilter(filter === action ? '' : action)}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              filter === action ? 'bg-blue-600 text-white' : 'bg-[#334155] text-slate-400 hover:text-slate-200'
+              filter === action ? 'bg-blue-600 text-white' : 'bg-accent text-muted-foreground hover:text-foreground'
             }`}
           >
             {action}
@@ -78,11 +78,11 @@ export default function AuditLog() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
+      <div className="rounded-lg border border-border bg-card shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 w-8"></th>
                 <th className="px-5 py-3">Time</th>
                 <th className="px-5 py-3">Action</th>
@@ -92,7 +92,7 @@ export default function AuditLog() {
             </thead>
             <tbody>
               {filtered.map((entry, i) => (
-                <tr key={i} className="border-b border-[#334155]/50 text-slate-300">
+                <tr key={i} className="border-b border-border/50 text-card-foreground">
                   <td className="px-5 py-2.5">
                     {entry.success ? (
                       <CheckCircle size={14} className="text-green-400" />
@@ -100,25 +100,25 @@ export default function AuditLog() {
                       <XCircle size={14} className="text-red-400" />
                     )}
                   </td>
-                  <td className="px-5 py-2.5 text-xs text-slate-400 whitespace-nowrap">
+                  <td className="px-5 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                     {formatTime(entry.time)}
                   </td>
                   <td className="px-5 py-2.5">
-                    <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ACTION_COLORS[entry.action] || 'bg-slate-500/20 text-slate-400'}`}>
+                    <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ACTION_COLORS[entry.action] || 'bg-slate-500/20 text-muted-foreground'}`}>
                       {entry.action}
                     </span>
                   </td>
-                  <td className="px-5 py-2.5 font-mono text-xs text-slate-400 max-w-xs truncate">
+                  <td className="px-5 py-2.5 font-mono text-xs text-muted-foreground max-w-xs truncate">
                     {entry.detail || '-'}
                   </td>
-                  <td className="px-5 py-2.5 font-mono text-xs text-slate-500">
+                  <td className="px-5 py-2.5 font-mono text-xs text-muted-foreground">
                     {entry.ip}
                   </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-8 text-center text-slate-500">
+                  <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">
                     <Shield size={24} className="mx-auto mb-2 opacity-50" />
                     No audit entries yet
                   </td>

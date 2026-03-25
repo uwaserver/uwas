@@ -57,8 +57,8 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Dashboard</h1>
-          <p className="text-sm text-slate-400">UWAS server overview</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">UWAS server overview</p>
         </div>
         {health && (
           <div className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${
@@ -92,42 +92,42 @@ export default function Dashboard() {
       {/* Status panels */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {/* SSL Status */}
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 mb-3">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground mb-3">
             <Lock size={15} className="text-emerald-400" /> SSL Certificates
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Active</span>
+              <span className="text-muted-foreground">Active</span>
               <span className="text-emerald-400 font-medium">{activeCerts}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Pending</span>
+              <span className="text-muted-foreground">Pending</span>
               <span className="text-blue-400 font-medium">{pendingCerts}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Total domains</span>
-              <span className="text-slate-300 font-medium">{certs.length}</span>
+              <span className="text-muted-foreground">Total domains</span>
+              <span className="text-card-foreground font-medium">{certs.length}</span>
             </div>
           </div>
         </div>
 
         {/* PHP Status */}
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 mb-3">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground mb-3">
             <Cpu size={15} className="text-purple-400" /> PHP Engines
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Detected</span>
-              <span className="text-slate-300 font-medium">{php.length}</span>
+              <span className="text-muted-foreground">Detected</span>
+              <span className="text-card-foreground font-medium">{php.length}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Running</span>
+              <span className="text-muted-foreground">Running</span>
               <span className="text-emerald-400 font-medium">{phpRunning}</span>
             </div>
             {php.length > 0 && (
-              <p className="text-[10px] text-slate-500 mt-1">
+              <p className="text-[10px] text-muted-foreground mt-1">
                 {php.map(p => `${p.version} (${p.sapi === 'cgi-fcgi' ? 'CGI' : 'FPM'})`).join(', ')}
               </p>
             )}
@@ -138,27 +138,27 @@ export default function Dashboard() {
         </div>
 
         {/* Security */}
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 mb-3">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground mb-3">
             <ShieldAlert size={15} className="text-red-400" /> Security
           </div>
           {security ? (
             <div className="space-y-2">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-400">WAF blocks</span>
+                <span className="text-muted-foreground">WAF blocks</span>
                 <span className="text-red-400 font-medium">{security.waf_blocked}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Bot blocks</span>
+                <span className="text-muted-foreground">Bot blocks</span>
                 <span className="text-orange-400 font-medium">{security.bot_blocked}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Rate limited</span>
+                <span className="text-muted-foreground">Rate limited</span>
                 <span className="text-amber-400 font-medium">{security.rate_blocked}</span>
               </div>
             </div>
           ) : (
-            <p className="text-xs text-slate-500">Loading...</p>
+            <p className="text-xs text-muted-foreground">Loading...</p>
           )}
         </div>
       </div>
@@ -173,8 +173,8 @@ export default function Dashboard() {
       </div>
 
       {/* Chart */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
-        <h2 className="mb-4 text-sm font-semibold text-slate-300">Requests Over Time</h2>
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
+        <h2 className="mb-4 text-sm font-semibold text-card-foreground">Requests Over Time</h2>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={history}>
@@ -193,14 +193,14 @@ export default function Dashboard() {
       </div>
 
       {/* Domains table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">Domains ({domains.length})</h2>
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">Domains ({domains.length})</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Host</th>
                 <th className="px-5 py-3 font-medium">Type</th>
                 <th className="px-5 py-3 font-medium">SSL</th>
@@ -210,13 +210,13 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {domains.map(d => (
-                <tr key={d.host} className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30">
+                <tr key={d.host} className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30">
                   <td className="px-5 py-3 font-mono text-xs">{d.host}</td>
                   <td className="px-5 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                       d.type === 'php' ? 'bg-purple-500/15 text-purple-400' :
                       d.type === 'proxy' ? 'bg-orange-500/15 text-orange-400' :
-                      d.type === 'redirect' ? 'bg-slate-500/15 text-slate-400' :
+                      d.type === 'redirect' ? 'bg-slate-500/15 text-muted-foreground' :
                       'bg-blue-500/15 text-blue-400'
                     }`}>{d.type}</span>
                   </td>
@@ -230,7 +230,7 @@ export default function Dashboard() {
                   <td className="px-5 py-3">
                     {(() => {
                       const h = domainHealth.find(dh => dh.host === d.host);
-                      if (!h) return <span className="text-xs text-slate-500">--</span>;
+                      if (!h) return <span className="text-xs text-muted-foreground">--</span>;
                       const isUp = h.status === 'up';
                       return (
                         <span className="flex items-center gap-1.5" title={!isUp && h.error ? h.error : undefined}>
@@ -238,16 +238,16 @@ export default function Dashboard() {
                           <span className={`text-xs font-medium ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
                             {h.status}
                           </span>
-                          <span className="text-[10px] text-slate-500">{h.ms}ms</span>
+                          <span className="text-[10px] text-muted-foreground">{h.ms}ms</span>
                         </span>
                       );
                     })()}
                   </td>
-                  <td className="px-5 py-3 font-mono text-xs text-slate-500">{d.ip || 'shared'}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{d.ip || 'shared'}</td>
                 </tr>
               ))}
               {domains.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">No domains configured</td></tr>
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">No domains configured</td></tr>
               )}
             </tbody>
           </table>

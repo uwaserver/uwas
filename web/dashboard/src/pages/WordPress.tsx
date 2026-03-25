@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, AlertTriangle, ChevronDown, ChevronUp, Bug, FileText } from 'lucide-react';
 import {
   fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus,
   fetchWPSites, wpUpdateCore, wpUpdatePlugins, wpPluginAction, wpFixPermissions,
+  wpToggleDebug, wpErrorLog,
   type DomainData, type WPInstallStatus, type WPSite, type WPPlugin,
 } from '@/lib/api';
 
@@ -22,6 +23,7 @@ export default function WordPress() {
   const [copied, setCopied] = useState('');
   const [expandedSite, setExpandedSite] = useState('');
   const [actionLoading, setActionLoading] = useState('');
+  const [actionResult, setActionResult] = useState('');
 
   const loadSites = useCallback(async () => {
     try {
@@ -95,19 +97,19 @@ export default function WordPress() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">WordPress</h1>
-          <p className="mt-1 text-sm text-slate-400">Manage WordPress installations across your domains</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">WordPress</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Manage WordPress installations across your domains</p>
         </div>
-        <button onClick={loadSites} disabled={loadingSites} className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-300 hover:bg-[#334155] disabled:opacity-50">
+        <button onClick={loadSites} disabled={loadingSites} className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent disabled:opacity-50">
           <RefreshCw size={14} className={loadingSites ? 'animate-spin' : ''} />Refresh
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-lg bg-[#0f172a] p-1">
+      <div className="flex gap-1 rounded-lg bg-background p-1">
         {(['sites', 'install'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 rounded-md py-2 text-sm font-medium transition ${tab === t ? 'bg-[#1e293b] text-slate-100 shadow' : 'text-slate-500 hover:text-slate-300'}`}>
+            className={`flex-1 rounded-md py-2 text-sm font-medium transition ${tab === t ? 'bg-card text-foreground shadow' : 'text-muted-foreground hover:text-card-foreground'}`}>
             {t === 'sites' ? `Sites (${sites.length})` : 'Install New'}
           </button>
         ))}
@@ -118,24 +120,24 @@ export default function WordPress() {
       {/* ═══ Sites Tab ═══ */}
       {tab === 'sites' && (
         <>
-          {loadingSites && <p className="text-sm text-slate-500 text-center py-8">Scanning domains for WordPress...</p>}
+          {loadingSites && <p className="text-sm text-muted-foreground text-center py-8">Scanning domains for WordPress...</p>}
           {!loadingSites && sites.length === 0 && (
-            <div className="text-center py-12 text-slate-500">
+            <div className="text-center py-12 text-muted-foreground">
               <Zap size={32} className="mx-auto mb-3 opacity-30" />
               <p className="text-sm">No WordPress sites found</p>
               <p className="text-xs mt-1">Install WordPress on a PHP domain using the Install tab</p>
             </div>
           )}
           {sites.map(site => (
-            <div key={site.domain} className="rounded-lg border border-[#334155] bg-[#1e293b] overflow-hidden">
+            <div key={site.domain} className="rounded-lg border border-border bg-card overflow-hidden">
               {/* Site header */}
-              <div className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-[#334155]/30"
+              <div className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-accent/30"
                 onClick={() => setExpandedSite(expandedSite === site.domain ? '' : site.domain)}>
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400 font-bold text-sm">WP</div>
                   <div>
-                    <p className="text-sm font-medium text-slate-200">{site.domain}</p>
-                    <p className="text-xs text-slate-500">WordPress {site.version} &middot; DB: {site.db_name}</p>
+                    <p className="text-sm font-medium text-foreground">{site.domain}</p>
+                    <p className="text-xs text-muted-foreground">WordPress {site.version} &middot; DB: {site.db_name}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -143,13 +145,13 @@ export default function WordPress() {
                   {site.health.core_update && <Badge ok={false} label="Core update" />}
                   <Badge ok={site.health.ssl} label={site.health.ssl ? 'SSL' : 'No SSL'} />
                   <Badge ok={!site.health.debug} label={site.health.debug ? 'DEBUG ON' : 'Debug off'} />
-                  {expandedSite === site.domain ? <ChevronUp size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
+                  {expandedSite === site.domain ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
                 </div>
               </div>
 
               {/* Expanded detail */}
               {expandedSite === site.domain && (
-                <div className="border-t border-[#334155] p-5 space-y-5">
+                <div className="border-t border-border p-5 space-y-5">
                   {/* Quick actions */}
                   <div className="flex flex-wrap gap-2">
                     <a href={site.admin_url} target="_blank" rel="noopener"
@@ -158,27 +160,47 @@ export default function WordPress() {
                     </a>
                     <button onClick={() => doAction('core-' + site.domain, () => wpUpdateCore(site.domain))}
                       disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#334155] disabled:opacity-50">
+                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
                       {actionLoading === 'core-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
                       Update Core
                     </button>
                     <button onClick={() => doAction('plugins-' + site.domain, () => wpUpdatePlugins(site.domain))}
                       disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#334155] disabled:opacity-50">
+                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
                       {actionLoading === 'plugins-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Plug size={11} />}
                       Update All Plugins
                     </button>
                     <button onClick={() => doAction('perms-' + site.domain, () => wpFixPermissions(site.domain))}
                       disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#334155] disabled:opacity-50">
+                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
                       {actionLoading === 'perms-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Shield size={11} />}
                       Fix Permissions
+                    </button>
+                    <button onClick={() => doAction('debug-' + site.domain, () => wpToggleDebug(site.domain, !site.health.debug))}
+                      disabled={!!actionLoading}
+                      className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${
+                        site.health.debug
+                          ? 'border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                          : 'border-border text-card-foreground hover:bg-accent'
+                      }`}>
+                      {actionLoading === 'debug-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Bug size={11} />}
+                      {site.health.debug ? 'Debug ON' : 'Debug OFF'}
+                    </button>
+                    <button onClick={() => doAction('errlog-' + site.domain, async () => {
+                        const res = await wpErrorLog(site.domain);
+                        setActionResult(res.log || res.message || 'No log content');
+                        return { status: 'ok', output: '' };
+                      })}
+                      disabled={!!actionLoading}
+                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
+                      {actionLoading === 'errlog-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <FileText size={11} />}
+                      Error Log
                     </button>
                   </div>
 
                   {/* Permissions */}
                   <div>
-                    <h3 className="text-xs font-semibold text-slate-400 mb-2">Permissions</h3>
+                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">Permissions</h3>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {[
                         ['wp-config.php', site.permissions.wp_config],
@@ -186,30 +208,43 @@ export default function WordPress() {
                         ['uploads/', site.permissions.uploads],
                         ['.htaccess', site.permissions.htaccess],
                       ].map(([label, val]) => (
-                        <div key={label as string} className="rounded bg-[#0f172a] px-3 py-2">
-                          <p className="text-[10px] text-slate-500">{label}</p>
-                          <p className="font-mono text-xs text-slate-300">{val || '—'}</p>
+                        <div key={label as string} className="rounded bg-background px-3 py-2">
+                          <p className="text-[10px] text-muted-foreground">{label}</p>
+                          <p className="font-mono text-xs text-card-foreground">{val || '—'}</p>
                         </div>
                       ))}
                     </div>
                     {site.permissions.owner && (
-                      <p className="mt-1.5 text-[10px] text-slate-500">Owner: <span className="font-mono text-slate-400">{site.permissions.owner}</span>
+                      <p className="mt-1.5 text-[10px] text-muted-foreground">Owner: <span className="font-mono text-muted-foreground">{site.permissions.owner}</span>
                         {site.permissions.writable ? <span className="ml-2 text-emerald-400">wp-content writable</span> : <span className="ml-2 text-red-400">wp-content NOT writable</span>}
                       </p>
                     )}
                   </div>
 
+                  {/* Error Log */}
+                  {actionResult && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-xs font-semibold text-muted-foreground flex items-center gap-1"><Bug size={12} /> Debug Log</h3>
+                        <button onClick={() => setActionResult('')} className="text-[10px] text-muted-foreground hover:text-foreground">Close</button>
+                      </div>
+                      <pre className="max-h-48 overflow-auto rounded bg-background p-3 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">
+                        {actionResult}
+                      </pre>
+                    </div>
+                  )}
+
                   {/* Plugins */}
                   {(site.plugins ?? []).length > 0 && (
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-400 mb-2 flex items-center gap-1"><Plug size={12} /> Plugins ({site.plugins.length})</h3>
+                      <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Plug size={12} /> Plugins ({site.plugins.length})</h3>
                       <div className="space-y-1">
                         {site.plugins.map((p: WPPlugin) => (
-                          <div key={p.name} className="flex items-center justify-between rounded bg-[#0f172a] px-3 py-2">
+                          <div key={p.name} className="flex items-center justify-between rounded bg-background px-3 py-2">
                             <div className="flex items-center gap-2">
                               <span className={`h-1.5 w-1.5 rounded-full ${p.status === 'active' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                              <span className="text-xs text-slate-300">{p.name}</span>
-                              <span className="text-[10px] text-slate-500">v{p.version}</span>
+                              <span className="text-xs text-card-foreground">{p.name}</span>
+                              <span className="text-[10px] text-muted-foreground">v{p.version}</span>
                               {p.update && p.update !== 'none' && (
                                 <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">{p.update} available</span>
                               )}
@@ -239,10 +274,10 @@ export default function WordPress() {
                   {/* Themes */}
                   {(site.themes ?? []).length > 0 && (
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-400 mb-2 flex items-center gap-1"><Palette size={12} /> Themes ({site.themes.length})</h3>
+                      <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Palette size={12} /> Themes ({site.themes.length})</h3>
                       <div className="flex flex-wrap gap-2">
                         {site.themes.map(t => (
-                          <div key={t.name} className={`rounded px-3 py-1.5 text-xs ${t.status === 'active' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'bg-[#0f172a] text-slate-400'}`}>
+                          <div key={t.name} className={`rounded px-3 py-1.5 text-xs ${t.status === 'active' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'bg-background text-muted-foreground'}`}>
                             {t.name} v{t.version}
                             {t.update && t.update !== 'none' && <span className="ml-1 text-amber-400">({t.update})</span>}
                           </div>
@@ -253,7 +288,7 @@ export default function WordPress() {
 
                   {/* Health */}
                   <div>
-                    <h3 className="text-xs font-semibold text-slate-400 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> Health</h3>
+                    <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><AlertTriangle size={12} /> Health</h3>
                     <div className="flex flex-wrap gap-2">
                       <Badge ok={site.health.ssl} label={site.health.ssl ? 'FORCE_SSL_ADMIN' : 'SSL not forced'} />
                       <Badge ok={site.health.file_edit} label={site.health.file_edit ? 'File editor disabled' : 'File editor enabled'} />
@@ -270,8 +305,8 @@ export default function WordPress() {
       {/* ═══ Install Tab ═══ */}
       {tab === 'install' && (
         <>
-          <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
-            <h2 className="text-sm font-semibold text-slate-300 mb-3">Prerequisites</h2>
+          <div className="rounded-lg border border-border bg-card p-5">
+            <h2 className="text-sm font-semibold text-card-foreground mb-3">Prerequisites</h2>
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <span className={`h-2.5 w-2.5 rounded-full ${installableDomains.length > 0 ? 'bg-emerald-400' : 'bg-red-400'}`} />
@@ -289,20 +324,20 @@ export default function WordPress() {
           </div>
 
           {installableDomains.length > 0 && mysqlOk && (
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
-              <h2 className="text-sm font-semibold text-slate-300 mb-4">Install WordPress</h2>
+            <div className="rounded-lg border border-border bg-card p-5">
+              <h2 className="text-sm font-semibold text-card-foreground mb-4">Install WordPress</h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-xs text-slate-500">Domain</label>
+                  <label className="mb-1.5 block text-xs text-muted-foreground">Domain</label>
                   <select value={selectedDomain} onChange={e => setSelectedDomain(e.target.value)}
-                    className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500">
+                    className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500">
                     {installableDomains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs text-slate-500">Database Host</label>
+                  <label className="mb-1.5 block text-xs text-muted-foreground">Database Host</label>
                   <input value={dbHost} onChange={e => setDbHost(e.target.value)}
-                    className="w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500" placeholder="localhost" />
+                    className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500" placeholder="localhost" />
                 </div>
               </div>
               <button onClick={handleInstall} disabled={installing || !selectedDomain}
@@ -315,7 +350,7 @@ export default function WordPress() {
           {status && status.status === 'running' && (
             <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-5">
               <p className="text-sm text-blue-400 mb-2">Installing WordPress on {status.domain}...</p>
-              <div className="h-1.5 w-full bg-[#334155] rounded-full overflow-hidden">
+              <div className="h-1.5 w-full bg-accent rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '60%' }} />
               </div>
             </div>
@@ -327,9 +362,9 @@ export default function WordPress() {
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {([['Database', status.db_name], ['DB User', status.db_user], ['DB Password', status.db_pass], ['Admin URL', status.admin_url]] as [string, string][])
                   .filter(([,v]) => v).map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between rounded bg-[#0f172a] px-3 py-2">
-                      <div><span className="text-xs text-slate-500">{label}</span><p className="font-mono text-xs text-slate-200">{value}</p></div>
-                      <button onClick={() => copy(value, label)} className="ml-2 rounded p-1 text-slate-500 hover:text-slate-300">
+                    <div key={label} className="flex items-center justify-between rounded bg-background px-3 py-2">
+                      <div><span className="text-xs text-muted-foreground">{label}</span><p className="font-mono text-xs text-foreground">{value}</p></div>
+                      <button onClick={() => copy(value, label)} className="ml-2 rounded p-1 text-muted-foreground hover:text-card-foreground">
                         {copied === label ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                       </button>
                     </div>
@@ -345,7 +380,7 @@ export default function WordPress() {
           {status && status.status === 'error' && (
             <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-5">
               <p className="text-sm text-red-400 mb-2">Failed: {status.error}</p>
-              {status.output && <pre className="mt-2 max-h-40 overflow-auto rounded bg-[#0f172a] p-3 text-[10px] text-slate-500 whitespace-pre-wrap">{status.output}</pre>}
+              {status.output && <pre className="mt-2 max-h-40 overflow-auto rounded bg-background p-3 text-[10px] text-muted-foreground whitespace-pre-wrap">{status.output}</pre>}
             </div>
           )}
         </>

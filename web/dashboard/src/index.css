@@ -20,8 +20,45 @@
   --radius-sm: 0.25rem;
 }
 
+/* Light theme overrides */
+.light {
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-border: #e2e8f0;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+  --color-accent: #e2e8f0;
+  --color-accent-foreground: #0f172a;
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
   font-family: system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Mobile responsive tables */
+@media (max-width: 640px) {
+  table {
+    font-size: 0.75rem;
+  }
+  table th,
+  table td {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  /* Horizontal scroll for wide tables */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Touch-friendly buttons on mobile */
+@media (max-width: 640px) {
+  button, select, input {
+    min-height: 2.5rem;
+  }
 }

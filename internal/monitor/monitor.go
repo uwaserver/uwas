@@ -61,6 +61,11 @@ func New(domains []config.Domain, log *logger.Logger) *Monitor {
 	}
 }
 
+// UpdateDomains updates the domain list for health monitoring.
+func (m *Monitor) UpdateDomains(domains []config.Domain) {
+	m.domains = domains
+}
+
 // Start launches goroutines that check each domain every 30 seconds.
 // It blocks until the context is cancelled.
 func (m *Monitor) Start(ctx context.Context) {

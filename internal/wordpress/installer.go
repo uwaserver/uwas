@@ -892,3 +892,38 @@ func FixPermissions(webRoot string) (string, error) {
 
 	return log.String(), nil
 }
+
+// SetDebugMode enables or disables WP_DEBUG, WP_DEBUG_LOG and WP_DEBUG_DISPLAY
+// in wp-config.php. When enabled, PHP errors are written to wp-content/debug.log
+// so white-page issues can be diagnosed.
+func SetDebugMode(webRoot string, enable bool) error {
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read wp-config.php: %w", err)
+	}
+
+	content := string(data)
+
+	// Remove existing debug defines
+	re := regexp.MustCompile(`(?m)^\s*define\s*\(\s*'WP_DEBUG(?:_LOG|_DISPLAY)?'\s*,\s*(?:true|false)\s*\)\s*;\s*\n?`)
+	content = re.ReplaceAllString(content, "")
+
+	if enable {
+		debugBlock := "define('WP_DEBUG', true);\ndefine('WP_DEBUG_LOG', true);\ndefine('WP_DEBUG_DISPLAY', true);\n\n"
+		if idx := strings.Index(content, "require_once ABSPATH"); idx >= 0 {
+			content = content[:idx] + debugBlock + content[idx:]
+		} else if idx := strings.Index(content, "/* That's all"); idx >= 0 {
+			content = content[:idx] + debugBlock + content[idx:]
+		} else {
+			content += "\n" + debugBlock
+		}
+	} else {
+		debugOff := "define('WP_DEBUG', false);\n\n"
+		if idx := strings.Index(content, "require_once ABSPATH"); idx >= 0 {
+			content = content[:idx] + debugOff + content[idx:]
+		}
+	}
+
+	return os.WriteFile(configPath, []byte(content), 0600)
+}

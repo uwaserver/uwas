@@ -55,12 +55,12 @@ export default function Security() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Security</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Security</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             WAF, bot protection, rate limiting, and threat monitoring.
           </p>
         </div>
-        <button onClick={load} className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-300 hover:bg-[#334155]">
+        <button onClick={load} className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent">
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
@@ -75,12 +75,12 @@ export default function Security() {
             { label: 'Rate Limited', value: stats.rate_blocked, icon: Gauge, color: 'text-amber-400' },
             { label: 'Hotlinks Blocked', value: stats.hotlink_blocked, icon: Link2Off, color: 'text-purple-400' },
           ] as const).map(card => (
-            <div key={card.label} className="rounded-lg border border-[#334155] bg-[#1e293b] p-4">
-              <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
+            <div key={card.label} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
                 <card.icon size={14} className={card.color} />
                 {card.label}
               </div>
-              <p className={`text-2xl font-bold ${card.color}`}>
+              <p className={`text-xl font-bold sm:text-2xl ${card.color}`}>
                 {card.value.toLocaleString()}
               </p>
             </div>
@@ -89,8 +89,8 @@ export default function Security() {
       )}
 
       {/* Active protections */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
-        <h2 className="text-sm font-semibold text-slate-300 mb-3">Active Protections</h2>
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="text-sm font-semibold text-card-foreground mb-3">Active Protections</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {[
             { name: 'WAF (SQL/XSS/Shell)', active: true, detail: 'URL + body inspection' },
@@ -102,11 +102,11 @@ export default function Security() {
             { name: 'Basic Auth', active: true, detail: 'SHA256 + constant-time' },
             { name: 'Hotlink Protection', active: true, detail: 'Referer-based blocking' },
           ].map(p => (
-            <div key={p.name} className="flex items-start gap-2 rounded-md bg-[#0f172a] px-3 py-2.5">
+            <div key={p.name} className="flex items-start gap-2 rounded-md bg-background px-3 py-2.5">
               <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
               <div>
-                <p className="text-xs font-medium text-slate-300">{p.name}</p>
-                <p className="text-[10px] text-slate-500">{p.detail}</p>
+                <p className="text-xs font-medium text-card-foreground">{p.name}</p>
+                <p className="text-[10px] text-muted-foreground">{p.detail}</p>
               </div>
             </div>
           ))}
@@ -115,22 +115,22 @@ export default function Security() {
 
       {/* Recent blocked requests */}
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
           Recent Blocked Requests ({blocked.length})
         </h2>
         {loading ? (
-          <div className="text-center text-sm text-slate-500 py-8">Loading...</div>
+          <div className="text-center text-sm text-muted-foreground py-8">Loading...</div>
         ) : blocked.length === 0 ? (
-          <div className="rounded-lg border border-[#334155] bg-[#1e293b] px-6 py-12 text-center">
+          <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
             <Shield size={40} className="mx-auto mb-3 text-emerald-400" />
-            <p className="text-slate-300 font-medium">No blocked requests yet</p>
-            <p className="text-sm text-slate-500 mt-1">All traffic is clean.</p>
+            <p className="text-card-foreground font-medium">No blocked requests yet</p>
+            <p className="text-sm text-muted-foreground mt-1">All traffic is clean.</p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-[#334155]">
+          <div className="overflow-hidden rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#334155] bg-[#1e293b]/50 text-left text-xs uppercase tracking-wider text-slate-500">
+                <tr className="border-b border-border bg-card/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="px-4 py-3">Time</th>
                   <th className="px-4 py-3">IP</th>
                   <th className="px-4 py-3">Path</th>
@@ -138,18 +138,18 @@ export default function Security() {
                   <th className="px-4 py-3">User Agent</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#334155]">
+              <tbody className="divide-y divide-border">
                 {blocked.slice(0, 100).map((b, i) => (
-                  <tr key={i} className="bg-[#0f172a] hover:bg-[#1e293b]/50">
-                    <td className="px-4 py-2.5 text-xs text-slate-400 whitespace-nowrap">{timeAgo(b.time)}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{b.ip}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-400 max-w-[200px] truncate" title={b.path}>{b.path}</td>
+                  <tr key={i} className="bg-background hover:bg-card/50">
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{timeAgo(b.time)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-card-foreground">{b.ip}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground max-w-[200px] truncate" title={b.path}>{b.path}</td>
                     <td className="px-4 py-2.5">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${reasonColors[b.reason] || 'bg-slate-500/15 text-slate-400'}`}>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${reasonColors[b.reason] || 'bg-slate-500/15 text-muted-foreground'}`}>
                         {reasonLabels[b.reason] || b.reason}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-[10px] text-slate-500 max-w-[250px] truncate" title={b.ua}>{b.ua || '-'}</td>
+                    <td className="px-4 py-2.5 text-[10px] text-muted-foreground max-w-[250px] truncate" title={b.ua}>{b.ua || '-'}</td>
                   </tr>
                 ))}
               </tbody>

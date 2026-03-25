@@ -31,15 +31,17 @@ import IPManagement from '@/pages/IPManagement';
 import Services from '@/pages/Services';
 import Packages from '@/pages/Packages';
 import Doctor from '@/pages/Doctor';
+import CloneStaging from '@/pages/CloneStaging';
+import Migration from '@/pages/Migration';
 
 function RequireAuth() {
   if (!getToken()) {
     return <Navigate to="/login" replace />;
   }
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0f172a]">
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto p-6 lg:p-8">
+      <main className="flex-1 overflow-y-auto p-4 pt-16 sm:p-6 sm:pt-6 lg:p-8">
         <Outlet />
       </main>
     </div>
@@ -77,6 +79,8 @@ export default function App() {
         <Route path="/backups" element={<Backups />} />
         <Route path="/database" element={<Database />} />
         <Route path="/wordpress" element={<WordPress />} />
+        <Route path="/clone" element={<CloneStaging />} />
+        <Route path="/migrate" element={<Migration />} />
         <Route path="/dns" element={<DNS />} />
         <Route path="/ip-management" element={<IPManagement />} />
         <Route path="/audit" element={<AuditLog />} />

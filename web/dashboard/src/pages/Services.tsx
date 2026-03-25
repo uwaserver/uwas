@@ -61,7 +61,7 @@ export default function Services() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading services...
       </div>
     );
@@ -72,12 +72,12 @@ export default function Services() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Services</h1>
-          <p className="text-sm text-slate-400">System services management</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Services</h1>
+          <p className="text-sm text-muted-foreground">System services management</p>
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-1.5 rounded-md bg-[#334155] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#475569]"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
         </button>
@@ -100,16 +100,16 @@ export default function Services() {
       )}
 
       {/* Services Table */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-        <div className="border-b border-[#334155] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-300">
+      <div className="rounded-lg border border-border bg-card shadow-md">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">
             Services ({services.length})
           </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-[#334155] text-slate-400">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Service Name</th>
                 <th className="px-5 py-3 font-medium">Status</th>
                 <th className="px-5 py-3 font-medium">Enabled</th>
@@ -120,10 +120,10 @@ export default function Services() {
               {services.map((svc) => (
                 <tr
                   key={svc.name}
-                  className="border-b border-[#334155]/50 text-slate-300 transition hover:bg-[#334155]/30"
+                  className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-3">
-                    <span className="font-medium text-slate-200">{svc.display || svc.name}</span>
+                    <span className="font-medium text-foreground">{svc.display || svc.name}</span>
                   </td>
                   <td className="px-5 py-3">
                     <span className="flex items-center gap-2">
@@ -137,7 +137,7 @@ export default function Services() {
                       </span>
                     </span>
                   </td>
-                  <td className="px-5 py-3 text-slate-400">{svc.enabled ? 'Yes' : 'No'}</td>
+                  <td className="px-5 py-3 text-muted-foreground">{svc.enabled ? 'Yes' : 'No'}</td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
@@ -185,7 +185,7 @@ export default function Services() {
               ))}
               {services.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-5 py-12 text-center text-slate-500">
+                  <td colSpan={4} className="px-5 py-12 text-center text-muted-foreground">
                     No services found.
                   </td>
                 </tr>

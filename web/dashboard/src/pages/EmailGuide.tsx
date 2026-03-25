@@ -70,19 +70,19 @@ export default function EmailGuide() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-100">Email Configuration</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-xl font-bold sm:text-2xl text-foreground">Email Configuration</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           DNS records needed for email delivery. Add these at your DNS provider.
         </p>
       </div>
 
       {/* Domain selector */}
       <div className="flex items-center gap-3">
-        <label className="text-sm text-slate-400">Domain:</label>
+        <label className="text-sm text-muted-foreground">Domain:</label>
         <select
           value={selectedDomain}
           onChange={e => setSelectedDomain(e.target.value)}
-          className="rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500"
+          className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
         >
           {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
         </select>
@@ -93,17 +93,17 @@ export default function EmailGuide() {
         <div className="flex items-center gap-2 text-blue-400 font-medium mb-1">
           <Mail size={16} /> UWAS does not include a mail server
         </div>
-        <p className="text-slate-400 text-xs">
+        <p className="text-muted-foreground text-xs">
           For email, install <strong>Postfix + Dovecot</strong> or use an external service
           (Gmail SMTP, SendGrid, Mailgun). The DNS records below are needed regardless of your mail setup.
         </p>
       </div>
 
       {/* DNS Records table */}
-      <div className="overflow-hidden rounded-lg border border-[#334155]">
+      <div className="overflow-hidden rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[#334155] bg-[#1e293b]/50 text-left text-xs uppercase tracking-wider text-slate-500">
+            <tr className="border-b border-border bg-card/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
               <th className="px-4 py-3">Type</th>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Value</th>
@@ -111,16 +111,16 @@ export default function EmailGuide() {
               <th className="px-4 py-3 w-10"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#334155]">
+          <tbody className="divide-y divide-border">
             {records.map((r, i) => (
-              <tr key={i} className="bg-[#0f172a] hover:bg-[#1e293b]/50">
+              <tr key={i} className="bg-background hover:bg-card/50">
                 <td className="px-4 py-3">
                   <span className="rounded bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-400">{r.type}</span>
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-300">{r.name}</td>
+                <td className="px-4 py-3 font-mono text-xs text-card-foreground">{r.name}</td>
                 <td className="px-4 py-3">
-                  <code className="rounded bg-[#1e293b] px-2 py-1 text-xs font-mono text-slate-200 select-all">{r.value}</code>
-                  <p className="text-[10px] text-slate-500 mt-1">{r.description}</p>
+                  <code className="rounded bg-card px-2 py-1 text-xs font-mono text-foreground select-all">{r.value}</code>
+                  <p className="text-[10px] text-muted-foreground mt-1">{r.description}</p>
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium ${r.priority === 'Required' ? 'text-red-400' : 'text-amber-400'}`}>
@@ -128,7 +128,7 @@ export default function EmailGuide() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <button onClick={() => copy(r.value, `r-${i}`)} className="rounded p-1 text-slate-500 hover:text-slate-300">
+                  <button onClick={() => copy(r.value, `r-${i}`)} className="rounded p-1 text-muted-foreground hover:text-card-foreground">
                     {copied === `r-${i}` ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
                   </button>
                 </td>
@@ -139,25 +139,25 @@ export default function EmailGuide() {
       </div>
 
       {/* Mail server options */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5">
-        <h2 className="text-sm font-semibold text-slate-300 mb-3">Mail Server Options</h2>
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h2 className="text-sm font-semibold text-card-foreground mb-3">Mail Server Options</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {[
             { name: 'Postfix + Dovecot', desc: 'Self-hosted, full control', cmd: 'apt install postfix dovecot-imapd' },
             { name: 'Mail-in-a-Box', desc: 'All-in-one mail server', cmd: 'curl -s https://mailinabox.email/setup.sh | sudo bash' },
             { name: 'External SMTP', desc: 'Gmail, SendGrid, Mailgun', cmd: 'No server install needed — configure app to use SMTP relay' },
           ].map(opt => (
-            <div key={opt.name} className="rounded-md bg-[#0f172a] p-3">
-              <p className="text-xs font-medium text-slate-300">{opt.name}</p>
-              <p className="text-[10px] text-slate-500 mb-2">{opt.desc}</p>
-              <code className="block rounded bg-[#1e293b] px-2 py-1 text-[10px] font-mono text-slate-400 select-all">{opt.cmd}</code>
+            <div key={opt.name} className="rounded-md bg-background p-3">
+              <p className="text-xs font-medium text-card-foreground">{opt.name}</p>
+              <p className="text-[10px] text-muted-foreground mb-2">{opt.desc}</p>
+              <code className="block rounded bg-card px-2 py-1 text-[10px] font-mono text-muted-foreground select-all">{opt.cmd}</code>
             </div>
           ))}
         </div>
       </div>
 
       {/* Testing link */}
-      <div className="text-xs text-slate-500 flex items-center gap-1">
+      <div className="text-xs text-muted-foreground flex items-center gap-1">
         Test your email config:
         <a href="https://mxtoolbox.com" target="_blank" rel="noopener" className="text-blue-400 hover:underline flex items-center gap-0.5">
           MXToolbox <ExternalLink size={10} />

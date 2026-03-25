@@ -66,10 +66,10 @@ export default function Packages() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Packages</h1>
-          <p className="mt-1 text-sm text-slate-400">{installed} installed, {available} available</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Packages</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{installed} installed, {available} available</p>
         </div>
-        <button onClick={load} disabled={loading} className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-sm text-slate-300 hover:bg-[#334155] disabled:opacity-50">
+        <button onClick={load} disabled={loading} className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent disabled:opacity-50">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />Refresh
         </button>
       </div>
@@ -80,18 +80,18 @@ export default function Packages() {
       {/* Remove confirmation modal */}
       {confirmRemove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-md rounded-lg border border-red-500/50 bg-[#1e293b] p-6 shadow-xl">
+          <div className="w-full max-w-md rounded-lg border border-red-500/50 bg-card p-6 shadow-xl">
             <div className="flex items-center gap-2 text-red-400 font-medium mb-3">
               <AlertTriangle size={18} /> Remove {confirmRemove.name}?
             </div>
             {confirmRemove.warning && (
               <div className="rounded bg-red-500/10 px-3 py-2 mb-3 text-sm text-red-300">{confirmRemove.warning}</div>
             )}
-            <p className="text-sm text-slate-400 mb-4">
-              This will run <code className="bg-[#0f172a] px-1 rounded text-xs">apt remove --purge</code> and stop the service. Config files may be removed.
+            <p className="text-sm text-muted-foreground mb-4">
+              This will run <code className="bg-background px-1 rounded text-xs">apt remove --purge</code> and stop the service. Config files may be removed.
             </p>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setConfirmRemove(null)} className="rounded-md border border-[#334155] px-4 py-2 text-sm text-slate-300 hover:bg-[#334155]">Cancel</button>
+              <button onClick={() => setConfirmRemove(null)} className="rounded-md border border-border px-4 py-2 text-sm text-card-foreground hover:bg-accent">Cancel</button>
               <button onClick={() => handleRemove(confirmRemove)} className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
                 Yes, Remove {confirmRemove.name}
               </button>
@@ -100,18 +100,18 @@ export default function Packages() {
         </div>
       )}
 
-      {loading && <p className="text-center py-8 text-slate-500">Detecting packages...</p>}
+      {loading && <p className="text-center py-8 text-muted-foreground">Detecting packages...</p>}
 
       {sorted.map(cat => (
         <div key={cat}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">{cat}</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{cat}</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {grouped[cat].map(pkg => (
-              <div key={pkg.id} className={`rounded-lg border bg-[#1e293b] p-4 shadow-md ${pkg.installed ? 'border-emerald-500/30' : 'border-[#334155]'}`}>
+              <div key={pkg.id} className={`rounded-lg border bg-card p-4 shadow-md ${pkg.installed ? 'border-emerald-500/30' : 'border-border'}`}>
                 <div className="flex items-start justify-between mb-1">
                   <div className="flex items-center gap-2">
-                    <Package size={16} className={pkg.installed ? 'text-emerald-400' : 'text-slate-500'} />
-                    <span className="text-sm font-medium text-slate-200">{pkg.name}</span>
+                    <Package size={16} className={pkg.installed ? 'text-emerald-400' : 'text-muted-foreground'} />
+                    <span className="text-sm font-medium text-foreground">{pkg.name}</span>
                     {pkg.required && <span title="Required by UWAS"><Shield size={12} className="text-blue-400" /></span>}
                   </div>
                   {pkg.installed ? (
@@ -119,12 +119,12 @@ export default function Packages() {
                       <Check size={10} /> Installed
                     </span>
                   ) : (
-                    <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-[10px] text-slate-500">Not installed</span>
+                    <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-[10px] text-muted-foreground">Not installed</span>
                   )}
                 </div>
-                <p className="text-xs text-slate-500">{pkg.description}</p>
+                <p className="text-xs text-muted-foreground">{pkg.description}</p>
                 {pkg.used_by && <p className="mt-0.5 text-[10px] text-blue-400/60">Used by: {pkg.used_by}</p>}
-                {pkg.version && <p className="mt-0.5 font-mono text-[10px] text-slate-600 truncate">{pkg.version}</p>}
+                {pkg.version && <p className="mt-0.5 font-mono text-[10px] text-muted-foreground truncate">{pkg.version}</p>}
 
                 <div className="mt-3 flex gap-2">
                   {!pkg.installed && (
@@ -140,7 +140,7 @@ export default function Packages() {
                     </button>
                   )}
                   {pkg.installed && !pkg.can_remove && (
-                    <p className="flex-1 text-center text-[10px] text-slate-600 py-2">Required — cannot remove</p>
+                    <p className="flex-1 text-center text-[10px] text-muted-foreground py-2">Required — cannot remove</p>
                   )}
                 </div>
               </div>

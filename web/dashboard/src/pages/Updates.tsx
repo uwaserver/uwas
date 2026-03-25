@@ -77,8 +77,8 @@ export default function Updates() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Updates</h1>
-          <p className="text-sm text-slate-400">Check for and install UWAS updates</p>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Updates</h1>
+          <p className="text-sm text-muted-foreground">Check for and install UWAS updates</p>
         </div>
       </div>
 
@@ -100,10 +100,10 @@ export default function Updates() {
 
       {/* Check for updates */}
       {!info && (
-        <div className="rounded-lg border border-[#334155] bg-[#1e293b] px-6 py-12 text-center shadow-md">
-          <Download size={48} className="mx-auto mb-4 text-slate-500" />
-          <h2 className="text-lg font-semibold text-slate-200 mb-2">Check for Updates</h2>
-          <p className="text-sm text-slate-400 mb-6">
+        <div className="rounded-lg border border-border bg-card px-6 py-12 text-center shadow-md">
+          <Download size={48} className="mx-auto mb-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground mb-2">Check for Updates</h2>
+          <p className="text-sm text-muted-foreground mb-6">
             Verify if a newer version of UWAS is available.
           </p>
           <button
@@ -126,28 +126,28 @@ export default function Updates() {
         <>
           {/* Version cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
-              <div className="flex items-center gap-2 text-slate-400 mb-3">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-md">
+              <div className="flex items-center gap-2 text-muted-foreground mb-3">
                 <Package size={18} />
                 <span className="text-xs font-medium uppercase">Current Version</span>
               </div>
-              <p className="text-2xl font-bold text-slate-100 font-mono">{info.current_version}</p>
+              <p className="text-xl font-bold sm:text-2xl text-foreground font-mono">{info.current_version}</p>
             </div>
 
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
-              <div className="flex items-center gap-2 text-slate-400 mb-3">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-md">
+              <div className="flex items-center gap-2 text-muted-foreground mb-3">
                 <Tag size={18} />
                 <span className="text-xs font-medium uppercase">Latest Version</span>
               </div>
-              <p className="text-2xl font-bold text-slate-100 font-mono">{info.latest_version}</p>
+              <p className="text-xl font-bold sm:text-2xl text-foreground font-mono">{info.latest_version}</p>
             </div>
 
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
-              <div className="flex items-center gap-2 text-slate-400 mb-3">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-md">
+              <div className="flex items-center gap-2 text-muted-foreground mb-3">
                 <Calendar size={18} />
                 <span className="text-xs font-medium uppercase">Published</span>
               </div>
-              <p className="text-lg font-semibold text-slate-100">{formatDate(info.published_at)}</p>
+              <p className="text-lg font-semibold text-foreground">{formatDate(info.published_at)}</p>
             </div>
           </div>
 
@@ -164,7 +164,7 @@ export default function Updates() {
                     <Download size={24} className="text-blue-400" />
                     <div>
                       <p className="text-sm font-semibold text-blue-400">Update Available</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-muted-foreground">
                         {info.current_version} <ArrowRight size={12} className="inline" /> {info.latest_version}
                       </p>
                     </div>
@@ -174,7 +174,7 @@ export default function Updates() {
                     <CheckCircle size={24} className="text-emerald-400" />
                     <div>
                       <p className="text-sm font-semibold text-emerald-400">Up to Date</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-muted-foreground">
                         You are running the latest version.
                       </p>
                     </div>
@@ -185,7 +185,7 @@ export default function Updates() {
                 <button
                   onClick={handleCheck}
                   disabled={checking}
-                  className="flex items-center gap-1.5 rounded-md border border-[#334155] bg-[#1e293b] px-3 py-2 text-xs text-slate-300 hover:bg-[#334155] disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs text-card-foreground hover:bg-accent disabled:opacity-50"
                 >
                   {checking ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                   Re-check
@@ -210,9 +210,9 @@ export default function Updates() {
 
           {/* Release notes */}
           {info.release_notes && (
-            <div className="rounded-lg border border-[#334155] bg-[#1e293b] shadow-md">
-              <div className="flex items-center justify-between border-b border-[#334155] px-5 py-4">
-                <h2 className="text-sm font-semibold text-slate-300">Release Notes</h2>
+            <div className="rounded-lg border border-border bg-card shadow-md">
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-card-foreground">Release Notes</h2>
                 {info.release_url && (
                   <a
                     href={info.release_url}
@@ -225,7 +225,7 @@ export default function Updates() {
                 )}
               </div>
               <div className="px-5 py-4">
-                <pre className="whitespace-pre-wrap text-sm text-slate-300 font-mono leading-relaxed">
+                <pre className="whitespace-pre-wrap text-sm text-card-foreground font-mono leading-relaxed">
                   {info.release_notes}
                 </pre>
               </div>

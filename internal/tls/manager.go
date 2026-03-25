@@ -27,6 +27,11 @@ type Manager struct {
 	// On-demand rate limiting: max 10 certs per minute.
 	onDemandCount atomic.Int64
 	onDemandReset atomic.Int64 // unix timestamp of current window start
+
+	// onCertRenewed is called after a certificate is successfully renewed.
+	onCertRenewed func(host string)
+	// onCertExpiry is called when a certificate is near expiry and renewal fails.
+	onCertExpiry func(host string, daysLeft int)
 }
 
 const onDemandMaxPerMinute = 10
@@ -186,6 +191,16 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 	}
 }
 
+// SetOnCertRenewed sets a callback that fires after a certificate is renewed.
+func (m *Manager) SetOnCertRenewed(fn func(host string)) {
+	m.onCertRenewed = fn
+}
+
+// SetOnCertExpiry sets a callback that fires when a certificate is near expiry and renewal fails.
+func (m *Manager) SetOnCertExpiry(fn func(host string, daysLeft int)) {
+	m.onCertExpiry = fn
+}
+
 // RenewCert forces renewal of a certificate for the given host.
 func (m *Manager) RenewCert(ctx context.Context, host string) error {
 	if m.acme == nil {
@@ -322,6 +337,10 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 			newCert, certPEM, keyPEM, err := m.acme.ObtainCertificate(ctx, leaf.DNSNames)
 			if err != nil {
 				m.logger.Error("renewal failed", "host", host, "error", err)
+				if m.onCertExpiry != nil {
+					daysLeft := int(remaining.Hours() / 24)
+					m.onCertExpiry(host, daysLeft)
+				}
 				return true
 			}
 
@@ -331,6 +350,9 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 			}
 
 			m.logger.Info("certificate renewed", "host", host)
+			if m.onCertRenewed != nil {
+				m.onCertRenewed(host)
+			}
 		}
 
 		return true

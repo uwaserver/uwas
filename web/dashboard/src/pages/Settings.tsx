@@ -530,7 +530,7 @@ export default function Settings() {
 
   if (loading) {
     return (
-      <div className="flex h-96 items-center justify-center text-slate-400">
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
         Loading settings...
       </div>
     );
@@ -541,8 +541,8 @@ export default function Settings() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Settings</h1>
-          <p className="text-sm text-slate-400">
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Settings</h1>
+          <p className="text-sm text-muted-foreground">
             Global server configuration
           </p>
         </div>
@@ -557,7 +557,7 @@ export default function Settings() {
           <button
             onClick={handleExport}
             disabled={exporting}
-            className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-[#334155] disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition hover:bg-accent disabled:opacity-50"
           >
             <Download size={14} />
             {exporting ? 'Exporting...' : 'Export'}
@@ -565,7 +565,7 @@ export default function Settings() {
           <button
             onClick={handleReload}
             disabled={reloading}
-            className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#1e293b] px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-[#334155] disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition hover:bg-accent disabled:opacity-50"
           >
             <RefreshCw size={14} className={reloading ? 'animate-spin' : ''} />
             Reload
@@ -597,7 +597,7 @@ export default function Settings() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleDiscard}
-              className="rounded-md border border-[#334155] bg-[#1e293b] px-3 py-1.5 text-sm text-slate-300 hover:bg-[#334155]"
+              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-card-foreground hover:bg-accent"
             >
               Discard
             </button>
@@ -622,10 +622,10 @@ export default function Settings() {
       )}
 
       {/* Server Status card */}
-      <div className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Activity size={18} className="text-blue-400" />
-          <h2 className="text-sm font-semibold text-slate-300">Server Status</h2>
+          <h2 className="text-sm font-semibold text-card-foreground">Server Status</h2>
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <StatusItem label="Status" value={
@@ -650,11 +650,11 @@ export default function Settings() {
       {SECTIONS.map(section => (
         <div
           key={section.id}
-          className="rounded-lg border border-[#334155] bg-[#1e293b] p-5 shadow-md"
+          className="rounded-lg border border-border bg-card p-5 shadow-md"
         >
           <div className="mb-5 flex items-center gap-2">
             <span className={section.iconColor}>{section.icon}</span>
-            <h2 className="text-sm font-semibold text-slate-300">{section.title}</h2>
+            <h2 className="text-sm font-semibold text-card-foreground">{section.title}</h2>
           </div>
           <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
             {section.fields.map(field => (
@@ -672,14 +672,14 @@ export default function Settings() {
 
           {/* Admin: 2FA Section */}
           {section.id === 'admin' && twoFA && (
-            <div className="mt-5 border-t border-[#334155] pt-5">
-              <h3 className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <ShieldCheck size={14} />
                 Two-Factor Authentication (TOTP)
                 {twoFA.enabled ? (
                   <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-medium normal-case text-emerald-400">Enabled</span>
                 ) : (
-                  <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium normal-case text-slate-400">Disabled</span>
+                  <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium normal-case text-muted-foreground">Disabled</span>
                 )}
               </h3>
 
@@ -710,30 +710,30 @@ export default function Settings() {
 
               {!twoFA.enabled && twoFASetup && (
                 <div className="space-y-4">
-                  <div className="rounded bg-[#0f172a] p-4">
-                    <p className="mb-2 text-sm text-slate-300">
+                  <div className="rounded bg-background p-4">
+                    <p className="mb-2 text-sm text-card-foreground">
                       Add this secret to your authenticator app (Google Authenticator, Authy, etc.):
                     </p>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 rounded bg-[#334155] px-3 py-2 text-xs font-mono text-emerald-400 break-all">
+                      <code className="flex-1 rounded bg-accent px-3 py-2 text-xs font-mono text-emerald-400 break-all">
                         {twoFASetup.secret}
                       </code>
                       <button
                         onClick={() => navigator.clipboard.writeText(twoFASetup.secret)}
-                        className="rounded bg-[#334155] p-2 text-slate-400 hover:text-white"
+                        className="rounded bg-accent p-2 text-muted-foreground hover:text-white"
                         title="Copy secret"
                       >
                         <Copy size={14} />
                       </button>
                     </div>
-                    <p className="mt-3 text-xs text-slate-500">
-                      Or use this URI: <code className="break-all text-slate-400">{twoFASetup.uri}</code>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Or use this URI: <code className="break-all text-muted-foreground">{twoFASetup.uri}</code>
                     </p>
                   </div>
 
                   <div className="flex items-end gap-3">
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-300">
+                      <label className="mb-1 block text-sm font-medium text-card-foreground">
                         Verify Code
                       </label>
                       <input
@@ -743,7 +743,7 @@ export default function Settings() {
                         value={twoFACode}
                         onChange={e => setTwoFACode(e.target.value.replace(/\D/g, ''))}
                         placeholder="000000"
-                        className="w-32 rounded border border-[#334155] bg-[#0f172a] px-3 py-2 text-center font-mono text-lg tracking-widest text-slate-200 outline-none focus:border-blue-500"
+                        className="w-32 rounded border border-border bg-background px-3 py-2 text-center font-mono text-lg tracking-widest text-foreground outline-none focus:border-blue-500"
                       />
                     </div>
                     <button
@@ -769,7 +769,7 @@ export default function Settings() {
                     </button>
                     <button
                       onClick={() => { setTwoFASetup(null); setTwoFACode(''); setTwoFAError(''); }}
-                      className="rounded px-3 py-2 text-sm text-slate-400 hover:text-white"
+                      className="rounded px-3 py-2 text-sm text-muted-foreground hover:text-white"
                     >
                       Cancel
                     </button>
@@ -780,7 +780,7 @@ export default function Settings() {
               {twoFA.enabled && (
                 <div className="flex items-end gap-3">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-300">
+                    <label className="mb-1 block text-sm font-medium text-card-foreground">
                       Current Code (to disable)
                     </label>
                     <input
@@ -790,7 +790,7 @@ export default function Settings() {
                       value={twoFACode}
                       onChange={e => setTwoFACode(e.target.value.replace(/\D/g, ''))}
                       placeholder="000000"
-                      className="w-32 rounded border border-[#334155] bg-[#0f172a] px-3 py-2 text-center font-mono text-lg tracking-widest text-slate-200 outline-none focus:border-blue-500"
+                      className="w-32 rounded border border-border bg-background px-3 py-2 text-center font-mono text-lg tracking-widest text-foreground outline-none focus:border-blue-500"
                     />
                   </div>
                   <button
@@ -820,10 +820,10 @@ export default function Settings() {
 
           {/* ACME: DNS Credentials conditional sub-section */}
           {section.id === 'acme' && formValues['global.acme.dns_provider'] && (
-            <div className="mt-5 border-t border-[#334155] pt-5">
-              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 DNS Credentials
-                <span className="ml-2 font-normal normal-case text-slate-600">
+                <span className="ml-2 font-normal normal-case text-muted-foreground">
                   ({formValues['global.acme.dns_provider']})
                 </span>
               </h3>
@@ -849,8 +849,8 @@ export default function Settings() {
 
           {/* Backup: Provider-specific sub-sections */}
           {section.id === 'backup' && formValues['global.backup.provider'] === 'local' && (
-            <div className="mt-5 border-t border-[#334155] pt-5">
-              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Local Storage
               </h3>
               <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -870,8 +870,8 @@ export default function Settings() {
           )}
 
           {section.id === 'backup' && formValues['global.backup.provider'] === 's3' && (
-            <div className="mt-5 border-t border-[#334155] pt-5">
-              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 S3 Configuration
               </h3>
               <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -891,8 +891,8 @@ export default function Settings() {
           )}
 
           {section.id === 'backup' && formValues['global.backup.provider'] === 'sftp' && (
-            <div className="mt-5 border-t border-[#334155] pt-5">
-              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 SFTP Configuration
               </h3>
               <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -914,14 +914,14 @@ export default function Settings() {
       ))}
 
       {/* Bottom save bar */}
-      <div className="flex items-center justify-end gap-3 rounded-lg border border-[#334155] bg-[#1e293b] px-5 py-4 shadow-md">
+      <div className="flex items-center justify-end gap-3 rounded-lg border border-border bg-card px-5 py-4 shadow-md">
         {isDirty && (
           <span className="mr-auto text-sm text-amber-400">Unsaved changes</span>
         )}
         <button
           onClick={handleExport}
           disabled={exporting}
-          className="flex items-center gap-2 rounded-md border border-[#334155] bg-[#0f172a] px-4 py-2 text-sm text-slate-300 hover:bg-[#334155] disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm text-card-foreground hover:bg-accent disabled:opacity-50"
         >
           <Download size={14} />
           Export YAML
@@ -954,8 +954,8 @@ export default function Settings() {
 function StatusItem({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-xs font-medium uppercase text-slate-500">{label}</dt>
-      <dd className="mt-1 text-sm text-slate-200">{value}</dd>
+      <dt className="text-xs font-medium uppercase text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-sm text-foreground">{value}</dd>
     </div>
   );
 }
@@ -971,20 +971,20 @@ interface FieldInputProps {
 
 function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }: FieldInputProps) {
   const inputClasses =
-    'w-full rounded-md border border-[#334155] bg-[#0f172a] px-3 py-2 text-sm text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30';
+    'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30';
 
   if (field.type === 'toggle') {
     const isOn = value === 'true';
     return (
       <div className="flex items-center justify-between sm:col-span-1">
-        <label className="text-sm text-slate-300">{field.label}</label>
+        <label className="text-sm text-card-foreground">{field.label}</label>
         <button
           type="button"
           role="switch"
           aria-checked={isOn}
           onClick={() => onChange(isOn ? 'false' : 'true')}
           className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-            isOn ? 'bg-blue-600' : 'bg-[#334155]'
+            isOn ? 'bg-blue-600' : 'bg-accent'
           }`}
         >
           <span
@@ -1000,7 +1000,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
   if (field.type === 'select') {
     return (
       <div>
-        <label className="mb-1.5 block text-sm text-slate-300">{field.label}</label>
+        <label className="mb-1.5 block text-sm text-card-foreground">{field.label}</label>
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -1018,7 +1018,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
   if (field.type === 'secret') {
     return (
       <div>
-        <label className="mb-1.5 block text-sm text-slate-300">{field.label}</label>
+        <label className="mb-1.5 block text-sm text-card-foreground">{field.label}</label>
         <div className="flex gap-1">
           <input
             type={revealed ? 'text' : 'password'}
@@ -1030,7 +1030,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
           <button
             type="button"
             onClick={onToggleReveal}
-            className="rounded-md border border-[#334155] bg-[#0f172a] px-2 text-slate-400 hover:text-slate-200"
+            className="rounded-md border border-border bg-background px-2 text-muted-foreground hover:text-foreground"
             title={revealed ? 'Hide' : 'Show'}
           >
             {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -1038,7 +1038,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
           <button
             type="button"
             onClick={onCopy}
-            className="rounded-md border border-[#334155] bg-[#0f172a] px-2 text-slate-400 hover:text-slate-200"
+            className="rounded-md border border-border bg-background px-2 text-muted-foreground hover:text-foreground"
             title="Copy"
           >
             <Copy size={14} />
@@ -1051,7 +1051,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
   if (field.type === 'textarea') {
     return (
       <div className={field.fullWidth ? 'sm:col-span-2 lg:col-span-3' : ''}>
-        <label className="mb-1.5 block text-sm text-slate-300">{field.label}</label>
+        <label className="mb-1.5 block text-sm text-card-foreground">{field.label}</label>
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -1060,7 +1060,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
           className={inputClasses + ' resize-y font-mono text-xs'}
         />
         {field.help && (
-          <p className="mt-1 text-xs text-slate-500">{field.help}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{field.help}</p>
         )}
       </div>
     );
@@ -1068,7 +1068,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
 
   return (
     <div>
-      <label className="mb-1.5 block text-sm text-slate-300">{field.label}</label>
+      <label className="mb-1.5 block text-sm text-card-foreground">{field.label}</label>
       <input
         type={field.type === 'number' ? 'text' : 'text'}
         inputMode={field.type === 'number' ? 'numeric' : undefined}
@@ -1078,7 +1078,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
         className={inputClasses}
       />
       {field.help && (
-        <p className="mt-1 text-xs text-slate-500">{field.help}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{field.help}</p>
       )}
     </div>
   );
