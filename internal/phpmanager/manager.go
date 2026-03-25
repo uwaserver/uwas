@@ -535,6 +535,9 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_multi_exec,parse_ini_file,show_source,pcntl_exec")
 		lines = append(lines, "allow_url_include = Off")
 		lines = append(lines, "expose_php = Off")
+		// UWAS handles compression — disable PHP's to prevent double-compress
+		lines = append(lines, "zlib.output_compression = Off")
+		lines = append(lines, "output_handler = ")
 
 		// open_basedir: restrict PHP to domain's web root + tmp
 		if domainInst.webRoot != "" {

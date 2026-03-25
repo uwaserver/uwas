@@ -881,6 +881,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Domain) {
+	// Save original URI before any rewriting (PHP needs this for SCRIPT_NAME)
+	if ctx.OriginalURI == "" {
+		ctx.OriginalURI = ctx.Request.URL.RequestURI()
+	}
+
 	// Check if the raw path points to a directory (for directory listing)
 	if domain.DirectoryListing && domain.Root != "" {
 		rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
