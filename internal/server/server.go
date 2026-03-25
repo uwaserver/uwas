@@ -329,6 +329,19 @@ func (s *Server) SetConfigPath(path string) {
 	if s.backupMgr != nil {
 		certsDir := s.config.Global.ACME.Storage
 		s.backupMgr.SetPaths(path, certsDir)
+
+		// Set domain content paths for full backup (web files + databases)
+		domainsDir := s.config.DomainsDir
+		if domainsDir != "" && !filepath.IsAbs(domainsDir) {
+			domainsDir = filepath.Join(filepath.Dir(path), domainsDir)
+		}
+		var roots []string
+		for _, d := range s.config.Domains {
+			if d.Root != "" {
+				roots = append(roots, d.Root)
+			}
+		}
+		s.backupMgr.SetDomainPaths(s.config.Global.WebRoot, domainsDir, roots)
 	}
 }
 
