@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -449,6 +450,9 @@ func TestRemovePIDEmptyPath(t *testing.T) {
 }
 
 func TestHandleFileRequestPHP(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping PHP test on Windows — no PHP-FPM available")
+	}
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.php"), []byte("<?php echo 'hi'; ?>"), 0644)
 
