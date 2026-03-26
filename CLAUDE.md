@@ -2,7 +2,7 @@
 
 ## Project
 
-UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. It replaces Apache + Nginx + Varnish + Caddy + cPanel. Features: auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 29-page React dashboard with 116 API endpoints.
+UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. It replaces Apache + Nginx + Varnish + Caddy + cPanel. Features: auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 35-page React dashboard with 170+ API endpoints.
 
 ## Build
 
@@ -67,8 +67,8 @@ web/dashboard/       React SPA (33 pages, Vite + TypeScript + Tailwind)
 
 ## Stats
 
-- 44 Go packages, 40 with tests (all passing)
-- 29 dashboard pages, 116 API endpoints
+- 45 Go packages, 45 with tests (all passing)
+- 35 dashboard pages, 170+ API endpoints
 - 18 CLI commands
 - ~14MB single binary (linux/amd64)
 
@@ -131,9 +131,9 @@ go test -v -run TestWordPress ./...  # Specific test
 - **Add dashboard page**: Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to sidebar group in `Sidebar.tsx`
 - **Add API function**: Add to `web/dashboard/src/lib/api.ts` with proper TypeScript interface
 
-## Dashboard Pages (33)
+## Dashboard Pages (35)
 
-Sites: Domains, Topology, Certificates, DNS, WordPress, Clone/Staging, Migration, File Manager
+Sites: Domains, Domain Detail, Topology, Certificates, DNS, WordPress, Clone/Staging, Migration, File Manager
 Server: PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 Performance: Cache, Metrics, Analytics, Logs
 Security: Security, Firewall, Unknown Domains, Audit Log, Admin Users
