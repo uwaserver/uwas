@@ -1274,6 +1274,26 @@ func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist FPM address to domain config so it survives restart
+	s.configMu.Lock()
+	for i, dom := range s.config.Domains {
+		if dom.Host == req.Domain {
+			s.config.Domains[i].PHP.FPMAddress = dp.ListenAddr
+			break
+		}
+	}
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.notifyDomainChange()
+
+	// Start the PHP process
+	if err := s.phpMgr.StartDomain(req.Domain); err != nil {
+		s.logger.Warn("PHP start after assign failed", "domain", req.Domain, "error", err)
+	}
+
+	ip := requestIP(r)
+	s.RecordAudit("php.assign", req.Domain+": PHP "+req.Version+" → "+dp.ListenAddr, ip, true)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(dp)
@@ -1906,20 +1926,33 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		d.AccessLog.Path = filepath.Join(logDir, "access.log")
 	}
 
-	// Auto-assign PHP BEFORE persisting so config on disk has FPM address.
+	// PHP assignment: use user-provided FPM address, or auto-assign.
 	if d.Type == "php" && s.phpMgr != nil {
-		phpStatus := s.phpMgr.Status()
-		if len(phpStatus) > 0 {
-			version := phpStatus[0].Version
-			if inst, err := s.phpMgr.AssignDomainWithRoot(d.Host, version, d.Root); err == nil {
-				d.PHP.FPMAddress = inst.ListenAddr
-				if err := s.phpMgr.StartDomain(d.Host); err != nil {
-					s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
-				} else {
-					s.logger.Info("auto-assigned PHP to domain", "domain", d.Host, "version", version, "listen", inst.ListenAddr)
+		if d.PHP.FPMAddress != "" {
+			// User explicitly provided FPM address — use it as-is.
+			s.logger.Info("using user-provided PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
+		} else {
+			// Auto-assign: prefer FPM socket, fallback to CGI TCP port
+			phpStatus := s.phpMgr.Status()
+			if len(phpStatus) > 0 {
+				// Pick best version: prefer FPM over CGI
+				version := phpStatus[0].Version
+				for _, st := range phpStatus {
+					if strings.Contains(st.SAPI, "fpm") && st.Running {
+						version = st.Version
+						break
+					}
 				}
-			} else {
-				s.logger.Warn("PHP auto-assign failed", "domain", d.Host, "error", err)
+				if inst, err := s.phpMgr.AssignDomainWithRoot(d.Host, version, d.Root); err == nil {
+					d.PHP.FPMAddress = inst.ListenAddr
+					if err := s.phpMgr.StartDomain(d.Host); err != nil {
+						s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
+					} else {
+						s.logger.Info("auto-assigned PHP to domain", "domain", d.Host, "version", version, "listen", inst.ListenAddr)
+					}
+				} else {
+					s.logger.Warn("PHP auto-assign failed", "domain", d.Host, "error", err)
+				}
 			}
 		}
 	}
