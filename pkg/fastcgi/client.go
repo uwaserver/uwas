@@ -173,6 +173,15 @@ func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Rea
 		statusCode = http.StatusOK
 	}
 
+	// If Location header is present but status is 200 (no Status header from PHP),
+	// upgrade to 302. PHP-FPM sometimes sends Location without explicit Status header
+	// (e.g. wp_redirect uses header("Location: ...") which PHP-CGI wraps as a header
+	// but may not include "Status: 302" depending on SAPI behavior).
+	// Without this, browsers receive 200 + Location and show a blank page.
+	if headers.Get("Location") != "" && statusCode == http.StatusOK {
+		statusCode = http.StatusFound // 302
+	}
+
 	body = reader // remaining bytes = response body
 	return
 }
