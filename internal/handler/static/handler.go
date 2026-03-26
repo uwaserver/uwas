@@ -150,6 +150,36 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 			indexFiles = []string{"index.html", "index.htm"}
 		}
 	}
+	// For PHP domains, ensure index.php is always checked first.
+	// Config may have index_files: [index.html] without index.php,
+	// which breaks directory resolution (e.g. /wp-admin/ → index.php).
+	if domain.Type == "php" {
+		hasIndexPHP := false
+		for _, f := range indexFiles {
+			if f == "index.php" {
+				hasIndexPHP = true
+				break
+			}
+		}
+		if !hasIndexPHP {
+			indexFiles = append([]string{"index.php"}, indexFiles...)
+		}
+	}
+	// Also merge PHP-specific index files if set
+	if len(domain.PHP.IndexFiles) > 0 {
+		for _, f := range domain.PHP.IndexFiles {
+			found := false
+			for _, existing := range indexFiles {
+				if existing == f {
+					found = true
+					break
+				}
+			}
+			if !found {
+				indexFiles = append(indexFiles, f)
+			}
+		}
+	}
 
 	for _, candidate := range candidates {
 		resolved := expandTryFileVar(candidate, cleanURI)
