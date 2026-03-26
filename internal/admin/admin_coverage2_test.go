@@ -2563,10 +2563,13 @@ func TestPHPInstallStatusIdle(t *testing.T) {
 
 func TestPHPInstallAlreadyRunning(t *testing.T) {
 	s := testServer()
-	s.phpInstallStatus = &phpInstallState{
-		Version: "8.3",
-		Status:  "running",
-	}
+	// Submit a long-running task to simulate an active install
+	s.taskMgr.Submit("php", "PHP 8.3", "install", func(appendOutput func(string)) error {
+		time.Sleep(10 * time.Second)
+		return nil
+	})
+	// Give the task time to start
+	time.Sleep(50 * time.Millisecond)
 	rec := httptest.NewRecorder()
 	s.handlePHPInstall(rec, httptest.NewRequest("POST", "/api/v1/php/install", strings.NewReader(`{"version":"8.4"}`)))
 	if rec.Code != 409 {

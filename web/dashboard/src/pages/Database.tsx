@@ -240,12 +240,32 @@ export default function Database() {
     setInstalling(true);
     setStatus(null);
     try {
-      await installDatabase();
-      setStatus({ ok: true, message: 'MariaDB installation initiated. This may take a few minutes.' });
-      await load();
+      const res = await installDatabase();
+      setStatus({ ok: true, message: 'MariaDB installation started. This may take a few minutes...' });
+      if (res.task_id) {
+        // Poll task status
+        const poll = setInterval(async () => {
+          try {
+            const { fetchTask } = await import('../lib/api');
+            const task = await fetchTask(res.task_id!);
+            if (task.status === 'done') {
+              clearInterval(poll);
+              setStatus({ ok: true, message: 'MariaDB installed successfully.' });
+              setInstalling(false);
+              await load();
+            } else if (task.status === 'error') {
+              clearInterval(poll);
+              setStatus({ ok: false, message: 'Installation failed: ' + (task.error || 'unknown error') });
+              setInstalling(false);
+            }
+          } catch { clearInterval(poll); setInstalling(false); }
+        }, 3000);
+      } else {
+        await load();
+        setInstalling(false);
+      }
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
-    } finally {
       setInstalling(false);
     }
   };

@@ -1151,9 +1151,9 @@ func TestFixPermissions_Linux(t *testing.T) {
 	if !strings.Contains(out, "FS_METHOD") {
 		t.Errorf("should add FS_METHOD: %s", out)
 	}
-	// .tmp dir
-	if !strings.Contains(out, ".tmp directory") {
-		t.Errorf("should create .tmp: %s", out)
+	// upgrade, uploads, .tmp dirs
+	if !strings.Contains(out, ".tmp directories created") {
+		t.Errorf("should create dirs: %s", out)
 	}
 }
 

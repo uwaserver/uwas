@@ -30,6 +30,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/webhook"
 	"github.com/uwaserver/uwas/internal/filemanager"
+	"github.com/uwaserver/uwas/internal/install"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -97,7 +98,10 @@ type Server struct {
 	unknownHT     *router.UnknownHostTracker
 	securityStats *middleware.SecurityStats
 
-	// PHP install state
+	// Global installation task manager (serializes apt/dpkg operations)
+	taskMgr *install.Manager
+
+	// PHP install state (legacy, kept for backward compat)
 	phpInstallMu     sync.Mutex
 	phpInstallStatus *phpInstallState
 
@@ -148,6 +152,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 		logger:  log,
 		metrics: m,
 		mux:     http.NewServeMux(),
+		taskMgr: install.New(),
 	}
 	s.initAudit()
 	s.registerRoutes()
@@ -209,6 +214,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/php/domains/{domain}/stop", s.handlePHPDomainStop)
 	s.mux.HandleFunc("GET /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigGet)
 	s.mux.HandleFunc("PUT /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigPut)
+
+	// Installation tasks (global queue)
+	s.mux.HandleFunc("GET /api/v1/tasks", s.handleTaskList)
+	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskGet)
 
 	// Audit log
 	s.mux.HandleFunc("GET /api/v1/audit", s.handleAudit)
@@ -916,14 +925,32 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 		req.Version = "8.3"
 	}
 
-	s.phpInstallMu.Lock()
-	if s.phpInstallStatus != nil && s.phpInstallStatus.Status == "running" {
-		s.phpInstallMu.Unlock()
-		jsonError(w, "install already in progress: PHP "+s.phpInstallStatus.Version, http.StatusConflict)
+	// Check if any install task is already running
+	if active := s.taskMgr.Active(); active != nil {
+		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
 		return
 	}
 
 	info := phpmanager.GetInstallInfo(req.Version)
+	s.logger.Info("starting PHP install", "version", req.Version, "distro", info.Distro)
+
+	phpMgr := s.phpMgr
+	task := s.taskMgr.Submit("php", "PHP "+req.Version, "install", func(appendOutput func(string)) error {
+		output, err := phpmanager.RunInstall(req.Version)
+		appendOutput(output)
+		if err != nil {
+			s.logger.Error("PHP install failed", "version", req.Version, "error", err)
+			return err
+		}
+		s.logger.Info("PHP install complete", "version", req.Version)
+		if phpMgr != nil {
+			phpMgr.Detect()
+		}
+		return nil
+	})
+
+	// Also update legacy status for backward compat
+	s.phpInstallMu.Lock()
 	s.phpInstallStatus = &phpInstallState{
 		Version: req.Version,
 		Status:  "running",
@@ -931,37 +958,49 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	s.phpInstallMu.Unlock()
 
-	s.logger.Info("starting PHP install", "version", req.Version, "distro", info.Distro)
-
-	// Run in background
+	// Sync legacy status from task in background
 	go func() {
-		output, err := phpmanager.RunInstall(req.Version)
-
-		s.phpInstallMu.Lock()
-		s.phpInstallStatus.Output = output
-		if err != nil {
-			s.phpInstallStatus.Status = "error"
-			s.phpInstallStatus.Error = err.Error()
-			s.logger.Error("PHP install failed", "version", req.Version, "error", err)
-		} else {
-			s.phpInstallStatus.Status = "done"
-			s.logger.Info("PHP install complete", "version", req.Version)
-			// Re-detect PHP binaries
-			if s.phpMgr != nil {
-				s.phpMgr.Detect()
+		for {
+			t := s.taskMgr.Get(task.ID)
+			if t == nil || (t.Status != "running" && t.Status != "queued") {
+				s.phpInstallMu.Lock()
+				if t != nil {
+					s.phpInstallStatus.Status = string(t.Status)
+					s.phpInstallStatus.Output = t.Output
+					s.phpInstallStatus.Error = t.Error
+				}
+				s.phpInstallMu.Unlock()
+				break
 			}
+			s.phpInstallMu.Lock()
+			s.phpInstallStatus.Output = t.Output
+			s.phpInstallMu.Unlock()
+			time.Sleep(500 * time.Millisecond)
 		}
-		s.phpInstallMu.Unlock()
 	}()
 
 	jsonResponse(w, map[string]string{
 		"status":  "started",
+		"task_id": task.ID,
 		"version": req.Version,
 		"distro":  info.Distro,
 	})
 }
 
 func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) {
+	// First check task manager for active PHP task
+	if t := s.taskMgr.ActiveByType("php"); t != nil {
+		jsonResponse(w, map[string]interface{}{
+			"status":  t.Status,
+			"output":  t.Output,
+			"error":   t.Error,
+			"task_id": t.ID,
+			"version": t.Name,
+		})
+		return
+	}
+
+	// Fall back to legacy state
 	s.phpInstallMu.Lock()
 	state := s.phpInstallStatus
 	s.phpInstallMu.Unlock()
@@ -971,6 +1010,26 @@ func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	jsonResponse(w, state)
+}
+
+// --- Task API handlers ---
+
+func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
+	tasks := s.taskMgr.List()
+	if tasks == nil {
+		tasks = []install.Task{}
+	}
+	jsonResponse(w, tasks)
+}
+
+func (s *Server) handleTaskGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	task := s.taskMgr.Get(id)
+	if task == nil {
+		jsonError(w, "task not found", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, task)
 }
 
 func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {

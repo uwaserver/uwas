@@ -786,12 +786,25 @@ func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "already_installed", "version": st.Version})
 		return
 	}
-	output, err := database.InstallMySQL()
-	if err != nil {
-		jsonError(w, "install failed: "+err.Error()+"\n"+output, http.StatusInternalServerError)
+
+	// Check if any install task is already running
+	if active := s.taskMgr.Active(); active != nil {
+		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "installed"})
+
+	task := s.taskMgr.Submit("database", "MariaDB", "install", func(appendOutput func(string)) error {
+		output, err := database.InstallMySQL()
+		appendOutput(output)
+		if err != nil {
+			s.logger.Error("database install failed", "error", err)
+			return err
+		}
+		s.logger.Info("database install complete")
+		return nil
+	})
+
+	jsonResponse(w, map[string]string{"status": "installing", "task_id": task.ID})
 }
 
 func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request) {
@@ -1626,16 +1639,8 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, pkgs)
 }
 
-// packageInstallState tracks background package installation.
-var (
-	pkgInstallMu     sync.Mutex
-	pkgInstallStatus struct {
-		Package string `json:"package"`
-		Status  string `json:"status"` // idle, running, done, error
-		Output  string `json:"output"`
-		Error   string `json:"error,omitempty"`
-	}
-)
+// packageInstallState is kept for reference but installation
+// is now managed by the global task manager (install.Manager).
 
 func findPkg(id string) *knownPkg {
 	for i := range knownPackages {
@@ -1679,67 +1684,54 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	pkgInstallMu.Lock()
-	if pkgInstallStatus.Status == "running" {
-		pkgInstallMu.Unlock()
-		jsonError(w, "another operation in progress: "+pkgInstallStatus.Package, http.StatusConflict)
+	// Check if any install task is already running
+	if active := s.taskMgr.Active(); active != nil {
+		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
 		return
 	}
-	pkgInstallStatus.Package = pkg.name
-	pkgInstallStatus.Status = "running"
-	pkgInstallStatus.Output = ""
-	pkgInstallStatus.Error = ""
-	pkgInstallMu.Unlock()
 
 	action := req.Action
 	s.RecordAudit("package."+action, pkg.name, ip, true)
 
-	go func() {
+	pkgName := pkg.name
+	pkgID := pkg.id
+	aptPkgs := pkg.aptPkgs
+	aptRemove := pkg.aptRemove
+
+	task := s.taskMgr.Submit("package", pkgName, action, func(appendOutput func(string)) error {
 		var cmd *exec.Cmd
 
 		if action == "remove" {
-			// Uninstall
-			if pkg.id == "wp-cli" {
+			if pkgID == "wp-cli" {
 				cmd = exec.Command("rm", "-f", "/usr/local/bin/wp")
 			} else {
-				// Stop service first if applicable
-				exec.Command("systemctl", "stop", pkg.id).Run()
-				args := append([]string{"remove", "-y", "--purge"}, pkg.aptRemove...)
+				exec.Command("systemctl", "stop", pkgID).Run()
+				args := append([]string{"remove", "-y", "--purge"}, aptRemove...)
 				cmd = exec.Command("apt", args...)
 			}
 		} else {
-			// Install
-			if pkg.id == "wp-cli" {
+			if pkgID == "wp-cli" {
 				cmd = exec.Command("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
-			} else if len(pkg.aptPkgs) > 0 {
-				args := append([]string{"install", "-y"}, pkg.aptPkgs...)
+			} else if len(aptPkgs) > 0 {
+				args := append([]string{"install", "-y"}, aptPkgs...)
 				cmd = exec.Command("apt", args...)
 			} else {
-				pkgInstallMu.Lock()
-				pkgInstallStatus.Status = "error"
-				pkgInstallStatus.Error = "no install method"
-				pkgInstallMu.Unlock()
-				return
+				return fmt.Errorf("no install method for %s", pkgName)
 			}
 		}
 
 		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		out, err := cmd.CombinedOutput()
-
-		pkgInstallMu.Lock()
-		pkgInstallStatus.Output = string(out)
+		appendOutput(string(out))
 		if err != nil {
-			pkgInstallStatus.Status = "error"
-			pkgInstallStatus.Error = err.Error()
-		} else {
-			pkgInstallStatus.Status = "done"
+			s.logger.Error("package "+action+" failed", "package", pkgName, "error", err)
+			return err
 		}
-		pkgInstallMu.Unlock()
+		s.logger.Info("package "+action+" complete", "package", pkgName)
+		return nil
+	})
 
-		s.logger.Info("package "+action, "package", pkg.name, "status", pkgInstallStatus.Status)
-	}()
-
-	jsonResponse(w, map[string]string{"status": action + "ing", "package": pkg.name})
+	jsonResponse(w, map[string]string{"status": action + "ing", "package": pkgName, "task_id": task.ID})
 }
 
 // ============ Site Migration + Clone ============

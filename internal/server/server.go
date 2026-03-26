@@ -973,12 +973,27 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+		// Bypass cache for WordPress admin/login paths (always dynamic)
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/wp-admin") ||
+			strings.HasPrefix(p, "/wp-login") ||
+			strings.HasPrefix(p, "/wp-cron") ||
+			strings.HasPrefix(p, "/wp-json") ||
+			strings.HasPrefix(p, "/xmlrpc") ||
+			p == "/wp-comments-post.php" {
+			cacheEnabled = false
+		}
 		// Bypass cache if request has session cookies (WordPress, PHP sessions)
-		if cookie := r.Header.Get("Cookie"); cookie != "" {
-			if strings.Contains(cookie, "wordpress_logged_in") ||
-				strings.Contains(cookie, "wp-settings") ||
-				strings.Contains(cookie, "PHPSESSID") {
-				cacheEnabled = false
+		if cacheEnabled {
+			if cookie := r.Header.Get("Cookie"); cookie != "" {
+				if strings.Contains(cookie, "wordpress_logged_in") ||
+					strings.Contains(cookie, "wp-settings") ||
+					strings.Contains(cookie, "PHPSESSID") ||
+					strings.Contains(cookie, "comment_author") ||
+					strings.Contains(cookie, "woocommerce_cart") ||
+					strings.Contains(cookie, "woocommerce_items") {
+					cacheEnabled = false
+				}
 			}
 		}
 	}

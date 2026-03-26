@@ -165,6 +165,24 @@ export default function PHP() {
 
   useEffect(() => {
     void loadAll();
+    // Resume install monitoring if an install is running
+    fetchPHPInstallStatus().then(st => {
+      if (st && (st.status === 'running' || st.status === 'queued')) {
+        setInstallJob(st);
+        setShowInstall(true);
+        const poll = setInterval(async () => {
+          try {
+            const s = await fetchPHPInstallStatus();
+            setInstallJob(s);
+            if (s.status !== 'running' && s.status !== 'queued') {
+              clearInterval(poll);
+              if (s.status === 'done') loadAll();
+            }
+          } catch { clearInterval(poll); }
+        }, 2000);
+        return () => clearInterval(poll);
+      }
+    }).catch(() => {});
   }, [loadAll]);
 
   /* -------- actions -------- */
