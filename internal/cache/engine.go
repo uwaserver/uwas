@@ -136,6 +136,11 @@ func ShouldBypass(r *http.Request) bool {
 		return true
 	}
 
+	// Never cache .php requests — PHP output is dynamic
+	if strings.HasSuffix(r.URL.Path, ".php") {
+		return true
+	}
+
 	// Cache-Control: no-cache
 	if strings.Contains(r.Header.Get("Cache-Control"), "no-cache") {
 		return true
