@@ -5,7 +5,7 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.1] - 2026-03-26
+## [0.0.9] - 2026-03-26
 
 ### Bug Fixes
 
@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default domain protection** — `localhost`, `localhost:80`, `127.0.0.1` cannot be deleted
 - **Domain detail iframe removed** — Replaced non-functional iframe with clean URL bar + Visit/WP Admin buttons
 
-## [1.9.0] - 2026-03-26
+## [0.0.8] - 2026-03-26
 
 ### Highlights
 
@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **45 test packages**, all passing, 0 failures
 - **9 new install manager tests** (serial execution, task lifecycle, concurrency safety)
 
-## [1.8.0] - 2026-03-26
+## [0.0.7] - 2026-03-26
 
 ### Highlights
 
@@ -140,7 +140,7 @@ New test files and major expansions across 30+ packages:
 - **30+** packages with expanded coverage
 - **83 files** changed in this release
 
-## [1.3.1] - 2026-03-23
+## [0.0.6] - 2026-03-23
 
 ### Highlights
 
@@ -199,7 +199,7 @@ New test files and major expansions across 30+ packages:
 - **0 JS errors** in dashboard
 - **0 TODO/FIXME** remaining in codebase
 
-## [1.3.0] - 2026-03-22
+## [0.0.5] - 2026-03-22
 
 ### Highlights
 
@@ -253,11 +253,11 @@ New test files and major expansions across 30+ packages:
 
 ---
 
-## [1.0.0] - 2026-03-22
+## [0.0.4] - 2026-03-22
 
 ### Highlights
 
-UWAS v1.0.0 is a feature-complete, production-ready web server that replaces
+UWAS is a feature-complete, production-ready web server that replaces
 Apache + Nginx + Varnish + Caddy with a single 13MB Go binary.
 
 **818 tests, 88% coverage, 0 failures.** WordPress 6.9.4 verified.
@@ -356,7 +356,7 @@ Apache + Nginx + Varnish + Caddy with a single 13MB Go binary.
 - VHost routing: 70,000,000 ops/sec
 - Middleware chain: 308,000 req/sec
 
-## [0.3.0] - 2026-03-22
+## [0.0.3] - 2026-03-22
 
 ### Security
 
@@ -392,7 +392,7 @@ Apache + Nginx + Varnish + Caddy with a single 13MB Go binary.
 - **Nonce pool capped**: ACME nonce pool limited to 10 entries
 - **Request context zeroed**: Full struct zero on pool acquire prevents data leak
 
-## [0.2.0] - 2026-03-22
+## [0.0.2] - 2026-03-22
 
 ### Added
 
@@ -429,7 +429,7 @@ Apache + Nginx + Varnish + Caddy with a single 13MB Go binary.
 - Middleware chain: 308K req/sec
 - Static file serve: 10K req/sec
 
-## [0.1.0] - 2026-03-21
+## [0.0.1] - 2026-03-21
 
 ### Added
 
@@ -544,5 +544,5 @@ Apache + Nginx + Varnish + Caddy with a single 13MB Go binary.
   - Dockerfile (multi-stage build, Alpine runtime)
   - Makefile (build, dev, test, lint, clean)
 
-[0.2.0]: https://github.com/uwaserver/uwas/releases/tag/v0.2.0
-[0.1.0]: https://github.com/uwaserver/uwas/releases/tag/v0.1.0
+[0.0.2]: https://github.com/uwaserver/uwas/releases/tag/v0.0.2
+[0.0.1]: https://github.com/uwaserver/uwas/releases/tag/v0.0.1
