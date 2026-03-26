@@ -116,8 +116,9 @@ type Server struct {
 	auditPos     int
 	auditFull    bool
 
-	// 2FA pending setup (not yet verified)
-	pendingTOTP string
+	// 2FA pending setup (per-user, keyed by username)
+	pendingTOTPMu sync.Mutex
+	pendingTOTP   map[string]string
 
 	// Rate limiting for auth failures
 	rlMu      sync.Mutex
@@ -439,6 +440,17 @@ func (s *Server) Start() error {
 		return err
 	}
 
+	// Use TLS if certificate is configured
+	s.configMu.RLock()
+	tlsCert := s.config.Global.Admin.TLSCert
+	tlsKey := s.config.Global.Admin.TLSKey
+	s.configMu.RUnlock()
+
+	if tlsCert != "" && tlsKey != "" {
+		s.logger.Info("admin API listening (TLS)", "address", addr)
+		return s.httpSrv.ServeTLS(ln, tlsCert, tlsKey)
+	}
+
 	s.logger.Info("admin API listening", "address", addr)
 	return s.httpSrv.Serve(ln)
 }
@@ -533,6 +545,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 							user = u
 						}
 					}
+					// Strip token from URL to prevent leaking in logs/referer
+					q := r.URL.Query()
+					q.Del("token")
+					r.URL.RawQuery = q.Encode()
 				}
 			}
 		}
@@ -544,6 +560,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			if authHeader == "" {
 				if token := r.URL.Query().Get("token"); token != "" {
 					authHeader = "Bearer " + token
+					// Strip token from URL to prevent leaking in logs/referer
+					q := r.URL.Query()
+					q.Del("token")
+					r.URL.RawQuery = q.Encode()
 				}
 			}
 			if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1 {
@@ -3341,10 +3361,17 @@ func (s *Server) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 
 	uri := TOTPProvisioningURI(secret, "admin", "UWAS")
 	// Don't save yet — user must verify with a valid code first.
-	// Store in a temporary field so verify can pick it up.
-	s.configMu.Lock()
-	s.pendingTOTP = secret
-	s.configMu.Unlock()
+	// Store per-user so concurrent 2FA setups don't overwrite each other.
+	username := "admin"
+	if user, ok := auth.UserFromContext(r.Context()); ok {
+		username = user.Username
+	}
+	s.pendingTOTPMu.Lock()
+	if s.pendingTOTP == nil {
+		s.pendingTOTP = make(map[string]string)
+	}
+	s.pendingTOTP[username] = secret
+	s.pendingTOTPMu.Unlock()
 
 	jsonResponse(w, map[string]string{
 		"secret": secret,
@@ -3361,13 +3388,24 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.configMu.Lock()
-	secret := s.pendingTOTP
+	username := "admin"
+	if user, ok := auth.UserFromContext(r.Context()); ok {
+		username = user.Username
+	}
+
+	s.pendingTOTPMu.Lock()
+	secret := ""
+	if s.pendingTOTP != nil {
+		secret = s.pendingTOTP[username]
+	}
+	s.pendingTOTPMu.Unlock()
+
 	if secret == "" {
 		// Already enabled — validate against active secret
+		s.configMu.RLock()
 		secret = s.config.Global.Admin.TOTPSecret
+		s.configMu.RUnlock()
 	}
-	s.configMu.Unlock()
 
 	if secret == "" {
 		jsonError(w, "no 2FA setup pending; call /auth/2fa/setup first", http.StatusBadRequest)
@@ -3380,12 +3418,19 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If this was a pending setup, activate it.
-	s.configMu.Lock()
-	if s.pendingTOTP != "" {
-		s.config.Global.Admin.TOTPSecret = s.pendingTOTP
-		s.pendingTOTP = ""
+	s.pendingTOTPMu.Lock()
+	pending := ""
+	if s.pendingTOTP != nil {
+		pending = s.pendingTOTP[username]
+		delete(s.pendingTOTP, username)
 	}
-	s.configMu.Unlock()
+	s.pendingTOTPMu.Unlock()
+
+	if pending != "" {
+		s.configMu.Lock()
+		s.config.Global.Admin.TOTPSecret = pending
+		s.configMu.Unlock()
+	}
 
 	s.persistConfig()
 	ip := requestIP(r)
