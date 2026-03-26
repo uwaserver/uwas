@@ -389,16 +389,23 @@ func TestListServices_WindowsReturnsNil(t *testing.T) {
 func TestStartService(t *testing.T) {
 	withMock(t, fakeExecCommand)
 
-	err := StartService("nginx")
+	err := StartService("mariadb")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestStartService_UnknownService(t *testing.T) {
+	withMock(t, fakeExecCommand)
+	if err := StartService("evil-service"); err == nil {
+		t.Error("expected error for unknown service")
 	}
 }
 
 func TestStartService_Failure(t *testing.T) {
 	withMock(t, fakeExecCommandFail)
 
-	err := StartService("nginx")
+	err := StartService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing start command")
 	}
@@ -409,7 +416,7 @@ func TestStartService_Failure(t *testing.T) {
 func TestStopService(t *testing.T) {
 	withMock(t, fakeExecCommand)
 
-	err := StopService("nginx")
+	err := StopService("mariadb")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -418,7 +425,7 @@ func TestStopService(t *testing.T) {
 func TestStopService_Failure(t *testing.T) {
 	withMock(t, fakeExecCommandFail)
 
-	err := StopService("nginx")
+	err := StopService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing stop command")
 	}
@@ -429,7 +436,7 @@ func TestStopService_Failure(t *testing.T) {
 func TestRestartService(t *testing.T) {
 	withMock(t, fakeExecCommand)
 
-	err := RestartService("nginx")
+	err := RestartService("mariadb")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -438,7 +445,7 @@ func TestRestartService(t *testing.T) {
 func TestRestartService_Failure(t *testing.T) {
 	withMock(t, fakeExecCommandFail)
 
-	err := RestartService("nginx")
+	err := RestartService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing restart command")
 	}
@@ -449,7 +456,7 @@ func TestRestartService_Failure(t *testing.T) {
 func TestEnableService(t *testing.T) {
 	withMock(t, fakeExecCommand)
 
-	err := EnableService("nginx")
+	err := EnableService("mariadb")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -458,7 +465,7 @@ func TestEnableService(t *testing.T) {
 func TestEnableService_Failure(t *testing.T) {
 	withMock(t, fakeExecCommandFail)
 
-	err := EnableService("nginx")
+	err := EnableService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing enable command")
 	}
@@ -469,7 +476,7 @@ func TestEnableService_Failure(t *testing.T) {
 func TestDisableService(t *testing.T) {
 	withMock(t, fakeExecCommand)
 
-	err := DisableService("nginx")
+	err := DisableService("mariadb")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -478,7 +485,7 @@ func TestDisableService(t *testing.T) {
 func TestDisableService_Failure(t *testing.T) {
 	withMock(t, fakeExecCommandFail)
 
-	err := DisableService("nginx")
+	err := DisableService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing disable command")
 	}
@@ -501,7 +508,7 @@ func TestStartService_EnableFailure(t *testing.T) {
 	}
 	withMock(t, mock)
 
-	err := StartService("nginx")
+	err := StartService("mariadb")
 	if err == nil {
 		t.Error("expected error when enable phase fails")
 	}

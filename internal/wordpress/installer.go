@@ -314,7 +314,7 @@ if ( ! defined('ABSPATH') ) {
 require_once ABSPATH . 'wp-settings.php';
 `, dbName, dbUser, dbPass, dbHost, strings.Join(salts, "\n"))
 
-	return osWriteFileFn(filepath.Join(webRoot, "wp-config.php"), []byte(config), 0644)
+	return osWriteFileFn(filepath.Join(webRoot, "wp-config.php"), []byte(config), 0600)
 }
 
 func setWordPressPermissions(webRoot string, log *strings.Builder) {

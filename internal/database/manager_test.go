@@ -1057,20 +1057,14 @@ func TestEscapeSQL_Quotes(t *testing.T) {
 		{"simple", "simple"},
 		{"", ""},
 		{"hello world", "hello world"},
-		// Note: escapeSQL replaces ' first, then \.
-		// Input "it's" → after ' replace: "it\\'s" → after \ replace: "it\\\\'s"
-		// But actually the function does:
-		// s = strings.ReplaceAll(s, "'", "\\'")  → it\'s
-		// s = strings.ReplaceAll(s, "\\", "\\\\") → it\\\\'s
-		// Wait, that's wrong. Let me trace carefully:
-		// Input: it's
-		// After step 1 (replace ' with \'): it\'s
-		// After step 2 (replace \ with \\): it\\'s
-		{"it's", "it\\\\'s"},
-		// Input with backslash: a\b
-		// After step 1: a\b (no change)
-		// After step 2: a\\b
+		// Correct order: escape backslashes FIRST, then quotes.
+		// "it's" → no backslash → "it's" → "it\'s"
+		{"it's", "it\\'s"},
+		// "a\b" → "a\\b" → no quote → "a\\b"
 		{"a\\b", "a\\\\b"},
+		// Both: "a\'b" → "a\\\\'b" → "a\\\\'b" (already safe)
+		// Null bytes stripped
+		{"null\x00byte", "nullbyte"},
 	}
 
 	for _, tt := range tests {

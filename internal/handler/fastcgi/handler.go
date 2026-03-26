@@ -86,7 +86,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 			ctx.Response.WriteHeader(500)
 			ctx.Response.Write([]byte("<h1>500 Internal Server Error</h1>\n"))
 			ctx.Response.Write([]byte("<p>PHP returned an empty response. Check server logs for details.</p>\n"))
-			ctx.Response.Write([]byte("<!-- " + stderrContent + " -->\n"))
+			// stderr is logged server-side only (not leaked to client)
 		} else {
 			h.logger.Error("PHP returned empty response (white screen of death)",
 				"host", domain.Host,
