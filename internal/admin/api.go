@@ -1962,24 +1962,47 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 			s.phpMgr.UnassignDomain(host)
 		}
 		siteuser.DeleteUser(host)
-		// Delete web root — only if it looks like a domain-specific directory.
-		// Safety: never delete system dirs like /var/www, /var, /home, /etc, /tmp, /root
+		// Delete web root — only the domain-specific directory.
+		// Safety: never delete system dirs, shared roots, or paths too close to /
 		if domainRoot != "" {
-			parent := filepath.Dir(domainRoot) // e.g. /var/www/domain.com
-			absParent, _ := filepath.Abs(parent)
-			protectedPaths := []string{"/", "/var", "/var/www", "/home", "/etc", "/tmp", "/root", "/opt", "/usr", "/srv"}
-			safe := absParent != "" && absParent != "." && len(absParent) > 5
-			for _, pp := range protectedPaths {
-				if absParent == pp {
-					safe = false
-					break
-				}
+			// Find the domain-specific directory to delete.
+			// Convention: /var/www/{domain}/public_html → delete /var/www/{domain}
+			// But if root IS /var/www (no subdirectory), don't delete anything.
+			absRoot, _ := filepath.Abs(domainRoot)
+			parent := filepath.Dir(absRoot) // e.g. /var/www/domain.com
+
+			protectedPaths := map[string]bool{
+				"/": true, "/var": true, "/var/www": true, "/home": true,
+				"/etc": true, "/tmp": true, "/root": true, "/opt": true,
+				"/usr": true, "/srv": true, "/var/lib": true, "/var/log": true,
 			}
+
+			// Only delete if:
+			// 1. Parent is a domain-specific dir (not a system/shared path)
+			// 2. Parent has at least 3 path components (e.g. /var/www/domain.com)
+			// 3. Parent is not the webRoot itself
+			webRoot := s.config.Global.WebRoot
+			if webRoot == "" {
+				webRoot = "/var/www"
+			}
+			absWebRoot, _ := filepath.Abs(webRoot)
+
+			safe := parent != "" &&
+				!protectedPaths[parent] &&
+				!protectedPaths[absRoot] &&
+				parent != absWebRoot &&
+				absRoot != absWebRoot &&
+				len(strings.Split(parent, string(filepath.Separator))) >= 4
+
 			if safe {
-				os.RemoveAll(absParent)
-				s.logger.Info("deleted domain files", "domain", host, "path", absParent)
+				os.RemoveAll(parent)
+				s.logger.Info("deleted domain files", "domain", host, "path", parent)
+			} else if absRoot != absWebRoot && !protectedPaths[absRoot] {
+				// Try deleting just the root directory itself (not parent)
+				os.RemoveAll(absRoot)
+				s.logger.Info("deleted domain root", "domain", host, "path", absRoot)
 			} else {
-				s.logger.Warn("skipped dangerous file deletion", "domain", host, "path", absParent)
+				s.logger.Warn("skipped file deletion (protected path)", "domain", host, "path", parent)
 			}
 		}
 	}

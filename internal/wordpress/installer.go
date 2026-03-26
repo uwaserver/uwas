@@ -627,12 +627,35 @@ func hasWPCLI() bool {
 }
 
 // wpCLI runs a WP-CLI command in the given web root.
+// It auto-detects the site URL from wp-config.php to avoid HTTP_HOST warnings.
 func wpCLI(webRoot string, args ...string) (string, error) {
 	allArgs := append([]string{"--path=" + webRoot, "--allow-root", "--no-color"}, args...)
+
+	// Detect site URL to pass --url (avoids "Undefined array key HTTP_HOST" warning)
+	if url := detectSiteURL(webRoot); url != "" {
+		allArgs = append([]string{"--url=" + url}, allArgs...)
+	}
+
 	cmd := execCommandFn("wp", allArgs...)
 	cmd.Dir = webRoot
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// detectSiteURL tries to find the domain from the directory structure.
+// e.g. /var/www/example.com/public_html → https://example.com
+func detectSiteURL(webRoot string) string {
+	// Try parent directory name as domain (UWAS convention: /var/www/{domain}/public_html)
+	parent := filepath.Base(filepath.Dir(webRoot))
+	if parent != "" && parent != "." && parent != "/" && strings.Contains(parent, ".") {
+		return "https://" + parent
+	}
+	// Fallback: directory name itself
+	base := filepath.Base(webRoot)
+	if strings.Contains(base, ".") {
+		return "https://" + base
+	}
+	return ""
 }
 
 // listPlugins uses WP-CLI to get plugin info.
