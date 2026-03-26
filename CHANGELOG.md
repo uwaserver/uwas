@@ -5,6 +5,87 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-26
+
+### Highlights
+
+**Dual licensing, massive test coverage push, doctor & database hardening.** 50,000+ lines of new tests across 30+ packages, AGPL-3.0 + commercial dual license, MariaDB auto-repair, and multi-user auth improvements.
+
+### License
+
+- **Dual licensing** — AGPL-3.0 for open-source community use, commercial license available for enterprise/proprietary use
+- Updated LICENSE, README, CONTRIBUTING, and docs site footer
+
+### New Features
+
+- **DB repair & force uninstall** — `POST /api/v1/database/repair`, `DELETE /api/v1/database/uninstall?force=true` for broken MariaDB installations
+- **Doctor: MariaDB auto-repair** — Detects and fixes corrupt InnoDB tablespace, broken permissions, stale PID files
+- **Doctor: system checks** — Memory usage, open file descriptors, NTP clock sync diagnostics
+- **Login upgrade** — Multi-user auth flow with role-aware session handling
+- **Settings: notification channels** — Configure webhook/Slack/Telegram/email notification destinations from dashboard
+
+### Test Coverage (~50,000 new lines)
+
+New test files and major expansions across 30+ packages:
+
+- `internal/admin` — 3,528 lines: API endpoint coverage (domains, PHP, cache, backup, cron, firewall)
+- `internal/cli` — 4,464 lines: all CLI commands (install, stop, conflicts, pidcheck, user)
+- `internal/sftpserver` — 3,435 lines: SFTP protocol, chroot, permissions, SSH key auth
+- `internal/phpmanager` — 3,038 lines: PHP detect, install, start/stop, config, auto-restart
+- `internal/wordpress` — 2,646 lines: install, permissions, mu-plugin, wp-config generation
+- `internal/server` — 5,149 lines: HTTP/HTTPS dispatch, middleware chain, graceful shutdown
+- `internal/migrate` — 2,339 lines: clone, site migration, SSH transfer
+- `internal/siteuser` — 1,118 lines: user CRUD, chroot setup, SSH key management
+- `internal/auth` — 1,549 lines: RBAC, sessions, API keys, TOTP 2FA, persistence
+- `internal/cronjob` — 1,449 lines: cron CRUD, execution, monitoring, failure alerts
+- `internal/database` — 1,807 lines: MySQL/MariaDB management + Docker container tests
+- `internal/doctor` — 1,559 lines: diagnostics, auto-fix, PHP/permissions/config/ports
+- `internal/backup` — 1,357 lines: local/S3/SFTP backup + restore
+- `internal/bandwidth` — 1,605 lines: throttle/block, daily/monthly limits
+- `internal/tls` — 2,275 lines: SNI routing, ACME client, JWS signing, cert storage
+- `internal/dnsmanager` — 2,261 lines: Cloudflare, DigitalOcean, Hetzner, Route53
+- `internal/selfupdate` — 712 lines: GitHub release check, download, binary swap
+- `internal/serverip` — 984 lines: interface detection, public IP lookup
+- `internal/firewall` — 601 lines: UFW rule management
+- `internal/notify` — 490 lines: webhook, Slack, Telegram, email channels
+- `internal/handler/*` — 1,714 lines: FastCGI, proxy, static handler edge cases
+- `internal/middleware` — 848 lines: chain composition, WAF, image optimization
+- `internal/router` — 937 lines: vhost routing, unknown domain tracking
+- `internal/config` — 829 lines: YAML parsing, Duration/ByteSize types, validation
+- `internal/webhook` — 456 lines: event delivery, HMAC signing, retry
+- `pkg/fastcgi` — 436 lines: binary protocol, connection pool
+- `pkg/htaccess` — 393 lines: parser directives, IfModule, RewriteCond
+
+### Bug Fixes
+
+- **CLI install** — Fixed error handling in package installation flow
+- **CLI stop** — Improved PID file cleanup on graceful shutdown
+- **CLI conflicts** — Better port conflict detection and reporting
+- **Cronjob monitor** — Fixed race condition in concurrent job execution tracking
+- **Database manager** — Hardened connection error handling, added timeout for stale connections
+- **DNS checker** — Fixed edge case in CNAME chain resolution
+- **DNS providers** — Consistent error handling across Cloudflare, DigitalOcean, Hetzner, Route53
+- **Doctor** — Expanded diagnostic checks with actionable fix suggestions
+- **File manager** — Path traversal guard strengthened for symlink edge cases
+- **Firewall** — Improved UFW rule parsing for complex CIDR ranges
+- **Image optimization** — Added nil check for missing Accept header
+- **Migrate/clone** — Fixed SSH key auth and database dump error propagation
+- **Notify channels** — Fixed timeout handling for slow webhook endpoints
+- **PHP manager** — Improved version detection and FPM socket path resolution
+- **Self-update** — Fixed GitHub API rate limit handling and checksum verification
+- **Server IP** — Improved interface filtering for virtual/docker bridges
+- **Services** — Better systemd unit file parsing and status detection
+- **Site user** — Fixed SSH key format validation and chroot directory permissions
+- **TLS/ACME** — Improved retry logic for DNS-01 challenge propagation
+- **WordPress** — Fixed wp-config.php generation for non-standard DB prefixes
+
+### Stats
+
+- **44 test packages**, all passing, 0 failures
+- **50,000+** new lines of test code
+- **30+** packages with expanded coverage
+- **83 files** changed in this release
+
 ## [1.3.1] - 2026-03-23
 
 ### Highlights
