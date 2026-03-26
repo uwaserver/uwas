@@ -934,12 +934,16 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// .htaccess import (runtime parse)
-	// Skip rewrite for wp-admin, wp-includes, wp-content (WordPress serves these directly)
+	// Skip rewrite for paths that should be served directly:
+	// - /wp-admin, /wp-includes, /wp-content (WordPress core)
+	// - Direct .php file requests (already resolved, no rewrite needed)
 	if domain.Htaccess.Mode == "import" && domain.Root != "" {
 		p := r.URL.Path
-		if !strings.HasPrefix(p, "/wp-admin") &&
-			!strings.HasPrefix(p, "/wp-includes") &&
-			!strings.HasPrefix(p, "/wp-content") {
+		skipRewrite := strings.HasPrefix(p, "/wp-admin") ||
+			strings.HasPrefix(p, "/wp-includes") ||
+			strings.HasPrefix(p, "/wp-content") ||
+			strings.HasSuffix(p, ".php")
+		if !skipRewrite {
 			s.applyHtaccess(ctx, domain)
 		}
 	}
