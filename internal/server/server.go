@@ -783,8 +783,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
 		s.metrics.RecordDomain(r.Host, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 
-		// Record to admin log ring buffer (skip internal health checks)
-		if s.admin != nil && r.Host != "localhost:80" && r.Host != "localhost" {
+		// Record to admin log ring buffer (skip internal health checks and monitor)
+		isMonitor := r.UserAgent() == "UWAS-Monitor/1.0"
+		if s.admin != nil && !isMonitor && r.Host != "localhost:80" && r.Host != "localhost" {
 			elapsed := time.Since(start)
 			// Use real client IP from X-Forwarded-For or X-Real-IP
 			remoteIP := r.RemoteAddr
