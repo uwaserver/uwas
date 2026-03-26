@@ -11,10 +11,10 @@ func TestWPInstallStatusIdle(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/wordpress/install/status", nil)
-	s.mux.ServeHTTP(rec, req)
+	s.handleWPInstallStatus(rec, req)
 
 	if rec.Code != 200 {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)

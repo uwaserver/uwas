@@ -819,6 +819,9 @@ func TestConfigRawPutReadOnlyDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("read-only dir test not reliable on Windows")
 	}
+	if os.Getuid() == 0 {
+		t.Skip("root can write to read-only dirs")
+	}
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "uwas.yaml")
