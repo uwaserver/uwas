@@ -707,6 +707,16 @@ export default function Database() {
       )}
 
       {/* Docker Database Containers */}
+      {!dockerAvailable && (
+        <div className="rounded-lg border border-border bg-card p-5">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-card-foreground mb-2">
+            Docker Containers
+          </h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            Docker is not installed. Install it from the <a href="/packages" className="text-blue-400 hover:underline">Packages</a> page to create containerized MariaDB, MySQL, or PostgreSQL databases.
+          </p>
+        </div>
+      )}
       {dockerAvailable && (
         <div className="rounded-lg border border-border bg-card shadow-md">
           <div className="border-b border-border px-5 py-4 flex items-center justify-between">
