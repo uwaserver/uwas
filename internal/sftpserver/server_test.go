@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -124,11 +123,7 @@ func TestSafePath(t *testing.T) {
 		handles: make(map[string]*openHandle),
 	}
 
-	// On Windows, filepath.Clean("/" + "../../etc/passwd") = \etc\passwd,
-	// and Join(root, \etc\passwd) stays within root. So traversal paths
-	// only escape on Unix where /etc/passwd is an absolute path outside root.
-	isWindows := runtime.GOOS == "windows"
-
+	// safePath rejects any input containing ".." to prevent traversal on all platforms.
 	tests := []struct {
 		name    string
 		input   string
@@ -140,40 +135,10 @@ func TestSafePath(t *testing.T) {
 		{"simple relative", "foo.txt", true, "foo.txt"},
 		{"nested path", "a/b/c", true, filepath.Join("a", "b", "c")},
 		{"absolute within root", "/foo/bar", true, filepath.Join("foo", "bar")},
+		// Traversal attempts: all rejected (contain "..")
 		{"traversal leading slash", "/../../../etc/shadow", false, ""},
-	}
-	if !isWindows {
-		// These only escape on Unix
-		tests = append(tests,
-			struct {
-				name    string
-				input   string
-				wantOK  bool
-				wantRel string
-			}{"traversal dot-dot", "../../etc/passwd", false, ""},
-			struct {
-				name    string
-				input   string
-				wantOK  bool
-				wantRel string
-			}{"traversal embedded", "foo/../../etc/passwd", false, ""},
-		)
-	} else {
-		// On Windows these resolve within root
-		tests = append(tests,
-			struct {
-				name    string
-				input   string
-				wantOK  bool
-				wantRel string
-			}{"traversal dot-dot stays in root", "../../etc/passwd", true, filepath.Join("etc", "passwd")},
-			struct {
-				name    string
-				input   string
-				wantOK  bool
-				wantRel string
-			}{"traversal embedded stays in root", "foo/../../etc/passwd", true, filepath.Join("etc", "passwd")},
-		)
+		{"traversal dot-dot", "../../etc/passwd", false, ""},
+		{"traversal embedded", "foo/../../etc/passwd", false, ""},
 	}
 
 	for _, tt := range tests {
@@ -1653,29 +1618,17 @@ func TestSFTP_PathTraversal_OpenDir(t *testing.T) {
 	sftp.sendInit()
 	sftp.recvPacket()
 
-	// On Unix, "../../../" escapes root -> PERMISSION_DENIED.
-	// On Windows, it resolves to root itself -> returns a handle (valid dir).
+	// "../../../" contains ".." -> PERMISSION_DENIED on all platforms.
 	sftp.sendPacket(sshFXPOpenDir, 102, marshalString("../../../"))
 	pktType, _, payload, err := sftp.recvPacket()
 	if err != nil {
 		t.Fatalf("recvPacket: %v", err)
 	}
-	if runtime.GOOS == "windows" {
-		// On Windows the path resolves within root, so opendir succeeds
-		if pktType != sshFXPHandle {
-			t.Fatalf("on Windows expected handle, got %d", pktType)
-		}
-		// Close the handle
-		handle, _ := readString(payload)
-		sftp.sendPacket(sshFXPClose, 103, marshalString(handle))
-		sftp.recvPacket()
-	} else {
-		if pktType != sshFXPStatus {
-			t.Fatalf("expected status for traversal, got %d", pktType)
-		}
-		if statusCode(payload) != sshFXPermissionDenied {
-			t.Errorf("expected PERMISSION_DENIED, got %d", statusCode(payload))
-		}
+	if pktType != sshFXPStatus {
+		t.Fatalf("expected status for traversal, got %d", pktType)
+	}
+	if statusCode(payload) != sshFXPermissionDenied {
+		t.Errorf("expected PERMISSION_DENIED, got %d", statusCode(payload))
 	}
 }
 
@@ -1705,18 +1658,9 @@ func TestSFTP_PathTraversal_MkDir(t *testing.T) {
 		t.Fatalf("expected status for traversal, got %d", pktType)
 	}
 	code := statusCode(payload)
-	// On Unix: PERMISSION_DENIED (escapes root).
-	// On Windows: OK or FAILURE (resolves within root, so mkdir is attempted).
-	if runtime.GOOS != "windows" {
-		if code != sshFXPermissionDenied {
-			t.Errorf("expected PERMISSION_DENIED, got %d", code)
-		}
-	} else {
-		// On Windows the path resolves within root, so mkdir succeeds or
-		// fails because parent dir doesn't exist -- either way, not a traversal.
-		if code == sshFXPermissionDenied {
-			t.Errorf("on Windows, did not expect PERMISSION_DENIED for this path")
-		}
+	// Path contains ".." -> PERMISSION_DENIED on all platforms.
+	if code != sshFXPermissionDenied {
+		t.Errorf("expected PERMISSION_DENIED, got %d", code)
 	}
 }
 
@@ -1749,17 +1693,9 @@ func TestSFTP_PathTraversal_Rename(t *testing.T) {
 		t.Fatalf("expected status for traversal, got %d", pktType)
 	}
 	code := statusCode(payload)
-	// On Unix: PERMISSION_DENIED (target escapes root).
-	// On Windows: OK or FAILURE (target resolves within root).
-	if runtime.GOOS != "windows" {
-		if code != sshFXPermissionDenied {
-			t.Errorf("expected PERMISSION_DENIED, got %d", code)
-		}
-	} else {
-		// On Windows the dest path resolves within root
-		if code == sshFXPermissionDenied {
-			t.Errorf("on Windows, did not expect PERMISSION_DENIED for this path")
-		}
+	// Path contains ".." -> PERMISSION_DENIED on all platforms.
+	if code != sshFXPermissionDenied {
+		t.Errorf("expected PERMISSION_DENIED, got %d", code)
 	}
 }
 

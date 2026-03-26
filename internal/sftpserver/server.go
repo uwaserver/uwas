@@ -294,9 +294,15 @@ func (sess *sftpSession) safePath(p string) string {
 	if p == "" || p == "." {
 		return sess.root
 	}
-	// Clean the path and strip any leading slash to make it relative,
-	// then join with root. This prevents filepath.Join from ignoring
-	// root when clean is an absolute path (e.g. /etc/shadow).
+
+	// Reject any path containing .. BEFORE cleaning (prevents traversal).
+	// filepath.Clean would normalize "../../etc/shadow" to "/etc/shadow"
+	// which on Linux becomes an absolute path outside root.
+	if strings.Contains(p, "..") {
+		return ""
+	}
+
+	// Clean and make relative to root
 	clean := filepath.Clean("/" + p)
 	rel := strings.TrimPrefix(clean, "/")
 	if rel == "" {
