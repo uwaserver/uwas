@@ -327,7 +327,17 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 	// wp-content needs to be writable
 	wpContent := filepath.Join(webRoot, "wp-content")
 	execCommandFn("chmod", "-R", "775", wpContent).Run()
-	log.WriteString("Permissions set (www-data:www-data, 755/644, wp-content 775)\n")
+
+	// Create directories WordPress needs for plugin/theme installs and uploads
+	for _, sub := range []string{"upgrade", "uploads", "upgrade/skins", ".tmp"} {
+		dir := filepath.Join(webRoot, "wp-content", sub)
+		if sub == ".tmp" {
+			dir = filepath.Join(webRoot, ".tmp")
+		}
+		osMkdirAllFn(dir, 0775)
+		execCommandFn("chown", "www-data:www-data", dir).Run()
+	}
+	log.WriteString("Permissions set (www-data:www-data, 755/644, wp-content 775, upgrade/uploads created)\n")
 }
 
 func sanitizeDBName(domain string) string {
@@ -900,11 +910,17 @@ func FixPermissions(webRoot string) (string, error) {
 		}
 	}
 
-	// Create .tmp directory for WordPress temp operations
-	tmpDir := filepath.Join(webRoot, ".tmp")
-	osMkdirAllFn(tmpDir, 0775)
-	execCommandFn("chown", "www-data:www-data", tmpDir).Run()
-	log.WriteString(".tmp directory created for WordPress temp operations\n")
+	// Create directories WordPress needs for plugin/theme installs, uploads, and temp
+	for _, sub := range []string{
+		filepath.Join("wp-content", "upgrade"),
+		filepath.Join("wp-content", "uploads"),
+		".tmp",
+	} {
+		dir := filepath.Join(webRoot, sub)
+		osMkdirAllFn(dir, 0775)
+		execCommandFn("chown", "www-data:www-data", dir).Run()
+	}
+	log.WriteString("upgrade, uploads, .tmp directories created\n")
 
 	return log.String(), nil
 }

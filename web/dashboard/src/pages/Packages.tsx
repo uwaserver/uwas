@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Package, Download, Check, RefreshCw, AlertTriangle, Trash2, Shield } from 'lucide-react';
-import { fetchPackages, installPackage, removePackage, type PackageInfo } from '@/lib/api';
+import { fetchPackages, installPackage, removePackage, fetchTasks, type PackageInfo } from '@/lib/api';
 
 const categoryOrder = ['Required', 'Database', 'Performance', 'Security', 'WordPress', 'Email'];
 
@@ -18,7 +18,28 @@ export default function Packages() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    // Resume monitoring if a package task is running
+    fetchTasks().then(tasks => {
+      const active = tasks?.find(t => t.type === 'package' && (t.status === 'running' || t.status === 'queued'));
+      if (active) {
+        setActing(active.name);
+        setSuccess(`${active.action === 'remove' ? 'Removing' : 'Installing'} ${active.name}...`);
+        const poll = setInterval(async () => {
+          const ts = await fetchTasks().catch(() => []);
+          const t = ts?.find(x => x.id === active.id);
+          if (!t || (t.status !== 'running' && t.status !== 'queued')) {
+            clearInterval(poll);
+            setActing('');
+            if (t?.status === 'done') setSuccess(`${active.name} ${active.action === 'remove' ? 'removed' : 'installed'}!`);
+            else if (t?.status === 'error') setError(t.error || 'Operation failed');
+            load();
+          }
+        }, 3000);
+      }
+    }).catch(() => {});
+  }, [load]);
 
   const handleInstall = async (pkg: PackageInfo) => {
     setActing(pkg.id);
