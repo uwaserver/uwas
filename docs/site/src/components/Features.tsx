@@ -53,7 +53,7 @@ const features: Feature[] = [
   {
     icon: LayoutDashboard,
     title: 'Web Dashboard',
-    description: '15 pages, real-time SSE updates, built with React 19. Monitor and manage everything from the browser.',
+    description: '35 pages, real-time SSE updates, built with React 19. Monitor and manage everything from the browser.',
     color: 'var(--accent-blue)',
     bgColor: 'rgba(59, 130, 246, 0.1)',
   },
