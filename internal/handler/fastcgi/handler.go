@@ -66,40 +66,28 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 		)
 	}
 
-	// Check for empty PHP output BEFORE ParseHTTP consumes the buffer
-	hasOutput := len(resp.Stdout()) > 0
+	// Log stderr (PHP errors)
 	stderrContent := string(resp.Stderr())
+
+	// Check stdout length BEFORE ParseHTTP (which consumes the buffer)
+	stdoutLen := len(resp.Stdout())
 
 	// Parse HTTP response from FastCGI
 	statusCode, headers, body := resp.ParseHTTP()
 
-	// If PHP returned nothing (blank page), return 500 instead of silent 200
-	if !hasOutput {
-		if stderrContent != "" {
-			h.logger.Error("PHP returned empty response with errors",
-				"host", domain.Host,
-				"uri", ctx.Request.RequestURI,
-				"script", scriptFilename,
-				"stderr", stderrContent,
-			)
-			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-			ctx.Response.WriteHeader(500)
-			ctx.Response.Write([]byte("<h1>500 Internal Server Error</h1>\n"))
-			ctx.Response.Write([]byte("<p>PHP returned an empty response. Check server logs for details.</p>\n"))
-			// stderr is logged server-side only (not leaked to client)
-		} else {
-			h.logger.Error("PHP returned empty response (white screen of death)",
-				"host", domain.Host,
-				"uri", ctx.Request.RequestURI,
-				"script", scriptFilename,
-				"fpm_address", domain.PHP.FPMAddress,
-			)
-			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-			ctx.Response.WriteHeader(500)
-			ctx.Response.Write([]byte("<h1>500 Internal Server Error</h1>\n"))
-			ctx.Response.Write([]byte("<p>PHP returned an empty response. This usually means a fatal error occurred with <code>display_errors=off</code>.</p>\n"))
-			ctx.Response.Write([]byte("<p>Check PHP error log: <code>/var/log/php8.x-fpm.log</code> or run <code>uwas doctor</code></p>\n"))
-		}
+	// Completely empty stdout = PHP crashed or didn't respond at all
+	if stdoutLen == 0 {
+		h.logger.Error("PHP returned empty response (WSOD)",
+			"host", domain.Host,
+			"uri", ctx.Request.RequestURI,
+			"script", scriptFilename,
+			"fpm_address", domain.PHP.FPMAddress,
+			"stderr", stderrContent,
+		)
+		ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		ctx.Response.WriteHeader(500)
+		ctx.Response.Write([]byte("<h1>500 Internal Server Error</h1>\n"))
+		ctx.Response.Write([]byte("<p>PHP returned an empty response.</p>\n"))
 		return
 	}
 
