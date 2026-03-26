@@ -22,7 +22,8 @@ type Manager struct {
 	config  config.ACMEConfig
 	storage *CertStorage
 	logger  *logger.Logger
-	domains []config.Domain
+	domainsMu sync.RWMutex
+	domains   []config.Domain
 
 	// On-demand rate limiting: max 10 certs per minute.
 	onDemandCount atomic.Int64
@@ -392,7 +393,9 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 
 // UpdateDomains updates the domain list (for hot reload).
 func (m *Manager) UpdateDomains(domains []config.Domain) {
+	m.domainsMu.Lock()
 	m.domains = domains
+	m.domainsMu.Unlock()
 }
 
 // TLSConfig returns a tls.Config with best-practice settings.

@@ -2,6 +2,7 @@
 package services
 
 import (
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -88,30 +89,60 @@ func checkService(name, display string) *Service {
 	}
 }
 
-// StartService starts a systemd service.
+// IsKnownService checks if a service name is in the allowlist.
+func IsKnownService(name string) bool {
+	for _, ks := range KnownServices {
+		if ks.Name == name {
+			return true
+		}
+		for _, alias := range ks.Aliases {
+			if alias == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StartService starts a systemd service (must be in KnownServices allowlist).
 func StartService(name string) error {
+	if !IsKnownService(name) {
+		return fmt.Errorf("unknown service: %s", name)
+	}
 	if err := execCommandFn("systemctl", "start", name).Run(); err != nil {
 		return err
 	}
 	return execCommandFn("systemctl", "enable", name).Run()
 }
 
-// StopService stops a systemd service.
+// StopService stops a systemd service (must be in KnownServices allowlist).
 func StopService(name string) error {
+	if !IsKnownService(name) {
+		return fmt.Errorf("unknown service: %s", name)
+	}
 	return execCommandFn("systemctl", "stop", name).Run()
 }
 
-// RestartService restarts a systemd service.
+// RestartService restarts a systemd service (must be in KnownServices allowlist).
 func RestartService(name string) error {
+	if !IsKnownService(name) {
+		return fmt.Errorf("unknown service: %s", name)
+	}
 	return execCommandFn("systemctl", "restart", name).Run()
 }
 
 // EnableService enables a service to start on boot.
 func EnableService(name string) error {
+	if !IsKnownService(name) {
+		return fmt.Errorf("unknown service: %s", name)
+	}
 	return execCommandFn("systemctl", "enable", name).Run()
 }
 
 // DisableService disables a service from starting on boot.
 func DisableService(name string) error {
+	if !IsKnownService(name) {
+		return fmt.Errorf("unknown service: %s", name)
+	}
 	return execCommandFn("systemctl", "disable", name).Run()
 }

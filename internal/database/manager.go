@@ -671,7 +671,11 @@ func backtick(name string) string {
 }
 
 func escapeSQL(s string) string {
-	s = strings.ReplaceAll(s, "'", "\\'")
+	// IMPORTANT: escape backslashes FIRST, then quotes.
+	// Reversing this order breaks the escape (\ -> \\ -> \\' leaves quote unescaped).
 	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\x00", "")
 	return s
 }

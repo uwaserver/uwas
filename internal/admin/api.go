@@ -430,8 +430,8 @@ func (s *Server) Start() error {
 
 	s.httpSrv = &http.Server{
 		Handler:      s.authMiddleware(s.mux),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 5 * time.Minute, // SSE, DB export, backup can take minutes
 	}
 
 	ln, err := net.Listen("tcp", addr)
@@ -470,10 +470,21 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Public endpoints: health check, dashboard UI, and login (no auth needed)
+		// Public endpoints: health check and dashboard UI (no auth needed)
 		if r.URL.Path == "/api/v1/health" ||
-			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") ||
-			r.URL.Path == "/api/v1/auth/login" {
+			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Login endpoint: public but rate-limited
+		if r.URL.Path == "/api/v1/auth/login" {
+			ip := requestIP(r)
+			if s.checkRateLimit(ip) {
+				w.Header().Set("Retry-After", "300")
+				jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -3896,6 +3907,14 @@ func (s *Server) handleCronMonitorDomain(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
+	// Admin-only: cron execute runs arbitrary shell commands
+	if s.authMgr != nil {
+		user, ok := auth.UserFromContext(r.Context())
+		if ok && user.Role != auth.RoleAdmin {
+			jsonError(w, "forbidden: admin only", http.StatusForbidden)
+			return
+		}
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Domain   string `json:"domain"`
