@@ -43,9 +43,9 @@ export default function Hero() {
           className="mx-auto mt-6 max-w-3xl text-lg leading-relaxed sm:text-xl"
           style={{ color: 'var(--text-secondary)' }}
         >
-          A high-performance web server replacing Apache + Nginx + Varnish + Caddy.
-          Auto HTTPS, built-in cache, PHP/FastCGI, reverse proxy, and real-time dashboard
-          — all in a single binary with zero external dependencies. Written in pure Go.
+          A high-performance web server + hosting panel replacing Apache + Nginx + Varnish + Caddy + cPanel.
+          Auto HTTPS, built-in cache, PHP/FastCGI, reverse proxy, WordPress management, WAF,
+          and a 35-page dashboard — all in a single binary. Written in pure Go.
         </p>
 
         {/* CTA Buttons */}
