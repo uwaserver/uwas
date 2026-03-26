@@ -18,9 +18,9 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 31-page React dashboard with 120+ API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 35-page React dashboard with 170+ API endpoints.
 
-One binary. Zero hassle. Production ready.
+One binary. Zero hassle.
 
 ## Features
 
@@ -37,7 +37,7 @@ One binary. Zero hassle. Production ready.
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **31-page Dashboard** — React 19 admin panel with dark/light theme
+- **35-page Dashboard** — React 19 admin panel with dark/light theme
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
 - **WordPress Management** — One-click install, plugin updates, debug mode, error log viewer
 - **DNS Zone Editor** — Full CRUD for Cloudflare, Hetzner, DigitalOcean, Route53
@@ -222,7 +222,7 @@ Request Flow:
 ```
 cmd/uwas/                → CLI entry point (18 commands)
 internal/
-  admin/                 → REST API (120+ routes) + dashboard embed + TOTP auth
+  admin/                 → REST API (170+ routes) + dashboard embed + TOTP auth
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
   auth/                  → Multi-user RBAC (admin/reseller/user) + session + TOTP 2FA
@@ -263,22 +263,22 @@ internal/
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
   htaccess/              → .htaccess parser and converter
-web/dashboard/           → React 19 SPA (31 pages, Vite + TypeScript + Tailwind)
+web/dashboard/           → React 19 SPA (35 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Dashboard
 
-UWAS includes a 31-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
+UWAS includes a 35-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
 
-**Sites:** Dashboard, Domains, Topology, Certificates, DNS Zone Editor, WordPress, Clone/Staging, Migration, File Manager
+**Sites:** Dashboard, Domains, Domain Detail, Topology, Certificates, DNS Zone Editor, WordPress, Clone/Staging, Migration, File Manager
 
 **Server:** PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 
 **Performance:** Cache, Metrics, Analytics, Logs
 
-**Security:** Security, Firewall, Unknown Domains, Audit Log
+**Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users
 
-**System:** Config Editor, Backups, Updates, Doctor, Settings
+**System:** Config Editor, Webhooks, Backups, Updates, Doctor, Settings
 
 **Auth:** Login (with 2FA/TOTP support)
 

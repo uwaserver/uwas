@@ -2,10 +2,10 @@ import { ArrowRight, Github } from 'lucide-react'
 
 const stats = [
   { value: '0', label: 'Dependencies', sub: 'ext' },
-  { value: '1,718', label: 'Tests', sub: 'passing' },
-  { value: '15', label: 'Dashboard Pages', sub: 'built-in' },
-  { value: '28+', label: 'API Endpoints', sub: 'RESTful' },
-  { value: '18MB', label: 'Binary', sub: 'statically linked' },
+  { value: '45', label: 'Test Packages', sub: 'all passing' },
+  { value: '35', label: 'Dashboard Pages', sub: 'built-in' },
+  { value: '170+', label: 'API Endpoints', sub: 'RESTful' },
+  { value: '~14MB', label: 'Binary', sub: 'statically linked' },
 ]
 
 export default function Hero() {
