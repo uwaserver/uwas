@@ -14,6 +14,8 @@ import (
 // CertStorage handles reading/writing certificates to disk.
 type CertStorage struct {
 	baseDir string
+	// readDirFunc overrides os.ReadDir for testing error paths.
+	readDirFunc func(name string) ([]os.DirEntry, error)
 }
 
 // CertMeta stores metadata about a certificate on disk.
@@ -111,7 +113,11 @@ func (s *CertStorage) Load(domain string) (*tls.Certificate, error) {
 func (s *CertStorage) LoadAll() (map[string]*tls.Certificate, error) {
 	certs := make(map[string]*tls.Certificate)
 
-	entries, err := os.ReadDir(s.baseDir)
+	readDir := os.ReadDir
+	if s.readDirFunc != nil {
+		readDir = s.readDirFunc
+	}
+	entries, err := readDir(s.baseDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return certs, nil

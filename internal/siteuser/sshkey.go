@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
 // AddSSHKey adds a public SSH key to a domain user's authorized_keys.
 func AddSSHKey(webRootBase, hostname, pubKey string) error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return fmt.Errorf("SSH key management not supported on Windows")
 	}
 
@@ -19,18 +18,18 @@ func AddSSHKey(webRootBase, hostname, pubKey string) error {
 	sshDir := filepath.Join(domainDir, ".ssh")
 	authKeys := filepath.Join(sshDir, "authorized_keys")
 
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
+	if err := osMkdirAllFn(sshDir, 0700); err != nil {
 		return fmt.Errorf("create .ssh: %w", err)
 	}
 
 	// Append key if not already present
-	existing, _ := os.ReadFile(authKeys)
+	existing, _ := osReadFileFn(authKeys)
 	pubKey = strings.TrimSpace(pubKey)
 	if strings.Contains(string(existing), pubKey) {
 		return nil // already present
 	}
 
-	f, err := os.OpenFile(authKeys, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := osOpenFileFn(authKeys, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -49,7 +48,7 @@ func RemoveSSHKey(webRootBase, hostname, pubKeyFingerprint string) error {
 	domainDir := filepath.Join(webRootBase, hostname)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
 
-	data, err := os.ReadFile(authKeys)
+	data, err := osReadFileFn(authKeys)
 	if err != nil {
 		return nil // no keys file
 	}
@@ -65,7 +64,7 @@ func RemoveSSHKey(webRootBase, hostname, pubKeyFingerprint string) error {
 		filtered = append(filtered, line)
 	}
 
-	return os.WriteFile(authKeys, []byte(strings.Join(filtered, "\n")+"\n"), 0600)
+	return osWriteFileFn(authKeys, []byte(strings.Join(filtered, "\n")+"\n"), 0600)
 }
 
 // ListSSHKeys returns the SSH public keys for a domain user.
@@ -73,7 +72,7 @@ func ListSSHKeys(webRootBase, hostname string) []string {
 	domainDir := filepath.Join(webRootBase, hostname)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
 
-	data, err := os.ReadFile(authKeys)
+	data, err := osReadFileFn(authKeys)
 	if err != nil {
 		return nil
 	}

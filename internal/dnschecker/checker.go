@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// Testable hooks for DNS and network lookups.
+var (
+	lookupHost   = net.LookupHost
+	lookupCNAME  = net.LookupCNAME
+	lookupMX     = net.LookupMX
+	lookupNS     = net.LookupNS
+	lookupTXT    = net.LookupTXT
+	interfaceAddrs = net.InterfaceAddrs
+	txtTimeout     = 3 * time.Second
+)
+
 // Result contains DNS check results for a domain.
 type Result struct {
 	Domain     string   `json:"domain"`
@@ -30,7 +41,7 @@ func Check(domain string) Result {
 	r.ServerIPs = getServerIPs()
 
 	// Resolve A records
-	ips, err := net.LookupHost(domain)
+	ips, err := lookupHost(domain)
 	if err != nil {
 		r.Error = fmt.Sprintf("DNS lookup failed: %s", err)
 		return r
@@ -61,13 +72,13 @@ func Check(domain string) Result {
 	}
 
 	// CNAME
-	cname, err := net.LookupCNAME(domain)
+	cname, err := lookupCNAME(domain)
 	if err == nil && cname != domain+"." {
 		r.CNAME = strings.TrimSuffix(cname, ".")
 	}
 
 	// MX
-	mxRecords, err := net.LookupMX(domain)
+	mxRecords, err := lookupMX(domain)
 	if err == nil {
 		for _, mx := range mxRecords {
 			r.MX = append(r.MX, fmt.Sprintf("%s (priority %d)", strings.TrimSuffix(mx.Host, "."), mx.Pref))
@@ -75,7 +86,7 @@ func Check(domain string) Result {
 	}
 
 	// NS
-	nsRecords, err := net.LookupNS(domain)
+	nsRecords, err := lookupNS(domain)
 	if err == nil {
 		for _, ns := range nsRecords {
 			r.NS = append(r.NS, strings.TrimSuffix(ns.Host, "."))
@@ -85,13 +96,13 @@ func Check(domain string) Result {
 	// TXT (with timeout)
 	txtCh := make(chan []string, 1)
 	go func() {
-		txt, _ := net.LookupTXT(domain)
+		txt, _ := lookupTXT(domain)
 		txtCh <- txt
 	}()
 	select {
 	case txt := <-txtCh:
 		r.TXT = txt
-	case <-time.After(3 * time.Second):
+	case <-time.After(txtTimeout):
 	}
 
 	return r
@@ -100,7 +111,7 @@ func Check(domain string) Result {
 // getServerIPs returns this server's non-loopback IPs.
 func getServerIPs() []string {
 	var ips []string
-	addrs, err := net.InterfaceAddrs()
+	addrs, err := interfaceAddrs()
 	if err != nil {
 		return nil
 	}

@@ -11,6 +11,18 @@ import (
 	"strings"
 )
 
+// Testable hooks — replaced in tests for full coverage.
+var (
+	runtimeGOOS    = runtime.GOOS
+	execCommandFn  = exec.Command
+	execLookPathFn = exec.LookPath
+	runMySQLFn     = runMySQL
+	osStatFn       = os.Stat
+	osReadFileFn   = os.ReadFile
+	osMkdirAllFn   = os.MkdirAll
+	osRemoveAllFn  = os.RemoveAll
+)
+
 // DBInfo represents a database.
 type DBInfo struct {
 	Name     string `json:"name"`
@@ -31,7 +43,7 @@ type Status struct {
 
 // GetStatus checks MySQL/MariaDB availability.
 func GetStatus() Status {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return Status{Backend: "none"}
 	}
 
@@ -39,7 +51,7 @@ func GetStatus() Status {
 
 	// Check mariadb first, then mysql
 	for _, bin := range []string{"mariadb", "mysql"} {
-		if path, err := exec.LookPath(bin); err == nil {
+		if path, err := execLookPathFn(bin); err == nil {
 			st.Installed = true
 			if bin == "mariadb" {
 				st.Backend = "mariadb"
@@ -47,7 +59,7 @@ func GetStatus() Status {
 				st.Backend = "mysql"
 			}
 			// Get version
-			out, err := exec.Command(path, "--version").Output()
+			out, err := execCommandFn(path, "--version").Output()
 			if err == nil {
 				st.Version = strings.TrimSpace(string(out))
 			}
@@ -67,11 +79,11 @@ func GetStatus() Status {
 		{"mysql", "-u", "root", "-e", "SELECT 1"},
 		{"mariadb", "-u", "root", "-e", "SELECT 1"},
 	} {
-		bin, err := exec.LookPath(method[0])
+		bin, err := execLookPathFn(method[0])
 		if err != nil {
 			continue
 		}
-		cmd := exec.Command(bin, method[1:]...)
+		cmd := execCommandFn(bin, method[1:]...)
 		out, err := cmd.CombinedOutput()
 		if err == nil && (strings.Contains(string(out), "alive") || strings.Contains(string(out), "1")) {
 			st.Running = true
@@ -84,22 +96,22 @@ func GetStatus() Status {
 
 // StartService starts MySQL/MariaDB service.
 func StartService() error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return fmt.Errorf("not supported on Windows")
 	}
 
 	// Ensure socket directory exists (common issue after reboot).
 	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
-		os.MkdirAll(dir, 0755)
-		exec.Command("chown", "mysql:mysql", dir).Run()
+		osMkdirAllFn(dir, 0755)
+		execCommandFn("chown", "mysql:mysql", dir).Run()
 	}
 
 	// Try mariadb first, then mysql
 	var lastErr string
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		out, err := exec.Command("systemctl", "start", svc).CombinedOutput()
+		out, err := execCommandFn("systemctl", "start", svc).CombinedOutput()
 		if err == nil {
-			exec.Command("systemctl", "enable", svc).Run()
+			execCommandFn("systemctl", "enable", svc).Run()
 			return nil
 		}
 		lastErr = strings.TrimSpace(string(out))
@@ -111,31 +123,31 @@ func StartService() error {
 
 // StopService stops MySQL/MariaDB service.
 func StopService() error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return fmt.Errorf("not supported on Windows")
 	}
 	var lastErr string
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		out, err := exec.Command("systemctl", "stop", svc).CombinedOutput()
+		out, err := execCommandFn("systemctl", "stop", svc).CombinedOutput()
 		if err == nil {
 			return nil
 		}
 		lastErr = strings.TrimSpace(string(out))
 	}
 	// Force kill as fallback
-	exec.Command("pkill", "-9", "mysqld").Run()
-	exec.Command("pkill", "-9", "mariadbd").Run()
+	execCommandFn("pkill", "-9", "mysqld").Run()
+	execCommandFn("pkill", "-9", "mariadbd").Run()
 	return fmt.Errorf("could not stop MySQL/MariaDB (force killed): %s", lastErr)
 }
 
 // RestartService restarts MySQL/MariaDB service.
 func RestartService() error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return fmt.Errorf("not supported on Windows")
 	}
 	var lastErr string
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		out, err := exec.Command("systemctl", "restart", svc).CombinedOutput()
+		out, err := execCommandFn("systemctl", "restart", svc).CombinedOutput()
 		if err == nil {
 			return nil
 		}
@@ -151,42 +163,42 @@ func RestartService() error {
 // 3. Run mariadb-install-db / mysql_install_db
 // 4. Start the service
 func RepairService() (string, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return "", fmt.Errorf("not supported on Windows")
 	}
 
 	var log strings.Builder
 
 	// Step 1: Fix broken dpkg/apt state
-	if _, err := exec.LookPath("dpkg"); err == nil {
-		out, _ := exec.Command("dpkg", "--configure", "-a").CombinedOutput()
+	if _, err := execLookPathFn("dpkg"); err == nil {
+		out, _ := execCommandFn("dpkg", "--configure", "-a").CombinedOutput()
 		log.WriteString("dpkg --configure -a:\n" + string(out) + "\n")
 
-		out, _ = exec.Command("apt", "--fix-broken", "install", "-y").CombinedOutput()
+		out, _ = execCommandFn("apt", "--fix-broken", "install", "-y").CombinedOutput()
 		log.WriteString("apt --fix-broken install:\n" + string(out) + "\n")
 	}
 
 	// Step 2: Stop any stuck processes
-	exec.Command("systemctl", "stop", "mariadb").Run()
-	exec.Command("systemctl", "stop", "mysql").Run()
-	exec.Command("pkill", "-9", "mysqld").Run()
-	exec.Command("pkill", "-9", "mariadbd").Run()
+	execCommandFn("systemctl", "stop", "mariadb").Run()
+	execCommandFn("systemctl", "stop", "mysql").Run()
+	execCommandFn("pkill", "-9", "mysqld").Run()
+	execCommandFn("pkill", "-9", "mariadbd").Run()
 	log.WriteString("Killed any running DB processes\n")
 
 	// Step 3: Recreate data directory
 	for _, dir := range []string{"/var/lib/mysql", "/run/mysqld", "/var/run/mysqld", "/var/log/mysql"} {
-		os.MkdirAll(dir, 0755)
-		exec.Command("chown", "mysql:mysql", dir).Run()
+		osMkdirAllFn(dir, 0755)
+		execCommandFn("chown", "mysql:mysql", dir).Run()
 	}
 	log.WriteString("Created /var/lib/mysql + socket dirs with mysql:mysql ownership\n")
 
 	// Step 4: Initialize database (mariadb-install-db or mysql_install_db)
 	for _, bin := range []string{"mariadb-install-db", "mysql_install_db"} {
-		path, err := exec.LookPath(bin)
+		path, err := execLookPathFn(bin)
 		if err != nil {
 			continue
 		}
-		out, err := exec.Command(path, "--user=mysql", "--datadir=/var/lib/mysql").CombinedOutput()
+		out, err := execCommandFn(path, "--user=mysql", "--datadir=/var/lib/mysql").CombinedOutput()
 		log.WriteString(bin + ":\n" + string(out) + "\n")
 		if err == nil {
 			log.WriteString("Database initialized successfully\n")
@@ -196,14 +208,14 @@ func RepairService() (string, error) {
 
 	// Step 5: Start service
 	for _, svc := range []string{"mariadb", "mysql"} {
-		out, err := exec.Command("systemctl", "start", svc).CombinedOutput()
+		out, err := execCommandFn("systemctl", "start", svc).CombinedOutput()
 		if err == nil {
-			exec.Command("systemctl", "enable", svc).Run()
+			execCommandFn("systemctl", "enable", svc).Run()
 			log.WriteString("Service " + svc + " started\n")
 
 			// Step 6: Secure installation
-			runMySQL("DELETE FROM mysql.user WHERE User='';")
-			runMySQL("FLUSH PRIVILEGES;")
+			runMySQLFn("DELETE FROM mysql.user WHERE User='';")
+			runMySQLFn("FLUSH PRIVILEGES;")
 			log.WriteString("Basic security applied\n")
 			return log.String(), nil
 		}
@@ -216,28 +228,28 @@ func RepairService() (string, error) {
 // ForceUninstall does a more aggressive uninstall when normal uninstall fails:
 // kills processes, removes packages with dpkg --force, cleans all data.
 func ForceUninstall() (string, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return "", fmt.Errorf("not supported on Windows")
 	}
 
 	var log strings.Builder
 
 	// Kill everything
-	exec.Command("systemctl", "stop", "mariadb").Run()
-	exec.Command("systemctl", "stop", "mysql").Run()
-	exec.Command("pkill", "-9", "mysqld").Run()
-	exec.Command("pkill", "-9", "mariadbd").Run()
+	execCommandFn("systemctl", "stop", "mariadb").Run()
+	execCommandFn("systemctl", "stop", "mysql").Run()
+	execCommandFn("pkill", "-9", "mysqld").Run()
+	execCommandFn("pkill", "-9", "mariadbd").Run()
 	log.WriteString("Killed all DB processes\n")
 
 	// Force remove with dpkg
-	if _, err := exec.LookPath("dpkg"); err == nil {
+	if _, err := execLookPathFn("dpkg"); err == nil {
 		// Find all mariadb/mysql packages
-		out, _ := exec.Command("dpkg", "-l").Output()
+		out, _ := execCommandFn("dpkg", "-l").Output()
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 && (strings.Contains(fields[1], "mariadb") || strings.Contains(fields[1], "mysql")) {
 				pkg := fields[1]
-				o, _ := exec.Command("dpkg", "--force-all", "--purge", pkg).CombinedOutput()
+				o, _ := execCommandFn("dpkg", "--force-all", "--purge", pkg).CombinedOutput()
 				log.WriteString("purge " + pkg + ": " + strings.TrimSpace(string(o)) + "\n")
 			}
 		}
@@ -253,21 +265,21 @@ func ForceUninstall() (string, error) {
 		"/etc/my.cnf",
 		"/etc/my.cnf.d",
 	} {
-		if _, err := os.Stat(path); err == nil {
-			os.RemoveAll(path)
+		if _, err := osStatFn(path); err == nil {
+			osRemoveAllFn(path)
 			log.WriteString("Removed " + path + "\n")
 		}
 	}
 
 	// Remove user
-	exec.Command("userdel", "-f", "mysql").Run()
-	exec.Command("groupdel", "mysql").Run()
+	execCommandFn("userdel", "-f", "mysql").Run()
+	execCommandFn("groupdel", "mysql").Run()
 	log.WriteString("Removed mysql user/group\n")
 
 	// Clean apt cache
-	exec.Command("apt", "autoremove", "-y").Run()
-	exec.Command("apt", "clean").Run()
-	exec.Command("systemctl", "daemon-reload").Run()
+	execCommandFn("apt", "autoremove", "-y").Run()
+	execCommandFn("apt", "clean").Run()
+	execCommandFn("systemctl", "daemon-reload").Run()
 	log.WriteString("Cleaned apt cache + daemon-reload\n")
 
 	return log.String(), nil
@@ -275,7 +287,7 @@ func ForceUninstall() (string, error) {
 
 // UninstallService completely removes MySQL/MariaDB packages and data.
 func UninstallService() (string, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return "", fmt.Errorf("not supported on Windows")
 	}
 
@@ -286,15 +298,15 @@ func UninstallService() (string, error) {
 	log.WriteString("Service stopped\n")
 
 	// Purge packages
-	if _, err := exec.LookPath("apt"); err == nil {
-		out, _ := exec.Command("apt", "purge", "-y",
+	if _, err := execLookPathFn("apt"); err == nil {
+		out, _ := execCommandFn("apt", "purge", "-y",
 			"mariadb-server", "mariadb-client", "mariadb-common",
 			"mysql-server", "mysql-client", "mysql-common",
 		).CombinedOutput()
 		log.WriteString(string(out))
-		exec.Command("apt", "autoremove", "-y").CombinedOutput()
-	} else if _, err := exec.LookPath("dnf"); err == nil {
-		out, _ := exec.Command("dnf", "remove", "-y",
+		execCommandFn("apt", "autoremove", "-y").CombinedOutput()
+	} else if _, err := execLookPathFn("dnf"); err == nil {
+		out, _ := execCommandFn("dnf", "remove", "-y",
 			"mariadb-server", "mariadb", "mysql-server", "mysql",
 		).CombinedOutput()
 		log.WriteString(string(out))
@@ -308,18 +320,18 @@ func UninstallService() (string, error) {
 		"/var/run/mysqld",
 		"/etc/mysql",
 	} {
-		if _, err := os.Stat(path); err == nil {
-			os.RemoveAll(path)
+		if _, err := osStatFn(path); err == nil {
+			osRemoveAllFn(path)
 			log.WriteString("Removed " + path + "\n")
 		}
 	}
 
 	// Remove system user
-	exec.Command("userdel", "mysql").Run()
-	exec.Command("groupdel", "mysql").Run()
+	execCommandFn("userdel", "mysql").Run()
+	execCommandFn("groupdel", "mysql").Run()
 	log.WriteString("Removed mysql user/group\n")
 
-	exec.Command("systemctl", "daemon-reload").Run()
+	execCommandFn("systemctl", "daemon-reload").Run()
 	log.WriteString("systemctl daemon-reload done\n")
 
 	return log.String(), nil
@@ -331,7 +343,7 @@ func DiagnoseService() map[string]any {
 
 	// Service status
 	for _, svc := range []string{"mariadb", "mysql"} {
-		out, err := exec.Command("systemctl", "is-active", svc).Output()
+		out, err := execCommandFn("systemctl", "is-active", svc).Output()
 		status := strings.TrimSpace(string(out))
 		if err == nil || status != "" {
 			diag["service_name"] = svc
@@ -342,7 +354,7 @@ func DiagnoseService() map[string]any {
 
 	// Journal errors (last 20 lines)
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		out, err := exec.Command("journalctl", "-u", svc, "-n", "20", "--no-pager", "-q").Output()
+		out, err := execCommandFn("journalctl", "-u", svc, "-n", "20", "--no-pager", "-q").Output()
 		if err == nil && len(out) > 0 {
 			diag["journal"] = strings.TrimSpace(string(out))
 			break
@@ -351,7 +363,7 @@ func DiagnoseService() map[string]any {
 
 	// Socket check
 	for _, sock := range []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"} {
-		if _, err := os.Stat(sock); err == nil {
+		if _, err := osStatFn(sock); err == nil {
 			diag["socket"] = sock
 			break
 		}
@@ -359,7 +371,7 @@ func DiagnoseService() map[string]any {
 
 	// PID file check
 	for _, pid := range []string{"/run/mysqld/mysqld.pid", "/var/run/mysqld/mysqld.pid"} {
-		if data, err := os.ReadFile(pid); err == nil {
+		if data, err := osReadFileFn(pid); err == nil {
 			diag["pid_file"] = pid
 			diag["pid"] = strings.TrimSpace(string(data))
 			break
@@ -367,13 +379,13 @@ func DiagnoseService() map[string]any {
 	}
 
 	// Disk space
-	out, err := exec.Command("df", "-h", "/var/lib/mysql").Output()
+	out, err := execCommandFn("df", "-h", "/var/lib/mysql").Output()
 	if err == nil {
 		diag["disk"] = strings.TrimSpace(string(out))
 	}
 
 	// Data directory permissions
-	if info, err := os.Stat("/var/lib/mysql"); err == nil {
+	if info, err := osStatFn("/var/lib/mysql"); err == nil {
 		diag["data_dir_mode"] = info.Mode().String()
 	} else {
 		diag["data_dir"] = "missing"
@@ -385,7 +397,7 @@ func DiagnoseService() map[string]any {
 func collectDBDiagnostics() string {
 	var sb strings.Builder
 	for _, svc := range []string{"mariadb", "mysql", "mysqld"} {
-		out, err := exec.Command("journalctl", "-u", svc, "-n", "10", "--no-pager", "-q").Output()
+		out, err := execCommandFn("journalctl", "-u", svc, "-n", "10", "--no-pager", "-q").Output()
 		if err == nil && len(out) > 10 {
 			sb.WriteString("--- journalctl -u " + svc + " ---\n")
 			sb.WriteString(strings.TrimSpace(string(out)))
@@ -408,7 +420,7 @@ func ListDatabases() ([]DBInfo, error) {
 	GROUP BY SCHEMA_NAME
 	ORDER BY SCHEMA_NAME`
 
-	out, err := runMySQL(sql)
+	out, err := runMySQLFn(sql)
 	if err != nil {
 		return nil, err
 	}
@@ -419,9 +431,6 @@ func ListDatabases() ([]DBInfo, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 1 {
-			continue
-		}
 		db := DBInfo{Name: fields[0], Host: "localhost"}
 		if len(fields) >= 2 {
 			db.Size = fields[1] + " MB"
@@ -464,7 +473,7 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 		FLUSH PRIVILEGES;
 	`, backtick(name), user, host, escapeSQL(password), backtick(name), user, host)
 
-	_, err := runMySQL(sql)
+	_, err := runMySQLFn(sql)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +495,7 @@ func DropDatabase(name, user, host string) error {
 		FLUSH PRIVILEGES;
 	`, backtick(name), user, host)
 
-	_, err := runMySQL(sql)
+	_, err := runMySQLFn(sql)
 	return err
 }
 
@@ -496,14 +505,14 @@ func ChangePassword(user, host, newPassword string) error {
 		host = "localhost"
 	}
 	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", user, host, newPassword)
-	_, err := runMySQL(sql)
+	_, err := runMySQLFn(sql)
 	return err
 }
 
 // ListUsers returns all non-system database users.
 func ListUsers() ([]DBUser, error) {
 	sql := `SELECT User, Host FROM mysql.user WHERE User NOT IN ('root', 'mysql', 'mariadb.sys', 'debian-sys-maint', '') ORDER BY User`
-	out, err := runMySQL(sql)
+	out, err := runMySQLFn(sql)
 	if err != nil {
 		return nil, err
 	}
@@ -527,16 +536,16 @@ type DBUser struct {
 func ExportDatabase(name string) ([]byte, error) {
 	// Try mariadb-dump first, then mysqldump
 	for _, bin := range []string{"mariadb-dump", "mysqldump"} {
-		path, err := exec.LookPath(bin)
+		path, err := execLookPathFn(bin)
 		if err != nil {
 			continue
 		}
-		out, err := exec.Command(path, "-u", "root", "--single-transaction", "--routines", "--triggers", name).Output()
+		out, err := execCommandFn(path, "-u", "root", "--single-transaction", "--routines", "--triggers", name).Output()
 		if err == nil {
 			return out, nil
 		}
 		// Try with sudo
-		out, err = exec.Command("sudo", path, "--single-transaction", "--routines", "--triggers", name).Output()
+		out, err = execCommandFn("sudo", path, "--single-transaction", "--routines", "--triggers", name).Output()
 		if err == nil {
 			return out, nil
 		}
@@ -547,18 +556,18 @@ func ExportDatabase(name string) ([]byte, error) {
 // ImportDatabase imports SQL data into a database.
 func ImportDatabase(name string, sqlData []byte) error {
 	for _, client := range []string{"mariadb", "mysql"} {
-		bin, err := exec.LookPath(client)
+		bin, err := execLookPathFn(client)
 		if err != nil {
 			continue
 		}
-		cmd := exec.Command(bin, "-u", "root", name)
+		cmd := execCommandFn(bin, "-u", "root", name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			return nil
 		}
 		// Try with sudo
-		cmd = exec.Command("sudo", bin, name)
+		cmd = execCommandFn("sudo", bin, name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
 		out, err = cmd.CombinedOutput()
 		if err == nil {
@@ -571,33 +580,33 @@ func ImportDatabase(name string, sqlData []byte) error {
 
 // InstallMySQL attempts to install MySQL/MariaDB.
 func InstallMySQL() (string, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return "", fmt.Errorf("not supported on Windows")
 	}
 
 	// Try apt (Debian/Ubuntu)
-	if _, err := exec.LookPath("apt"); err == nil {
-		cmd := exec.Command("apt", "install", "-y", "mariadb-server", "mariadb-client")
+	if _, err := execLookPathFn("apt"); err == nil {
+		cmd := execCommandFn("apt", "install", "-y", "mariadb-server", "mariadb-client")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			// Start and enable
-			exec.Command("systemctl", "start", "mariadb").Run()
-			exec.Command("systemctl", "enable", "mariadb").Run()
+			execCommandFn("systemctl", "start", "mariadb").Run()
+			execCommandFn("systemctl", "enable", "mariadb").Run()
 			// Secure installation basics
-			runMySQL("DELETE FROM mysql.user WHERE User='';")
-			runMySQL("DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');")
-			runMySQL("FLUSH PRIVILEGES;")
+			runMySQLFn("DELETE FROM mysql.user WHERE User='';")
+			runMySQLFn("DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');")
+			runMySQLFn("FLUSH PRIVILEGES;")
 		}
 		return string(out), err
 	}
 
 	// Try dnf (RHEL/Fedora)
-	if _, err := exec.LookPath("dnf"); err == nil {
-		cmd := exec.Command("dnf", "install", "-y", "mariadb-server", "mariadb")
+	if _, err := execLookPathFn("dnf"); err == nil {
+		cmd := execCommandFn("dnf", "install", "-y", "mariadb-server", "mariadb")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
-			exec.Command("systemctl", "start", "mariadb").Run()
-			exec.Command("systemctl", "enable", "mariadb").Run()
+			execCommandFn("systemctl", "start", "mariadb").Run()
+			execCommandFn("systemctl", "enable", "mariadb").Run()
 		}
 		return string(out), err
 	}
@@ -608,26 +617,26 @@ func InstallMySQL() (string, error) {
 func runMySQL(sql string) (string, error) {
 	// Ensure socket directory exists (common issue after reboot)
 	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
-		os.MkdirAll(dir, 0755)
-		exec.Command("chown", "mysql:mysql", dir).Run()
+		osMkdirAllFn(dir, 0755)
+		execCommandFn("chown", "mysql:mysql", dir).Run()
 	}
 
 	// Try mariadb client first (preferred on modern Ubuntu), then mysql
 	for _, client := range []string{"mariadb", "mysql"} {
-		bin, err := exec.LookPath(client)
+		bin, err := execLookPathFn(client)
 		if err != nil {
 			continue
 		}
 
 		// Method 1: Direct as root (unix_socket auth)
-		cmd := exec.Command(bin, "-u", "root", "--batch", "--skip-column-names", "-e", sql)
+		cmd := execCommandFn(bin, "-u", "root", "--batch", "--skip-column-names", "-e", sql)
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil
 		}
 
 		// Method 2: With sudo (if not running as root)
-		cmd = exec.Command("sudo", bin, "--batch", "--skip-column-names", "-e", sql)
+		cmd = execCommandFn("sudo", bin, "--batch", "--skip-column-names", "-e", sql)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil
@@ -635,10 +644,10 @@ func runMySQL(sql string) (string, error) {
 
 		// Method 3: Via socket explicitly
 		for _, sock := range []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"} {
-			if _, statErr := os.Stat(sock); statErr != nil {
+			if _, statErr := osStatFn(sock); statErr != nil {
 				continue
 			}
-			cmd = exec.Command(bin, "-u", "root", "--socket="+sock, "--batch", "--skip-column-names", "-e", sql)
+			cmd = execCommandFn(bin, "-u", "root", "--socket="+sock, "--batch", "--skip-column-names", "-e", sql)
 			out, err = cmd.CombinedOutput()
 			if err == nil {
 				return string(out), nil

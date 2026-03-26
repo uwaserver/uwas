@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// Testable hook for docker.go — replaced in tests.
+var dockerExecCommandFn = exec.Command
+
 // DockerDBEngine represents a supported database engine.
 type DockerDBEngine string
 
@@ -34,13 +37,13 @@ const containerPrefix = "uwas-db-"
 
 // DockerAvailable checks if Docker is installed and running.
 func DockerAvailable() bool {
-	out, err := exec.Command("docker", "info", "--format", "{{.ServerVersion}}").Output()
+	out, err := dockerExecCommandFn("docker", "info", "--format", "{{.ServerVersion}}").Output()
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
 // DockerVersion returns Docker version string.
 func DockerVersion() string {
-	out, _ := exec.Command("docker", "version", "--format", "{{.Server.Version}}").Output()
+	out, _ := dockerExecCommandFn("docker", "version", "--format", "{{.Server.Version}}").Output()
 	return strings.TrimSpace(string(out))
 }
 
@@ -68,7 +71,7 @@ func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, data
 	containerName := containerPrefix + name
 
 	// Check if already exists
-	if out, _ := exec.Command("docker", "ps", "-a", "--filter", "name="+containerName, "--format", "{{.ID}}").Output(); len(strings.TrimSpace(string(out))) > 0 {
+	if out, _ := dockerExecCommandFn("docker", "ps", "-a", "--filter", "name="+containerName, "--format", "{{.ID}}").Output(); len(strings.TrimSpace(string(out))) > 0 {
 		return nil, fmt.Errorf("container %s already exists", containerName)
 	}
 
@@ -93,7 +96,7 @@ func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, data
 
 	args = append(args, image)
 
-	out, err := exec.Command("docker", args...).CombinedOutput()
+	out, err := dockerExecCommandFn("docker", args...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker run: %s — %w", strings.TrimSpace(string(out)), err)
 	}
@@ -136,7 +139,7 @@ func volumePath(engine DockerDBEngine) string {
 
 // ListDockerDBs lists all UWAS-managed database containers.
 func ListDockerDBs() ([]DockerDBContainer, error) {
-	out, err := exec.Command("docker", "ps", "-a",
+	out, err := dockerExecCommandFn("docker", "ps", "-a",
 		"--filter", "name="+containerPrefix,
 		"--format", "{{json .}}",
 	).Output()
@@ -186,7 +189,7 @@ func ListDockerDBs() ([]DockerDBContainer, error) {
 
 // StartDockerDB starts a stopped container.
 func StartDockerDB(name string) error {
-	out, err := exec.Command("docker", "start", containerPrefix+name).CombinedOutput()
+	out, err := dockerExecCommandFn("docker", "start", containerPrefix+name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker start: %s — %w", strings.TrimSpace(string(out)), err)
 	}
@@ -195,7 +198,7 @@ func StartDockerDB(name string) error {
 
 // StopDockerDB stops a running container.
 func StopDockerDB(name string) error {
-	out, err := exec.Command("docker", "stop", "-t", "10", containerPrefix+name).CombinedOutput()
+	out, err := dockerExecCommandFn("docker", "stop", "-t", "10", containerPrefix+name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker stop: %s — %w", strings.TrimSpace(string(out)), err)
 	}
@@ -205,10 +208,10 @@ func StopDockerDB(name string) error {
 // RemoveDockerDB stops and removes a container.
 func RemoveDockerDB(name string) error {
 	// Stop first (ignore error if already stopped)
-	exec.Command("docker", "stop", "-t", "5", containerPrefix+name).Run()
+	dockerExecCommandFn("docker", "stop", "-t", "5", containerPrefix+name).Run()
 	time.Sleep(500 * time.Millisecond)
 
-	out, err := exec.Command("docker", "rm", "-f", containerPrefix+name).CombinedOutput()
+	out, err := dockerExecCommandFn("docker", "rm", "-f", containerPrefix+name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker rm: %s — %w", strings.TrimSpace(string(out)), err)
 	}

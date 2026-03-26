@@ -14,6 +14,7 @@ import (
 type DigitalOceanProvider struct {
 	apiToken string
 	client   *http.Client
+	baseURL  string
 }
 
 const doBaseURL = "https://api.digitalocean.com/v2"
@@ -22,6 +23,7 @@ func NewDigitalOcean(apiToken string) *DigitalOceanProvider {
 	return &DigitalOceanProvider{
 		apiToken: apiToken,
 		client:   &http.Client{Timeout: 30 * time.Second},
+		baseURL:  doBaseURL,
 	}
 }
 
@@ -34,7 +36,7 @@ func (p *DigitalOceanProvider) doRequest(method, path string, body interface{}) 
 		}
 		bodyReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, doBaseURL+path, bodyReader)
+	req, err := http.NewRequest(method, p.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}

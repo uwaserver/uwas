@@ -20,6 +20,7 @@ type Route53Provider struct {
 	secretKey string
 	region    string
 	client    *http.Client
+	baseURL   string
 }
 
 // NewRoute53 creates a Route53 DNS provider.
@@ -32,6 +33,7 @@ func NewRoute53(accessKey, secretKey, region string) *Route53Provider {
 		secretKey: secretKey,
 		region:    region,
 		client:    &http.Client{Timeout: 30 * time.Second},
+		baseURL:   r53BaseURL,
 	}
 }
 
@@ -160,7 +162,7 @@ func (p *Route53Provider) changeRecord(zoneID, action string, rec Record) (*Reco
 
 // r53Request makes a signed AWS request to Route53.
 func (p *Route53Provider) r53Request(method, path string, body []byte) ([]byte, error) {
-	url := r53BaseURL + path
+	url := p.baseURL + path
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)

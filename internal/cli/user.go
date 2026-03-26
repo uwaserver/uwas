@@ -10,6 +10,15 @@ import (
 	"github.com/uwaserver/uwas/internal/siteuser"
 )
 
+// Hooks for testing.
+var (
+	userRuntimeGOOS  = runtime.GOOS
+	userOsGeteuid    = os.Geteuid
+	userListUsersFn  = siteuser.ListUsers
+	userCreateUserFn = siteuser.CreateUser
+	userDeleteUserFn = siteuser.DeleteUser
+)
+
 // UserCommand manages SFTP users for domains.
 type UserCommand struct{}
 
@@ -56,7 +65,7 @@ func (u *UserCommand) Run(args []string) error {
 }
 
 func (u *UserCommand) list() error {
-	users := siteuser.ListUsers()
+	users := userListUsersFn()
 	if len(users) == 0 {
 		fmt.Println("No site users configured.")
 		fmt.Println("Create one with: uwas user add <domain>")
@@ -73,22 +82,22 @@ func (u *UserCommand) list() error {
 }
 
 func (u *UserCommand) add(domain string) error {
-	if runtime.GOOS == "windows" {
+	if userRuntimeGOOS == "windows" {
 		return fmt.Errorf("user management not supported on Windows")
 	}
-	if os.Geteuid() != 0 {
+	if userOsGeteuid() != 0 {
 		return fmt.Errorf("root required — run: sudo uwas user add %s", domain)
 	}
 
 	// Get web root from config
 	webRoot := "/var/www"
-	if cfgFile, found := findConfig(""); found {
+	if cfgFile, found := findConfigFn(""); found {
 		if cfg, err := config.Load(cfgFile); err == nil && cfg.Global.WebRoot != "" {
 			webRoot = cfg.Global.WebRoot
 		}
 	}
 
-	user, password, err := siteuser.CreateUser(webRoot, domain)
+	user, password, err := userCreateUserFn(webRoot, domain)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
@@ -117,14 +126,14 @@ func (u *UserCommand) add(domain string) error {
 }
 
 func (u *UserCommand) remove(domain string) error {
-	if runtime.GOOS == "windows" {
+	if userRuntimeGOOS == "windows" {
 		return fmt.Errorf("user management not supported on Windows")
 	}
-	if os.Geteuid() != 0 {
+	if userOsGeteuid() != 0 {
 		return fmt.Errorf("root required — run: sudo uwas user remove %s", domain)
 	}
 
-	if err := siteuser.DeleteUser(domain); err != nil {
+	if err := userDeleteUserFn(domain); err != nil {
 		return fmt.Errorf("remove user: %w", err)
 	}
 

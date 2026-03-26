@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+var (
+	runtimeGOOS    = runtime.GOOS
+	execCommandFn  = exec.Command
+	execLookPathFn = exec.LookPath
+)
+
 // Rule represents a firewall rule.
 type Rule struct {
 	Number  int    `json:"number"`
@@ -28,12 +34,12 @@ type Status struct {
 
 // GetStatus returns the current firewall status.
 func GetStatus() Status {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return Status{Backend: "none"}
 	}
 
 	// Try ufw first
-	if _, err := exec.LookPath("ufw"); err == nil {
+	if _, err := execLookPathFn("ufw"); err == nil {
 		return getUFWStatus()
 	}
 
@@ -43,7 +49,7 @@ func GetStatus() Status {
 func getUFWStatus() Status {
 	st := Status{Backend: "ufw"}
 
-	out, err := exec.Command("ufw", "status", "numbered").Output()
+	out, err := execCommandFn("ufw", "status", "numbered").Output()
 	if err != nil {
 		return st
 	}
@@ -105,43 +111,43 @@ func parseUFWRule(line string) Rule {
 
 // AllowPort adds a ufw allow rule.
 func AllowPort(port, proto string) error {
-	if _, err := exec.LookPath("ufw"); err != nil {
+	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
 	target := port
 	if proto != "" {
 		target = port + "/" + proto
 	}
-	return exec.Command("ufw", "allow", target).Run()
+	return execCommandFn("ufw", "allow", target).Run()
 }
 
 // DenyPort adds a ufw deny rule.
 func DenyPort(port, proto string) error {
-	if _, err := exec.LookPath("ufw"); err != nil {
+	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
 	target := port
 	if proto != "" {
 		target = port + "/" + proto
 	}
-	return exec.Command("ufw", "deny", target).Run()
+	return execCommandFn("ufw", "deny", target).Run()
 }
 
 // DeleteRule removes a rule by number.
 func DeleteRule(number int) error {
-	if _, err := exec.LookPath("ufw"); err != nil {
+	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
-	cmd := exec.Command("ufw", "--force", "delete", fmt.Sprintf("%d", number))
+	cmd := execCommandFn("ufw", "--force", "delete", fmt.Sprintf("%d", number))
 	return cmd.Run()
 }
 
 // Enable enables the firewall.
 func Enable() error {
-	return exec.Command("ufw", "--force", "enable").Run()
+	return execCommandFn("ufw", "--force", "enable").Run()
 }
 
 // Disable disables the firewall.
 func Disable() error {
-	return exec.Command("ufw", "disable").Run()
+	return execCommandFn("ufw", "disable").Run()
 }

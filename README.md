@@ -13,7 +13,7 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 </p>
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![CI](https://github.com/uwaserver/uwas/actions/workflows/ci.yml/badge.svg)](https://github.com/uwaserver/uwas/actions/workflows/ci.yml)
 
 ## What is UWAS?
@@ -299,7 +299,7 @@ UWAS includes a 31-page React 19 dashboard at `/_uwas/dashboard/` with dark/ligh
 | Webhook events | Yes | No | No | No | No |
 | DNS management | 4 providers | No | No | No | Yes |
 | MCP / AI-native | Yes | No | No | No | No |
-| Open source | Apache 2.0 | BSD | Apache 2.0 | Apache 2.0 | Proprietary |
+| Open source | AGPL-3.0 | BSD | Apache 2.0 | Apache 2.0 | Proprietary |
 
 ## Performance
 
@@ -360,7 +360,10 @@ cd web/dashboard && npm run build
 
 ## License
 
-[Apache License 2.0](LICENSE)
+UWAS is dual-licensed:
+
+- **AGPL-3.0** for open-source and community use — [full text](LICENSE)
+- **Commercial license** for enterprise and proprietary use — [uwaserver.com/enterprise](https://uwaserver.com/enterprise)
 
 ## Contributing
 

@@ -8,6 +8,19 @@ import (
 	"runtime"
 )
 
+// Hooks for testing install.go functions.
+var (
+	installExecCommand = exec.Command
+	installRuntimeGOOS = runtime.GOOS
+	installOsGetuid    = os.Getuid
+	installOsExecutable = os.Executable
+	installOsWriteFile = os.WriteFile
+	installOsReadFile  = os.ReadFile
+	installOsRemove    = os.Remove
+	installOsSymlink   = os.Symlink
+	installOsStat      = os.Stat
+)
+
 // InstallCmd installs UWAS as a system service.
 type InstallCmd struct{}
 
@@ -27,10 +40,10 @@ func (c *DoctorCmd) Run(args []string) error {
 }
 
 func installUWAS(args []string) error {
-	if runtime.GOOS != "linux" {
+	if installRuntimeGOOS != "linux" {
 		return fmt.Errorf("install command is only supported on Linux")
 	}
-	if os.Getuid() != 0 {
+	if installOsGetuid() != 0 {
 		return fmt.Errorf("install requires root — run with sudo")
 	}
 
@@ -41,18 +54,18 @@ func installUWAS(args []string) error {
 	fmt.Println("Installing UWAS...")
 
 	// 1. Copy current binary to /usr/local/bin/uwas
-	self, err := os.Executable()
+	self, err := installOsExecutable()
 	if err != nil {
 		return fmt.Errorf("cannot determine executable path: %w", err)
 	}
 	self, _ = filepath.EvalSymlinks(self)
 
 	if self != binPath {
-		data, err := os.ReadFile(self)
+		data, err := installOsReadFile(self)
 		if err != nil {
 			return fmt.Errorf("read binary: %w", err)
 		}
-		if err := os.WriteFile(binPath, data, 0755); err != nil {
+		if err := installOsWriteFile(binPath, data, 0755); err != nil {
 			return fmt.Errorf("write %s: %w", binPath, err)
 		}
 		fmt.Printf("  ✓ Binary installed: %s\n", binPath)
@@ -85,19 +98,19 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 `
-	if err := os.WriteFile(servicePath, []byte(service), 0644); err != nil {
+	if err := installOsWriteFile(servicePath, []byte(service), 0644); err != nil {
 		return fmt.Errorf("write service file: %w", err)
 	}
 	fmt.Printf("  ✓ Systemd service: %s\n", servicePath)
 
 	// 4. Reload systemd and enable
-	exec.Command("systemctl", "daemon-reload").Run()
-	exec.Command("systemctl", "enable", "uwas").Run()
+	installExecCommand("systemctl", "daemon-reload").Run()
+	installExecCommand("systemctl", "enable", "uwas").Run()
 	fmt.Println("  ✓ Service enabled (starts on boot)")
 
 	// 5. Create symlink for convenience
-	if _, err := os.Stat("/usr/bin/uwas"); os.IsNotExist(err) {
-		os.Symlink(binPath, "/usr/bin/uwas")
+	if _, err := installOsStat("/usr/bin/uwas"); os.IsNotExist(err) {
+		installOsSymlink(binPath, "/usr/bin/uwas")
 	}
 
 	fmt.Println()
@@ -127,10 +140,10 @@ type UninstallCmd struct{}
 func (c *UninstallCmd) Name() string        { return "uninstall" }
 func (c *UninstallCmd) Description() string { return "Remove UWAS service and binary (keeps config and data)" }
 func (c *UninstallCmd) Run(args []string) error {
-	if runtime.GOOS != "linux" {
+	if installRuntimeGOOS != "linux" {
 		return fmt.Errorf("uninstall is only supported on Linux")
 	}
-	if os.Getuid() != 0 {
+	if installOsGetuid() != 0 {
 		return fmt.Errorf("uninstall requires root — run with sudo")
 	}
 
@@ -153,27 +166,27 @@ func (c *UninstallCmd) Run(args []string) error {
 	}
 
 	// Stop and disable service
-	exec.Command("systemctl", "stop", "uwas").Run()
-	exec.Command("systemctl", "disable", "uwas").Run()
+	installExecCommand("systemctl", "stop", "uwas").Run()
+	installExecCommand("systemctl", "disable", "uwas").Run()
 	fmt.Println("  - Service stopped and disabled")
 
 	// Remove files
-	os.Remove("/etc/systemd/system/uwas.service")
+	installOsRemove("/etc/systemd/system/uwas.service")
 	fmt.Println("  - Removed systemd service")
 
-	os.Remove("/usr/bin/uwas")
+	installOsRemove("/usr/bin/uwas")
 	fmt.Println("  - Removed /usr/bin/uwas symlink")
 
-	self, _ := os.Executable()
+	self, _ := installOsExecutable()
 	if self != "/usr/local/bin/uwas" {
-		os.Remove("/usr/local/bin/uwas")
+		installOsRemove("/usr/local/bin/uwas")
 		fmt.Println("  - Removed /usr/local/bin/uwas")
 	} else {
 		// Can't delete ourselves while running — schedule deletion
 		fmt.Println("  - Binary will be removed on next reboot (currently running)")
 	}
 
-	exec.Command("systemctl", "daemon-reload").Run()
+	installExecCommand("systemctl", "daemon-reload").Run()
 
 	fmt.Println()
 	fmt.Println("UWAS uninstalled. Config preserved at /etc/uwas/")
@@ -270,17 +283,24 @@ func runDoctorChecks(configPath string, autoFix bool) []cliCheck {
 	return checks
 }
 
+// Hooks for doctor check testing.
+var (
+	doctorExecCommand  = exec.Command
+	doctorExecLookPath = exec.LookPath
+	doctorOsStat       = os.Stat
+)
+
 func checkCLI_PHPFPM(autoFix bool) cliCheck {
 	sockets := []string{"/run/php/php8.4-fpm.sock", "/run/php/php8.3-fpm.sock", "/run/php/php8.2-fpm.sock"}
 	for _, sock := range sockets {
-		if _, err := os.Stat(sock); err == nil {
+		if _, err := doctorOsStat(sock); err == nil {
 			return cliCheck{name: "PHP-FPM", status: "ok", message: "Running at " + sock}
 		}
 	}
-	if _, err := exec.LookPath("php-fpm8.3"); err == nil {
+	if _, err := doctorExecLookPath("php-fpm8.3"); err == nil {
 		if autoFix {
 			os.MkdirAll("/run/php", 0755)
-			exec.Command("systemctl", "start", "php8.3-fpm").Run()
+			doctorExecCommand("systemctl", "start", "php8.3-fpm").Run()
 			return cliCheck{name: "PHP-FPM", status: "fixed", message: "Started php8.3-fpm", fix: "systemctl start php8.3-fpm"}
 		}
 		return cliCheck{name: "PHP-FPM", status: "fail", message: "Installed but not running", howTo: "sudo systemctl start php8.3-fpm"}
@@ -289,7 +309,7 @@ func checkCLI_PHPFPM(autoFix bool) cliCheck {
 }
 
 func checkCLI_PHPModules() cliCheck {
-	out, err := exec.Command("php", "-m").Output()
+	out, err := doctorExecCommand("php", "-m").Output()
 	if err != nil {
 		return cliCheck{name: "PHP Modules", status: "warn", message: "Cannot check"}
 	}
@@ -307,15 +327,15 @@ func checkCLI_PHPModules() cliCheck {
 }
 
 func checkCLI_MySQL(autoFix bool) cliCheck {
-	out, _ := exec.Command("systemctl", "is-active", "mariadb").Output()
+	out, _ := doctorExecCommand("systemctl", "is-active", "mariadb").Output()
 	if containsCI(string(out), "active") {
 		return cliCheck{name: "MariaDB", status: "ok", message: "Running"}
 	}
-	if _, err := exec.LookPath("mariadb"); err == nil {
+	if _, err := doctorExecLookPath("mariadb"); err == nil {
 		if autoFix {
 			os.MkdirAll("/run/mysqld", 0755)
-			exec.Command("chown", "mysql:mysql", "/run/mysqld").Run()
-			exec.Command("systemctl", "start", "mariadb").Run()
+			doctorExecCommand("chown", "mysql:mysql", "/run/mysqld").Run()
+			doctorExecCommand("systemctl", "start", "mariadb").Run()
 			return cliCheck{name: "MariaDB", status: "fixed", message: "Started", fix: "systemctl start mariadb"}
 		}
 		return cliCheck{name: "MariaDB", status: "fail", message: "Not running", howTo: "sudo systemctl start mariadb"}
@@ -324,12 +344,12 @@ func checkCLI_MySQL(autoFix bool) cliCheck {
 }
 
 func checkCLI_WebRoot(autoFix bool) cliCheck {
-	if _, err := os.Stat("/var/www"); err == nil {
+	if _, err := doctorOsStat("/var/www"); err == nil {
 		return cliCheck{name: "Web Root", status: "ok", message: "/var/www"}
 	}
 	if autoFix {
 		os.MkdirAll("/var/www", 0755)
-		exec.Command("chown", "www-data:www-data", "/var/www").Run()
+		doctorExecCommand("chown", "www-data:www-data", "/var/www").Run()
 		return cliCheck{name: "Web Root", status: "fixed", message: "Created /var/www", fix: "mkdir /var/www"}
 	}
 	return cliCheck{name: "Web Root", status: "fail", message: "/var/www missing", howTo: "sudo mkdir -p /var/www && sudo chown www-data:www-data /var/www"}
@@ -343,7 +363,7 @@ func checkCLI_Config(path string) cliCheck {
 }
 
 func checkCLI_Disk() cliCheck {
-	out, err := exec.Command("df", "-h", "/").Output()
+	out, err := doctorExecCommand("df", "-h", "/").Output()
 	if err != nil {
 		return cliCheck{name: "Disk", status: "ok", message: "OK"}
 	}
@@ -356,7 +376,7 @@ func checkCLI_Disk() cliCheck {
 }
 
 func checkCLI_DNS() cliCheck {
-	_, err := exec.Command("dig", "+short", "acme-v02.api.letsencrypt.org").Output()
+	_, err := doctorExecCommand("dig", "+short", "acme-v02.api.letsencrypt.org").Output()
 	if err != nil {
 		return cliCheck{name: "DNS", status: "warn", message: "dig not available"}
 	}

@@ -8,6 +8,16 @@ import (
 	"strings"
 )
 
+// Testable hooks for install.go — overridden in tests.
+var (
+	// runtimeGOOSInstall is the OS identifier used by DetectDistro.
+	runtimeGOOSInstall = runtime.GOOS
+	// readOSRelease reads the os-release file. Defaults to reading /etc/os-release.
+	readOSRelease = func() ([]byte, error) { return os.ReadFile("/etc/os-release") }
+	// installExecCommand is the function used by RunInstall to create exec.Cmd objects.
+	installExecCommand = exec.Command
+)
+
 // Distro represents a detected Linux distribution.
 type Distro struct {
 	ID      string // "ubuntu", "debian", "centos", "fedora", "arch", "alpine"
@@ -17,10 +27,10 @@ type Distro struct {
 
 // DetectDistro reads /etc/os-release to identify the Linux distribution.
 func DetectDistro() Distro {
-	if runtime.GOOS != "linux" {
-		return Distro{ID: runtime.GOOS, Name: runtime.GOOS}
+	if runtimeGOOSInstall != "linux" {
+		return Distro{ID: runtimeGOOSInstall, Name: runtimeGOOSInstall}
 	}
-	data, err := os.ReadFile("/etc/os-release")
+	data, err := readOSRelease()
 	if err != nil {
 		return Distro{ID: "unknown"}
 	}
@@ -156,7 +166,7 @@ func RunInstall(phpVersion string) (string, error) {
 		if len(parts) == 0 {
 			continue
 		}
-		cmd := exec.Command(parts[0], parts[1:]...)
+		cmd := installExecCommand(parts[0], parts[1:]...)
 		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		out, err := cmd.CombinedOutput()
 		output.Write(out)

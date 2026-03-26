@@ -140,11 +140,18 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 	}
 }
 
+// convertImageFunc can be overridden in tests.
+var convertImageFunc = convertImageReal
+
 // convertImage converts src to dst using cwebp or avifenc.
 // Returns true if conversion succeeded. Thread-safe via file lock.
 var convertMu sync.Mutex
 
 func convertImage(src, dst, format string) bool {
+	return convertImageFunc(src, dst, format)
+}
+
+func convertImageReal(src, dst, format string) bool {
 	// Don't convert if src doesn't exist or dst already exists
 	if _, err := os.Stat(src); err != nil {
 		return false

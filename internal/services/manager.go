@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// Testable hooks
+var (
+	execCommandFn = exec.Command
+	runtimeGOOS   = runtime.GOOS
+)
+
 // Service represents a system service.
 type Service struct {
 	Name    string `json:"name"`
@@ -36,7 +42,7 @@ var KnownServices = []struct {
 
 // ListServices returns the status of all known system services.
 func ListServices() []Service {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return nil
 	}
 
@@ -61,14 +67,14 @@ func ListServices() []Service {
 
 func checkService(name, display string) *Service {
 	// Check if service unit exists
-	out, err := exec.Command("systemctl", "is-active", name).Output()
+	out, err := execCommandFn("systemctl", "is-active", name).Output()
 	if err != nil {
 		return nil
 	}
 	active := strings.TrimSpace(string(out))
 
 	enabled := false
-	enabledOut, _ := exec.Command("systemctl", "is-enabled", name).Output()
+	enabledOut, _ := execCommandFn("systemctl", "is-enabled", name).Output()
 	if strings.TrimSpace(string(enabledOut)) == "enabled" {
 		enabled = true
 	}
@@ -84,28 +90,28 @@ func checkService(name, display string) *Service {
 
 // StartService starts a systemd service.
 func StartService(name string) error {
-	if err := exec.Command("systemctl", "start", name).Run(); err != nil {
+	if err := execCommandFn("systemctl", "start", name).Run(); err != nil {
 		return err
 	}
-	return exec.Command("systemctl", "enable", name).Run()
+	return execCommandFn("systemctl", "enable", name).Run()
 }
 
 // StopService stops a systemd service.
 func StopService(name string) error {
-	return exec.Command("systemctl", "stop", name).Run()
+	return execCommandFn("systemctl", "stop", name).Run()
 }
 
 // RestartService restarts a systemd service.
 func RestartService(name string) error {
-	return exec.Command("systemctl", "restart", name).Run()
+	return execCommandFn("systemctl", "restart", name).Run()
 }
 
 // EnableService enables a service to start on boot.
 func EnableService(name string) error {
-	return exec.Command("systemctl", "enable", name).Run()
+	return execCommandFn("systemctl", "enable", name).Run()
 }
 
 // DisableService disables a service from starting on boot.
 func DisableService(name string) error {
-	return exec.Command("systemctl", "disable", name).Run()
+	return execCommandFn("systemctl", "disable", name).Run()
 }

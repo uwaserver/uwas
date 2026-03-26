@@ -20,10 +20,10 @@ type MigrateRequest struct {
 	Domain     string `json:"domain"`      // target domain on this server
 	LocalRoot  string `json:"local_root"`  // local web root
 	// Database migration
-	DBHost     string `json:"db_host"`     // remote DB host (default: localhost on remote)
-	DBName     string `json:"db_name"`     // remote database name
-	DBUser     string `json:"db_user"`     // remote DB user
-	DBPass     string `json:"db_pass"`     // remote DB password
+	DBHost string `json:"db_host"` // remote DB host (default: localhost on remote)
+	DBName string `json:"db_name"` // remote database name
+	DBUser string `json:"db_user"` // remote DB user
+	DBPass string `json:"db_pass"` // remote DB password
 }
 
 // MigrateResult contains migration status.
@@ -38,6 +38,19 @@ type MigrateResult struct {
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	Duration   string    `json:"duration,omitempty"`
 }
+
+// Hooks for testing — override in tests to avoid real exec calls.
+var (
+	runSyncFiles = syncFilesReal
+	runMigrateDB = migrateDBReal
+	runChown     = func(root string) { exec.Command("chown", "-R", "www-data:www-data", root).Run() }
+	// execCommandFn allows tests to intercept exec.Command calls.
+	execCommandFn = exec.Command
+	// execLookPathFn allows tests to intercept exec.LookPath calls.
+	execLookPathFn = exec.LookPath
+	// tempDirFn allows tests to override the temp directory.
+	tempDirFn = os.TempDir
+)
 
 // Migrate performs a full site migration from a remote server.
 func Migrate(req MigrateRequest) *MigrateResult {
@@ -67,19 +80,19 @@ func Migrate(req MigrateRequest) *MigrateResult {
 
 	// Step 1: Sync files via rsync over SSH
 	log.WriteString("=== Syncing files ===\n")
-	filesResult := syncFiles(req, &log)
+	filesResult := runSyncFiles(req, &log)
 	result.FilesSync = filesResult
 
 	// Step 2: Dump and import database (if configured)
 	if req.DBName != "" {
 		log.WriteString("\n=== Migrating database ===\n")
-		dbResult := migrateDB(req, &log)
+		dbResult := runMigrateDB(req, &log)
 		result.DBImport = dbResult
 	}
 
 	// Step 3: Fix permissions
 	log.WriteString("\n=== Fixing permissions ===\n")
-	exec.Command("chown", "-R", "www-data:www-data", req.LocalRoot).Run()
+	runChown(req.LocalRoot)
 	log.WriteString("Ownership set to www-data:www-data\n")
 
 	// Step 4: Update wp-config.php if WordPress
@@ -96,32 +109,62 @@ func Migrate(req MigrateRequest) *MigrateResult {
 	return result
 }
 
-// syncFiles uses rsync to copy files from remote server.
-func syncFiles(req MigrateRequest, log *strings.Builder) string {
-	sshOpts := fmt.Sprintf("ssh -p %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", req.SourcePort)
-	if req.SSHKey != "" {
-		sshOpts += " -i " + req.SSHKey
+// buildSSHOpts builds the SSH command options string for rsync.
+func buildSSHOpts(port, sshKey string) string {
+	opts := fmt.Sprintf("ssh -p %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", port)
+	if sshKey != "" {
+		opts += " -i " + sshKey
 	}
+	return opts
+}
 
-	src := req.SourceHost + ":" + req.SourcePath + "/"
-	dst := req.LocalRoot + "/"
-
-	args := []string{
+// buildRsyncArgs builds the rsync argument list.
+func buildRsyncArgs(sshOpts, src, dst string) []string {
+	return []string{
 		"-avz", "--progress", "--delete",
 		"-e", sshOpts,
 		src, dst,
 	}
+}
+
+// buildSSHArgs builds the SSH argument list for remote commands.
+func buildSSHArgs(port, sshKey, sourceHost, remoteCmd string) []string {
+	args := []string{
+		"-p", port,
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+	}
+	if sshKey != "" {
+		args = append(args, "-i", sshKey)
+	}
+	args = append(args, sourceHost, remoteCmd)
+	return args
+}
+
+// buildMysqldumpCmd builds the remote mysqldump command string.
+func buildMysqldumpCmd(dbHost, dbUser, dbPass, dbName string) string {
+	return fmt.Sprintf("mysqldump -h %s -u %s -p'%s' --single-transaction --quick %s",
+		dbHost, dbUser, dbPass, dbName)
+}
+
+// syncFilesReal uses rsync to copy files from remote server.
+func syncFilesReal(req MigrateRequest, log *strings.Builder) string {
+	sshOpts := buildSSHOpts(req.SourcePort, req.SSHKey)
+
+	src := req.SourceHost + ":" + req.SourcePath + "/"
+	dst := req.LocalRoot + "/"
+	args := buildRsyncArgs(sshOpts, src, dst)
 
 	// If using password, use sshpass
 	var cmd *exec.Cmd
 	if req.SSHPass != "" && req.SSHKey == "" {
-		if _, err := exec.LookPath("sshpass"); err != nil {
+		if _, err := execLookPathFn("sshpass"); err != nil {
 			log.WriteString("WARNING: sshpass not installed, password auth may fail\n")
 			log.WriteString("Install with: apt install sshpass\n")
 		}
-		cmd = exec.Command("sshpass", append([]string{"-p", req.SSHPass, "rsync"}, args...)...)
+		cmd = execCommandFn("sshpass", append([]string{"-p", req.SSHPass, "rsync"}, args...)...)
 	} else {
-		cmd = exec.Command("rsync", args...)
+		cmd = execCommandFn("rsync", args...)
 	}
 
 	out, err := cmd.CombinedOutput()
@@ -133,37 +176,25 @@ func syncFiles(req MigrateRequest, log *strings.Builder) string {
 	return "ok"
 }
 
-// migrateDB dumps remote database and imports locally.
-func migrateDB(req MigrateRequest, log *strings.Builder) string {
+// migrateDBReal dumps remote database and imports locally.
+func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
 	}
 
-	// Build SSH + mysqldump command
-	sshArgs := []string{
-		"-p", req.SourcePort,
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-	}
-	if req.SSHKey != "" {
-		sshArgs = append(sshArgs, "-i", req.SSHKey)
-	}
-
-	dumpCmd := fmt.Sprintf("mysqldump -h %s -u %s -p'%s' --single-transaction --quick %s",
-		dbHost, req.DBUser, req.DBPass, req.DBName)
-
-	sshArgs = append(sshArgs, req.SourceHost, dumpCmd)
+	dumpCmd := buildMysqldumpCmd(dbHost, req.DBUser, req.DBPass, req.DBName)
+	sshArgs := buildSSHArgs(req.SourcePort, req.SSHKey, req.SourceHost, dumpCmd)
 
 	// Dump via SSH
 	var cmd *exec.Cmd
 	if req.SSHPass != "" && req.SSHKey == "" {
-		cmd = exec.Command("sshpass", append([]string{"-p", req.SSHPass, "ssh"}, sshArgs...)...)
+		cmd = execCommandFn("sshpass", append([]string{"-p", req.SSHPass, "ssh"}, sshArgs...)...)
 	} else {
-		cmd = exec.Command("ssh", sshArgs...)
+		cmd = execCommandFn("ssh", sshArgs...)
 	}
 
-	dumpFile := filepath.Join(os.TempDir(), fmt.Sprintf("uwas-migrate-%s-%d.sql", req.DBName, time.Now().Unix()))
+	dumpFile := filepath.Join(tempDirFn(), fmt.Sprintf("uwas-migrate-%s-%d.sql", req.DBName, time.Now().Unix()))
 	defer os.Remove(dumpFile)
 
 	dump, err := cmd.Output()
@@ -185,21 +216,21 @@ func migrateDB(req MigrateRequest, log *strings.Builder) string {
 	// Create local database
 	log.WriteString("Creating local database...\n")
 	for _, client := range []string{"mariadb", "mysql"} {
-		bin, err := exec.LookPath(client)
+		bin, err := execLookPathFn(client)
 		if err != nil {
 			continue
 		}
 		// Create DB
-		exec.Command(bin, "-u", "root", "-e",
+		execCommandFn(bin, "-u", "root", "-e",
 			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", req.DBName)).Run()
 		// Create user
-		exec.Command(bin, "-u", "root", "-e",
+		execCommandFn(bin, "-u", "root", "-e",
 			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", req.DBUser, req.DBPass)).Run()
-		exec.Command(bin, "-u", "root", "-e",
+		execCommandFn(bin, "-u", "root", "-e",
 			fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES", req.DBName, req.DBUser)).Run()
 
 		// Import
-		importCmd := exec.Command(bin, "-u", "root", req.DBName)
+		importCmd := execCommandFn(bin, "-u", "root", req.DBName)
 		importCmd.Stdin, _ = os.Open(dumpFile)
 		if out, err := importCmd.CombinedOutput(); err != nil {
 			log.WriteString(fmt.Sprintf("import error: %s — %s\n", err, string(out)))
@@ -223,10 +254,10 @@ func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder)
 	content := string(data)
 
 	replacements := map[string]string{
-		"DB_NAME": dbName,
-		"DB_USER": dbUser,
+		"DB_NAME":     dbName,
+		"DB_USER":     dbUser,
 		"DB_PASSWORD": dbPass,
-		"DB_HOST": "localhost",
+		"DB_HOST":     "localhost",
 	}
 
 	for key, val := range replacements {

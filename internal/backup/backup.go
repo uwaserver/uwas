@@ -538,8 +538,16 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 	return err
 }
 
+// importDatabaseDumpFunc is the function used to import database dumps.
+// It can be overridden in tests.
+var importDatabaseDumpFunc = importDatabaseDumpReal
+
 // importDatabaseDump imports a SQL dump via the mysql command.
 func importDatabaseDump(data []byte, log *logger.Logger) {
+	importDatabaseDumpFunc(data, log)
+}
+
+func importDatabaseDumpReal(data []byte, log *logger.Logger) {
 	mysqlBin, err := exec.LookPath("mysql")
 	if err != nil {
 		log.Warn("backup restore: mysql not found, skipping DB import")
@@ -628,8 +636,16 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 	return &BackupInfo{Name: filename, Size: size, Created: time.Now().UTC(), Provider: provider}, nil
 }
 
+// dumpDatabaseFunc is the function used to dump a single database.
+// It can be overridden in tests.
+var dumpDatabaseFunc = dumpDatabaseReal
+
 // dumpDatabase dumps a single MySQL database.
 func dumpDatabase(dbName string) ([]byte, error) {
+	return dumpDatabaseFunc(dbName)
+}
+
+func dumpDatabaseReal(dbName string) ([]byte, error) {
 	mysqldump, err := exec.LookPath("mysqldump")
 	if err != nil {
 		return nil, err
@@ -637,9 +653,17 @@ func dumpDatabase(dbName string) ([]byte, error) {
 	return exec.Command(mysqldump, "--single-transaction", "--quick", dbName).Output()
 }
 
+// dumpAllDatabasesFunc is the function used to dump all databases.
+// It can be overridden in tests.
+var dumpAllDatabasesFunc = dumpAllDatabasesReal
+
 // dumpAllDatabases runs mysqldump --all-databases and returns the SQL dump.
 // Returns nil if mysqldump is not available or MySQL is not running.
 func dumpAllDatabases() ([]byte, error) {
+	return dumpAllDatabasesFunc()
+}
+
+func dumpAllDatabasesReal() ([]byte, error) {
 	mysqldump, err := exec.LookPath("mysqldump")
 	if err != nil {
 		return nil, err

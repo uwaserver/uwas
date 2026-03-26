@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -15,7 +16,20 @@ import (
 const (
 	repoOwner = "uwaserver"
 	repoName  = "uwas"
-	githubAPI = "https://api.github.com"
+)
+
+// Testable hooks
+var (
+	githubAPIBase  = "https://api.github.com"
+	httpClientFn   = func(timeout time.Duration) *http.Client { return &http.Client{Timeout: timeout} }
+	osExecutableFn = os.Executable
+	osRenameFn     = os.Rename
+	osRemoveFn     = os.Remove
+	osChmodFn      = os.Chmod
+	evalSymlinksFn = filepath.EvalSymlinks
+	osCreateTempFn = os.CreateTemp
+	runtimeGOOS    = runtime.GOOS
+	runtimeGOARCH  = runtime.GOARCH
 )
 
 // ReleaseInfo contains version information.
@@ -31,9 +45,9 @@ type ReleaseInfo struct {
 
 // CheckUpdate checks GitHub for a newer release.
 func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPI, repoOwner, repoName)
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, repoOwner, repoName)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := httpClientFn(10 * time.Second)
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("check update: %w", err)
@@ -72,7 +86,7 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 	}
 
 	// Find matching asset for this platform
-	wantName := fmt.Sprintf("uwas-%s-%s", runtime.GOOS, runtime.GOARCH)
+	wantName := fmt.Sprintf("uwas-%s-%s", runtimeGOOS, runtimeGOARCH)
 	for _, asset := range release.Assets {
 		if strings.Contains(asset.Name, wantName) {
 			info.DownloadURL = asset.BrowserDownloadURL
@@ -86,22 +100,22 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 // Update downloads and replaces the current binary.
 func Update(downloadURL string) error {
 	if downloadURL == "" {
-		return fmt.Errorf("no download URL for %s/%s", runtime.GOOS, runtime.GOARCH)
+		return fmt.Errorf("no download URL for %s/%s", runtimeGOOS, runtimeGOARCH)
 	}
 
 	// Download to temp file
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := httpClientFn(5 * time.Minute)
 	resp, err := client.Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
 
-	tmp, err := os.CreateTemp("", "uwas-update-*")
+	tmp, err := osCreateTempFn("", "uwas-update-*")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
-	defer os.Remove(tmp.Name())
+	defer osRemoveFn(tmp.Name())
 
 	if _, err := io.Copy(tmp, resp.Body); err != nil {
 		tmp.Close()
@@ -110,36 +124,30 @@ func Update(downloadURL string) error {
 	tmp.Close()
 
 	// Make executable
-	os.Chmod(tmp.Name(), 0755)
+	if err := osChmodFn(tmp.Name(), 0755); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
 
 	// Replace current binary
-	exe, err := os.Executable()
+	exe, err := osExecutableFn()
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)
 	}
-	exe, _ = evalSymlinks(exe)
+	exe, _ = evalSymlinksFn(exe)
 
 	// Backup current binary
 	backup := exe + ".bak"
-	os.Remove(backup)
-	if err := os.Rename(exe, backup); err != nil {
+	osRemoveFn(backup)
+	if err := osRenameFn(exe, backup); err != nil {
 		return fmt.Errorf("backup current binary: %w", err)
 	}
 
-	if err := os.Rename(tmp.Name(), exe); err != nil {
+	if err := osRenameFn(tmp.Name(), exe); err != nil {
 		// Restore backup
-		os.Rename(backup, exe)
+		osRenameFn(backup, exe)
 		return fmt.Errorf("replace binary: %w", err)
 	}
 
-	os.Remove(backup)
+	osRemoveFn(backup)
 	return nil
-}
-
-func evalSymlinks(path string) (string, error) {
-	resolved, err := os.Readlink(path)
-	if err != nil {
-		return path, nil
-	}
-	return resolved, nil
 }

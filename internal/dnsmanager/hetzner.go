@@ -14,6 +14,7 @@ import (
 type HetznerProvider struct {
 	apiToken string
 	client   *http.Client
+	baseURL  string
 }
 
 const hetznerBaseURL = "https://dns.hetzner.com/api/v1"
@@ -22,6 +23,7 @@ func NewHetzner(apiToken string) *HetznerProvider {
 	return &HetznerProvider{
 		apiToken: apiToken,
 		client:   &http.Client{Timeout: 30 * time.Second},
+		baseURL:  hetznerBaseURL,
 	}
 }
 
@@ -34,7 +36,7 @@ func (p *HetznerProvider) hetznerRequest(method, path string, body interface{}) 
 		}
 		bodyReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, hetznerBaseURL+path, bodyReader)
+	req, err := http.NewRequest(method, p.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}

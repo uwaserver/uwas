@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// Hooks for testing.
+var (
+	osReadFileFn    = os.ReadFile
+	osFindProcessFn = os.FindProcess
+	findConfigFn    = findConfig
+)
+
 // StopCommand stops the running UWAS server by sending SIGTERM.
 type StopCommand struct{}
 
@@ -39,7 +46,7 @@ func (s *StopCommand) Run(args []string) error {
 		pidFile = "/var/run/uwas.pid"
 	}
 
-	pidData, err := os.ReadFile(pidFile)
+	pidData, err := osReadFileFn(pidFile)
 	if err != nil {
 		return fmt.Errorf("cannot read PID file %s: %w\nIs the server running?", pidFile, err)
 	}
@@ -49,7 +56,7 @@ func (s *StopCommand) Run(args []string) error {
 		return fmt.Errorf("invalid PID in %s: %w", pidFile, err)
 	}
 
-	process, err := os.FindProcess(pid)
+	process, err := osFindProcessFn(pid)
 	if err != nil {
 		return fmt.Errorf("cannot find process %d: %w", pid, err)
 	}
@@ -93,11 +100,11 @@ func adminURLFromConfig() string {
 // quickConfigValue does a quick line-scan of the config YAML for a given key.
 // Not a full YAML parser — works for simple scalar values.
 func quickConfigValue(key string) string {
-	cfgFile, found := findConfig("")
+	cfgFile, found := findConfigFn("")
 	if !found {
 		return ""
 	}
-	data, err := os.ReadFile(cfgFile)
+	data, err := osReadFileFn(cfgFile)
 	if err != nil {
 		return ""
 	}

@@ -122,7 +122,7 @@ export default function Footer() {
           style={{ borderColor: 'var(--border)' }}
         >
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            &copy; {new Date().getFullYear()} UWAS. Released under the Apache-2.0 License.
+            &copy; {new Date().getFullYear()} UWAS. AGPL-3.0 &middot; Commercial license available.
           </p>
           <p className="flex items-center gap-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
             Made with <Heart className="h-3.5 w-3.5 text-red-500" /> by Ersin KOÇ

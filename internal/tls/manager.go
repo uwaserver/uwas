@@ -32,6 +32,15 @@ type Manager struct {
 	onCertRenewed func(host string)
 	// onCertExpiry is called when a certificate is near expiry and renewal fails.
 	onCertExpiry func(host string, daysLeft int)
+
+	// acmeObtainFunc overrides ACME cert obtainment for testing.
+	// When nil, uses m.acme.ObtainCertificate.
+	acmeObtainFunc func(ctx context.Context, domains []string) (*tls.Certificate, []byte, []byte, error)
+
+	// renewalInitialDelay overrides the 1-minute initial delay in StartRenewal for testing.
+	renewalInitialDelay time.Duration
+	// renewalInterval overrides the 12-hour ticker interval in StartRenewal for testing.
+	renewalInterval time.Duration
 }
 
 const onDemandMaxPerMinute = 10
@@ -239,11 +248,18 @@ type CertStatusInfo struct {
 }
 
 func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate, error) {
-	if m.acme == nil {
+	if m.acme == nil && m.acmeObtainFunc == nil {
 		return nil, fmt.Errorf("ACME client not configured")
 	}
 
-	cert, certPEM, keyPEM, err := m.acme.ObtainCertificate(ctx, []string{host})
+	var cert *tls.Certificate
+	var certPEM, keyPEM []byte
+	var err error
+	if m.acmeObtainFunc != nil {
+		cert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, []string{host})
+	} else {
+		cert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, []string{host})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -293,13 +309,21 @@ func (m *Manager) StartRenewal(ctx context.Context) {
 
 	go func() {
 		// Initial delay to let server start
+		initDelay := m.renewalInitialDelay
+		if initDelay == 0 {
+			initDelay = 1 * time.Minute
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(1 * time.Minute):
+		case <-time.After(initDelay):
 		}
 
-		ticker := time.NewTicker(12 * time.Hour)
+		interval := m.renewalInterval
+		if interval == 0 {
+			interval = 12 * time.Hour
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
@@ -334,7 +358,14 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 				"expires_in", remaining.Round(time.Hour),
 			)
 
-			newCert, certPEM, keyPEM, err := m.acme.ObtainCertificate(ctx, leaf.DNSNames)
+			var newCert *tls.Certificate
+			var certPEM, keyPEM []byte
+			var err error
+			if m.acmeObtainFunc != nil {
+				newCert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, leaf.DNSNames)
+			} else {
+				newCert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, leaf.DNSNames)
+			}
 			if err != nil {
 				m.logger.Error("renewal failed", "host", host, "error", err)
 				if m.onCertExpiry != nil {

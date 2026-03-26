@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+var (
+	monitorExecCommandFn = exec.Command
+	monitorRuntimeGOOS   = runtime.GOOS
+)
+
 // ExecutionRecord tracks a single cron job execution.
 type ExecutionRecord struct {
 	ID        string        `json:"id"`
@@ -91,10 +96,10 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 
 	// Execute the command
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", command)
+	if monitorRuntimeGOOS == "windows" {
+		cmd = monitorExecCommandFn("cmd", "/c", command)
 	} else {
-		cmd = exec.Command("sh", "-c", command)
+		cmd = monitorExecCommandFn("sh", "-c", command)
 	}
 
 	// Set working directory to domain root if possible

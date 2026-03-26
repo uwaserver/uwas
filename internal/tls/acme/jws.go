@@ -9,9 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"sync"
 )
+
+// Testable hook for ECDSA signing.
+var ecdsaSign = func(key *ecdsa.PrivateKey, hash []byte) (*big.Int, *big.Int, error) {
+	return ecdsa.Sign(rand.Reader, key, hash)
+}
 
 // signedRequest sends a JWS-signed POST to the ACME server.
 func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*http.Response, error) {
@@ -44,7 +50,7 @@ func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*h
 	// Sign: ECDSA-SHA256
 	sigInput := protectedB64 + "." + payloadB64
 	hash := sha256.Sum256([]byte(sigInput))
-	r, s, err := ecdsa.Sign(rand.Reader, c.accountKey, hash[:])
+	r, s, err := ecdsaSign(c.accountKey, hash[:])
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
@@ -79,15 +85,23 @@ func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*h
 	return resp, nil
 }
 
+// ecdsaToECDH is a testable hook for converting an ECDSA public key to ECDH.
+var ecdsaToECDH = func(pub *ecdsa.PublicKey) ([]byte, error) {
+	ecdhKey, err := pub.ECDH()
+	if err != nil {
+		return nil, err
+	}
+	return ecdhKey.Bytes(), nil
+}
+
 // ecdsaPublicKeyBytes returns the uncompressed X and Y coordinates of a P-256 key.
 func ecdsaPublicKeyBytes(pub *ecdsa.PublicKey) (x, y []byte) {
-	ecdhKey, err := pub.ECDH()
+	raw, err := ecdsaToECDH(pub)
 	if err != nil {
 		// Fallback: should not happen with P-256
 		return padTo(pub.X.Bytes(), 32), padTo(pub.Y.Bytes(), 32)
 	}
 	// ECDH Bytes() returns uncompressed point: 0x04 || X(32) || Y(32)
-	raw := ecdhKey.Bytes()
 	return raw[1:33], raw[33:65]
 }
 

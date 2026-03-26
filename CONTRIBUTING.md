@@ -76,4 +76,4 @@ Be respectful and constructive. We're here to build great software together.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [AGPL-3.0](LICENSE) and may also be included in commercially licensed versions of UWAS.

@@ -12,6 +12,22 @@ import (
 	"time"
 )
 
+// Testable hooks — override in tests to avoid real system calls.
+var (
+	runtimeGOOS      = runtime.GOOS
+	runtimeGOARCH    = runtime.GOARCH
+	execCommandFn    = exec.Command
+	execLookPathFn   = exec.LookPath
+	netListenFn      = net.Listen
+	netDialTimeoutFn = net.DialTimeout
+	netLookupHostFn  = net.LookupHost
+	osStatFn         = os.Stat
+	osReadDirFn      = os.ReadDir
+	osReadFileFn     = os.ReadFile
+	osMkdirAllFn     = os.MkdirAll
+	timeSleepFn      = time.Sleep
+)
+
 // Status represents the result of a single check.
 type Status string
 
@@ -90,16 +106,16 @@ func (r *Report) add(c Check) {
 // ── Individual checks ──────────────────────────────────────
 
 func checkOS() Check {
-	if runtime.GOOS != "linux" {
-		return Check{Name: "Operating System", Status: StatusWarn, Message: fmt.Sprintf("%s/%s — production should be Linux", runtime.GOOS, runtime.GOARCH)}
+	if runtimeGOOS != "linux" {
+		return Check{Name: "Operating System", Status: StatusWarn, Message: fmt.Sprintf("%s/%s — production should be Linux", runtimeGOOS, runtimeGOARCH)}
 	}
-	return Check{Name: "Operating System", Status: StatusOK, Message: fmt.Sprintf("Linux %s", runtime.GOARCH)}
+	return Check{Name: "Operating System", Status: StatusOK, Message: fmt.Sprintf("Linux %s", runtimeGOARCH)}
 }
 
 func checkPorts() Check {
 	issues := []string{}
 	for _, port := range []string{":80", ":443"} {
-		ln, err := net.Listen("tcp", port)
+		ln, err := netListenFn("tcp", port)
 		if err != nil {
 			// Port in use — check if it's UWAS
 			if strings.Contains(err.Error(), "address already in use") || strings.Contains(err.Error(), "bind") {
@@ -125,8 +141,8 @@ func checkPHPFPM(autoFix bool) Check {
 		"/run/php/php-fpm.sock",
 	}
 	for _, sock := range sockets {
-		if _, err := os.Stat(sock); err == nil {
-			conn, err := net.DialTimeout("unix", sock, 2*time.Second)
+		if _, err := osStatFn(sock); err == nil {
+			conn, err := netDialTimeoutFn("unix", sock, 2*time.Second)
 			if err == nil {
 				conn.Close()
 				return Check{Name: "PHP-FPM", Status: StatusOK, Message: fmt.Sprintf("Running at %s", sock)}
@@ -135,9 +151,9 @@ func checkPHPFPM(autoFix bool) Check {
 			if autoFix {
 				ver := extractPHPVersion(sock)
 				if ver != "" {
-					exec.Command("systemctl", "start", fmt.Sprintf("php%s-fpm", ver)).Run()
+					execCommandFn("systemctl", "start", fmt.Sprintf("php%s-fpm", ver)).Run()
 					// Re-check
-					conn2, err2 := net.DialTimeout("unix", sock, 2*time.Second)
+					conn2, err2 := netDialTimeoutFn("unix", sock, 2*time.Second)
 					if err2 == nil {
 						conn2.Close()
 						return Check{Name: "PHP-FPM", Status: StatusFixed, Message: fmt.Sprintf("Started php%s-fpm", ver), Fix: fmt.Sprintf("systemctl start php%s-fpm", ver)}
@@ -149,12 +165,12 @@ func checkPHPFPM(autoFix bool) Check {
 	}
 
 	// No socket — check if php-fpm is installed
-	if _, err := exec.LookPath("php-fpm8.3"); err == nil {
+	if _, err := execLookPathFn("php-fpm8.3"); err == nil {
 		if autoFix {
-			exec.Command("systemctl", "start", "php8.3-fpm").Run()
-			time.Sleep(time.Second)
+			execCommandFn("systemctl", "start", "php8.3-fpm").Run()
+			timeSleepFn(time.Second)
 			for _, sock := range sockets {
-				conn, err := net.DialTimeout("unix", sock, 2*time.Second)
+				conn, err := netDialTimeoutFn("unix", sock, 2*time.Second)
 				if err == nil {
 					conn.Close()
 					return Check{Name: "PHP-FPM", Status: StatusFixed, Message: "Started php8.3-fpm", Fix: "systemctl start php8.3-fpm"}
@@ -165,7 +181,7 @@ func checkPHPFPM(autoFix bool) Check {
 	}
 
 	// Check php-cgi as fallback
-	if _, err := exec.LookPath("php-cgi8.3"); err == nil {
+	if _, err := execLookPathFn("php-cgi8.3"); err == nil {
 		return Check{Name: "PHP-FPM", Status: StatusWarn, Message: "Only php-cgi found (slow, single-threaded)", HowTo: "sudo apt install php8.3-fpm for production performance"}
 	}
 
@@ -173,7 +189,7 @@ func checkPHPFPM(autoFix bool) Check {
 }
 
 func checkPHPModules() Check {
-	out, err := exec.Command("php", "-m").Output()
+	out, err := execCommandFn("php", "-m").Output()
 	if err != nil {
 		return Check{Name: "PHP Modules", Status: StatusWarn, Message: "Could not check PHP modules"}
 	}
@@ -194,7 +210,7 @@ func checkPHPModules() Check {
 func checkMySQL(autoFix bool) Check {
 	// Check if MySQL/MariaDB is running
 	for _, svc := range []string{"mariadb", "mysql"} {
-		out, _ := exec.Command("systemctl", "is-active", svc).Output()
+		out, _ := execCommandFn("systemctl", "is-active", svc).Output()
 		if strings.TrimSpace(string(out)) == "active" {
 			return Check{Name: "MySQL/MariaDB", Status: StatusOK, Message: fmt.Sprintf("Running (%s)", svc)}
 		}
@@ -203,7 +219,7 @@ func checkMySQL(autoFix bool) Check {
 	// Check if installed
 	installed := false
 	for _, bin := range []string{"mariadb", "mysql", "mariadbd", "mysqld"} {
-		if _, err := exec.LookPath(bin); err == nil {
+		if _, err := execLookPathFn(bin); err == nil {
 			installed = true
 			break
 		}
@@ -212,11 +228,11 @@ func checkMySQL(autoFix bool) Check {
 	if !installed {
 		if autoFix {
 			// Install MariaDB
-			if _, err := exec.LookPath("apt"); err == nil {
-				exec.Command("apt", "install", "-y", "mariadb-server", "mariadb-client").Run()
-				exec.Command("systemctl", "start", "mariadb").Run()
-				exec.Command("systemctl", "enable", "mariadb").Run()
-				out, _ := exec.Command("systemctl", "is-active", "mariadb").Output()
+			if _, err := execLookPathFn("apt"); err == nil {
+				execCommandFn("apt", "install", "-y", "mariadb-server", "mariadb-client").Run()
+				execCommandFn("systemctl", "start", "mariadb").Run()
+				execCommandFn("systemctl", "enable", "mariadb").Run()
+				out, _ := execCommandFn("systemctl", "is-active", "mariadb").Output()
 				if strings.TrimSpace(string(out)) == "active" {
 					return Check{Name: "MySQL/MariaDB", Status: StatusFixed, Message: "Installed and started MariaDB", Fix: "apt install mariadb-server && systemctl start mariadb"}
 				}
@@ -229,20 +245,20 @@ func checkMySQL(autoFix bool) Check {
 	issues := []string{}
 
 	// Check data directory
-	if _, err := os.Stat("/var/lib/mysql"); os.IsNotExist(err) {
+	if _, err := osStatFn("/var/lib/mysql"); os.IsNotExist(err) {
 		issues = append(issues, "data directory /var/lib/mysql missing")
 	}
 
 	// Check socket directories
 	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if _, err := osStatFn(dir); os.IsNotExist(err) {
 			issues = append(issues, fmt.Sprintf("socket directory %s missing", dir))
 		}
 	}
 
 	// Check dpkg state
-	if _, err := exec.LookPath("dpkg"); err == nil {
-		out, _ := exec.Command("dpkg", "--audit").Output()
+	if _, err := execLookPathFn("dpkg"); err == nil {
+		out, _ := execCommandFn("dpkg", "--audit").Output()
 		if len(strings.TrimSpace(string(out))) > 0 {
 			issues = append(issues, "dpkg has broken packages")
 		}
@@ -260,27 +276,27 @@ func checkMySQL(autoFix bool) Check {
 	var fixLog []string
 
 	// 1. Kill stuck processes
-	exec.Command("pkill", "-9", "mysqld").Run()
-	exec.Command("pkill", "-9", "mariadbd").Run()
+	execCommandFn("pkill", "-9", "mysqld").Run()
+	execCommandFn("pkill", "-9", "mariadbd").Run()
 
 	// 2. Fix dpkg/apt state
-	if _, err := exec.LookPath("dpkg"); err == nil {
-		exec.Command("dpkg", "--configure", "-a").Run()
-		exec.Command("apt", "--fix-broken", "install", "-y").Run()
+	if _, err := execLookPathFn("dpkg"); err == nil {
+		execCommandFn("dpkg", "--configure", "-a").Run()
+		execCommandFn("apt", "--fix-broken", "install", "-y").Run()
 		fixLog = append(fixLog, "dpkg/apt fixed")
 	}
 
 	// 3. Create directories
 	for _, dir := range []string{"/var/lib/mysql", "/run/mysqld", "/var/run/mysqld", "/var/log/mysql"} {
-		os.MkdirAll(dir, 0755)
-		exec.Command("chown", "mysql:mysql", dir).Run()
+		osMkdirAllFn(dir, 0755)
+		execCommandFn("chown", "mysql:mysql", dir).Run()
 	}
 	fixLog = append(fixLog, "created data/socket/log dirs")
 
 	// 4. Init database if data dir was missing
 	for _, bin := range []string{"mariadb-install-db", "mysql_install_db"} {
-		if path, err := exec.LookPath(bin); err == nil {
-			exec.Command(path, "--user=mysql", "--datadir=/var/lib/mysql").Run()
+		if path, err := execLookPathFn(bin); err == nil {
+			execCommandFn(path, "--user=mysql", "--datadir=/var/lib/mysql").Run()
 			fixLog = append(fixLog, "initialized database")
 			break
 		}
@@ -288,8 +304,8 @@ func checkMySQL(autoFix bool) Check {
 
 	// 5. Start service
 	for _, svc := range []string{"mariadb", "mysql"} {
-		if err := exec.Command("systemctl", "start", svc).Run(); err == nil {
-			exec.Command("systemctl", "enable", svc).Run()
+		if err := execCommandFn("systemctl", "start", svc).Run(); err == nil {
+			execCommandFn("systemctl", "enable", svc).Run()
 			fixLog = append(fixLog, "started "+svc)
 			return Check{Name: "MySQL/MariaDB", Status: StatusFixed, Message: "Fully repaired and started", Fix: strings.Join(fixLog, " → ")}
 		}
@@ -302,10 +318,10 @@ func checkWebRoot(webRoot string, autoFix bool) Check {
 	if webRoot == "" {
 		webRoot = "/var/www"
 	}
-	if _, err := os.Stat(webRoot); os.IsNotExist(err) {
+	if _, err := osStatFn(webRoot); os.IsNotExist(err) {
 		if autoFix {
-			os.MkdirAll(webRoot, 0755)
-			exec.Command("chown", "www-data:www-data", webRoot).Run()
+			osMkdirAllFn(webRoot, 0755)
+			execCommandFn("chown", "www-data:www-data", webRoot).Run()
 			return Check{Name: "Web Root", Status: StatusFixed, Message: fmt.Sprintf("Created %s", webRoot), Fix: fmt.Sprintf("mkdir -p %s && chown www-data:www-data %s", webRoot, webRoot)}
 		}
 		return Check{Name: "Web Root", Status: StatusFail, Message: fmt.Sprintf("%s does not exist", webRoot), HowTo: fmt.Sprintf("sudo mkdir -p %s && sudo chown www-data:www-data %s", webRoot, webRoot)}
@@ -317,13 +333,13 @@ func checkConfigFile(configPath string) Check {
 	if configPath == "" {
 		// Try common paths
 		for _, p := range []string{"/etc/uwas/uwas.yaml", "/opt/uwas/uwas.yaml", "./uwas.yaml"} {
-			if _, err := os.Stat(p); err == nil {
+			if _, err := osStatFn(p); err == nil {
 				return Check{Name: "Config File", Status: StatusOK, Message: p}
 			}
 		}
 		return Check{Name: "Config File", Status: StatusWarn, Message: "No config file found — run uwas serve to create one"}
 	}
-	if _, err := os.Stat(configPath); err != nil {
+	if _, err := osStatFn(configPath); err != nil {
 		return Check{Name: "Config File", Status: StatusFail, Message: fmt.Sprintf("%s not found", configPath)}
 	}
 	return Check{Name: "Config File", Status: StatusOK, Message: configPath}
@@ -334,7 +350,7 @@ func checkDomainsDir(configPath string) Check {
 	if configPath != "" {
 		dir = filepath.Join(filepath.Dir(configPath), "domains.d")
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := osReadDirFn(dir)
 	if err != nil {
 		return Check{Name: "Domains Directory", Status: StatusWarn, Message: fmt.Sprintf("%s not found or empty", dir)}
 	}
@@ -352,15 +368,15 @@ func checkSSLCerts(configPath string) Check {
 	if configPath != "" {
 		dir = filepath.Join(filepath.Dir(configPath), "certs")
 	}
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	if _, err := osStatFn(dir); os.IsNotExist(err) {
 		return Check{Name: "SSL Certificates", Status: StatusWarn, Message: "No certs directory — SSL will be requested on first domain add"}
 	}
-	entries, _ := os.ReadDir(dir)
+	entries, _ := osReadDirFn(dir)
 	return Check{Name: "SSL Certificates", Status: StatusOK, Message: fmt.Sprintf("%d certificate(s)", len(entries)/2)}
 }
 
 func checkFirewall() Check {
-	out, err := exec.Command("ufw", "status").Output()
+	out, err := execCommandFn("ufw", "status").Output()
 	if err != nil {
 		return Check{Name: "Firewall", Status: StatusWarn, Message: "ufw not available"}
 	}
@@ -376,7 +392,7 @@ func checkFirewall() Check {
 
 func checkDiskSpace() Check {
 	// Simple check using df
-	out, err := exec.Command("df", "-h", "/").Output()
+	out, err := execCommandFn("df", "-h", "/").Output()
 	if err != nil {
 		return Check{Name: "Disk Space", Status: StatusWarn, Message: "Could not check disk space"}
 	}
@@ -393,7 +409,7 @@ func checkDiskSpace() Check {
 
 func checkDNS() Check {
 	// Check if we can resolve external domains
-	_, err := net.LookupHost("acme-v02.api.letsencrypt.org")
+	_, err := netLookupHostFn("acme-v02.api.letsencrypt.org")
 	if err != nil {
 		return Check{Name: "DNS Resolution", Status: StatusFail, Message: "Cannot resolve Let's Encrypt API — SSL certificates will fail", HowTo: "Check /etc/resolv.conf and DNS settings"}
 	}
@@ -403,7 +419,7 @@ func checkDNS() Check {
 // ── Helpers ──────────────────────────────────────────
 
 func checkMemory() Check {
-	out, err := exec.Command("free", "-m").Output()
+	out, err := execCommandFn("free", "-m").Output()
 	if err != nil {
 		return Check{Name: "Memory", Status: StatusWarn, Message: "Could not check memory"}
 	}
@@ -418,10 +434,10 @@ func checkMemory() Check {
 }
 
 func checkOpenFiles() Check {
-	out, err := exec.Command("ulimit", "-n").Output()
+	out, err := execCommandFn("ulimit", "-n").Output()
 	if err != nil {
 		// ulimit is a shell builtin, try reading from proc
-		data, err2 := os.ReadFile("/proc/sys/fs/file-max")
+		data, err2 := osReadFileFn("/proc/sys/fs/file-max")
 		if err2 != nil {
 			return Check{Name: "Open Files Limit", Status: StatusWarn, Message: "Could not check"}
 		}
@@ -433,7 +449,7 @@ func checkOpenFiles() Check {
 }
 
 func checkTimeSync() Check {
-	out, err := exec.Command("timedatectl", "show", "--property=NTPSynchronized", "--value").Output()
+	out, err := execCommandFn("timedatectl", "show", "--property=NTPSynchronized", "--value").Output()
 	if err != nil {
 		return Check{Name: "Time Sync", Status: StatusWarn, Message: "Could not check NTP status"}
 	}
