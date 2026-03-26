@@ -35,6 +35,7 @@ import CloneStaging from '@/pages/CloneStaging';
 import Migration from '@/pages/Migration';
 import Webhooks from '@/pages/Webhooks';
 import AdminUsers from '@/pages/AdminUsers';
+import DomainDetail from '@/pages/DomainDetail';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -69,6 +70,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/domains" element={<Domains />} />
+        <Route path="/domains/:host" element={<DomainDetail />} />
         <Route path="/topology" element={<Topology />} />
         <Route path="/cache" element={<Cache />} />
         <Route path="/metrics" element={<Metrics />} />
