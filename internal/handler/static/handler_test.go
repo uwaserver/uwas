@@ -473,6 +473,65 @@ func TestResolveRequestPHPDefaults(t *testing.T) {
 	}
 }
 
+func TestResolveRequestWPAdmin(t *testing.T) {
+	dir := t.TempDir()
+	// Simulate WordPress directory structure
+	os.MkdirAll(filepath.Join(dir, "wp-admin"), 0755)
+	os.MkdirAll(filepath.Join(dir, "wp-content"), 0755)
+	os.MkdirAll(filepath.Join(dir, "wp-includes"), 0755)
+	writeFile(t, dir, "index.php", "<?php // front page")
+	writeFile(t, dir, filepath.Join("wp-admin", "index.php"), "<?php // dashboard")
+	writeFile(t, dir, filepath.Join("wp-admin", "post.php"), "<?php // post editor")
+
+	domain := &config.Domain{Host: "wp.test", Root: dir, Type: "php"}
+
+	tests := []struct {
+		path     string
+		wantFile string
+	}{
+		{"/", "index.php"},                               // root → root index.php
+		{"/wp-admin/", "index.php"},                      // wp-admin dir → wp-admin/index.php
+		{"/wp-admin", "index.php"},                       // no trailing slash → wp-admin/index.php
+		{"/wp-admin/post.php", "post.php"},               // direct .php → post.php
+		{"/hello-world/", "index.php"},                   // pretty permalink → root index.php (front controller)
+	}
+
+	for _, tt := range tests {
+		ctx := makeCtx(t, "GET", tt.path)
+		if !ResolveRequest(ctx, domain) {
+			t.Errorf("%s: ResolveRequest returned false", tt.path)
+			continue
+		}
+		got := filepath.Base(ctx.ResolvedPath)
+		if got != tt.wantFile {
+			t.Errorf("%s: resolved to %q (full: %s), want %q", tt.path, got, ctx.ResolvedPath, tt.wantFile)
+		}
+		// wp-admin paths must resolve to wp-admin/index.php, not root index.php
+		if strings.HasPrefix(tt.path, "/wp-admin") && tt.path != "/wp-admin/post.php" {
+			if !strings.Contains(ctx.ResolvedPath, "wp-admin") {
+				t.Errorf("%s: resolved to ROOT index.php instead of wp-admin/index.php: %s", tt.path, ctx.ResolvedPath)
+			}
+		}
+	}
+}
+
+func TestResolveRequestPOSTToPHP(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "wp-admin"), 0755)
+	writeFile(t, dir, filepath.Join("wp-admin", "post.php"), "<?php // handle post")
+
+	domain := &config.Domain{Host: "wp.test", Root: dir, Type: "php"}
+
+	// POST to wp-admin/post.php
+	ctx := makeCtx(t, "POST", "/wp-admin/post.php")
+	if !ResolveRequest(ctx, domain) {
+		t.Fatal("POST /wp-admin/post.php: ResolveRequest returned false")
+	}
+	if !strings.HasSuffix(ctx.ResolvedPath, "post.php") {
+		t.Errorf("POST resolved to %q, want post.php", ctx.ResolvedPath)
+	}
+}
+
 func TestResolveRequestDirWithCustomIndex(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")
