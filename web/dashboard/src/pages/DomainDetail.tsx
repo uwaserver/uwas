@@ -169,25 +169,25 @@ export default function DomainDetail() {
         </button>
       </div>
 
-      {/* Screenshot preview */}
+      {/* Site link bar */}
       <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-2 bg-background border-b border-border">
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-background">
           <div className="flex gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
             <span className="h-2.5 w-2.5 rounded-full bg-amber-500/60" />
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/60" />
           </div>
-          <div className="flex-1 flex items-center gap-2 rounded-md bg-card px-3 py-1 text-xs text-muted-foreground font-mono">
+          <div className="flex-1 flex items-center gap-2 rounded-md bg-card px-3 py-1.5 text-xs text-muted-foreground font-mono">
             <Lock size={10} className="text-emerald-400" />{siteUrl}
           </div>
-        </div>
-        <div className="relative bg-background" style={{ height: 200 }}>
-          <iframe src={siteUrl} title={host} sandbox="allow-same-origin" className="w-full h-[600px] pointer-events-none" style={{ transform: 'scale(0.333)', transformOrigin: 'top left', width: '300%' }} />
-          <a href={siteUrl} target="_blank" rel="noopener" className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition group">
-            <span className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white opacity-0 group-hover:opacity-100 transition flex items-center gap-2">
-              <ExternalLink size={14} /> Open Site
-            </span>
+          <a href={siteUrl} target="_blank" rel="noopener" className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+            <ExternalLink size={11} /> Visit Site
           </a>
+          {wpSite && (
+            <a href={wpSite.admin_url} target="_blank" rel="noopener" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">
+              WP Admin
+            </a>
+          )}
         </div>
       </div>
 

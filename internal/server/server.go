@@ -926,8 +926,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// .htaccess import (runtime parse)
+	// Skip rewrite for wp-admin, wp-includes, wp-content (WordPress serves these directly)
 	if domain.Htaccess.Mode == "import" && domain.Root != "" {
-		s.applyHtaccess(ctx, domain)
+		p := r.URL.Path
+		if !strings.HasPrefix(p, "/wp-admin") &&
+			!strings.HasPrefix(p, "/wp-includes") &&
+			!strings.HasPrefix(p, "/wp-content") {
+			s.applyHtaccess(ctx, domain)
+		}
 	}
 
 	// Rewrite engine (from YAML config)

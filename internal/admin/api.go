@@ -1918,6 +1918,12 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	cleanup := r.URL.Query().Get("cleanup") == "true"
 
+	// Protect default/system domains from deletion
+	if host == "localhost" || host == "localhost:80" || host == "localhost:443" || host == "127.0.0.1" {
+		jsonError(w, "cannot delete default domain: "+host, http.StatusForbidden)
+		return
+	}
+
 	// Check domain permissions for non-admin users
 	if s.authMgr != nil {
 		user, ok := auth.UserFromContext(r.Context())
@@ -1956,12 +1962,24 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 			s.phpMgr.UnassignDomain(host)
 		}
 		siteuser.DeleteUser(host)
-		// Delete web root (go up one level from public_html)
+		// Delete web root — only if it looks like a domain-specific directory.
+		// Safety: never delete system dirs like /var/www, /var, /home, /etc, /tmp, /root
 		if domainRoot != "" {
-			parent := filepath.Dir(domainRoot) // /var/www/domain.com
-			if parent != "" && parent != "/" && parent != "." {
-				os.RemoveAll(parent)
-				s.logger.Info("deleted domain files", "domain", host, "path", parent)
+			parent := filepath.Dir(domainRoot) // e.g. /var/www/domain.com
+			absParent, _ := filepath.Abs(parent)
+			protectedPaths := []string{"/", "/var", "/var/www", "/home", "/etc", "/tmp", "/root", "/opt", "/usr", "/srv"}
+			safe := absParent != "" && absParent != "." && len(absParent) > 5
+			for _, pp := range protectedPaths {
+				if absParent == pp {
+					safe = false
+					break
+				}
+			}
+			if safe {
+				os.RemoveAll(absParent)
+				s.logger.Info("deleted domain files", "domain", host, "path", absParent)
+			} else {
+				s.logger.Warn("skipped dangerous file deletion", "domain", host, "path", absParent)
 			}
 		}
 	}
