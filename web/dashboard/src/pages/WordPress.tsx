@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, AlertTriangle, ChevronDown, ChevronUp, Bug, FileText } from 'lucide-react';
+import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, ChevronDown, ChevronUp, Bug, FileText, Users, Key, Lock, Database, Trash2 } from 'lucide-react';
 import {
   fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus,
   fetchWPSites, wpUpdateCore, wpUpdatePlugins, wpPluginAction, wpFixPermissions,
-  wpToggleDebug, wpErrorLog,
+  wpToggleDebug, wpErrorLog, wpListUsers, wpChangePassword, wpSecurityStatus,
+  wpHarden, wpOptimizeDB,
   type DomainData, type WPInstallStatus, type WPSite, type WPPlugin,
+  type WPUserInfo, type WPSecurityStatus,
 } from '@/lib/api';
 
 type Tab = 'sites' | 'install';
@@ -24,6 +26,12 @@ export default function WordPress() {
   const [expandedSite, setExpandedSite] = useState('');
   const [actionLoading, setActionLoading] = useState('');
   const [actionResult, setActionResult] = useState('');
+  // New: users, security, password
+  const [siteUsers, setSiteUsers] = useState<WPUserInfo[]>([]);
+  const [security, setSecurity] = useState<WPSecurityStatus | null>(null);
+  const [showPasswordForm, setShowPasswordForm] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [siteTab, setSiteTab] = useState<'overview' | 'security' | 'users' | 'optimize'>('overview');
 
   const loadSites = useCallback(async () => {
     try {
@@ -132,7 +140,15 @@ export default function WordPress() {
             <div key={site.domain} className="rounded-lg border border-border bg-card overflow-hidden">
               {/* Site header */}
               <div className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-accent/30"
-                onClick={() => setExpandedSite(expandedSite === site.domain ? '' : site.domain)}>
+                onClick={() => {
+                  const next = expandedSite === site.domain ? '' : site.domain;
+                  setExpandedSite(next);
+                  setSiteTab('overview');
+                  if (next) {
+                    wpSecurityStatus(next).then(setSecurity).catch(() => setSecurity(null));
+                    wpListUsers(next).then(setSiteUsers).catch(() => setSiteUsers([]));
+                  }
+                }}>
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400 font-bold text-sm">WP</div>
                   <div>
@@ -151,149 +167,333 @@ export default function WordPress() {
 
               {/* Expanded detail */}
               {expandedSite === site.domain && (
-                <div className="border-t border-border p-5 space-y-5">
-                  {/* Quick actions */}
-                  <div className="flex flex-wrap gap-2">
-                    <a href={site.admin_url} target="_blank" rel="noopener"
-                      className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                      WP Admin <ExternalLink size={11} />
-                    </a>
-                    <button onClick={() => doAction('core-' + site.domain, () => wpUpdateCore(site.domain))}
-                      disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
-                      {actionLoading === 'core-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
-                      Update Core
-                    </button>
-                    <button onClick={() => doAction('plugins-' + site.domain, () => wpUpdatePlugins(site.domain))}
-                      disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
-                      {actionLoading === 'plugins-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Plug size={11} />}
-                      Update All Plugins
-                    </button>
-                    <button onClick={() => doAction('perms-' + site.domain, () => wpFixPermissions(site.domain))}
-                      disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
-                      {actionLoading === 'perms-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Shield size={11} />}
-                      Fix Permissions
-                    </button>
-                    <button onClick={() => doAction('debug-' + site.domain, () => wpToggleDebug(site.domain, !site.health.debug))}
-                      disabled={!!actionLoading}
-                      className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${
-                        site.health.debug
-                          ? 'border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
-                          : 'border-border text-card-foreground hover:bg-accent'
-                      }`}>
-                      {actionLoading === 'debug-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Bug size={11} />}
-                      {site.health.debug ? 'Debug ON' : 'Debug OFF'}
-                    </button>
-                    <button onClick={() => doAction('errlog-' + site.domain, async () => {
-                        const res = await wpErrorLog(site.domain);
-                        setActionResult(res.log || res.message || 'No log content');
-                        return { status: 'ok', output: '' };
-                      })}
-                      disabled={!!actionLoading}
-                      className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
-                      {actionLoading === 'errlog-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <FileText size={11} />}
-                      Error Log
-                    </button>
+                <div className="border-t border-border">
+                  {/* Sub-tabs */}
+                  <div className="flex border-b border-border">
+                    {(['overview', 'security', 'users', 'optimize'] as const).map(t => (
+                      <button key={t} onClick={() => setSiteTab(t)}
+                        className={`px-4 py-2.5 text-xs font-medium transition border-b-2 ${siteTab === t
+                          ? 'border-blue-500 text-blue-400' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+                        {t === 'overview' && 'Overview'}
+                        {t === 'security' && <span className="flex items-center gap-1"><Shield size={11} /> Security</span>}
+                        {t === 'users' && <span className="flex items-center gap-1"><Users size={11} /> Users</span>}
+                        {t === 'optimize' && <span className="flex items-center gap-1"><Database size={11} /> DB Optimize</span>}
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Permissions */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">Permissions</h3>
+                  <div className="p-5 space-y-5">
+                  {/* ═══ Overview Tab ═══ */}
+                  {siteTab === 'overview' && (<>
+                    {/* Version info */}
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {[
-                        ['wp-config.php', site.permissions.wp_config],
-                        ['wp-content/', site.permissions.wp_content],
-                        ['uploads/', site.permissions.uploads],
-                        ['.htaccess', site.permissions.htaccess],
+                        ['WP Version', site.version || '—'],
+                        ['PHP', security?.php_version || site.health.php_version || '—'],
+                        ['Database', site.db_name],
+                        ['Prefix', security?.table_prefix || 'wp_'],
                       ].map(([label, val]) => (
                         <div key={label as string} className="rounded bg-background px-3 py-2">
                           <p className="text-[10px] text-muted-foreground">{label}</p>
-                          <p className="font-mono text-xs text-card-foreground">{val || '—'}</p>
+                          <p className="font-mono text-xs text-card-foreground">{val}</p>
                         </div>
                       ))}
                     </div>
-                    {site.permissions.owner && (
-                      <p className="mt-1.5 text-[10px] text-muted-foreground">Owner: <span className="font-mono text-muted-foreground">{site.permissions.owner}</span>
-                        {site.permissions.writable ? <span className="ml-2 text-emerald-400">wp-content writable</span> : <span className="ml-2 text-red-400">wp-content NOT writable</span>}
-                      </p>
-                    )}
-                  </div>
 
-                  {/* Error Log */}
-                  {actionResult && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-xs font-semibold text-muted-foreground flex items-center gap-1"><Bug size={12} /> Debug Log</h3>
-                        <button onClick={() => setActionResult('')} className="text-[10px] text-muted-foreground hover:text-foreground">Close</button>
-                      </div>
-                      <pre className="max-h-48 overflow-auto rounded bg-background p-3 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">
-                        {actionResult}
-                      </pre>
-                    </div>
-                  )}
-
-                  {/* Plugins */}
-                  {(site.plugins ?? []).length > 0 && (
-                    <div>
-                      <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Plug size={12} /> Plugins ({site.plugins.length})</h3>
-                      <div className="space-y-1">
-                        {site.plugins.map((p: WPPlugin) => (
-                          <div key={p.name} className="flex items-center justify-between rounded bg-background px-3 py-2">
-                            <div className="flex items-center gap-2">
-                              <span className={`h-1.5 w-1.5 rounded-full ${p.status === 'active' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                              <span className="text-xs text-card-foreground">{p.name}</span>
-                              <span className="text-[10px] text-muted-foreground">v{p.version}</span>
-                              {p.update && p.update !== 'none' && (
-                                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">{p.update} available</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {p.update && p.update !== 'none' && (
-                                <button onClick={() => doAction(`update-${p.name}`, () => wpPluginAction(site.domain, 'update', p.name))}
-                                  disabled={!!actionLoading}
-                                  className="rounded px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 disabled:opacity-50">Update</button>
-                              )}
-                              {p.status === 'active' ? (
-                                <button onClick={() => doAction(`deactivate-${p.name}`, () => wpPluginAction(site.domain, 'deactivate', p.name))}
-                                  disabled={!!actionLoading}
-                                  className="rounded px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-500/10 disabled:opacity-50">Deactivate</button>
-                              ) : (
-                                <button onClick={() => doAction(`activate-${p.name}`, () => wpPluginAction(site.domain, 'activate', p.name))}
-                                  disabled={!!actionLoading}
-                                  className="rounded px-2 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50">Activate</button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Themes */}
-                  {(site.themes ?? []).length > 0 && (
-                    <div>
-                      <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Palette size={12} /> Themes ({site.themes.length})</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {site.themes.map(t => (
-                          <div key={t.name} className={`rounded px-3 py-1.5 text-xs ${t.status === 'active' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'bg-background text-muted-foreground'}`}>
-                            {t.name} v{t.version}
-                            {t.update && t.update !== 'none' && <span className="ml-1 text-amber-400">({t.update})</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Health */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><AlertTriangle size={12} /> Health</h3>
+                    {/* Quick actions */}
                     <div className="flex flex-wrap gap-2">
-                      <Badge ok={site.health.ssl} label={site.health.ssl ? 'FORCE_SSL_ADMIN' : 'SSL not forced'} />
-                      <Badge ok={site.health.file_edit} label={site.health.file_edit ? 'File editor disabled' : 'File editor enabled'} />
-                      <Badge ok={!site.health.debug} label={site.health.debug ? 'WP_DEBUG on' : 'WP_DEBUG off'} />
+                      <a href={site.admin_url} target="_blank" rel="noopener"
+                        className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        WP Admin <ExternalLink size={11} />
+                      </a>
+                      <button onClick={() => doAction('core-' + site.domain, () => wpUpdateCore(site.domain))}
+                        disabled={!!actionLoading}
+                        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
+                        {actionLoading === 'core-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Download size={11} />}
+                        Update Core
+                      </button>
+                      <button onClick={() => doAction('plugins-' + site.domain, () => wpUpdatePlugins(site.domain))}
+                        disabled={!!actionLoading}
+                        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
+                        {actionLoading === 'plugins-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Plug size={11} />}
+                        Update All Plugins
+                      </button>
+                      <button onClick={() => doAction('perms-' + site.domain, () => wpFixPermissions(site.domain))}
+                        disabled={!!actionLoading}
+                        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
+                        {actionLoading === 'perms-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Shield size={11} />}
+                        Fix Permissions
+                      </button>
+                      <button onClick={() => doAction('debug-' + site.domain, () => wpToggleDebug(site.domain, !site.health.debug))}
+                        disabled={!!actionLoading}
+                        className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${
+                          site.health.debug ? 'border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20' : 'border-border text-card-foreground hover:bg-accent'}`}>
+                        {actionLoading === 'debug-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <Bug size={11} />}
+                        {site.health.debug ? 'Debug ON' : 'Debug OFF'}
+                      </button>
+                      <button onClick={() => doAction('errlog-' + site.domain, async () => {
+                          const res = await wpErrorLog(site.domain);
+                          setActionResult(res.log || res.message || 'No log content');
+                          return { status: 'ok', output: '' };
+                        })}
+                        disabled={!!actionLoading}
+                        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
+                        {actionLoading === 'errlog-' + site.domain ? <RefreshCw size={11} className="animate-spin" /> : <FileText size={11} />}
+                        Error Log
+                      </button>
                     </div>
+
+                    {/* Error Log */}
+                    {actionResult && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-xs font-semibold text-muted-foreground flex items-center gap-1"><Bug size={12} /> Debug Log</h3>
+                          <button onClick={() => setActionResult('')} className="text-[10px] text-muted-foreground hover:text-foreground">Close</button>
+                        </div>
+                        <pre className="max-h-48 overflow-auto rounded bg-background p-3 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">{actionResult}</pre>
+                      </div>
+                    )}
+
+                    {/* Permissions */}
+                    <div>
+                      <h3 className="text-xs font-semibold text-muted-foreground mb-2">Permissions</h3>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {[['wp-config.php', site.permissions.wp_config], ['wp-content/', site.permissions.wp_content], ['uploads/', site.permissions.uploads], ['.htaccess', site.permissions.htaccess]]
+                          .map(([label, val]) => (
+                            <div key={label as string} className="rounded bg-background px-3 py-2">
+                              <p className="text-[10px] text-muted-foreground">{label}</p>
+                              <p className="font-mono text-xs text-card-foreground">{val || '—'}</p>
+                            </div>
+                          ))}
+                      </div>
+                      {site.permissions.owner && (
+                        <p className="mt-1.5 text-[10px] text-muted-foreground">Owner: <span className="font-mono">{site.permissions.owner}</span>
+                          {site.permissions.writable ? <span className="ml-2 text-emerald-400">wp-content writable</span> : <span className="ml-2 text-red-400">wp-content NOT writable</span>}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Plugins */}
+                    {(site.plugins ?? []).length > 0 && (
+                      <div>
+                        <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Plug size={12} /> Plugins ({site.plugins.length})</h3>
+                        <div className="space-y-1">
+                          {site.plugins.map((p: WPPlugin) => (
+                            <div key={p.name} className="flex items-center justify-between rounded bg-background px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`h-1.5 w-1.5 rounded-full ${p.status === 'active' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                                <span className="text-xs text-card-foreground">{p.name}</span>
+                                <span className="text-[10px] text-muted-foreground">v{p.version}</span>
+                                {p.update && p.update !== 'none' && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">{p.update} available</span>}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {p.update && p.update !== 'none' && (
+                                  <button onClick={() => doAction(`update-${p.name}`, () => wpPluginAction(site.domain, 'update', p.name))}
+                                    disabled={!!actionLoading} className="rounded px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 disabled:opacity-50">Update</button>
+                                )}
+                                {p.status === 'active' ? (
+                                  <button onClick={() => doAction(`deactivate-${p.name}`, () => wpPluginAction(site.domain, 'deactivate', p.name))}
+                                    disabled={!!actionLoading} className="rounded px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-500/10 disabled:opacity-50">Deactivate</button>
+                                ) : (
+                                  <button onClick={() => doAction(`activate-${p.name}`, () => wpPluginAction(site.domain, 'activate', p.name))}
+                                    disabled={!!actionLoading} className="rounded px-2 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50">Activate</button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Themes */}
+                    {(site.themes ?? []).length > 0 && (
+                      <div>
+                        <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Palette size={12} /> Themes ({site.themes.length})</h3>
+                        <div className="flex flex-wrap gap-2">
+                          {site.themes.map(t => (
+                            <div key={t.name} className={`rounded px-3 py-1.5 text-xs ${t.status === 'active' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' : 'bg-background text-muted-foreground'}`}>
+                              {t.name} v{t.version}
+                              {t.update && t.update !== 'none' && <span className="ml-1 text-amber-400">({t.update})</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>)}
+
+                  {/* ═══ Security Tab ═══ */}
+                  {siteTab === 'security' && (<>
+                    {security ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {/* Security toggles */}
+                          {([
+                            { key: 'xmlrpc', label: 'XML-RPC', desc: 'Disable XML-RPC (prevents brute-force & DDoS)', on: security.xmlrpc_disabled, field: 'disable_xmlrpc' },
+                            { key: 'fileedit', label: 'File Editor', desc: 'Disable theme/plugin editor in dashboard', on: security.file_edit_disabled, field: 'disable_file_edit' },
+                            { key: 'ssl', label: 'Force SSL Admin', desc: 'Require HTTPS for wp-admin', on: security.ssl_forced, field: 'force_ssl_admin' },
+                            { key: 'cron', label: 'Disable WP-Cron', desc: 'Use system cron instead of WP-Cron', on: security.wp_cron_disabled, field: 'disable_wp_cron' },
+                            { key: 'dirlist', label: 'Block Directory Listing', desc: 'Prevent browsing directory contents', on: security.directory_listing_blocked, field: 'block_dir_listing' },
+                          ] as const).map(item => (
+                            <div key={item.key} className="flex items-center justify-between rounded-lg bg-background px-4 py-3">
+                              <div>
+                                <p className="text-sm font-medium text-card-foreground">{item.label}</p>
+                                <p className="text-[10px] text-muted-foreground">{item.desc}</p>
+                              </div>
+                              <button
+                                onClick={() => doAction('harden-' + item.key, async () => {
+                                  await wpHarden(site.domain, { [item.field]: !item.on });
+                                  const s = await wpSecurityStatus(site.domain);
+                                  setSecurity(s);
+                                })}
+                                disabled={!!actionLoading}
+                                className={`relative h-6 w-11 rounded-full transition ${item.on ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+                                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${item.on ? 'left-[22px]' : 'left-0.5'}`} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Security status badges */}
+                        <div>
+                          <h3 className="text-xs font-semibold text-muted-foreground mb-2">Status</h3>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge ok={security.xmlrpc_disabled} label={security.xmlrpc_disabled ? 'XML-RPC disabled' : 'XML-RPC enabled'} />
+                            <Badge ok={security.file_edit_disabled} label={security.file_edit_disabled ? 'File editor disabled' : 'File editor enabled'} />
+                            <Badge ok={security.ssl_forced} label={security.ssl_forced ? 'SSL forced' : 'SSL not forced'} />
+                            <Badge ok={!security.debug_enabled} label={security.debug_enabled ? 'DEBUG on' : 'DEBUG off'} />
+                            <Badge ok={security.directory_listing_blocked} label={security.directory_listing_blocked ? 'Dir listing blocked' : 'Dir listing open'} />
+                            <Badge ok={security.table_prefix !== 'wp_'} label={`Prefix: ${security.table_prefix}`} />
+                          </div>
+                        </div>
+
+                        {/* Quick harden all */}
+                        <button
+                          onClick={() => doAction('harden-all', async () => {
+                            await wpHarden(site.domain, {
+                              disable_xmlrpc: true, disable_file_edit: true,
+                              force_ssl_admin: true, block_dir_listing: true,
+                            });
+                            const s = await wpSecurityStatus(site.domain);
+                            setSecurity(s);
+                          })}
+                          disabled={!!actionLoading}
+                          className="flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                          {actionLoading === 'harden-all' ? <RefreshCw size={13} className="animate-spin" /> : <Lock size={13} />}
+                          Harden All
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-4">Loading security status...</p>
+                    )}
+                  </>)}
+
+                  {/* ═══ Users Tab ═══ */}
+                  {siteTab === 'users' && (<>
+                    <div className="space-y-3">
+                      {siteUsers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground py-4">No users found (requires wp-cli)</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {siteUsers.map(u => (
+                            <div key={u.id} className="flex items-center justify-between rounded bg-background px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500/10 text-blue-400 text-xs font-bold">
+                                  {u.login[0]?.toUpperCase()}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-medium text-card-foreground">{u.login}</p>
+                                  <p className="text-[10px] text-muted-foreground">{u.email} &middot; {u.role}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                  u.role === 'administrator' ? 'bg-red-500/15 text-red-400' :
+                                  u.role === 'editor' ? 'bg-blue-500/15 text-blue-400' :
+                                  'bg-slate-500/15 text-slate-400'
+                                }`}>{u.role}</span>
+                                <button
+                                  onClick={() => { setShowPasswordForm(showPasswordForm === u.login ? '' : u.login); setNewPassword(''); }}
+                                  className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground">
+                                  <Key size={10} /> Change Password
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {/* Password change form */}
+                          {showPasswordForm && (
+                            <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 mt-2">
+                              <p className="text-xs text-blue-400 mb-2">Change password for <span className="font-bold">{showPasswordForm}</span></p>
+                              <div className="flex gap-2">
+                                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                                  placeholder="New password (min 8 chars)"
+                                  className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500" />
+                                <button
+                                  onClick={async () => {
+                                    if (newPassword.length < 8) { setError('Password must be at least 8 characters'); return; }
+                                    await doAction('pw-change', async () => {
+                                      await wpChangePassword(site.domain, showPasswordForm, newPassword);
+                                      setShowPasswordForm('');
+                                      setNewPassword('');
+                                    });
+                                  }}
+                                  disabled={!!actionLoading || newPassword.length < 8}
+                                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                                  {actionLoading === 'pw-change' ? <RefreshCw size={13} className="animate-spin" /> : 'Save'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>)}
+
+                  {/* ═══ DB Optimize Tab ═══ */}
+                  {siteTab === 'optimize' && (<>
+                    <div className="space-y-4">
+                      <div className="rounded-lg bg-background p-4">
+                        <h3 className="text-sm font-medium text-card-foreground mb-1">Database Optimization</h3>
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Clean up post revisions, spam comments, trashed items, expired transients, and optimize database tables.
+                        </p>
+                        <button
+                          onClick={() => doAction('optimize-db', async () => {
+                            const res = await wpOptimizeDB(site.domain);
+                            setActionResult(res.output || 'Optimization complete');
+                          })}
+                          disabled={!!actionLoading}
+                          className="flex items-center gap-2 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                          {actionLoading === 'optimize-db' ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                          Optimize Database
+                        </button>
+                      </div>
+
+                      {actionResult && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-xs font-semibold text-muted-foreground">Result</h3>
+                            <button onClick={() => setActionResult('')} className="text-[10px] text-muted-foreground hover:text-foreground">Close</button>
+                          </div>
+                          <pre className="max-h-48 overflow-auto rounded bg-background p-3 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">{actionResult}</pre>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        <div className="rounded bg-background px-3 py-2">
+                          <p className="text-[10px] text-muted-foreground">Database</p>
+                          <p className="font-mono text-xs text-card-foreground">{site.db_name}</p>
+                        </div>
+                        <div className="rounded bg-background px-3 py-2">
+                          <p className="text-[10px] text-muted-foreground">DB User</p>
+                          <p className="font-mono text-xs text-card-foreground">{site.db_user}</p>
+                        </div>
+                        <div className="rounded bg-background px-3 py-2">
+                          <p className="text-[10px] text-muted-foreground">DB Host</p>
+                          <p className="font-mono text-xs text-card-foreground">{site.db_host}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </>)}
                   </div>
                 </div>
               )}

@@ -285,6 +285,102 @@ func (s *Server) handleWPErrorLog(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"log": content, "size": len(data)})
 }
 
+func (s *Server) handleWPUsers(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	users, err := wordpress.ListUsers(root)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, users)
+}
+
+func (s *Server) handleWPChangePassword(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		jsonError(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Password) < 8 {
+		jsonError(w, "password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+	if err := wordpress.ChangeUserPassword(root, req.Username, req.Password); err != nil {
+		jsonError(w, "password change failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("wordpress.change_password", domain+":"+req.Username, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleWPSecurityStatus(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	status := wordpress.GetSecurityStatus(root)
+	jsonResponse(w, status)
+}
+
+func (s *Server) handleWPHarden(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var opts wordpress.HardenOptions
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	output, err := wordpress.Harden(root, opts)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("wordpress.harden", domain, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "ok", "output": output})
+}
+
+func (s *Server) handleWPOptimizeDB(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	result, err := wordpress.OptimizeDatabase(root)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("wordpress.optimize_db", domain, requestIP(r), true)
+	jsonResponse(w, result)
+}
+
 // ============ File Manager ============
 
 func (s *Server) domainRoot(domain string) string {
