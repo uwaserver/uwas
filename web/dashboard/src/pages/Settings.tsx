@@ -119,6 +119,21 @@ interface SectionDef {
 // Section definitions
 // ---------------------------------------------------------------------------
 
+type SettingsTab = 'general' | 'security' | 'performance' | 'integrations';
+const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'general', label: 'General' },
+  { id: 'security', label: 'Security' },
+  { id: 'performance', label: 'Performance' },
+  { id: 'integrations', label: 'Integrations' },
+];
+
+const SECTION_GROUPS: Record<string, SettingsTab> = {
+  server: 'general', timeouts: 'general', logging: 'general',
+  admin: 'security', acme: 'security', users: 'security', mcp: 'security',
+  cache: 'performance',
+  backup: 'integrations', alerting: 'integrations', trusted_proxies: 'integrations',
+};
+
 const SECTIONS: SectionDef[] = [
   {
     id: 'server',
@@ -542,6 +557,8 @@ export default function Settings() {
     });
   };
 
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center text-muted-foreground">
@@ -635,6 +652,16 @@ export default function Settings() {
         </div>
       )}
 
+      {/* Tabs */}
+      <div className="flex gap-1 rounded-lg bg-background p-1">
+        {SETTINGS_TABS.map(t => (
+          <button key={t.id} onClick={() => setSettingsTab(t.id)}
+            className={`flex-1 rounded-md py-2 text-sm font-medium transition ${settingsTab === t.id ? 'bg-card text-foreground shadow' : 'text-muted-foreground hover:text-card-foreground'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {/* Server Status card */}
       <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
@@ -660,8 +687,8 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Settings sections */}
-      {SECTIONS.map(section => (
+      {/* Settings sections (filtered by tab) */}
+      {SECTIONS.filter(s => SECTION_GROUPS[s.id] === settingsTab).map(section => (
         <div
           key={section.id}
           className="rounded-lg border border-border bg-card p-5 shadow-md"
