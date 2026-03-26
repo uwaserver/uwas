@@ -2634,8 +2634,10 @@ func TestStatusWithSystemSocketFound(t *testing.T) {
 	}
 
 	m := New(testLogger())
+
+	// FPM SAPI should show system socket
 	m.installations = []PHPInstall{
-		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
+		{Version: "8.4.19", Binary: "/usr/sbin/php-fpm8.4", SAPI: "fpm-fcgi"},
 	}
 
 	statuses := m.Status()
@@ -2643,16 +2645,32 @@ func TestStatusWithSystemSocketFound(t *testing.T) {
 		t.Fatalf("expected 1 status, got %d", len(statuses))
 	}
 	if !statuses[0].SystemManaged {
-		t.Error("should be system managed when socket found")
+		t.Error("FPM should be system managed when socket found")
 	}
 	if !statuses[0].Running {
-		t.Error("should be running when system socket found")
+		t.Error("FPM should be running when system socket found")
 	}
 	if statuses[0].SocketPath == "" {
-		t.Error("SocketPath should be set")
+		t.Error("FPM SocketPath should be set")
 	}
 	if statuses[0].ListenAddr == "" {
-		t.Error("ListenAddr should be set to socket path")
+		t.Error("FPM ListenAddr should be set to socket path")
+	}
+
+	// CGI SAPI should NOT show system FPM socket
+	m.installations = []PHPInstall{
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
+	}
+
+	statuses = m.Status()
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 status for CGI, got %d", len(statuses))
+	}
+	if statuses[0].SystemManaged {
+		t.Error("CGI should NOT be system managed (FPM socket belongs to FPM)")
+	}
+	if statuses[0].SocketPath != "" {
+		t.Error("CGI SocketPath should be empty")
 	}
 }
 
