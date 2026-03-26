@@ -45,11 +45,13 @@ export default function WordPress() {
 
   useEffect(() => {
     loadSites();
-    fetchDomains().then(d => {
+    Promise.all([fetchDomains(), fetchWPSites()]).then(([d, wp]) => {
       const list = d ?? [];
       setDomains(list);
-      const phpDomains = list.filter(dd => dd.type === 'php');
-      if (phpDomains.length > 0) setSelectedDomain(phpDomains[0].host);
+      // Select first PHP domain that doesn't have WordPress installed
+      const wpHosts = new Set((wp ?? []).map(s => s.domain));
+      const available = list.filter(dd => dd.type === 'php' && !wpHosts.has(dd.host));
+      if (available.length > 0) setSelectedDomain(available[0].host);
     }).catch(() => {});
     fetchDBStatus().then(s => setMysqlOk(s?.installed && s?.running)).catch(() => {});
   }, [loadSites]);
