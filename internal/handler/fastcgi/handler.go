@@ -95,7 +95,6 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	if accel := headers.Get("X-Accel-Redirect"); accel != "" {
 		headers.Del("X-Accel-Redirect")
 		filePath := filepath.Join(domain.Root, filepath.Clean("/"+accel))
-		// Security: prevent path traversal outside document root
 		absRoot, _ := filepath.Abs(domain.Root)
 		absPath, _ := filepath.Abs(filePath)
 		if strings.HasPrefix(absPath, absRoot) {
@@ -112,10 +111,8 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 				}
 			}
 		}
-		// Fall through to normal response if file not found or path traversal
 	} else if sendfile := headers.Get("X-Sendfile"); sendfile != "" {
 		headers.Del("X-Sendfile")
-		// Security: X-Sendfile must stay within document root
 		absRoot, _ := filepath.Abs(domain.Root)
 		absSend, _ := filepath.Abs(sendfile)
 		if strings.HasPrefix(absSend, absRoot) {
@@ -134,6 +131,36 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 		}
 	}
 
+	// Read body fully so we can detect WSOD (headers present, body empty)
+	var bodyBytes []byte
+	if body != nil {
+		bodyBytes, _ = io.ReadAll(body)
+	}
+
+	// Detect WSOD: PHP sent HTTP headers but zero-length HTML body.
+	// PHP fatal error with display_errors=Off produces:
+	//   "Status: 200\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
+	// with no actual HTML. Only check GET 200 text/html — empty body is
+	// normal for HEAD, 204, 302, DELETE, X-Accel, etc.
+	if len(bodyBytes) == 0 &&
+		statusCode == 200 &&
+		(ctx.Request.Method == "GET" || ctx.Request.Method == "POST") &&
+		strings.Contains(headers.Get("Content-Type"), "text/html") {
+		h.logger.Error("PHP WSOD: headers present but body empty",
+			"host", domain.Host,
+			"uri", ctx.Request.RequestURI,
+			"script", scriptFilename,
+			"fpm_address", domain.PHP.FPMAddress,
+			"stderr", stderrContent,
+		)
+		ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		ctx.Response.WriteHeader(500)
+		ctx.Response.Write([]byte("<h1>500 Internal Server Error</h1>\n"))
+		ctx.Response.Write([]byte("<p>PHP returned headers but no content (WSOD). This usually means a fatal error with <code>display_errors=Off</code>.</p>\n"))
+		ctx.Response.Write([]byte("<p>Check: <code>tail -50 /var/log/php*.log</code></p>\n"))
+		return
+	}
+
 	// Forward response headers
 	for key, vals := range headers {
 		for _, v := range vals {
@@ -143,7 +170,9 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 
 	// Write status and body
 	ctx.Response.WriteHeader(statusCode)
-	io.Copy(ctx.Response, body)
+	if len(bodyBytes) > 0 {
+		ctx.Response.Write(bodyBytes)
+	}
 }
 
 func (h *Handler) getClient(address string) *fastcgi.Client {
