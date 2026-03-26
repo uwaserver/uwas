@@ -5,6 +5,49 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-03-26
+
+### Highlights
+
+**Unified domain management, WordPress security hardening, installation task queue, PHP white-screen fix.** Every domain now has its own detail page with live preview, security toggles, WordPress management, analytics, and file access — all in one place.
+
+### New Features
+
+- **Domain Detail page** (`/domains/:host`) — unified per-domain management with 6 tabs:
+  - **Overview**: live screenshot preview, quick stats (requests, bandwidth, errors, disk), 24h traffic chart, config info
+  - **Settings**: domain config display with links to editor
+  - **Security**: WAF toggle, hotlink protection, rate limiting, blocked paths, IP blacklist — all editable and saveable
+  - **WordPress**: version info, plugin/theme management, security hardening, user/password management, DB optimization
+  - **Analytics**: page views, unique IPs, top pages, top referrers
+  - **Files**: disk usage, link to file manager
+- **WordPress security hardening** — toggle XML-RPC, file editor, SSL admin, WP-Cron, directory listing; "Harden All" one-click
+- **WordPress user management** — list users with roles, change any user's password from dashboard
+- **WordPress DB optimization** — clean revisions, spam, trash, expired transients, optimize tables
+- **Global install task manager** (`internal/install/`) — serialized apt/dpkg queue prevents concurrent lock conflicts
+- **Installation progress persistence** — navigate away and back, install progress resumes automatically
+- **Security page upgrade** — two tabs: Threat Monitor (stats + blocked requests) and Per-Domain Rules (WAF/rate-limit/IP ACL toggles)
+
+### Bug Fixes
+
+- **PHP white screen of death** — empty FastCGI response now returns 500 with diagnostic message instead of silent blank 200
+- **WordPress plugin install failure** — `wp-content/upgrade` and `uploads` directories now created during install and fix-permissions
+- **Cache bypass** — wp-admin, wp-login, wp-cron, wp-json, xmlrpc paths + woocommerce/comment_author cookies now bypass cache
+
+### API Endpoints (new)
+
+- `GET /api/v1/tasks` — list all active/recent installation tasks
+- `GET /api/v1/tasks/{id}` — get task status and output
+- `GET /api/v1/wordpress/sites/{domain}/users` — list WordPress users
+- `POST /api/v1/wordpress/sites/{domain}/change-password` — change WP user password
+- `GET /api/v1/wordpress/sites/{domain}/security` — get WP security status
+- `POST /api/v1/wordpress/sites/{domain}/harden` — apply security hardening
+- `POST /api/v1/wordpress/sites/{domain}/optimize-db` — clean and optimize database
+
+### Stats
+
+- **45 test packages**, all passing, 0 failures
+- **9 new install manager tests** (serial execution, task lifecycle, concurrency safety)
+
 ## [1.8.0] - 2026-03-26
 
 ### Highlights
