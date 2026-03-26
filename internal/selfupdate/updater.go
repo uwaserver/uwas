@@ -44,21 +44,11 @@ type ReleaseInfo struct {
 }
 
 // CheckUpdate checks GitHub for a newer release.
+// Tries /releases/latest first, falls back to /releases (for pre-releases).
 func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, repoOwner, repoName)
-
 	client := httpClientFn(10 * time.Second)
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("check update: %w", err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release struct {
+	type ghRelease struct {
 		TagName     string `json:"tag_name"`
 		HTMLURL     string `json:"html_url"`
 		Body        string `json:"body"`
@@ -69,8 +59,42 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 		} `json:"assets"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("parse release: %w", err)
+	var release ghRelease
+
+	// Try /releases/latest first (non-prerelease)
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, repoOwner, repoName)
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("check update: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+			return nil, fmt.Errorf("parse release: %w", err)
+		}
+	} else {
+		// Fallback: get first release from /releases (includes pre-releases)
+		resp.Body.Close()
+		url = fmt.Sprintf("%s/repos/%s/%s/releases?per_page=1", githubAPIBase, repoOwner, repoName)
+		resp2, err := client.Get(url)
+		if err != nil {
+			return nil, fmt.Errorf("check update (fallback): %w", err)
+		}
+		defer resp2.Body.Close()
+
+		if resp2.StatusCode != 200 {
+			return nil, fmt.Errorf("GitHub API returned %d", resp2.StatusCode)
+		}
+
+		var releases []ghRelease
+		if err := json.NewDecoder(resp2.Body).Decode(&releases); err != nil {
+			return nil, fmt.Errorf("parse releases: %w", err)
+		}
+		if len(releases) == 0 {
+			return nil, fmt.Errorf("no releases found")
+		}
+		release = releases[0]
 	}
 
 	latest := strings.TrimPrefix(release.TagName, "v")
