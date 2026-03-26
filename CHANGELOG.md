@@ -5,6 +5,18 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.13] - 2026-03-26
+
+### Critical Fix
+
+- **WordPress redirects fixed** — PHP-FPM sends `Location` header without `Status: 302`. UWAS was forwarding as `200 + Location` — browsers don't follow redirects on 200, so pages appeared blank after form submissions (POST). Now auto-upgrades to 302 when Location header is present with status 200.
+
+### Improvements
+
+- **WSOD body detection** — Detects PHP responses with headers but empty body (fatal error with `display_errors=Off`). Returns 500 with diagnostic instead of blank page. Only triggers for GET/POST text/html 200 without Location header.
+- **FastCGI handler cleanup** — Removed duplicate stderr read, extracted X-Accel-Redirect into helper, body read via `io.ReadAll` for reliable WSOD detection.
+- **htaccess skip for .php** — Direct `.php` file requests now skip htaccess rewrite processing (unnecessary overhead, potential interference).
+
 ## [0.0.12] - 2026-03-26
 
 ### Critical Fix
