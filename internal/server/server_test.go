@@ -967,6 +967,53 @@ RewriteRule ^(.*)$ /index.php [L]
 	}
 }
 
+func TestWordPressHtaccessSkipWPAdmin(t *testing.T) {
+	dir := t.TempDir()
+
+	// WordPress directory structure
+	os.MkdirAll(filepath.Join(dir, "wp-admin"), 0755)
+	os.MkdirAll(filepath.Join(dir, "wp-content"), 0755)
+	os.MkdirAll(filepath.Join(dir, "wp-includes"), 0755)
+	os.WriteFile(filepath.Join(dir, "index.php"), []byte("<?php // front page ?>"), 0644)
+	os.WriteFile(filepath.Join(dir, "wp-admin", "index.php"), []byte("<?php // dashboard ?>"), 0644)
+
+	// Standard WordPress .htaccess
+	os.WriteFile(filepath.Join(dir, ".htaccess"), []byte(`RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+`), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{WorkerCount: "1", LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{{
+			Host: "wp.test", Root: dir, Type: "php",
+			SSL: config.SSLConfig{Mode: "off"},
+			Htaccess: config.HtaccessConfig{Mode: "import"},
+		}},
+	}
+	s := New(cfg, logger.New("error", "text"))
+
+	// Test: /wp-admin/ should NOT be rewritten to /index.php
+	// It should resolve to wp-admin/index.php via try_files
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/wp-admin/", nil)
+	req.Host = "wp.test"
+	s.handleRequest(rec, req)
+
+	// Should not get homepage (which would mean rewrite to root /index.php)
+	// Should get wp-admin/index.php (502 because no PHP-FPM, but NOT homepage)
+	body := rec.Body.String()
+	if strings.Contains(body, "front page") {
+		t.Error("/wp-admin/ was rewritten to root index.php (homepage) — should go to wp-admin/index.php")
+	}
+	// 502 is expected since there's no PHP-FPM running in test
+	// But the important thing is it didn't serve the homepage
+	t.Logf("/wp-admin/ → status=%d body=%q", rec.Code, body[:min(len(body), 100)])
+}
+
 // --- matchPath tests ---
 
 func TestMatchPathExact(t *testing.T) {
