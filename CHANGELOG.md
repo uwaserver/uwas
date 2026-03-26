@@ -5,6 +5,18 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.19] - 2026-03-27
+
+### New Features
+
+- **About page** — System > About: version info, GitHub/website links, AGPL-3.0 + commercial license cards, "What UWAS Replaces" table, tech stack
+- **Docker installable** — Docker added to Packages page (`docker.io`). Database page shows install prompt when Docker is missing.
+- **Clone auto-domain** — Clone/staging now auto-creates domain config (was only copying files + DB, no domain record)
+
+### Improvements
+
+- **Settings help text** — S3 endpoint examples (AWS/Wasabi/MinIO), SFTP descriptions, Telegram bot setup guide (@BotFather), Slack webhook instructions, HTTP/3 QUIC explanation, email SMTP fields added
+
 ## [0.0.17] - 2026-03-27
 
 ### Fixes
