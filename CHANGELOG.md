@@ -5,6 +5,22 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2026-03-26
+
+### Improvements
+
+- **Install script** — Rewritten `install.sh` with proper binary name matching, version fallback, binary verification, colored output, and post-install guidance (systemd, dashboard URL)
+- **README** — Added one-line install command (`curl | sh`), systemd install instructions, dashboard URL, build-from-source section
+- **Docs site** — Updated subtitle (35 pages, hosting panel + cPanel replacement), feature descriptions
+
+### Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/install.sh | sh
+```
+
+Downloads the latest release binary for your platform (linux/darwin, amd64/arm64), verifies it runs, installs to `/usr/local/bin/uwas`.
+
 ## [0.0.10] - 2026-03-26
 
 ### Bug Fixes
