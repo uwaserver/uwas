@@ -875,13 +875,15 @@ function DomainRow({
               >
                 <Pencil size={14} />
               </button>
-              <button
-                onClick={e => { e.stopPropagation(); onConfirmDelete(d.host); }}
-                className="rounded p-1.5 text-muted-foreground transition hover:bg-red-500/10 hover:text-red-400"
-                title="Delete domain"
-              >
-                <Trash2 size={14} />
-              </button>
+              {!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(d.host) && (
+                <button
+                  onClick={e => { e.stopPropagation(); onConfirmDelete(d.host); }}
+                  className="rounded p-1.5 text-muted-foreground transition hover:bg-red-500/10 hover:text-red-400"
+                  title="Delete domain"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
           )}
         </td>
