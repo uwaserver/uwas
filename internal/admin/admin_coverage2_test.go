@@ -323,7 +323,7 @@ func TestHandle2FASetup(t *testing.T) {
 	if body["uri"] == "" {
 		t.Error("uri should not be empty")
 	}
-	if s.pendingTOTP == "" {
+	if len(s.pendingTOTP) == 0 {
 		t.Error("pendingTOTP should be set")
 	}
 }
@@ -350,7 +350,12 @@ func TestHandle2FAVerifyBadJSON(t *testing.T) {
 
 func TestHandle2FAVerifyInvalidCode(t *testing.T) {
 	s := testServer()
-	s.pendingTOTP = "JBSWY3DPEHPK3PXP"
+	s.pendingTOTPMu.Lock()
+	if s.pendingTOTP == nil {
+		s.pendingTOTP = make(map[string]string)
+	}
+	s.pendingTOTP["admin"] = "JBSWY3DPEHPK3PXP"
+	s.pendingTOTPMu.Unlock()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", strings.NewReader(`{"code":"000000"}`))

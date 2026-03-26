@@ -3,7 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -596,11 +599,15 @@ func (s *Server) Start() error {
 	// Built-in SFTP server
 	if s.config.Global.SFTPListen != "" {
 		users := make(map[string]sftpserver.User)
+		apiKey := s.config.Global.Admin.APIKey
 		for _, d := range s.config.Domains {
 			if d.Root != "" {
-				// Create an SFTP user per domain: username = hostname
+				// Create an SFTP user per domain with a unique password
+				// derived from API key + domain (so compromising one doesn't
+				// expose all domains).
+				domainPass := deriveSFTPPassword(apiKey, d.Host)
 				users[d.Host] = sftpserver.User{
-					Password: s.config.Global.Admin.APIKey, // use API key as default password
+					Password: domainPass,
 					Root:     d.Root,
 				}
 			}
@@ -1818,4 +1825,13 @@ func toWebhookConfigs(cfgs []config.WebhookConfig) []webhook.WebhookConfig {
 		}
 	}
 	return result
+}
+
+// deriveSFTPPassword creates a unique per-domain SFTP password from the
+// API key and domain name using HMAC-SHA256. This ensures that compromising
+// one domain's SFTP password doesn't expose others.
+func deriveSFTPPassword(apiKey, domain string) string {
+	mac := hmac.New(sha256.New, []byte(apiKey))
+	mac.Write([]byte("sftp:" + domain))
+	return hex.EncodeToString(mac.Sum(nil))[:32]
 }
