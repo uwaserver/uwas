@@ -103,31 +103,9 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 		return "", fmt.Errorf("write default config: %w", err)
 	}
 
-	// Create domains.d/ with default localhost domain
+	// Create domains.d/ directory (no default domain — add via dashboard)
 	domainsDir := filepath.Join(dir, "domains.d")
 	os.MkdirAll(domainsDir, 0755)
-	localhostDomain := fmt.Sprintf(`host: "localhost:%s"
-aliases:
-  - "127.0.0.1:%s"
-root: %s
-type: static
-ssl:
-  mode: "off"
-compression:
-  enabled: true
-  algorithms:
-    - gzip
-    - br
-cache:
-  enabled: true
-  ttl: 300
-security:
-  blocked_paths:
-    - ".git"
-    - ".env"
-`, httpPort, httpPort, filepath.ToSlash(webRoot))
-	localhostFile := filepath.Join(domainsDir, fmt.Sprintf("localhost_%s.yaml", httpPort))
-	os.WriteFile(localhostFile, []byte(localhostDomain), 0644)
 
 	// Write .env file
 	envPath := filepath.Join(dir, ".env")

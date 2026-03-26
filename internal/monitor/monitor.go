@@ -97,7 +97,12 @@ func (m *Monitor) checkDomain(d config.Domain) {
 	url := scheme + "://" + d.Host + "/"
 
 	start := time.Now()
-	resp, err := m.client.Get(url)
+	req, reqErr := http.NewRequest("GET", url, nil)
+	if reqErr != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "UWAS-Monitor/1.0")
+	resp, err := m.client.Do(req)
 	elapsed := time.Since(start).Milliseconds()
 
 	check := Check{
