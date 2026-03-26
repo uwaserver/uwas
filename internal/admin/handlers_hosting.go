@@ -1918,5 +1918,52 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 	}
 	s.RecordAudit("clone.start", req.SourceDomain+" → "+req.TargetDomain, ip, true)
 	result := migrate.Clone(req)
+
+	// Auto-create domain config for the cloned site
+	if result.Status == "done" || result.Status == "completed" {
+		s.configMu.Lock()
+		// Find source domain config to copy settings
+		var sourceCfg *config.Domain
+		for i := range s.config.Domains {
+			if s.config.Domains[i].Host == req.SourceDomain {
+				sourceCfg = &s.config.Domains[i]
+				break
+			}
+		}
+
+		// Check target doesn't already exist
+		exists := false
+		for _, d := range s.config.Domains {
+			if d.Host == req.TargetDomain {
+				exists = true
+				break
+			}
+		}
+
+		if !exists {
+			newDomain := config.Domain{
+				Host: req.TargetDomain,
+				Root: req.TargetRoot,
+				Type: "php",
+				SSL:  config.SSLConfig{Mode: "auto"},
+				Htaccess: config.HtaccessConfig{Mode: "import"},
+			}
+			// Copy settings from source if available
+			if sourceCfg != nil {
+				newDomain.Type = sourceCfg.Type
+				newDomain.PHP = sourceCfg.PHP
+				newDomain.Cache = sourceCfg.Cache
+				newDomain.Security = sourceCfg.Security
+			}
+			s.config.Domains = append(s.config.Domains, newDomain)
+			s.configMu.Unlock()
+			s.persistConfig()
+			s.notifyDomainChange()
+			s.logger.Info("clone: auto-created domain", "domain", req.TargetDomain, "root", req.TargetRoot)
+		} else {
+			s.configMu.Unlock()
+		}
+	}
+
 	jsonResponse(w, result)
 }
