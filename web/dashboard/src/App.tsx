@@ -36,6 +36,7 @@ import Migration from '@/pages/Migration';
 import Webhooks from '@/pages/Webhooks';
 import AdminUsers from '@/pages/AdminUsers';
 import DomainDetail from '@/pages/DomainDetail';
+import About from '@/pages/About';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -102,6 +103,7 @@ export default function App() {
         <Route path="/packages" element={<Packages />} />
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/about" element={<About />} />
       </Route>
 
       {/* Fallback */}

@@ -40,6 +40,7 @@ import {
   ArrowDownToLine,
   Webhook,
   UserCog,
+  Info,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 import { useTheme } from '@/hooks/useTheme';
@@ -121,6 +122,7 @@ const groups: NavGroup[] = [
       { to: '/updates', label: 'Updates', icon: Download },
       { to: '/doctor', label: 'Doctor', icon: Stethoscope },
       { to: '/settings', label: 'Settings', icon: Settings },
+      { to: '/about', label: 'About', icon: Info },
     ],
   },
 ];
