@@ -18,6 +18,22 @@ import (
 	"time"
 )
 
+// Testable hooks — replaced in tests to avoid real exec/HTTP/filesystem calls.
+var (
+	runtimeGOOS    = runtime.GOOS
+	execCommandFn  = exec.Command
+	execLookPathFn = exec.LookPath
+	httpGetFn      = http.Get
+	osStatFn       = os.Stat
+	osReadFileFn   = os.ReadFile
+	osWriteFileFn  = os.WriteFile
+	osMkdirAllFn   = os.MkdirAll
+	osRemoveAllFn  = os.RemoveAll
+	osRenameFn     = os.Rename
+	osReadDirFn    = os.ReadDir
+	filepathWalkFn = filepath.Walk
+)
+
 // escSQL escapes a string for use inside SQL single-quoted literals.
 func escSQL(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
@@ -100,7 +116,7 @@ func Install(req InstallRequest) InstallResult {
 
 	// Step 1.5: Remove placeholder index.html (UWAS auto-generated)
 	placeholderIndex := filepath.Join(req.WebRoot, "index.html")
-	if data, err := os.ReadFile(placeholderIndex); err == nil {
+	if data, err := osReadFileFn(placeholderIndex); err == nil {
 		if strings.Contains(string(data), "Site is ready") || strings.Contains(string(data), "UWAS") {
 			os.Remove(placeholderIndex)
 			log.WriteString("Removed placeholder index.html\n")
@@ -144,7 +160,7 @@ RewriteRule . /index.php [L]
 # END WordPress
 `
 	htaccessPath := filepath.Join(req.WebRoot, ".htaccess")
-	if err := os.WriteFile(htaccessPath, []byte(htaccess), 0644); err != nil {
+	if err := osWriteFileFn(htaccessPath, []byte(htaccess), 0644); err != nil {
 		log.WriteString(fmt.Sprintf("Warning: failed to create .htaccess: %s\n", err))
 	} else {
 		log.WriteString(".htaccess created (pretty permalinks ready)\n")
@@ -155,7 +171,7 @@ RewriteRule . /index.php [L]
 	// Under PHP-CGI/FPM, got_mod_rewrite() returns false → WordPress uses
 	// ugly /index.php/hello-world/ PATHINFO permalinks. This mu-plugin fixes it.
 	muDir := filepath.Join(req.WebRoot, "wp-content", "mu-plugins")
-	os.MkdirAll(muDir, 0755)
+	osMkdirAllFn(muDir, 0755)
 	muPlugin := `<?php
 // UWAS: Tell WordPress that URL rewriting is available.
 // UWAS handles rewrite rules via .htaccess parsing + built-in try_files.
@@ -163,7 +179,7 @@ add_filter('got_url_rewrite', '__return_true');
 add_filter('got_rewrite', '__return_true');
 `
 	muPath := filepath.Join(muDir, "uwas-rewrite.php")
-	if err := os.WriteFile(muPath, []byte(muPlugin), 0644); err != nil {
+	if err := osWriteFileFn(muPath, []byte(muPlugin), 0644); err != nil {
 		log.WriteString(fmt.Sprintf("Warning: failed to create mu-plugin: %s\n", err))
 	} else {
 		log.WriteString("mu-plugin created (mod_rewrite compatibility)\n")
@@ -177,7 +193,7 @@ add_filter('got_rewrite', '__return_true');
 
 func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) error {
 	// Try mysql client
-	if _, err := exec.LookPath("mysql"); err != nil {
+	if _, err := execLookPathFn("mysql"); err != nil {
 		return fmt.Errorf("mysql client not found")
 	}
 
@@ -189,12 +205,12 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	}
 
 	sql := strings.Join(cmds, "\n")
-	cmd := exec.Command("mysql", "-u", "root", "-e", sql)
+	cmd := execCommandFn("mysql", "-u", "root", "-e", sql)
 	out, err := cmd.CombinedOutput()
 	log.Write(out)
 	if err != nil {
 		// Try with sudo
-		cmd = exec.Command("sudo", "mysql", "-e", sql)
+		cmd = execCommandFn("sudo", "mysql", "-e", sql)
 		out, err = cmd.CombinedOutput()
 		log.Write(out)
 	}
@@ -202,13 +218,13 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 }
 
 func downloadAndExtract(webRoot string, log *strings.Builder) error {
-	os.MkdirAll(webRoot, 0755)
+	osMkdirAllFn(webRoot, 0755)
 
 	// Download
 	tarPath := filepath.Join(os.TempDir(), "wordpress-latest.tar.gz")
 	log.WriteString(fmt.Sprintf("Downloading %s\n", wpDownloadURL))
 
-	resp, err := http.Get(wpDownloadURL)
+	resp, err := httpGetFn(wpDownloadURL)
 	if err != nil {
 		return err
 	}
@@ -224,7 +240,7 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 
 	// Extract — tar xzf to parent, then move wordpress/* to webRoot
 	parentDir := filepath.Dir(webRoot)
-	cmd := exec.Command("tar", "xzf", tarPath, "-C", parentDir)
+	cmd := execCommandFn("tar", "xzf", tarPath, "-C", parentDir)
 	out, err := cmd.CombinedOutput()
 	log.Write(out)
 	if err != nil {
@@ -233,14 +249,14 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 
 	// Move wordpress/* to webRoot
 	extractedDir := filepath.Join(parentDir, "wordpress")
-	if _, err := os.Stat(extractedDir); err == nil {
-		entries, _ := os.ReadDir(extractedDir)
+	if _, err := osStatFn(extractedDir); err == nil {
+		entries, _ := osReadDirFn(extractedDir)
 		for _, entry := range entries {
 			src := filepath.Join(extractedDir, entry.Name())
 			dst := filepath.Join(webRoot, entry.Name())
-			os.Rename(src, dst)
+			osRenameFn(src, dst)
 		}
-		os.RemoveAll(extractedDir)
+		osRemoveAllFn(extractedDir)
 	}
 	log.WriteString(fmt.Sprintf("Extracted to %s\n", webRoot))
 
@@ -298,19 +314,19 @@ if ( ! defined('ABSPATH') ) {
 require_once ABSPATH . 'wp-settings.php';
 `, dbName, dbUser, dbPass, dbHost, strings.Join(salts, "\n"))
 
-	return os.WriteFile(filepath.Join(webRoot, "wp-config.php"), []byte(config), 0644)
+	return osWriteFileFn(filepath.Join(webRoot, "wp-config.php"), []byte(config), 0644)
 }
 
 func setWordPressPermissions(webRoot string, log *strings.Builder) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return
 	}
-	exec.Command("chown", "-R", "www-data:www-data", webRoot).Run()
-	exec.Command("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").Run()
-	exec.Command("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").Run()
+	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
+	execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").Run()
+	execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").Run()
 	// wp-content needs to be writable
 	wpContent := filepath.Join(webRoot, "wp-content")
-	exec.Command("chmod", "-R", "775", wpContent).Run()
+	execCommandFn("chmod", "-R", "775", wpContent).Run()
 	log.WriteString("Permissions set (www-data:www-data, 755/644, wp-content 775)\n")
 }
 
@@ -331,12 +347,12 @@ func generateSecret(length int) string {
 
 // ensurePHPExtensions installs MySQL and other WordPress-required PHP extensions.
 func ensurePHPExtensions(log *strings.Builder) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return
 	}
 
 	// Detect PHP version
-	out, err := exec.Command("php", "-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;").Output()
+	out, err := execCommandFn("php", "-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;").Output()
 	if err != nil {
 		log.WriteString("Could not detect PHP version\n")
 		return
@@ -344,7 +360,7 @@ func ensurePHPExtensions(log *strings.Builder) {
 	ver := strings.TrimSpace(string(out))
 
 	// Check if mysqli is already loaded
-	check, _ := exec.Command("php", "-m").Output()
+	check, _ := execCommandFn("php", "-m").Output()
 	if strings.Contains(strings.ToLower(string(check)), "mysqli") {
 		log.WriteString("mysqli extension: OK\n")
 		return
@@ -364,8 +380,8 @@ func ensurePHPExtensions(log *strings.Builder) {
 	}
 
 	// Try apt
-	if _, err := exec.LookPath("apt"); err == nil {
-		cmd := exec.Command("apt", append([]string{"install", "-y"}, pkgs...)...)
+	if _, err := execLookPathFn("apt"); err == nil {
+		cmd := execCommandFn("apt", append([]string{"install", "-y"}, pkgs...)...)
 		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		out, err := cmd.CombinedOutput()
 		log.Write(out)
@@ -378,8 +394,8 @@ func ensurePHPExtensions(log *strings.Builder) {
 	}
 
 	// Try dnf
-	if _, err := exec.LookPath("dnf"); err == nil {
-		cmd := exec.Command("dnf", append([]string{"install", "-y"}, pkgs...)...)
+	if _, err := execLookPathFn("dnf"); err == nil {
+		cmd := execCommandFn("dnf", append([]string{"install", "-y"}, pkgs...)...)
 		out, err := cmd.CombinedOutput()
 		log.Write(out)
 		if err != nil {
@@ -452,7 +468,7 @@ func DetectSites(domains []DomainInfo) []SiteInfo {
 			continue
 		}
 		wpConfig := filepath.Join(d.WebRoot, "wp-config.php")
-		if _, err := os.Stat(wpConfig); err != nil {
+		if _, err := osStatFn(wpConfig); err != nil {
 			continue
 		}
 		site := SiteInfo{
@@ -501,13 +517,13 @@ type DomainInfo struct {
 
 // IsWordPress checks if the given web root contains a WordPress installation.
 func IsWordPress(webRoot string) bool {
-	_, err := os.Stat(filepath.Join(webRoot, "wp-config.php"))
+	_, err := osStatFn(filepath.Join(webRoot, "wp-config.php"))
 	return err == nil
 }
 
 // parseWPConfig extracts DB_NAME, DB_USER, DB_HOST from wp-config.php.
 func parseWPConfig(path string) (dbName, dbUser, dbHost string) {
-	data, err := os.ReadFile(path)
+	data, err := osReadFileFn(path)
 	if err != nil {
 		return
 	}
@@ -528,7 +544,7 @@ func parseWPConfig(path string) (dbName, dbUser, dbHost string) {
 
 // detectWPVersion reads $wp_version from wp-includes/version.php.
 func detectWPVersion(webRoot string) string {
-	data, err := os.ReadFile(filepath.Join(webRoot, "wp-includes", "version.php"))
+	data, err := osReadFileFn(filepath.Join(webRoot, "wp-includes", "version.php"))
 	if err != nil {
 		return "unknown"
 	}
@@ -542,7 +558,7 @@ func detectWPVersion(webRoot string) string {
 
 // checkWPHealth reads wp-config.php for health indicators.
 func checkWPHealth(wpConfigPath, webRoot string) SiteHealth {
-	data, _ := os.ReadFile(wpConfigPath)
+	data, _ := osReadFileFn(wpConfigPath)
 	content := string(data)
 	h := SiteHealth{}
 	h.Debug = strings.Contains(content, "'WP_DEBUG', true") || strings.Contains(content, "'WP_DEBUG',true")
@@ -560,8 +576,8 @@ func checkPermissions(webRoot string) PermissionsReport {
 	r.Htaccess = permString(filepath.Join(webRoot, ".htaccess"))
 
 	// Check owner (Linux only)
-	if runtime.GOOS != "windows" {
-		out, err := exec.Command("stat", "-c", "%U:%G", webRoot).Output()
+	if runtimeGOOS != "windows" {
+		out, err := execCommandFn("stat", "-c", "%U:%G", webRoot).Output()
 		if err == nil {
 			r.Owner = strings.TrimSpace(string(out))
 		}
@@ -569,7 +585,7 @@ func checkPermissions(webRoot string) PermissionsReport {
 
 	// Check if wp-content is writable
 	testFile := filepath.Join(webRoot, "wp-content", ".uwas-write-test")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
+	if err := osWriteFileFn(testFile, []byte("test"), 0644); err == nil {
 		os.Remove(testFile)
 		r.Writable = true
 	}
@@ -577,14 +593,14 @@ func checkPermissions(webRoot string) PermissionsReport {
 }
 
 func permString(path string) string {
-	info, err := os.Stat(path)
+	info, err := osStatFn(path)
 	if err != nil {
 		return "missing"
 	}
 	mode := info.Mode().Perm()
 	// Get owner on Linux
-	if runtime.GOOS != "windows" {
-		out, err := exec.Command("stat", "-c", "%U:%G", path).Output()
+	if runtimeGOOS != "windows" {
+		out, err := execCommandFn("stat", "-c", "%U:%G", path).Output()
 		if err == nil {
 			return fmt.Sprintf("%04o %s", mode, strings.TrimSpace(string(out)))
 		}
@@ -596,14 +612,14 @@ func permString(path string) string {
 
 // hasWPCLI checks if wp-cli is installed.
 func hasWPCLI() bool {
-	_, err := exec.LookPath("wp")
+	_, err := execLookPathFn("wp")
 	return err == nil
 }
 
 // wpCLI runs a WP-CLI command in the given web root.
 func wpCLI(webRoot string, args ...string) (string, error) {
 	allArgs := append([]string{"--path=" + webRoot, "--allow-root", "--no-color"}, args...)
-	cmd := exec.Command("wp", allArgs...)
+	cmd := execCommandFn("wp", allArgs...)
 	cmd.Dir = webRoot
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -656,7 +672,7 @@ func listThemes(webRoot string) []ThemeInfo {
 // scanPluginDirs is a fallback when WP-CLI is not available.
 func scanPluginDirs(webRoot string) []PluginInfo {
 	pluginDir := filepath.Join(webRoot, "wp-content", "plugins")
-	entries, err := os.ReadDir(pluginDir)
+	entries, err := osReadDirFn(pluginDir)
 	if err != nil {
 		return nil
 	}
@@ -672,7 +688,7 @@ func scanPluginDirs(webRoot string) []PluginInfo {
 		p := PluginInfo{Name: name, Status: "unknown"}
 		// Try to read version from plugin header
 		mainFile := filepath.Join(pluginDir, name, name+".php")
-		if data, err := os.ReadFile(mainFile); err == nil {
+		if data, err := osReadFileFn(mainFile); err == nil {
 			p.Version = parsePluginVersion(string(data))
 		}
 		plugins = append(plugins, p)
@@ -729,7 +745,7 @@ func UpdateCore(webRoot string) (string, error) {
 	tarPath := filepath.Join(os.TempDir(), "wordpress-update.tar.gz")
 	defer os.Remove(tarPath)
 
-	resp, err := http.Get(tarURL)
+	resp, err := httpGetFn(tarURL)
 	if err != nil {
 		return log.String(), fmt.Errorf("download failed: %w", err)
 	}
@@ -745,9 +761,9 @@ func UpdateCore(webRoot string) (string, error) {
 
 	// Extract to temp dir
 	tmpDir, _ := os.MkdirTemp("", "wp-update-*")
-	defer os.RemoveAll(tmpDir)
+	defer osRemoveAllFn(tmpDir)
 
-	cmd := exec.Command("tar", "xzf", tarPath, "-C", tmpDir)
+	cmd := execCommandFn("tar", "xzf", tarPath, "-C", tmpDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return log.String(), fmt.Errorf("extract failed: %s — %w", string(out), err)
 	}
@@ -758,7 +774,7 @@ func UpdateCore(webRoot string) (string, error) {
 	skipDirs := map[string]bool{"wp-content": true}
 	skipFiles := map[string]bool{"wp-config.php": true, ".htaccess": true, "wp-config-sample.php": true}
 
-	err = filepath.Walk(wpDir, func(path string, info os.FileInfo, err error) error {
+	err = filepathWalkFn(wpDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -781,13 +797,13 @@ func UpdateCore(webRoot string) (string, error) {
 
 		dst := filepath.Join(webRoot, rel)
 		if info.IsDir() {
-			return os.MkdirAll(dst, 0755)
+			return osMkdirAllFn(dst, 0755)
 		}
-		data, readErr := os.ReadFile(path)
+		data, readErr := osReadFileFn(path)
 		if readErr != nil {
 			return readErr
 		}
-		return os.WriteFile(dst, data, info.Mode())
+		return osWriteFileFn(dst, data, info.Mode())
 	})
 
 	if err != nil {
@@ -795,7 +811,7 @@ func UpdateCore(webRoot string) (string, error) {
 	}
 
 	// Fix ownership
-	exec.Command("chown", "-R", "www-data:www-data", webRoot).Run()
+	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
 	log.WriteString("WordPress core updated (wp-content preserved)\n")
 
 	return log.String(), nil
@@ -841,29 +857,29 @@ func UpdateTheme(webRoot, theme string) (string, error) {
 func FixPermissions(webRoot string) (string, error) {
 	var log strings.Builder
 	// Directories: 755, files: 644
-	if out, err := exec.Command("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").CombinedOutput(); err != nil {
+	if out, err := execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").CombinedOutput(); err != nil {
 		log.WriteString(fmt.Sprintf("chmod dirs: %s\n", string(out)))
 	} else {
 		log.WriteString("Directories set to 755\n")
 	}
-	if out, err := exec.Command("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").CombinedOutput(); err != nil {
+	if out, err := execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").CombinedOutput(); err != nil {
 		log.WriteString(fmt.Sprintf("chmod files: %s\n", string(out)))
 	} else {
 		log.WriteString("Files set to 644\n")
 	}
 	// wp-content writable
-	exec.Command("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")).Run()
+	execCommandFn("chmod", "-R", "775", filepath.Join(webRoot, "wp-content")).Run()
 	log.WriteString("wp-content set to 775\n")
 	// wp-config.php locked
-	exec.Command("chmod", "600", filepath.Join(webRoot, "wp-config.php")).Run()
+	execCommandFn("chmod", "600", filepath.Join(webRoot, "wp-config.php")).Run()
 	log.WriteString("wp-config.php set to 600\n")
 	// Owner
-	exec.Command("chown", "-R", "www-data:www-data", webRoot).Run()
+	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
 	log.WriteString("Owner set to www-data:www-data\n")
 
 	// Ensure FS_METHOD is set in wp-config.php (prevents FTP prompt for plugin installs)
 	wpConfig := filepath.Join(webRoot, "wp-config.php")
-	if data, err := os.ReadFile(wpConfig); err == nil {
+	if data, err := osReadFileFn(wpConfig); err == nil {
 		content := string(data)
 		if !strings.Contains(content, "FS_METHOD") {
 			// Insert before require_once
@@ -871,7 +887,7 @@ func FixPermissions(webRoot string) (string, error) {
 				"require_once ABSPATH",
 				"define('FS_METHOD', 'direct');\ndefine('WP_TEMP_DIR', __DIR__ . '/.tmp');\n\nrequire_once ABSPATH",
 				1)
-			os.WriteFile(wpConfig, []byte(content), 0600)
+			osWriteFileFn(wpConfig, []byte(content), 0600)
 			log.WriteString("Added FS_METHOD=direct to wp-config.php\n")
 		}
 		if !strings.Contains(content, "WP_TEMP_DIR") {
@@ -879,15 +895,15 @@ func FixPermissions(webRoot string) (string, error) {
 				"require_once ABSPATH",
 				"define('WP_TEMP_DIR', __DIR__ . '/.tmp');\n\nrequire_once ABSPATH",
 				1)
-			os.WriteFile(wpConfig, []byte(content), 0600)
+			osWriteFileFn(wpConfig, []byte(content), 0600)
 			log.WriteString("Added WP_TEMP_DIR to wp-config.php\n")
 		}
 	}
 
 	// Create .tmp directory for WordPress temp operations
 	tmpDir := filepath.Join(webRoot, ".tmp")
-	os.MkdirAll(tmpDir, 0775)
-	exec.Command("chown", "www-data:www-data", tmpDir).Run()
+	osMkdirAllFn(tmpDir, 0775)
+	execCommandFn("chown", "www-data:www-data", tmpDir).Run()
 	log.WriteString(".tmp directory created for WordPress temp operations\n")
 
 	return log.String(), nil
@@ -898,7 +914,7 @@ func FixPermissions(webRoot string) (string, error) {
 // so white-page issues can be diagnosed.
 func SetDebugMode(webRoot string, enable bool) error {
 	configPath := filepath.Join(webRoot, "wp-config.php")
-	data, err := os.ReadFile(configPath)
+	data, err := osReadFileFn(configPath)
 	if err != nil {
 		return fmt.Errorf("read wp-config.php: %w", err)
 	}
@@ -925,5 +941,5 @@ func SetDebugMode(webRoot string, enable bool) error {
 		}
 	}
 
-	return os.WriteFile(configPath, []byte(content), 0600)
+	return osWriteFileFn(configPath, []byte(content), 0600)
 }

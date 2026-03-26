@@ -9,6 +9,22 @@ import (
 	"time"
 )
 
+// Testable hooks — overridden in tests to avoid real network calls.
+var (
+	netInterfaces = net.Interfaces
+	ifaceAddrs    = func(iface *net.Interface) ([]net.Addr, error) {
+		return iface.Addrs()
+	}
+	httpGet = func(client *http.Client, url string) (*http.Response, error) {
+		return client.Get(url)
+	}
+	publicIPURLs = []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://icanhazip.com",
+	}
+)
+
 // IPInfo represents a server IP address.
 type IPInfo struct {
 	IP        string `json:"ip"`
@@ -21,7 +37,7 @@ type IPInfo struct {
 func DetectAll() []IPInfo {
 	var ips []IPInfo
 
-	ifaces, err := net.Interfaces()
+	ifaces, err := netInterfaces()
 	if err != nil {
 		return nil
 	}
@@ -31,7 +47,7 @@ func DetectAll() []IPInfo {
 			continue
 		}
 
-		addrs, err := iface.Addrs()
+		addrs, err := ifaceAddrs(&iface)
 		if err != nil {
 			continue
 		}
@@ -95,12 +111,8 @@ func PrimaryIPv4() string {
 func PublicIP() string {
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	for _, url := range []string{
-		"https://api.ipify.org",
-		"https://ifconfig.me/ip",
-		"https://icanhazip.com",
-	} {
-		resp, err := client.Get(url)
+	for _, url := range publicIPURLs {
+		resp, err := httpGet(client, url)
 		if err != nil {
 			continue
 		}

@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+var (
+	telegramAPIBase = "https://api.telegram.org"
+	smtpSendMailFn  = smtp.SendMail
+)
+
 // Channel is a notification destination.
 type Channel struct {
 	Type    string            `json:"type" yaml:"type"` // "webhook", "slack", "telegram", "email"
@@ -87,7 +92,7 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 		emoji = "🚨"
 	}
 	text := fmt.Sprintf("%s <b>%s</b>\n%s\n<i>%s</i>", emoji, msg.Title, msg.Body, msg.Source)
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+	url := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBase, botToken)
 	payload := map[string]string{
 		"chat_id":    chatID,
 		"text":       text,
@@ -130,5 +135,5 @@ func sendEmail(cfg map[string]string, msg Message) error {
 	if user != "" {
 		auth = smtp.PlainAuth("", user, pass, host)
 	}
-	return smtp.SendMail(addr, auth, from, strings.Split(to, ","), []byte(body))
+	return smtpSendMailFn(addr, auth, from, strings.Split(to, ","), []byte(body))
 }

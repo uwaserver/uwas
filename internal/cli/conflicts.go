@@ -9,6 +9,13 @@ import (
 	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
+// Hooks for testing.
+var (
+	conflictsRuntimeGOOS = runtime.GOOS
+	conflictsExecLookPath = exec.LookPath
+	conflictsExecCommand  = exec.Command
+)
+
 // ConflictingServer describes a detected web server that may conflict with UWAS.
 type ConflictingServer struct {
 	Name    string // "apache2", "nginx", "caddy", "lighttpd"
@@ -19,7 +26,7 @@ type ConflictingServer struct {
 
 // DetectConflicts checks for other web servers installed or running on the system.
 func DetectConflicts() []ConflictingServer {
-	if runtime.GOOS == "windows" {
+	if conflictsRuntimeGOOS == "windows" {
 		return nil
 	}
 
@@ -41,7 +48,7 @@ func DetectConflicts() []ConflictingServer {
 	for _, c := range candidates {
 		installed := false
 		for _, bin := range c.bins {
-			if _, err := exec.LookPath(bin); err == nil {
+			if _, err := conflictsExecLookPath(bin); err == nil {
 				installed = true
 				break
 			}
@@ -57,7 +64,7 @@ func DetectConflicts() []ConflictingServer {
 
 		// Check if running via pidof or systemctl
 		for _, bin := range c.bins {
-			out, err := exec.Command("pidof", bin).Output()
+			out, err := conflictsExecCommand("pidof", bin).Output()
 			if err == nil && len(strings.TrimSpace(string(out))) > 0 {
 				cs.Running = true
 				cs.PID = strings.Fields(strings.TrimSpace(string(out)))[0]
@@ -127,12 +134,12 @@ func OfferStopConflicts(conflicts []ConflictingServer) {
 	for _, c := range running {
 		fmt.Printf("  Stopping %s...\n", c.Name)
 		// Try systemctl first
-		if err := exec.Command("systemctl", "stop", c.Service).Run(); err == nil {
-			exec.Command("systemctl", "disable", c.Service).Run()
+		if err := conflictsExecCommand("systemctl", "stop", c.Service).Run(); err == nil {
+			conflictsExecCommand("systemctl", "disable", c.Service).Run()
 			fmt.Printf("    \033[32m✓\033[0m %s stopped and disabled\n", c.Name)
 		} else {
 			// Fallback: service command
-			if err := exec.Command("service", c.Service, "stop").Run(); err == nil {
+			if err := conflictsExecCommand("service", c.Service, "stop").Run(); err == nil {
 				fmt.Printf("    \033[32m✓\033[0m %s stopped\n", c.Name)
 			} else {
 				fmt.Printf("    \033[31m✗\033[0m Could not stop %s: %v\n", c.Name, err)
@@ -146,11 +153,11 @@ func OfferStopConflicts(conflicts []ConflictingServer) {
 	if strings.EqualFold(uninstall, "y") || strings.EqualFold(uninstall, "yes") {
 		for _, c := range running {
 			fmt.Printf("  Removing %s...\n", c.Name)
-			if err := exec.Command("apt", "remove", "-y", c.Service).Run(); err == nil {
+			if err := conflictsExecCommand("apt", "remove", "-y", c.Service).Run(); err == nil {
 				fmt.Printf("    \033[32m✓\033[0m %s removed\n", c.Name)
-			} else if err := exec.Command("dnf", "remove", "-y", c.Service).Run(); err == nil {
+			} else if err := conflictsExecCommand("dnf", "remove", "-y", c.Service).Run(); err == nil {
 				fmt.Printf("    \033[32m✓\033[0m %s removed\n", c.Name)
-			} else if err := exec.Command("apk", "del", c.Service).Run(); err == nil {
+			} else if err := conflictsExecCommand("apk", "del", c.Service).Run(); err == nil {
 				fmt.Printf("    \033[32m✓\033[0m %s removed\n", c.Name)
 			} else {
 				fmt.Printf("    \033[31m✗\033[0m Could not remove %s — try: sudo apt remove %s\n", c.Name, c.Service)
@@ -162,20 +169,20 @@ func OfferStopConflicts(conflicts []ConflictingServer) {
 
 // OfferPHPInstall checks if PHP-CGI/FPM is available and offers to install it.
 func OfferPHPInstall() {
-	if runtime.GOOS == "windows" {
+	if conflictsRuntimeGOOS == "windows" {
 		return
 	}
 
 	// Quick check: is any php-cgi or php-fpm binary on PATH?
 	hasCGI := false
 	for _, bin := range []string{"php-cgi", "php-cgi8.4", "php-cgi8.3", "php-cgi8.2", "php-cgi8.1"} {
-		if _, err := exec.LookPath(bin); err == nil {
+		if _, err := conflictsExecLookPath(bin); err == nil {
 			hasCGI = true
 			break
 		}
 	}
 	for _, bin := range []string{"php-fpm", "php-fpm8.4", "php-fpm8.3", "php-fpm8.2", "php-fpm8.1"} {
-		if _, err := exec.LookPath(bin); err == nil {
+		if _, err := conflictsExecLookPath(bin); err == nil {
 			hasCGI = true
 			break
 		}

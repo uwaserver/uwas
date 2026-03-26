@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+var (
+	execCommandFn = exec.Command
+	runtimeGOOS   = runtime.GOOS
+)
+
 // Job represents a cron job entry.
 type Job struct {
 	Schedule string `json:"schedule"` // cron expression: "*/5 * * * *"
@@ -21,10 +26,10 @@ const uwasMarker = "# UWAS managed"
 
 // List returns all UWAS-managed cron jobs.
 func List() ([]Job, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return nil, nil
 	}
-	out, err := exec.Command("crontab", "-l").Output()
+	out, err := execCommandFn("crontab", "-l").Output()
 	if err != nil {
 		return nil, nil // no crontab
 	}
@@ -55,11 +60,11 @@ func List() ([]Job, error) {
 
 // Add adds a cron job.
 func Add(job Job) error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return fmt.Errorf("cron not supported on Windows")
 	}
 
-	existing, _ := exec.Command("crontab", "-l").Output()
+	existing, _ := execCommandFn("crontab", "-l").Output()
 	comment := fmt.Sprintf("%s [%s] %s", uwasMarker, job.Domain, job.Comment)
 	entry := fmt.Sprintf("%s\n%s %s\n", comment, job.Schedule, job.Command)
 
@@ -69,11 +74,11 @@ func Add(job Job) error {
 
 // Remove removes a cron job by matching schedule + command.
 func Remove(schedule, command string) error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return fmt.Errorf("cron not supported on Windows")
 	}
 
-	existing, _ := exec.Command("crontab", "-l").Output()
+	existing, _ := execCommandFn("crontab", "-l").Output()
 	lines := strings.Split(string(existing), "\n")
 	var filtered []string
 	skipNext := false
@@ -107,7 +112,7 @@ func writeCrontab(content string) error {
 	defer os.Remove(tmp.Name())
 	tmp.WriteString(content)
 	tmp.Close()
-	return exec.Command("crontab", tmp.Name()).Run()
+	return execCommandFn("crontab", tmp.Name()).Run()
 }
 
 func parseCronLine(line string) Job {

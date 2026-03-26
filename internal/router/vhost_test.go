@@ -1,6 +1,7 @@
 package router
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -192,5 +193,293 @@ func TestVHostMultipleWildcardsLongestMatch(t *testing.T) {
 	d = r.Lookup("random.com")
 	if d == nil || d.Root != "/var/www/short" {
 		t.Errorf("expected short wildcard match, got %v", d)
+	}
+}
+
+// --- IsConfigured tests ---
+
+func TestIsConfiguredExactMatch(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www"},
+		{Host: "other.com", Root: "/var/www/other"},
+	}
+	r := NewVHostRouter(domains)
+
+	if !r.IsConfigured("example.com") {
+		t.Error("example.com should be configured")
+	}
+	if !r.IsConfigured("other.com") {
+		t.Error("other.com should be configured")
+	}
+}
+
+func TestIsConfiguredAlias(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Aliases: []string{"www.example.com"}, Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	if !r.IsConfigured("www.example.com") {
+		t.Error("www.example.com (alias) should be configured")
+	}
+}
+
+func TestIsConfiguredWildcard(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "*.example.com", Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	if !r.IsConfigured("sub.example.com") {
+		t.Error("sub.example.com should match wildcard")
+	}
+	if !r.IsConfigured("deep.sub.example.com") {
+		t.Error("deep.sub.example.com should match wildcard suffix")
+	}
+}
+
+func TestIsConfiguredUnknownHost(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	if r.IsConfigured("unknown.com") {
+		t.Error("unknown.com should not be configured")
+	}
+}
+
+func TestIsConfiguredStripsPort(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	if !r.IsConfigured("example.com:443") {
+		t.Error("IsConfigured should strip port")
+	}
+}
+
+func TestIsConfiguredCaseInsensitive(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "Example.COM", Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	if !r.IsConfigured("example.com") {
+		t.Error("IsConfigured should be case-insensitive")
+	}
+	if !r.IsConfigured("EXAMPLE.COM") {
+		t.Error("IsConfigured should be case-insensitive")
+	}
+}
+
+func TestIsConfiguredNoDomains(t *testing.T) {
+	r := NewVHostRouter(nil)
+
+	if r.IsConfigured("anything.com") {
+		t.Error("should not be configured when no domains are loaded")
+	}
+}
+
+func TestIsConfiguredWildcardAlias(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "main.com", Aliases: []string{"*.main.com"}, Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	if !r.IsConfigured("sub.main.com") {
+		t.Error("wildcard alias should be configured")
+	}
+}
+
+// --- Load: host with port registration ---
+
+func TestVHostHostWithPort(t *testing.T) {
+	// A domain registered with a port in the Host field
+	// should also be findable without the port
+	domains := []config.Domain{
+		{Host: "example.com:8080", Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	// Lookup without port should match (port-stripped form registered in load)
+	d := r.Lookup("example.com")
+	if d == nil || d.Root != "/var/www" {
+		t.Error("should match host registered with port via port-stripped form")
+	}
+
+	// Lookup with the exact port
+	d = r.Lookup("example.com:8080")
+	if d == nil || d.Root != "/var/www" {
+		t.Error("should match host registered with exact port")
+	}
+}
+
+// --- Load: alias with port registration ---
+
+func TestVHostAliasWithPort(t *testing.T) {
+	// An alias registered with a port should also be findable without the port
+	domains := []config.Domain{
+		{Host: "main.com", Aliases: []string{"alias.com:9090"}, Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	// Lookup via alias without port (port-stripped form)
+	d := r.Lookup("alias.com")
+	if d == nil || d.Host != "main.com" {
+		t.Error("should match alias registered with port via port-stripped form")
+	}
+
+	// Lookup via alias with exact port
+	d = r.Lookup("alias.com:9090")
+	if d == nil || d.Host != "main.com" {
+		t.Error("should match alias with exact port")
+	}
+}
+
+// --- Concurrent access on VHostRouter ---
+
+func TestVHostConcurrentLookupAndUpdate(t *testing.T) {
+	initial := []config.Domain{
+		{Host: "initial.com", Root: "/var/www/initial"},
+	}
+	r := NewVHostRouter(initial)
+
+	var wg sync.WaitGroup
+
+	// Concurrent lookups
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				r.Lookup("initial.com")
+				r.Lookup("unknown.com")
+				r.IsConfigured("initial.com")
+				r.IsConfigured("unknown.com")
+			}
+		}()
+	}
+
+	// Concurrent updates
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				r.Update([]config.Domain{
+					{Host: "updated.com", Root: "/var/www/updated"},
+				})
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	// No data race = pass
+}
+
+func TestVHostConcurrentIsConfigured(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www"},
+		{Host: "*.wild.com", Root: "/var/www/wild"},
+	}
+	r := NewVHostRouter(domains)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				r.IsConfigured("example.com")
+				r.IsConfigured("sub.wild.com")
+				r.IsConfigured("unknown.com")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// --- Update edge cases ---
+
+func TestVHostUpdateToEmpty(t *testing.T) {
+	r := NewVHostRouter([]config.Domain{
+		{Host: "example.com", Root: "/var/www"},
+	})
+	r.Update(nil)
+
+	d := r.Lookup("example.com")
+	if d != nil {
+		t.Error("after update to empty, Lookup should return nil")
+	}
+	if r.IsConfigured("example.com") {
+		t.Error("after update to empty, IsConfigured should return false")
+	}
+}
+
+func TestVHostUpdateReplacesCompletely(t *testing.T) {
+	r := NewVHostRouter([]config.Domain{
+		{Host: "old.com", Root: "/var/www/old"},
+		{Host: "*.old.com", Root: "/var/www/old-wild"},
+	})
+
+	r.Update([]config.Domain{
+		{Host: "new.com", Root: "/var/www/new"},
+	})
+
+	// Old domains gone
+	if r.IsConfigured("old.com") {
+		t.Error("old.com should no longer be configured")
+	}
+	if r.IsConfigured("sub.old.com") {
+		t.Error("sub.old.com should no longer match wildcard")
+	}
+
+	// New domain works
+	if !r.IsConfigured("new.com") {
+		t.Error("new.com should be configured")
+	}
+	d := r.Lookup("new.com")
+	if d == nil || d.Root != "/var/www/new" {
+		t.Error("new.com should resolve correctly")
+	}
+}
+
+// --- Complex scenario tests ---
+
+func TestVHostComplexRouting(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "primary.com", Aliases: []string{"www.primary.com", "*.cdn.primary.com"}, Root: "/var/www/primary"},
+		{Host: "*.primary.com", Root: "/var/www/primary-wild"},
+		{Host: "secondary.com", Root: "/var/www/secondary"},
+	}
+	r := NewVHostRouter(domains)
+
+	tests := []struct {
+		host     string
+		wantRoot string
+		wantConf bool
+	}{
+		{"primary.com", "/var/www/primary", true},
+		{"www.primary.com", "/var/www/primary", true},              // alias exact match
+		{"assets.cdn.primary.com", "/var/www/primary", true},      // alias wildcard
+		{"blog.primary.com", "/var/www/primary-wild", true},       // wildcard
+		{"secondary.com", "/var/www/secondary", true},
+		{"unknown.com", "/var/www/primary", false},                 // fallback
+	}
+
+	for _, tt := range tests {
+		d := r.Lookup(tt.host)
+		if d == nil {
+			t.Errorf("Lookup(%q) = nil, want root=%q", tt.host, tt.wantRoot)
+			continue
+		}
+		if d.Root != tt.wantRoot {
+			t.Errorf("Lookup(%q).Root = %q, want %q", tt.host, d.Root, tt.wantRoot)
+		}
+		if got := r.IsConfigured(tt.host); got != tt.wantConf {
+			t.Errorf("IsConfigured(%q) = %v, want %v", tt.host, got, tt.wantConf)
+		}
 	}
 }

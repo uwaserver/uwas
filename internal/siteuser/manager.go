@@ -14,6 +14,26 @@ import (
 	"strings"
 )
 
+// Testable hooks — override in tests to avoid real syscalls.
+var (
+	runtimeGOOS   = runtime.GOOS
+	execCommandFn = exec.Command
+	osReadFileFn  = os.ReadFile
+	osWriteFileFn = os.WriteFile
+	osMkdirAllFn  = os.MkdirAll
+	osStatFn      = os.Stat
+	osOpenFileFn  = os.OpenFile
+
+	// sshdConfigPath allows tests to redirect sshd_config reads/writes.
+	sshdConfigPath = "/etc/ssh/sshd_config"
+
+	// passwdPath allows tests to redirect /etc/passwd reads.
+	passwdPath = "/etc/passwd"
+
+	// netInterfaceAddrsFn allows tests to mock net.InterfaceAddrs.
+	netInterfaceAddrsFn = net.InterfaceAddrs
+)
+
 // User describes a site-level system user for SFTP access.
 type User struct {
 	Username string `json:"username"`
@@ -25,15 +45,15 @@ type User struct {
 // PrepareWebRoot creates the domain directory structure with proper ownership.
 // Structure: /var/www/domain.com/public_html/ (owned by www-data:www-data, 755)
 func PrepareWebRoot(webRootBase, hostname string) (string, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		dir := filepath.Join(webRootBase, hostname)
-		return dir, os.MkdirAll(dir, 0755)
+		return dir, osMkdirAllFn(dir, 0755)
 	}
 
 	domainDir := filepath.Join(webRootBase, hostname)
 	publicDir := filepath.Join(domainDir, "public_html")
 
-	if err := os.MkdirAll(publicDir, 0755); err != nil {
+	if err := osMkdirAllFn(publicDir, 0755); err != nil {
 		return "", fmt.Errorf("create web root: %w", err)
 	}
 
@@ -46,7 +66,7 @@ func PrepareWebRoot(webRootBase, hostname string) (string, error) {
 // CreateUser creates a system user for SFTP access to a domain.
 // Returns the user info and generated password.
 func CreateUser(webRootBase, hostname string) (*User, string, error) {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return nil, "", fmt.Errorf("user management not supported on Windows")
 	}
 
@@ -55,7 +75,7 @@ func CreateUser(webRootBase, hostname string) (*User, string, error) {
 	publicDir := filepath.Join(domainDir, "public_html")
 
 	// Create domain directory structure
-	if err := os.MkdirAll(publicDir, 0755); err != nil {
+	if err := osMkdirAllFn(publicDir, 0755); err != nil {
 		return nil, "", fmt.Errorf("create directories: %w", err)
 	}
 
@@ -66,7 +86,7 @@ func CreateUser(webRootBase, hostname string) (*User, string, error) {
 	// - home dir = domain dir (for chroot)
 	// - shell = nologin (SFTP only)
 	// - group = www-data
-	err := exec.Command("useradd",
+	err := execCommandFn("useradd",
 		"-d", domainDir,
 		"-s", "/usr/sbin/nologin",
 		"-g", "www-data",
@@ -81,7 +101,7 @@ func CreateUser(webRootBase, hostname string) (*User, string, error) {
 	}
 
 	// Set password
-	cmd := exec.Command("chpasswd")
+	cmd := execCommandFn("chpasswd")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("%s:%s", username, password))
 	if err := cmd.Run(); err != nil {
 		return nil, "", fmt.Errorf("set password for %s: %w", username, err)
@@ -108,23 +128,23 @@ func CreateUser(webRootBase, hostname string) (*User, string, error) {
 
 // DeleteUser removes a domain's SFTP user (keeps files).
 func DeleteUser(hostname string) error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return nil
 	}
 	username := domainToUsername(hostname)
 	if !userExists(username) {
 		return nil
 	}
-	return exec.Command("userdel", username).Run()
+	return execCommandFn("userdel", username).Run()
 }
 
 // ListUsers returns site users by scanning /etc/passwd for uwas- prefix.
 func ListUsers() []User {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return nil
 	}
 
-	data, err := os.ReadFile("/etc/passwd")
+	data, err := osReadFileFn(passwdPath)
 	if err != nil {
 		return nil
 	}
@@ -172,26 +192,24 @@ func generatePassword() string {
 }
 
 func userExists(username string) bool {
-	return exec.Command("id", username).Run() == nil
+	return execCommandFn("id", username).Run() == nil
 }
 
 func chown(path, user, group string) {
-	exec.Command("chown", user+":"+group, path).Run()
+	execCommandFn("chown", user+":"+group, path).Run()
 }
 
 func chownRecursive(path, user, group string) {
-	exec.Command("chown", "-R", user+":"+group, path).Run()
+	execCommandFn("chown", "-R", user+":"+group, path).Run()
 }
 
 func chmodDir(path, mode string) {
-	exec.Command("chmod", mode, path).Run()
+	execCommandFn("chmod", mode, path).Run()
 }
 
 // ensureSFTPConfig ensures sshd is configured for chroot SFTP and adds a Match block.
 func ensureSFTPConfig(username, chrootDir string) {
-	const sshdConfig = "/etc/ssh/sshd_config"
-
-	data, err := os.ReadFile(sshdConfig)
+	data, err := osReadFileFn(sshdConfigPath)
 	if err != nil {
 		return
 	}
@@ -242,17 +260,17 @@ Match User %s
 		return
 	}
 
-	os.WriteFile(sshdConfig, []byte(content), 0644)
+	osWriteFileFn(sshdConfigPath, []byte(content), 0644)
 
 	// Reload sshd — try both service names
-	if err := exec.Command("systemctl", "reload", "ssh").Run(); err != nil {
-		exec.Command("systemctl", "reload", "sshd").Run()
+	if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
+		execCommandFn("systemctl", "reload", "sshd").Run()
 	}
 }
 
 // GetServerIP returns the server's primary non-loopback IP.
 func GetServerIP() string {
-	addrs, err := net.InterfaceAddrs()
+	addrs, err := netInterfaceAddrsFn()
 	if err != nil {
 		return "your-server-ip"
 	}

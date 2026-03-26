@@ -42,6 +42,7 @@ type Provider interface {
 type CloudflareProvider struct {
 	apiToken string
 	client   *http.Client
+	baseURL  string
 }
 
 const cfBaseURL = "https://api.cloudflare.com/client/v4"
@@ -51,6 +52,7 @@ func NewCloudflare(apiToken string) *CloudflareProvider {
 	return &CloudflareProvider{
 		apiToken: apiToken,
 		client:   &http.Client{Timeout: 15 * time.Second},
+		baseURL:  cfBaseURL,
 	}
 }
 
@@ -61,7 +63,7 @@ func (c *CloudflareProvider) do(method, path string, body any) (json.RawMessage,
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, cfBaseURL+path, bodyReader)
+	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}

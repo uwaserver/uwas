@@ -286,3 +286,103 @@ func TestPercentileCalculation(t *testing.T) {
 		t.Errorf("max = %.4f, want %.4f", max, expected)
 	}
 }
+
+func TestRecordDomain(t *testing.T) {
+	c := New()
+
+	// Record various status codes for different domains
+	c.RecordDomain("example.com", 200, 1024)
+	c.RecordDomain("example.com", 201, 2048)
+	c.RecordDomain("example.com", 301, 128)
+	c.RecordDomain("example.com", 404, 256)
+	c.RecordDomain("example.com", 500, 512)
+	c.RecordDomain("other.com", 200, 100)
+
+	snap := c.DomainStatsSnapshot()
+
+	ex, ok := snap["example.com"]
+	if !ok {
+		t.Fatal("expected example.com in snapshot")
+	}
+	if ex["requests"] != 5 {
+		t.Errorf("example.com requests = %d, want 5", ex["requests"])
+	}
+	if ex["bytes_out"] != 1024+2048+128+256+512 {
+		t.Errorf("example.com bytes_out = %d, want %d", ex["bytes_out"], 1024+2048+128+256+512)
+	}
+	if ex["status_2xx"] != 2 {
+		t.Errorf("example.com status_2xx = %d, want 2", ex["status_2xx"])
+	}
+	if ex["status_3xx"] != 1 {
+		t.Errorf("example.com status_3xx = %d, want 1", ex["status_3xx"])
+	}
+	if ex["status_4xx"] != 1 {
+		t.Errorf("example.com status_4xx = %d, want 1", ex["status_4xx"])
+	}
+	if ex["status_5xx"] != 1 {
+		t.Errorf("example.com status_5xx = %d, want 1", ex["status_5xx"])
+	}
+
+	ot, ok := snap["other.com"]
+	if !ok {
+		t.Fatal("expected other.com in snapshot")
+	}
+	if ot["requests"] != 1 {
+		t.Errorf("other.com requests = %d, want 1", ot["requests"])
+	}
+	if ot["bytes_out"] != 100 {
+		t.Errorf("other.com bytes_out = %d, want 100", ot["bytes_out"])
+	}
+}
+
+func TestDomainStatsSnapshotEmpty(t *testing.T) {
+	c := New()
+	snap := c.DomainStatsSnapshot()
+	if len(snap) != 0 {
+		t.Errorf("expected empty snapshot, got %d entries", len(snap))
+	}
+}
+
+func TestRecordDomainStatusEdgeCases(t *testing.T) {
+	c := New()
+
+	// Status codes that don't match any 2xx-5xx bucket (e.g. 1xx, 0)
+	c.RecordDomain("edge.com", 100, 10)
+	c.RecordDomain("edge.com", 0, 5)
+
+	snap := c.DomainStatsSnapshot()
+	e := snap["edge.com"]
+	if e["requests"] != 2 {
+		t.Errorf("requests = %d, want 2", e["requests"])
+	}
+	if e["bytes_out"] != 15 {
+		t.Errorf("bytes_out = %d, want 15", e["bytes_out"])
+	}
+	// None of the status buckets should be incremented
+	if e["status_2xx"] != 0 || e["status_3xx"] != 0 || e["status_4xx"] != 0 || e["status_5xx"] != 0 {
+		t.Errorf("unexpected status bucket increment for edge status codes")
+	}
+}
+
+func TestRecordCacheUnknownStatus(t *testing.T) {
+	c := New()
+	// Recording an unknown cache status should not change any counter
+	c.RecordCache("BYPASS")
+	c.RecordCache("")
+	if c.CacheHits.Load() != 0 || c.CacheMisses.Load() != 0 || c.CacheStales.Load() != 0 {
+		t.Error("unknown cache status should not increment any counter")
+	}
+}
+
+func TestRecordRequest1xxAnd3xx(t *testing.T) {
+	c := New()
+	c.RecordRequest(100) // 1xx
+	c.RecordRequest(301) // 3xx
+
+	if c.RequestsByCode[0].Load() != 1 {
+		t.Errorf("1xx = %d, want 1", c.RequestsByCode[0].Load())
+	}
+	if c.RequestsByCode[2].Load() != 1 {
+		t.Errorf("3xx = %d, want 1", c.RequestsByCode[2].Load())
+	}
+}

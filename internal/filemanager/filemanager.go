@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// Testable hooks for filesystem operations.
+var (
+	evalSymlinks = filepath.EvalSymlinks
+	absFunc      = filepath.Abs
+	entryInfo    = func(e os.DirEntry) (os.FileInfo, error) { return e.Info() }
+)
+
 // Entry represents a file or directory.
 type Entry struct {
 	Name    string    `json:"name"`
@@ -34,7 +41,7 @@ func List(baseDir, relPath string) ([]Entry, error) {
 
 	result := make([]Entry, 0, len(entries))
 	for _, e := range entries {
-		info, err := e.Info()
+		info, err := entryInfo(e)
 		if err != nil {
 			continue
 		}
@@ -141,14 +148,14 @@ func safePath(baseDir, relPath string) string {
 	}
 	full := filepath.Join(baseDir, relPath)
 	// Ensure result is still under baseDir
-	absBase, _ := filepath.Abs(baseDir)
-	absFull, _ := filepath.Abs(full)
+	absBase, _ := absFunc(baseDir)
+	absFull, _ := absFunc(full)
 	if !strings.HasPrefix(absFull, absBase) {
 		return ""
 	}
 	// Resolve symlinks to prevent cross-domain escape
-	if realFull, err := filepath.EvalSymlinks(absFull); err == nil {
-		realBase, _ := filepath.EvalSymlinks(absBase)
+	if realFull, err := evalSymlinks(absFull); err == nil {
+		realBase, _ := evalSymlinks(absBase)
 		if realBase != "" && !strings.HasPrefix(realFull, realBase) {
 			return "" // symlink points outside base directory
 		}

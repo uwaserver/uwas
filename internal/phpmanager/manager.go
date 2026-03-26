@@ -17,6 +17,24 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
+// Testable hooks for OS operations. Overridden in tests.
+var (
+	// osStat wraps os.Stat for testability.
+	osStat = os.Stat
+	// netDialTimeout wraps net.DialTimeout for testability.
+	netDialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return net.DialTimeout(network, address, timeout)
+	}
+	// osReadFile wraps os.ReadFile for testability.
+	osReadFileHook = os.ReadFile
+	// osMkdirAll wraps os.MkdirAll for testability.
+	osMkdirAllHook = os.MkdirAll
+	// osWriteFileHook wraps os.WriteFile for testability.
+	osWriteFileHook = os.WriteFile
+	// osCreateTemp wraps os.CreateTemp for testability.
+	osCreateTempHook = os.CreateTemp
+)
+
 // PHPInstall describes a single detected PHP installation.
 type PHPInstall struct {
 	Version    string   `json:"version"`     // e.g. "8.4.19"
@@ -191,9 +209,9 @@ func (m *Manager) detectSystemFPMSocket(version string) string {
 	}
 
 	for _, sock := range socketPaths {
-		if _, err := os.Stat(sock); err == nil {
+		if _, err := osStat(sock); err == nil {
 			// Socket exists — verify it's actually listening
-			conn, err := net.DialTimeout("unix", sock, 2*time.Second)
+			conn, err := netDialTimeout("unix", sock, 2*time.Second)
 			if err == nil {
 				conn.Close()
 				m.logger.Info("detected system php-fpm socket", "version", shortVer, "socket", sock)
@@ -512,7 +530,7 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 		return "", nil
 	}
 
-	tmpFile, err := os.CreateTemp("", fmt.Sprintf("uwas-php-%s-*.ini", domain))
+	tmpFile, err := osCreateTempHook("", fmt.Sprintf("uwas-php-%s-*.ini", domain))
 	if err != nil {
 		return "", err
 	}
@@ -537,9 +555,9 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 	}
 
 	// Security: enforce open_basedir per domain (chroot PHP to web root + tmp).
-	m.domainMu.RLock()
+	// NOTE: Caller must hold domainMu (or not depend on lock) since buildDomainINI
+	// is invoked from StartDomain which already holds domainMu.Lock().
 	domainInst, _ := m.domainMap[domain]
-	m.domainMu.RUnlock()
 	if domainInst != nil {
 		// Security: UWAS enforced — domain isolation
 		lines = append(lines, "; Security: UWAS enforced — domain isolation")
@@ -648,10 +666,13 @@ func (m *Manager) Installations() []PHPInstall {
 	return out
 }
 
+// candidatePathsFunc can be overridden in tests to inject custom search paths.
+var candidatePathsFunc = candidatePaths
+
 // Detect scans the system for PHP binaries and populates the installations
 // list. It looks in OS-specific common locations.
 func (m *Manager) Detect() error {
-	patterns := candidatePaths()
+	patterns := candidatePathsFunc()
 
 	var found []PHPInstall
 	seen := make(map[string]bool) // resolved real path → already added
@@ -695,9 +716,12 @@ func (m *Manager) Detect() error {
 	return nil
 }
 
+// runtimeGOOS is the OS identifier used by candidatePaths. Overridden in tests.
+var runtimeGOOS = runtime.GOOS
+
 // candidatePaths returns glob patterns for common PHP binary locations.
 func candidatePaths() []string {
-	switch runtime.GOOS {
+	switch runtimeGOOS {
 	case "linux":
 		return []string{
 			"/usr/bin/php-cgi*",
@@ -807,7 +831,7 @@ func findOrCreatePHPConfig(version, phpInfo string) string {
 					// The scan dir parent usually has php.ini
 					parent := filepath.Dir(dir)
 					candidate := filepath.Join(parent, "php.ini")
-					if _, err := os.Stat(candidate); err == nil {
+					if _, err := osStat(candidate); err == nil {
 						return candidate
 					}
 				}
@@ -825,21 +849,21 @@ func findOrCreatePHPConfig(version, phpInfo string) string {
 		"/usr/local/etc/php.ini",
 	}
 	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
+		if _, err := osStat(c); err == nil {
 			return c
 		}
 	}
 
 	// 3. Create a minimal php.ini in the expected location
 	iniDir := fmt.Sprintf("/etc/php/%s/cgi", short)
-	os.MkdirAll(iniDir, 0755)
+	osMkdirAllHook(iniDir, 0755)
 	iniPath := filepath.Join(iniDir, "php.ini")
 	content := "; PHP configuration managed by UWAS\n; Edit via dashboard or uwas php config\n\n[PHP]\n"
-	if err := os.WriteFile(iniPath, []byte(content), 0644); err != nil {
+	if err := osWriteFileHook(iniPath, []byte(content), 0644); err != nil {
 		// Fallback: try cli path
 		iniDir = fmt.Sprintf("/etc/php/%s/cli", short)
 		iniPath = filepath.Join(iniDir, "php.ini")
-		if _, err := os.Stat(iniPath); err == nil {
+		if _, err := osStat(iniPath); err == nil {
 			return iniPath
 		}
 		return "" // give up
@@ -1138,7 +1162,7 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 func (m *Manager) startFPMDaemon(version, binary, listenAddr string) error {
 	// Generate a minimal php-fpm config for this listen address
 	confDir := filepath.Join(os.TempDir(), "uwas-fpm")
-	os.MkdirAll(confDir, 0755)
+	osMkdirAllHook(confDir, 0755)
 	confPath := filepath.Join(confDir, fmt.Sprintf("php%s-fpm.conf", strings.ReplaceAll(version, ".", "")))
 
 	conf := fmt.Sprintf(`[global]
@@ -1156,7 +1180,7 @@ pm.max_spare_servers = 6
 pm.max_requests = 500
 `, confDir, strings.ReplaceAll(version, ".", ""), listenAddr)
 
-	if err := os.WriteFile(confPath, []byte(conf), 0644); err != nil {
+	if err := osWriteFileHook(confPath, []byte(conf), 0644); err != nil {
 		return fmt.Errorf("write fpm config: %w", err)
 	}
 
@@ -1188,7 +1212,7 @@ pm.max_requests = 500
 }
 
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
+	_, err := osStat(path)
 	return err == nil
 }
 

@@ -21,6 +21,19 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
+// Testable hooks for crypto operations.
+var (
+	generateKey = func() (*ecdsa.PrivateKey, error) {
+		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	}
+	createCSR = func(key *ecdsa.PrivateKey, domains []string) ([]byte, error) {
+		return x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+			DNSNames: domains,
+		}, key)
+	}
+	thumbprintFunc = jwkThumbprint
+)
+
 // Client implements the ACME protocol (RFC 8555) for automated certificate issuance.
 type Client struct {
 	directoryURL string
@@ -124,18 +137,17 @@ func (c *Client) ObtainCertificate(ctx context.Context, domains []string) (*tls.
 	}
 
 	// 6. Generate cert key + CSR
-	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certKey, err := generateKey()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("generate key: %w", err)
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		DNSNames: domains,
-	}, certKey)
+	csr, err := createCSR(certKey, domains)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create CSR: %w", err)
 	}
 
 	// 7. Finalize order
+	orderURL := order.URL
 	order, err = c.finalizeOrder(ctx, order.Finalize, csr)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("finalize: %w", err)
@@ -143,7 +155,7 @@ func (c *Client) ObtainCertificate(ctx context.Context, domains []string) (*tls.
 
 	// 8. Wait for certificate
 	if order.Status != "valid" {
-		order, err = c.waitForStatus(ctx, order.URL, "valid", 30)
+		order, err = c.waitForStatus(ctx, orderURL, "valid", 30)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("order valid: %w", err)
 		}
@@ -258,7 +270,7 @@ func (c *Client) loadOrCreateAccountKey() error {
 	}
 
 	// Generate new key
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := generateKey()
 	if err != nil {
 		return err
 	}
@@ -326,7 +338,7 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 	}
 
 	// Compute key authorization
-	thumbprint, err := jwkThumbprint(&c.accountKey.PublicKey)
+	thumbprint, err := thumbprintFunc(&c.accountKey.PublicKey)
 	if err != nil {
 		return err
 	}
