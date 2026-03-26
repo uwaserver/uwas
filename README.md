@@ -68,16 +68,38 @@ One binary. Zero hassle.
 - **CI/CD** — GitHub Actions for build, test, release automation
 - **Single Binary** — ~14MB, no dependencies, just download and run
 
+## Install
+
+```bash
+# One-line install (Linux / macOS)
+curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/install.sh | sh
+```
+
+Or download from [GitHub Releases](https://github.com/uwaserver/uwas/releases).
+
+### Build from Source
+
+```bash
+git clone https://github.com/uwaserver/uwas.git && cd uwas
+make build        # Production binary → bin/uwas
+make linux        # Cross-compile for Linux amd64
+```
+
 ## Quick Start
 
 ```bash
-# Just run it — creates config automatically on first launch
+# Start server (auto-creates config on first run)
 uwas
 
-# Or build from source
-git clone https://github.com/uwaserver/uwas.git && cd uwas
-make build
-./bin/uwas
+# Or with a specific config
+uwas serve -c uwas.yaml
+
+# Install as systemd service
+sudo uwas install
+sudo systemctl start uwas
+
+# Dashboard is at
+# http://your-ip:9443/_uwas/dashboard/
 ```
 
 ## Configuration
