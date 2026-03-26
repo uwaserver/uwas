@@ -120,9 +120,20 @@ type compressResponseWriter struct {
 }
 
 func (w *compressResponseWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
 	w.statusCode = code
-	// Defer actual WriteHeader until we know if we're compressing
 	w.wroteHeader = true
+
+	// Redirect, No Content, Not Modified: no body expected.
+	// Flush status immediately — don't buffer, don't compress.
+	if code == http.StatusNoContent || code == http.StatusNotModified ||
+		(code >= 300 && code < 400) || code < 200 {
+		w.compressed = true // prevent future compression attempts
+		w.ResponseWriter.WriteHeader(code)
+	}
+	// For 200 etc., defer WriteHeader until Write decides on compression
 }
 
 func (w *compressResponseWriter) Write(b []byte) (int, error) {
@@ -207,7 +218,7 @@ func (w *compressResponseWriter) Close() {
 		if ct == "" {
 			ct = http.DetectContentType(w.buf)
 		}
-		if isCompressible(ct) && len(w.buf) >= w.minSize {
+		if isCompressible(ct) && len(w.buf) >= w.minSize && w.statusCode == http.StatusOK {
 			w.startCompression()
 		} else {
 			w.flushUncompressed()
@@ -225,8 +236,11 @@ func (w *compressResponseWriter) Close() {
 		}
 	}
 
-	// If nothing was written at all
-	if !w.wroteHeader {
+	// If WriteHeader was called but the real ResponseWriter never got it
+	// (no Write happened, e.g. empty redirect), flush the status now.
+	if w.wroteHeader && w.writer == nil && len(w.buf) == 0 && !w.compressed {
+		w.ResponseWriter.WriteHeader(w.statusCode)
+	} else if !w.wroteHeader {
 		w.ResponseWriter.WriteHeader(http.StatusOK)
 	}
 }

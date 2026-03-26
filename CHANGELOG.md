@@ -5,6 +5,13 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.15] - 2026-03-26
+
+### Critical Fix
+
+- **POST blank pages FIXED (root cause)** — Compression middleware was swallowing redirect status codes. When PHP returned `302 + Location`, `WriteHeader(302)` was buffered but never flushed to the real ResponseWriter. Go defaulted to 200 → browser got `200 + Location + empty body` → didn't follow redirect → white page. Now redirects (3xx), 204, 304 are flushed immediately without compression buffering.
+- **Content-Length stripped from PHP** — PHP's Content-Length conflicted with gzip compression. Now removed before forwarding; Go recalculates.
+
 ## [0.0.14] - 2026-03-26
 
 ### Critical Fix
