@@ -8,6 +8,11 @@ import (
 )
 
 func TestWPInstallStatusIdle(t *testing.T) {
+	// Reset global WP install state to ensure clean test
+	wpInstallMu.Lock()
+	wpInstallResult = nil
+	wpInstallMu.Unlock()
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/wordpress/install/status", nil)
