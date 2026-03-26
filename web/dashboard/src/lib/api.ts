@@ -646,6 +646,29 @@ export const wpToggleDebug = (domain: string, enable: boolean) =>
 export const wpErrorLog = (domain: string) =>
   api<{ log: string; size?: number; message?: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/error-log`);
 
+// WordPress Users
+export interface WPUserInfo { id: string; login: string; email: string; role: string; registered?: string; }
+export const wpListUsers = (domain: string) =>
+  api<WPUserInfo[]>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/users`);
+export const wpChangePassword = (domain: string, username: string, password: string) =>
+  api<{ status: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/change-password`, { method: 'POST', body: JSON.stringify({ username, password }) });
+
+// WordPress Security
+export interface WPSecurityStatus {
+  xmlrpc_disabled: boolean; file_edit_disabled: boolean; debug_enabled: boolean;
+  ssl_forced: boolean; auto_updates_core: string; auto_updates_plugins: boolean;
+  auto_updates_themes: boolean; table_prefix: string; php_version: string;
+  wp_version: string; directory_listing_blocked: boolean; wp_cron_disabled: boolean;
+}
+export const wpSecurityStatus = (domain: string) =>
+  api<WPSecurityStatus>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/security`);
+export const wpHarden = (domain: string, opts: { disable_xmlrpc?: boolean; disable_file_edit?: boolean; force_ssl_admin?: boolean; disable_wp_cron?: boolean; block_dir_listing?: boolean }) =>
+  api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/harden`, { method: 'POST', body: JSON.stringify(opts) });
+
+// WordPress DB Optimization
+export const wpOptimizeDB = (domain: string) =>
+  api<{ output: string; revisions_deleted: number; spam_deleted: number; trash_deleted: number; transients_cleaned: number; tables_optimized: number }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/optimize-db`, { method: 'POST' });
+
 // ── Per-domain Stats ──────────────────────────────────
 
 export type DomainStatsMap = Record<string, { requests: number; bytes_out: number; status_2xx: number; status_3xx: number; status_4xx: number; status_5xx: number }>;

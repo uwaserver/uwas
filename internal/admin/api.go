@@ -297,6 +297,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/reinstall", s.handleWPReinstall)
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/debug", s.handleWPToggleDebug)
 	s.mux.HandleFunc("GET /api/v1/wordpress/sites/{domain}/error-log", s.handleWPErrorLog)
+	s.mux.HandleFunc("GET /api/v1/wordpress/sites/{domain}/users", s.handleWPUsers)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/change-password", s.handleWPChangePassword)
+	s.mux.HandleFunc("GET /api/v1/wordpress/sites/{domain}/security", s.handleWPSecurityStatus)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/harden", s.handleWPHarden)
+	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/optimize-db", s.handleWPOptimizeDB)
 
 	// File manager
 	s.mux.HandleFunc("GET /api/v1/files/{domain}/list", s.handleFileList)
