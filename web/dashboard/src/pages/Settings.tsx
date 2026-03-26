@@ -143,7 +143,7 @@ const SECTIONS: SectionDef[] = [
     fields: [
       { key: 'global.http_listen', label: 'HTTP Listen', type: 'text', placeholder: ':80' },
       { key: 'global.https_listen', label: 'HTTPS Listen', type: 'text', placeholder: ':443' },
-      { key: 'global.http3', label: 'HTTP/3', type: 'toggle' },
+      { key: 'global.http3', label: 'HTTP/3 (QUIC)', type: 'toggle', help: 'Enable HTTP/3 via QUIC. Requires HTTPS. Advertised via Alt-Svc header.' },
       { key: 'global.worker_count', label: 'Worker Count', type: 'text', placeholder: 'auto', help: '"auto" or a number' },
       { key: 'global.max_connections', label: 'Max Connections', type: 'number', placeholder: '10000' },
       { key: 'global.pid_file', label: 'PID File', type: 'text', placeholder: '/var/run/uwas.pid' },
@@ -250,15 +250,18 @@ const SECTIONS: SectionDef[] = [
   },
   {
     id: 'alerting',
-    title: 'Alerting',
+    title: 'Alerting & Notifications',
     icon: <AlertTriangle size={18} />,
     iconColor: 'text-yellow-400',
     fields: [
       { key: 'global.alerting.enabled', label: 'Enabled', type: 'toggle' },
-      { key: 'global.alerting.webhook_url', label: 'Webhook URL', type: 'text', placeholder: 'https://hooks.slack.com/...' },
-      { key: 'global.alerting.slack_url', label: 'Slack Webhook URL', type: 'text', placeholder: 'https://hooks.slack.com/services/...' },
-      { key: 'global.alerting.telegram_token', label: 'Telegram Bot Token', type: 'secret', placeholder: '123456:ABC-DEF...' },
-      { key: 'global.alerting.telegram_chat_id', label: 'Telegram Chat ID', type: 'text', placeholder: '-1001234567890' },
+      { key: 'global.alerting.webhook_url', label: 'Generic Webhook URL', type: 'text', placeholder: 'https://example.com/webhook', help: 'Receives JSON POST with alert data' },
+      { key: 'global.alerting.slack_url', label: 'Slack Webhook URL', type: 'text', placeholder: 'https://hooks.slack.com/services/T.../B.../xxx', help: 'Slack > Apps > Incoming Webhooks > Add' },
+      { key: 'global.alerting.telegram_token', label: 'Telegram Bot Token', type: 'secret', placeholder: '123456789:ABCdefGHIjklMNOpqrSTUvwxYZ', help: 'Message @BotFather on Telegram → /newbot' },
+      { key: 'global.alerting.telegram_chat_id', label: 'Telegram Chat ID', type: 'text', placeholder: '-1001234567890', help: 'Use @userinfobot or @getidsbot to find your chat ID' },
+      { key: 'global.alerting.email_smtp_host', label: 'SMTP Host', type: 'text', placeholder: 'smtp.gmail.com:587' },
+      { key: 'global.alerting.email_from', label: 'Email From', type: 'text', placeholder: 'alerts@example.com' },
+      { key: 'global.alerting.email_to', label: 'Email To', type: 'text', placeholder: 'admin@example.com' },
     ],
   },
   {
@@ -292,20 +295,20 @@ const BACKUP_LOCAL_FIELDS: FieldDef[] = [
 ];
 
 const BACKUP_S3_FIELDS: FieldDef[] = [
-  { key: 'global.backup.s3.endpoint', label: 'Endpoint', type: 'text', placeholder: 'https://s3.amazonaws.com' },
-  { key: 'global.backup.s3.bucket', label: 'Bucket', type: 'text', placeholder: 'my-uwas-backups' },
-  { key: 'global.backup.s3.access_key', label: 'Access Key', type: 'secret' },
-  { key: 'global.backup.s3.secret_key', label: 'Secret Key', type: 'secret' },
-  { key: 'global.backup.s3.region', label: 'Region', type: 'text', placeholder: 'us-east-1' },
+  { key: 'global.backup.s3.endpoint', label: 'S3 Endpoint', type: 'text', placeholder: 'https://s3.amazonaws.com', help: 'AWS: https://s3.amazonaws.com · Wasabi: https://s3.wasabisys.com · MinIO: http://localhost:9000' },
+  { key: 'global.backup.s3.bucket', label: 'Bucket Name', type: 'text', placeholder: 'my-uwas-backups' },
+  { key: 'global.backup.s3.region', label: 'Region', type: 'text', placeholder: 'us-east-1', help: 'AWS region (e.g. eu-west-1, ap-southeast-1)' },
+  { key: 'global.backup.s3.access_key', label: 'Access Key ID', type: 'secret', help: 'AWS IAM > Users > Security Credentials > Access Keys' },
+  { key: 'global.backup.s3.secret_key', label: 'Secret Access Key', type: 'secret' },
 ];
 
 const BACKUP_SFTP_FIELDS: FieldDef[] = [
-  { key: 'global.backup.sftp.host', label: 'Host', type: 'text', placeholder: 'backup.example.com' },
+  { key: 'global.backup.sftp.host', label: 'SFTP Host', type: 'text', placeholder: 'backup.example.com', help: 'Hostname or IP of the backup server' },
   { key: 'global.backup.sftp.port', label: 'Port', type: 'number', placeholder: '22' },
-  { key: 'global.backup.sftp.user', label: 'User', type: 'text', placeholder: 'backup' },
-  { key: 'global.backup.sftp.key_file', label: 'Key File', type: 'text', placeholder: '/root/.ssh/id_rsa' },
-  { key: 'global.backup.sftp.password', label: 'Password', type: 'secret' },
-  { key: 'global.backup.sftp.remote_path', label: 'Remote Path', type: 'text', placeholder: '/backups/uwas' },
+  { key: 'global.backup.sftp.user', label: 'Username', type: 'text', placeholder: 'backup' },
+  { key: 'global.backup.sftp.key_file', label: 'SSH Key File', type: 'text', placeholder: '/root/.ssh/id_rsa', help: 'Path to private key on this server' },
+  { key: 'global.backup.sftp.password', label: 'Password', type: 'secret', help: 'Alternative to SSH key (key preferred)' },
+  { key: 'global.backup.sftp.remote_path', label: 'Remote Path', type: 'text', placeholder: '/backups/uwas', help: 'Directory on the remote server' },
 ];
 
 /** DNS credential fields by provider name. */
