@@ -5,6 +5,15 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.10] - 2026-03-26
+
+### Bug Fixes
+
+- **SFTP path traversal (security)** — Reject all paths containing `..` before processing, prevents chroot escape on Linux
+- **CI green** — Fixed SFTP, admin, and read-only dir tests for Linux; skipped CLI tests (signal handling); increased timeout to 600s
+- **CI workflows** — Upgraded to `actions/checkout@v5`, `setup-go@v6`, `setup-node@v5` (Node.js 20 deprecation fix)
+- **Stats updated** — README, CLAUDE.md, docs site: 35 pages, 170+ API endpoints, 45 test packages
+
 ## [0.0.9] - 2026-03-26
 
 ### Bug Fixes
