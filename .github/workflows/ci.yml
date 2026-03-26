@@ -23,7 +23,10 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test -p 1 -timeout 600s -count=1 ./...
+        run: |
+          # Run all tests except internal/cli (has signal handling that
+          # interferes with the test runner on Linux CI)
+          go test -p 1 -timeout 600s -count=1 $(go list ./... | grep -v /internal/cli$)
 
   dashboard:
     runs-on: ubuntu-latest
