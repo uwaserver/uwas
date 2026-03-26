@@ -172,7 +172,7 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	// Try system php-fpm socket first (best performance, shared workers)
 	addr := m.detectSystemFPMSocket(version)
 	if addr == "" {
-		// Fallback to per-domain TCP port
+		// Fallback to per-domain TCP port (for php-cgi)
 		addr = fmt.Sprintf("127.0.0.1:%d", m.nextPort)
 		m.nextPort++
 	}
@@ -1271,14 +1271,16 @@ func (m *Manager) Status() []PHPStatus {
 			}
 		}
 
-		// Check for system php-fpm socket
-		sock := m.detectSystemFPMSocket(inst.Version)
-		if sock != "" {
-			st.SocketPath = sock
-			st.Running = true
-			st.SystemManaged = true
-			if st.ListenAddr == "" {
-				st.ListenAddr = sock
+		// Check for system php-fpm socket (only for FPM SAPI)
+		if strings.Contains(inst.SAPI, "fpm") {
+			sock := m.detectSystemFPMSocket(inst.Version)
+			if sock != "" {
+				st.SocketPath = sock
+				st.Running = true
+				st.SystemManaged = true
+				if st.ListenAddr == "" {
+					st.ListenAddr = sock
+				}
 			}
 		}
 

@@ -5,6 +5,12 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.16] - 2026-03-27
+
+### Fixes
+
+- **PHP status: CGI no longer shows FPM socket** — Dashboard was showing the FPM socket for all PHP binaries (CGI, FPM, CLI). Now only FPM SAPI shows the system socket; CGI shows its own TCP port.
+
 ## [0.0.15] - 2026-03-26
 
 ### Critical Fix
