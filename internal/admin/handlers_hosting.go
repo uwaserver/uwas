@@ -1666,6 +1666,11 @@ var knownPackages = []knownPkg{
 
 	// ── PHP (managed separately via PHP page) ──
 
+	// ── Docker ──
+	{"docker", "Docker", "Container runtime for dockerized databases (MariaDB, MySQL, PostgreSQL)", "Database",
+		false, "Database page (Docker containers)", "All Docker containers will remain, only Docker engine removed.", true,
+		[]string{"docker"}, []string{"docker.io"}, []string{"docker.io"}},
+
 	// ── Image Optimization ──
 	{"webp", "WebP Tools", "Convert images to WebP (smaller, faster loading)", "Performance",
 		false, "Image Optimization (per-domain)", "", true,
