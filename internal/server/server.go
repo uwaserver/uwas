@@ -982,7 +982,22 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cache lookup — check global bypass + per-domain bypass rules
+	// PHP domains: only cache static assets (images, CSS, JS), never PHP output.
+	// PHP responses go through FastCGI and are always dynamic.
 	cacheEnabled := s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r)
+	if cacheEnabled && domain.Type == "php" {
+		// Only cache requests for known static file extensions on PHP domains
+		ext := strings.ToLower(filepath.Ext(r.URL.Path))
+		staticExts := map[string]bool{
+			".css": true, ".js": true, ".png": true, ".jpg": true, ".jpeg": true,
+			".gif": true, ".svg": true, ".ico": true, ".webp": true, ".avif": true,
+			".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
+			".mp4": true, ".webm": true, ".pdf": true, ".zip": true,
+		}
+		if !staticExts[ext] {
+			cacheEnabled = false
+		}
+	}
 	if cacheEnabled {
 		// Check per-domain cache bypass rules
 		for _, rule := range domain.Cache.Rules {
