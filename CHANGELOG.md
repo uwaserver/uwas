@@ -5,6 +5,17 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-03-26
+
+### Bug Fixes
+
+- **WordPress admin routing** — Skip `.htaccess` rewrite for `/wp-admin`, `/wp-includes`, `/wp-content` paths (was rewriting admin URLs to front-page `index.php`)
+- **wp-cli HTTP_HOST error** — Auto-detect site URL from directory structure and pass `--url` flag to wp-cli (fixes "Undefined array key HTTP_HOST" warning during core updates)
+- **Cache bypass for .php** — `.php` requests are never cached (PHP output is always dynamic)
+- **Domain deletion safety** — Protected paths expanded (`/var/www`, `/var/lib`, `/var/log`, etc.), require 4+ path components to delete parent, never delete webRoot itself
+- **Default domain protection** — `localhost`, `localhost:80`, `127.0.0.1` cannot be deleted
+- **Domain detail iframe removed** — Replaced non-functional iframe with clean URL bar + Visit/WP Admin buttons
+
 ## [1.9.0] - 2026-03-26
 
 ### Highlights
