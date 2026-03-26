@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Globe, X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
-  AlertTriangle, Layers, Settings, Link, Pencil,
+  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink,
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
@@ -832,6 +833,11 @@ function DomainRow({
           <div className="flex items-center gap-2">
             <Globe size={14} className="text-muted-foreground" />
             <span className="font-mono text-xs">{d.host}</span>
+            <RouterLink to={`/domains/${encodeURIComponent(d.host)}`} onClick={e => e.stopPropagation()}
+              className="rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-400 hover:bg-blue-500/10 flex items-center gap-0.5"
+              title="Manage domain">
+              Manage <ExternalLink size={9} />
+            </RouterLink>
           </div>
         </td>
         <td className="px-5 py-3"><TypeBadge type={d.type} /></td>
