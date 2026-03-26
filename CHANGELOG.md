@@ -5,6 +5,41 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.12] - 2026-03-26
+
+### Critical Fix
+
+- **PHP blank pages fixed** — `resp.Stdout()` was called AFTER `ParseHTTP()` which consumes the buffer. Every PHP response was incorrectly flagged as empty, returning 500 instead of the actual page. WordPress, wp-admin, POST forms — all affected. Root cause identified and fixed with single-line change.
+
+### Security (8 fixes from full code audit)
+
+- **SQL injection** — `escapeSQL()` was escaping in wrong order (quotes before backslashes), allowing quote escape. Fixed + added null byte stripping.
+- **Command injection** — `/api/v1/cron/execute` had no permission check. Now admin-only.
+- **Info disclosure** — PHP stderr was leaked to clients in HTML comments. Now server-side only.
+- **Login brute-force** — Login endpoint bypassed rate limiter. Now rate-limited.
+- **TLS data race** — `UpdateDomains()` had no mutex. Added `sync.RWMutex`.
+- **wp-config.php** — Written with 0644 (world-readable). Now 0600.
+- **Service injection** — `systemctl` commands accepted arbitrary names. Now allowlist-checked via `IsKnownService()`.
+- **Session token leak** — Query param tokens stripped from URL after auth (prevents log/referer leakage).
+
+### Security (4 additional hardening)
+
+- **TOTP 2FA** — `pendingTOTP` was single global string. Now per-user map (concurrent setup safe).
+- **SFTP passwords** — All domains shared the API key. Now per-domain via HMAC-SHA256 derivation.
+- **Admin API TLS** — New `admin.tls_cert` / `admin.tls_key` config for encrypted admin traffic.
+- **Admin timeout** — Write timeout increased from 10s to 5min (SSE, DB export, backup).
+
+### Improvements
+
+- **localhost:80 removed** — No longer created on init. Was dangerous (deleting it wiped `/var/www`).
+- **localhost delete blocked** — Backend returns 403, dashboard hides delete button for localhost/127.0.0.1.
+- **Monitor log noise** — Internal health checks (30s interval) no longer pollute access logs.
+- **Self-update** — Falls back to `/releases` API when `/releases/latest` returns 404 (pre-releases).
+
+### Tests
+
+- WordPress URL resolution tests: `/wp-admin/`, `/wp-admin/post.php`, POST, pretty permalinks — all verified working.
+
 ## [0.0.11] - 2026-03-26
 
 ### Improvements
