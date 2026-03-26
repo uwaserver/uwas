@@ -120,6 +120,14 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	}
 
 	// --- Forward response to client ---
+	// Remove hop-by-hop headers that PHP should not control.
+	// Content-Length from PHP conflicts with gzip middleware (compressed size differs).
+	// Transfer-Encoding is managed by Go's HTTP stack.
+	// Status was already parsed and removed by ParseHTTP.
+	headers.Del("Content-Length")
+	headers.Del("Transfer-Encoding")
+	headers.Del("Connection")
+
 	for key, vals := range headers {
 		for _, v := range vals {
 			ctx.Response.Header().Add(key, v)
