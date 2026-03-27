@@ -290,14 +290,19 @@ func DockerDBDropDatabase(containerName, dbName string) error {
 }
 
 // DockerDBExport exports a database from a Docker container as SQL dump.
+// Use "--all-databases" as dbName to dump everything.
 func DockerDBExport(containerName, dbName string) (string, error) {
 	fullName := containerName
 	if !strings.HasPrefix(fullName, containerPrefix) {
 		fullName = containerPrefix + containerName
 	}
+	dbArg := containerName_safe(dbName)
+	if dbName == "--all-databases" {
+		dbArg = "--all-databases"
+	}
 	cmd := dockerExecCommandFn("docker", "exec", fullName, "sh", "-c",
 		fmt.Sprintf(`mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s 2>/dev/null || mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s 2>/dev/null`,
-			containerName_safe(dbName), containerName_safe(dbName)))
+			dbArg, dbArg))
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("docker mysqldump: %w", err)

@@ -30,6 +30,7 @@ import (
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
+	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/sftpserver"
 	"github.com/uwaserver/uwas/internal/webhook"
@@ -473,6 +474,28 @@ func (s *Server) SetConfigPath(path string) {
 			}
 		}
 		s.backupMgr.SetDomainPaths(s.config.Global.WebRoot, domainsDir, roots)
+
+		// Wire Docker DB dump into backup
+		backup.SetDockerDumpFunc(func() map[string][]byte {
+			containers, err := database.ListDockerDBs()
+			if err != nil {
+				return nil
+			}
+			dumps := make(map[string][]byte)
+			for _, c := range containers {
+				if !c.Running || c.Engine == database.EnginePostgreSQL {
+					continue
+				}
+				shortName := strings.TrimPrefix(c.Name, "uwas-db-")
+				dump, err := database.DockerDBExport(shortName, "--all-databases")
+				if err != nil {
+					s.logger.Warn("backup: docker dump failed", "container", c.Name, "error", err)
+					continue
+				}
+				dumps[shortName] = []byte(dump)
+			}
+			return dumps
+		})
 	}
 }
 

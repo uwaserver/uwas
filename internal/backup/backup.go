@@ -220,16 +220,36 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 		}
 	}
 
-	// MySQL/MariaDB database dump (if mysqldump available).
+	// MySQL/MariaDB database dump (native, if mysqldump available).
 	if dbDump, err := dumpAllDatabases(); err == nil && len(dbDump) > 0 {
 		hdr := &tar.Header{
-			Name:    "databases/all-databases.sql",
+			Name:    "databases/native-all-databases.sql",
 			Size:    int64(len(dbDump)),
 			Mode:    0644,
 			ModTime: time.Now(),
 		}
 		if err := tw.WriteHeader(hdr); err == nil {
 			tw.Write(dbDump)
+		}
+	}
+
+	// Docker container database dumps.
+	if dockerDumpFn != nil {
+		dockerDumps := dockerDumpFn()
+		for name, dump := range dockerDumps {
+			if len(dump) == 0 {
+				continue
+			}
+			hdr := &tar.Header{
+				Name:    "databases/docker-" + name + ".sql",
+				Size:    int64(len(dump)),
+				Mode:    0644,
+				ModTime: time.Now(),
+			}
+			if err := tw.WriteHeader(hdr); err == nil {
+				tw.Write(dump)
+			}
+			m.logger.Info("backup: docker DB dumped", "container", name, "size", len(dump))
 		}
 	}
 
@@ -656,6 +676,15 @@ func dumpDatabaseReal(dbName string) ([]byte, error) {
 // dumpAllDatabasesFunc is the function used to dump all databases.
 // It can be overridden in tests.
 var dumpAllDatabasesFunc = dumpAllDatabasesReal
+
+// dockerDumpFn dumps all Docker container databases. Set by server.go at init.
+// Returns map[containerName]sqlDump.
+var dockerDumpFn func() map[string][]byte
+
+// SetDockerDumpFunc sets the function that dumps Docker container databases.
+func SetDockerDumpFunc(fn func() map[string][]byte) {
+	dockerDumpFn = fn
+}
 
 // dumpAllDatabases runs mysqldump --all-databases and returns the SQL dump.
 // Returns nil if mysqldump is not available or MySQL is not running.
