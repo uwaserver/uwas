@@ -1934,7 +1934,13 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	// PHP assignment: use user-provided FPM address, or auto-assign.
 	if d.Type == "php" && s.phpMgr != nil {
 		if d.PHP.FPMAddress != "" {
-			// User explicitly provided FPM address — use it as-is.
+			// User explicitly provided FPM address — register so it shows in PHP page.
+			phpStatus := s.phpMgr.Status()
+			ver := ""
+			if len(phpStatus) > 0 {
+				ver = phpStatus[0].Version
+			}
+			s.phpMgr.RegisterExistingDomain(d.Host, ver, d.PHP.FPMAddress, d.Root)
 			s.logger.Info("using user-provided PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
 		} else {
 			// Auto-assign: prefer FPM socket, fallback to CGI TCP port

@@ -377,7 +377,13 @@ export default function Domains() {
   const selectTemplate = (name: TemplateName) => {
     setSelectedTemplate(name);
     if (name && templates[name]) {
-      setForm({ ...emptyForm, ...templates[name].form });
+      const tpl = { ...emptyForm, ...templates[name].form };
+      // Use detected PHP address instead of hardcoded default
+      if (tpl.type === 'php' && phpInstalls.length > 0) {
+        const best = phpInstalls.find(p => p.sapi === 'fpm-fcgi') ?? phpInstalls.find(p => p.sapi !== 'cli');
+        if (best?.listen_addr) tpl.phpFpmAddress = best.listen_addr;
+      }
+      setForm(tpl);
     } else {
       setForm({ ...emptyForm });
     }
@@ -712,15 +718,25 @@ export default function Domains() {
                             }
                           }} className={selectCls}>
                             {phpInstalls.length === 0 && <option value="">No PHP detected</option>}
-                            {phpInstalls.filter(p => p.sapi !== 'cli').map((p, i) => {
-                              const sapiLabel = p.sapi === 'cgi-fcgi' ? 'FastCGI' : p.sapi === 'fpm-fcgi' ? 'FPM' : p.sapi;
-                              const addr = p.listen_addr || `127.0.0.1:${9000 + i}`;
-                              return (
-                                <option key={p.binary || p.version} value={addr}>
-                                  PHP {p.version} ({sapiLabel}) — {addr}
-                                </option>
-                              );
-                            })}
+                            {(() => {
+                              // Group by major.minor, prefer FPM over CGI
+                              const seen = new Map<string, typeof phpInstalls[0]>();
+                              for (const p of phpInstalls.filter(p => p.sapi !== 'cli')) {
+                                const major = p.version.split('.').slice(0, 2).join('.');
+                                const existing = seen.get(major);
+                                if (!existing || (p.sapi === 'fpm-fcgi' && existing.sapi !== 'fpm-fcgi')) {
+                                  seen.set(major, p);
+                                }
+                              }
+                              return [...seen.entries()].map(([major, p]) => {
+                                const addr = p.listen_addr || '127.0.0.1:9000';
+                                return (
+                                  <option key={major} value={addr}>
+                                    PHP {major}{p.sapi === 'fpm-fcgi' ? ' (FPM)' : ''}
+                                  </option>
+                                );
+                              });
+                            })()}
                             <option value="__custom__">Custom...</option>
                           </select>
                         )}
