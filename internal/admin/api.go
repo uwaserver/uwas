@@ -2895,6 +2895,23 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 		return fmt.Errorf("redirect type requires a target URL")
 	}
 
+	// Root path: must be under web root (prevent serving /etc, /root, etc.)
+	if d.Root != "" && d.Type != "redirect" {
+		webRoot := "/var/www"
+		if s != nil {
+			s.configMu.RLock()
+			if s.config.Global.WebRoot != "" {
+				webRoot = s.config.Global.WebRoot
+			}
+			s.configMu.RUnlock()
+		}
+		absRoot, _ := filepath.Abs(d.Root)
+		absWebRoot, _ := filepath.Abs(webRoot)
+		if !strings.HasPrefix(absRoot, absWebRoot) {
+			return fmt.Errorf("root path must be under %s (got %s)", webRoot, d.Root)
+		}
+	}
+
 	// Cache TTL sanity
 	if d.Cache.TTL < 0 {
 		return fmt.Errorf("cache TTL cannot be negative")
