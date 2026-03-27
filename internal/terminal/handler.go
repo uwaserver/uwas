@@ -60,6 +60,8 @@ func UpgradeWebSocket(w http.ResponseWriter, r *http.Request) (*WSConn, error) {
 	return &WSConn{rwc: conn, reader: bufrw, writer: conn}, nil
 }
 
+const maxWSPayload = 64 * 1024 // 64KB max frame to prevent OOM
+
 func (c *WSConn) ReadMessage() ([]byte, error) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(c.reader, header); err != nil {
@@ -85,6 +87,10 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 		payloadLen = int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
 	}
 
+	if payloadLen > maxWSPayload {
+		return nil, fmt.Errorf("frame too large: %d bytes", payloadLen)
+	}
+
 	var mask [4]byte
 	if masked {
 		if _, err := io.ReadFull(c.reader, mask[:]); err != nil {
@@ -102,7 +108,8 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 		}
 	}
 
-	if opcode == 0x8 { // close frame
+	if opcode == 0x8 { // close frame — echo back per RFC 6455
+		c.WriteText(payload) // echo close frame body (status code)
 		return nil, io.EOF
 	}
 	return payload, nil

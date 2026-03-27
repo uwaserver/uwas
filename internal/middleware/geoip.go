@@ -154,7 +154,7 @@ func lookupCountry(ip string, db map[string]string, cache *geoCache) string {
 		return country
 	}
 
-	// Try local DB first
+	// Try local DB first (fast, no network)
 	if len(db) > 0 {
 		parsed := net.ParseIP(ip)
 		for cidr, country := range db {
@@ -169,12 +169,14 @@ func lookupCountry(ip string, db map[string]string, cache *geoCache) string {
 		}
 	}
 
-	// Fallback: external API (rate-limited, best-effort)
-	country := lookupExternal(ip)
-	if country != "" {
-		cache.set(ip, country)
-	}
-	return country
+	// Cache miss + no local DB: fetch async, allow this request through.
+	// Next request from this IP will use the cached result.
+	go func() {
+		if country := lookupExternal(ip); country != "" {
+			cache.set(ip, country)
+		}
+	}()
+	return "" // allow through on first request (default-allow until cached)
 }
 
 func lookupExternal(ip string) string {

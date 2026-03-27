@@ -271,9 +271,19 @@ func (m *Manager) monitorProcess(app *appProcess, logFile *os.File) {
 		m.logger.Warn("app process exited", "domain", app.domain, "error", waitErr)
 	}
 
-	// Auto-restart after backoff
+	// Auto-restart after backoff (re-check stopCh to avoid zombie restart)
 	if app.autoRestart {
-		time.Sleep(2 * time.Second)
+		select {
+		case <-app.stopCh:
+			return // stopped during backoff
+		case <-time.After(2 * time.Second):
+		}
+		// Final check before restart
+		select {
+		case <-app.stopCh:
+			return
+		default:
+		}
 		if err := m.startProcess(app); err != nil {
 			if m.logger != nil {
 				m.logger.Error("app auto-restart failed", "domain", app.domain, "error", err)
