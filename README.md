@@ -75,6 +75,13 @@ One binary. Zero hassle.
 curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/install.sh | sh
 ```
 
+### Update
+
+```bash
+# One-line update (detects current version, downloads latest, restarts service)
+curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/update.sh | sh
+```
+
 Or download from [GitHub Releases](https://github.com/uwaserver/uwas/releases).
 
 ### Build from Source
@@ -94,12 +101,18 @@ uwas
 # Or with a specific config
 uwas serve -c uwas.yaml
 
-# Install as systemd service
+# Install as systemd service (auto-start on boot)
 sudo uwas install
 sudo systemctl start uwas
 
-# Dashboard is at
+# Dashboard
 # http://your-ip:9443/_uwas/dashboard/
+
+# CLI commands (API key auto-loaded from ~/.uwas/.env)
+uwas status
+uwas php list
+uwas domain list
+uwas doctor
 ```
 
 ## Configuration
