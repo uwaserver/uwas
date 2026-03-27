@@ -15,13 +15,14 @@ const (
 
 // CachedResponse holds a complete HTTP response for caching.
 type CachedResponse struct {
-	StatusCode int
-	Headers    http.Header
-	Body       []byte
-	Created    time.Time
-	TTL        time.Duration
-	GraceTTL   time.Duration
-	Tags       []string
+	StatusCode  int
+	Headers     http.Header
+	Body        []byte
+	Created     time.Time
+	TTL         time.Duration
+	GraceTTL    time.Duration
+	Tags        []string
+	ESITemplate bool // true if Body contains ESI tags needing assembly on serve
 }
 
 // Size returns the approximate memory size of this entry in bytes.
@@ -111,6 +112,13 @@ func (r *CachedResponse) Serialize() []byte {
 	buf = append(buf, b4...)
 	buf = append(buf, r.Body...)
 
+	// ESI flag (1 byte, backward compatible extension)
+	if r.ESITemplate {
+		buf = append(buf, 1)
+	} else {
+		buf = append(buf, 0)
+	}
+
 	return buf
 }
 
@@ -166,6 +174,12 @@ func Deserialize(data []byte) (*CachedResponse, error) {
 		return nil, errCorrupt
 	}
 	r.Body = append([]byte(nil), data[pos:pos+bodyLen]...)
+	pos += bodyLen
+
+	// ESI flag (backward compatible: missing = false)
+	if pos < len(data) {
+		r.ESITemplate = data[pos] == 1
+	}
 
 	return r, nil
 }

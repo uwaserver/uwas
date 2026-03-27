@@ -76,6 +76,39 @@ func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
 	}
 }
 
+// GetByKey looks up a cache entry by explicit key (for ESI fragments).
+func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
+	resp, status := e.memory.Get(key)
+	if resp != nil {
+		return resp, status
+	}
+	if e.disk != nil {
+		resp, err := e.disk.Get(key)
+		if err == nil && resp != nil {
+			if resp.IsFresh() || resp.IsStale() {
+				e.memory.Set(key, resp)
+				if resp.IsFresh() {
+					return resp, StatusHit
+				}
+				return resp, StatusStale
+			}
+		}
+	}
+	return nil, StatusMiss
+}
+
+// SetByKey stores a response by explicit key (for ESI fragments).
+func (e *Engine) SetByKey(key string, resp *CachedResponse) {
+	e.memory.Set(key, resp)
+	if e.disk != nil {
+		go func() {
+			if err := e.disk.Set(key, resp); err != nil {
+				e.logger.Warn("disk cache write failed", "key", key, "error", err)
+			}
+		}()
+	}
+}
+
 // PurgeByTag removes entries matching tags from both L1 and L2.
 func (e *Engine) PurgeByTag(tags ...string) int {
 	return e.memory.PurgeByTag(tags...)
