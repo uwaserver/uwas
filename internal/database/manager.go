@@ -615,34 +615,59 @@ func InstallMySQL() (string, error) {
 }
 
 func runMySQL(sql string) (string, error) {
-	// Ensure socket directory exists (common issue after reboot)
-	for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
-		osMkdirAllFn(dir, 0755)
-		execCommandFn("chown", "mysql:mysql", dir).Run()
+	return runMySQLOnHost(sql, "", 0, "")
+}
+
+// RunMySQLOnDocker runs SQL on a Docker container's MySQL via TCP port.
+func RunMySQLOnDocker(sql, containerName string, port int, rootPass string) (string, error) {
+	return runMySQLOnHost(sql, fmt.Sprintf("127.0.0.1:%d", port), port, rootPass)
+}
+
+func runMySQLOnHost(sql, host string, port int, password string) (string, error) {
+	// Ensure socket directory exists for native installs
+	if host == "" {
+		for _, dir := range []string{"/run/mysqld", "/var/run/mysqld"} {
+			osMkdirAllFn(dir, 0755)
+			execCommandFn("chown", "mysql:mysql", dir).Run()
+		}
 	}
 
-	// Try mariadb client first (preferred on modern Ubuntu), then mysql
 	for _, client := range []string{"mariadb", "mysql"} {
 		bin, err := execLookPathFn(client)
 		if err != nil {
 			continue
 		}
 
-		// Method 1: Direct as root (unix_socket auth)
+		// Docker/remote: connect via TCP with password
+		if host != "" && password != "" {
+			args := []string{"-u", "root", "-p" + password, "-h", "127.0.0.1",
+				"--batch", "--skip-column-names", "-e", sql}
+			if port > 0 {
+				args = append(args, "-P", fmt.Sprintf("%d", port))
+			}
+			cmd := execCommandFn(bin, args...)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				return string(out), nil
+			}
+			return string(out), fmt.Errorf("%s TCP error: %w — %s", client, err, string(out))
+		}
+
+		// Native: direct as root (unix_socket auth)
 		cmd := execCommandFn(bin, "-u", "root", "--batch", "--skip-column-names", "-e", sql)
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil
 		}
 
-		// Method 2: With sudo (if not running as root)
+		// Native: with sudo
 		cmd = execCommandFn("sudo", bin, "--batch", "--skip-column-names", "-e", sql)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil
 		}
 
-		// Method 3: Via socket explicitly
+		// Native: via socket explicitly
 		for _, sock := range []string{"/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"} {
 			if _, statErr := osStatFn(sock); statErr != nil {
 				continue

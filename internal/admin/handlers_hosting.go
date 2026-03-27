@@ -1092,6 +1092,57 @@ func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "removed"})
 }
 
+func (s *Server) handleDockerDBListDatabases(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	dbs, err := database.DockerDBListDatabases(name)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if dbs == nil {
+		dbs = []database.DBInfo{}
+	}
+	jsonResponse(w, dbs)
+}
+
+func (s *Server) handleDockerDBCreateDatabase(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		DBName   string `json:"name"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.DBName == "" {
+		jsonError(w, "database name required", http.StatusBadRequest)
+		return
+	}
+	result, err := database.DockerDBCreateDatabase(name, req.DBName, req.User, req.Password)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("docker_db.create_database", name+"/"+req.DBName, requestIP(r), true)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	db := r.PathValue("db")
+	if err := database.DockerDBDropDatabase(name, db); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("docker_db.drop_database", name+"/"+db, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "dropped"})
+}
+
 // ============ DNS Checker ============
 
 func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
