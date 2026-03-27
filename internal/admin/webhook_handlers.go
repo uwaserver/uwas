@@ -77,6 +77,7 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	id := r.PathValue("id")
 	if id == "" {
 		jsonError(w, "webhook ID required", http.StatusBadRequest)

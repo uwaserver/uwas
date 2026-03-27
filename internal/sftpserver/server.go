@@ -314,6 +314,13 @@ func (sess *sftpSession) safePath(p string) string {
 	if !strings.HasPrefix(absFull, absRoot) {
 		return ""
 	}
+	// Resolve symlinks to prevent chroot escape via symlink
+	if realPath, err := filepath.EvalSymlinks(absFull); err == nil {
+		realRoot, _ := filepath.EvalSymlinks(sess.root)
+		if realRoot != "" && !strings.HasPrefix(realPath, realRoot) {
+			return "" // symlink points outside chroot
+		}
+	}
 	return absFull
 }
 

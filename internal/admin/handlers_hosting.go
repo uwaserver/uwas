@@ -599,6 +599,7 @@ func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Schedule string `json:"schedule"`
@@ -666,6 +667,7 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	numStr := r.PathValue("number")
 	var num int
 	fmt.Sscanf(numStr, "%d", &num)
@@ -689,6 +691,7 @@ func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	if err := firewall.Disable(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -745,6 +748,7 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	domain := r.PathValue("domain")
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
@@ -781,6 +785,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	info, err := selfupdate.CheckUpdate(build.Version)
 	if err != nil {
 		jsonError(w, "check failed: "+err.Error(), http.StatusInternalServerError)
@@ -1379,6 +1384,7 @@ func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	domain := r.PathValue("domain")
 	recordID := r.PathValue("id")
 	cf := s.getDNSProvider()

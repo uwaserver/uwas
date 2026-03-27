@@ -146,11 +146,25 @@ func validatePort(port string) error {
 }
 
 // AllowPort adds a ufw allow rule.
+func validateProto(proto string) error {
+	if proto == "" {
+		return nil
+	}
+	valid := map[string]bool{"tcp": true, "udp": true}
+	if !valid[strings.ToLower(proto)] {
+		return fmt.Errorf("invalid protocol %q — must be tcp or udp", proto)
+	}
+	return nil
+}
+
 func AllowPort(port, proto string) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
 	if err := validatePort(port); err != nil {
+		return err
+	}
+	if err := validateProto(proto); err != nil {
 		return err
 	}
 	target := port
@@ -166,6 +180,9 @@ func DenyPort(port, proto string) error {
 		return fmt.Errorf("ufw not installed")
 	}
 	if err := validatePort(port); err != nil {
+		return err
+	}
+	if err := validateProto(proto); err != nil {
 		return err
 	}
 	if protectedPorts[port] {

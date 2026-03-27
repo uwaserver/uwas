@@ -471,7 +471,7 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 		CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';
 		GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';
 		FLUSH PRIVILEGES;
-	`, backtick(name), user, host, escapeSQL(password), backtick(name), user, host)
+	`, backtick(name), escapeSQL(user), escapeSQL(host), escapeSQL(password), backtick(name), escapeSQL(user), escapeSQL(host))
 
 	_, err := runMySQLFn(sql)
 	if err != nil {
@@ -493,7 +493,7 @@ func DropDatabase(name, user, host string) error {
 		DROP DATABASE IF EXISTS %s;
 		DROP USER IF EXISTS '%s'@'%s';
 		FLUSH PRIVILEGES;
-	`, backtick(name), user, host)
+	`, backtick(name), escapeSQL(user), escapeSQL(host))
 
 	_, err := runMySQLFn(sql)
 	return err
@@ -504,7 +504,7 @@ func ChangePassword(user, host, newPassword string) error {
 	if host == "" {
 		host = "localhost"
 	}
-	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", user, host, newPassword)
+	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", escapeSQL(user), escapeSQL(host), escapeSQL(newPassword))
 	_, err := runMySQLFn(sql)
 	return err
 }
