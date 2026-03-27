@@ -25,8 +25,6 @@ var (
 	netDialTimeout = func(network, address string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout(network, address, timeout)
 	}
-	// osReadFile wraps os.ReadFile for testability.
-	osReadFileHook = os.ReadFile
 	// osMkdirAll wraps os.MkdirAll for testability.
 	osMkdirAllHook = os.MkdirAll
 	// osWriteFileHook wraps os.WriteFile for testability.

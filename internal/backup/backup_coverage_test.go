@@ -716,7 +716,7 @@ func TestCreateBackupWithDBDump(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if hdr.Name == "databases/all-databases.sql" {
+		if hdr.Name == "databases/native-all-databases.sql" {
 			found = true
 			content, _ := io.ReadAll(tr)
 			if string(content) != "-- Full DB dump" {
@@ -725,7 +725,7 @@ func TestCreateBackupWithDBDump(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("databases/all-databases.sql not found in archive")
+		t.Error("databases/native-all-databases.sql not found in archive")
 	}
 }
 

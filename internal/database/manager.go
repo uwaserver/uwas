@@ -562,18 +562,17 @@ func ImportDatabase(name string, sqlData []byte) error {
 		}
 		cmd := execCommandFn(bin, "-u", "root", name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
-		out, err := cmd.CombinedOutput()
+		_, err = cmd.CombinedOutput()
 		if err == nil {
 			return nil
 		}
 		// Try with sudo
 		cmd = execCommandFn("sudo", bin, name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
-		out, err = cmd.CombinedOutput()
+		_, err = cmd.CombinedOutput()
 		if err == nil {
 			return nil
 		}
-		_ = out
 	}
 	return fmt.Errorf("mysql/mariadb client not found or import failed")
 }

@@ -24,10 +24,6 @@ export function setTOTPCode(code: string) {
   localStorage.setItem('uwas_totp_verified', 'true');
 }
 
-export function isTOTPVerified() {
-  return localStorage.getItem('uwas_totp_verified') === 'true';
-}
-
 // Pin code for destructive operations
 let pinCode = '';
 export function setPinCode(pin: string) { pinCode = pin; }
@@ -126,16 +122,6 @@ export interface DomainData {
   root: string;
 }
 
-export interface ConfigData {
-  global: {
-    worker_count: string;
-    max_connections: number;
-    log_level: string;
-    log_format: string;
-  };
-  domain_count: number;
-}
-
 export interface LogEntry {
   time: string;
   method: string;
@@ -189,7 +175,6 @@ export const fetchHealth = () => api<HealthData>('/api/v1/health');
 export const fetchSystem = () => api<SystemInfo>('/api/v1/system');
 export const fetchStats = () => api<StatsData>('/api/v1/stats');
 export const fetchDomains = () => api<DomainData[]>('/api/v1/domains');
-export const fetchConfig = () => api<ConfigData>('/api/v1/config');
 export const fetchMetrics = () => fetch(`${BASE}/api/v1/metrics`, {
   headers: token ? { Authorization: `Bearer ${token}` } : {},
 }).then(r => r.text());
@@ -216,33 +201,6 @@ export interface CacheStatsData {
   }[];
 }
 export const fetchCacheStats = () => api<CacheStatsData>('/api/v1/cache/stats');
-
-export interface MonitorResult {
-  host: string;
-  status: string;
-  latency_ms: number;
-  checks: { timestamp: string; status: string; latency_ms: number }[];
-  uptime_percent: number;
-}
-export const fetchMonitor = () => api<MonitorResult[]>('/api/v1/monitor');
-
-export interface AlertData {
-  time: string;
-  level: string;
-  type: string;
-  host: string;
-  message: string;
-}
-export const fetchAlerts = () => api<AlertData[]>('/api/v1/alerts');
-
-export interface MCPTool {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
-export const fetchMCPTools = () => api<MCPTool[]>('/api/v1/mcp/tools');
-export const callMCPTool = (name: string, input?: Record<string, unknown>) =>
-  api<unknown>('/api/v1/mcp/call', { method: 'POST', body: JSON.stringify({ name, input: input ?? {} }) });
 
 export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
 export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
@@ -555,8 +513,6 @@ export interface AdminUserCreated extends AdminUser { password: string; api_key:
 export const fetchAdminUsers = () => api<AdminUser[]>('/api/v1/auth/users');
 export const createAdminUser = (user: { username: string; password: string; role: string; email?: string; domains?: string[] }) =>
   api<AdminUserCreated>('/api/v1/auth/users', { method: 'POST', body: JSON.stringify(user) });
-export const updateAdminUser = (username: string, updates: Partial<AdminUser>) =>
-  api<AdminUser>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'PUT', body: JSON.stringify(updates) });
 export const deleteAdminUser = (username: string) => api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
 export const changeAdminPassword = (username: string, password: string) =>
   api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ password }) });
@@ -566,19 +522,14 @@ export const regenAdminApiKey = (username: string) =>
 // Bandwidth
 export interface BandwidthStatus { host: string; monthly_bytes: number; daily_bytes: number; monthly_limit: number; daily_limit: number; monthly_pct: number; daily_pct: number; blocked: boolean; throttled: boolean; }
 export const fetchBandwidth = () => api<BandwidthStatus[]>('/api/v1/bandwidth');
-export const fetchBandwidthHost = (host: string) => api<BandwidthStatus>(`/api/v1/bandwidth/${encodeURIComponent(host)}`);
 export const resetBandwidth = (host: string) => api<{ status: string }>(`/api/v1/bandwidth/${encodeURIComponent(host)}/reset`, { method: 'POST' });
 
 // Cron Monitoring
 export interface CronExecution { id: string; domain: string; command: string; schedule: string; started_at: string; ended_at: string; duration: number; exit_code: number; success: boolean; output: string; error?: string; }
 export interface CronJobStatus { domain: string; command: string; schedule: string; last_run?: CronExecution; last_success?: CronExecution; last_failure?: CronExecution; success_count: number; failure_count: number; consecutive_fail: number; history: CronExecution[]; }
 export const fetchCronMonitor = () => api<CronJobStatus[]>('/api/v1/cron/monitor');
-export const fetchCronMonitorHost = (host: string) => api<CronJobStatus[]>(`/api/v1/cron/monitor/${encodeURIComponent(host)}`);
 export const executeCron = (domain: string, schedule: string, command: string) =>
   api<CronExecution>('/api/v1/cron/execute', { method: 'POST', body: JSON.stringify({ domain, schedule, command }) });
-
-// Domain Debug
-export const debugDomain = (host: string) => api<Record<string, any>>(`/api/v1/domains/${encodeURIComponent(host)}/debug`);
 
 // DNS
 export interface DNSResult { domain: string; a: string[]; aaaa: string[]; cname?: string; mx: string[]; ns: string[]; txt: string[]; points_here: boolean; server_ips: string[]; error?: string; }
@@ -592,18 +543,11 @@ export const updateDNSRecord = (domain: string, id: string, rec: Partial<DNSReco
 export const deleteDNSRecord = (domain: string, id: string) => api<{ status: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${id}`, { method: 'DELETE' });
 export const syncDNS = (domain: string) => api<{ status: string; ip: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/sync`, { method: 'POST' });
 
-// Notification test
-export const testNotification = (channel: { type: string; config: Record<string, string> }) =>
-  api<{ status: string }>('/api/v1/notify/test', { method: 'POST', body: JSON.stringify(channel) });
-
 // Security
 export interface SecurityStats { waf_blocked: number; bot_blocked: number; rate_blocked: number; hotlink_blocked: number; total_blocked: number; }
 export interface BlockedRequest { time: string; ip: string; path: string; reason: string; ua: string; }
 export const fetchSecurityStats = () => api<SecurityStats>('/api/v1/security/stats');
 export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked');
-
-// System resources
-export const fetchSystemResources = () => api<{ cpus: number; goroutines: number; memory_alloc_mb: number; memory_sys_mb: number; disk_used_mb?: number }>('/api/v1/system/resources');
 
 // Domain health
 export interface DomainHealth { host: string; status: string; code: number; ms: number; error?: string; }
@@ -711,20 +655,6 @@ export const wpOptimizeDB = (domain: string) =>
 
 export type DomainStatsMap = Record<string, { requests: number; bytes_out: number; status_2xx: number; status_3xx: number; status_4xx: number; status_5xx: number }>;
 export const fetchDomainStats = () => api<DomainStatsMap>('/api/v1/stats/domains');
-
-// ── Per-domain Backup ─────────────────────────────────
-
-export const createDomainBackup = (domain: string, provider?: string) =>
-  api<BackupInfo>('/api/v1/backups/domain', { method: 'POST', body: JSON.stringify({ domain, provider: provider || 'local' }) });
-
-// ── SSE Logs Stream ───────────────────────────────────
-
-export function sseLogsURL(domain?: string): string {
-  const params = new URLSearchParams();
-  if (token) params.set('token', token);
-  if (domain) params.set('domain', domain);
-  return `${BASE}/api/v1/sse/logs?${params.toString()}`;
-}
 
 // ── 2FA / TOTP ────────────────────────────────────────
 
