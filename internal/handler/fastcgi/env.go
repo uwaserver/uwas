@@ -61,6 +61,10 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		if upper == "CONTENT_TYPE" || upper == "CONTENT_LENGTH" {
 			continue
 		}
+		// Block PHP_ADMIN_VALUE/PHP_VALUE injection via HTTP headers
+		if strings.HasPrefix(upper, "PHP_") {
+			continue
+		}
 		env["HTTP_"+upper] = strings.Join(vals, ", ")
 	}
 
