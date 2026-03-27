@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, ChevronDown, ChevronUp, Bug, FileText, Users, Key, Lock, Database, Trash2 } from 'lucide-react';
 import {
-  fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus,
+  fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus, fetchDockerDBs,
+  type DockerDBContainer,
   fetchWPSites, wpUpdateCore, wpUpdatePlugins, wpPluginAction, wpFixPermissions,
   wpToggleDebug, wpErrorLog, wpListUsers, wpChangePassword, wpSecurityStatus,
   wpHarden, wpOptimizeDB,
@@ -22,6 +23,7 @@ export default function WordPress() {
   const [status, setStatus] = useState<WPInstallStatus | null>(null);
   const [error, setError] = useState('');
   const [mysqlOk, setMysqlOk] = useState(false);
+  const [dockerDBs, setDockerDBs] = useState<DockerDBContainer[]>([]);
   const [copied, setCopied] = useState('');
   const [expandedSite, setExpandedSite] = useState('');
   const [actionLoading, setActionLoading] = useState('');
@@ -54,6 +56,7 @@ export default function WordPress() {
       if (available.length > 0) setSelectedDomain(available[0].host);
     }).catch(() => {});
     fetchDBStatus().then(s => setMysqlOk(s?.installed && s?.running)).catch(() => {});
+    fetchDockerDBs().then(r => setDockerDBs((r?.containers ?? []).filter(c => c.running))).catch(() => {});
   }, [loadSites]);
 
   const phpDomains = domains.filter(d => d.type === 'php');
@@ -516,16 +519,21 @@ export default function WordPress() {
                   PHP domain without WP {installableDomains.length > 0 ? `(${installableDomains.length} available)` : '— all PHP domains already have WordPress'}
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <span className={`h-2.5 w-2.5 rounded-full ${mysqlOk ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                <span className={mysqlOk ? 'text-emerald-400' : 'text-red-400'}>
-                  MySQL/MariaDB {mysqlOk ? 'running' : '— install from Database page'}
-                </span>
-              </div>
+              {(() => {
+                const hasDB = mysqlOk || dockerDBs.filter(c => c.engine !== 'postgresql').length > 0;
+                return (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className={`h-2.5 w-2.5 rounded-full ${hasDB ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <span className={hasDB ? 'text-emerald-400' : 'text-red-400'}>
+                      {mysqlOk ? 'MySQL/MariaDB running' : dockerDBs.filter(c => c.engine !== 'postgresql').length > 0 ? `Docker DB available (${dockerDBs.filter(c => c.engine !== 'postgresql').map(c => c.name).join(', ')})` : 'MySQL/MariaDB — install from Database page'}
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
-          {installableDomains.length > 0 && mysqlOk && (
+          {installableDomains.length > 0 && (mysqlOk || dockerDBs.filter(c => c.engine !== 'postgresql').length > 0) && (
             <div className="rounded-lg border border-border bg-card p-5">
               <h2 className="text-sm font-semibold text-card-foreground mb-4">Install WordPress</h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -538,8 +546,20 @@ export default function WordPress() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs text-muted-foreground">Database Host</label>
-                  <input value={dbHost} onChange={e => setDbHost(e.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500" placeholder="localhost" />
+                  {dockerDBs.length > 0 ? (
+                    <select value={dbHost} onChange={e => setDbHost(e.target.value)}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500">
+                      {mysqlOk && <option value="localhost">localhost (Native MariaDB/MySQL)</option>}
+                      {dockerDBs.filter(c => c.engine !== 'postgresql').map(c => (
+                        <option key={c.name} value={`127.0.0.1:${c.port}`}>
+                          {c.name} (Docker {c.engine} — port {c.port})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input value={dbHost} onChange={e => setDbHost(e.target.value)}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500" placeholder="localhost" />
+                  )}
                 </div>
               </div>
               <button onClick={handleInstall} disabled={installing || !selectedDomain}
