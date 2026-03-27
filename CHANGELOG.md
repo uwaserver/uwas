@@ -5,6 +5,32 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.22] - 2026-03-27
+
+### New Features
+
+- **update.sh** — One-line update script: detects version, downloads latest, replaces binary, auto-restarts systemd service
+- **CLI auto-loads .env** — `uwas php list`, `uwas status` etc. now work without manually setting UWAS_ADMIN_KEY (auto-loads from `~/.uwas/.env`)
+
+### Fixes
+
+- **WP-CLI + PHP 8.5** — Separated stdout/stderr so deprecation warnings don't corrupt JSON output. Users, plugins, themes now display correctly.
+- **Blocked unknown domains** — Now persisted to `blocked-hosts.txt`, survive restart
+- **Settings save** — 15+ missing config keys added (multi-user auth, ACME, cache, backup, alerting)
+- **PHP domains missing from PHP page** — `RegisterExistingDomain()` ensures config-based PHP domains appear after restart
+- **PHP Config dropdown** — Deduplicated versions, input validation, preset descriptions
+- **WordPress install** — Docker DB containers shown in host dropdown
+- **Clone/staging** — Auto-creates domain config after cloning
+- **Doctor** — Detects and auto-stops Apache/Nginx conflicts
+- **Services** — PHP 8.1-8.5 FPM, Docker added; Redis/Postfix/Dovecot removed
+
+### Improvements
+
+- **Settings layout** — Toggles in highlighted row, fields in 2-column grid
+- **About page** — Version, license, GitHub links, tech stack
+- **Docker DB management** — Create/list/drop databases inside containers, export/import SQL
+- **Backup includes Docker DBs** — All running Docker MySQL/MariaDB dumped in backup archive
+
 ## [0.0.20] - 2026-03-27
 
 ### New Features
