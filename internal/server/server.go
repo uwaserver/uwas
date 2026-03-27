@@ -599,7 +599,7 @@ func (s *Server) Start() error {
 		if err := s.startHTTPS(); err != nil {
 			return err
 		}
-		go s.tlsMgr.ObtainCerts(s.ctx)
+		s.logger.SafeGo("tls.obtain", func() { s.tlsMgr.ObtainCerts(s.ctx) })
 		s.tlsMgr.StartRenewal(s.ctx)
 
 		// HTTP/3 (QUIC) listener on same port
@@ -612,7 +612,7 @@ func (s *Server) Start() error {
 
 	// Uptime monitor
 	if s.monitor != nil {
-		go s.monitor.Start(s.ctx)
+		s.logger.SafeGo("monitor", func() { s.monitor.Start(s.ctx) })
 	}
 
 	// Backup scheduler

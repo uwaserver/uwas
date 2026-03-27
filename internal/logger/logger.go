@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 )
 
 type Logger struct {
@@ -52,6 +53,33 @@ type logWriter struct {
 func (w *logWriter) Write(p []byte) (int, error) {
 	w.logger.Log(context.Background(), w.level, strings.TrimRight(string(p), "\n"))
 	return len(p), nil
+}
+
+// SafeGo runs fn in a new goroutine with panic recovery.
+// If fn panics, the panic is logged and fn is restarted after 1 second.
+// If fn returns normally, the goroutine exits.
+func (l *Logger) SafeGo(name string, fn func()) {
+	go func() {
+		for {
+			panicked := true
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						l.Error("goroutine panicked, restarting in 1s",
+							"goroutine", name,
+							"panic", r,
+						)
+					}
+				}()
+				fn()
+				panicked = false
+			}()
+			if !panicked {
+				return
+			}
+			time.Sleep(time.Second)
+		}
+	}()
 }
 
 func parseLevel(s string) slog.Level {
