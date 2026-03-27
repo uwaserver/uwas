@@ -2,6 +2,8 @@ package admin
 
 import (
 	"net/http"
+
+	"github.com/uwaserver/uwas/internal/terminal"
 )
 
 func (s *Server) handleAppList(w http.ResponseWriter, r *http.Request) {
@@ -66,4 +68,9 @@ func (s *Server) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.RecordAudit("app.restart", domain, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "restarted", "domain": domain})
+}
+
+// terminalHandler returns the web terminal HTTP handler.
+func (s *Server) terminalHandler() http.Handler {
+	return terminal.New(s.logger)
 }

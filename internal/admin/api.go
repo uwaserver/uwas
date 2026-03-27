@@ -225,6 +225,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/stop", s.handleAppStop)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/restart", s.handleAppRestart)
 
+	// Web terminal (WebSocket → PTY)
+	s.mux.Handle("GET /api/v1/terminal", s.terminalHandler())
+
 	// Installation tasks (global queue)
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleTaskList)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskGet)
