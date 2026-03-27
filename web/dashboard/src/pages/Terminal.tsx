@@ -31,10 +31,12 @@ export default function TerminalPage() {
       });
     };
 
-    ws.onerror = () => setError('Connection error');
-    ws.onclose = () => {
+    ws.onerror = () => setError('Connection error — check server logs. Make sure you are on Linux and authenticated.');
+    ws.onclose = (e) => {
       setConnected(false);
       wsRef.current = null;
+      if (e.code === 1006) setError('Connection lost (abnormal close). Server may have rejected the WebSocket upgrade.');
+      else if (e.code !== 1000 && e.code !== 1005) setError(`Connection closed: code ${e.code} ${e.reason || ''}`);
     };
   }, []);
 
