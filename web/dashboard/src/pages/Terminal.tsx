@@ -31,7 +31,16 @@ export default function TerminalPage() {
       });
     };
 
-    ws.onerror = () => setError('Connection error — check server logs. Make sure you are on Linux and authenticated.');
+    ws.onerror = async () => {
+      // Debug: try a normal HTTP request to see if auth works
+      try {
+        const res = await fetch(url.replace('ws', 'http'));
+        const text = await res.text();
+        setError(`Connection error (HTTP ${res.status}: ${text.slice(0, 200)})`);
+      } catch {
+        setError('Connection error — server unreachable or WebSocket blocked');
+      }
+    };
     ws.onclose = (e) => {
       setConnected(false);
       wsRef.current = null;
