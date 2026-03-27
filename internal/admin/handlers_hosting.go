@@ -1143,6 +1143,36 @@ func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, map[string]string{"status": "dropped"})
 }
 
+func (s *Server) handleDockerDBExport(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	db := r.PathValue("db")
+	dump, err := database.DockerDBExport(name, db)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/sql")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_%s.sql", name, db))
+	w.Write([]byte(dump))
+}
+
+func (s *Server) handleDockerDBImport(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	db := r.PathValue("db")
+	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB max
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := database.DockerDBImport(name, db, string(data)); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("docker_db.import", name+"/"+db, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "imported"})
+}
+
 // ============ DNS Checker ============
 
 func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {

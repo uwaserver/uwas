@@ -289,6 +289,49 @@ func DockerDBDropDatabase(containerName, dbName string) error {
 	return err
 }
 
+// DockerDBExport exports a database from a Docker container as SQL dump.
+func DockerDBExport(containerName, dbName string) (string, error) {
+	fullName := containerName
+	if !strings.HasPrefix(fullName, containerPrefix) {
+		fullName = containerPrefix + containerName
+	}
+	cmd := dockerExecCommandFn("docker", "exec", fullName, "sh", "-c",
+		fmt.Sprintf(`mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s 2>/dev/null || mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s 2>/dev/null`,
+			containerName_safe(dbName), containerName_safe(dbName)))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("docker mysqldump: %w", err)
+	}
+	return string(out), nil
+}
+
+// DockerDBImport imports SQL into a database inside a Docker container.
+func DockerDBImport(containerName, dbName, sql string) error {
+	fullName := containerName
+	if !strings.HasPrefix(fullName, containerPrefix) {
+		fullName = containerPrefix + containerName
+	}
+	cmd := dockerExecCommandFn("docker", "exec", "-i", fullName, "sh", "-c",
+		fmt.Sprintf(`mysql -u root -p"$MYSQL_ROOT_PASSWORD" %s 2>/dev/null || mariadb -u root -p"$MYSQL_ROOT_PASSWORD" %s 2>/dev/null`,
+			containerName_safe(dbName), containerName_safe(dbName)))
+	cmd.Stdin = strings.NewReader(sql)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker import: %w — %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func containerName_safe(name string) string {
+	// Basic sanitization for shell safety
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, name)
+}
+
 // RemoveDockerDB stops and removes a container.
 func RemoveDockerDB(name string) error {
 	// Stop first (ignore error if already stopped)
