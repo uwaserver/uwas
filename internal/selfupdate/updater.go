@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -174,4 +176,34 @@ func Update(downloadURL string) error {
 
 	osRemoveFn(backup)
 	return nil
+}
+
+// UpdateAndRestart downloads the update, replaces the binary, and restarts
+// the process using syscall.Exec (replaces current process in-place).
+func UpdateAndRestart(downloadURL string) error {
+	if err := Update(downloadURL); err != nil {
+		return err
+	}
+	return RestartSelf()
+}
+
+// RestartSelf replaces the current process with a fresh exec of the same binary.
+// On systemd this triggers a clean restart. On bare metal it re-execs.
+func RestartSelf() error {
+	exe, err := osExecutableFn()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	exe, _ = evalSymlinksFn(exe)
+
+	// Try systemctl restart first (if running as service)
+	if runtimeGOOS == "linux" {
+		if out, err := exec.Command("systemctl", "restart", "uwas").CombinedOutput(); err == nil {
+			_ = out
+			return nil
+		}
+	}
+
+	// Fallback: re-exec self with same args
+	return syscall.Exec(exe, os.Args, os.Environ())
 }
