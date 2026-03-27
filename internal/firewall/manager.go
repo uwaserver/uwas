@@ -109,10 +109,49 @@ func parseUFWRule(line string) Rule {
 	return r
 }
 
+// protectedPorts are ports that cannot be denied (would lock out the server).
+var protectedPorts = map[string]bool{
+	"80": true, "443": true, "22": true,
+}
+
+// SetAdminPort adds the admin port to protected list so it can't be denied.
+func SetAdminPort(port string) {
+	if port != "" {
+		// Extract port number from ":9443" or "0.0.0.0:9443"
+		if i := strings.LastIndex(port, ":"); i >= 0 {
+			port = port[i+1:]
+		}
+		protectedPorts[port] = true
+	}
+}
+
+// validatePort checks that port is a valid number or range, not empty, not "any".
+func validatePort(port string) error {
+	if port == "" {
+		return fmt.Errorf("port is required")
+	}
+	p := strings.ToLower(strings.TrimSpace(port))
+	if p == "any" || p == "all" || p == "*" {
+		return fmt.Errorf("cannot use '%s' as port — specify a port number", port)
+	}
+	// Allow ranges like "8000:8100"
+	for _, part := range strings.Split(p, ":") {
+		for _, ch := range part {
+			if ch < '0' || ch > '9' {
+				return fmt.Errorf("invalid port: %s", port)
+			}
+		}
+	}
+	return nil
+}
+
 // AllowPort adds a ufw allow rule.
 func AllowPort(port, proto string) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
+	}
+	if err := validatePort(port); err != nil {
+		return err
 	}
 	target := port
 	if proto != "" {
@@ -121,10 +160,16 @@ func AllowPort(port, proto string) error {
 	return execCommandFn("ufw", "allow", target).Run()
 }
 
-// DenyPort adds a ufw deny rule.
+// DenyPort adds a ufw deny rule. Cannot deny protected ports (80, 443, 22, admin).
 func DenyPort(port, proto string) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
+	}
+	if err := validatePort(port); err != nil {
+		return err
+	}
+	if protectedPorts[port] {
+		return fmt.Errorf("cannot deny port %s — it is required for server operation (HTTP/HTTPS/SSH/Admin)", port)
 	}
 	target := port
 	if proto != "" {

@@ -386,7 +386,7 @@ func TestDenyPort_Success(t *testing.T) {
 	execLookPathFn = fakeLookPath(true)
 	execCommandFn = fakeExecCommand("", false)
 
-	err := DenyPort("22", "tcp")
+	err := DenyPort("3306", "tcp")
 	if err != nil {
 		t.Errorf("DenyPort() error = %v, want nil", err)
 	}
@@ -398,9 +398,34 @@ func TestDenyPort_NoProto(t *testing.T) {
 	execLookPathFn = fakeLookPath(true)
 	execCommandFn = fakeExecCommand("", false)
 
-	err := DenyPort("22", "")
+	err := DenyPort("3306", "")
 	if err != nil {
 		t.Errorf("DenyPort() error = %v, want nil", err)
+	}
+}
+
+func TestDenyPort_ProtectedPort(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	for _, port := range []string{"80", "443", "22"} {
+		if err := DenyPort(port, "tcp"); err == nil {
+			t.Errorf("DenyPort(%s) should fail for protected port", port)
+		}
+	}
+}
+
+func TestDenyPort_AnyBlocked(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+
+	for _, port := range []string{"any", "all", "*", ""} {
+		if err := DenyPort(port, ""); err == nil {
+			t.Errorf("DenyPort(%q) should fail", port)
+		}
 	}
 }
 
@@ -410,7 +435,7 @@ func TestDenyPort_Failure(t *testing.T) {
 	execLookPathFn = fakeLookPath(true)
 	execCommandFn = fakeExecCommand("", true)
 
-	err := DenyPort("22", "tcp")
+	err := DenyPort("3306", "tcp")
 	if err == nil {
 		t.Error("DenyPort() expected error, got nil")
 	}
@@ -421,7 +446,7 @@ func TestDenyPort_NoUFW(t *testing.T) {
 	runtimeGOOS = "linux"
 	execLookPathFn = fakeLookPath(false)
 
-	err := DenyPort("22", "tcp")
+	err := DenyPort("3306", "tcp")
 	if err == nil {
 		t.Error("DenyPort() expected error for missing ufw, got nil")
 	}

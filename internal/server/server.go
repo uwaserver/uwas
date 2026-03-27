@@ -31,6 +31,7 @@ import (
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/database"
+	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/sftpserver"
 	"github.com/uwaserver/uwas/internal/webhook"
@@ -648,6 +649,9 @@ func (s *Server) Start() error {
 			s.logger.Warn("SFTP server start failed", "error", err)
 		}
 	}
+
+	// Protect admin port from firewall deny
+	firewall.SetAdminPort(s.config.Global.Admin.Listen)
 
 	// Admin API
 	if s.admin != nil {
