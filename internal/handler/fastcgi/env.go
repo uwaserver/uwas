@@ -74,6 +74,22 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		env[k] = v
 	}
 
+	// PHP isolation: enforce open_basedir per-request via PHP_ADMIN_VALUE.
+	// This works with both system PHP-FPM and UWAS-managed php-cgi.
+	// Restricts PHP to domain's web root + tmp + system paths.
+	if ctx.DocumentRoot != "" {
+		docRoot := ctx.DocumentRoot
+		domainTmp := filepath.Join(docRoot, ".tmp")
+		adminValues := []string{
+			"open_basedir = " + docRoot + ":" + domainTmp + ":/tmp:/usr/share/php:/usr/share/pear:/etc/ssl/certs:/dev/urandom",
+		}
+		// Merge with existing PHP_ADMIN_VALUE if set
+		if existing := env["PHP_ADMIN_VALUE"]; existing != "" {
+			adminValues = append(adminValues, existing)
+		}
+		env["PHP_ADMIN_VALUE"] = strings.Join(adminValues, "\n")
+	}
+
 	// Remove empty values
 	for k, v := range env {
 		if v == "" {
