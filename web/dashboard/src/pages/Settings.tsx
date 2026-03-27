@@ -700,18 +700,37 @@ export default function Settings() {
             <span className={section.iconColor}>{section.icon}</span>
             <h2 className="text-sm font-semibold text-card-foreground">{section.title}</h2>
           </div>
-          <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-            {section.fields.map(field => (
-              <FieldInput
-                key={field.key}
-                field={field}
-                value={formValues[field.key] ?? ''}
-                onChange={(v) => updateField(field.key, v)}
-                revealed={revealedSecrets[field.key] ?? false}
-                onToggleReveal={() => toggleSecret(field.key)}
-                onCopy={() => copyToClipboard(formValues[field.key] ?? '')}
-              />
-            ))}
+          <div className="space-y-4">
+            {/* Toggles row */}
+            {section.fields.some(f => f.type === 'toggle') && (
+              <div className="flex flex-wrap gap-x-8 gap-y-3 rounded-lg bg-background px-4 py-3">
+                {section.fields.filter(f => f.type === 'toggle').map(field => (
+                  <FieldInput
+                    key={field.key}
+                    field={field}
+                    value={formValues[field.key] ?? ''}
+                    onChange={(v) => updateField(field.key, v)}
+                    revealed={false}
+                    onToggleReveal={() => {}}
+                    onCopy={() => {}}
+                  />
+                ))}
+              </div>
+            )}
+            {/* Other fields in 2-column grid */}
+            <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+              {section.fields.filter(f => f.type !== 'toggle').map(field => (
+                <FieldInput
+                  key={field.key}
+                  field={field}
+                  value={formValues[field.key] ?? ''}
+                  onChange={(v) => updateField(field.key, v)}
+                  revealed={revealedSecrets[field.key] ?? false}
+                  onToggleReveal={() => toggleSecret(field.key)}
+                  onCopy={() => copyToClipboard(formValues[field.key] ?? '')}
+                />
+              ))}
+            </div>
           </div>
 
           {/* Admin: 2FA Section */}
@@ -1094,7 +1113,7 @@ function FieldInput({ field, value, onChange, revealed, onToggleReveal, onCopy }
 
   if (field.type === 'textarea') {
     return (
-      <div className={field.fullWidth ? 'sm:col-span-2 lg:col-span-3' : ''}>
+      <div className={field.fullWidth ? 'sm:col-span-2' : ''}>
         <label className="mb-1.5 block text-sm text-card-foreground">{field.label}</label>
         <textarea
           value={value}
