@@ -2681,7 +2681,9 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 		"global.admin.enabled": g.Admin.Enabled,
 		"global.admin.listen":  g.Admin.Listen,
 		"global.admin.api_key":  maskSecret(g.Admin.APIKey),
-		"global.admin.pin_code": maskSecret(g.Admin.PinCode),
+		// Multi-User Auth
+		"global.users.enabled":        g.Users.Enabled,
+		"global.users.allow_reseller": g.Users.AllowResller,
 		// MCP
 		"global.mcp.enabled": g.MCP.Enabled,
 		// ACME
@@ -2752,7 +2754,7 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		case "global.admin.enabled": g.Admin.Enabled = sv == "true"
 		case "global.admin.listen":  g.Admin.Listen = sv
 		case "global.admin.api_key": g.Admin.APIKey = sv
-		case "global.admin.pin_code": g.Admin.PinCode = sv
+		// pin_code is intentionally not settable via API — must be set in YAML config
 		// Multi-User Auth
 		case "global.users.enabled":        g.Users.Enabled = sv == "true"
 		case "global.users.allow_reseller": g.Users.AllowResller = sv == "true"
