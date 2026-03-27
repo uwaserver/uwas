@@ -3,6 +3,7 @@ package wordpress
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -638,8 +639,18 @@ func wpCLI(webRoot string, args ...string) (string, error) {
 
 	cmd := execCommandFn("wp", allArgs...)
 	cmd.Dir = webRoot
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	// Separate stdout from stderr — PHP deprecation warnings go to stderr
+	// and corrupt JSON output if mixed via CombinedOutput.
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	out := stdout.String()
+	// If stdout is empty but stderr has content, return stderr for error context
+	if out == "" && stderr.Len() > 0 {
+		out = stderr.String()
+	}
+	return out, err
 }
 
 // detectSiteURL tries to find the domain from the directory structure.
@@ -658,12 +669,25 @@ func detectSiteURL(webRoot string) string {
 	return ""
 }
 
+// extractJSON finds the first JSON array or object in a string that may
+// contain PHP warnings/deprecation notices before the actual JSON.
+func extractJSON(s string) string {
+	// Find first [ or {
+	for i, c := range s {
+		if c == '[' || c == '{' {
+			return s[i:]
+		}
+	}
+	return s
+}
+
 // listPlugins uses WP-CLI to get plugin info.
 func listPlugins(webRoot string) []PluginInfo {
 	out, err := wpCLI(webRoot, "plugin", "list", "--format=json")
 	if err != nil {
 		return scanPluginDirs(webRoot) // fallback
 	}
+	out = extractJSON(out) // strip any PHP warnings before JSON
 	var raw []struct {
 		Name    string `json:"name"`
 		Status  string `json:"status"`
@@ -686,6 +710,7 @@ func listThemes(webRoot string) []ThemeInfo {
 	if err != nil {
 		return nil
 	}
+	out = extractJSON(out)
 	var raw []struct {
 		Name    string `json:"name"`
 		Status  string `json:"status"`
@@ -1000,6 +1025,7 @@ func ListUsers(webRoot string) ([]WPUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("wp user list: %w", err)
 	}
+	out = extractJSON(out)
 	var raw []struct {
 		ID             string `json:"ID"`
 		UserLogin      string `json:"user_login"`
@@ -1075,9 +1101,18 @@ func GetSecurityStatus(webRoot string) SecurityStatus {
 		st.TablePrefix = re.FindStringSubmatch(content)[1]
 	}
 
-	// PHP version via wp-cli
+	// PHP version via wp-cli (extract just the version number, skip warnings)
 	if phpOut, err := wpCLI(webRoot, "eval", "echo PHP_VERSION;"); err == nil {
-		st.PHPVersion = strings.TrimSpace(phpOut)
+		phpOut = strings.TrimSpace(phpOut)
+		// Output may contain "Deprecated: ..." lines before the version
+		lines := strings.Split(phpOut, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if len(line) > 0 && line[0] >= '0' && line[0] <= '9' {
+				st.PHPVersion = line
+				break
+			}
+		}
 	}
 
 	// XML-RPC — check if blocked via mu-plugin or wp-config
