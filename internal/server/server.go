@@ -26,6 +26,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/uwaserver/uwas/internal/admin"
+	"github.com/uwaserver/uwas/internal/appmanager"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/auth"
@@ -124,6 +125,9 @@ type Server struct {
 
 	// esiProcessor handles Edge Side Includes fragment assembly.
 	esiProcessor *cache.ESIProcessor
+
+	// appMgr manages non-PHP application processes (Node.js, Python, etc.)
+	appMgr *appmanager.Manager
 }
 
 // New creates a fully initialized server from config.
@@ -247,6 +251,23 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	// ESI processor (requires cache engine + server as fragment fetcher)
 	if cacheEngine != nil {
 		s.esiProcessor = cache.NewESIProcessor(cacheEngine, s, log, 3)
+	}
+
+	// App Manager — Node.js, Python, Ruby, Go, custom processes
+	s.appMgr = appmanager.New(log)
+	for _, d := range cfg.Domains {
+		if d.Type == "app" && (d.App.Command != "" || d.App.Runtime != "") {
+			if err := s.appMgr.Register(d.Host, d.App, d.Root); err != nil {
+				log.Warn("app register failed", "domain", d.Host, "error", err)
+				continue
+			}
+			if err := s.appMgr.Start(d.Host); err != nil {
+				log.Warn("app start failed", "domain", d.Host, "error", err)
+			}
+		}
+	}
+	if s.admin != nil {
+		s.admin.SetAppManager(s.appMgr)
 	}
 
 	// PHP Manager — detect, auto-assign to PHP domains, start all
@@ -1131,6 +1152,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			s.handleFileRequest(ctx, domain)
 		case "proxy":
 			s.handleProxy(ctx, domain)
+		case "app":
+			s.handleAppProxy(ctx, domain)
 		default:
 			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 		}
@@ -1167,6 +1190,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			s.handleFileRequest(ctx, domain)
 		case "proxy":
 			s.handleProxy(ctx, domain)
+		case "app":
+			s.handleAppProxy(ctx, domain)
 		default:
 			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 		}
@@ -1736,6 +1761,12 @@ func (s *Server) shutdown() {
 		}
 	}
 
+	// Stop all app processes (Node.js, Python, etc.)
+	if s.appMgr != nil {
+		s.appMgr.StopAll()
+		s.logger.Info("all app processes stopped")
+	}
+
 	// Stop all PHP processes.
 	if s.phpMgr != nil {
 		for _, inst := range s.phpMgr.GetDomainInstances() {
@@ -1799,6 +1830,8 @@ func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]by
 		s.handleFileRequest(ctx, domain)
 	case "proxy":
 		s.handleProxy(ctx, domain)
+	case "app":
+		s.handleAppProxy(ctx, domain)
 	default:
 		return nil, 0, nil, fmt.Errorf("ESI: unsupported type: %s", domain.Type)
 	}
@@ -1807,6 +1840,26 @@ func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]by
 	body, _ := io.ReadAll(result.Body)
 	result.Body.Close()
 	return body, result.StatusCode, result.Header, nil
+}
+
+// handleAppProxy proxies the request to the app process listening on its assigned port.
+func (s *Server) handleAppProxy(ctx *router.RequestContext, domain *config.Domain) {
+	if s.appMgr == nil {
+		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+		return
+	}
+	addr := s.appMgr.ListenAddr(domain.Host)
+	if addr == "" {
+		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+		return
+	}
+	// Build a temporary proxy config pointing to the app's port
+	proxyDomain := *domain
+	proxyDomain.Type = "proxy"
+	proxyDomain.Proxy = config.ProxyConfig{
+		Upstreams: []config.Upstream{{Address: "http://" + addr, Weight: 1}},
+	}
+	s.handleProxy(ctx, &proxyDomain)
 }
 
 func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
