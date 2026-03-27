@@ -66,6 +66,7 @@ func Run(opts Options) *Report {
 
 	// System checks
 	r.add(checkOS())
+	r.add(checkConflictingServices(opts.AutoFix))
 	r.add(checkPorts())
 	r.add(checkPHPFPM(opts.AutoFix))
 	r.add(checkPHPModules())
@@ -477,4 +478,52 @@ func modulesToPackages(modules []string) string {
 		pkgs[i] = "php-" + strings.ToLower(m)
 	}
 	return strings.Join(pkgs, " ")
+}
+
+// checkConflictingServices detects Apache/Nginx running on ports 80/443.
+func checkConflictingServices(autoFix bool) Check {
+	if runtimeGOOS == "windows" {
+		return Check{Name: "Conflicting services", Status: StatusOK, Message: "Skipped on Windows"}
+	}
+
+	conflicts := []struct {
+		service string
+		display string
+		pkg     string
+	}{
+		{"apache2", "Apache", "apache2"},
+		{"httpd", "Apache (httpd)", "httpd"},
+		{"nginx", "Nginx", "nginx"},
+	}
+
+	for _, c := range conflicts {
+		// Check if running
+		out, err := execCommandFn("systemctl", "is-active", c.service).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "active" {
+			continue
+		}
+
+		msg := fmt.Sprintf("%s is running — conflicts with UWAS on ports 80/443", c.display)
+
+		if autoFix {
+			// Stop and disable
+			execCommandFn("systemctl", "stop", c.service).Run()
+			execCommandFn("systemctl", "disable", c.service).Run()
+			return Check{
+				Name:    "Conflicting services",
+				Status:  StatusFixed,
+				Message: msg,
+				Fix:     fmt.Sprintf("Stopped and disabled %s", c.service),
+			}
+		}
+
+		return Check{
+			Name:    "Conflicting services",
+			Status:  StatusFail,
+			Message: msg,
+			HowTo:   fmt.Sprintf("sudo systemctl stop %s && sudo systemctl disable %s", c.service, c.service),
+		}
+	}
+
+	return Check{Name: "Conflicting services", Status: StatusOK, Message: "No Apache/Nginx detected"}
 }

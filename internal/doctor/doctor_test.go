@@ -199,8 +199,8 @@ func TestRun_BasicOptions(t *testing.T) {
 	if r == nil {
 		t.Fatal("Run returned nil")
 	}
-	if len(r.Checks) != 15 {
-		t.Errorf("expected 15 checks, got %d", len(r.Checks))
+	if len(r.Checks) != 16 {
+		t.Errorf("expected 16 checks, got %d", len(r.Checks))
 	}
 	if r.Summary == "" {
 		t.Error("summary is empty")
@@ -218,8 +218,8 @@ func TestRun_WithAutoFix(t *testing.T) {
 	if r == nil {
 		t.Fatal("Run returned nil")
 	}
-	if len(r.Checks) != 15 {
-		t.Errorf("expected 15 checks, got %d", len(r.Checks))
+	if len(r.Checks) != 16 {
+		t.Errorf("expected 16 checks, got %d", len(r.Checks))
 	}
 	// Should have summary with auto-fixed count
 	if !strings.Contains(r.Summary, "auto-fixed") {
@@ -1432,8 +1432,8 @@ func TestRun_SummaryCounts(t *testing.T) {
 	r := Run(Options{})
 
 	// Verify we have all 15 checks
-	if len(r.Checks) != 15 {
-		t.Errorf("expected 15 checks, got %d", len(r.Checks))
+	if len(r.Checks) != 16 {
+		t.Errorf("expected 16 checks, got %d", len(r.Checks))
 	}
 
 	// Verify summary is well-formed
