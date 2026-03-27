@@ -1675,6 +1675,18 @@ func (s *Server) reload() error {
 	}
 	s.domainChains = newDomainChains
 
+	// Rebuild per-domain GeoIP chains
+	newGeoChains := make(map[string]middleware.Middleware)
+	for _, d := range newCfg.Domains {
+		if len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
+			newGeoChains[d.Host] = middleware.GeoIP(middleware.GeoIPConfig{
+				BlockedCountries: d.Security.GeoBlockCountries,
+				AllowedCountries: d.Security.GeoAllowCountries,
+			})
+		}
+	}
+	s.geoChains = newGeoChains
+
 	// Rebuild per-domain rate limiters
 	newRateLimiters := make(map[string]*middleware.RateLimiter)
 	for _, d := range newCfg.Domains {
@@ -1729,6 +1741,31 @@ func (s *Server) reload() error {
 	// Update health monitor domains
 	if s.monitor != nil {
 		s.monitor.UpdateDomains(newCfg.Domains)
+	}
+
+	// Sync app manager: stop removed apps, register new ones
+	if s.appMgr != nil {
+		newAppDomains := make(map[string]bool)
+		for _, d := range newCfg.Domains {
+			if d.Type == "app" {
+				newAppDomains[d.Host] = true
+			}
+		}
+		// Stop apps for removed domains
+		for _, inst := range s.appMgr.Instances() {
+			if !newAppDomains[inst.Domain] {
+				s.appMgr.Unregister(inst.Domain)
+				s.logger.Info("unregistered removed app", "domain", inst.Domain)
+			}
+		}
+		// Register new app domains
+		for _, d := range newCfg.Domains {
+			if d.Type == "app" && s.appMgr.Get(d.Host) == nil {
+				if err := s.appMgr.Register(d.Host, d.App, d.Root); err == nil {
+					s.appMgr.Start(d.Host)
+				}
+			}
+		}
 	}
 
 	// Update stored config under write lock
