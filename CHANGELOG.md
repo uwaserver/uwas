@@ -5,6 +5,31 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.20] - 2026-03-27
+
+### New Features
+
+- **Docker DB management** — Create/list/drop databases inside Docker containers via `docker exec`. Export (mysqldump) and import SQL. Dashboard UI with expandable container panels.
+- **Backup includes Docker DBs** — Backup archives now dump all running Docker MySQL/MariaDB containers alongside native DB.
+- **Self-update auto-restart** — `UpdateAndRestart()` downloads, replaces binary, and restarts via `systemctl restart uwas` or `syscall.Exec`.
+- **Doctor: Apache/Nginx conflict detection** — Detects running Apache/Nginx, auto-stops with `--fix`.
+
+### Fixes
+
+- **Settings save fixed** — 15+ missing config keys added (multi-user auth, ACME on-demand, cache, backup S3/SFTP, alerting email, MCP).
+- **PHP domains missing from PHP page** — `autoAssignPHP` skipped domains with working FPM address but never registered them in phpMgr. Now uses `RegisterExistingDomain()`.
+- **PHP Config: version dropdown deduplicated** — No more 3x same version. Input validation added.
+- **WordPress install: Docker DB in dropdown** — Shows Docker containers as database host options.
+- **Clone/staging: auto-creates domain config** — Was only copying files + DB, no domain record.
+- **Packages link fixed** — Uses React Router `Link` instead of `<a href>`.
+
+### Improvements
+
+- **Services page** — PHP 8.1-8.5 FPM individually listed, Docker added, Redis/Memcached/Postfix/Dovecot removed.
+- **Settings tabs** — General, Security, Performance, Integrations.
+- **Settings help text** — S3/SFTP/Telegram/Slack/HTTP3 setup guides.
+- **About page** — Version, license, GitHub links, tech stack.
+
 ## [0.0.19] - 2026-03-27
 
 ### New Features
