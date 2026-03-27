@@ -5,6 +5,34 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.25] - 2026-03-27
+
+### Fixes
+
+- **Backup restore** — Fixed DB dump not being restored from new backups. `CreateBackup` wrote `databases/native-all-databases.sql` but `RestoreBackup` only matched the old `databases/all-databases.sql` path. Now recognizes both for backward compatibility.
+
+### Improvements
+
+- **Global pin modal** — Auto-prompts on ANY page when API returns `pin_required`, not just specific pages
+- **Dead code cleanup** — Removed unused Go code (vars, methods, test helpers), 18 unused dashboard API exports, and 3 unreferenced asset files. Net -84 lines.
+
+## [0.0.24] - 2026-03-27
+
+### Security
+
+- **SQL injection protection** — Parameterized queries and input validation hardened across database operations
+- **Pin bypass prevention** — Strengthened pin code verification for destructive operations
+- **SFTP symlink guard** — Prevents symlink-based path traversal in SFTP chroot jails
+- **PHP header blocking** — Blocks sensitive PHP headers from leaking to clients
+
+## [0.0.23] - 2026-03-27
+
+### Security
+
+- **Pin code protection** — Destructive operations (delete domain, drop DB, firewall changes) now require a pin code. Auto-generated on init, shown in setup output.
+- **PHP isolation** — Enforces `open_basedir` per-request via `PHP_ADMIN_VALUE`, sandboxing each domain
+- **Firewall hardening** — Blocks `any` deny rules, protects ports 80/443/22/admin, validates domain root paths
+
 ## [0.0.22] - 2026-03-27
 
 ### New Features
