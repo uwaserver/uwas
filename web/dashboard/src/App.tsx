@@ -39,6 +39,8 @@ import Webhooks from '@/pages/Webhooks';
 import AdminUsers from '@/pages/AdminUsers';
 import DomainDetail from '@/pages/DomainDetail';
 import About from '@/pages/About';
+import Apps from '@/pages/Apps';
+import TerminalPage from '@/pages/Terminal';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -129,6 +131,8 @@ export default function App() {
         <Route path="/packages" element={<Packages />} />
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/apps" element={<Apps />} />
+        <Route path="/terminal" element={<TerminalPage />} />
         <Route path="/about" element={<About />} />
       </Route>
 

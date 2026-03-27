@@ -41,6 +41,8 @@ import {
   Webhook,
   UserCog,
   Info,
+  Terminal,
+  Box,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 import { useTheme } from '@/hooks/useTheme';
@@ -82,6 +84,7 @@ const groups: NavGroup[] = [
     items: [
       { to: '/php', label: 'PHP', icon: Cpu },
       { to: '/php-config', label: 'PHP Config', icon: Settings },
+      { to: '/apps', label: 'Applications', icon: Box },
       { to: '/database', label: 'Database', icon: HardDrive },
       { to: '/users', label: 'SFTP Users', icon: Users },
       { to: '/cron', label: 'Cron Jobs', icon: Clock },
@@ -119,6 +122,7 @@ const groups: NavGroup[] = [
       { to: '/config-editor', label: 'Config Editor', icon: Code },
       { to: '/webhooks', label: 'Webhooks', icon: Webhook },
       { to: '/backups', label: 'Backups', icon: Archive },
+      { to: '/terminal', label: 'Terminal', icon: Terminal },
       { to: '/updates', label: 'Updates', icon: Download },
       { to: '/doctor', label: 'Doctor', icon: Stethoscope },
       { to: '/settings', label: 'Settings', icon: Settings },
