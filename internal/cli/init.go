@@ -63,6 +63,14 @@ func findConfig(explicit string) (string, bool) {
 }
 
 // generateAPIKey creates a random 32-char hex API key.
+func generatePinCode() string {
+	b := make([]byte, 3)
+	rand.Read(b)
+	// 6-digit numeric pin
+	n := int(b[0])<<16 | int(b[1])<<8 | int(b[2])
+	return fmt.Sprintf("%06d", n%1000000)
+}
+
 func generateAPIKey() string {
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -96,8 +104,9 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 
 	// Generate config with provided ports
 	apiKey := generateAPIKey()
+	pinCode := generatePinCode()
 
-	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, dir, webRoot, acmeEmail)
+	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, pinCode, dir, webRoot, acmeEmail)
 
 	if err := os.WriteFile(cfgPath, []byte(configContent), 0644); err != nil {
 		return "", fmt.Errorf("write default config: %w", err)
@@ -115,6 +124,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 	fmt.Printf("\n  %s Created default configuration\n", colorize("*", "green"))
 	fmt.Printf("    Config:    %s\n", cfgPath)
 	fmt.Printf("    API Key:   %s\n", apiKey)
+	fmt.Printf("    Pin Code:  %s\n", pinCode)
 	fmt.Printf("    Web Root:  %s\n", webRoot)
 	dashHost := adminBind
 	if dashHost == "0.0.0.0" {
@@ -125,7 +135,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 	return cfgPath, nil
 }
 
-func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, baseDir, webRoot, acmeEmail string) string {
+func generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, pinCode, baseDir, webRoot, acmeEmail string) string {
 	// Normalize paths for the config (use forward slashes)
 	wwwDir := filepath.ToSlash(webRoot)
 	certsDir := filepath.ToSlash(filepath.Join(baseDir, "certs"))
@@ -162,6 +172,7 @@ global:
     enabled: true
     listen: "%s"
     api_key: "%s"
+    pin_code: "%s"
 
   mcp:
     enabled: true
@@ -194,7 +205,7 @@ global:
       path: %s
 
 domains_dir: domains.d
-`, listenAddr, wwwDir, adminAddr, apiKey,
+`, listenAddr, wwwDir, adminAddr, apiKey, pinCode,
 		acmeEmail, certsDir, cacheDir, backupsDir)) + "\n"
 }
 
