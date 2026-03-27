@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -33,8 +34,8 @@ type WSConn struct {
 
 // UpgradeWebSocket performs the HTTP→WebSocket handshake.
 func UpgradeWebSocket(w http.ResponseWriter, r *http.Request) (*WSConn, error) {
-	if r.Header.Get("Upgrade") != "websocket" {
-		return nil, fmt.Errorf("not a websocket request")
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return nil, fmt.Errorf("not a websocket request (Upgrade: %q)", r.Header.Get("Upgrade"))
 	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
