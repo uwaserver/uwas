@@ -81,6 +81,7 @@ type AdminConfig struct {
 	Listen     string `yaml:"listen"`
 	Enabled    bool   `yaml:"enabled"`
 	APIKey     string `yaml:"api_key"`
+	PinCode    string `yaml:"pin_code,omitempty"`    // required for destructive operations (delete, uninstall)
 	TOTPSecret string `yaml:"totp_secret,omitempty"` // base32-encoded TOTP secret for 2FA
 	TLSCert    string `yaml:"tls_cert,omitempty"`    // path to TLS certificate for admin API
 	TLSKey     string `yaml:"tls_key,omitempty"`     // path to TLS key for admin API

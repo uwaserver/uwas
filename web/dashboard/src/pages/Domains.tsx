@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
+import PinModal from '@/components/PinModal';
+import { setPinCode, clearPinCode } from '@/lib/api';
 import {
   Globe, X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
@@ -325,6 +327,8 @@ export default function Domains() {
   /* -------- delete -------- */
 
   const [cleanupOnDelete, setCleanupOnDelete] = useState(true);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pendingDeleteHost, setPendingDeleteHost] = useState('');
 
   const handleDelete = async (host: string) => {
     setStatus(null);
@@ -336,11 +340,19 @@ export default function Domains() {
       setStatus({ ok: true, message: msg });
       setConfirmDelete(null);
       setCleanupOnDelete(true);
+      clearPinCode();
       if (expandedHost === host) { setExpandedHost(null); setDetail(null); }
       loadDomains();
     } catch (e) {
-      setStatus({ ok: false, message: (e as Error).message });
+      const msg = (e as Error).message;
+      if (msg === 'pin_required' || msg === 'invalid_pin') {
+        setPendingDeleteHost(host);
+        setPinModalOpen(true);
+        return;
+      }
+      setStatus({ ok: false, message: msg });
       setConfirmDelete(null);
+      clearPinCode();
     }
   };
 
@@ -794,6 +806,18 @@ export default function Domains() {
           </div>
         </div>
       )}
+      {/* Pin Code Modal */}
+      <PinModal
+        open={pinModalOpen}
+        title="Delete Domain"
+        message={`Enter pin code to delete "${pendingDeleteHost}".`}
+        onCancel={() => { setPinModalOpen(false); clearPinCode(); }}
+        onConfirm={(pin) => {
+          setPinModalOpen(false);
+          setPinCode(pin);
+          handleDelete(pendingDeleteHost);
+        }}
+      />
     </div>
   );
 }

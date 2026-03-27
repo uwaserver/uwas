@@ -1983,6 +1983,9 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	host := r.PathValue("host")
 	cleanup := r.URL.Query().Get("cleanup") == "true"
@@ -2522,6 +2525,9 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) {
+		return
+	}
 	domain := r.PathValue("domain")
 	if err := siteuser.DeleteUser(domain); err != nil {
 		jsonError(w, "delete user: "+err.Error(), http.StatusInternalServerError)
@@ -2674,7 +2680,8 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 		// Admin
 		"global.admin.enabled": g.Admin.Enabled,
 		"global.admin.listen":  g.Admin.Listen,
-		"global.admin.api_key": maskSecret(g.Admin.APIKey),
+		"global.admin.api_key":  maskSecret(g.Admin.APIKey),
+		"global.admin.pin_code": maskSecret(g.Admin.PinCode),
 		// MCP
 		"global.mcp.enabled": g.MCP.Enabled,
 		// ACME
@@ -2745,6 +2752,7 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		case "global.admin.enabled": g.Admin.Enabled = sv == "true"
 		case "global.admin.listen":  g.Admin.Listen = sv
 		case "global.admin.api_key": g.Admin.APIKey = sv
+		case "global.admin.pin_code": g.Admin.PinCode = sv
 		// Multi-User Auth
 		case "global.users.enabled":        g.Users.Enabled = sv == "true"
 		case "global.users.allow_reseller": g.Users.AllowResller = sv == "true"
@@ -3307,6 +3315,9 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	if s.backupMgr == nil {
 		s.RecordAudit("backup.delete", "backup not enabled", ip, false)
@@ -3819,6 +3830,9 @@ func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) {
+		return
+	}
 	if s.authMgr == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
@@ -4049,4 +4063,29 @@ func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK) // Still 200, but success=false in body
 	}
 	json.NewEncoder(w).Encode(record)
+}
+
+// requirePin checks the X-Pin-Code header against the configured pin_code.
+// Returns true if pin is valid or no pin is configured. Returns false and
+// sends 403 if pin is required but missing/wrong.
+func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
+	s.configMu.RLock()
+	pin := s.config.Global.Admin.PinCode
+	s.configMu.RUnlock()
+
+	if pin == "" {
+		return true // no pin configured, allow
+	}
+
+	provided := r.Header.Get("X-Pin-Code")
+	if provided == "" {
+		jsonError(w, "pin_required", http.StatusForbidden)
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(pin)) != 1 {
+		s.RecordAudit("pin.failed", r.URL.Path, requestIP(r), false)
+		jsonError(w, "invalid_pin", http.StatusForbidden)
+		return false
+	}
+	return true
 }

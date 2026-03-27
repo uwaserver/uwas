@@ -867,6 +867,7 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	name := r.PathValue("name")
 	if err := database.DropDatabase(name, name, "localhost"); err != nil {
 		jsonError(w, "drop database: "+err.Error(), http.StatusInternalServerError)
@@ -967,6 +968,7 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	ip := requestIP(r)
 	out, err := database.UninstallService()
 	if err != nil {
@@ -993,6 +995,7 @@ func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	ip := requestIP(r)
 	out, err := database.ForceUninstall()
 	if err != nil {
@@ -1083,6 +1086,7 @@ func (s *Server) handleDockerDBStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	name := r.PathValue("name")
 	if err := database.RemoveDockerDB(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1133,6 +1137,7 @@ func (s *Server) handleDockerDBCreateDatabase(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePin(w, r) { return }
 	name := r.PathValue("name")
 	db := r.PathValue("db")
 	if err := database.DockerDBDropDatabase(name, db); err != nil {

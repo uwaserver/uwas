@@ -173,6 +173,7 @@ const SECTIONS: SectionDef[] = [
       { key: 'global.admin.enabled', label: 'Enabled', type: 'toggle' },
       { key: 'global.admin.listen', label: 'Listen Address', type: 'text', placeholder: ':9443' },
       { key: 'global.admin.api_key', label: 'API Key', type: 'secret' },
+      { key: 'global.admin.pin_code', label: 'Pin Code', type: 'secret', help: 'Required for destructive operations (delete, uninstall). Set in YAML config.' },
     ],
   },
   {
