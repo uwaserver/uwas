@@ -147,6 +147,23 @@ func (m *Manager) AssignDomainWithRoot(domain, version, webRoot string) (*Domain
 	return dp, nil
 }
 
+// RegisterExistingDomain registers a domain that already has a working PHP
+// address (from config file). This ensures it appears in GetDomainInstances().
+func (m *Manager) RegisterExistingDomain(domain, version, listenAddr, webRoot string) {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
+	if _, exists := m.domainMap[domain]; exists {
+		return // already registered
+	}
+	m.domainMap[domain] = &domainInstance{
+		domain:          domain,
+		version:         version,
+		listenAddr:      listenAddr,
+		webRoot:         webRoot,
+		configOverrides: make(map[string]string),
+	}
+}
+
 // AssignDomain assigns a PHP version to a domain.
 // Priority: 1) system php-fpm socket 2) running shared php-fpm 3) per-domain port
 func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {

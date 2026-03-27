@@ -1754,13 +1754,14 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 			continue
 		}
 
-		// If domain already has a working FPM address (from config file), use it
+		// If domain already has a working FPM address (from config file), register it
+		if d.PHP.FPMAddress != "" && isAddrReachable(d.PHP.FPMAddress) {
+			// Register in phpMgr so it shows in PHP page domain list
+			phpMgr.RegisterExistingDomain(d.Host, defaultVer, d.PHP.FPMAddress, d.Root)
+			s.logger.Info("using configured PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
+			continue
+		}
 		if d.PHP.FPMAddress != "" {
-			// Verify it's actually reachable
-			if isAddrReachable(d.PHP.FPMAddress) {
-				s.logger.Info("using configured PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
-				continue
-			}
 			s.logger.Warn("configured PHP address unreachable, re-assigning", "domain", d.Host, "address", d.PHP.FPMAddress)
 		}
 
