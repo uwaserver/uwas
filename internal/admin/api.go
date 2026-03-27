@@ -282,6 +282,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/database/docker/{name}/databases", s.handleDockerDBListDatabases)
 	s.mux.HandleFunc("POST /api/v1/database/docker/{name}/databases", s.handleDockerDBCreateDatabase)
 	s.mux.HandleFunc("DELETE /api/v1/database/docker/{name}/databases/{db}", s.handleDockerDBDropDatabase)
+	s.mux.HandleFunc("GET /api/v1/database/docker/{name}/databases/{db}/export", s.handleDockerDBExport)
+	s.mux.HandleFunc("POST /api/v1/database/docker/{name}/databases/{db}/import", s.handleDockerDBImport)
 
 	s.mux.HandleFunc("POST /api/v1/database/start", s.handleDBStart)
 	s.mux.HandleFunc("POST /api/v1/database/stop", s.handleDBStop)
