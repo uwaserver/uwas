@@ -14,6 +14,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/rlimit"
 )
 
 // AppInstance describes a running application process.
@@ -37,9 +38,10 @@ type appProcess struct {
 	workDir   string
 	env       map[string]string
 	autoRestart bool
-	cmd       *exec.Cmd
-	startedAt time.Time
-	stopCh    chan struct{}
+	cmd         *exec.Cmd
+	startedAt   time.Time
+	stopCh      chan struct{}
+	cgroupPath  string // cgroup path for resource limits (Linux)
 }
 
 // Manager manages application processes for domains.
@@ -157,6 +159,15 @@ func (m *Manager) Register(domain string, appCfg config.AppConfig, webRoot strin
 	return nil
 }
 
+// SetCgroupPath sets the cgroup path for resource-limited process assignment.
+func (m *Manager) SetCgroupPath(domain, path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if app, ok := m.apps[domain]; ok {
+		app.cgroupPath = path
+	}
+}
+
 // Start launches the application process for a domain.
 func (m *Manager) Start(domain string) error {
 	m.mu.RLock()
@@ -214,6 +225,11 @@ func (m *Manager) startProcess(app *appProcess) error {
 	app.cmd = cmd
 	now := time.Now()
 	app.startedAt = now
+
+	// Apply resource limits via cgroups (Linux only, best-effort)
+	if app.cgroupPath != "" {
+		rlimit.AssignPID(app.cgroupPath, cmd.Process.Pid)
+	}
 
 	if m.logger != nil {
 		m.logger.Info("app started", "domain", app.domain, "pid", cmd.Process.Pid, "port", app.port)

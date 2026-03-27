@@ -24,11 +24,12 @@ cd web/dashboard && npm run build
 ```
 cmd/uwas/            CLI entry point (18 commands)
 internal/
-  admin/             API server (116 routes) + dashboard embed + TOTP auth
+  admin/             API server (185+ routes) + dashboard embed + TOTP auth
   alerting/          Alert thresholds + notifications
   analytics/         Per-domain traffic analytics
+  appmanager/        Node.js/Python/Ruby/Go process management (like phpmanager but generic)
   backup/            Local/S3/SFTP backup + restore
-  cache/             L1 memory (256-shard LRU) → L2 disk
+  cache/             L1 memory (256-shard LRU) → L2 disk + ESI (Edge Side Includes)
   cli/               CLI commands (serve, stop, cert, php, user, domain, install, doctor...)
   config/            Config structs + Duration/ByteSize types + MarshalYAML
   cronjob/           Cron job management (per-domain)
@@ -45,15 +46,17 @@ internal/
   logger/            log/slog wrapper
   mcp/               MCP interface for AI management
   metrics/           Request metrics + latency percentiles
-  middleware/        Chain composition, WAF, bot guard, rate limit, CORS, compression
+  middleware/        Chain composition, WAF, bot guard, rate limit, CORS, compression, GeoIP
   migrate/           Apache/Nginx config migration
   monitor/           Health monitoring + domain health checks
-  notify/            Webhook, Slack, Telegram, Email (SMTP) channels
+  notify/            Webhook, Slack, Telegram, Email (SMTP) channels + SMTP relay
   phpmanager/        PHP detect, install, start/stop, per-domain assign, config, auto-restart
   rewrite/           Apache mod_rewrite compatible engine (RewriteCond, -f/-d/-l/-s)
+  rlimit/            Per-domain resource limits via Linux cgroups v2 (CPU/memory/PID)
   router/            VHost routing + unknown host tracking
   selfupdate/        Binary self-update from GitHub releases
-  server/            Main HTTP/HTTPS/HTTP3 server + request dispatch
+  server/            Main HTTP/HTTPS/HTTP3 server + request dispatch + ESI assembly
+  terminal/          WebSocket-to-PTY bridge for browser-based shell (Linux)
   serverip/          Server IP detection (interfaces + public IP)
   services/          systemd service management (start/stop/restart)
   siteuser/          SFTP user management (chroot jail + SSH keys)
@@ -67,8 +70,8 @@ web/dashboard/       React SPA (33 pages, Vite + TypeScript + Tailwind)
 
 ## Stats
 
-- 46 Go packages, all with tests (all passing)
-- 36 dashboard pages, 179 API endpoints
+- 50 Go packages, all with tests (all passing)
+- 38 dashboard pages, 190+ API endpoints
 - 18 CLI commands
 - ~14MB single binary (linux/amd64)
 
@@ -131,12 +134,12 @@ go test -v -run TestWordPress ./...  # Specific test
 - **Add dashboard page**: Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to sidebar group in `Sidebar.tsx`
 - **Add API function**: Add to `web/dashboard/src/lib/api.ts` with proper TypeScript interface
 
-## Dashboard Pages (36)
+## Dashboard Pages (38)
 
 Sites: Domains, Domain Detail, Topology, Certificates, DNS, WordPress, Clone/Staging, Migration, File Manager
-Server: PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
+Server: PHP, PHP Config, Applications, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 Performance: Cache, Metrics, Analytics, Logs
 Security: Security, Firewall, Unknown Domains, Audit Log, Admin Users
-System: Config Editor, Webhooks, Backups, Updates, Settings, Doctor
+System: Config Editor, Webhooks, Backups, Terminal, Updates, Settings, Doctor
 Auth: Login (with 2FA/TOTP support)
 Overview: Dashboard (stats, health, graphs)

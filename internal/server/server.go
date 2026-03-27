@@ -50,6 +50,7 @@ import (
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
+	"github.com/uwaserver/uwas/internal/rlimit"
 	"github.com/uwaserver/uwas/internal/router"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 	"github.com/uwaserver/uwas/pkg/htaccess"
@@ -113,6 +114,8 @@ type Server struct {
 
 	// domainChains holds pre-compiled per-domain IP ACL middleware.
 	domainChains map[string]middleware.Middleware
+	// geoChains holds pre-compiled per-domain GeoIP middleware.
+	geoChains map[string]middleware.Middleware
 
 	// domainRateLimiters holds pre-compiled per-domain rate limiters.
 	domainRateLimiters map[string]*middleware.RateLimiter
@@ -260,6 +263,19 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			if err := s.appMgr.Register(d.Host, d.App, d.Root); err != nil {
 				log.Warn("app register failed", "domain", d.Host, "error", err)
 				continue
+			}
+			// Apply resource limits (cgroups) if configured
+			if d.Resources.CPUPercent > 0 || d.Resources.MemoryMB > 0 || d.Resources.PIDMax > 0 {
+				cgPath, err := rlimit.Apply(d.Host, rlimit.Limits{
+					CPUPercent: d.Resources.CPUPercent,
+					MemoryMB:   d.Resources.MemoryMB,
+					PIDMax:     d.Resources.PIDMax,
+				})
+				if err != nil {
+					log.Warn("cgroup apply failed", "domain", d.Host, "error", err)
+				} else if cgPath != "" {
+					s.appMgr.SetCgroupPath(d.Host, cgPath)
+				}
 			}
 			if err := s.appMgr.Start(d.Host); err != nil {
 				log.Warn("app start failed", "domain", d.Host, "error", err)
@@ -445,6 +461,17 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			s.domainChains[d.Host] = middleware.IPACL(middleware.IPACLConfig{
 				Whitelist: d.Security.IPWhitelist,
 				Blacklist: d.Security.IPBlacklist,
+			})
+		}
+	}
+
+	// Per-domain GeoIP middleware
+	s.geoChains = make(map[string]middleware.Middleware)
+	for _, d := range cfg.Domains {
+		if len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
+			s.geoChains[d.Host] = middleware.GeoIP(middleware.GeoIPConfig{
+				BlockedCountries: d.Security.GeoBlockCountries,
+				AllowedCountries: d.Security.GeoAllowCountries,
 			})
 		}
 	}
@@ -937,6 +964,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain IP ACL (whitelist/blacklist)
 	if chain := s.domainChains[domain.Host]; chain != nil {
+		passed := false
+		chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			passed = true
+		})).ServeHTTP(ctx.Response, r)
+		if !passed {
+			return
+		}
+	}
+
+	// Per-domain GeoIP blocking
+	if chain := s.geoChains[domain.Host]; chain != nil {
 		passed := false
 		chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			passed = true

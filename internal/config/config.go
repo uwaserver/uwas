@@ -372,6 +372,8 @@ type SecurityConfig struct {
 	WAF               WAFConfig       `yaml:"waf,omitempty" json:"waf,omitempty"`
 	IPWhitelist       []string        `yaml:"ip_whitelist,omitempty" json:"ip_whitelist,omitempty"`
 	IPBlacklist       []string        `yaml:"ip_blacklist,omitempty" json:"ip_blacklist,omitempty"`
+	GeoBlockCountries []string        `yaml:"geo_block_countries,omitempty" json:"geo_block_countries,omitempty"` // 2-letter ISO codes
+	GeoAllowCountries []string        `yaml:"geo_allow_countries,omitempty" json:"geo_allow_countries,omitempty"` // whitelist mode
 }
 
 type HotlinkConfig struct {
