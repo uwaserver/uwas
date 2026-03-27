@@ -32,13 +32,16 @@ export default function TerminalPage() {
     };
 
     ws.onerror = async () => {
-      // Debug: try a normal HTTP request to see if auth works
+      // Debug: try with Authorization header to check auth
       try {
-        const res = await fetch(url.replace('ws', 'http'));
+        const tkn = (await import('@/lib/api')).getToken();
+        const res = await fetch(url.replace(/^ws/, 'http'), {
+          headers: tkn ? { 'Authorization': `Bearer ${tkn}` } : {},
+        });
         const text = await res.text();
-        setError(`Connection error (HTTP ${res.status}: ${text.slice(0, 200)})`);
+        setError(`WS failed (HTTP fallback: ${res.status} ${text.slice(0, 150)}). Token present: ${!!tkn}, URL: ${url.slice(0, 80)}...`);
       } catch {
-        setError('Connection error — server unreachable or WebSocket blocked');
+        setError('Connection error — server unreachable');
       }
     };
     ws.onclose = (e) => {
