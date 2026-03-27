@@ -38,6 +38,11 @@ export default function DomainDetail() {
   const [blockedPaths, setBlockedPaths] = useState<string[]>([]);
   const [newBlockedPath, setNewBlockedPath] = useState('');
   const [ipBlacklist, setIpBlacklist] = useState<string[]>([]);
+  const [geoBlock, setGeoBlock] = useState('');
+  const [geoAllow, setGeoAllow] = useState('');
+  const [cpuPercent, setCpuPercent] = useState(0);
+  const [memoryMB, setMemoryMB] = useState(0);
+  const [pidMax, setPidMax] = useState(0);
   const [newBlacklistIP, setNewBlacklistIP] = useState('');
 
   // WordPress
@@ -68,6 +73,11 @@ export default function DomainDetail() {
       setRateLimitWindow(d.security?.rate_limit?.window ?? '1m');
       setBlockedPaths(d.security?.blocked_paths ?? []);
       setIpBlacklist(d.security?.ip_blacklist ?? []);
+      setGeoBlock((d.security?.geo_block_countries ?? []).join(', '));
+      setGeoAllow((d.security?.geo_allow_countries ?? []).join(', '));
+      setCpuPercent(d.resources?.cpu_percent ?? 0);
+      setMemoryMB(d.resources?.memory_mb ?? 0);
+      setPidMax(d.resources?.pid_max ?? 0);
 
       // Disk usage
       fetchDiskUsage(host).then(setDiskUsage).catch(() => {});
@@ -103,6 +113,8 @@ export default function DomainDetail() {
     setSaving(true);
     setMsg(null);
     try {
+      const geoBlockList = geoBlock.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const geoAllowList = geoAllow.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       await updateDomain(host, {
         security: {
           waf: { enabled: wafEnabled },
@@ -110,9 +122,16 @@ export default function DomainDetail() {
           blocked_paths: blockedPaths.length > 0 ? blockedPaths : undefined,
           ip_blacklist: ipBlacklist.length > 0 ? ipBlacklist : undefined,
           hotlink_protection: { enabled: hotlinkEnabled },
+          geo_block_countries: geoBlockList.length > 0 ? geoBlockList : undefined,
+          geo_allow_countries: geoAllowList.length > 0 ? geoAllowList : undefined,
         },
+        resources: (cpuPercent > 0 || memoryMB > 0 || pidMax > 0) ? {
+          cpu_percent: cpuPercent || undefined,
+          memory_mb: memoryMB || undefined,
+          pid_max: pidMax || undefined,
+        } : undefined,
       });
-      setMsg({ ok: true, text: 'Security settings saved' });
+      setMsg({ ok: true, text: 'Security & resource settings saved' });
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
     finally { setSaving(false); }
   };
@@ -381,6 +400,45 @@ export default function DomainDetail() {
                 className="flex-1 rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono" />
               <button onClick={() => { if (newBlacklistIP.trim()) { setIpBlacklist([...ipBlacklist, newBlacklistIP.trim()]); setNewBlacklistIP(''); } }}
                 className="rounded bg-red-600 px-2 py-1.5 text-xs text-white hover:bg-red-700"><Plus size={12} /></button>
+            </div>
+          </div>
+
+          {/* GeoIP */}
+          <div>
+            <p className="text-sm font-medium text-card-foreground mb-2">GeoIP Blocking</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground">Block Countries (comma-separated ISO codes)</label>
+                <input value={geoBlock} onChange={e => setGeoBlock(e.target.value)} placeholder="CN, RU, KP"
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Allow Only (whitelist mode, leave empty for all)</label>
+                <input value={geoAllow} onChange={e => setGeoAllow(e.target.value)} placeholder="US, TR, DE"
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono" />
+              </div>
+            </div>
+          </div>
+
+          {/* Resource Limits */}
+          <div>
+            <p className="text-sm font-medium text-card-foreground mb-2">Resource Limits (Linux cgroups)</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label className="text-[10px] text-muted-foreground">CPU % (0 = unlimited)</label>
+                <input type="number" min={0} max={400} value={cpuPercent} onChange={e => setCpuPercent(Number(e.target.value))}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Memory MB (0 = unlimited)</label>
+                <input type="number" min={0} value={memoryMB} onChange={e => setMemoryMB(Number(e.target.value))}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Max PIDs (0 = unlimited)</label>
+                <input type="number" min={0} value={pidMax} onChange={e => setPidMax(Number(e.target.value))}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none" />
+              </div>
             </div>
           </div>
 
