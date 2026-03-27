@@ -28,12 +28,20 @@ export function isTOTPVerified() {
   return localStorage.getItem('uwas_totp_verified') === 'true';
 }
 
+// Pin code for destructive operations (set before calling delete/uninstall APIs)
+let pinCode = '';
+export function setPinCode(pin: string) { pinCode = pin; }
+export function clearPinCode() { pinCode = ''; }
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  }
+  if (pinCode) {
+    headers['X-Pin-Code'] = pinCode;
   }
   if (totpCode) {
     headers['X-TOTP-Code'] = totpCode;
@@ -55,6 +63,9 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
       totpCode = '';
       window.location.href = '/_uwas/dashboard/login?2fa=required';
       throw new Error('2FA required');
+    }
+    if (body.error === 'pin_required' || body.error === 'invalid_pin') {
+      throw new Error(body.error);
     }
     throw new Error(body.error || 'Forbidden');
   }
