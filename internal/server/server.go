@@ -455,6 +455,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 // SetConfigPath stores the config file path for reload support and config editor.
 func (s *Server) SetConfigPath(path string) {
 	s.configPath = path
+
+	// Persist blocked unknown domains alongside config
+	blockedPath := filepath.Join(filepath.Dir(path), "blocked-hosts.txt")
+	s.unknownHosts.SetPersistPath(blockedPath)
+
 	if s.admin != nil {
 		s.admin.SetConfigPath(path)
 	}
