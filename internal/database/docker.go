@@ -205,6 +205,90 @@ func StopDockerDB(name string) error {
 	return nil
 }
 
+// DockerDBExecSQL runs SQL inside a Docker database container.
+func DockerDBExecSQL(containerName, sql string) (string, error) {
+	fullName := containerName
+	if !strings.HasPrefix(fullName, containerPrefix) {
+		fullName = containerPrefix + containerName
+	}
+
+	// Detect engine from container image
+	inspectOut, err := dockerExecCommandFn("docker", "inspect", "--format", "{{.Config.Image}}", fullName).Output()
+	if err != nil {
+		return "", fmt.Errorf("docker inspect: %w", err)
+	}
+	image := strings.TrimSpace(string(inspectOut))
+
+	var args []string
+	switch {
+	case strings.Contains(image, "postgres"):
+		args = []string{"docker", "exec", fullName, "psql", "-U", "postgres", "-t", "-c", sql}
+	default: // mariadb, mysql
+		args = []string{"docker", "exec", fullName, "mariadb", "-u", "root", "-p$MYSQL_ROOT_PASSWORD",
+			"--batch", "--skip-column-names", "-e", sql}
+	}
+
+	cmd := dockerExecCommandFn(args[0], args[1:]...)
+	// Pass through env from container
+	if !strings.Contains(image, "postgres") {
+		cmd = dockerExecCommandFn("docker", "exec", fullName, "sh", "-c",
+			fmt.Sprintf(`mariadb -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names -e '%s' 2>/dev/null || mysql -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names -e '%s' 2>/dev/null`,
+				strings.ReplaceAll(sql, "'", "'\"'\"'"),
+				strings.ReplaceAll(sql, "'", "'\"'\"'")))
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("docker exec sql: %w — %s", err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+// DockerDBListDatabases lists databases in a Docker container.
+func DockerDBListDatabases(containerName string) ([]DBInfo, error) {
+	sql := `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema','mysql','performance_schema','sys')`
+	out, err := DockerDBExecSQL(containerName, sql)
+	if err != nil {
+		return nil, err
+	}
+	var dbs []DBInfo
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		dbs = append(dbs, DBInfo{Name: strings.TrimSpace(line)})
+	}
+	return dbs, nil
+}
+
+// DockerDBCreateDatabase creates a database inside a Docker container.
+func DockerDBCreateDatabase(containerName, dbName, user, password string) (*CreateResult, error) {
+	if password == "" {
+		password = generateDBPassword()
+	}
+	if user == "" {
+		user = dbName
+	}
+	sql := fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "+
+			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
+			"GRANT ALL ON %s.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
+		backtick(dbName), user, escapeSQL(password), backtick(dbName), user)
+
+	_, err := DockerDBExecSQL(containerName, sql)
+	if err != nil {
+		return nil, err
+	}
+	return &CreateResult{Name: dbName, User: user, Password: password, Host: containerName}, nil
+}
+
+// DockerDBDropDatabase drops a database from a Docker container.
+func DockerDBDropDatabase(containerName, dbName string) error {
+	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s;", backtick(dbName))
+	_, err := DockerDBExecSQL(containerName, sql)
+	return err
+}
+
 // RemoveDockerDB stops and removes a container.
 func RemoveDockerDB(name string) error {
 	// Stop first (ignore error if already stopped)

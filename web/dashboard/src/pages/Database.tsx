@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   HardDrive,
@@ -39,10 +39,14 @@ import {
   startDockerDB,
   stopDockerDB,
   removeDockerDB,
+  fetchDockerDBDatabases,
+  createDockerDBDatabase,
+  dropDockerDBDatabase,
   type DBStatus,
   type DBInfo,
   type DBUser,
   type DockerDBContainer,
+  type DBCreateResult,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -203,6 +207,10 @@ export default function Database() {
   const [showDockerForm, setShowDockerForm] = useState(false);
   const [dockerForm, setDockerForm] = useState({ engine: 'mariadb', name: '', port: '3307', root_pass: '' });
   const [dockerAction, setDockerAction] = useState('');
+  const [expandedContainer, setExpandedContainer] = useState('');
+  const [containerDBs, setContainerDBs] = useState<DBInfo[]>([]);
+  const [newDockerDBName, setNewDockerDBName] = useState('');
+  const [dockerDBResult, setDockerDBResult] = useState<DBCreateResult | null>(null);
 
   // Diagnose
   const [diagData, setDiagData] = useState<Record<string, any> | null>(null);
@@ -796,8 +804,10 @@ export default function Database() {
                 <tbody>
                   {dockerContainers.map(c => {
                     const shortName = c.name.replace('uwas-db-', '');
+                    const isExpanded = expandedContainer === shortName;
                     return (
-                      <tr key={c.id} className="border-b border-border/50 text-card-foreground hover:bg-accent/30">
+                      <React.Fragment key={c.id}>
+                      <tr className="border-b border-border/50 text-card-foreground hover:bg-accent/30">
                         <td className="px-5 py-3 font-mono text-xs">{c.name}</td>
                         <td className="px-5 py-3 text-muted-foreground">{c.engine}</td>
                         <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{c.image}</td>
@@ -809,6 +819,15 @@ export default function Database() {
                         </td>
                         <td className="px-5 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {c.running && (
+                              <button onClick={async () => {
+                                if (isExpanded) { setExpandedContainer(''); return; }
+                                setExpandedContainer(shortName);
+                                try { setContainerDBs(await fetchDockerDBDatabases(shortName) ?? []); } catch { setContainerDBs([]); }
+                              }} className="rounded bg-blue-600/15 px-2.5 py-1.5 text-xs text-blue-400 hover:bg-blue-600/25">
+                                <HardDrive size={11} />
+                              </button>
+                            )}
                             {c.running ? (
                               <button disabled={!!dockerAction} onClick={async () => {
                                 setDockerAction('stop-' + shortName);
@@ -837,6 +856,59 @@ export default function Database() {
                           </div>
                         </td>
                       </tr>
+                      {/* Expanded: DB management */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={5} className="bg-background px-5 py-4">
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h3 className="text-xs font-semibold text-muted-foreground">Databases in {c.name}</h3>
+                                <div className="flex items-center gap-2">
+                                  <input value={newDockerDBName} onChange={e => setNewDockerDBName(e.target.value)} placeholder="new_database"
+                                    className="rounded border border-border bg-card px-2 py-1 text-xs text-foreground outline-none font-mono w-40" />
+                                  <button disabled={!newDockerDBName.trim()} onClick={async () => {
+                                    try {
+                                      const r = await createDockerDBDatabase(shortName, newDockerDBName.trim());
+                                      setDockerDBResult(r);
+                                      setNewDockerDBName('');
+                                      setContainerDBs(await fetchDockerDBDatabases(shortName) ?? []);
+                                    } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                                  }} className="rounded bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50">
+                                    <Plus size={11} />
+                                  </button>
+                                </div>
+                              </div>
+                              {dockerDBResult && (
+                                <div className="rounded bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">
+                                  Created: {dockerDBResult.name} — User: {dockerDBResult.user} — Pass: <span className="font-mono">{dockerDBResult.password}</span>
+                                  <button onClick={() => setDockerDBResult(null)} className="ml-2 text-muted-foreground hover:text-foreground">x</button>
+                                </div>
+                              )}
+                              {containerDBs.length > 0 ? (
+                                <div className="space-y-1">
+                                  {containerDBs.map(db => (
+                                    <div key={db.name} className="flex items-center justify-between rounded bg-card px-3 py-2">
+                                      <span className="font-mono text-xs text-card-foreground">{db.name}</span>
+                                      <button onClick={async () => {
+                                        if (!confirm(`Drop database ${db.name}?`)) return;
+                                        try {
+                                          await dropDockerDBDatabase(shortName, db.name);
+                                          setContainerDBs(await fetchDockerDBDatabases(shortName) ?? []);
+                                        } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                                      }} className="text-red-400 hover:text-red-300">
+                                        <Trash2 size={11} />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No databases yet.</p>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

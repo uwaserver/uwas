@@ -500,6 +500,11 @@ export const createDockerDB = (engine: string, name: string, port: number, root_
 export const startDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}/start`, { method: 'POST' });
 export const stopDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}/stop`, { method: 'POST' });
 export const removeDockerDB = (name: string) => api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export const fetchDockerDBDatabases = (name: string) => api<DBInfo[]>(`/api/v1/database/docker/${encodeURIComponent(name)}/databases`);
+export const createDockerDBDatabase = (containerName: string, dbName: string, user?: string, password?: string) =>
+  api<DBCreateResult>(`/api/v1/database/docker/${encodeURIComponent(containerName)}/databases`, { method: 'POST', body: JSON.stringify({ name: dbName, user, password }) });
+export const dropDockerDBDatabase = (containerName: string, dbName: string) =>
+  api<{ status: string }>(`/api/v1/database/docker/${encodeURIComponent(containerName)}/databases/${encodeURIComponent(dbName)}`, { method: 'DELETE' });
 
 // User Login (multi-user auth)
 export interface LoginResult { status: string; token: string; user_id: string; username: string; role: string; domains: string[]; expires_at: string; }
