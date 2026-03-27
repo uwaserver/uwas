@@ -290,7 +290,7 @@ func TestGenerateAPIKey(t *testing.T) {
 }
 
 func TestGenerateDefaultConfigValidYAML(t *testing.T) {
-	content := generateDefaultConfig("8080", "9443", "0.0.0.0", "abcdef1234567890abcdef1234567890", "/tmp/uwas", "/var/www", "test@example.com")
+	content := generateDefaultConfig("8080", "9443", "0.0.0.0", "abcdef1234567890abcdef1234567890", "123456", "/tmp/uwas", "/var/www", "test@example.com")
 
 	// Should be parseable as YAML.
 	var parsed map[string]any
@@ -319,7 +319,7 @@ func TestGenerateDefaultConfigValidYAML(t *testing.T) {
 
 func TestGenerateDefaultConfigContainsAPIKey(t *testing.T) {
 	apiKey := "deadbeef12345678deadbeef12345678"
-	content := generateDefaultConfig("80", "9443", "0.0.0.0", apiKey, "/tmp/uwas", "/var/www", "")
+	content := generateDefaultConfig("80", "9443", "0.0.0.0", apiKey, "654321", "/tmp/uwas", "/var/www", "")
 
 	if !strings.Contains(content, apiKey) {
 		t.Error("generated config should contain the API key")
@@ -327,7 +327,7 @@ func TestGenerateDefaultConfigContainsAPIKey(t *testing.T) {
 }
 
 func TestGenerateDefaultConfigContainsPorts(t *testing.T) {
-	content := generateDefaultConfig("8888", "7777", "0.0.0.0", "key", "/tmp/uwas", "/var/www", "")
+	content := generateDefaultConfig("8888", "7777", "0.0.0.0", "key", "000000", "/tmp/uwas", "/var/www", "")
 
 	if !strings.Contains(content, ":8888") {
 		t.Error("should contain HTTP port")
