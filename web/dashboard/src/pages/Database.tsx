@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   HardDrive,
   RefreshCw,
@@ -713,7 +714,7 @@ export default function Database() {
             Docker Containers
           </h2>
           <p className="text-xs text-muted-foreground mb-3">
-            Docker is not installed. Install it from the <a href="/packages" className="text-blue-400 hover:underline">Packages</a> page to create containerized MariaDB, MySQL, or PostgreSQL databases.
+            Docker is not installed. Install it from the <Link to="/packages" className="text-blue-400 hover:underline">Packages</Link> page to create containerized MariaDB, MySQL, or PostgreSQL databases.
           </p>
         </div>
       )}

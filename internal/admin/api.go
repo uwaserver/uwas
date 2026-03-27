@@ -2740,18 +2740,28 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		case "global.admin.enabled": g.Admin.Enabled = sv == "true"
 		case "global.admin.listen":  g.Admin.Listen = sv
 		case "global.admin.api_key": g.Admin.APIKey = sv
+		// Multi-User Auth
+		case "global.users.enabled":        g.Users.Enabled = sv == "true"
+		case "global.users.allow_reseller": g.Users.AllowResller = sv == "true"
 		// MCP
 		case "global.mcp.enabled": g.MCP.Enabled = sv == "true"
+		case "global.mcp.listen":  g.MCP.Listen = sv
 		// ACME
 		case "global.acme.email":        g.ACME.Email = sv
 		case "global.acme.ca_url":       g.ACME.CAURL = sv
 		case "global.acme.storage":      g.ACME.Storage = sv
 		case "global.acme.dns_provider": g.ACME.DNSProvider = sv
+		case "global.acme.on_demand":    g.ACME.OnDemand = sv == "true"
+		case "global.acme.on_demand_ask": g.ACME.OnDemandAsk = sv
 		// Cache
 		case "global.cache.enabled":      g.Cache.Enabled = sv == "true"
 		case "global.cache.memory_limit": g.Cache.MemoryLimit = parseBS(sv)
 		case "global.cache.disk_path":    g.Cache.DiskPath = sv
+		case "global.cache.disk_limit":   g.Cache.DiskLimit = parseBS(sv)
 		case "global.cache.default_ttl":  g.Cache.DefaultTTL = toInt(val)
+		case "global.cache.grace_ttl":    g.Cache.GraceTTL = toInt(val)
+		case "global.cache.stale_while_revalidate": g.Cache.StaleWhileRevalidate = sv == "true"
+		case "global.cache.purge_key":   g.Cache.PurgeKey = sv
 		// Alerting
 		case "global.alerting.enabled":          g.Alerting.Enabled = sv == "true"
 		case "global.alerting.webhook_url":      g.Alerting.WebhookURL = sv
@@ -2766,10 +2776,19 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		case "global.backup.local.path":  g.Backup.Local.Path = sv
 		case "global.backup.s3.endpoint": g.Backup.S3.Endpoint = sv
 		case "global.backup.s3.bucket":   g.Backup.S3.Bucket = sv
-		case "global.backup.s3.region":   g.Backup.S3.Region = sv
-		case "global.backup.sftp.host":   g.Backup.SFTP.Host = sv
-		case "global.backup.sftp.port":   g.Backup.SFTP.Port = toInt(val)
-		case "global.backup.sftp.user":   g.Backup.SFTP.User = sv
+		case "global.backup.s3.region":      g.Backup.S3.Region = sv
+		case "global.backup.s3.access_key":  g.Backup.S3.AccessKey = sv
+		case "global.backup.s3.secret_key":  g.Backup.S3.SecretKey = sv
+		case "global.backup.sftp.host":      g.Backup.SFTP.Host = sv
+		case "global.backup.sftp.port":      g.Backup.SFTP.Port = toInt(val)
+		case "global.backup.sftp.user":      g.Backup.SFTP.User = sv
+		case "global.backup.sftp.key_file":  g.Backup.SFTP.KeyFile = sv
+		case "global.backup.sftp.password":  g.Backup.SFTP.Password = sv
+		case "global.backup.sftp.remote_path": g.Backup.SFTP.RemotePath = sv
+		// Alerting email
+		case "global.alerting.email_smtp_host": g.Alerting.EmailSMTP = sv
+		case "global.alerting.email_from":      g.Alerting.EmailFrom = sv
+		case "global.alerting.email_to":        g.Alerting.EmailTo = sv
 		}
 	}
 	s.configMu.Unlock()
