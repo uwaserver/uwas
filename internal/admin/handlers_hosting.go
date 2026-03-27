@@ -1821,8 +1821,7 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, pkgs)
 }
 
-// packageInstallState is kept for reference but installation
-// is now managed by the global task manager (install.Manager).
+// Package installation is managed by the global task manager (install.Manager).
 
 func findPkg(id string) *knownPkg {
 	for i := range knownPackages {
