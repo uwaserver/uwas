@@ -155,6 +155,7 @@ type Domain struct {
 	SSL               SSLConfig               `yaml:"ssl" json:"ssl"`
 	PHP               PHPConfig               `yaml:"php,omitempty" json:"php,omitempty"`
 	App               AppConfig               `yaml:"app,omitempty" json:"app,omitempty"`
+	Resources         ResourceLimits          `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Cache             DomainCache             `yaml:"cache,omitempty" json:"cache,omitempty"`
 	Rewrites          []RewriteRule           `yaml:"rewrites,omitempty" json:"rewrites,omitempty"`
 	Htaccess          HtaccessConfig          `yaml:"htaccess,omitempty" json:"htaccess,omitempty"`
@@ -329,6 +330,13 @@ type AppConfig struct {
 	WorkDir    string            `yaml:"work_dir,omitempty" json:"work_dir,omitempty"`     // working directory (defaults to domain root)
 	Runtime    string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`       // "node", "python", "ruby", "go", "custom"
 	AutoRestart bool            `yaml:"auto_restart,omitempty" json:"auto_restart,omitempty"` // restart on crash (default true)
+}
+
+// ResourceLimits defines per-domain CPU/memory/PID limits (Linux cgroups v2).
+type ResourceLimits struct {
+	CPUPercent int `yaml:"cpu_percent,omitempty" json:"cpu_percent,omitempty"` // max CPU % (e.g. 50 = half a core)
+	MemoryMB   int `yaml:"memory_mb,omitempty" json:"memory_mb,omitempty"`    // max memory in MB
+	PIDMax     int `yaml:"pid_max,omitempty" json:"pid_max,omitempty"`        // max processes
 }
 
 type DomainCache struct {
