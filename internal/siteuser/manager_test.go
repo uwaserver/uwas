@@ -75,11 +75,7 @@ func fakeExecCommandFail(command string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// fakeExecCommandIDExists returns a fake command that succeeds only for "id".
-// All other commands succeed too. This simulates "user already exists".
-func fakeExecCommandIDExists(command string, args ...string) *exec.Cmd {
-	return fakeExecCommand(command, args...)
-}
+
 
 // fakeExecCommandUseraddFailIDFail makes useradd fail AND id fail (user doesn't exist).
 func fakeExecCommandUseraddFailIDFail(command string, args ...string) *exec.Cmd {

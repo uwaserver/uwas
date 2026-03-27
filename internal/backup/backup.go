@@ -369,7 +369,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			outPath = filepath.Join(m.webRoot, rel)
-		case hdr.Name == "databases/all-databases.sql":
+		case hdr.Name == "databases/all-databases.sql" || hdr.Name == "databases/native-all-databases.sql":
 			// Import database dump via mysql
 			if hdr.Typeflag != tar.TypeDir {
 				data, _ := io.ReadAll(tr)

@@ -150,11 +150,6 @@ func (m *Manager) IsRunning() bool {
 	return false
 }
 
-// QueueLen returns the number of queued + running tasks.
-func (m *Manager) QueueLen() int {
-	return len(m.queue)
-}
-
 // Stop shuts down the queue worker.
 func (m *Manager) Stop() {
 	close(m.stopCh)
