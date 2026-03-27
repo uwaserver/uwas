@@ -26,7 +26,9 @@ func New(log *logger.Logger) *Handler {
 
 // WSConn wraps a hijacked connection for WebSocket framing.
 type WSConn struct {
-	rwc io.ReadWriteCloser
+	rwc    io.ReadWriteCloser // underlying TCP conn (for Close)
+	reader io.Reader          // buffered reader (may have pre-read data)
+	writer io.Writer          // buffered writer
 }
 
 // UpgradeWebSocket performs the HTTP→WebSocket handshake.
@@ -53,13 +55,13 @@ func UpgradeWebSocket(w http.ResponseWriter, r *http.Request) (*WSConn, error) {
 	bufrw.Write([]byte(resp))
 	bufrw.Flush()
 
-	// bufrw wraps conn; we use conn directly for unbuffered I/O after flush
-	return &WSConn{rwc: conn}, nil
+	// Use bufrw for reads (may have buffered client data) and conn for close
+	return &WSConn{rwc: conn, reader: bufrw, writer: conn}, nil
 }
 
 func (c *WSConn) ReadMessage() ([]byte, error) {
 	header := make([]byte, 2)
-	if _, err := io.ReadFull(c.rwc, header); err != nil {
+	if _, err := io.ReadFull(c.reader, header); err != nil {
 		return nil, err
 	}
 
@@ -70,13 +72,13 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 	switch payloadLen {
 	case 126:
 		ext := make([]byte, 2)
-		if _, err := io.ReadFull(c.rwc, ext); err != nil {
+		if _, err := io.ReadFull(c.reader, ext); err != nil {
 			return nil, err
 		}
 		payloadLen = int(ext[0])<<8 | int(ext[1])
 	case 127:
 		ext := make([]byte, 8)
-		if _, err := io.ReadFull(c.rwc, ext); err != nil {
+		if _, err := io.ReadFull(c.reader, ext); err != nil {
 			return nil, err
 		}
 		payloadLen = int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
@@ -84,13 +86,13 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 
 	var mask [4]byte
 	if masked {
-		if _, err := io.ReadFull(c.rwc, mask[:]); err != nil {
+		if _, err := io.ReadFull(c.reader, mask[:]); err != nil {
 			return nil, err
 		}
 	}
 
 	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(c.rwc, payload); err != nil {
+	if _, err := io.ReadFull(c.reader, payload); err != nil {
 		return nil, err
 	}
 	if masked {
@@ -117,12 +119,12 @@ func (c *WSConn) WriteText(data []byte) error {
 			byte(len(data)>>24), byte(len(data)>>16), byte(len(data)>>8), byte(len(data)))
 	}
 	frame = append(frame, data...)
-	_, err := c.rwc.Write(frame)
+	_, err := c.writer.Write(frame)
 	return err
 }
 
 func (c *WSConn) Close() error {
-	c.rwc.Write([]byte{0x88, 0x00}) // close frame
+	c.writer.Write([]byte{0x88, 0x00}) // close frame
 	return c.rwc.Close()
 }
 
