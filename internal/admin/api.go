@@ -473,18 +473,18 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	s.configMu.RLock()
-	apiKey := s.config.Global.Admin.APIKey
-	multiUserEnabled := s.config.Global.Users.Enabled
-	s.configMu.RUnlock()
-
-	// If no auth configured at all, warn and allow all
-	if apiKey == "" && !multiUserEnabled {
-		s.logger.Warn("admin API has no authentication — all endpoints are unauthenticated!")
-		return next
-	}
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read auth config per-request so config changes take effect without restart
+		s.configMu.RLock()
+		apiKey := s.config.Global.Admin.APIKey
+		multiUserEnabled := s.config.Global.Users.Enabled
+		s.configMu.RUnlock()
+
+		// If no auth configured at all, allow all
+		if apiKey == "" && !multiUserEnabled {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// CORS: only allow the dashboard's own origin (or localhost for dev).
 		if origin := r.Header.Get("Origin"); origin != "" {
 			if isAllowedOrigin(origin, r) {
