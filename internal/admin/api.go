@@ -36,6 +36,7 @@ import (
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
+	"github.com/uwaserver/uwas/internal/appmanager"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/serverip"
@@ -89,6 +90,7 @@ type Server struct {
 	monitor       *monitor.Monitor
 	alerter       *alerting.Alerter
 	phpMgr        *phpmanager.Manager
+	appMgr        *appmanager.Manager
 	backupMgr     *backup.BackupManager
 	bwMgr         *bandwidth.Manager
 	cronMonitor   *cronjob.Monitor
@@ -215,6 +217,13 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/php/domains/{domain}/stop", s.handlePHPDomainStop)
 	s.mux.HandleFunc("GET /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigGet)
 	s.mux.HandleFunc("PUT /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigPut)
+
+	// App process management (Node.js, Python, etc.)
+	s.mux.HandleFunc("GET /api/v1/apps", s.handleAppList)
+	s.mux.HandleFunc("GET /api/v1/apps/{domain}", s.handleAppGet)
+	s.mux.HandleFunc("POST /api/v1/apps/{domain}/start", s.handleAppStart)
+	s.mux.HandleFunc("POST /api/v1/apps/{domain}/stop", s.handleAppStop)
+	s.mux.HandleFunc("POST /api/v1/apps/{domain}/restart", s.handleAppRestart)
 
 	// Installation tasks (global queue)
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleTaskList)
@@ -4024,6 +4033,9 @@ func (s *Server) SetAuthManager(m AuthManager) { s.authMgr = m }
 
 // SetWebhookManager sets the webhook manager for event delivery.
 func (s *Server) SetWebhookManager(m *webhook.Manager) { s.webhookMgr = m }
+
+// SetAppManager sets the application process manager.
+func (s *Server) SetAppManager(m *appmanager.Manager) { s.appMgr = m }
 
 func (s *Server) handleCronMonitorList(w http.ResponseWriter, r *http.Request) {
 	if s.cronMonitor == nil {

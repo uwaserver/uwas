@@ -154,6 +154,7 @@ type Domain struct {
 	Type              string                  `yaml:"type" json:"type"`
 	SSL               SSLConfig               `yaml:"ssl" json:"ssl"`
 	PHP               PHPConfig               `yaml:"php,omitempty" json:"php,omitempty"`
+	App               AppConfig               `yaml:"app,omitempty" json:"app,omitempty"`
 	Cache             DomainCache             `yaml:"cache,omitempty" json:"cache,omitempty"`
 	Rewrites          []RewriteRule           `yaml:"rewrites,omitempty" json:"rewrites,omitempty"`
 	Htaccess          HtaccessConfig          `yaml:"htaccess,omitempty" json:"htaccess,omitempty"`
@@ -318,6 +319,16 @@ type PHPConfig struct {
 	MaxUpload  ByteSize          `yaml:"max_upload,omitempty" json:"max_upload,omitempty"`
 	Timeout    Duration          `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Env        map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+}
+
+// AppConfig holds configuration for non-PHP application processes (Node.js, Python, etc.).
+type AppConfig struct {
+	Command    string            `yaml:"command,omitempty" json:"command,omitempty"`       // e.g. "npm start", "gunicorn app:app"
+	Port       int               `yaml:"port,omitempty" json:"port,omitempty"`             // app listens on this port (auto-assigned if 0)
+	Env        map[string]string `yaml:"env,omitempty" json:"env,omitempty"`               // environment variables
+	WorkDir    string            `yaml:"work_dir,omitempty" json:"work_dir,omitempty"`     // working directory (defaults to domain root)
+	Runtime    string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`       // "node", "python", "ruby", "go", "custom"
+	AutoRestart bool            `yaml:"auto_restart,omitempty" json:"auto_restart,omitempty"` // restart on crash (default true)
 }
 
 type DomainCache struct {
