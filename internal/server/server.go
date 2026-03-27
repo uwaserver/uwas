@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -120,6 +121,9 @@ type Server struct {
 
 	// domainLogs writes per-domain access log files.
 	domainLogs *domainLogManager
+
+	// esiProcessor handles Edge Side Includes fragment assembly.
+	esiProcessor *cache.ESIProcessor
 }
 
 // New creates a fully initialized server from config.
@@ -238,6 +242,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	s.monitor = monitor.New(cfg.Domains, log)
 	if s.admin != nil {
 		s.admin.SetMonitor(s.monitor)
+	}
+
+	// ESI processor (requires cache engine + server as fragment fetcher)
+	if cacheEngine != nil {
+		s.esiProcessor = cache.NewESIProcessor(cacheEngine, s, log, 3)
 	}
 
 	// PHP Manager — detect, auto-assign to PHP domains, start all
@@ -1083,8 +1092,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			body := cached.Body
+			// ESI assembly on cache hit: replace ESI tags with cached/fetched fragments
+			if cached.ESITemplate && domain.Cache.ESI && s.esiProcessor != nil &&
+				r.Header.Get("X-ESI-Subrequest") == "" {
+				assembled, err := s.esiProcessor.Process(body, r.Host, r, domain.Cache.Tags, 0)
+				if err == nil {
+					body = assembled
+				}
+				ctx.Response.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			}
 			ctx.Response.WriteHeader(cached.StatusCode)
-			ctx.Response.Write(cached.Body)
+			ctx.Response.Write(body)
 			return
 		}
 		ctx.CacheStatus = cache.StatusMiss
@@ -1125,13 +1144,19 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			if ttl <= 0 {
 				ttl = 60 * time.Second
 			}
+			capturedBody := capture.body.Bytes()
+			isESI := domain.Cache.ESI && s.esiProcessor != nil &&
+				strings.Contains(hdrs.Get("Content-Type"), "text/html") &&
+				cache.ContainsESI(capturedBody) &&
+				r.Header.Get("X-ESI-Subrequest") == ""
 			s.cache.Set(r, &cache.CachedResponse{
-				StatusCode: ctx.Response.StatusCode(),
-				Headers:    hdrs,
-				Body:       capture.body.Bytes(),
-				Created:    time.Now(),
-				TTL:        ttl,
-				Tags:       domain.Cache.Tags,
+				StatusCode:  ctx.Response.StatusCode(),
+				Headers:     hdrs,
+				Body:        capturedBody,
+				Created:     time.Now(),
+				TTL:         ttl,
+				Tags:        domain.Cache.Tags,
+				ESITemplate: isESI,
 			})
 		}
 	} else {
@@ -1748,6 +1773,42 @@ func (s *Server) shutdown() {
 
 // autoAssignPHP assigns PHP to all PHP-type domains on server startup.
 // Uses system php-fpm socket if available (shared), otherwise starts per-domain processes.
+// FetchFragment makes an internal sub-request for an ESI fragment.
+// Implements cache.ESIFragmentFetcher.
+func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]byte, int, http.Header, error) {
+	req, _ := http.NewRequestWithContext(parentReq.Context(), "GET", path, nil)
+	req.Host = host
+	req.URL.Path = path
+	req.Header.Set("Accept", "text/html, */*")
+	req.Header.Set("Cookie", parentReq.Header.Get("Cookie"))
+	req.Header.Set("X-ESI-Subrequest", "true")
+
+	domain := s.vhosts.Lookup(host)
+	if domain == nil {
+		return nil, 0, nil, fmt.Errorf("ESI: domain not found: %s", host)
+	}
+
+	rec := httptest.NewRecorder()
+	ctx := router.AcquireContext(rec, req)
+	defer router.ReleaseContext(ctx)
+	ctx.VHostName = domain.Host
+	ctx.DocumentRoot = domain.Root
+
+	switch domain.Type {
+	case "static", "php":
+		s.handleFileRequest(ctx, domain)
+	case "proxy":
+		s.handleProxy(ctx, domain)
+	default:
+		return nil, 0, nil, fmt.Errorf("ESI: unsupported type: %s", domain.Type)
+	}
+
+	result := rec.Result()
+	body, _ := io.ReadAll(result.Body)
+	result.Body.Close()
+	return body, result.StatusCode, result.Header, nil
+}
+
 func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 	status := phpMgr.Status()
 	if len(status) == 0 {
