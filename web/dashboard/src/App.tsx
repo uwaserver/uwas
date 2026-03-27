@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { getToken } from '@/lib/api';
+import { getToken, onPinRequired } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import PinModal from '@/components/PinModal';
 import Login from '@/pages/Login';
 import Dashboard from '@/pages/Dashboard';
 import Domains from '@/pages/Domains';
@@ -60,7 +62,31 @@ function PublicOnly() {
 }
 
 export default function App() {
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinResolver, setPinResolver] = useState<{ resolve: (pin: string) => void; reject: () => void } | null>(null);
+
+  useEffect(() => {
+    onPinRequired((resolve, reject) => {
+      setPinResolver({ resolve, reject });
+      setPinOpen(true);
+    });
+  }, []);
+
   return (
+    <>
+    <PinModal
+      open={pinOpen}
+      onConfirm={(pin) => {
+        setPinOpen(false);
+        pinResolver?.resolve(pin);
+        setPinResolver(null);
+      }}
+      onCancel={() => {
+        setPinOpen(false);
+        pinResolver?.reject();
+        setPinResolver(null);
+      }}
+    />
     <Routes>
       {/* Public routes */}
       <Route element={<PublicOnly />}>
@@ -109,5 +135,6 @@ export default function App() {
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }

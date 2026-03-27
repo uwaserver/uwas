@@ -28,10 +28,14 @@ export function isTOTPVerified() {
   return localStorage.getItem('uwas_totp_verified') === 'true';
 }
 
-// Pin code for destructive operations (set before calling delete/uninstall APIs)
+// Pin code for destructive operations
 let pinCode = '';
 export function setPinCode(pin: string) { pinCode = pin; }
 export function clearPinCode() { pinCode = ''; }
+
+// Global pin prompt callback — set by App.tsx, called when API returns pin_required
+let pinPromptCallback: ((resolve: (pin: string) => void, reject: () => void) => void) | null = null;
+export function onPinRequired(cb: typeof pinPromptCallback) { pinPromptCallback = cb; }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
@@ -63,6 +67,22 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
       totpCode = '';
       window.location.href = '/_uwas/dashboard/login?2fa=required';
       throw new Error('2FA required');
+    }
+    if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
+      // Show global pin modal, wait for user input, retry the request
+      const pin = await new Promise<string>((resolve, reject) => {
+        pinPromptCallback!(resolve, reject);
+      });
+      pinCode = pin;
+      // Retry the same request with pin
+      const retryHeaders: Record<string, string> = { ...headers, 'X-Pin-Code': pin };
+      const retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders });
+      pinCode = '';
+      if (!retryRes.ok) {
+        const retryBody = await retryRes.json().catch(() => ({ error: retryRes.statusText }));
+        throw new Error(retryBody.error || retryRes.statusText);
+      }
+      return retryRes.json();
     }
     if (body.error === 'pin_required' || body.error === 'invalid_pin') {
       throw new Error(body.error);
