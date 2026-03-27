@@ -33,7 +33,8 @@ export default function PHPConfig() {
   const [selectedVer, setSelectedVer] = useState('');
   const [tab, setTab] = useState<Tab>('form');
   const [formValues, setFormValues] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState<string | null>(null);
+  const [savedValues, setSavedValues] = useState<Record<string, string>>({});
+  const [savingAll, setSavingAll] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [rawContent, setRawContent] = useState('');
   const [rawDirty, setRawDirty] = useState(false);
@@ -59,7 +60,7 @@ export default function PHPConfig() {
 
   useEffect(() => {
     if (!selectedVer) return;
-    fetchPHPConfig(selectedVer).then(cfg => setFormValues(cfg ?? {})).catch(() => setFormValues({}));
+    fetchPHPConfig(selectedVer).then(cfg => { const c = cfg ?? {}; setFormValues(c); setSavedValues(c); }).catch(() => { setFormValues({}); setSavedValues({}); });
     fetchPHPConfigRaw(selectedVer).then(r => { setRawContent(r?.content ?? ''); setRawDirty(false); }).catch(() => setRawContent(''));
   }, [selectedVer]);
 
@@ -68,21 +69,30 @@ export default function PHPConfig() {
     setTimeout(() => setStatus(null), 4000);
   };
 
-  const handleFormSave = async (key: string, value: string) => {
-    const setting = popularSettings.find(s => s.key === key);
-    if (setting?.validate && value && !setting.validate.test(value)) {
-      showStatus(false, `Invalid value for ${key}: "${value}"`);
-      return;
+  const dirtyKeys = popularSettings.filter(s => (formValues[s.key] ?? '') !== (savedValues[s.key] ?? '')).map(s => s.key);
+  const hasDirty = dirtyKeys.length > 0;
+
+  const handleSaveAll = async () => {
+    // Validate all dirty keys first
+    for (const key of dirtyKeys) {
+      const setting = popularSettings.find(s => s.key === key);
+      const value = formValues[key] ?? '';
+      if (setting?.validate && value && !setting.validate.test(value)) {
+        showStatus(false, `Invalid value for ${key}: "${value}"`);
+        return;
+      }
     }
-    setSaving(key);
+    setSavingAll(true);
     try {
-      await updatePHPConfigKey(selectedVer, key, value);
-      setFormValues(prev => ({ ...prev, [key]: value }));
-      showStatus(true, `${key} = ${value}`);
+      for (const key of dirtyKeys) {
+        await updatePHPConfigKey(selectedVer, key, formValues[key] ?? '');
+      }
+      setSavedValues({ ...formValues });
+      showStatus(true, `${dirtyKeys.length} setting${dirtyKeys.length > 1 ? 's' : ''} saved`);
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {
-      setSaving(null);
+      setSavingAll(false);
     }
   };
 
@@ -93,6 +103,7 @@ export default function PHPConfig() {
         await updatePHPConfigKey(selectedVer, k, v);
       }
       setFormValues(prev => ({ ...prev, ...preset.values }));
+      setSavedValues(prev => ({ ...prev, ...preset.values }));
       showStatus(true, `${preset.name} preset applied (${Object.keys(preset.values).length} settings)`);
     } catch (e) {
       showStatus(false, (e as Error).message);
@@ -174,9 +185,10 @@ export default function PHPConfig() {
         <div className="rounded-lg border border-border bg-card divide-y divide-border">
           {popularSettings.map(s => {
             const value = formValues[s.key] ?? '';
+            const dirty = value !== (savedValues[s.key] ?? '');
             const invalid = s.validate && value && !s.validate.test(value);
             return (
-              <div key={s.key} className="flex items-center gap-4 px-5 py-3">
+              <div key={s.key} className={`flex items-center gap-4 px-5 py-3 ${dirty ? 'bg-blue-500/5' : ''}`}>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-card-foreground">{s.label}</p>
                   <p className="text-[10px] text-muted-foreground"><code>{s.key}</code> — {s.hint}</p>
@@ -187,21 +199,25 @@ export default function PHPConfig() {
                     onChange={e => setFormValues(prev => ({ ...prev, [s.key]: e.target.value }))}
                     placeholder={s.placeholder}
                     className={`w-44 rounded-md border px-3 py-1.5 text-sm font-mono text-foreground outline-none ${
-                      invalid ? 'border-red-500 bg-red-500/5' : 'border-border bg-background focus:border-blue-500'
+                      invalid ? 'border-red-500 bg-red-500/5' : dirty ? 'border-blue-500 bg-blue-500/5' : 'border-border bg-background focus:border-blue-500'
                     }`}
                   />
                   {invalid && <p className="absolute -bottom-3.5 left-0 text-[9px] text-red-400">Invalid format</p>}
                 </div>
-                <button
-                  onClick={() => handleFormSave(s.key, value)}
-                  disabled={saving === s.key || !!invalid}
-                  className="flex items-center gap-1 rounded-md bg-blue-600/15 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-600/25 disabled:opacity-50">
-                  {saving === s.key ? <RefreshCw size={11} className="animate-spin" /> : <Save size={11} />}
-                  Save
-                </button>
               </div>
             );
           })}
+        </div>
+
+        {/* Save All button */}
+        <div className="flex justify-end">
+          <button
+            onClick={handleSaveAll}
+            disabled={!hasDirty || savingAll}
+            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 transition">
+            {savingAll ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+            {savingAll ? 'Saving...' : hasDirty ? `Save ${dirtyKeys.length} change${dirtyKeys.length > 1 ? 's' : ''}` : 'No changes'}
+          </button>
         </div>
       </>)}
 
