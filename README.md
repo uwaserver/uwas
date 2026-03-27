@@ -18,7 +18,7 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 35-page React dashboard with 170+ API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 36-page React dashboard with 179 API endpoints.
 
 One binary. Zero hassle.
 
@@ -37,7 +37,7 @@ One binary. Zero hassle.
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **35-page Dashboard** — React 19 admin panel with dark/light theme
+- **36-page Dashboard** — React 19 admin panel with dark/light theme
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
 - **WordPress Management** — One-click install, plugin updates, debug mode, error log viewer
 - **DNS Zone Editor** — Full CRUD for Cloudflare, Hetzner, DigitalOcean, Route53
@@ -244,7 +244,7 @@ Request Flow:
 ```
 cmd/uwas/                → CLI entry point (18 commands)
 internal/
-  admin/                 → REST API (170+ routes) + dashboard embed + TOTP auth
+  admin/                 → REST API (179 routes) + dashboard embed + TOTP auth
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
   auth/                  → Multi-user RBAC (admin/reseller/user) + session + TOTP 2FA
@@ -285,7 +285,7 @@ internal/
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
   htaccess/              → .htaccess parser and converter
-web/dashboard/           → React 19 SPA (35 pages, Vite + TypeScript + Tailwind)
+web/dashboard/           → React 19 SPA (36 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Dashboard

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -31,6 +33,9 @@ func (c *CLI) Register(cmd Command) {
 }
 
 func (c *CLI) Run(args []string) {
+	// Auto-load .env from config directory for API key
+	loadDotEnv()
+
 	if len(args) == 0 {
 		// No arguments: auto-start server (first-run friendly)
 		if cmd, ok := c.commands["serve"]; ok {
@@ -121,4 +126,37 @@ func (h *HelpCommand) Run(args []string) error {
 	}
 	h.cli.printUsage()
 	return nil
+}
+
+// loadDotEnv reads .env from the UWAS config directory and sets env vars.
+// Looks in ~/.uwas/.env and /etc/uwas/.env.
+func loadDotEnv() {
+	home, _ := os.UserHomeDir()
+	paths := []string{
+		filepath.Join(home, ".uwas", ".env"),
+		"/etc/uwas/.env",
+	}
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if k, v, ok := strings.Cut(line, "="); ok {
+				k = strings.TrimSpace(k)
+				v = strings.TrimSpace(v)
+				// Don't override existing env vars
+				if os.Getenv(k) == "" {
+					os.Setenv(k, v)
+				}
+			}
+		}
+		f.Close()
+		return // use first found
+	}
 }

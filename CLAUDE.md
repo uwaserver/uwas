@@ -67,8 +67,8 @@ web/dashboard/       React SPA (33 pages, Vite + TypeScript + Tailwind)
 
 ## Stats
 
-- 45 Go packages, 45 with tests (all passing)
-- 35 dashboard pages, 170+ API endpoints
+- 46 Go packages, all with tests (all passing)
+- 36 dashboard pages, 179 API endpoints
 - 18 CLI commands
 - ~14MB single binary (linux/amd64)
 
@@ -131,7 +131,7 @@ go test -v -run TestWordPress ./...  # Specific test
 - **Add dashboard page**: Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to sidebar group in `Sidebar.tsx`
 - **Add API function**: Add to `web/dashboard/src/lib/api.ts` with proper TypeScript interface
 
-## Dashboard Pages (35)
+## Dashboard Pages (36)
 
 Sites: Domains, Domain Detail, Topology, Certificates, DNS, WordPress, Clone/Staging, Migration, File Manager
 Server: PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
