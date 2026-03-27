@@ -344,7 +344,7 @@ func (m *Manager) StartDomain(domain string) error {
 	}
 
 	// Reap the process in the background and auto-restart on crash.
-	go func() {
+	m.logger.SafeGo("php.monitor."+domain, func() {
 		waitErr := cmd.Wait()
 		m.domainMu.Lock()
 		di, stillAssigned := m.domainMap[domain]
@@ -375,7 +375,7 @@ func (m *Manager) StartDomain(domain string) error {
 				m.logger.Info("PHP-CGI auto-restarted", "domain", domain)
 			}
 		}
-	}()
+	})
 
 	return nil
 }

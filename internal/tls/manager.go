@@ -308,7 +308,7 @@ func (m *Manager) StartRenewal(ctx context.Context) {
 		return
 	}
 
-	go func() {
+	m.logger.SafeGo("tls.renewal", func() {
 		// Initial delay to let server start
 		initDelay := m.renewalInitialDelay
 		if initDelay == 0 {
@@ -336,7 +336,7 @@ func (m *Manager) StartRenewal(ctx context.Context) {
 			case <-ticker.C:
 			}
 		}
-	}()
+	})
 }
 
 func (m *Manager) checkRenewals(ctx context.Context) {
