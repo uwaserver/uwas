@@ -40,10 +40,6 @@ var KnownServices = []struct {
 	{"cron", "Cron", []string{"crond"}},
 	{"ufw", "Firewall (UFW)", nil},
 	{"fail2ban", "Fail2ban", nil},
-	{"postfix", "Postfix (Mail)", nil},
-	{"dovecot", "Dovecot (IMAP)", nil},
-	{"redis-server", "Redis", []string{"redis"}},
-	{"memcached", "Memcached", nil},
 }
 
 // ListServices returns the status of all known system services.
