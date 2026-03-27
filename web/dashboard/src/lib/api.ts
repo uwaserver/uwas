@@ -780,3 +780,32 @@ export interface InstallTask {
 
 export const fetchTasks = () => api<InstallTask[]>('/api/v1/tasks');
 export const fetchTask = (id: string) => api<InstallTask>(`/api/v1/tasks/${encodeURIComponent(id)}`);
+
+// ── App Process Manager (Node.js, Python, Ruby, Go) ──
+
+export interface AppInstance {
+  domain: string;
+  runtime: string;
+  command: string;
+  port: number;
+  pid: number;
+  running: boolean;
+  uptime?: string;
+  started_at?: string;
+  env?: Record<string, string>;
+}
+
+export const fetchApps = () => api<AppInstance[]>('/api/v1/apps');
+export const fetchApp = (domain: string) => api<AppInstance>(`/api/v1/apps/${encodeURIComponent(domain)}`);
+export const startApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/start`, { method: 'POST' });
+export const stopApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/stop`, { method: 'POST' });
+export const restartApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/restart`, { method: 'POST' });
+
+// ── Web Terminal ──
+
+export function terminalWSURL(): string {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = import.meta.env.DEV ? '127.0.0.1:9443' : window.location.host;
+  const params = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${proto}//${host}/api/v1/terminal${params}`;
+}
