@@ -222,18 +222,29 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetUnknownHostTracker(s.unknownHosts)
 		s.admin.SetSecurityStats(s.securityStats)
 		s.admin.SetOnDomainChange(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s.logger.Error("panic in onDomainChange", "panic", r)
+				}
+			}()
 			// Admin and server share the same *config.Config pointer,
 			// so config.Domains is already updated. Sync all subsystems.
-			s.vhosts.Update(s.config.Domains)
-			s.tlsMgr.UpdateDomains(s.config.Domains)
-			s.bwMgr.UpdateDomains(s.config.Domains)
+			s.configMu.RLock()
+			domains := s.config.Domains
+			s.configMu.RUnlock()
+
+			s.vhosts.Update(domains)
+			s.tlsMgr.UpdateDomains(domains)
+			if s.bwMgr != nil {
+				s.bwMgr.UpdateDomains(domains)
+			}
 			// Obtain certs for any new auto-SSL domains.
 			go s.tlsMgr.ObtainCerts(s.ctx)
 
 			// Start HTTPS listener dynamically if a new SSL domain was added
 			// and HTTPS isn't running yet.
 			if s.httpsSrv == nil {
-				for _, d := range s.config.Domains {
+				for _, d := range domains {
 					if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
 						s.logger.Info("SSL domain added — starting HTTPS listener")
 						if err := s.startHTTPS(); err != nil {
