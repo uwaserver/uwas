@@ -553,7 +553,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				}
 			}
 
-			// Also check token query param for SSE (EventSource can't set headers)
+			// Also check token query param for SSE/WebSocket (can't set headers)
 			if !authenticated {
 				if token := r.URL.Query().Get("token"); token != "" {
 					if session, err := s.authMgr.ValidateSession(token); err == nil {
@@ -562,10 +562,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 							user = u
 						}
 					}
-					// Strip token from URL to prevent leaking in logs/referer
-					q := r.URL.Query()
-					q.Del("token")
-					r.URL.RawQuery = q.Encode()
+					// Also try as multi-user API key
+					if !authenticated {
+						if u, err := s.authMgr.AuthenticateAPIKey(token); err == nil {
+							authenticated = true
+							user = u
+						}
+					}
+					// Only strip token from URL after all checks
+					if authenticated {
+						q := r.URL.Query()
+						q.Del("token")
+						r.URL.RawQuery = q.Encode()
+					}
 				}
 			}
 		}
@@ -573,14 +582,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Fall back to legacy API key auth if multi-user auth failed or not enabled
 		if !authenticated && apiKey != "" {
 			authHeader := r.Header.Get("Authorization")
-			// Also check token query param for SSE
+			// Also check token query param for SSE/WebSocket
 			if authHeader == "" {
 				if token := r.URL.Query().Get("token"); token != "" {
 					authHeader = "Bearer " + token
-					// Strip token from URL to prevent leaking in logs/referer
-					q := r.URL.Query()
-					q.Del("token")
-					r.URL.RawQuery = q.Encode()
 				}
 			}
 			if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1 {
@@ -599,6 +604,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			s.recordAuthFailure(ip)
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+
+		// Strip token from URL after successful auth to prevent leaking
+		if r.URL.Query().Get("token") != "" {
+			q := r.URL.Query()
+			q.Del("token")
+			r.URL.RawQuery = q.Encode()
 		}
 
 		// Store user in context for handlers to access
