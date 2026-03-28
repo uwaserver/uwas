@@ -209,6 +209,7 @@ export const deleteDomain = (host: string, cleanup = false) => api<{ status: str
 
 export interface DomainDetail {
   host: string;
+  ip?: string;
   aliases: string[] | null;
   type: string;
   ssl: { mode: string; cert: string; key: string; min_version: string };
