@@ -212,6 +212,15 @@ export default function Database() {
   const [newDockerDBName, setNewDockerDBName] = useState('');
   const [dockerDBResult, setDockerDBResult] = useState<DBCreateResult | null>(null);
 
+  // Generic confirm modal (for docker container remove, docker db drop, uninstall)
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    message: string;
+    label: string;
+    action: () => Promise<void>;
+  } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
   // Diagnose
   const [diagData, setDiagData] = useState<Record<string, any> | null>(null);
 
@@ -661,6 +670,32 @@ export default function Database() {
         </div>
       </ConfirmModal>
 
+      {/* Generic Confirm Modal (docker container remove, docker db drop, uninstall) */}
+      <ConfirmModal
+        open={confirmAction !== null}
+        title={confirmAction?.title ?? ''}
+        confirmLabel={confirmAction?.label ?? 'Confirm'}
+        confirmClass="bg-red-600 hover:bg-red-700"
+        onConfirm={async () => {
+          if (!confirmAction) return;
+          setConfirmLoading(true);
+          try {
+            await confirmAction.action();
+          } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+          finally {
+            setConfirmLoading(false);
+            setConfirmAction(null);
+          }
+        }}
+        onCancel={() => setConfirmAction(null)}
+        loading={confirmLoading}
+      >
+        <div className="flex items-start gap-2 rounded-md bg-red-500/10 p-3 text-red-400">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+          <p>{confirmAction?.message}</p>
+        </div>
+      </ConfirmModal>
+
       {/* Database Users */}
       {dbUsers.length > 0 && (
         <div className="rounded-lg border border-border bg-card shadow-md">
@@ -845,11 +880,17 @@ export default function Database() {
                                 <Play size={11} />
                               </button>
                             )}
-                            <button disabled={!!dockerAction} onClick={async () => {
-                              if (!confirm(`Remove container ${c.name}?`)) return;
-                              setDockerAction('rm-' + shortName);
-                              try { await removeDockerDB(shortName); await load(); } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
-                              finally { setDockerAction(''); }
+                            <button disabled={!!dockerAction} onClick={() => {
+                              setConfirmAction({
+                                title: 'Remove Container',
+                                message: `Remove container "${c.name}"? This will stop and delete the container and its data.`,
+                                label: 'Remove',
+                                action: async () => {
+                                  setDockerAction('rm-' + shortName);
+                                  try { await removeDockerDB(shortName); await load(); } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                                  finally { setDockerAction(''); }
+                                },
+                              });
                             }} className="rounded bg-red-600/15 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/25 disabled:opacity-50">
                               <Trash2 size={11} />
                             </button>
@@ -889,12 +930,16 @@ export default function Database() {
                                   {containerDBs.map(db => (
                                     <div key={db.name} className="flex items-center justify-between rounded bg-card px-3 py-2">
                                       <span className="font-mono text-xs text-card-foreground">{db.name}</span>
-                                      <button onClick={async () => {
-                                        if (!confirm(`Drop database ${db.name}?`)) return;
-                                        try {
-                                          await dropDockerDBDatabase(shortName, db.name);
-                                          setContainerDBs(await fetchDockerDBDatabases(shortName) ?? []);
-                                        } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+                                      <button onClick={() => {
+                                        setConfirmAction({
+                                          title: 'Drop Database',
+                                          message: `Drop database "${db.name}" from container? This cannot be undone.`,
+                                          label: 'Drop',
+                                          action: async () => {
+                                            await dropDockerDBDatabase(shortName, db.name);
+                                            setContainerDBs(await fetchDockerDBDatabases(shortName) ?? []);
+                                          },
+                                        });
                                       }} className="text-red-400 hover:text-red-300">
                                         <Trash2 size={11} />
                                       </button>
@@ -935,13 +980,17 @@ export default function Database() {
               }} className="flex items-center gap-1 rounded-md bg-accent/50 px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">
                 <Stethoscope size={12} /> Run Diagnostics
               </button>
-              <button onClick={async () => {
-                if (!confirm('This will completely remove MariaDB/MySQL including all data. Are you sure?')) return;
-                try {
-                  const res = await uninstallDatabase();
-                  setStatus({ ok: true, message: 'Database uninstalled: ' + res.output?.slice(0, 100) });
-                  await load();
-                } catch (e) { setStatus({ ok: false, message: (e as Error).message }); }
+              <button onClick={() => {
+                setConfirmAction({
+                  title: 'Uninstall Database',
+                  message: 'This will completely remove MariaDB/MySQL including all databases and data. This action cannot be undone.',
+                  label: 'Uninstall',
+                  action: async () => {
+                    const res = await uninstallDatabase();
+                    setStatus({ ok: true, message: 'Database uninstalled: ' + res.output?.slice(0, 100) });
+                    await load();
+                  },
+                });
               }} className="flex items-center gap-1 rounded-md bg-red-600/15 px-3 py-1.5 text-xs text-red-400 hover:bg-red-600/25">
                 <Trash2 size={12} /> Uninstall
               </button>

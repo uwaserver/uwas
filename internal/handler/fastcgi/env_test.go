@@ -2,6 +2,7 @@ package fastcgi
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/uwaserver/uwas/internal/logger"
@@ -216,6 +217,29 @@ func TestClientPortMalformed(t *testing.T) {
 	got = clientPort("192.168.1.1:9090")
 	if got != "9090" {
 		t.Errorf("clientPort(valid) = %q, want 9090", got)
+	}
+}
+
+func TestBuildEnvOpenBasedirIncludesParent(t *testing.T) {
+	r := httptest.NewRequest("GET", "/index.php", nil)
+	w := httptest.NewRecorder()
+	ctx := router.AcquireContext(w, r)
+	defer router.ReleaseContext(ctx)
+	ctx.DocumentRoot = "/var/www/site/public"
+
+	env := BuildEnv(ctx, "/var/www/site/public/index.php", "/index.php", "", nil)
+
+	adminValue, ok := env["PHP_ADMIN_VALUE"]
+	if !ok {
+		t.Fatal("PHP_ADMIN_VALUE not set")
+	}
+	// Should contain both docRoot and parent (project root)
+	if !strings.Contains(adminValue, "/var/www/site/public") {
+		t.Errorf("open_basedir should contain docRoot, got %q", adminValue)
+	}
+	// filepath.Dir on Windows produces backslashes; check for both separators
+	if !strings.Contains(adminValue, "/var/www/site:") && !strings.Contains(adminValue, "\\var\\www\\site:") {
+		t.Errorf("open_basedir should contain project root (parent), got %q", adminValue)
 	}
 }
 

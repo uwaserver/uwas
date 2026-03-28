@@ -80,12 +80,19 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 
 	// PHP isolation: enforce open_basedir per-request via PHP_ADMIN_VALUE.
 	// This works with both system PHP-FPM and UWAS-managed php-cgi.
-	// Restricts PHP to domain's web root + tmp + system paths.
+	// Restricts PHP to domain's web root + project root (parent) + system paths.
+	// Including the parent is essential for PHP frameworks where web root is a
+	// subdirectory (e.g. Laravel public/, Symfony public/, Craft web/) and
+	// storage/vendor/var directories are siblings of the web root.
 	if ctx.DocumentRoot != "" {
 		docRoot := ctx.DocumentRoot
 		domainTmp := filepath.Join(docRoot, ".tmp")
+		// Include parent directory (project root) for framework compatibility.
+		// e.g. /var/www/site/public → also allows /var/www/site/storage, /var/www/site/vendor
+		projectRoot := filepath.Dir(docRoot)
+		basedirPaths := docRoot + ":" + projectRoot + ":" + domainTmp + ":/tmp:/usr/share/php:/usr/share/pear:/etc/ssl/certs:/dev/urandom"
 		adminValues := []string{
-			"open_basedir = " + docRoot + ":" + domainTmp + ":/tmp:/usr/share/php:/usr/share/pear:/etc/ssl/certs:/dev/urandom",
+			"open_basedir = " + basedirPaths,
 		}
 		// Merge with existing PHP_ADMIN_VALUE if set
 		if existing := env["PHP_ADMIN_VALUE"]; existing != "" {

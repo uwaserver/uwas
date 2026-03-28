@@ -228,6 +228,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/restart", s.handleAppRestart)
 	s.mux.HandleFunc("PUT /api/v1/apps/{domain}/env", s.handleAppEnvUpdate)
 	s.mux.HandleFunc("GET /api/v1/apps/{domain}/logs", s.handleAppLogs)
+	s.mux.HandleFunc("GET /api/v1/apps/{domain}/stats", s.handleAppStats)
 
 	// Deploy (git clone → build → restart, Docker build → run)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/deploy", s.handleDeploy)
@@ -516,7 +517,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Public endpoints: health check, dashboard UI, deploy webhooks (no auth needed)
 		if r.URL.Path == "/api/v1/health" ||
 			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") ||
-			(strings.Contains(r.URL.Path, "/webhook") && r.Method == "POST") {
+			(strings.HasPrefix(r.URL.Path, "/api/v1/apps/") && strings.HasSuffix(r.URL.Path, "/webhook") && r.Method == "POST") {
 			next.ServeHTTP(w, r)
 			return
 		}

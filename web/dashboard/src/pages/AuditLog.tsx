@@ -21,6 +21,7 @@ function formatTime(iso: string): string {
 
 export default function AuditLog() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
 
@@ -30,6 +31,7 @@ export default function AuditLog() {
       setEntries((result || []).reverse()); // newest first
       setError('');
     } catch (e) { setError((e as Error).message); }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id); }, [load]);
@@ -53,6 +55,10 @@ export default function AuditLog() {
       </div>
 
       {error && <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
+
+      {loading && entries.length === 0 && (
+        <div className="text-center py-12 text-sm text-muted-foreground">Loading audit log...</div>
+      )}
 
       {/* Filter */}
       <div className="flex flex-wrap gap-2">

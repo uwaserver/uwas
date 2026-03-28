@@ -86,15 +86,15 @@ export default function DNS() {
     try {
       const data = await fetchDomains();
       setDomains(data ?? []);
-      if (data && data.length > 0 && !selectedDomain) {
-        setSelectedDomain(data[0].host);
+      if (data && data.length > 0) {
+        setSelectedDomain(prev => prev || data[0].host);
       }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setDomainsLoading(false);
     }
-  }, [selectedDomain]);
+  }, []);
 
   useEffect(() => {
     loadDomains();

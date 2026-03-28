@@ -206,20 +206,20 @@ export default function Users() {
           <h3 className="text-sm font-semibold text-emerald-400 mb-3">SFTP User Created</h3>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {([
-              ['Host', created.server_ip || 'your-server-ip'],
-              ['Port', created.port || '22'],
-              ['Username', created.username],
-              ['Password', created.password],
-              ['Web Root', created.web_dir],
-            ] as const).map(([label, value]) => (
+              { label: 'Host', value: created.server_ip || 'your-server-ip', secret: false },
+              { label: 'Port', value: created.port || '22', secret: false },
+              { label: 'Username', value: created.username, secret: false },
+              { label: 'Password', value: created.password, secret: true },
+              { label: 'Web Root', value: created.web_dir, secret: false },
+            ] as const).map(({ label, value, secret }) => (
               <div key={label} className="flex items-center justify-between rounded bg-background px-3 py-2">
                 <div>
                   <span className="text-xs text-muted-foreground">{label}</span>
-                  <p className="font-mono text-sm text-foreground">{value}</p>
+                  <p className="font-mono text-sm text-foreground">{secret ? '•'.repeat(Math.min(value.length, 12)) : value}</p>
                 </div>
                 <button
                   onClick={() => copyToClipboard(value, label)}
-                  className="ml-2 rounded p-1 text-muted-foreground hover:text-card-foreground"
+                  className="ml-2 rounded p-1.5 text-muted-foreground hover:text-card-foreground hover:bg-accent"
                   title={`Copy ${label}`}
                 >
                   {copied === label ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}

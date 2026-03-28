@@ -205,6 +205,12 @@ export default function Updates() {
                   </button>
                 )}
               </div>
+              {updating && (
+                <div className="mt-3 flex items-center gap-2 rounded-md bg-blue-500/10 px-4 py-3 text-sm text-blue-400">
+                  <RefreshCw size={14} className="animate-spin" />
+                  Downloading and replacing binary. Server will restart automatically. This may take a minute.
+                </div>
+              )}
             </div>
           </div>
 

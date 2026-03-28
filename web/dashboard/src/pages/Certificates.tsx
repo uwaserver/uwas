@@ -194,6 +194,14 @@ export default function Certificates() {
     load();
   }, [load]);
 
+  // Auto-refresh when any cert is pending (ACME issuance in progress)
+  const hasPending = certs.some(c => c.status === 'pending');
+  useEffect(() => {
+    if (!hasPending) return;
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
+  }, [hasPending, load]);
+
   const detailCert = detailHost ? certs.find((c) => c.host === detailHost) : null;
 
   // Upcoming renewals: certs with days_left, sorted ascending

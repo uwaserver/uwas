@@ -100,8 +100,8 @@ export default function Packages() {
 
       {/* Remove confirmation modal */}
       {confirmRemove && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-md rounded-lg border border-red-500/50 bg-card p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmRemove(null)} onKeyDown={e => e.key === 'Escape' && setConfirmRemove(null)}>
+          <div className="w-full max-w-md rounded-lg border border-red-500/50 bg-card p-6 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 text-red-400 font-medium mb-3">
               <AlertTriangle size={18} /> Remove {confirmRemove.name}?
             </div>

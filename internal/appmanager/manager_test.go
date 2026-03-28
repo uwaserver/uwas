@@ -174,3 +174,57 @@ func TestStopNotRunning(t *testing.T) {
 		t.Error("expected error for not-running domain")
 	}
 }
+
+func TestStatsRegisteredNotRunning(t *testing.T) {
+	m := New(nil)
+	m.Register("stat.com", config.AppConfig{Command: "echo", Runtime: "node", Port: 7000}, "/tmp")
+	s := m.Stats("stat.com")
+	if s == nil {
+		t.Fatal("expected non-nil stats")
+	}
+	if s.Domain != "stat.com" {
+		t.Errorf("domain = %q", s.Domain)
+	}
+	if s.Running {
+		t.Error("should not be running")
+	}
+	if s.PID != 0 {
+		t.Error("PID should be 0")
+	}
+}
+
+func TestStatsNotRegistered(t *testing.T) {
+	m := New(nil)
+	if s := m.Stats("nope.com"); s != nil {
+		t.Error("expected nil for unregistered domain")
+	}
+}
+
+func TestStatsRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process stats test skipped on Windows")
+	}
+	dir := t.TempDir()
+	m := New(nil)
+	m.Register("running.com", config.AppConfig{Command: "sleep 60", Runtime: "custom", Port: 7001}, dir)
+	if err := m.Start("running.com"); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop("running.com")
+
+	time.Sleep(200 * time.Millisecond)
+
+	s := m.Stats("running.com")
+	if s == nil {
+		t.Fatal("expected non-nil stats")
+	}
+	if !s.Running {
+		t.Error("should be running")
+	}
+	if s.PID == 0 {
+		t.Error("PID should be set")
+	}
+	if s.Uptime == "" {
+		t.Error("uptime should be set")
+	}
+}

@@ -544,8 +544,8 @@ func ExportDatabase(name string) ([]byte, error) {
 		if err == nil {
 			return out, nil
 		}
-		// Try with sudo
-		out, err = execCommandFn("sudo", path, "--single-transaction", "--routines", "--triggers", name).Output()
+		// Try without -u root (let socket auth auto-detect user)
+		out, err = execCommandFn(path, "--single-transaction", "--routines", "--triggers", name).Output()
 		if err == nil {
 			return out, nil
 		}
@@ -566,8 +566,8 @@ func ImportDatabase(name string, sqlData []byte) error {
 		if err == nil {
 			return nil
 		}
-		// Try with sudo
-		cmd = execCommandFn("sudo", bin, name)
+		// Try without -u root (let socket auth auto-detect user)
+		cmd = execCommandFn(bin, name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
 		_, err = cmd.CombinedOutput()
 		if err == nil {
@@ -659,8 +659,8 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 			return string(out), nil
 		}
 
-		// Native: with sudo
-		cmd = execCommandFn("sudo", bin, "--batch", "--skip-column-names", "-e", sql)
+		// Native: without -u root (let socket auth auto-detect user)
+		cmd = execCommandFn(bin, "--batch", "--skip-column-names", "-e", sql)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil

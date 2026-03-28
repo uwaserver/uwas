@@ -106,8 +106,10 @@ export default function Logs() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Logs</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground flex items-center gap-2">
             Real-time request log viewer
+            {!paused && <span className="flex items-center gap-1 text-[10px] text-emerald-400"><span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live</span>}
+            {paused && <span className="text-[10px] text-amber-400">Paused</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
