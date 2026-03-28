@@ -544,7 +544,9 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			relPath := filepath.Join(dir, fh.Filename)
+			// Use filepath.Base to strip directory components from uploaded filename
+			// (prevents path traversal via filenames like "../../etc/cron.d/x")
+			relPath := filepath.Join(dir, filepath.Base(fh.Filename))
 			_, err = filemanager.SaveUpload(root, relPath, src)
 			src.Close()
 			if err == nil {

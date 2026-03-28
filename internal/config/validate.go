@@ -180,6 +180,8 @@ func validate(cfg *Config) error {
 						parsed, err := url.Parse(u.Address)
 						if err != nil || parsed.Host == "" {
 							errs = append(errs, fmt.Sprintf("%s: invalid URL %q", uprefix, u.Address))
+						} else if isCloudMetadataHost(parsed.Hostname()) {
+							errs = append(errs, fmt.Sprintf("%s: cloud metadata endpoint blocked (%s)", uprefix, parsed.Hostname()))
 						}
 						if seen[u.Address] {
 							errs = append(errs, fmt.Sprintf("%s: duplicate upstream address %q", uprefix, u.Address))
@@ -312,4 +314,16 @@ func validateListenAddr(addr, field string, errs *[]string) {
 	if port < 1 || port > 65535 {
 		*errs = append(*errs, fmt.Sprintf("%s: port must be 1-65535, got %d", field, port))
 	}
+}
+
+// isCloudMetadataHost returns true for cloud provider metadata endpoints
+// that should never be used as proxy upstreams (SSRF prevention).
+func isCloudMetadataHost(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	// AWS/GCP/Azure instance metadata
+	return ip.Equal(net.ParseIP("169.254.169.254")) ||
+		ip.Equal(net.ParseIP("fd00:ec2::254"))
 }

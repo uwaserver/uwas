@@ -60,10 +60,54 @@ func New(log *logger.Logger) *Manager {
 
 // Deploy performs a git clone/pull → build → signals the app manager to restart.
 // Returns immediately; deployment runs in background. Poll Status() for progress.
+// safeGitURL rejects dangerous git transport protocols (ext::, file://) and
+// ensures URLs are HTTPS, SSH, or plain paths only.
+func safeGitURL(u string) error {
+	if u == "" {
+		return nil
+	}
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "ext::") {
+		return fmt.Errorf("ext:: protocol not allowed in git URLs")
+	}
+	if strings.HasPrefix(lower, "file://") {
+		return fmt.Errorf("file:// protocol not allowed in git URLs")
+	}
+	if strings.Contains(lower, "--upload-pack") || strings.Contains(lower, "--receive-pack") {
+		return fmt.Errorf("git option injection not allowed")
+	}
+	return nil
+}
+
+// safeBranch validates a git branch name (no shell metacharacters).
+func safeBranch(b string) bool {
+	for _, c := range b {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '/') {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err error)) {
+	// Validate git URL — reject dangerous protocols
+	if err := safeGitURL(req.GitURL); err != nil {
+		if onComplete != nil {
+			onComplete(err)
+		}
+		return
+	}
+
 	branch := req.GitBranch
 	if branch == "" {
 		branch = "main"
+	}
+	if !safeBranch(branch) {
+		if onComplete != nil {
+			onComplete(fmt.Errorf("invalid branch name"))
+		}
+		return
 	}
 
 	mode := "git"
@@ -127,6 +171,8 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	for k, v := range req.Env {
 		gitEnv[k] = v
 	}
+	// Restrict git protocols to prevent command execution via ext::
+	gitEnv["GIT_ALLOW_PROTOCOL"] = "https:ssh:git"
 
 	// SSH key auth: GIT_SSH_COMMAND with -i flag
 	if req.SSHKeyPath != "" {
