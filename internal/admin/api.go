@@ -4206,6 +4206,10 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	provided := r.Header.Get("X-Pin-Code")
+	// WebSocket connections can't set headers — also check query param
+	if provided == "" {
+		provided = r.URL.Query().Get("pin")
+	}
 	if provided == "" {
 		jsonError(w, "pin_required", http.StatusForbidden)
 		return false
