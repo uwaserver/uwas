@@ -508,9 +508,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Public endpoints: health check and dashboard UI (no auth needed)
+		// Public endpoints: health check, dashboard UI, deploy webhooks (no auth needed)
 		if r.URL.Path == "/api/v1/health" ||
-			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") {
+			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") ||
+			(strings.Contains(r.URL.Path, "/webhook") && r.Method == "POST") {
 			next.ServeHTTP(w, r)
 			return
 		}

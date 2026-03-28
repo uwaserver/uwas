@@ -1,8 +1,13 @@
 package admin
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/terminal"
@@ -134,6 +139,9 @@ func (s *Server) handleDeployList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeployWebhook handles GitHub/GitLab push webhooks for auto-deploy.
+// Public endpoint (no auth middleware) — uses webhook secret for verification.
+// GitHub: X-Hub-Signature-256 header with HMAC-SHA256
+// GitLab: X-Gitlab-Token header with plain secret
 func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 	if s.deployMgr == nil {
 		jsonError(w, "deploy manager not enabled", http.StatusNotImplemented)
@@ -146,9 +154,73 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Simple: any POST to this endpoint triggers a deploy (git pull + build + restart)
+	// Read body for signature verification
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Verify webhook secret (from domain's pin_code or global admin API key)
+	s.configMu.RLock()
+	secret := s.config.Global.Admin.APIKey // use API key as webhook secret
+	s.configMu.RUnlock()
+
+	if secret != "" {
+		// GitHub: X-Hub-Signature-256 = sha256=HMAC
+		if sig := r.Header.Get("X-Hub-Signature-256"); sig != "" {
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write(body)
+			expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+			if !hmac.Equal([]byte(sig), []byte(expected)) {
+				jsonError(w, "invalid webhook signature", http.StatusForbidden)
+				return
+			}
+		} else if tok := r.Header.Get("X-Gitlab-Token"); tok != "" {
+			// GitLab: X-Gitlab-Token = plain secret
+			if tok != secret {
+				jsonError(w, "invalid webhook token", http.StatusForbidden)
+				return
+			}
+		} else {
+			// No signature — check query param ?secret=
+			if qs := r.URL.Query().Get("secret"); qs == "" || qs != secret {
+				jsonError(w, "webhook secret required", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	// Check if this is a push event (GitHub sends X-GitHub-Event header)
+	event := r.Header.Get("X-GitHub-Event")
+	if event != "" && event != "push" && event != "ping" {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ignored","event":"` + event + `"}`))
+		return
+	}
+	// Respond to ping
+	if event == "ping" {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"pong"}`))
+		return
+	}
+
+	// Extract branch from payload (optional — defaults to configured branch)
+	var branch string
+	if len(body) > 0 {
+		var payload struct {
+			Ref string `json:"ref"` // "refs/heads/main"
+		}
+		if json.Unmarshal(body, &payload) == nil && strings.HasPrefix(payload.Ref, "refs/heads/") {
+			branch = strings.TrimPrefix(payload.Ref, "refs/heads/")
+		}
+	}
+
 	req := deploy.DeployRequest{Domain: domain}
-	s.RecordAudit("deploy.webhook", domain, requestIP(r), true)
+	if branch != "" {
+		req.GitBranch = branch
+	}
+	s.RecordAudit("deploy.webhook", domain+" branch:"+branch, requestIP(r), true)
 
 	s.deployMgr.Deploy(req, root, func(err error) {
 		if err == nil && s.appMgr != nil {
@@ -157,5 +229,5 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"deploying"}`))
+	w.Write([]byte(`{"status":"deploying","branch":"` + branch + `"}`))
 }
