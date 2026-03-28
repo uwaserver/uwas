@@ -646,17 +646,53 @@ func wpCLI(webRoot string, args ...string) (string, error) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	out := stdout.String()
-	// If stdout is empty but stderr has content, return stderr for error context
+	if err != nil {
+		// Include stderr in error for better diagnostics
+		errMsg := stderr.String()
+		if errMsg != "" {
+			// Filter out PHP deprecation noise, keep actual errors
+			var realErrors []string
+			for _, line := range strings.Split(errMsg, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				// Skip PHP deprecation/notice lines
+				if strings.HasPrefix(line, "Deprecated:") || strings.HasPrefix(line, "Notice:") ||
+					strings.HasPrefix(line, "Warning:") && strings.Contains(line, "PHP") {
+					continue
+				}
+				realErrors = append(realErrors, line)
+			}
+			if len(realErrors) > 0 {
+				err = fmt.Errorf("%w: %s", err, strings.Join(realErrors, "; "))
+			}
+		}
+	}
+	// If stdout is empty but stderr has content, return stderr for context
 	if out == "" && stderr.Len() > 0 {
 		out = stderr.String()
 	}
 	return out, err
 }
 
-// detectSiteURL tries to find the domain from the directory structure.
-// e.g. /var/www/example.com/public_html → https://example.com
+// detectSiteURL finds the WordPress site URL for --url flag.
+// Priority: 1) wp-config.php WP_HOME/WP_SITEURL 2) directory convention 3) empty
 func detectSiteURL(webRoot string) string {
-	// Try parent directory name as domain (UWAS convention: /var/www/{domain}/public_html)
+	// 1. Try reading site URL from wp-config.php
+	configPath := filepath.Join(webRoot, "wp-config.php")
+	if data, err := osReadFileFn(configPath); err == nil {
+		content := string(data)
+		// Check for WP_HOME or WP_SITEURL define
+		for _, constant := range []string{"WP_HOME", "WP_SITEURL"} {
+			re := regexp.MustCompile(`define\s*\(\s*'` + constant + `'\s*,\s*'([^']+)'`)
+			if m := re.FindStringSubmatch(content); len(m) > 1 {
+				return m[1]
+			}
+		}
+	}
+
+	// 2. Try parent directory name as domain (UWAS convention: /var/www/{domain}/public_html)
 	parent := filepath.Base(filepath.Dir(webRoot))
 	if parent != "" && parent != "." && parent != "/" && strings.Contains(parent, ".") {
 		return "https://" + parent
@@ -1283,43 +1319,66 @@ func OptimizeDatabase(webRoot string) (*DBOptimizeResult, error) {
 	result := &DBOptimizeResult{}
 	var log strings.Builder
 
-	// Delete post revisions
-	if out, err := wpCLI(webRoot, "post", "delete", "--force",
-		"$(wp post list --post_type=revision --format=ids --path="+webRoot+")"); err == nil {
-		log.WriteString("Revisions: " + out + "\n")
-	}
-	// Use wp-cli db query for more reliable cleanup
-	if out, err := wpCLI(webRoot, "db", "query",
-		"SELECT COUNT(*) FROM $(wp db prefix --path="+webRoot+")posts WHERE post_type='revision'"); err == nil {
-		log.WriteString("Revision check: " + out + "\n")
+	// Delete post revisions (two-step: get IDs, then delete)
+	if ids, err := wpCLI(webRoot, "post", "list", "--post_type=revision", "--format=ids"); err == nil {
+		ids = strings.TrimSpace(ids)
+		if ids != "" {
+			count := len(strings.Fields(ids))
+			for _, id := range strings.Fields(ids) {
+				wpCLI(webRoot, "post", "delete", id, "--force")
+			}
+			result.RevisionsDeleted = count
+			log.WriteString(fmt.Sprintf("Revisions deleted: %d\n", count))
+		}
 	}
 
 	// Delete spam comments
-	if out, err := wpCLI(webRoot, "comment", "delete",
-		"$(wp comment list --status=spam --format=ids --path="+webRoot+")", "--force"); err == nil {
-		log.WriteString("Spam comments cleaned: " + out + "\n")
+	if ids, err := wpCLI(webRoot, "comment", "list", "--status=spam", "--format=ids"); err == nil {
+		ids = strings.TrimSpace(ids)
+		if ids != "" {
+			count := len(strings.Fields(ids))
+			for _, id := range strings.Fields(ids) {
+				wpCLI(webRoot, "comment", "delete", id, "--force")
+			}
+			result.SpamDeleted = count
+			log.WriteString(fmt.Sprintf("Spam comments deleted: %d\n", count))
+		}
 	}
 
 	// Delete trashed comments
-	if out, err := wpCLI(webRoot, "comment", "delete",
-		"$(wp comment list --status=trash --format=ids --path="+webRoot+")", "--force"); err == nil {
-		log.WriteString("Trash comments cleaned: " + out + "\n")
+	if ids, err := wpCLI(webRoot, "comment", "list", "--status=trash", "--format=ids"); err == nil {
+		ids = strings.TrimSpace(ids)
+		if ids != "" {
+			for _, id := range strings.Fields(ids) {
+				wpCLI(webRoot, "comment", "delete", id, "--force")
+			}
+			log.WriteString(fmt.Sprintf("Trash comments deleted: %d\n", len(strings.Fields(ids))))
+		}
 	}
 
 	// Delete trashed posts
-	if out, err := wpCLI(webRoot, "post", "delete",
-		"$(wp post list --post_status=trash --format=ids --path="+webRoot+")", "--force"); err == nil {
-		log.WriteString("Trash posts cleaned: " + out + "\n")
+	if ids, err := wpCLI(webRoot, "post", "list", "--post_status=trash", "--format=ids"); err == nil {
+		ids = strings.TrimSpace(ids)
+		if ids != "" {
+			count := len(strings.Fields(ids))
+			for _, id := range strings.Fields(ids) {
+				wpCLI(webRoot, "post", "delete", id, "--force")
+			}
+			result.TrashDeleted = count
+			log.WriteString(fmt.Sprintf("Trash posts deleted: %d\n", count))
+		}
 	}
 
 	// Clean expired transients
 	if out, err := wpCLI(webRoot, "transient", "delete", "--expired"); err == nil {
-		log.WriteString("Transients: " + out + "\n")
+		log.WriteString("Transients: " + strings.TrimSpace(out) + "\n")
+		result.TransientsCleaned = 1
 	}
 
 	// Optimize database tables
 	if out, err := wpCLI(webRoot, "db", "optimize"); err == nil {
-		log.WriteString("Tables optimized: " + out + "\n")
+		log.WriteString("Tables optimized\n")
+		_ = out
 		result.TablesOptimized = 1
 	}
 
