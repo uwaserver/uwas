@@ -226,6 +226,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/start", s.handleAppStart)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/stop", s.handleAppStop)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/restart", s.handleAppRestart)
+	s.mux.HandleFunc("PUT /api/v1/apps/{domain}/env", s.handleAppEnvUpdate)
+	s.mux.HandleFunc("GET /api/v1/apps/{domain}/logs", s.handleAppLogs)
 
 	// Deploy (git clone → build → restart, Docker build → run)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/deploy", s.handleDeploy)

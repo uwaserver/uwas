@@ -805,6 +805,11 @@ export const startApp = (domain: string) => api<{ status: string }>(`/api/v1/app
 export const stopApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/stop`, { method: 'POST' });
 export const restartApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/restart`, { method: 'POST' });
 
+export const updateAppEnv = (domain: string, env: Record<string, string>, command?: string, port?: number) =>
+  api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/env`, { method: 'PUT', body: JSON.stringify({ env, command, port }) });
+export const fetchAppLogs = (domain: string) =>
+  api<{ log: string; error?: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/logs`);
+
 // ── Deploy (git clone → build → restart) ──
 
 export interface DeployRequest {
