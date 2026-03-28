@@ -5,6 +5,41 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.26] - 2026-03-28
+
+### Major Features
+
+- **ESI (Edge Side Includes)** — Fragment caching for HTML responses. Each `<esi:include>` has its own cache key and TTL. Enable per-domain: `cache.esi: true`
+- **App Process Manager** — Node.js/Python/Ruby/Go process management. Auto-detect start commands, per-domain ports, crash auto-restart. Domain type: `app`
+- **Web Terminal** — Browser-based shell via WebSocket-to-PTY (Linux). No external dependencies.
+- **GeoIP Blocking** — Country-based access control per domain (block/allow ISO codes)
+- **Resource Limits** — Per-domain CPU/memory/PID limits via Linux cgroups v2
+- **SMTP Relay** — Transactional email via SMTP with TLS/STARTTLS
+
+### Dashboard (38 pages)
+
+- **Applications** page — List, start, stop, restart app processes with runtime badges
+- **Terminal** page — Browser shell with Ctrl+C/D/L shortcuts
+- **Domain Detail** — GeoIP block/allow + Resource Limits fields in Security tab
+
+### Fixes
+
+- **Auth middleware stale closure** — Config changes (API key, multi-user toggle) now take effect without restart
+- **Auth token query param bug** — `?token=` was deleted before legacy auth could use it when multi-user was enabled. Fixed WebSocket terminal and SSE endpoints.
+- **GeoIP external call** — Async lookup, no longer blocks request path
+- **WebSocket DoS** — 64KB max frame size, close frame echo per RFC 6455
+- **App manager race** — Double-check stopCh prevents zombie restarts
+- **App cleanup on reload** — Removed domains' app processes are stopped
+- **GeoIP chains on reload** — Rebuilt on config change (was missing)
+- **CORS** — Added `X-Pin-Code` to allowed headers
+
+### Improvements
+
+- `logger.SafeGo()` panic recovery for critical goroutines
+- PHP dropdown simplified, PHP Config batch save
+- TypeScript: removed `as any` cast, proper `DomainDetail.ip` typing
+- CLAUDE.md updated: 50 packages, 38 pages, 190+ API endpoints
+
 ## [0.0.25] - 2026-03-27
 
 ### Fixes
