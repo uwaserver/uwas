@@ -1258,7 +1258,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if domain.AccessLog.Path != "" {
 		s.domainLogs.Write(
 			r.Host, domain.AccessLog.Path, domain.AccessLog.Rotate,
-			r.Method, r.URL.Path,
+			r.Method, r.URL.RequestURI(),
 			r.RemoteAddr, r.UserAgent(),
 			ctx.Response.StatusCode(), int(ctx.Response.BytesWritten()),
 			time.Since(start),
@@ -1328,7 +1328,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 					if _, err := os.Stat(optPath); err == nil {
 						ctx.ResolvedPath = optPath
 						ctx.Response.Header().Set("Content-Type", "image/"+fmt)
-						ctx.Response.Header().Set("Vary", "Accept")
+						ctx.Response.Header().Add("Vary", "Accept")
 						break
 					}
 				}
