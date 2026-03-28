@@ -2216,6 +2216,14 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			if d.Redirect.Target != "" {
 				merged.Redirect = d.Redirect
 			}
+			// App
+			if d.App.Command != "" || d.App.Runtime != "" {
+				merged.App = d.App
+			}
+			// Resources
+			if d.Resources.CPUPercent > 0 || d.Resources.MemoryMB > 0 || d.Resources.PIDMax > 0 {
+				merged.Resources = d.Resources
+			}
 			// Htaccess
 			if d.Htaccess.Mode != "" {
 				merged.Htaccess = d.Htaccess
@@ -2232,7 +2240,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 					merged.Cache = d.Cache
 				}
 				if len(d.Security.BlockedPaths) > 0 || d.Security.WAF.Enabled ||
-					len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
+					len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 ||
+					len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
 					merged.Security = d.Security
 				}
 				if d.Compression.Enabled || len(d.Compression.Algorithms) > 0 {
@@ -2288,6 +2297,16 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 					s.notifyDomainChange() // sync VHost router with new FPM address
 					s.logger.Info("auto-assigned PHP on update", "domain", d.Host, "version", version)
 				}
+			}
+		}
+	}
+
+	// Auto-register app if domain type changed to app
+	if d.Type == "app" && s.appMgr != nil && (d.App.Command != "" || d.App.Runtime != "") {
+		if s.appMgr.Get(d.Host) == nil {
+			if err := s.appMgr.Register(d.Host, d.App, d.Root); err == nil {
+				s.appMgr.Start(d.Host)
+				s.logger.Info("auto-registered app on update", "domain", d.Host)
 			}
 		}
 	}
