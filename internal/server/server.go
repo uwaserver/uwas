@@ -638,6 +638,7 @@ func (s *Server) Start() error {
 		s.logger.Warn("failed to write pid file", "error", err)
 	}
 
+	s.tlsMgr.AllowSelfSigned = true
 	s.tlsMgr.LoadExistingCerts()
 	s.tlsMgr.LoadManualCerts()
 

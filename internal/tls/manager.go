@@ -2,8 +2,14 @@ package uwastls
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,6 +48,10 @@ type Manager struct {
 	renewalInitialDelay time.Duration
 	// renewalInterval overrides the 12-hour ticker interval in StartRenewal for testing.
 	renewalInterval time.Duration
+
+	// AllowSelfSigned enables auto-generated self-signed certs as fallback.
+	// Set to true in production server; false in tests.
+	AllowSelfSigned bool
 }
 
 const onDemandMaxPerMinute = 10
@@ -148,7 +158,44 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 		return cert.(*tls.Certificate), nil
 	}
 
+	// 5. Fallback: if AllowSelfSigned is set, generate a temp cert so TLS works.
+	if m.AllowSelfSigned {
+		m.logger.Warn("no certificate, generating self-signed", "host", name)
+		cert, err := m.generateSelfSigned(name)
+		if err != nil {
+			return nil, fmt.Errorf("no certificate for %s: %w", name, err)
+		}
+		m.certs.Store(name, cert)
+		return cert, nil
+	}
+
 	return nil, fmt.Errorf("no certificate for %s", name)
+}
+
+// generateSelfSigned creates a temporary self-signed certificate for the given host.
+func (m *Manager) generateSelfSigned(host string) (*tls.Certificate, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: host},
+		DNSNames:     []string{host},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	cert := &tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}
+	return cert, nil
 }
 
 // ObtainCerts requests ACME certificates for all auto-SSL domains.
