@@ -235,8 +235,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/deploys", s.handleDeployList)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/webhook", s.handleDeployWebhook)
 
-	// Web terminal (WebSocket → PTY)
-	s.mux.Handle("GET /api/v1/terminal", s.terminalHandler())
+	// Web terminal (WebSocket → PTY) — requires pin for security
+	s.mux.HandleFunc("GET /api/v1/terminal", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requirePin(w, r) { return }
+		s.terminalHandler().ServeHTTP(w, r)
+	})
 
 	// Installation tasks (global queue)
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleTaskList)
@@ -1684,6 +1687,8 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 	export := *s.config
 	s.configMu.RUnlock()
 	export.Global.Admin.APIKey = ""
+	export.Global.Admin.PinCode = ""
+	export.Global.Admin.TOTPSecret = ""
 	export.Global.ACME.DNSCredentials = nil
 	export.Global.Cache.PurgeKey = ""
 
@@ -2648,6 +2653,7 @@ func (s *Server) SetConfigPath(path string) { s.configPath = path }
 // --- Raw YAML config editor ---
 
 // handleConfigRawGet returns the raw YAML content of the main config file.
+// Secrets (api_key, pin_code, totp_secret) are masked with asterisks.
 func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
 	if s.configPath == "" {
 		jsonError(w, "config path not set", http.StatusNotImplemented)
@@ -2660,7 +2666,13 @@ func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, map[string]string{"content": string(data)})
+	// Mask secrets in raw YAML before sending to dashboard
+	content := string(data)
+	for _, key := range []string{"api_key", "pin_code", "totp_secret", "secret_key", "password"} {
+		content = maskYAMLValue(content, key)
+	}
+
+	jsonResponse(w, map[string]string{"content": content})
 }
 
 // handleConfigRawPut validates and writes raw YAML content to the main config
@@ -3015,6 +3027,22 @@ func isValidHostname(s string) bool {
 }
 
 // maskSecret returns "****" + last 4 chars for non-empty secrets, "" for empty.
+// maskYAMLValue replaces the value of a YAML key with "********" in raw YAML text.
+func maskYAMLValue(content, key string) string {
+	var result strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, key+":") {
+			idx := strings.Index(line, key+":")
+			result.WriteString(line[:idx] + key + `: "********"`)
+		} else {
+			result.WriteString(line)
+		}
+		result.WriteByte('\n')
+	}
+	return strings.TrimSuffix(result.String(), "\n")
+}
+
 func maskSecret(s string) string {
 	if s == "" {
 		return ""
