@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 
+	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/terminal"
 )
 
@@ -73,4 +75,87 @@ func (s *Server) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 // terminalHandler returns the web terminal HTTP handler.
 func (s *Server) terminalHandler() http.Handler {
 	return terminal.New(s.logger)
+}
+
+// --- Deploy handlers ---
+
+func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
+	if s.deployMgr == nil {
+		jsonError(w, "deploy manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req deploy.DeployRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	domain := r.PathValue("domain")
+	req.Domain = domain
+
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+
+	s.RecordAudit("deploy.start", domain+" git:"+req.GitURL, requestIP(r), true)
+
+	// Deploy in background, restart app on completion
+	s.deployMgr.Deploy(req, root, func(err error) {
+		if err == nil && s.appMgr != nil {
+			_ = s.appMgr.Restart(domain)
+		}
+	})
+
+	jsonResponse(w, map[string]string{"status": "deploying", "domain": domain})
+}
+
+func (s *Server) handleDeployStatus(w http.ResponseWriter, r *http.Request) {
+	if s.deployMgr == nil {
+		jsonError(w, "deploy manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+	status := s.deployMgr.Status(domain)
+	if status == nil {
+		jsonError(w, "no deployment found", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, status)
+}
+
+func (s *Server) handleDeployList(w http.ResponseWriter, r *http.Request) {
+	if s.deployMgr == nil {
+		jsonResponse(w, []any{})
+		return
+	}
+	jsonResponse(w, s.deployMgr.AllStatuses())
+}
+
+// handleDeployWebhook handles GitHub/GitLab push webhooks for auto-deploy.
+func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.deployMgr == nil {
+		jsonError(w, "deploy manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+
+	// Simple: any POST to this endpoint triggers a deploy (git pull + build + restart)
+	req := deploy.DeployRequest{Domain: domain}
+	s.RecordAudit("deploy.webhook", domain, requestIP(r), true)
+
+	s.deployMgr.Deploy(req, root, func(err error) {
+		if err == nil && s.appMgr != nil {
+			_ = s.appMgr.Restart(domain)
+		}
+	})
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"deploying"}`))
 }

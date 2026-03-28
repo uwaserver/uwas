@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Square, RefreshCw, Box, Clock, Hash, Terminal, Cpu } from 'lucide-react';
-import { fetchApps, startApp, stopApp, restartApp, type AppInstance } from '@/lib/api';
+import { Play, Square, RefreshCw, Box, Clock, Hash, Terminal, Cpu, Rocket, GitBranch, X, CheckCircle } from 'lucide-react';
+import { fetchApps, startApp, stopApp, restartApp, deployApp, fetchDeployStatus, type AppInstance, type DeployStatus } from '@/lib/api';
 
 const runtimeColors: Record<string, string> = {
   node: 'bg-green-500/15 text-green-400',
@@ -15,6 +15,10 @@ export default function Apps() {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [deployDomain, setDeployDomain] = useState('');
+  const [deployForm, setDeployForm] = useState({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '' });
+  const [deploying, setDeploying] = useState(false);
+  const [deployStatus, setDeployStatus] = useState<DeployStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -32,6 +36,38 @@ export default function Apps() {
   const showStatus = (ok: boolean, msg: string) => {
     setStatus({ ok, msg });
     setTimeout(() => setStatus(null), 4000);
+  };
+
+  const handleDeploy = async () => {
+    if (!deployDomain) return;
+    setDeploying(true);
+    setDeployStatus(null);
+    try {
+      await deployApp(deployDomain, {
+        git_url: deployForm.gitUrl || undefined,
+        git_branch: deployForm.branch || 'main',
+        build_cmd: deployForm.buildCmd || undefined,
+        dockerfile: deployForm.dockerfile || undefined,
+      });
+      showStatus(true, `Deploy started for ${deployDomain}`);
+      // Poll for status
+      const poll = setInterval(async () => {
+        try {
+          const st = await fetchDeployStatus(deployDomain);
+          setDeployStatus(st);
+          if (st.status === 'running' || st.status === 'failed') {
+            clearInterval(poll);
+            setDeploying(false);
+            await load();
+            if (st.status === 'running') showStatus(true, `Deploy complete: ${deployDomain} (${st.duration})`);
+            else showStatus(false, `Deploy failed: ${st.error}`);
+          }
+        } catch { clearInterval(poll); setDeploying(false); }
+      }, 2000);
+    } catch (e) {
+      showStatus(false, (e as Error).message);
+      setDeploying(false);
+    }
   };
 
   const handleAction = async (domain: string, action: 'start' | 'stop' | 'restart') => {
@@ -100,6 +136,10 @@ export default function Apps() {
               </div>
 
               <div className="flex items-center gap-2">
+                <button onClick={() => { setDeployDomain(app.domain); setDeployForm({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '' }); setDeployStatus(null); }}
+                  className="flex items-center gap-1 rounded-md bg-purple-600/15 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-600/25">
+                  <Rocket size={11} /> Deploy
+                </button>
                 {!app.running && (
                   <button onClick={() => handleAction(app.domain, 'start')} disabled={acting === app.domain}
                     className="flex items-center gap-1 rounded-md bg-emerald-600/15 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-600/25 disabled:opacity-50">
@@ -130,6 +170,86 @@ export default function Apps() {
           </div>
         ))}
       </div>
+
+      {/* Deploy Modal */}
+      {deployDomain && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !deploying && setDeployDomain('')}>
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Rocket size={18} className="text-purple-400" />
+                <h2 className="text-sm font-semibold text-foreground">Deploy {deployDomain}</h2>
+              </div>
+              {!deploying && <button onClick={() => setDeployDomain('')} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>}
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-muted-foreground">Git Repository URL</label>
+                <input value={deployForm.gitUrl} onChange={e => setDeployForm(f => ({ ...f, gitUrl: e.target.value }))}
+                  placeholder="https://github.com/user/repo.git (leave empty for git pull)"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none font-mono" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Branch</label>
+                  <input value={deployForm.branch} onChange={e => setDeployForm(f => ({ ...f, branch: e.target.value }))}
+                    placeholder="main"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Dockerfile (optional)</label>
+                  <input value={deployForm.dockerfile} onChange={e => setDeployForm(f => ({ ...f, dockerfile: e.target.value }))}
+                    placeholder="Dockerfile"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Build Command (auto-detected if empty)</label>
+                <input value={deployForm.buildCmd} onChange={e => setDeployForm(f => ({ ...f, buildCmd: e.target.value }))}
+                  placeholder="npm install && npm run build"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none font-mono" />
+              </div>
+
+              {/* Deploy log */}
+              {deployStatus && (
+                <div className="rounded-md bg-[#0d1117] p-3 max-h-48 overflow-auto">
+                  <div className="flex items-center gap-2 mb-2">
+                    {deployStatus.status === 'deploying' || deployStatus.status === 'building' ? (
+                      <RefreshCw size={12} className="animate-spin text-blue-400" />
+                    ) : deployStatus.status === 'running' ? (
+                      <CheckCircle size={12} className="text-emerald-400" />
+                    ) : (
+                      <X size={12} className="text-red-400" />
+                    )}
+                    <span className="text-xs text-muted-foreground">{deployStatus.status} {deployStatus.commit_sha && `• ${deployStatus.commit_sha}`} {deployStatus.duration && `• ${deployStatus.duration}`}</span>
+                  </div>
+                  <pre className="text-[10px] text-green-400 font-mono whitespace-pre-wrap">{deployStatus.log || 'Waiting...'}</pre>
+                  {deployStatus.error && <p className="mt-2 text-xs text-red-400">{deployStatus.error}</p>}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                {!deploying && (
+                  <button onClick={() => setDeployDomain('')}
+                    className="rounded-md border border-border bg-card px-4 py-2 text-sm text-card-foreground hover:bg-accent">
+                    Cancel
+                  </button>
+                )}
+                <button onClick={handleDeploy} disabled={deploying}
+                  className="flex items-center gap-1.5 rounded-md bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
+                  {deploying ? <RefreshCw size={14} className="animate-spin" /> : <Rocket size={14} />}
+                  {deploying ? 'Deploying...' : 'Deploy'}
+                </button>
+              </div>
+
+              <p className="text-[10px] text-muted-foreground">
+                <GitBranch size={10} className="inline" /> Webhook URL for auto-deploy: <code className="bg-accent px-1 rounded">/api/v1/apps/{deployDomain}/webhook</code>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -27,6 +27,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/appmanager"
+	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/auth"
@@ -284,6 +285,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	}
 	if s.admin != nil {
 		s.admin.SetAppManager(s.appMgr)
+	}
+
+	// Deploy manager (git clone → build → restart)
+	deployMgr := deploy.New(log)
+	if s.admin != nil {
+		s.admin.SetDeployManager(deployMgr)
 	}
 
 	// PHP Manager — detect, auto-assign to PHP domains, start all
