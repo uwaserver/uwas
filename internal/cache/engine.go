@@ -11,9 +11,10 @@ import (
 
 // Engine is the main cache interface combining L1 memory + L2 disk.
 type Engine struct {
-	memory *MemoryCache
-	disk   *DiskCache
-	logger *logger.Logger
+	memory       *MemoryCache
+	disk         *DiskCache
+	logger       *logger.Logger
+	VaryHeaders  []string // additional headers to include in cache key (from config)
 }
 
 // NewEngine creates a cache engine with memory and optional disk backing.
@@ -36,7 +37,7 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
 
 // Get looks up a cache entry: L1 (memory) → L2 (disk) → miss.
 func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
-	key := GenerateKey(r, []string{"Accept-Encoding"})
+	key := GenerateKey(r, e.varyKeys())
 
 	// L1: memory
 	resp, status := e.memory.Get(key)
@@ -62,8 +63,14 @@ func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
 }
 
 // Set stores a response in L1 and async-writes to L2.
+func (e *Engine) varyKeys() []string {
+	keys := []string{"Accept-Encoding"}
+	keys = append(keys, e.VaryHeaders...)
+	return keys
+}
+
 func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
-	key := GenerateKey(r, []string{"Accept-Encoding"})
+	key := GenerateKey(r, e.varyKeys())
 	e.memory.Set(key, resp)
 
 	// Async disk write
