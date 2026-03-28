@@ -214,3 +214,26 @@ domains:
       target: "https://example.com"
       status: 301
       preserve_path: true
+
+  # ── Node.js Application ──────────────────────────────
+  - host: app.example.com
+    type: app
+    root: /var/www/app.example.com
+    ssl:
+      mode: auto
+    app:
+      runtime: node              # node, python, ruby, go, custom
+      command: "npm start"       # auto-detected from package.json if omitted
+      port: 3000                 # auto-assigned if 0
+      auto_restart: true
+      env:
+        NODE_ENV: production
+        DATABASE_URL: "postgres://localhost/myapp"
+    # Resource limits (Linux cgroups v2)
+    resources:
+      cpu_percent: 50            # max 50% of one CPU core
+      memory_mb: 512             # max 512MB RAM
+      pid_max: 100               # max 100 processes
+    security:
+      # GeoIP blocking
+      geo_block_countries: ["CN", "RU"]
