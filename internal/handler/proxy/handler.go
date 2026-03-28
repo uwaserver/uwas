@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -19,22 +20,55 @@ import (
 
 // Handler handles reverse proxy requests with load balancing.
 type Handler struct {
-	logger    *logger.Logger
-	transport *http.Transport
+	logger     *logger.Logger
+	transports sync.Map // domain host → *http.Transport
 }
 
 func New(log *logger.Logger) *Handler {
-	return &Handler{
-		logger: log,
-		transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout: 5 * time.Second,
-			}).DialContext,
-			ResponseHeaderTimeout: 60 * time.Second,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-		},
+	return &Handler{logger: log}
+}
+
+// getTransport returns a per-domain transport with configured timeouts.
+func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
+	if t, ok := h.transports.Load(domain.Host); ok {
+		return t.(*http.Transport)
 	}
+
+	connectTimeout := 5 * time.Second
+	if domain.Proxy.Timeouts.Connect.Duration > 0 {
+		connectTimeout = domain.Proxy.Timeouts.Connect.Duration
+	}
+
+	headerTimeout := 60 * time.Second
+	if domain.Proxy.Timeouts.Read.Duration > 0 {
+		headerTimeout = domain.Proxy.Timeouts.Read.Duration
+	}
+
+	writeTimeout := 60 * time.Second
+	if domain.Proxy.Timeouts.Write.Duration > 0 {
+		writeTimeout = domain.Proxy.Timeouts.Write.Duration
+	}
+
+	t := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   connectTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ResponseHeaderTimeout: headerTimeout,
+		WriteBufferSize:       64 * 1024,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: writeTimeout,
+	}
+
+	// gRPC/h2c: allow HTTP/2 cleartext to upstream
+	if domain.Proxy.GRPC {
+		t.ForceAttemptHTTP2 = true
+	}
+
+	actual, _ := h.transports.LoadOrStore(domain.Host, t)
+	return actual.(*http.Transport)
 }
 
 // Serve proxies the request to an upstream backend.
@@ -167,7 +201,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		removeHopByHop(proxyReq.Header)
 
 		// Execute
-		resp, err := h.transport.RoundTrip(proxyReq)
+		resp, err := h.getTransport(domain).RoundTrip(proxyReq)
 		if err != nil {
 			cancel()
 			backend.ActiveConns.Add(-1)
@@ -216,14 +250,29 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 		// Write status + body
 		ctx.Response.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
-			h.logger.Error("error copying upstream response body",
-				"backend", backend.URL.String(),
-				"error", err,
-			)
+		if domain.Proxy.BufferResponse {
+			// Buffered mode: read entire upstream response, then write to client.
+			// Frees upstream connection faster for slow clients.
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			cancel()
+			if readErr != nil {
+				h.logger.Error("error reading upstream response body", "backend", backend.URL.String(), "error", readErr)
+			}
+			if len(body) > 0 {
+				ctx.Response.Write(body)
+			}
+		} else {
+			// Streaming mode (default): pipe upstream → client directly.
+			if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
+				h.logger.Error("error copying upstream response body",
+					"backend", backend.URL.String(),
+					"error", err,
+				)
+			}
+			resp.Body.Close()
+			cancel() // safe now — body fully consumed
 		}
-		resp.Body.Close()
-		cancel() // safe now — body fully consumed
 		return
 	}
 

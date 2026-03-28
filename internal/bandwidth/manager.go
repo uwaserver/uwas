@@ -172,6 +172,19 @@ func (m *Manager) SetAlertFunc(fn func(host string, limitType string, current, l
 	m.alertFn = fn
 }
 
+// IsBlocked returns true if the domain has exceeded its bandwidth limit.
+func (m *Manager) IsBlocked(host string) bool {
+	m.mu.RLock()
+	usage, ok := m.usage[host]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	usage.mu.Lock()
+	defer usage.mu.Unlock()
+	return usage.Blocked
+}
+
 // GetStatus returns the bandwidth status for a domain.
 func (m *Manager) GetStatus(host string) *Status {
 	m.mu.RLock()

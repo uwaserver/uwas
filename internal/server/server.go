@@ -130,6 +130,9 @@ type Server struct {
 	// esiProcessor handles Edge Side Includes fragment assembly.
 	esiProcessor *cache.ESIProcessor
 
+	// locationLimiters holds per-location rate limit counters.
+	locationLimiters *sync.Map
+
 	// appMgr manages non-PHP application processes (Node.js, Python, etc.)
 	appMgr *appmanager.Manager
 }
@@ -149,6 +152,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			int64(cfg.Global.Cache.DiskLimit),
 			log,
 		)
+		cacheEngine.VaryHeaders = cfg.Global.Cache.VaryByHeaders
 	}
 
 	// Alerting engine
@@ -795,10 +799,17 @@ func (s *Server) startHTTPS() error {
 		ErrorLog:          s.logger.StdLogger(),
 	}
 
-	ln, err := tls.Listen("tcp", addr, tlsCfg)
+	tcpLn, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
+
+	// Wrap with PROXY protocol if enabled (HAProxy, Cloudflare, etc.)
+	var ln net.Listener = tcpLn
+	if s.config.Global.ProxyProtocol {
+		ln = newProxyProtoListener(ln)
+	}
+	ln = tls.NewListener(ln, tlsCfg)
 
 	s.logger.Info("listening", "address", addr, "protocol", "HTTPS")
 
@@ -919,9 +930,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		// Record bandwidth usage (before analytics so bandwidth mgr can block future requests)
+		// Record bandwidth usage
 		if s.bwMgr != nil {
-			s.bwMgr.Record(r.Host, ctx.Response.BytesWritten())
+			blocked, _ := s.bwMgr.Record(r.Host, ctx.Response.BytesWritten())
+			_ = blocked // blocking is applied on next request via pre-handler check
 		}
 
 		// Record analytics
@@ -1001,6 +1013,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Bandwidth limit check: block requests to domains that exceeded their limit
+	if s.bwMgr != nil && domain.Bandwidth.Enabled && s.bwMgr.IsBlocked(domain.Host) {
+		ctx.Response.Header().Set("Retry-After", "3600")
+		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
+		return
+	}
+
 	// Per-domain security headers (CSP, COEP, COOP, CORP, Permissions-Policy)
 	if sh := domain.SecurityHeaders; sh.ContentSecurityPolicy != "" {
 		ctx.Response.Header().Set("Content-Security-Policy", sh.ContentSecurityPolicy)
@@ -1018,7 +1037,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		ctx.Response.Header().Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
 	}
 
-	// Per-path location overrides (headers, cache-control)
+	// Per-path location overrides (headers, cache-control, timeout, rate limit)
 	for _, loc := range domain.Locations {
 		if !matchLocation(r.URL.Path, loc.Match) {
 			continue
@@ -1028,6 +1047,37 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if loc.CacheControl != "" {
 			ctx.Response.Header().Set("Cache-Control", loc.CacheControl)
+		}
+		// Per-path rate limit
+		if loc.RateLimit != nil && loc.RateLimit.Requests > 0 {
+			clientAddr := ctx.RemoteIP
+			if clientAddr == "" {
+				clientAddr, _, _ = net.SplitHostPort(r.RemoteAddr)
+			}
+			limiterKey := domain.Host + "|" + loc.Match + "|" + clientAddr
+			if s.locationLimiters == nil {
+				s.locationLimiters = &sync.Map{}
+			}
+			val, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{})
+			entry := val.(*rateLimitEntry)
+			window := loc.RateLimit.Window.Duration
+			if window == 0 {
+				window = time.Minute
+			}
+			now := time.Now()
+			entry.mu.Lock()
+			if now.Sub(entry.windowStart) > window {
+				entry.windowStart = now
+				entry.count = 0
+			}
+			entry.count++
+			exceeded := entry.count > int64(loc.RateLimit.Requests)
+			entry.mu.Unlock()
+			if exceeded {
+				ctx.Response.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
+				renderDomainError(ctx.Response, http.StatusTooManyRequests, domain)
+				return
+			}
 		}
 		break // first match wins (like Nginx)
 	}
@@ -1177,11 +1227,16 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if cacheEnabled {
-		// Check per-domain cache bypass rules
+		// Check per-domain cache bypass rules + set Cache-Control from rules
 		for _, rule := range domain.Cache.Rules {
-			if rule.Bypass && matchPath(r.URL.Path, rule.Match) {
-				cacheEnabled = false
-				break
+			if matchPath(r.URL.Path, rule.Match) {
+				if rule.Bypass {
+					cacheEnabled = false
+					break
+				}
+				if rule.CacheControl != "" {
+					ctx.Response.Header().Set("Cache-Control", rule.CacheControl)
+				}
 			}
 		}
 		// Bypass cache for WordPress admin/login paths (always dynamic)
@@ -2154,6 +2209,13 @@ func deriveSFTPPassword(apiKey, domain string) string {
 	mac := hmac.New(sha256.New, []byte(apiKey))
 	mac.Write([]byte("sftp:" + domain))
 	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+// rateLimitEntry tracks per-location rate limit state.
+type rateLimitEntry struct {
+	mu          sync.Mutex
+	windowStart time.Time
+	count       int64
 }
 
 // matchLocation checks if a URL path matches a location pattern.
