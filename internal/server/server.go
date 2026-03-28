@@ -973,6 +973,65 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
 
+	// Maintenance mode: serve 503 with Retry-After for all non-allowed IPs
+	if domain.Maintenance.Enabled {
+		allowed := false
+		clientAddr := ctx.RemoteIP
+		if clientAddr == "" {
+			clientAddr, _, _ = net.SplitHostPort(r.RemoteAddr)
+		}
+		for _, ip := range domain.Maintenance.AllowedIPs {
+			if clientAddr == ip {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if domain.Maintenance.RetryAfter > 0 {
+				ctx.Response.Header().Set("Retry-After", strconv.Itoa(domain.Maintenance.RetryAfter))
+			}
+			ctx.Response.WriteHeader(http.StatusServiceUnavailable)
+			msg := domain.Maintenance.Message
+			if msg == "" {
+				msg = "<html><body style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1>Under Maintenance</h1><p>We'll be back shortly.</p></body></html>"
+			}
+			ctx.Response.Write([]byte(msg))
+			return
+		}
+	}
+
+	// Per-domain security headers (CSP, COEP, COOP, CORP, Permissions-Policy)
+	if sh := domain.SecurityHeaders; sh.ContentSecurityPolicy != "" {
+		ctx.Response.Header().Set("Content-Security-Policy", sh.ContentSecurityPolicy)
+	}
+	if sh := domain.SecurityHeaders; sh.PermissionsPolicy != "" {
+		ctx.Response.Header().Set("Permissions-Policy", sh.PermissionsPolicy)
+	}
+	if sh := domain.SecurityHeaders; sh.CrossOriginEmbedder != "" {
+		ctx.Response.Header().Set("Cross-Origin-Embedder-Policy", sh.CrossOriginEmbedder)
+	}
+	if sh := domain.SecurityHeaders; sh.CrossOriginOpener != "" {
+		ctx.Response.Header().Set("Cross-Origin-Opener-Policy", sh.CrossOriginOpener)
+	}
+	if sh := domain.SecurityHeaders; sh.CrossOriginResource != "" {
+		ctx.Response.Header().Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
+	}
+
+	// Per-path location overrides (headers, cache-control)
+	for _, loc := range domain.Locations {
+		if !matchLocation(r.URL.Path, loc.Match) {
+			continue
+		}
+		for k, v := range loc.Headers {
+			ctx.Response.Header().Set(k, v)
+		}
+		if loc.CacheControl != "" {
+			ctx.Response.Header().Set("Cache-Control", loc.CacheControl)
+		}
+		break // first match wins (like Nginx)
+	}
+
 	// Per-domain blocked paths
 	for _, blocked := range domain.Security.BlockedPaths {
 		if strings.Contains(r.URL.Path, blocked) {
@@ -2095,4 +2154,20 @@ func deriveSFTPPassword(apiKey, domain string) string {
 	mac := hmac.New(sha256.New, []byte(apiKey))
 	mac.Write([]byte("sftp:" + domain))
 	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+// matchLocation checks if a URL path matches a location pattern.
+// Prefix match: "/api/" matches "/api/users"
+// Regex match (prefix ~): "~\\.php$" matches "/index.php"
+func matchLocation(path, pattern string) bool {
+	if strings.HasPrefix(pattern, "~") {
+		// Regex match
+		re, err := regexp.Compile(strings.TrimSpace(pattern[1:]))
+		if err != nil {
+			return false
+		}
+		return re.MatchString(path)
+	}
+	// Prefix match
+	return strings.HasPrefix(path, pattern)
 }

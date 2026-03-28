@@ -1,6 +1,7 @@
 package uwastls
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,12 +10,16 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/crypto/ocsp"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -48,6 +53,10 @@ type Manager struct {
 	renewalInitialDelay time.Duration
 	// renewalInterval overrides the 12-hour ticker interval in StartRenewal for testing.
 	renewalInterval time.Duration
+
+	// mTLS fields
+	clientCA       *x509.CertPool
+	clientAuthMode tls.ClientAuthType
 
 	// AllowSelfSigned enables auto-generated self-signed certs as fallback.
 	// Set to true in production server; false in tests.
@@ -312,6 +321,9 @@ func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate
 		return nil, err
 	}
 
+	// OCSP staple (best-effort)
+	m.stapleOCSP(cert, host)
+
 	// Store in memory
 	m.certs.Store(host, cert)
 
@@ -445,9 +457,54 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	m.domainsMu.Unlock()
 }
 
+// stapleOCSP fetches and attaches an OCSP response to the certificate.
+// This is best-effort: if OCSP fails, the cert works without stapling.
+func (m *Manager) stapleOCSP(cert *tls.Certificate, host string) {
+	if cert == nil || len(cert.Certificate) < 2 {
+		return // need at least leaf + issuer
+	}
+
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil || len(leaf.OCSPServer) == 0 {
+		return // no OCSP server or unparseable cert
+	}
+
+	issuer, err := x509.ParseCertificate(cert.Certificate[1])
+	if err != nil {
+		return
+	}
+
+	ocspReq, err := ocsp.CreateRequest(leaf, issuer, nil)
+	if err != nil {
+		return
+	}
+
+	httpResp, err := http.Post(leaf.OCSPServer[0], "application/ocsp-request", bytes.NewReader(ocspReq))
+	if err != nil {
+		m.logger.Debug("OCSP fetch failed", "host", host, "error", err)
+		return
+	}
+	defer httpResp.Body.Close()
+
+	respBytes, err := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
+	if err != nil {
+		return
+	}
+
+	ocspResp, err := ocsp.ParseResponse(respBytes, issuer)
+	if err != nil {
+		return
+	}
+
+	if ocspResp.Status == ocsp.Good {
+		cert.OCSPStaple = respBytes
+		m.logger.Info("OCSP stapled", "host", host)
+	}
+}
+
 // TLSConfig returns a tls.Config with best-practice settings.
 func (m *Manager) TLSConfig() *tls.Config {
-	return &tls.Config{
+	cfg := &tls.Config{
 		GetCertificate: m.GetCertificate,
 		MinVersion:     tls.VersionTLS12,
 		NextProtos:     []string{"h2", "http/1.1"},
@@ -465,4 +522,38 @@ func (m *Manager) TLSConfig() *tls.Config {
 			tls.CurveP256,
 		},
 	}
+
+	// mTLS: load client CA and set client auth mode if configured
+	if m.clientCA != nil {
+		cfg.ClientCAs = m.clientCA
+		cfg.ClientAuth = m.clientAuthMode
+	}
+
+	return cfg
+}
+
+// SetClientAuth configures mutual TLS (mTLS) with client certificate verification.
+func (m *Manager) SetClientAuth(caPath, mode string) error {
+	if caPath == "" {
+		return nil
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return fmt.Errorf("read client CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("no valid certs in client CA file: %s", caPath)
+	}
+	m.clientCA = pool
+	switch mode {
+	case "require":
+		m.clientAuthMode = tls.RequireAndVerifyClientCert
+	case "request":
+		m.clientAuthMode = tls.VerifyClientCertIfGiven
+	default:
+		m.clientAuthMode = tls.NoClientCert
+	}
+	m.logger.Info("mTLS configured", "ca", caPath, "mode", mode)
+	return nil
 }
