@@ -100,11 +100,20 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	// PHP fatal error with display_errors=Off sends headers but no body.
 	// Only flag text/html 200 on GET/POST — empty body is normal for:
 	//   HEAD, 204 No Content, 302 redirect, DELETE, application/json, etc.
+	// Paths that normally return empty bodies — not WSOD
+	uri := ctx.Request.URL.Path
+	isKnownEmpty := strings.Contains(uri, "wp-cron") ||
+		strings.Contains(uri, "admin-ajax") ||
+		strings.Contains(uri, "wp-json") ||
+		strings.Contains(uri, "heartbeat") ||
+		strings.HasSuffix(uri, "/xmlrpc.php")
+
 	isWSOD := len(bodyBytes) == 0 &&
 		statusCode == 200 &&
 		(ctx.Request.Method == "GET" || ctx.Request.Method == "POST") &&
 		strings.Contains(headers.Get("Content-Type"), "text/html") &&
-		headers.Get("Location") == "" // Location present = redirect, not WSOD
+		headers.Get("Location") == "" && // Location present = redirect, not WSOD
+		!isKnownEmpty
 
 	if isWSOD {
 		h.logger.Error("PHP WSOD: headers but no body",
