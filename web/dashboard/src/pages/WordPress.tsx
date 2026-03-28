@@ -3,7 +3,7 @@ import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Pale
 import {
   fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus, fetchDockerDBs,
   type DockerDBContainer,
-  fetchWPSites, wpUpdateCore, wpUpdatePlugins, wpPluginAction, wpFixPermissions,
+  fetchWPSites, fetchWPSiteDetail, wpUpdateCore, wpUpdatePlugins, wpPluginAction, wpFixPermissions,
   wpToggleDebug, wpErrorLog, wpListUsers, wpChangePassword, wpSecurityStatus,
   wpHarden, wpOptimizeDB,
   type DomainData, type WPInstallStatus, type WPSite, type WPPlugin,
@@ -46,15 +46,20 @@ export default function WordPress() {
   }, []);
 
   useEffect(() => {
-    loadSites();
-    Promise.all([fetchDomains(), fetchWPSites()]).then(([d, wp]) => {
-      const list = d ?? [];
-      setDomains(list);
-      // Select first PHP domain that doesn't have WordPress installed
-      const wpHosts = new Set((wp ?? []).map(s => s.domain));
-      const available = list.filter(dd => dd.type === 'php' && !wpHosts.has(dd.host));
-      if (available.length > 0) setSelectedDomain(available[0].host);
-    }).catch(() => {});
+    loadSites().then(() => {
+      // After sites loaded, load domains for install tab
+      fetchDomains().then(d => {
+        const list = d ?? [];
+        setDomains(list);
+        // Select first PHP domain that doesn't have WordPress installed
+        setSites(prev => {
+          const wpHosts = new Set(prev.map(s => s.domain));
+          const available = list.filter(dd => dd.type === 'php' && !wpHosts.has(dd.host));
+          if (available.length > 0) setSelectedDomain(available[0].host);
+          return prev;
+        });
+      }).catch(() => {});
+    });
     fetchDBStatus().then(s => setMysqlOk(s?.installed && s?.running)).catch(() => {});
     fetchDockerDBs().then(r => setDockerDBs((r?.containers ?? []).filter(c => c.running))).catch(() => {});
   }, [loadSites]);
@@ -150,6 +155,10 @@ export default function WordPress() {
                   setExpandedSite(next);
                   setSiteTab('overview');
                   if (next) {
+                    // Lazy load: enrich with wp-cli detail (plugins/themes with update info)
+                    fetchWPSiteDetail(next).then(enriched => {
+                      setSites(prev => prev.map(s => s.domain === next ? enriched : s));
+                    }).catch(() => {});
                     wpSecurityStatus(next).then(setSecurity).catch(() => setSecurity(null));
                     wpListUsers(next).then(setSiteUsers).catch(() => setSiteUsers([]));
                   }

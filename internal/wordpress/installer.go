@@ -472,6 +472,8 @@ type PermissionsReport struct {
 }
 
 // DetectSites scans domain web roots for WordPress installations.
+// DetectSites quickly detects WordPress installations using only filesystem checks.
+// Does NOT call wp-cli — returns instantly. Use EnrichSite for plugin/theme details.
 func DetectSites(domains []DomainInfo) []SiteInfo {
 	var sites []SiteInfo
 	for _, d := range domains {
@@ -486,38 +488,41 @@ func DetectSites(domains []DomainInfo) []SiteInfo {
 			Domain:    d.Host,
 			WebRoot:   d.WebRoot,
 			AdminURL:  fmt.Sprintf("https://%s/wp-admin/", d.Host),
+			SiteURL:   fmt.Sprintf("https://%s", d.Host),
 			UpdatedAt: time.Now(),
 		}
 
-		// Parse wp-config.php for DB info
+		// Fast: parse wp-config.php for DB info (file read only)
 		site.DBName, site.DBUser, site.DBHost = parseWPConfig(wpConfig)
 
-		// Detect WP version from wp-includes/version.php
+		// Fast: detect WP version from version.php (file read only)
 		site.Version = detectWPVersion(d.WebRoot)
 
-		// Detect site URL
-		site.SiteURL = fmt.Sprintf("https://%s", d.Host)
-
-		// Check health indicators from wp-config
+		// Fast: check health from wp-config (file read only)
 		site.Health = checkWPHealth(wpConfig, d.WebRoot)
 
-		// Check permissions
+		// Fast: check permissions (stat only)
 		site.Permissions = checkPermissions(d.WebRoot)
 
-		// Try WP-CLI for detailed plugin/theme info
-		if hasWPCLI() {
-			site.Plugins = listPlugins(d.WebRoot)
-			site.Themes = listThemes(d.WebRoot)
-			site.Health.PluginUpdates = countUpdates(site.Plugins)
-			site.Health.ThemeUpdates = countUpdates2(site.Themes)
-		} else {
-			// Fallback: scan wp-content/plugins directory
-			site.Plugins = scanPluginDirs(d.WebRoot)
-		}
+		// Fast: scan plugin dirs without wp-cli
+		site.Plugins = scanPluginDirs(d.WebRoot)
 
 		sites = append(sites, site)
 	}
 	return sites
+}
+
+// EnrichSite uses wp-cli to add detailed plugin/theme info for a single site.
+// This is slow (~2-3s per site) so should be called on-demand, not during list.
+func EnrichSite(site *SiteInfo) {
+	if !hasWPCLI() {
+		return
+	}
+	site.Plugins = listPlugins(site.WebRoot)
+	site.Themes = listThemes(site.WebRoot)
+	site.Health.PluginUpdates = countUpdates(site.Plugins)
+	site.Health.ThemeUpdates = countUpdates2(site.Themes)
+	site.UpdatedAt = time.Now()
 }
 
 // DomainInfo is a minimal domain descriptor for WordPress detection.

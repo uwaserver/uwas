@@ -308,6 +308,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/wordpress/install", s.handleWPInstall)
 	s.mux.HandleFunc("GET /api/v1/wordpress/install/status", s.handleWPInstallStatus)
 	s.mux.HandleFunc("GET /api/v1/wordpress/sites", s.handleWPSites)
+	s.mux.HandleFunc("GET /api/v1/wordpress/sites/{domain}/detail", s.handleWPSiteDetail)
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/update-core", s.handleWPUpdateCore)
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/update-plugins", s.handleWPUpdatePlugins)
 	s.mux.HandleFunc("POST /api/v1/wordpress/sites/{domain}/plugin/{action}/{plugin}", s.handleWPPluginAction)

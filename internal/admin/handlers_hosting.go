@@ -122,6 +122,29 @@ func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, sites)
 }
 
+// handleWPSiteDetail returns enriched info (plugins, themes via wp-cli) for a single site.
+func (s *Server) handleWPSiteDetail(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	if !wordpress.IsWordPress(root) {
+		jsonError(w, "not a WordPress site", http.StatusBadRequest)
+		return
+	}
+	// Quick detect first
+	sites := wordpress.DetectSites([]wordpress.DomainInfo{{Host: domain, WebRoot: root}})
+	if len(sites) == 0 {
+		jsonError(w, "WordPress not detected", http.StatusNotFound)
+		return
+	}
+	// Enrich with wp-cli (slow but on-demand)
+	wordpress.EnrichSite(&sites[0])
+	jsonResponse(w, sites[0])
+}
+
 // handleWPUpdateCore triggers WP core update via WP-CLI.
 func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
