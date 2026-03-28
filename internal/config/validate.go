@@ -120,9 +120,9 @@ func validate(cfg *Config) error {
 		}
 
 		switch d.Type {
-		case "static", "php", "proxy", "redirect":
+		case "static", "php", "proxy", "app", "redirect":
 		default:
-			errs = append(errs, fmt.Sprintf("%s: invalid type %q (must be static, php, proxy, redirect)", prefix, d.Type))
+			errs = append(errs, fmt.Sprintf("%s: invalid type %q (must be static, php, proxy, app, redirect)", prefix, d.Type))
 		}
 
 		switch d.SSL.Mode {
