@@ -5,7 +5,7 @@ import { setPinCode, clearPinCode } from '@/lib/api';
 import {
   Globe, X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
-  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink,
+  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Cpu,
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
@@ -115,6 +115,48 @@ const templates: Record<string, TemplateConfig> = {
       type: 'proxy',
       ssl: 'auto',
       proxyUpstreams: 'http://localhost:3000',
+      proxyAlgorithm: 'round-robin',
+    },
+  },
+  laravel: {
+    label: 'Laravel',
+    description: 'PHP with public/ root, .env blocked, OPcache',
+    icon: <Code size={20} />,
+    color: 'text-red-400 bg-red-500/15 border-red-500/30',
+    form: {
+      type: 'php',
+      ssl: 'auto',
+      root: '/var/www/html/public',
+      htaccessEnabled: true,
+      cacheEnabled: true,
+      cacheTTL: '3600',
+      phpFpmAddress: '127.0.0.1:9000',
+      phpIndexFiles: 'index.php',
+      wafEnabled: true,
+      blockedPaths: '.env,.git,composer.json,composer.lock,storage/logs',
+    },
+  },
+  nodejs: {
+    label: 'Node.js App',
+    description: 'Auto-managed Node process with npm start',
+    icon: <Box size={20} />,
+    color: 'text-green-400 bg-green-500/15 border-green-500/30',
+    form: {
+      type: 'proxy',
+      ssl: 'auto',
+      proxyUpstreams: 'http://localhost:3000',
+      proxyAlgorithm: 'round-robin',
+    },
+  },
+  python: {
+    label: 'Python App',
+    description: 'Gunicorn/Django/Flask behind reverse proxy',
+    icon: <Cpu size={20} />,
+    color: 'text-yellow-400 bg-yellow-500/15 border-yellow-500/30',
+    form: {
+      type: 'proxy',
+      ssl: 'auto',
+      proxyUpstreams: 'http://localhost:8000',
       proxyAlgorithm: 'round-robin',
     },
   },
