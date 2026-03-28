@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Terminal as TerminalIcon, X, AlertTriangle } from 'lucide-react';
-import { terminalWSURL } from '@/lib/api';
+import { terminalWSURL, requestPin } from '@/lib/api';
 
 export default function TerminalPage() {
   const [connected, setConnected] = useState(false);
@@ -10,10 +10,17 @@ export default function TerminalPage() {
   const outputRef = useRef<HTMLPreElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     setError('');
     setOutput('');
-    const url = terminalWSURL();
+    let pin: string | undefined;
+    try {
+      pin = await requestPin();
+    } catch {
+      setError('Pin required to access terminal.');
+      return;
+    }
+    const url = terminalWSURL(pin);
     const ws = new WebSocket(url);
     wsRef.current = ws;
 

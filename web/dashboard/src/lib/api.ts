@@ -856,9 +856,25 @@ export const fetchDeploys = () => api<DeployStatus[]>('/api/v1/deploys');
 
 // ── Web Terminal ──
 
-export function terminalWSURL(): string {
+export function terminalWSURL(pin?: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = import.meta.env.DEV ? '127.0.0.1:9443' : window.location.host;
-  const params = token ? `?token=${encodeURIComponent(token)}` : '';
-  return `${proto}//${host}/api/v1/terminal${params}`;
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  if (pin) params.set('pin', pin);
+  const qs = params.toString();
+  return `${proto}//${host}/api/v1/terminal${qs ? '?' + qs : ''}`;
+}
+
+// requestPin returns a promise that resolves with the user's pin code.
+// Uses the global PinModal from App.tsx.
+export function requestPin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (pinCode) { resolve(pinCode); return; }
+    if (pinPromptCallback) {
+      pinPromptCallback(resolve, reject);
+    } else {
+      reject(new Error('No pin prompt configured'));
+    }
+  });
 }
