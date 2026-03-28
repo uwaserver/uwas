@@ -404,7 +404,7 @@ export default function Domains() {
       const d = await fetchDomainDetail(host);
       const editForm: DomainFormState = {
         host: d.host,
-        ip: (d as any).ip ?? '',
+        ip: d.ip ?? '',
         type: d.type,
         root: d.root || '',
         ssl: d.ssl?.mode ?? 'off',
