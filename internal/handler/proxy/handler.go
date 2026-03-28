@@ -196,7 +196,9 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			return
 		}
 
-		cancel()
+		// NOTE: cancel() must be called AFTER resp.Body is fully read.
+		// Calling it before io.Copy truncates large responses because the
+		// canceled context closes the underlying connection mid-stream.
 		backend.ActiveConns.Add(-1)
 
 		// Copy response headers
@@ -216,6 +218,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			)
 		}
 		resp.Body.Close()
+		cancel() // safe now — body fully consumed
 		return
 	}
 
