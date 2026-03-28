@@ -89,6 +89,43 @@ func (rn *Random) Select(backends []*Backend, _ *http.Request) *Backend {
 	return backends[j]
 }
 
+// StickyBalancer provides cookie-based session affinity.
+// If a client has a sticky cookie, it routes to the same backend.
+// Otherwise it falls back to round-robin and sets the cookie.
+type StickyBalancer struct {
+	CookieName string
+	TTL        int // seconds
+	fallback   RoundRobin
+}
+
+func (sb *StickyBalancer) Select(backends []*Backend, r *http.Request) *Backend {
+	if len(backends) == 0 {
+		return nil
+	}
+	// Check for existing sticky cookie
+	if cookie, err := r.Cookie(sb.CookieName); err == nil && cookie.Value != "" {
+		for _, b := range backends {
+			if b.URL.Host == cookie.Value {
+				return b
+			}
+		}
+	}
+	// No cookie or backend gone — fall back to round-robin
+	return sb.fallback.Select(backends, r)
+}
+
+// SetStickyCookie sets the sticky session cookie on the response after backend selection.
+func SetStickyCookie(w http.ResponseWriter, cookieName, backendHost string, ttl int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    backendHost,
+		Path:     "/",
+		MaxAge:   ttl,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 // NewBalancer creates a balancer by algorithm name.
 func NewBalancer(algorithm string) Balancer {
 	switch algorithm {
@@ -100,6 +137,8 @@ func NewBalancer(algorithm string) Balancer {
 		return &URIHash{}
 	case "random":
 		return &Random{}
+	case "sticky":
+		return &StickyBalancer{CookieName: "uwas_sticky", TTL: 3600}
 	default:
 		return &RoundRobin{}
 	}

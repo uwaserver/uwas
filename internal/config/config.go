@@ -35,6 +35,7 @@ type GlobalConfig struct {
 	Backup         BackupConfig     `yaml:"backup"`
 	Webhooks       []WebhookConfig  `yaml:"webhooks"`
 	Users          UsersConfig      `yaml:"users"`
+	ProxyProtocol  bool             `yaml:"proxy_protocol"`    // enable PROXY protocol v1/v2 on listeners
 }
 
 type BackupConfig struct {
@@ -111,6 +112,8 @@ type CacheConfig struct {
 	GraceTTL             int      `yaml:"grace_ttl"`
 	StaleWhileRevalidate bool     `yaml:"stale_while_revalidate"`
 	PurgeKey             string   `yaml:"purge_key"`
+	VaryByQuery          bool     `yaml:"vary_by_query"`       // include query string in cache key
+	VaryByHeaders        []string `yaml:"vary_by_headers"`     // include specific request headers in cache key
 }
 
 type AlertingConfig struct {
@@ -174,6 +177,35 @@ type Domain struct {
 	CORS              CORSConfig              `yaml:"cors,omitempty" json:"cors,omitempty"`
 	BasicAuth         BasicAuthConfig         `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
 	Bandwidth         BandwidthConfig         `yaml:"bandwidth,omitempty" json:"bandwidth,omitempty"`
+	Maintenance       MaintenanceConfig       `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+	Locations         []LocationConfig        `yaml:"locations,omitempty" json:"locations,omitempty"`
+	SecurityHeaders   SecurityHeadersConfig   `yaml:"security_headers,omitempty" json:"security_headers,omitempty"`
+}
+
+// MaintenanceConfig enables a 503 maintenance page for the domain.
+type MaintenanceConfig struct {
+	Enabled    bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Message    string `yaml:"message,omitempty" json:"message,omitempty"`      // custom HTML body
+	RetryAfter int    `yaml:"retry_after,omitempty" json:"retry_after,omitempty"` // seconds, sent as Retry-After header
+	AllowedIPs []string `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"` // bypass maintenance for these IPs
+}
+
+// LocationConfig defines per-path overrides (like Nginx location blocks).
+type LocationConfig struct {
+	Match          string            `yaml:"match" json:"match"`                                       // path prefix or regex (prefix: "/api/", regex: "~\\.php$")
+	Headers        map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`               // response headers to add
+	CacheControl   string            `yaml:"cache_control,omitempty" json:"cache_control,omitempty"`   // Cache-Control header value
+	RequestTimeout Duration          `yaml:"request_timeout,omitempty" json:"request_timeout,omitempty"` // per-path timeout
+	RateLimit      *RateLimitConfig  `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`         // per-path rate limit
+}
+
+// SecurityHeadersConfig adds modern security headers per domain.
+type SecurityHeadersConfig struct {
+	ContentSecurityPolicy   string `yaml:"content_security_policy,omitempty" json:"content_security_policy,omitempty"`
+	PermissionsPolicy       string `yaml:"permissions_policy,omitempty" json:"permissions_policy,omitempty"`
+	CrossOriginEmbedder     string `yaml:"cross_origin_embedder_policy,omitempty" json:"cross_origin_embedder_policy,omitempty"`   // require-corp, unsafe-none
+	CrossOriginOpener       string `yaml:"cross_origin_opener_policy,omitempty" json:"cross_origin_opener_policy,omitempty"`       // same-origin, same-origin-allow-popups, unsafe-none
+	CrossOriginResource     string `yaml:"cross_origin_resource_policy,omitempty" json:"cross_origin_resource_policy,omitempty"`   // same-origin, same-site, cross-origin
 }
 
 // MarshalYAML produces clean YAML by omitting zero-value nested structs.
@@ -312,6 +344,8 @@ type SSLConfig struct {
 	Cert       string `yaml:"cert,omitempty" json:"cert,omitempty"`
 	Key        string `yaml:"key,omitempty" json:"key,omitempty"`
 	MinVersion string `yaml:"min_version,omitempty" json:"min_version,omitempty"`
+	ClientCA   string `yaml:"client_ca,omitempty" json:"client_ca,omitempty"`     // path to CA cert for mTLS
+	ClientAuth string `yaml:"client_auth,omitempty" json:"client_auth,omitempty"` // "require", "request", "none"
 }
 
 type PHPConfig struct {
@@ -348,9 +382,10 @@ type DomainCache struct {
 }
 
 type CacheRule struct {
-	Match  string `yaml:"match,omitempty" json:"match,omitempty"`
-	TTL    int    `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-	Bypass bool   `yaml:"bypass,omitempty" json:"bypass,omitempty"`
+	Match        string `yaml:"match,omitempty" json:"match,omitempty"`
+	TTL          int    `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	Bypass       bool   `yaml:"bypass,omitempty" json:"bypass,omitempty"`
+	CacheControl string `yaml:"cache_control,omitempty" json:"cache_control,omitempty"` // Cache-Control header override
 }
 
 type RewriteRule struct {
@@ -429,10 +464,12 @@ type ProxyConfig struct {
 	Sticky         StickyConfig      `yaml:"sticky,omitempty" json:"sticky,omitempty"`
 	CircuitBreaker CircuitConfig     `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
 	WebSocket      bool              `yaml:"websocket,omitempty" json:"websocket,omitempty"`
+	GRPC           bool              `yaml:"grpc,omitempty" json:"grpc,omitempty"`             // enable gRPC/h2c proxy
 	Timeouts       ProxyTimeouts     `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
 	MaxRetries     int               `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
 	Canary         CanaryConfig      `yaml:"canary,omitempty" json:"canary,omitempty"`
 	Mirror         MirrorConfig      `yaml:"mirror,omitempty" json:"mirror,omitempty"`
+	BufferResponse bool              `yaml:"buffer_response,omitempty" json:"buffer_response,omitempty"` // buffer entire upstream response
 }
 
 type CanaryConfig struct {
