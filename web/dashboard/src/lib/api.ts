@@ -617,6 +617,7 @@ export interface WPSite {
 }
 
 export const fetchWPSites = () => api<WPSite[]>('/api/v1/wordpress/sites');
+export const fetchWPSiteDetail = (domain: string) => api<WPSite>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/detail`);
 export const wpUpdateCore = (domain: string) =>
   api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/update-core`, { method: 'POST' });
 export const wpUpdatePlugins = (domain: string) =>

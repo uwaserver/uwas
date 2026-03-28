@@ -2178,8 +2178,11 @@ func TestDetectSites_WPCLIAvailable(t *testing.T) {
 	if len(sites) != 1 {
 		t.Fatalf("expected 1 site, got %d", len(sites))
 	}
+	// DetectSites no longer calls wp-cli (fast path), so plugins come from scanPluginDirs
+	// Test EnrichSite for wp-cli plugin/theme enrichment
+	EnrichSite(&sites[0])
 	if len(sites[0].Plugins) != 1 {
-		t.Errorf("expected 1 plugin, got %d", len(sites[0].Plugins))
+		t.Errorf("expected 1 plugin after enrich, got %d", len(sites[0].Plugins))
 	}
 	if sites[0].Health.PluginUpdates != 1 {
 		t.Errorf("PluginUpdates = %d, want 1", sites[0].Health.PluginUpdates)
