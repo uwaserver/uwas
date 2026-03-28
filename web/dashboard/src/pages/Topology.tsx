@@ -34,6 +34,7 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
     static: '#3b82f6',
     php: '#a855f7',
     proxy: '#f97316',
+    app: '#22c55e',
     redirect: '#64748b',
   };
 
@@ -177,6 +178,34 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
         animated: true,
         style: { stroke: '#f97316', strokeDasharray: '5 5' },
         markerEnd: { type: MarkerType.ArrowClosed, color: '#f97316' },
+      });
+    }
+
+    // Domain → App process
+    if (d.type === 'app') {
+      const appId = `app-${i}`;
+      nodes.push({
+        id: appId,
+        data: { label: `App Process\n127.0.0.1:${d.root || '3000'}` },
+        position: { x: 850, y: yPos },
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
+        style: {
+          background: '#1e293b', color: '#22c55e', border: '2px solid #22c55e',
+          borderRadius: '10px', padding: '8px 16px', fontSize: '10px',
+          whiteSpace: 'pre-line' as const, textAlign: 'center' as const,
+        },
+      });
+      edges.push({
+        id: `${domainId}-${appId}`,
+        source: domainId,
+        target: appId,
+        animated: true,
+        style: { stroke: '#22c55e' },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#22c55e' },
+        label: 'reverse proxy',
+        labelStyle: { fill: '#94a3b8', fontSize: 9 },
+        labelBgStyle: { fill: '#1e293b', fillOpacity: 0.8 },
       });
     }
   });

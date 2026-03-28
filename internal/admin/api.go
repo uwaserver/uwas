@@ -2002,6 +2002,19 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// App type: register with app manager and start
+	if d.Type == "app" && s.appMgr != nil && (d.App.Command != "" || d.App.Runtime != "") {
+		if err := s.appMgr.Register(d.Host, d.App, d.Root); err != nil {
+			s.logger.Warn("app register on create failed", "domain", d.Host, "error", err)
+		} else {
+			if err := s.appMgr.Start(d.Host); err != nil {
+				s.logger.Warn("app start on create failed", "domain", d.Host, "error", err)
+			} else {
+				s.logger.Info("app started on domain create", "domain", d.Host, "runtime", d.App.Runtime)
+			}
+		}
+	}
+
 	s.config.Domains = append(s.config.Domains, d)
 	s.configMu.Unlock()
 
@@ -2899,9 +2912,9 @@ func humanDuration(d time.Duration) string {
 // validateDomainConfig performs comprehensive pre-save validation.
 func validateDomainConfig(d *config.Domain, s *Server) error {
 	// Type validation
-	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "redirect": true}
+	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "app": true, "redirect": true}
 	if !validTypes[d.Type] {
-		return fmt.Errorf("invalid type %q — must be static, php, proxy, or redirect", d.Type)
+		return fmt.Errorf("invalid type %q — must be static, php, proxy, app, or redirect", d.Type)
 	}
 
 	// SSL mode validation
