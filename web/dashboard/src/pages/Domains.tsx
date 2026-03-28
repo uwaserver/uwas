@@ -34,6 +34,7 @@ interface DomainFormState {
   appRuntime: string;
   appCommand: string;
   appPort: string;
+  appEnv: string;
   blockedPaths: string;
   wafEnabled: boolean;
   htaccessEnabled: boolean;
@@ -67,6 +68,7 @@ const emptyForm: DomainFormState = {
   appRuntime: 'node',
   appCommand: '',
   appPort: '3000',
+  appEnv: '',
   blockedPaths: '',
   wafEnabled: false,
   htaccessEnabled: false,
@@ -470,6 +472,7 @@ export default function Domains() {
         appRuntime: d.app?.runtime ?? 'node',
         appCommand: d.app?.command ?? '',
         appPort: String(d.app?.port ?? 3000),
+        appEnv: '',
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
         htaccessEnabled: !!d.htaccess?.mode,
@@ -532,11 +535,17 @@ export default function Domains() {
     }
 
     if (form.type === 'app') {
+      const env: Record<string, string> = {};
+      form.appEnv.split('\n').forEach(line => {
+        const eq = line.indexOf('=');
+        if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+      });
       payload.app = {
         runtime: form.appRuntime || 'custom',
         command: form.appCommand || undefined,
         port: parseInt(form.appPort, 10) || 3000,
         auto_restart: true,
+        env: Object.keys(env).length > 0 ? env : undefined,
       };
     }
 
@@ -859,6 +868,10 @@ export default function Domains() {
                             placeholder="auto-detected" className={inputCls} />
                         </FormField>
                       </div>
+                      <FormField label="Environment Variables (KEY=value, one per line)" htmlFor="add-app-env">
+                        <textarea id="add-app-env" rows={3} value={form.appEnv} onChange={e => patchField('appEnv', e.target.value)}
+                          placeholder={"NODE_ENV=production\nDATABASE_URL=postgres://localhost/mydb"} className={inputCls + ' font-mono text-xs'} />
+                      </FormField>
                       <p className="text-[10px] text-muted-foreground">
                         Process auto-starts on domain creation. Use the Apps page to deploy from Git, manage, and monitor.
                       </p>
