@@ -456,8 +456,14 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	if name == "" {
 		return nil, fmt.Errorf("database name required")
 	}
+	if !validDBIdentifier(name) {
+		return nil, fmt.Errorf("invalid database name: only letters, digits, underscore, hyphen allowed (max 64 chars)")
+	}
 	if user == "" {
 		user = name
+	}
+	if !validDBIdentifier(user) {
+		return nil, fmt.Errorf("invalid username: only letters, digits, underscore, hyphen allowed (max 64 chars)")
 	}
 	if password == "" {
 		password = generateDBPassword()
@@ -482,6 +488,9 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 
 // DropDatabase removes a database and its user.
 func DropDatabase(name, user, host string) error {
+	if !validDBIdentifier(name) {
+		return fmt.Errorf("invalid database name")
+	}
 	if user == "" {
 		user = name
 	}
@@ -692,6 +701,19 @@ func generateDBPassword() string {
 
 func backtick(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+}
+
+// validDBIdentifier checks that a database/user name contains only safe characters.
+func validDBIdentifier(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func escapeSQL(s string) string {
