@@ -136,7 +136,7 @@ func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := wordpress.UpdateCore(root)
 	if err != nil {
-		jsonError(w, "update failed: "+out, http.StatusInternalServerError)
+		jsonError(w, "update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "updated", "output": out})
@@ -152,7 +152,7 @@ func (s *Server) handleWPUpdatePlugins(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := wordpress.UpdateAllPlugins(root)
 	if err != nil {
-		jsonError(w, "update failed: "+out, http.StatusInternalServerError)
+		jsonError(w, "update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "updated", "output": out})
@@ -184,7 +184,7 @@ func (s *Server) handleWPPluginAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		jsonError(w, action+" failed: "+out, http.StatusInternalServerError)
+		jsonError(w, action+" failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": action + "d", "output": out})
@@ -200,7 +200,7 @@ func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request) 
 	}
 	out, err := wordpress.FixPermissions(root)
 	if err != nil {
-		jsonError(w, "fix failed: "+out, http.StatusInternalServerError)
+		jsonError(w, "fix failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "fixed", "output": out})
@@ -220,7 +220,7 @@ func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := wordpress.ReinstallWordPress(root)
 	if err != nil {
-		jsonError(w, "reinstall failed: "+out, http.StatusInternalServerError)
+		jsonError(w, "reinstall failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "reinstalled", "output": out})
