@@ -16,7 +16,7 @@ export default function Apps() {
   const [acting, setActing] = useState<string | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [deployDomain, setDeployDomain] = useState('');
-  const [deployForm, setDeployForm] = useState({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '' });
+  const [deployForm, setDeployForm] = useState({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '', sshKey: '', gitToken: '' });
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<DeployStatus | null>(null);
 
@@ -48,6 +48,8 @@ export default function Apps() {
         git_branch: deployForm.branch || 'main',
         build_cmd: deployForm.buildCmd || undefined,
         dockerfile: deployForm.dockerfile || undefined,
+        ssh_key_path: deployForm.sshKey || undefined,
+        git_token: deployForm.gitToken || undefined,
       });
       showStatus(true, `Deploy started for ${deployDomain}`);
       // Poll for status
@@ -136,7 +138,7 @@ export default function Apps() {
               </div>
 
               <div className="flex items-center gap-2">
-                <button onClick={() => { setDeployDomain(app.domain); setDeployForm({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '' }); setDeployStatus(null); }}
+                <button onClick={() => { setDeployDomain(app.domain); setDeployForm({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '', sshKey: '', gitToken: '' }); setDeployStatus(null); }}
                   className="flex items-center gap-1 rounded-md bg-purple-600/15 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-600/25">
                   <Rocket size={11} /> Deploy
                 </button>
@@ -202,6 +204,20 @@ export default function Apps() {
                   <input value={deployForm.dockerfile} onChange={e => setDeployForm(f => ({ ...f, dockerfile: e.target.value }))}
                     placeholder="Dockerfile"
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">SSH Key Path (private repos)</label>
+                  <input value={deployForm.sshKey} onChange={e => setDeployForm(f => ({ ...f, sshKey: e.target.value }))}
+                    placeholder="/root/.ssh/deploy_key"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none font-mono" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Access Token (GitHub/GitLab)</label>
+                  <input type="password" value={deployForm.gitToken} onChange={e => setDeployForm(f => ({ ...f, gitToken: e.target.value }))}
+                    placeholder="ghp_xxxx or glpat-xxxx"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none font-mono" />
                 </div>
               </div>
               <div>

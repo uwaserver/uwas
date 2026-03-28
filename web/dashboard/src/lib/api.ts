@@ -222,6 +222,7 @@ export interface DomainDetail {
   php?: { fpm_address: string; index_files: string[] | null; timeout: number; upload_max_size: string };
   proxy?: { upstreams: string[] | null; algorithm: string; health_check?: { path: string; interval: string } };
   redirect?: { target: string; status: number; preserve_path: boolean };
+  app?: { runtime: string; command: string; port: number; auto_restart: boolean };
   htaccess?: { mode: string };
 }
 
@@ -809,6 +810,8 @@ export const restartApp = (domain: string) => api<{ status: string }>(`/api/v1/a
 export interface DeployRequest {
   git_url?: string;
   git_branch?: string;
+  ssh_key_path?: string;
+  git_token?: string;
   build_cmd?: string;
   dockerfile?: string;
   docker_port?: number;

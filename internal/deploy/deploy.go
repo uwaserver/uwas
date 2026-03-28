@@ -22,6 +22,8 @@ type DeployRequest struct {
 	GitURL      string            `json:"git_url,omitempty"`      // e.g. https://github.com/user/repo.git
 	GitBranch   string            `json:"git_branch,omitempty"`   // default: main
 	BuildCmd    string            `json:"build_cmd,omitempty"`    // e.g. "npm install && npm run build"
+	SSHKeyPath  string            `json:"ssh_key_path,omitempty"` // path to SSH private key for private repos
+	GitToken    string            `json:"git_token,omitempty"`    // GitHub/GitLab personal access token
 	DockerFile  string            `json:"dockerfile,omitempty"`   // path to Dockerfile (enables Docker mode)
 	DockerPort  int               `json:"docker_port,omitempty"`  // container internal port (e.g. 3000)
 	Env         map[string]string `json:"env,omitempty"`          // environment variables for build/run
@@ -120,20 +122,43 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	status.Status = "deploying"
 	gitDir := filepath.Join(appRoot, ".git")
 
+	// Build git environment for private repo access
+	gitEnv := make(map[string]string)
+	for k, v := range req.Env {
+		gitEnv[k] = v
+	}
+
+	// SSH key auth: GIT_SSH_COMMAND with -i flag
+	if req.SSHKeyPath != "" {
+		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", req.SSHKeyPath)
+		log.WriteString("Using SSH key: " + req.SSHKeyPath + "\n")
+	}
+
+	// Token auth: rewrite HTTPS URL to include token
+	gitURL := req.GitURL
+	if req.GitToken != "" && gitURL != "" {
+		gitURL = injectTokenInURL(gitURL, req.GitToken)
+		log.WriteString("Using access token for authentication\n")
+	}
+
 	if _, err := os.Stat(gitDir); err == nil {
 		// Existing repo — fetch + reset
+		// If token provided, update remote URL
+		if req.GitToken != "" && gitURL != "" {
+			runCmd(appRoot, gitEnv, "git", "remote", "set-url", "origin", gitURL)
+		}
 		log.WriteString("$ git fetch origin\n")
-		if out, err := runCmd(appRoot, req.Env, "git", "fetch", "origin"); err != nil {
+		if out, err := runCmd(appRoot, gitEnv, "git", "fetch", "origin"); err != nil {
 			return fmt.Errorf("git fetch: %w\n%s", err, out)
 		}
 		log.WriteString("$ git reset --hard origin/" + branch + "\n")
-		if out, err := runCmd(appRoot, req.Env, "git", "reset", "--hard", "origin/"+branch); err != nil {
+		if out, err := runCmd(appRoot, gitEnv, "git", "reset", "--hard", "origin/"+branch); err != nil {
 			return fmt.Errorf("git reset: %w\n%s", err, out)
 		}
-	} else if req.GitURL != "" {
+	} else if gitURL != "" {
 		// Fresh clone
-		log.WriteString("$ git clone -b " + branch + " " + req.GitURL + "\n")
-		if out, err := runCmd(filepath.Dir(appRoot), req.Env, "git", "clone", "-b", branch, req.GitURL, appRoot); err != nil {
+		log.WriteString("$ git clone -b " + branch + " <repo>\n")
+		if out, err := runCmd(filepath.Dir(appRoot), gitEnv, "git", "clone", "-b", branch, gitURL, appRoot); err != nil {
 			return fmt.Errorf("git clone: %w\n%s", err, out)
 		}
 	} else {
@@ -284,6 +309,18 @@ func runShell(dir string, env map[string]string, command string) (string, error)
 	cmd.Stderr = &buf
 	err := cmd.Run()
 	return buf.String(), err
+}
+
+// injectTokenInURL rewrites https://github.com/user/repo.git
+// to https://{token}@github.com/user/repo.git for private repo access.
+func injectTokenInURL(gitURL, token string) string {
+	if strings.HasPrefix(gitURL, "https://") {
+		return "https://" + token + "@" + strings.TrimPrefix(gitURL, "https://")
+	}
+	if strings.HasPrefix(gitURL, "http://") {
+		return "http://" + token + "@" + strings.TrimPrefix(gitURL, "http://")
+	}
+	return gitURL // SSH URLs don't need token injection
 }
 
 func sanitizeName(s string) string {
