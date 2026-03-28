@@ -54,8 +54,9 @@ export default function UnknownDomains() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Unknown Domains</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Hostnames hitting your server that aren't configured. Blocked hosts get 403, others get 421.
+          <p className="mt-1 text-sm text-muted-foreground flex items-center gap-2">
+            Hostnames hitting your server that aren't configured.
+            <span className="flex items-center gap-1 text-[10px] text-emerald-400"><span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Auto-refresh 10s</span>
           </p>
         </div>
         <button

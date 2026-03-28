@@ -12,6 +12,7 @@ export default function AdminUsers() {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ username: string; password: string; api_key: string } | null>(null);
   const [copied, setCopied] = useState('');
+  const [regenResult, setRegenResult] = useState<{ username: string; api_key: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [pwUser, setPwUser] = useState<string | null>(null);
   const [newPw, setNewPw] = useState('');
@@ -71,7 +72,8 @@ export default function AdminUsers() {
     setActionLoading('key-' + username);
     try {
       const res = await regenAdminApiKey(username);
-      setStatus(`New API key for ${username}: ${res.api_key}`);
+      setRegenResult({ username, api_key: res.api_key });
+      setStatus(`API key regenerated for ${username}. Copy it now — it won't be shown again.`);
       await load();
     } catch (e) { setError((e as Error).message); }
     finally { setActionLoading(''); }
@@ -97,15 +99,42 @@ export default function AdminUsers() {
       {error && <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       {status && <div className="rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{status}</div>}
 
+      {/* Regenerated API key — show once, copy-only */}
+      {regenResult && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-5">
+          <h3 className="text-sm font-semibold text-amber-400 mb-3">New API Key for {regenResult.username}</h3>
+          <div className="flex items-center justify-between rounded bg-background px-3 py-2">
+            <div>
+              <span className="text-xs text-muted-foreground">API Key</span>
+              <p className="font-mono text-sm text-foreground">{'•'.repeat(8)}...{regenResult.api_key.slice(-8)}</p>
+            </div>
+            <button onClick={() => copy(regenResult.api_key, 'regen-key')} className="ml-2 rounded p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent">
+              {copied === 'regen-key' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-amber-400">Copy this key now. It will not be shown again.</p>
+          <button onClick={() => setRegenResult(null)} className="mt-2 text-xs text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
+
       {/* Created credentials */}
       {created && (
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5">
           <h3 className="text-sm font-semibold text-emerald-400 mb-3">User Created</h3>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {[['Username', created.username], ['Password', created.password], ['API Key', created.api_key]].map(([label, value]) => (
+            {[
+              { label: 'Username', value: created.username, masked: false },
+              { label: 'Password', value: created.password, masked: true },
+              { label: 'API Key', value: created.api_key, masked: true },
+            ].map(({ label, value, masked }) => (
               <div key={label} className="flex items-center justify-between rounded bg-background px-3 py-2">
-                <div><span className="text-xs text-muted-foreground">{label}</span><p className="font-mono text-sm text-foreground">{value}</p></div>
-                <button onClick={() => copy(value, label)} className="ml-2 rounded p-1 text-muted-foreground hover:text-foreground">
+                <div>
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <p className="font-mono text-sm text-foreground">
+                    {masked ? '•'.repeat(Math.min(value.length, 12)) : value}
+                  </p>
+                </div>
+                <button onClick={() => copy(value, label)} className="ml-2 rounded p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent" title={`Copy ${label}`}>
                   {copied === label ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                 </button>
               </div>

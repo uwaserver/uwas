@@ -810,6 +810,18 @@ export const updateAppEnv = (domain: string, env: Record<string, string>, comman
 export const fetchAppLogs = (domain: string) =>
   api<{ log: string; error?: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/logs`);
 
+export interface AppStats {
+  domain: string;
+  pid: number;
+  running: boolean;
+  cpu_percent: number;
+  memory_rss: number;
+  memory_vms: number;
+  uptime?: string;
+}
+export const fetchAppStats = (domain: string) =>
+  api<AppStats>(`/api/v1/apps/${encodeURIComponent(domain)}/stats`);
+
 // ── Deploy (git clone → build → restart) ──
 
 export interface DeployRequest {

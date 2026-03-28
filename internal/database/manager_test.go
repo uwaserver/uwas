@@ -905,26 +905,26 @@ func TestExportDatabase_NotFound(t *testing.T) {
 	}
 }
 
-func TestExportDatabase_FallbackToSudo(t *testing.T) {
+func TestExportDatabase_FallbackToNoUser(t *testing.T) {
 	saveHooks(t)
 	execLookPathFn = lookPathFound("mariadb-dump")
 	callN := 0
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
 		callN++
 		if callN == 1 {
-			// First call (direct) fails
+			// First call (with -u root) fails
 			return fakeCmd("", 1)(name, args...)
 		}
-		// Second call (sudo) succeeds
-		return fakeCmd("-- dump via sudo", 0)(name, args...)
+		// Second call (without -u root) succeeds
+		return fakeCmd("-- dump via fallback", 0)(name, args...)
 	}
 
 	data, err := ExportDatabase("testdb")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(string(data), "sudo") {
-		t.Errorf("expected sudo fallback data, got %q", string(data))
+	if !strings.Contains(string(data), "fallback") {
+		t.Errorf("expected fallback data, got %q", string(data))
 	}
 }
 
@@ -956,7 +956,7 @@ func TestImportDatabase_NotFound(t *testing.T) {
 	}
 }
 
-func TestImportDatabase_FallbackToSudo(t *testing.T) {
+func TestImportDatabase_FallbackToNoUser(t *testing.T) {
 	saveHooks(t)
 	execLookPathFn = lookPathFound("mysql")
 	callN := 0
@@ -1229,7 +1229,7 @@ func TestRunMySQL_DirectSuccess(t *testing.T) {
 	}
 }
 
-func TestRunMySQL_SudoFallback(t *testing.T) {
+func TestRunMySQL_NoUserFallback(t *testing.T) {
 	saveHooks(t)
 	runMySQLFn = runMySQL
 	osMkdirAllFn = noopMkdirAll
@@ -1239,23 +1239,23 @@ func TestRunMySQL_SudoFallback(t *testing.T) {
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
 		callN++
 		if callN <= 2 {
-			// chown + first method (direct) fails
+			// chown + first method (with -u root) fails
 			return fakeCmd("", 1)(name, args...)
 		}
 		if callN == 3 {
 			// chown for second dir
 			return fakeCmd("", 1)(name, args...)
 		}
-		// sudo method succeeds
-		return fakeCmd("sudo result", 0)(name, args...)
+		// fallback method (without -u root) succeeds
+		return fakeCmd("fallback result", 0)(name, args...)
 	}
 
 	out, err := runMySQLFn("SELECT 1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "sudo result") {
-		t.Errorf("expected sudo result, got %q", out)
+	if !strings.Contains(out, "fallback result") {
+		t.Errorf("expected fallback result, got %q", out)
 	}
 }
 
@@ -1269,7 +1269,7 @@ func TestRunMySQL_SocketFallback(t *testing.T) {
 	callN := 0
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
 		callN++
-		// chown calls (2) + direct method fail + sudo fail + socket succeeds
+		// chown calls (2) + direct method fail + no-user fallback fail + socket succeeds
 		if callN <= 4 {
 			return fakeCmd("fail", 1)(name, args...)
 		}

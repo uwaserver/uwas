@@ -94,9 +94,9 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 			fmt.Sprintf("php%s-zip", short),
 		}
 		info.Commands = []string{
-			"sudo add-apt-repository -y ppa:ondrej/php",
-			"sudo apt update",
-			fmt.Sprintf("sudo apt install -y %s", strings.Join(info.Packages, " ")),
+			"add-apt-repository -y ppa:ondrej/php",
+			"apt update",
+			fmt.Sprintf("apt install -y %s", strings.Join(info.Packages, " ")),
 		}
 		info.Notes = "The ondrej/php PPA provides latest PHP versions for Ubuntu/Debian."
 
@@ -106,10 +106,10 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 			fmt.Sprintf("php%s-php-fpm", strings.Replace(short, ".", "", 1)),
 		}
 		info.Commands = []string{
-			"sudo dnf install -y epel-release",
-			"sudo dnf install -y https://rpms.remirepo.net/enterprise/remi-release-$(rpm -E %{rhel}).rpm",
-			fmt.Sprintf("sudo dnf module enable -y php:remi-%s", short),
-			fmt.Sprintf("sudo dnf install -y php%s-php-cgi php%s-php-fpm php%s-php-mysqlnd php%s-php-gd php%s-php-mbstring",
+			"dnf install -y epel-release",
+			"dnf install -y https://rpms.remirepo.net/enterprise/remi-release-$(rpm -E %{rhel}).rpm",
+			fmt.Sprintf("dnf module enable -y php:remi-%s", short),
+			fmt.Sprintf("dnf install -y php%s-php-cgi php%s-php-fpm php%s-php-mysqlnd php%s-php-gd php%s-php-mbstring",
 				strings.Replace(short, ".", "", 1), strings.Replace(short, ".", "", 1),
 				strings.Replace(short, ".", "", 1), strings.Replace(short, ".", "", 1),
 				strings.Replace(short, ".", "", 1)),
@@ -118,13 +118,13 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 
 	case "fedora":
 		info.Commands = []string{
-			fmt.Sprintf("sudo dnf install -y php-cgi php-fpm php-mysqlnd php-gd php-mbstring"),
+			fmt.Sprintf("dnf install -y php-cgi php-fpm php-mysqlnd php-gd php-mbstring"),
 		}
 		info.Notes = "Fedora ships recent PHP versions by default."
 
 	case "arch", "manjaro":
 		info.Commands = []string{
-			"sudo pacman -Sy php php-cgi php-fpm",
+			"pacman -Sy php php-cgi php-fpm",
 		}
 
 	case "alpine":
@@ -160,6 +160,10 @@ func RunInstall(phpVersion string) (string, error) {
 			output.WriteString(cmdStr + "\n")
 			continue
 		}
+
+		// Strip sudo — UWAS runs as root, sudo without TTY blocks for password
+		cmdStr = strings.TrimPrefix(cmdStr, "sudo ")
+
 		output.WriteString(fmt.Sprintf("$ %s\n", cmdStr))
 
 		parts := strings.Fields(cmdStr)
@@ -167,7 +171,17 @@ func RunInstall(phpVersion string) (string, error) {
 			continue
 		}
 		cmd := installExecCommand(parts[0], parts[1:]...)
-		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		// Prevent interactive prompts when running from API (no TTY):
+		// - DEBIAN_FRONTEND: suppresses apt dialog prompts
+		// - NEEDRESTART_MODE: auto-restart services without asking
+		// - APT_LISTCHANGES_FRONTEND: skip changelog display
+		// - DEBIAN_PRIORITY: skip non-critical debconf questions
+		cmd.Env = append(os.Environ(),
+			"DEBIAN_FRONTEND=noninteractive",
+			"NEEDRESTART_MODE=a",
+			"APT_LISTCHANGES_FRONTEND=none",
+			"DEBIAN_PRIORITY=critical",
+		)
 		out, err := cmd.CombinedOutput()
 		output.Write(out)
 		output.WriteString("\n")

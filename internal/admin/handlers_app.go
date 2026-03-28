@@ -84,6 +84,20 @@ func (s *Server) terminalHandler() http.Handler {
 	return terminal.New(s.logger)
 }
 
+func (s *Server) handleAppStats(w http.ResponseWriter, r *http.Request) {
+	if s.appMgr == nil {
+		jsonError(w, "app manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+	stats := s.appMgr.Stats(domain)
+	if stats == nil {
+		jsonError(w, "app not found: "+domain, http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, stats)
+}
+
 // --- App config + logs handlers ---
 
 func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {

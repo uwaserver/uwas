@@ -24,6 +24,16 @@ export default function ConfigEditor() {
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const [validationError, setValidationError] = useState('');
 
+  // Warn before navigating away with unsaved changes
+  useEffect(() => {
+    const dirty = content !== originalContent;
+    const handler = (e: BeforeUnloadEvent) => {
+      if (dirty) { e.preventDefault(); }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [content, originalContent]);
+
   // Load domain list for sidebar
   useEffect(() => {
     fetchDomains()

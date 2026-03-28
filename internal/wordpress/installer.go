@@ -210,8 +210,8 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	out, err := cmd.CombinedOutput()
 	log.Write(out)
 	if err != nil {
-		// Try with sudo
-		cmd = execCommandFn("sudo", "mysql", "-e", sql)
+		// Try without -u root (let socket auth auto-detect user)
+		cmd = execCommandFn("mysql", "-e", sql)
 		out, err = cmd.CombinedOutput()
 		log.Write(out)
 	}
@@ -393,7 +393,12 @@ func ensurePHPExtensions(log *strings.Builder) {
 	// Try apt
 	if _, err := execLookPathFn("apt"); err == nil {
 		cmd := execCommandFn("apt", append([]string{"install", "-y"}, pkgs...)...)
-		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		cmd.Env = append(os.Environ(),
+			"DEBIAN_FRONTEND=noninteractive",
+			"NEEDRESTART_MODE=a",
+			"APT_LISTCHANGES_FRONTEND=none",
+			"DEBIAN_PRIORITY=critical",
+		)
 		out, err := cmd.CombinedOutput()
 		log.Write(out)
 		if err != nil {

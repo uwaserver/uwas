@@ -349,14 +349,17 @@ export default function CronJobs() {
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span className="text-emerald-400">{job.success_count} ok</span>
                       <span className="text-red-400">{job.failure_count} fail</span>
-                      <button disabled={!!executing} onClick={async () => {
-                        setExecuting(job.command);
-                        try {
-                          await executeCron(job.domain, job.schedule, job.command);
-                          setStatus('Executed: ' + job.command);
-                          fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {});
-                        } catch (e) { setError((e as Error).message); }
-                        finally { setExecuting(''); }
+                      <button disabled={!!executing} onClick={() => {
+                        if (!window.confirm(`Run "${job.command}" on ${job.domain} now?`)) return;
+                        (async () => {
+                          setExecuting(job.command);
+                          try {
+                            await executeCron(job.domain, job.schedule, job.command);
+                            setStatus('Executed: ' + job.command);
+                            fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {});
+                          } catch (e) { setError((e as Error).message); }
+                          finally { setExecuting(''); }
+                        })();
                       }} className="flex items-center gap-1 rounded bg-accent/50 px-2 py-1 text-muted-foreground hover:text-foreground disabled:opacity-50">
                         {executing === job.command ? <RefreshCw size={10} className="animate-spin" /> : <Play size={10} />} Run
                       </button>

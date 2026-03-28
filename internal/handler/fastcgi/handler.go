@@ -1,6 +1,7 @@
 package fastcgi
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -46,15 +47,39 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 		stdin = ctx.Request.Body
 	}
 
-	resp, err := client.Execute(ctx.Request.Context(), env, stdin)
+	// Use domain's PHP timeout as FastCGI deadline (default 300s in config).
+	// This prevents the FastCGI client from timing out before PHP finishes
+	// (e.g. image processing, large imports).
+	execCtx := ctx.Request.Context()
+	if domain.PHP.Timeout.Duration > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(execCtx, domain.PHP.Timeout.Duration)
+		defer cancel()
+	}
+
+	resp, err := client.Execute(execCtx, env, stdin)
 	if err != nil {
-		h.logger.Error("fastcgi execute failed",
-			"host", domain.Host,
-			"script", scriptFilename,
-			"error", err,
-		)
-		ctx.Response.Error(502, "502 Bad Gateway — FastCGI error")
-		return
+		// Retry once for GET/HEAD — stale pooled connections cause immediate read/write errors.
+		// PHP-FPM may close idle connections without UWAS noticing.
+		// Only retry bodyless requests since request body (stdin) can't be replayed.
+		if stdin == nil && isRetriable(err) {
+			h.logger.Warn("fastcgi retry on stale connection",
+				"host", domain.Host,
+				"script", scriptFilename,
+				"error", err,
+			)
+			resp, err = client.Execute(execCtx, env, nil)
+		}
+		if err != nil {
+			h.logger.Error("fastcgi execute failed",
+				"host", domain.Host,
+				"script", scriptFilename,
+				"fpm", domain.PHP.FPMAddress,
+				"error", err,
+			)
+			ctx.Response.Error(502, "502 Bad Gateway — FastCGI error")
+			return
+		}
 	}
 
 	// Capture stderr for logging (once)
@@ -163,11 +188,18 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 		return false
 	}
 
-	// Security: path must stay within document root
+	// Security: path must stay within document root (resolve symlinks)
 	absRoot, _ := filepath.Abs(domain.Root)
 	absPath, _ := filepath.Abs(filePath)
 	if !strings.HasPrefix(absPath, absRoot) {
 		return false
+	}
+	// Resolve symlinks to prevent cross-domain escape
+	if realPath, err := filepath.EvalSymlinks(filePath); err == nil {
+		realRoot, _ := filepath.EvalSymlinks(domain.Root)
+		if realRoot != "" && !strings.HasPrefix(realPath, realRoot) {
+			return false
+		}
 	}
 
 	f, err := os.Open(filePath)
@@ -203,4 +235,21 @@ func (h *Handler) getClient(address string) *fastcgi.Client {
 
 	actual, _ := h.clients.LoadOrStore(address, client)
 	return actual.(*fastcgi.Client)
+}
+
+// isRetriable returns true for errors caused by stale/broken pooled connections
+// that would succeed on a fresh connection. These are typically read/write errors
+// on a connection that PHP-FPM closed while idle in the pool.
+func isRetriable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "read record:") ||
+		strings.Contains(msg, "write begin:") ||
+		strings.Contains(msg, "write params:") ||
+		strings.Contains(msg, "flush:") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "EOF")
 }

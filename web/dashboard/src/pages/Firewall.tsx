@@ -75,7 +75,19 @@ export default function Firewall() {
   };
 
   const handleAddRule = async () => {
-    if (!port.trim()) return;
+    const p = port.trim();
+    if (!p) return;
+    // Validate port: single port (1-65535), range (8080:8090), or service name
+    const portRangeRe = /^(\d{1,5})(:\d{1,5})?$/;
+    const match = p.match(portRangeRe);
+    if (match) {
+      const num = parseInt(match[1]);
+      if (num < 1 || num > 65535) { setError('Port must be between 1 and 65535'); return; }
+      if (match[2]) {
+        const end = parseInt(match[2].slice(1));
+        if (end < 1 || end > 65535 || end <= num) { setError('Invalid port range'); return; }
+      }
+    }
     setAdding(true);
     setError('');
     setStatus('');

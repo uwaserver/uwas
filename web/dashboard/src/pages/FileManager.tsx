@@ -197,6 +197,12 @@ export default function FileManager() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Check if file already exists
+    const exists = files.some(f => f.name === file.name && !f.is_dir);
+    if (exists && !window.confirm(`"${file.name}" already exists. Overwrite?`)) {
+      e.target.value = '';
+      return;
+    }
     setUploading(true);
     setError('');
     try {

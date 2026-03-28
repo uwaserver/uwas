@@ -130,15 +130,32 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 
 	// SSH key auth: GIT_SSH_COMMAND with -i flag
 	if req.SSHKeyPath != "" {
-		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", req.SSHKeyPath)
-		log.WriteString("Using SSH key: " + req.SSHKeyPath + "\n")
+		// Sanitize: must be absolute, no traversal, must exist
+		cleanKey := filepath.Clean(req.SSHKeyPath)
+		if !filepath.IsAbs(cleanKey) || strings.Contains(cleanKey, "..") {
+			return fmt.Errorf("invalid SSH key path: must be absolute")
+		}
+		if _, err := os.Stat(cleanKey); err != nil {
+			return fmt.Errorf("SSH key not found: %s", cleanKey)
+		}
+		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cleanKey)
+		log.WriteString("Using SSH key: " + cleanKey + "\n")
 	}
 
 	// Token auth: rewrite HTTPS URL to include token
 	gitURL := req.GitURL
-	if req.GitToken != "" && gitURL != "" {
+	hasToken := req.GitToken != "" && gitURL != ""
+	if hasToken {
 		gitURL = injectTokenInURL(gitURL, req.GitToken)
 		log.WriteString("Using access token for authentication\n")
+	}
+
+	// redactURL strips embedded tokens from URLs for safe logging
+	redactURL := func(s string) string {
+		if !hasToken || req.GitToken == "" {
+			return s
+		}
+		return strings.ReplaceAll(s, req.GitToken, "***")
 	}
 
 	if _, err := os.Stat(gitDir); err == nil {
@@ -149,17 +166,17 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 		}
 		log.WriteString("$ git fetch origin\n")
 		if out, err := runCmd(appRoot, gitEnv, "git", "fetch", "origin"); err != nil {
-			return fmt.Errorf("git fetch: %w\n%s", err, out)
+			return fmt.Errorf("git fetch: %w\n%s", err, redactURL(out))
 		}
 		log.WriteString("$ git reset --hard origin/" + branch + "\n")
 		if out, err := runCmd(appRoot, gitEnv, "git", "reset", "--hard", "origin/"+branch); err != nil {
-			return fmt.Errorf("git reset: %w\n%s", err, out)
+			return fmt.Errorf("git reset: %w\n%s", err, redactURL(out))
 		}
 	} else if gitURL != "" {
 		// Fresh clone
 		log.WriteString("$ git clone -b " + branch + " <repo>\n")
 		if out, err := runCmd(filepath.Dir(appRoot), gitEnv, "git", "clone", "-b", branch, gitURL, appRoot); err != nil {
-			return fmt.Errorf("git clone: %w\n%s", err, out)
+			return fmt.Errorf("git clone: %w\n%s", err, redactURL(out))
 		}
 	} else {
 		return fmt.Errorf("no git URL provided and no existing repo at %s", appRoot)
@@ -193,6 +210,11 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 	dockerfile := req.DockerFile
 	if dockerfile == "" {
 		dockerfile = "Dockerfile"
+	}
+	// Sanitize dockerfile path: no traversal, no absolute
+	dockerfile = filepath.Clean(dockerfile)
+	if filepath.IsAbs(dockerfile) || strings.HasPrefix(dockerfile, "..") {
+		return fmt.Errorf("invalid Dockerfile path: must be relative within app root")
 	}
 	port := req.DockerPort
 	if port == 0 {

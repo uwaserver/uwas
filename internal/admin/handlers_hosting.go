@@ -1935,7 +1935,12 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		cmd.Env = append(os.Environ(),
+			"DEBIAN_FRONTEND=noninteractive",
+			"NEEDRESTART_MODE=a",
+			"APT_LISTCHANGES_FRONTEND=none",
+			"DEBIAN_PRIORITY=critical",
+		)
 		out, err := cmd.CombinedOutput()
 		appendOutput(string(out))
 		if err != nil {

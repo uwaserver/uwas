@@ -51,16 +51,21 @@ export default function Doctor() {
   const [report, setReport] = useState<DoctorReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [fixing, setFixing] = useState(false);
+  const [error, setError] = useState('');
 
   const runDiagnose = useCallback(async () => {
     setLoading(true);
-    try { setReport(await fetchDoctor(false)); } catch {}
+    setError('');
+    try { setReport(await fetchDoctor(false)); }
+    catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, []);
 
   const runFix = useCallback(async () => {
     setFixing(true);
-    try { setReport(await fetchDoctor(true)); } catch {}
+    setError('');
+    try { setReport(await fetchDoctor(true)); }
+    catch (e) { setError((e as Error).message); }
     finally { setFixing(false); }
   }, []);
 
@@ -90,7 +95,11 @@ export default function Doctor() {
         </div>
       </div>
 
-      {!report && !loading && (
+      {error && (
+        <div className="rounded-lg bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
+      )}
+
+      {!report && !loading && !error && (
         <div className="rounded-lg border border-border bg-card p-12 text-center">
           <Stethoscope size={48} className="mx-auto mb-4 text-muted-foreground" />
           <p className="text-muted-foreground">Click <strong>Diagnose</strong> to scan your system for issues</p>

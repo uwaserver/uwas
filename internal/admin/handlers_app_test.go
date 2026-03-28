@@ -98,6 +98,54 @@ func TestHandleAppStopNotRunning(t *testing.T) {
 	}
 }
 
+func TestHandleAppStats(t *testing.T) {
+	s := newTestServerWithApp(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/apps/node.test.com/stats", nil)
+	req.SetPathValue("domain", "node.test.com")
+	s.handleAppStats(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	var stats appmanager.AppStats
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Domain != "node.test.com" {
+		t.Errorf("domain = %q", stats.Domain)
+	}
+	// App is registered but not started, so Running should be false
+	if stats.Running {
+		t.Error("expected not running")
+	}
+}
+
+func TestHandleAppStatsNotFound(t *testing.T) {
+	s := newTestServerWithApp(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/apps/nope.com/stats", nil)
+	req.SetPathValue("domain", "nope.com")
+	s.handleAppStats(rec, req)
+
+	if rec.Code != 404 {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleAppStatsNoManager(t *testing.T) {
+	s := New(&config.Config{}, nil, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/apps/test.com/stats", nil)
+	req.SetPathValue("domain", "test.com")
+	s.handleAppStats(rec, req)
+
+	if rec.Code != 501 {
+		t.Fatalf("status = %d, want 501", rec.Code)
+	}
+}
+
 func TestTerminalHandler(t *testing.T) {
 	s := New(&config.Config{}, nil, nil)
 	h := s.terminalHandler()

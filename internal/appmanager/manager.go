@@ -294,20 +294,24 @@ func (m *Manager) monitorProcess(app *appProcess, logFile *os.File) {
 
 // Stop terminates the application process for a domain.
 func (m *Manager) Stop(domain string) error {
-	m.mu.RLock()
+	m.mu.Lock()
 	app, exists := m.apps[domain]
-	m.mu.RUnlock()
 	if !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("domain %s not registered", domain)
 	}
-	if app.cmd == nil || app.cmd.Process == nil {
+	// Snapshot cmd under lock to avoid race with monitorProcess setting cmd=nil
+	cmd := app.cmd
+	if cmd == nil || cmd.Process == nil {
+		m.mu.Unlock()
 		return fmt.Errorf("domain %s is not running", domain)
 	}
 
 	close(app.stopCh)
 	app.stopCh = make(chan struct{}) // reset for next start
+	m.mu.Unlock()
 
-	if err := app.cmd.Process.Kill(); err != nil {
+	if err := cmd.Process.Kill(); err != nil {
 		return fmt.Errorf("failed to stop %s: %w", domain, err)
 	}
 
@@ -398,6 +402,44 @@ func (m *Manager) Get(domain string) *AppInstance {
 		inst.Uptime = uptime.String()
 	}
 	return inst
+}
+
+// AppStats holds resource usage for a running app process.
+type AppStats struct {
+	Domain    string  `json:"domain"`
+	PID       int     `json:"pid"`
+	Running   bool    `json:"running"`
+	CPUPct    float64 `json:"cpu_percent"`  // percentage of one core
+	MemoryRSS int64   `json:"memory_rss"`   // resident set size in bytes
+	MemoryVMS int64   `json:"memory_vms"`   // virtual memory size in bytes
+	Uptime    string  `json:"uptime,omitempty"`
+}
+
+// Stats returns resource usage for a single app's process.
+// On Linux it reads from /proc/[pid]/stat and /proc/[pid]/statm.
+// On other platforms it returns zeroes for CPU/memory.
+func (m *Manager) Stats(domain string) *AppStats {
+	m.mu.RLock()
+	app, exists := m.apps[domain]
+	m.mu.RUnlock()
+	if !exists {
+		return nil
+	}
+
+	s := &AppStats{Domain: domain}
+	if app.cmd == nil || app.cmd.Process == nil {
+		return s
+	}
+
+	s.Running = true
+	s.PID = app.cmd.Process.Pid
+	uptime := time.Since(app.startedAt).Truncate(time.Second)
+	s.Uptime = uptime.String()
+
+	// Read process stats (Linux only — best effort)
+	s.CPUPct, s.MemoryRSS, s.MemoryVMS = readProcessStats(app.cmd.Process.Pid)
+
+	return s
 }
 
 // ListenAddr returns the address the app for this domain listens on.
