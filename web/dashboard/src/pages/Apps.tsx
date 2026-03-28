@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Square, RefreshCw, Box, Clock, Hash, Terminal, Cpu, Rocket, GitBranch, X, CheckCircle } from 'lucide-react';
-import { fetchApps, startApp, stopApp, restartApp, deployApp, fetchDeployStatus, type AppInstance, type DeployStatus } from '@/lib/api';
+import { Play, Square, RefreshCw, Box, Clock, Hash, Terminal, Cpu, Rocket, GitBranch, X, CheckCircle, ChevronDown, ChevronUp, Save, FileText, Settings } from 'lucide-react';
+import { fetchApps, startApp, stopApp, restartApp, deployApp, fetchDeployStatus, updateAppEnv, fetchAppLogs, type AppInstance, type DeployStatus } from '@/lib/api';
 
 const runtimeColors: Record<string, string> = {
   node: 'bg-green-500/15 text-green-400',
@@ -19,6 +19,13 @@ export default function Apps() {
   const [deployForm, setDeployForm] = useState({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '', sshKey: '', gitToken: '' });
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<DeployStatus | null>(null);
+  const [expanded, setExpanded] = useState('');
+  const [appTab, setAppTab] = useState<'config' | 'logs'>('config');
+  const [envText, setEnvText] = useState('');
+  const [editCmd, setEditCmd] = useState('');
+  const [editPort, setEditPort] = useState('');
+  const [appLog, setAppLog] = useState('');
+  const [savingEnv, setSavingEnv] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -36,6 +43,36 @@ export default function Apps() {
   const showStatus = (ok: boolean, msg: string) => {
     setStatus({ ok, msg });
     setTimeout(() => setStatus(null), 4000);
+  };
+
+  const toggleExpand = (domain: string) => {
+    if (expanded === domain) { setExpanded(''); return; }
+    setExpanded(domain);
+    setAppTab('config');
+    const app = apps.find(a => a.domain === domain);
+    if (app) {
+      const envLines = Object.entries(app.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+      setEnvText(envLines);
+      setEditCmd(app.command);
+      setEditPort(String(app.port));
+    }
+    fetchAppLogs(domain).then(r => setAppLog(r?.log || '')).catch(() => setAppLog(''));
+  };
+
+  const handleSaveConfig = async () => {
+    if (!expanded) return;
+    setSavingEnv(true);
+    try {
+      const env: Record<string, string> = {};
+      envText.split('\n').forEach(line => {
+        const eq = line.indexOf('=');
+        if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+      });
+      await updateAppEnv(expanded, env, editCmd || undefined, parseInt(editPort) || undefined);
+      showStatus(true, `Config saved for ${expanded}. Restart to apply.`);
+      await load();
+    } catch (e) { showStatus(false, (e as Error).message); }
+    finally { setSavingEnv(false); }
   };
 
   const handleDeploy = async () => {
@@ -163,12 +200,78 @@ export default function Apps() {
               </div>
             </div>
 
-            {/* Details row */}
-            <div className="mt-3 flex gap-6 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><Hash size={11} /> Port {app.port}</span>
-              {app.pid > 0 && <span className="flex items-center gap-1"><Terminal size={11} /> PID {app.pid}</span>}
-              {app.uptime && <span className="flex items-center gap-1"><Clock size={11} /> {app.uptime}</span>}
+            {/* Details row — clickable to expand */}
+            <div className="mt-3 flex items-center justify-between cursor-pointer" onClick={() => toggleExpand(app.domain)}>
+              <div className="flex gap-6 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1"><Hash size={11} /> Port {app.port}</span>
+                {app.pid > 0 && <span className="flex items-center gap-1"><Terminal size={11} /> PID {app.pid}</span>}
+                {app.uptime && <span className="flex items-center gap-1"><Clock size={11} /> {app.uptime}</span>}
+              </div>
+              {expanded === app.domain ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
             </div>
+
+            {/* Expanded panel */}
+            {expanded === app.domain && (
+              <div className="mt-4 border-t border-border pt-4 space-y-4">
+                {/* Tab selector */}
+                <div className="flex gap-1 rounded-md border border-border overflow-hidden w-fit">
+                  <button onClick={() => setAppTab('config')}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium ${appTab === 'config' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
+                    <Settings size={11} /> Config & ENV
+                  </button>
+                  <button onClick={() => { setAppTab('logs'); fetchAppLogs(app.domain).then(r => setAppLog(r?.log || '')).catch(() => setAppLog('')); }}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium ${appTab === 'logs' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
+                    <FileText size={11} /> Logs
+                  </button>
+                </div>
+
+                {appTab === 'config' && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">Start Command</label>
+                        <input value={editCmd} onChange={e => setEditCmd(e.target.value)}
+                          className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono text-foreground outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">Port</label>
+                        <input type="number" value={editPort} onChange={e => setEditPort(e.target.value)}
+                          className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">Environment Variables (KEY=value, one per line)</label>
+                      <textarea rows={5} value={envText} onChange={e => setEnvText(e.target.value)}
+                        placeholder={"NODE_ENV=production\nDATABASE_URL=postgres://localhost/mydb\nPORT=3000"}
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono text-foreground outline-none" />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button onClick={handleSaveConfig} disabled={savingEnv}
+                        className="flex items-center gap-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                        {savingEnv ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />} Save Config
+                      </button>
+                      <button onClick={() => handleAction(app.domain, 'restart')} disabled={acting === app.domain}
+                        className="flex items-center gap-1 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                        <RefreshCw size={12} /> Restart to Apply
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {appTab === 'logs' && (
+                  <div className="rounded-md bg-[#0d1117] p-3 max-h-64 overflow-auto">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] text-muted-foreground">app.log (last 100KB)</span>
+                      <button onClick={() => fetchAppLogs(app.domain).then(r => setAppLog(r?.log || ''))}
+                        className="text-[10px] text-blue-400 hover:text-blue-300"><RefreshCw size={10} className="inline" /> Refresh</button>
+                    </div>
+                    <pre className="text-[10px] text-green-400 font-mono whitespace-pre-wrap leading-4">
+                      {appLog || 'No logs yet'}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

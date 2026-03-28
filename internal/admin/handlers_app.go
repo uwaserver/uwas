@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/deploy"
@@ -80,6 +82,69 @@ func (s *Server) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 // terminalHandler returns the web terminal HTTP handler.
 func (s *Server) terminalHandler() http.Handler {
 	return terminal.New(s.logger)
+}
+
+// --- App config + logs handlers ---
+
+func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.appMgr == nil {
+		jsonError(w, "app manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	domain := r.PathValue("domain")
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Env     map[string]string `json:"env"`
+		Command string            `json:"command,omitempty"`
+		Port    int               `json:"port,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Update domain config
+	s.configMu.Lock()
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == domain {
+			if req.Env != nil {
+				s.config.Domains[i].App.Env = req.Env
+			}
+			if req.Command != "" {
+				s.config.Domains[i].App.Command = req.Command
+			}
+			if req.Port > 0 {
+				s.config.Domains[i].App.Port = req.Port
+			}
+			break
+		}
+	}
+	s.configMu.Unlock()
+	s.persistConfig()
+
+	s.RecordAudit("app.env.update", domain, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "updated", "domain": domain})
+}
+
+func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root := s.domainRoot(domain)
+	if root == "" {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+
+	logPath := filepath.Join(filepath.Dir(root), "logs", "app.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		jsonResponse(w, map[string]string{"log": "", "error": "no log file"})
+		return
+	}
+	// Return last 100KB
+	if len(data) > 100*1024 {
+		data = data[len(data)-100*1024:]
+	}
+	jsonResponse(w, map[string]string{"log": string(data)})
 }
 
 // --- Deploy handlers ---
