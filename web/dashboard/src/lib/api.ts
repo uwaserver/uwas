@@ -804,6 +804,36 @@ export const startApp = (domain: string) => api<{ status: string }>(`/api/v1/app
 export const stopApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/stop`, { method: 'POST' });
 export const restartApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/restart`, { method: 'POST' });
 
+// ── Deploy (git clone → build → restart) ──
+
+export interface DeployRequest {
+  git_url?: string;
+  git_branch?: string;
+  build_cmd?: string;
+  dockerfile?: string;
+  docker_port?: number;
+  env?: Record<string, string>;
+}
+
+export interface DeployStatus {
+  domain: string;
+  status: string;
+  git_url?: string;
+  git_branch?: string;
+  commit_sha?: string;
+  mode: string;
+  log: string;
+  started_at: string;
+  duration?: string;
+  error?: string;
+}
+
+export const deployApp = (domain: string, req: DeployRequest) =>
+  api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`, { method: 'POST', body: JSON.stringify(req) });
+export const fetchDeployStatus = (domain: string) =>
+  api<DeployStatus>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`);
+export const fetchDeploys = () => api<DeployStatus[]>('/api/v1/deploys');
+
 // ── Web Terminal ──
 
 export function terminalWSURL(): string {

@@ -37,6 +37,7 @@ import (
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/appmanager"
+	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/serverip"
@@ -91,6 +92,7 @@ type Server struct {
 	alerter       *alerting.Alerter
 	phpMgr        *phpmanager.Manager
 	appMgr        *appmanager.Manager
+	deployMgr     *deploy.Manager
 	backupMgr     *backup.BackupManager
 	bwMgr         *bandwidth.Manager
 	cronMonitor   *cronjob.Monitor
@@ -224,6 +226,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/start", s.handleAppStart)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/stop", s.handleAppStop)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/restart", s.handleAppRestart)
+
+	// Deploy (git clone → build → restart, Docker build → run)
+	s.mux.HandleFunc("POST /api/v1/apps/{domain}/deploy", s.handleDeploy)
+	s.mux.HandleFunc("GET /api/v1/apps/{domain}/deploy", s.handleDeployStatus)
+	s.mux.HandleFunc("GET /api/v1/deploys", s.handleDeployList)
+	s.mux.HandleFunc("POST /api/v1/apps/{domain}/webhook", s.handleDeployWebhook)
 
 	// Web terminal (WebSocket → PTY)
 	s.mux.Handle("GET /api/v1/terminal", s.terminalHandler())
@@ -4052,6 +4060,9 @@ func (s *Server) SetWebhookManager(m *webhook.Manager) { s.webhookMgr = m }
 
 // SetAppManager sets the application process manager.
 func (s *Server) SetAppManager(m *appmanager.Manager) { s.appMgr = m }
+
+// SetDeployManager sets the deployment manager.
+func (s *Server) SetDeployManager(m *deploy.Manager) { s.deployMgr = m }
 
 func (s *Server) handleCronMonitorList(w http.ResponseWriter, r *http.Request) {
 	if s.cronMonitor == nil {
