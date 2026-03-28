@@ -31,18 +31,21 @@ interface DomainFormState {
   proxyAlgorithm: string;
   redirectTarget: string;
   redirectCode: string;
+  appRuntime: string;
+  appCommand: string;
+  appPort: string;
   blockedPaths: string;
   wafEnabled: boolean;
   htaccessEnabled: boolean;
 }
 
-type TemplateName = 'wordpress' | 'static' | 'proxy' | 'redirect' | null;
+type TemplateName = 'wordpress' | 'laravel' | 'nodejs' | 'python' | 'static' | 'proxy' | 'redirect' | null;
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const domainTypes = ['static', 'php', 'proxy', 'redirect'] as const;
+const domainTypes = ['static', 'php', 'proxy', 'app', 'redirect'] as const;
 const sslModes = ['auto', 'manual', 'off'] as const;
 const proxyAlgorithms = ['round-robin', 'least-conn', 'ip-hash', 'random'] as const;
 const redirectCodes = ['301', '302', '307', '308'] as const;
@@ -61,6 +64,9 @@ const emptyForm: DomainFormState = {
   proxyAlgorithm: 'round-robin',
   redirectTarget: '',
   redirectCode: '301',
+  appRuntime: 'node',
+  appCommand: '',
+  appPort: '3000',
   blockedPaths: '',
   wafEnabled: false,
   htaccessEnabled: false,
@@ -138,26 +144,28 @@ const templates: Record<string, TemplateConfig> = {
   },
   nodejs: {
     label: 'Node.js App',
-    description: 'Auto-managed Node process with npm start',
+    description: 'Managed Node process — auto-start, crash restart, git deploy',
     icon: <Box size={20} />,
     color: 'text-green-400 bg-green-500/15 border-green-500/30',
     form: {
-      type: 'proxy',
+      type: 'app',
       ssl: 'auto',
-      proxyUpstreams: 'http://localhost:3000',
-      proxyAlgorithm: 'round-robin',
+      appRuntime: 'node',
+      appCommand: 'npm start',
+      appPort: '3000',
     },
   },
   python: {
     label: 'Python App',
-    description: 'Gunicorn/Django/Flask behind reverse proxy',
+    description: 'Managed Python process — Gunicorn/Django/Flask with git deploy',
     icon: <Cpu size={20} />,
     color: 'text-yellow-400 bg-yellow-500/15 border-yellow-500/30',
     form: {
-      type: 'proxy',
+      type: 'app',
       ssl: 'auto',
-      proxyUpstreams: 'http://localhost:8000',
-      proxyAlgorithm: 'round-robin',
+      appRuntime: 'python',
+      appCommand: 'gunicorn app:app -b 0.0.0.0:${PORT}',
+      appPort: '8000',
     },
   },
   redirect: {
@@ -182,6 +190,7 @@ const typeBadgeStyles: Record<string, string> = {
   static: 'bg-blue-500/15 text-blue-400',
   php: 'bg-purple-500/15 text-purple-400',
   proxy: 'bg-orange-500/15 text-orange-400',
+  app: 'bg-green-500/15 text-green-400',
   redirect: 'bg-slate-500/15 text-muted-foreground',
 };
 
@@ -458,6 +467,9 @@ export default function Domains() {
         proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
         redirectTarget: d.redirect?.target ?? '',
         redirectCode: String(d.redirect?.status ?? 301),
+        appRuntime: d.app?.runtime ?? 'node',
+        appCommand: d.app?.command ?? '',
+        appPort: String(d.app?.port ?? 3000),
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
         htaccessEnabled: !!d.htaccess?.mode,
@@ -517,6 +529,15 @@ export default function Domains() {
       if (idx.length > 0) php.index_files = idx;
       if (Object.keys(php).length > 0) payload.php = php;
       payload.htaccess = { mode: 'import' };
+    }
+
+    if (form.type === 'app') {
+      payload.app = {
+        runtime: form.appRuntime || 'custom',
+        command: form.appCommand || undefined,
+        port: parseInt(form.appPort, 10) || 3000,
+        auto_restart: true,
+      };
     }
 
     try {
@@ -810,6 +831,37 @@ export default function Domains() {
                           {proxyAlgorithms.map(a => <option key={a} value={a}>{a}</option>)}
                         </select>
                       </FormField>
+                    </div>
+                  </div>
+                )}
+
+                {/* App section */}
+                {form.type === 'app' && (
+                  <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-4">
+                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-green-400"><Box size={14} /> Application Configuration</h3>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-3 gap-3">
+                        <FormField label="Runtime" htmlFor="add-app-runtime">
+                          <select id="add-app-runtime" value={form.appRuntime} onChange={e => patchField('appRuntime', e.target.value)} className={selectCls}>
+                            <option value="node">Node.js</option>
+                            <option value="python">Python</option>
+                            <option value="ruby">Ruby</option>
+                            <option value="go">Go</option>
+                            <option value="custom">Custom</option>
+                          </select>
+                        </FormField>
+                        <FormField label="Port" htmlFor="add-app-port">
+                          <input id="add-app-port" type="number" value={form.appPort} onChange={e => patchField('appPort', e.target.value)}
+                            placeholder="3000" className={inputCls} />
+                        </FormField>
+                        <FormField label="Start Command" htmlFor="add-app-cmd">
+                          <input id="add-app-cmd" type="text" value={form.appCommand} onChange={e => patchField('appCommand', e.target.value)}
+                            placeholder="auto-detected" className={inputCls} />
+                        </FormField>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        Process auto-starts on domain creation. Use the Apps page to deploy from Git, manage, and monitor.
+                      </p>
                     </div>
                   </div>
                 )}
