@@ -43,8 +43,14 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 		return
 	}
 
-	// Set content type
+	// Set content type with charset for text types
 	ct := h.mime.Lookup(path)
+	if !strings.Contains(ct, "charset") &&
+		(strings.HasPrefix(ct, "text/") || ct == "application/json" ||
+			ct == "application/javascript" || ct == "application/xml" ||
+			ct == "image/svg+xml") {
+		ct += "; charset=utf-8"
+	}
 	w.Header().Set("Content-Type", ct)
 
 	// Try pre-compressed version
@@ -101,7 +107,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 
 		w.Header().Set("Content-Encoding", c.encoding)
 		w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
-		w.Header().Set("Vary", "Accept-Encoding")
+		w.Header().Add("Vary", "Accept-Encoding")
 		w.Header().Set("ETag", generateETag(origInfo)+"-"+c.encoding)
 
 		http.ServeContent(w, r, filepath.Base(path), origInfo.ModTime(), f)

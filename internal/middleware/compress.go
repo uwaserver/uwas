@@ -94,7 +94,7 @@ func Compress(minSize int) Middleware {
 			}
 			defer cw.Close()
 
-			w.Header().Set("Vary", "Accept-Encoding")
+			w.Header().Add("Vary", "Accept-Encoding")
 			next.ServeHTTP(cw, r)
 		})
 	}

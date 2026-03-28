@@ -74,7 +74,7 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Always set Vary: Accept so caches key on the header.
-			w.Header().Set("Vary", "Accept")
+			w.Header().Add("Vary", "Accept")
 
 			// Only process image requests.
 			ext := strings.ToLower(filepath.Ext(r.URL.Path))

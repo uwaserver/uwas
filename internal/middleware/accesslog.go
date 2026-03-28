@@ -24,7 +24,7 @@ func AccessLog(log *logger.Logger) Middleware {
 			fields := []any{
 				"method", r.Method,
 				"host", r.Host,
-				"path", r.URL.Path,
+				"uri", r.URL.RequestURI(),
 				"status", rw.StatusCode(),
 				"bytes", rw.BytesWritten(),
 				"duration_ms", duration.Milliseconds(),

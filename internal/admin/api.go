@@ -506,7 +506,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Session-Token, X-TOTP-Code, X-Pin-Code")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Vary", "Origin")
+				w.Header().Add("Vary", "Origin")
 			}
 		}
 		if r.Method == "OPTIONS" {
