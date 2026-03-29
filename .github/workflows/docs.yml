@@ -37,12 +37,11 @@ jobs:
       - name: Package pages artifact
         run: |
           tar --dereference --hard-dereference -cvf github-pages.tar -C docs/site/dist .
-          gzip -9 -n github-pages.tar
 
       - uses: actions/upload-artifact@v7
         with:
           name: github-pages
-          path: github-pages.tar.gz
+          path: github-pages.tar
           retention-days: 1
 
   deploy:
