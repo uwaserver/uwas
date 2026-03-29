@@ -39,6 +39,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
+	// Strip UTF-8 BOM if present (common with Windows editors like Notepad)
+	data = stripBOM(data)
+
 	expanded := expandEnvVars(string(data))
 
 	cfg := &Config{}
@@ -168,6 +171,7 @@ func loadDomainFile(path string) ([]Domain, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
 	}
+	data = stripBOM(data)
 
 	expanded := expandEnvVars(string(data))
 
@@ -208,4 +212,13 @@ func expandEnvVars(s string) string {
 		}
 		return match
 	})
+}
+
+// stripBOM removes a UTF-8 Byte Order Mark (EF BB BF) from the beginning of data.
+// Windows editors (Notepad, VS Code with BOM) prepend this; Go's YAML parser rejects it.
+func stripBOM(data []byte) []byte {
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		return data[3:]
+	}
+	return data
 }
