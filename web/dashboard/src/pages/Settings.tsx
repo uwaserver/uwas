@@ -21,6 +21,7 @@ import {
   Globe,
   ShieldCheck,
   Users,
+  Paintbrush,
 } from 'lucide-react';
 import {
   fetchConfigRaw,
@@ -128,7 +129,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 ];
 
 const SECTION_GROUPS: Record<string, SettingsTab> = {
-  server: 'general', timeouts: 'general', logging: 'general',
+  server: 'general', timeouts: 'general', logging: 'general', branding: 'general',
   admin: 'security', acme: 'security', users: 'security', mcp: 'security',
   cache: 'performance',
   backup: 'integrations', alerting: 'integrations', trusted_proxies: 'integrations',
@@ -282,6 +283,19 @@ const SECTIONS: SectionDef[] = [
     fields: [
       { key: 'global.users.enabled', label: 'Enable Multi-User Auth', type: 'toggle' },
       { key: 'global.users.allow_reseller', label: 'Allow Resellers', type: 'toggle' },
+    ],
+  },
+  {
+    id: 'branding',
+    title: 'White-Label Branding',
+    icon: <Paintbrush size={18} />,
+    iconColor: 'text-pink-400',
+    fields: [
+      { key: 'global.admin.branding.name', label: 'Panel Name', type: 'text', placeholder: 'My Hosting Panel' },
+      { key: 'global.admin.branding.logo_url', label: 'Logo URL', type: 'text', placeholder: 'https://example.com/logo.svg or data:image/svg+xml;...' },
+      { key: 'global.admin.branding.favicon_url', label: 'Favicon URL', type: 'text', placeholder: 'https://example.com/favicon.ico' },
+      { key: 'global.admin.branding.primary_color', label: 'Primary Color', type: 'text', placeholder: '#3b82f6' },
+      { key: 'global.admin.branding.footer_text', label: 'Footer Text', type: 'text', placeholder: 'Powered by UWAS' },
     ],
   },
 ];

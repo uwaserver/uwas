@@ -95,7 +95,11 @@ export default function Logs() {
 
   const filtered = logs.filter((entry) => {
     if (!matchesFilter(entry.status, filter)) return false;
-    if (search && !entry.path.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const haystack = `${entry.path} ${entry.host} ${entry.remote} ${entry.status} ${entry.method}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
     if (domainFilter && !entry.host.toLowerCase().includes(domainFilter.toLowerCase())) return false;
     if (methodFilter !== 'all' && entry.method !== methodFilter) return false;
     return true;
