@@ -191,12 +191,32 @@ type MaintenanceConfig struct {
 }
 
 // LocationConfig defines per-path overrides (like Nginx location blocks).
+// Supports sub-path routing: proxy, static root, redirect, or custom headers.
+//
+// Examples:
+//
+//	locations:
+//	  - match: "/api/"
+//	    proxy_pass: "http://127.0.0.1:4000"
+//	  - match: "/blog/"
+//	    root: "/var/www/blog"
+//	  - match: "/old-path"
+//	    redirect: "https://example.com/new-path"
+//	    redirect_code: 301
+//	  - match: "/assets/"
+//	    cache_control: "public, max-age=31536000, immutable"
 type LocationConfig struct {
 	Match          string            `yaml:"match" json:"match"`                                       // path prefix or regex (prefix: "/api/", regex: "~\\.php$")
+	ProxyPass      string            `yaml:"proxy_pass,omitempty" json:"proxy_pass,omitempty"`         // forward to upstream (e.g. "http://127.0.0.1:4000")
+	Root           string            `yaml:"root,omitempty" json:"root,omitempty"`                     // serve static files from this directory
+	Redirect       string            `yaml:"redirect,omitempty" json:"redirect,omitempty"`             // redirect to this URL
+	RedirectCode   int               `yaml:"redirect_code,omitempty" json:"redirect_code,omitempty"`   // 301, 302, 307, 308
+	StripPrefix    bool              `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`     // strip the matched prefix before proxying
 	Headers        map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`               // response headers to add
 	CacheControl   string            `yaml:"cache_control,omitempty" json:"cache_control,omitempty"`   // Cache-Control header value
 	RequestTimeout Duration          `yaml:"request_timeout,omitempty" json:"request_timeout,omitempty"` // per-path timeout
 	RateLimit      *RateLimitConfig  `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`         // per-path rate limit
+	BasicAuth      *BasicAuthConfig  `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`         // per-path basic auth
 }
 
 // SecurityHeadersConfig adds modern security headers per domain.
