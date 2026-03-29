@@ -882,35 +882,109 @@ export default function Domains() {
 
                 {/* App section */}
                 {form.type === 'app' && (
-                  <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-4">
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-green-400"><Box size={14} /> Application Configuration</h3>
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-3 gap-3">
-                        <FormField label="Runtime" htmlFor="add-app-runtime">
-                          <select id="add-app-runtime" value={form.appRuntime} onChange={e => patchField('appRuntime', e.target.value)} className={selectCls}>
-                            <option value="node">Node.js</option>
-                            <option value="python">Python</option>
-                            <option value="ruby">Ruby</option>
-                            <option value="go">Go</option>
-                            <option value="custom">Custom</option>
-                          </select>
-                        </FormField>
-                        <FormField label="Port" htmlFor="add-app-port">
-                          <input id="add-app-port" type="number" value={form.appPort} onChange={e => patchField('appPort', e.target.value)}
-                            placeholder="3000" className={inputCls} />
-                        </FormField>
-                        <FormField label="Start Command" htmlFor="add-app-cmd">
-                          <input id="add-app-cmd" type="text" value={form.appCommand} onChange={e => patchField('appCommand', e.target.value)}
-                            placeholder="auto-detected" className={inputCls} />
-                        </FormField>
+                  <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-4 space-y-4">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-green-400"><Box size={14} /> Application Configuration</h3>
+
+                    {/* Visual routing diagram */}
+                    <div className="flex items-center gap-2 rounded-md bg-background/50 border border-border/50 px-3 py-2 text-[10px]">
+                      <span className="font-mono text-foreground">{form.host || 'domain.com'}</span>
+                      <ArrowRight size={10} className="text-muted-foreground" />
+                      <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-purple-400 font-medium">UWAS</span>
+                      <ArrowRight size={10} className="text-muted-foreground" />
+                      <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-400 font-mono">127.0.0.1:{form.appPort || '3000'}</span>
+                    </div>
+
+                    {/* Runtime selector — visual cards */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Runtime</label>
+                      <div className="grid grid-cols-5 gap-2">
+                        {[
+                          { value: 'node', label: 'Node.js', icon: 'N', color: 'green', cmd: 'npm start', port: '3000' },
+                          { value: 'python', label: 'Python', icon: 'Py', color: 'yellow', cmd: 'gunicorn app:app -b 0.0.0.0:${PORT}', port: '8000' },
+                          { value: 'ruby', label: 'Ruby', icon: 'Rb', color: 'red', cmd: 'bundle exec puma -p ${PORT}', port: '3000' },
+                          { value: 'go', label: 'Go', icon: 'Go', color: 'cyan', cmd: './main', port: '8080' },
+                          { value: 'custom', label: 'Custom', icon: '?', color: 'slate', cmd: '', port: '3000' },
+                        ].map(rt => (
+                          <button key={rt.value} type="button"
+                            onClick={() => {
+                              patchField('appRuntime', rt.value);
+                              if (!form.appCommand || form.appCommand === 'npm start' || form.appCommand === 'gunicorn app:app -b 0.0.0.0:${PORT}' || form.appCommand === 'bundle exec puma -p ${PORT}' || form.appCommand === './main') {
+                                patchField('appCommand', rt.cmd);
+                              }
+                              if (form.appPort === '3000' || form.appPort === '8000' || form.appPort === '8080') {
+                                patchField('appPort', rt.port);
+                              }
+                            }}
+                            className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
+                              form.appRuntime === rt.value
+                                ? `border-${rt.color}-500/50 bg-${rt.color}-500/10 ring-1 ring-${rt.color}-500/30`
+                                : 'border-border hover:border-foreground/20'
+                            }`}>
+                            <span className={`text-xs font-bold ${form.appRuntime === rt.value ? `text-${rt.color}-400` : 'text-muted-foreground'}`}>{rt.icon}</span>
+                            <span className="text-[10px] text-muted-foreground">{rt.label}</span>
+                          </button>
+                        ))}
                       </div>
-                      <FormField label="Environment Variables (KEY=value, one per line)" htmlFor="add-app-env">
-                        <textarea id="add-app-env" rows={3} value={form.appEnv} onChange={e => patchField('appEnv', e.target.value)}
-                          placeholder={"NODE_ENV=production\nDATABASE_URL=postgres://localhost/mydb"} className={inputCls + ' font-mono text-xs'} />
+                    </div>
+
+                    {/* Command + Port */}
+                    <div className="grid grid-cols-[1fr_100px] gap-3">
+                      <FormField label="Start Command" htmlFor="add-app-cmd">
+                        <input id="add-app-cmd" type="text" value={form.appCommand} onChange={e => patchField('appCommand', e.target.value)}
+                          placeholder="Leave empty for auto-detection" className={inputCls + ' font-mono text-xs'} />
+                        <p className="mt-1 text-[9px] text-muted-foreground">
+                          {form.appRuntime === 'node' && 'Detected from package.json scripts.start or server.js/index.js'}
+                          {form.appRuntime === 'python' && 'Detected from manage.py, app.py, or requirements.txt'}
+                          {form.appRuntime === 'ruby' && 'Detected from config.ru (Puma) or Gemfile'}
+                          {form.appRuntime === 'go' && 'Runs compiled binary from project root'}
+                          {form.appRuntime === 'custom' && 'Specify the exact command to run your application'}
+                        </p>
                       </FormField>
-                      <p className="text-[10px] text-muted-foreground">
-                        Process auto-starts on domain creation. Use the Apps page to deploy from Git, manage, and monitor.
-                      </p>
+                      <FormField label="Port" htmlFor="add-app-port">
+                        <input id="add-app-port" type="number" value={form.appPort} onChange={e => patchField('appPort', e.target.value)}
+                          placeholder="3000" className={inputCls} />
+                      </FormField>
+                    </div>
+
+                    {/* Environment Variables — key-value rows */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Environment Variables</label>
+                      {(() => {
+                        const rows = form.appEnv ? form.appEnv.split('\n').map(line => {
+                          const eq = line.indexOf('=');
+                          return eq > 0 ? { key: line.slice(0, eq), value: line.slice(eq + 1) } : { key: line, value: '' };
+                        }) : [];
+                        if (rows.length === 0) rows.push({ key: '', value: '' });
+
+                        const updateEnv = (newRows: typeof rows) => {
+                          patchField('appEnv', newRows.filter(r => r.key || r.value).map(r => `${r.key}=${r.value}`).join('\n'));
+                        };
+
+                        return (
+                          <div className="space-y-1.5">
+                            {rows.map((row, i) => (
+                              <div key={i} className="grid grid-cols-[1fr_1fr_28px] gap-1.5 items-center">
+                                <input value={row.key} onChange={e => { rows[i] = { ...row, key: e.target.value }; updateEnv(rows); }}
+                                  placeholder="KEY" className={inputCls + ' font-mono text-xs py-1.5'} />
+                                <input value={row.value} onChange={e => { rows[i] = { ...row, value: e.target.value }; updateEnv(rows); }}
+                                  placeholder="value" className={inputCls + ' font-mono text-xs py-1.5'} />
+                                <button type="button" onClick={() => { rows.splice(i, 1); if (rows.length === 0) rows.push({ key: '', value: '' }); updateEnv(rows); }}
+                                  className="rounded p-1 text-muted-foreground hover:text-red-400 hover:bg-red-500/10">
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => { rows.push({ key: '', value: '' }); updateEnv(rows); }}
+                              className="flex items-center gap-1 rounded border border-dashed border-border px-2.5 py-1.5 text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors w-full justify-center">
+                              <Plus size={10} /> Add Variable
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="rounded-md bg-background/50 border border-border/50 px-3 py-2 text-[10px] text-muted-foreground">
+                      Process auto-starts on domain creation. Use the <span className="text-foreground font-medium">Apps</span> page to deploy from Git, manage builds, and monitor resources.
                     </div>
                   </div>
                 )}
