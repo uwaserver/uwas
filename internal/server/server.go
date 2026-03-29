@@ -1037,17 +1037,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		ctx.Response.Header().Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
 	}
 
-	// Per-path location overrides (headers, cache-control, timeout, rate limit)
+	// Per-path location overrides (headers, cache-control, proxy, redirect, static root)
 	for _, loc := range domain.Locations {
 		if !matchLocation(r.URL.Path, loc.Match) {
 			continue
 		}
+
+		// Apply headers + cache-control
 		for k, v := range loc.Headers {
 			ctx.Response.Header().Set(k, v)
 		}
 		if loc.CacheControl != "" {
 			ctx.Response.Header().Set("Cache-Control", loc.CacheControl)
 		}
+
 		// Per-path rate limit
 		if loc.RateLimit != nil && loc.RateLimit.Requests > 0 {
 			clientAddr := ctx.RemoteIP
@@ -1079,7 +1082,79 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		break // first match wins (like Nginx)
+
+		// Location-level redirect (e.g. /old-path → https://example.com/new-path)
+		if loc.Redirect != "" {
+			code := loc.RedirectCode
+			if code == 0 {
+				code = http.StatusMovedPermanently
+			}
+			http.Redirect(ctx.Response, r, loc.Redirect, code)
+			return
+		}
+
+		// Location-level proxy_pass (e.g. /api/ → http://127.0.0.1:4000)
+		if loc.ProxyPass != "" {
+			path := r.URL.Path
+			if loc.StripPrefix && !strings.HasPrefix(loc.Match, "~") {
+				path = strings.TrimPrefix(path, strings.TrimSuffix(loc.Match, "/"))
+				if path == "" {
+					path = "/"
+				}
+			}
+			targetURL := loc.ProxyPass + path
+			if r.URL.RawQuery != "" {
+				targetURL += "?" + r.URL.RawQuery
+			}
+			// Simple single-backend proxy for location blocks
+			proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+			if err != nil {
+				renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+				return
+			}
+			for k, vv := range r.Header {
+				for _, v := range vv {
+					proxyReq.Header.Add(k, v)
+				}
+			}
+			proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+			proxyReq.Header.Set("X-Forwarded-Host", r.Host)
+			resp, err := http.DefaultClient.Do(proxyReq)
+			if err != nil {
+				s.logger.Error("location proxy error", "match", loc.Match, "target", loc.ProxyPass, "error", err)
+				renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+				return
+			}
+			defer resp.Body.Close()
+			for k, vv := range resp.Header {
+				for _, v := range vv {
+					ctx.Response.Header().Add(k, v)
+				}
+			}
+			ctx.Response.WriteHeader(resp.StatusCode)
+			io.Copy(ctx.Response, resp.Body)
+			return
+		}
+
+		// Location-level static root (e.g. /docs/ → /var/www/docs)
+		if loc.Root != "" {
+			path := r.URL.Path
+			if !strings.HasPrefix(loc.Match, "~") {
+				path = strings.TrimPrefix(path, strings.TrimSuffix(loc.Match, "/"))
+			}
+			filePath := filepath.Join(loc.Root, filepath.Clean("/"+path))
+			// Security: must stay within loc.Root
+			absRoot, _ := filepath.Abs(loc.Root)
+			absPath, _ := filepath.Abs(filePath)
+			if !strings.HasPrefix(absPath, absRoot) {
+				renderDomainError(ctx.Response, http.StatusForbidden, domain)
+				return
+			}
+			http.ServeFile(ctx.Response, r, filePath)
+			return
+		}
+
+		break // first match wins (like Nginx) — if no handler, continue to normal dispatch
 	}
 
 	// Per-domain blocked paths

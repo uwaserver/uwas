@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  ExternalLink, RefreshCw, Shield, HardDrive, BarChart3,
-  FileText, Settings, Lock, Plug, Save, Plus, Trash2, ArrowLeft, Eye,
+  ExternalLink, RefreshCw, Shield, HardDrive, BarChart3, ArrowRight,
+  FileText, Settings, Lock, Plug, Save, Plus, Trash2, ArrowLeft, Eye, Server,
 } from 'lucide-react';
 import {
   fetchDomainDetail, updateDomain, fetchDomainStats, fetchDiskUsage,
@@ -14,7 +14,7 @@ import {
   type WPSecurityStatus, type WPUserInfo, type WPPlugin,
 } from '@/lib/api';
 
-type Tab = 'overview' | 'settings' | 'security' | 'wordpress' | 'analytics' | 'files';
+type Tab = 'overview' | 'settings' | 'security' | 'routes' | 'wordpress' | 'analytics' | 'files';
 
 export default function DomainDetail() {
   const { host } = useParams<{ host: string }>();
@@ -158,6 +158,7 @@ export default function DomainDetail() {
     { id: 'overview', label: 'Overview', icon: <Eye size={13} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={13} /> },
     { id: 'security', label: 'Security', icon: <Shield size={13} /> },
+    { id: 'routes', label: 'Routes', icon: <ArrowRight size={13} /> },
     ...(wpSite ? [{ id: 'wordpress' as Tab, label: 'WordPress', icon: <Plug size={13} /> }] : []),
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={13} /> },
     { id: 'files', label: 'Files', icon: <FileText size={13} /> },
@@ -609,6 +610,60 @@ export default function DomainDetail() {
               <p className="text-sm">No analytics data yet</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══ Routes (Location Blocks) ═══ */}
+      {tab === 'routes' && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-card-foreground">Sub-Path Routes</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Route specific paths to different backends, directories, or redirects (like Nginx location blocks)</p>
+              </div>
+            </div>
+
+            {/* Existing routes */}
+            {(detail as any).locations?.length > 0 ? (
+              <div className="space-y-2 mb-4">
+                {((detail as any).locations as any[]).map((loc: any, i: number) => (
+                  <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
+                    <code className="text-xs font-mono text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded shrink-0">{loc.match}</code>
+                    <ArrowRight size={12} className="text-muted-foreground shrink-0" />
+                    {loc.proxy_pass && <span className="text-xs font-mono text-orange-400">{loc.proxy_pass}</span>}
+                    {loc.root && <span className="text-xs font-mono text-green-400">{loc.root}</span>}
+                    {loc.redirect && <span className="text-xs font-mono text-purple-400">{loc.redirect_code || 301} → {loc.redirect}</span>}
+                    {loc.cache_control && <span className="text-[10px] text-muted-foreground bg-accent px-1.5 py-0.5 rounded">{loc.cache_control}</span>}
+                    {!loc.proxy_pass && !loc.root && !loc.redirect && <span className="text-[10px] text-muted-foreground">headers only</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-border bg-background/50 p-6 text-center mb-4">
+                <Server size={24} className="mx-auto mb-2 text-muted-foreground opacity-30" />
+                <p className="text-xs text-muted-foreground">No routes configured. All paths go to the domain's default handler.</p>
+              </div>
+            )}
+
+            {/* Example config */}
+            <div className="rounded-lg bg-[#0d1117] border border-border/50 p-4">
+              <p className="text-[10px] text-muted-foreground mb-2">Add routes via YAML config or Config Editor:</p>
+              <pre className="text-[10px] text-green-400 font-mono whitespace-pre leading-4">{`locations:
+  - match: "/api/"
+    proxy_pass: "http://127.0.0.1:4000"
+    strip_prefix: true
+  - match: "/blog/"
+    root: "/var/www/blog"
+  - match: "/old-page"
+    redirect: "https://example.com/new-page"
+    redirect_code: 301
+  - match: "/assets/"
+    cache_control: "public, max-age=31536000, immutable"
+    headers:
+      X-CDN: "true"`}</pre>
+            </div>
+          </div>
         </div>
       )}
 
