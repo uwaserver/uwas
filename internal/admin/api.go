@@ -403,6 +403,7 @@ func (s *Server) registerRoutes() {
 
 	// Site migration + clone
 	s.mux.HandleFunc("POST /api/v1/migrate", s.handleMigrate)
+	s.mux.HandleFunc("POST /api/v1/migrate/cpanel", s.handleMigrateCPanel)
 	s.mux.HandleFunc("POST /api/v1/clone", s.handleClone)
 
 	// Bandwidth management

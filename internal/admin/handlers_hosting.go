@@ -2088,3 +2088,89 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, result)
 }
+
+// handleMigrateCPanel imports a cPanel backup archive (cpmove-*.tar.gz).
+// Expects multipart upload with "backup" file field.
+func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<30) // 10GB max backup
+	if err := r.ParseMultipartForm(256 << 20); err != nil {
+		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("backup")
+	if err != nil {
+		jsonError(w, "backup file required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	tmp, err := os.CreateTemp("", "uwas-cpanel-upload-*.tar.gz")
+	if err != nil {
+		jsonError(w, "create temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, file); err != nil {
+		tmp.Close()
+		jsonError(w, "save upload: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmp.Close()
+
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
+
+	importDB := r.FormValue("import_db") == "true"
+	s.RecordAudit("migrate.cpanel", header.Filename, ip, true)
+
+	result, err := migrate.ImportCPanelBackup(tmp.Name(), webRoot, importDB)
+	if err != nil {
+		jsonError(w, "import failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.configMu.Lock()
+	existingHosts := map[string]bool{}
+	for _, d := range s.config.Domains {
+		existingHosts[d.Host] = true
+	}
+	var added []string
+	for _, dom := range result.Domains {
+		if dom.Domain == "" || dom.Domain == "unknown" || existingHosts[dom.Domain] {
+			continue
+		}
+		newDomain := config.Domain{
+			Host: dom.Domain,
+			Type: "php",
+			Root: filepath.Join(webRoot, dom.Domain, "public_html"),
+			SSL:  config.SSLConfig{Mode: "auto"},
+		}
+		s.config.Domains = append(s.config.Domains, newDomain)
+		added = append(added, dom.Domain)
+	}
+	s.configMu.Unlock()
+
+	if len(added) > 0 {
+		s.persistConfig()
+		s.notifyDomainChange()
+		s.RecordAudit("migrate.cpanel.domains", strings.Join(added, ", "), ip, true)
+	}
+
+	jsonResponse(w, map[string]any{
+		"status":        "imported",
+		"user":          result.User,
+		"domains":       result.Domains,
+		"databases":     result.Databases,
+		"ssl_certs":     result.SSLCerts,
+		"files_count":   result.FilesCount,
+		"domains_added": added,
+		"errors":        result.Errors,
+	})
+}
