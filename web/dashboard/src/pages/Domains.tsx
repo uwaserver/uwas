@@ -3,7 +3,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import PinModal from '@/components/PinModal';
 import { setPinCode, clearPinCode } from '@/lib/api';
 import {
-  Globe, X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
+  X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
   AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Cpu,
 } from 'lucide-react';
@@ -382,6 +382,7 @@ export default function Domains() {
   const [cleanupOnDelete, setCleanupOnDelete] = useState(true);
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [pendingDeleteHost, setPendingDeleteHost] = useState('');
+  const [justCreated, setJustCreated] = useState('');
 
   const handleDelete = async (host: string) => {
     setStatus(null);
@@ -555,6 +556,7 @@ export default function Domains() {
         setStatus({ ok: true, message: `Domain "${editingHost}" updated successfully` });
       } else {
         await addDomain(payload);
+        setJustCreated(form.host.trim());
         setStatus({ ok: true, message: `Domain "${form.host.trim()}" added successfully` });
       }
       setForm({ ...emptyForm });
@@ -598,6 +600,40 @@ export default function Domains() {
         <div className={`flex items-center gap-2 rounded-md px-4 py-3 text-sm ${status.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
           {status.ok ? <CheckCircle size={14} /> : <XCircle size={14} />}
           {status.message}
+        </div>
+      )}
+
+      {/* Next Steps after domain creation */}
+      {justCreated && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-emerald-400">Domain Created: {justCreated}</h3>
+            <button onClick={() => setJustCreated('')} className="text-xs text-muted-foreground hover:text-foreground">Dismiss</button>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">Complete these steps to get your site live:</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="flex items-start gap-2 rounded-md bg-background p-3">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/15 text-[10px] font-bold text-blue-400 shrink-0">1</span>
+              <div>
+                <p className="text-xs font-medium text-foreground">Point DNS</p>
+                <p className="text-[10px] text-muted-foreground">Add an A record for <code className="bg-accent px-1 rounded">{justCreated}</code> pointing to your server IP</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 rounded-md bg-background p-3">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-purple-500/15 text-[10px] font-bold text-purple-400 shrink-0">2</span>
+              <div>
+                <p className="text-xs font-medium text-foreground">SSL Certificate</p>
+                <p className="text-[10px] text-muted-foreground">Auto-issued via Let's Encrypt once DNS propagates (2-5 min)</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 rounded-md bg-background p-3">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/15 text-[10px] font-bold text-emerald-400 shrink-0">3</span>
+              <div>
+                <p className="text-xs font-medium text-foreground">Upload Files</p>
+                <p className="text-[10px] text-muted-foreground">Use File Manager, SFTP, or git deploy to upload your site</p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -978,8 +1014,20 @@ function DomainRow({
         </td>
         <td className="px-5 py-3">
           <div className="flex items-center gap-2">
-            <Globe size={14} className="text-muted-foreground" />
+            {health ? (
+              <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${
+                health.healthy ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'
+              }`} title={health.healthy ? `Up (${health.response_time_ms}ms)` : `Down: ${health.error}`} />
+            ) : (
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-500 shrink-0" title="Health unknown" />
+            )}
             <span className="font-mono text-xs">{d.host}</span>
+            {health && !health.healthy && (
+              <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-medium text-red-400">DOWN</span>
+            )}
+            {health?.response_time_ms != null && health.healthy && (
+              <span className="text-[9px] text-muted-foreground">{health.response_time_ms}ms</span>
+            )}
             <RouterLink to={`/domains/${encodeURIComponent(d.host)}`} onClick={e => e.stopPropagation()}
               className="rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-400 hover:bg-blue-500/10 flex items-center gap-0.5"
               title="Manage domain">
