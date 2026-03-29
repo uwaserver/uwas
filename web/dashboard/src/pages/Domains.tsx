@@ -48,8 +48,7 @@ type TemplateName = 'wordpress' | 'laravel' | 'nodejs' | 'python' | 'static' | '
 
 const domainTypes = ['static', 'php', 'proxy', 'app', 'redirect'] as const;
 const sslModes = ['auto', 'manual', 'off'] as const;
-const proxyAlgorithms = ['round-robin', 'least-conn', 'ip-hash', 'random'] as const;
-const redirectCodes = ['301', '302', '307', '308'] as const;
+// proxyAlgorithms and redirectCodes are now rendered as visual cards inline
 
 const emptyForm: DomainFormState = {
   host: '',
@@ -864,18 +863,69 @@ export default function Domains() {
 
                 {/* Proxy section */}
                 {form.type === 'proxy' && (
-                  <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-4">
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-orange-400"><Server size={14} /> Proxy Configuration</h3>
-                    <div className="space-y-3">
-                      <FormField label="Upstream URLs (comma-separated)" htmlFor="add-proxy-upstreams">
-                        <input id="add-proxy-upstreams" type="text" value={form.proxyUpstreams} onChange={e => patchField('proxyUpstreams', e.target.value)}
-                          placeholder="http://localhost:3000,http://localhost:3001" className={inputCls} />
-                      </FormField>
-                      <FormField label="Algorithm" htmlFor="add-proxy-algo">
-                        <select id="add-proxy-algo" value={form.proxyAlgorithm} onChange={e => patchField('proxyAlgorithm', e.target.value)} className={selectCls}>
-                          {proxyAlgorithms.map(a => <option key={a} value={a}>{a}</option>)}
-                        </select>
-                      </FormField>
+                  <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-4 space-y-4">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-orange-400"><Server size={14} /> Reverse Proxy</h3>
+
+                    {/* Visual routing */}
+                    <div className="flex items-center gap-2 rounded-md bg-background/50 border border-border/50 px-3 py-2 text-[10px]">
+                      <span className="font-mono text-foreground">{form.host || 'domain.com'}</span>
+                      <ArrowRight size={10} className="text-muted-foreground" />
+                      <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-purple-400 font-medium">UWAS</span>
+                      <ArrowRight size={10} className="text-muted-foreground" />
+                      <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-orange-400 font-mono">
+                        {form.proxyUpstreams.split(',').filter(Boolean).length || 0} upstream{form.proxyUpstreams.split(',').filter(Boolean).length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+
+                    {/* Upstream list — row-based */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Upstreams</label>
+                      {(() => {
+                        const ups = form.proxyUpstreams ? form.proxyUpstreams.split(',').map(s => s.trim()).filter(Boolean) : [];
+                        if (ups.length === 0) ups.push('');
+                        const update = (newUps: string[]) => patchField('proxyUpstreams', newUps.filter(Boolean).join(','));
+                        return (
+                          <div className="space-y-1.5">
+                            {ups.map((u, i) => (
+                              <div key={i} className="flex gap-1.5 items-center">
+                                <input value={u} onChange={e => { ups[i] = e.target.value; update(ups); }}
+                                  placeholder="http://127.0.0.1:3000" className={inputCls + ' font-mono text-xs flex-1'} />
+                                <button type="button" onClick={() => { ups.splice(i, 1); if (ups.length === 0) ups.push(''); update(ups); }}
+                                  className="rounded p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 shrink-0">
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => { ups.push(''); update(ups); }}
+                              className="flex items-center gap-1 rounded border border-dashed border-border px-2.5 py-1.5 text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors w-full justify-center">
+                              <Plus size={10} /> Add Upstream
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Algorithm */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Load Balancing</label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { value: 'round-robin', label: 'Round Robin', desc: 'Rotate evenly' },
+                          { value: 'least-conn', label: 'Least Conn', desc: 'Fewest active' },
+                          { value: 'ip-hash', label: 'IP Hash', desc: 'Session affinity' },
+                          { value: 'random', label: 'Random', desc: 'Power of 2' },
+                        ].map(algo => (
+                          <button key={algo.value} type="button" onClick={() => patchField('proxyAlgorithm', algo.value)}
+                            className={`rounded-lg border p-2 text-center transition ${
+                              form.proxyAlgorithm === algo.value
+                                ? 'border-orange-500/50 bg-orange-500/10 ring-1 ring-orange-500/30'
+                                : 'border-border hover:border-foreground/20'
+                            }`}>
+                            <p className={`text-xs font-medium ${form.proxyAlgorithm === algo.value ? 'text-orange-400' : 'text-foreground'}`}>{algo.label}</p>
+                            <p className="text-[9px] text-muted-foreground">{algo.desc}</p>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -991,36 +1041,76 @@ export default function Domains() {
 
                 {/* Redirect section */}
                 {form.type === 'redirect' && (
-                  <div className="rounded-lg border border-slate-500/20 bg-slate-500/5 p-4">
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-card-foreground"><ArrowRight size={14} /> Redirect Configuration</h3>
-                    <div className="space-y-3">
-                      <FormField label="Target URL" htmlFor="add-redirect-target">
-                        <input id="add-redirect-target" type="text" value={form.redirectTarget} onChange={e => patchField('redirectTarget', e.target.value)}
-                          placeholder="https://new-domain.com" className={inputCls} />
-                      </FormField>
-                      <FormField label="Status Code" htmlFor="add-redirect-code">
-                        <select id="add-redirect-code" value={form.redirectCode} onChange={e => patchField('redirectCode', e.target.value)} className={selectCls}>
-                          {redirectCodes.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      </FormField>
+                  <div className="rounded-lg border border-slate-500/20 bg-slate-500/5 p-4 space-y-4">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-card-foreground"><ArrowRight size={14} /> Redirect</h3>
+
+                    {/* Visual flow */}
+                    <div className="flex items-center gap-2 rounded-md bg-background/50 border border-border/50 px-3 py-2 text-[10px]">
+                      <span className="font-mono text-foreground">{form.host || 'domain.com'}</span>
+                      <ArrowRight size={10} className="text-muted-foreground" />
+                      <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-blue-400 font-medium">{form.redirectCode}</span>
+                      <ArrowRight size={10} className="text-muted-foreground" />
+                      <span className="font-mono text-foreground truncate max-w-[200px]">{form.redirectTarget || 'https://...'}</span>
+                    </div>
+
+                    <FormField label="Target URL" htmlFor="add-redirect-target">
+                      <input id="add-redirect-target" type="url" value={form.redirectTarget} onChange={e => patchField('redirectTarget', e.target.value)}
+                        placeholder="https://new-domain.com" className={inputCls} />
+                    </FormField>
+
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Status Code</label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { code: '301', label: 'Permanent', desc: 'SEO-friendly move' },
+                          { code: '302', label: 'Temporary', desc: 'May change back' },
+                          { code: '307', label: 'Temp (strict)', desc: 'Keeps POST method' },
+                          { code: '308', label: 'Perm (strict)', desc: 'Keeps POST method' },
+                        ].map(r => (
+                          <button key={r.code} type="button" onClick={() => patchField('redirectCode', r.code)}
+                            className={`rounded-lg border p-2 text-center transition ${
+                              form.redirectCode === r.code ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/30' : 'border-border hover:border-foreground/20'
+                            }`}>
+                            <p className={`text-sm font-bold ${form.redirectCode === r.code ? 'text-blue-400' : 'text-foreground'}`}>{r.code}</p>
+                            <p className={`text-[10px] ${form.redirectCode === r.code ? 'text-blue-400' : 'text-muted-foreground'}`}>{r.label}</p>
+                            <p className="text-[9px] text-muted-foreground">{r.desc}</p>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {/* Security section */}
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-card-foreground"><Shield size={14} /> Security</h3>
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-2 text-sm text-card-foreground">
-                      <input type="checkbox" checked={form.wafEnabled} onChange={e => patchField('wafEnabled', e.target.checked)}
-                        className="rounded border-border bg-card text-blue-600 focus:ring-blue-500" />
-                      Enable WAF
-                    </label>
-                    <FormField label="Blocked Paths (comma-separated)" htmlFor="add-blocked-paths">
-                      <input id="add-blocked-paths" type="text" value={form.blockedPaths} onChange={e => patchField('blockedPaths', e.target.value)}
-                        placeholder=".env,.git,wp-config.php" className={inputCls} />
-                    </FormField>
+                <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-card-foreground"><Shield size={14} /> Security</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button type="button" onClick={() => patchField('wafEnabled', !form.wafEnabled)}
+                      className={`flex items-center gap-3 rounded-lg border p-3 text-left transition ${
+                        form.wafEnabled ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-border hover:border-foreground/20'
+                      }`}>
+                      <Shield size={16} className={form.wafEnabled ? 'text-emerald-400' : 'text-muted-foreground'} />
+                      <div>
+                        <p className={`text-xs font-medium ${form.wafEnabled ? 'text-emerald-400' : 'text-foreground'}`}>WAF Protection</p>
+                        <p className="text-[9px] text-muted-foreground">SQL injection, XSS, shell detection</p>
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => patchField('htaccessEnabled', !form.htaccessEnabled)}
+                      className={`flex items-center gap-3 rounded-lg border p-3 text-left transition ${
+                        form.htaccessEnabled ? 'border-blue-500/50 bg-blue-500/10' : 'border-border hover:border-foreground/20'
+                      }`}>
+                      <FileCode size={16} className={form.htaccessEnabled ? 'text-blue-400' : 'text-muted-foreground'} />
+                      <div>
+                        <p className={`text-xs font-medium ${form.htaccessEnabled ? 'text-blue-400' : 'text-foreground'}`}>.htaccess Import</p>
+                        <p className="text-[9px] text-muted-foreground">Apache mod_rewrite rules</p>
+                      </div>
+                    </button>
                   </div>
+                  {form.blockedPaths && (
+                    <div className="text-[10px] text-muted-foreground">
+                      Blocked: <code className="bg-accent px-1 rounded">{form.blockedPaths}</code>
+                    </div>
+                  )}
                 </div>
 
                 {/* Submit */}
