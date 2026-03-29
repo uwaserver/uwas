@@ -88,6 +88,17 @@ type AdminConfig struct {
 	TLSKey        string         `yaml:"tls_key,omitempty"`
 	RecoveryCodes []string       `yaml:"recovery_codes,omitempty"` // 2FA recovery codes
 	Branding      BrandingConfig `yaml:"branding,omitempty"`
+	OAuth         OAuthConfig    `yaml:"oauth,omitempty"`
+}
+
+// OAuthConfig enables OAuth2/SSO login (Google, GitHub).
+type OAuthConfig struct {
+	Enabled      bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	GoogleID     string `yaml:"google_client_id,omitempty" json:"google_client_id,omitempty"`
+	GoogleSecret string `yaml:"google_client_secret,omitempty" json:"google_client_secret,omitempty"`
+	GitHubID     string `yaml:"github_client_id,omitempty" json:"github_client_id,omitempty"`
+	GitHubSecret string `yaml:"github_client_secret,omitempty" json:"github_client_secret,omitempty"`
+	AllowedEmails []string `yaml:"allowed_emails,omitempty" json:"allowed_emails,omitempty"` // restrict to specific emails
 }
 
 // BrandingConfig allows white-labeling the dashboard.
