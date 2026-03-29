@@ -348,7 +348,8 @@ func (m *Manager) StartDomain(domain string) error {
 		waitErr := cmd.Wait()
 		m.domainMu.Lock()
 		di, stillAssigned := m.domainMap[domain]
-		if stillAssigned && di.proc != nil && di.proc.cmd == cmd {
+		shouldRestart := stillAssigned && di.proc != nil && di.proc.cmd == cmd
+		if shouldRestart {
 			di.proc = nil
 			if di.tmpINI != "" {
 				os.Remove(di.tmpINI)
@@ -363,8 +364,9 @@ func (m *Manager) StartDomain(domain string) error {
 			m.logger.Info("PHP-CGI for domain exited normally", "domain", domain)
 		}
 
-		// Auto-restart if the domain is still assigned (crash or max-requests reached)
-		if stillAssigned {
+		// Auto-restart only when this goroutine still owns the active process
+		// (prevents restart after intentional StopDomain/StopAll).
+		if shouldRestart {
 			if waitErr != nil && m.onCrash != nil {
 				m.onCrash(domain)
 			}
@@ -1238,7 +1240,12 @@ func (m *Manager) StopFPM(version string) error {
 		return fmt.Errorf("PHP %s is not running", version)
 	}
 
-	info := val.(*processInfo)
+	info, ok := val.(*processInfo)
+	if !ok || info == nil || info.cmd == nil || info.cmd.Process == nil {
+		m.processes.Delete(version)
+		m.logger.Warn("stale PHP-CGI process entry removed", "version", version)
+		return nil
+	}
 	if err := info.cmd.Process.Kill(); err != nil {
 		return fmt.Errorf("kill php-cgi: %w", err)
 	}
@@ -1256,8 +1263,8 @@ type PHPStatus struct {
 	SocketPath    string   `json:"socket_path,omitempty"`
 	PID           int      `json:"pid,omitempty"`
 	SystemManaged bool     `json:"system_managed,omitempty"`
-	DomainCount   int      `json:"domain_count"`            // number of domains using this version
-	Domains       []string `json:"domains,omitempty"`        // domain names using this version
+	DomainCount   int      `json:"domain_count"`      // number of domains using this version
+	Domains       []string `json:"domains,omitempty"` // domain names using this version
 }
 
 // Status returns the status of all detected PHP installations, including
@@ -1376,9 +1383,15 @@ func shortVersion(v string) string {
 // Called during server shutdown.
 func (m *Manager) StopAll() {
 	m.processes.Range(func(key, val any) bool {
-		version := key.(string)
-		info := val.(*processInfo)
-		if err := info.cmd.Process.Kill(); err != nil {
+		version, ok := key.(string)
+		if !ok {
+			m.processes.Delete(key)
+			return true
+		}
+		info, ok := val.(*processInfo)
+		if !ok || info == nil || info.cmd == nil || info.cmd.Process == nil {
+			m.logger.Warn("stale PHP-CGI process entry removed", "version", version)
+		} else if err := info.cmd.Process.Kill(); err != nil {
 			m.logger.Warn("failed to stop PHP-CGI", "version", version, "error", err)
 		} else {
 			m.logger.Info("stopped PHP-CGI", "version", version)

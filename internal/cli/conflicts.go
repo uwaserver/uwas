@@ -11,7 +11,7 @@ import (
 
 // Hooks for testing.
 var (
-	conflictsRuntimeGOOS = runtime.GOOS
+	conflictsRuntimeGOOS  = runtime.GOOS
 	conflictsExecLookPath = exec.LookPath
 	conflictsExecCommand  = exec.Command
 )
@@ -31,16 +31,16 @@ func DetectConflicts() []ConflictingServer {
 	}
 
 	type candidate struct {
-		name    string
-		bins    []string
-		service string
+		name     string
+		bins     []string
+		services []string
 	}
 
 	candidates := []candidate{
-		{"Apache", []string{"apache2", "httpd"}, "apache2"},
-		{"Nginx", []string{"nginx"}, "nginx"},
-		{"Caddy", []string{"caddy"}, "caddy"},
-		{"Lighttpd", []string{"lighttpd"}, "lighttpd"},
+		{"Apache", []string{"apache2", "httpd"}, []string{"apache2", "httpd"}},
+		{"Nginx", []string{"nginx"}, []string{"nginx"}},
+		{"Caddy", []string{"caddy"}, []string{"caddy"}},
+		{"Lighttpd", []string{"lighttpd"}, []string{"lighttpd"}},
 	}
 
 	var found []ConflictingServer
@@ -59,16 +59,34 @@ func DetectConflicts() []ConflictingServer {
 
 		cs := ConflictingServer{
 			Name:    c.name,
-			Service: c.service,
+			Service: c.services[0],
 		}
 
-		// Check if running via pidof or systemctl
+		// Check if running via pidof.
 		for _, bin := range c.bins {
 			out, err := conflictsExecCommand("pidof", bin).Output()
 			if err == nil && len(strings.TrimSpace(string(out))) > 0 {
 				cs.Running = true
 				cs.PID = strings.Fields(strings.TrimSpace(string(out)))[0]
 				break
+			}
+		}
+
+		// Fallback: check service activity (handles hosts where pidof misses it).
+		if !cs.Running {
+			for _, svc := range c.services {
+				out, err := conflictsExecCommand("systemctl", "is-active", svc).Output()
+				if err == nil && strings.TrimSpace(string(out)) == "active" {
+					cs.Running = true
+					cs.Service = svc
+					if out, err := conflictsExecCommand("systemctl", "show", "--property", "MainPID", "--value", svc).Output(); err == nil {
+						pid := strings.TrimSpace(string(out))
+						if pid != "" && pid != "0" {
+							cs.PID = pid
+						}
+					}
+					break
+				}
 			}
 		}
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1708,6 +1709,42 @@ func TestAutoRestartOnCrash(t *testing.T) {
 }
 
 // ============================================================
+// manager.go — StopDomain should not trigger auto-restart
+// ============================================================
+
+func TestStopDomainDoesNotAutoRestart(t *testing.T) {
+	m := New(testLogger())
+	m.installations = []PHPInstall{
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
+	}
+
+	var startCount atomic.Int32
+	m.execCommand = func(name string, args ...string) *exec.Cmd {
+		startCount.Add(1)
+		return exec.Command("ping", "-n", "100", "127.0.0.1")
+	}
+
+	if _, err := m.AssignDomain("manual-stop.com", "8.4"); err != nil {
+		t.Fatalf("AssignDomain: %v", err)
+	}
+	if err := m.StartDomain("manual-stop.com"); err != nil {
+		t.Fatalf("StartDomain: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if err := m.StopDomain("manual-stop.com"); err != nil {
+		t.Fatalf("StopDomain: %v", err)
+	}
+
+	// Wait longer than auto-restart backoff window.
+	time.Sleep(900 * time.Millisecond)
+
+	if got := startCount.Load(); got != 1 {
+		t.Fatalf("unexpected restart after manual stop, starts=%d want 1", got)
+	}
+}
+
+// ============================================================
 // manager.go — StopDomain kill error (already exited)
 // ============================================================
 
@@ -1862,6 +1899,20 @@ func TestStopFPMKillError(t *testing.T) {
 	err := m.StopFPM("8.4.19")
 	// Kill on exited process may or may not error
 	_ = err
+}
+
+func TestStopFPMStaleEntry(t *testing.T) {
+	m := New(testLogger())
+	m.processes.Store("8.4.19", &processInfo{
+		listenAddr: "127.0.0.1:9000",
+	})
+
+	if err := m.StopFPM("8.4.19"); err != nil {
+		t.Fatalf("StopFPM stale entry: %v", err)
+	}
+	if _, loaded := m.processes.Load("8.4.19"); loaded {
+		t.Error("stale process entry should be removed")
+	}
 }
 
 // ============================================================
@@ -2511,6 +2562,19 @@ func TestStopAllDomainNilProc(t *testing.T) {
 	// Should not panic
 }
 
+func TestStopAllStaleGlobalEntry(t *testing.T) {
+	m := New(testLogger())
+	m.processes.Store("8.4.19", &processInfo{
+		listenAddr: "127.0.0.1:9000",
+	})
+
+	// Should not panic and should clean stale entry.
+	m.StopAll()
+	if _, loaded := m.processes.Load("8.4.19"); loaded {
+		t.Error("stale process entry should be removed after StopAll")
+	}
+}
+
 // ============================================================
 // manager.go — detectSystemFPMSocket version normalization
 // ============================================================
@@ -2544,13 +2608,13 @@ func TestStatusEmpty(t *testing.T) {
 type mockConn struct{}
 
 func (mockConn) Read(b []byte) (n int, err error)   { return 0, nil }
-func (mockConn) Write(b []byte) (n int, err error)   { return len(b), nil }
-func (mockConn) Close() error                        { return nil }
-func (mockConn) LocalAddr() net.Addr                 { return nil }
-func (mockConn) RemoteAddr() net.Addr                { return nil }
-func (mockConn) SetDeadline(t time.Time) error       { return nil }
-func (mockConn) SetReadDeadline(t time.Time) error   { return nil }
-func (mockConn) SetWriteDeadline(t time.Time) error  { return nil }
+func (mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (mockConn) Close() error                       { return nil }
+func (mockConn) LocalAddr() net.Addr                { return nil }
+func (mockConn) RemoteAddr() net.Addr               { return nil }
+func (mockConn) SetDeadline(t time.Time) error      { return nil }
+func (mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (mockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestDetectSystemFPMSocketFound(t *testing.T) {
 	origStat := osStat
@@ -3034,9 +3098,9 @@ func TestStopAllDomainKillError(t *testing.T) {
 
 	m.domainMu.Lock()
 	m.domainMap["kill-err.com"] = &domainInstance{
-		domain:     "kill-err.com",
-		version:    "8.4",
-		listenAddr: "127.0.0.1:9099",
+		domain:          "kill-err.com",
+		version:         "8.4",
+		listenAddr:      "127.0.0.1:9099",
 		configOverrides: make(map[string]string),
 		proc: &processInfo{
 			cmd:        cmd,

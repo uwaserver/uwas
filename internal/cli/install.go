@@ -10,15 +10,15 @@ import (
 
 // Hooks for testing install.go functions.
 var (
-	installExecCommand = exec.Command
-	installRuntimeGOOS = runtime.GOOS
-	installOsGetuid    = os.Getuid
+	installExecCommand  = exec.Command
+	installRuntimeGOOS  = runtime.GOOS
+	installOsGetuid     = os.Getuid
 	installOsExecutable = os.Executable
-	installOsWriteFile = os.WriteFile
-	installOsReadFile  = os.ReadFile
-	installOsRemove    = os.Remove
-	installOsSymlink   = os.Symlink
-	installOsStat      = os.Stat
+	installOsWriteFile  = os.WriteFile
+	installOsReadFile   = os.ReadFile
+	installOsRemove     = os.Remove
+	installOsSymlink    = os.Symlink
+	installOsStat       = os.Stat
 )
 
 // InstallCmd installs UWAS as a system service.
@@ -74,8 +74,13 @@ func installUWAS(args []string) error {
 	}
 
 	// 2. Create config directory
-	os.MkdirAll(configDir, 0755)
-	os.MkdirAll(filepath.Join(configDir, "domains.d"), 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("create %s: %w", configDir, err)
+	}
+	domainsDir := filepath.Join(configDir, "domains.d")
+	if err := os.MkdirAll(domainsDir, 0755); err != nil {
+		return fmt.Errorf("create %s: %w", domainsDir, err)
+	}
 	fmt.Printf("  ✓ Config directory: %s\n", configDir)
 
 	// 3. Create systemd service
@@ -104,13 +109,23 @@ WantedBy=multi-user.target
 	fmt.Printf("  ✓ Systemd service: %s\n", servicePath)
 
 	// 4. Reload systemd and enable
-	installExecCommand("systemctl", "daemon-reload").Run()
-	installExecCommand("systemctl", "enable", "uwas").Run()
+	if err := installExecCommand("systemctl", "daemon-reload").Run(); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
+	if err := installExecCommand("systemctl", "enable", "uwas").Run(); err != nil {
+		return fmt.Errorf("systemctl enable uwas: %w", err)
+	}
 	fmt.Println("  ✓ Service enabled (starts on boot)")
 
 	// 5. Create symlink for convenience
-	if _, err := installOsStat("/usr/bin/uwas"); os.IsNotExist(err) {
-		installOsSymlink(binPath, "/usr/bin/uwas")
+	if _, err := installOsStat("/usr/bin/uwas"); err == nil {
+		// Already exists.
+	} else if os.IsNotExist(err) {
+		if err := installOsSymlink(binPath, "/usr/bin/uwas"); err != nil {
+			return fmt.Errorf("create symlink /usr/bin/uwas: %w", err)
+		}
+	} else {
+		return fmt.Errorf("stat /usr/bin/uwas: %w", err)
 	}
 
 	fmt.Println()
@@ -137,8 +152,10 @@ WantedBy=multi-user.target
 // UninstallCmd removes UWAS service and binary.
 type UninstallCmd struct{}
 
-func (c *UninstallCmd) Name() string        { return "uninstall" }
-func (c *UninstallCmd) Description() string { return "Remove UWAS service and binary (keeps config and data)" }
+func (c *UninstallCmd) Name() string { return "uninstall" }
+func (c *UninstallCmd) Description() string {
+	return "Remove UWAS service and binary (keeps config and data)"
+}
 func (c *UninstallCmd) Run(args []string) error {
 	if installRuntimeGOOS != "linux" {
 		return fmt.Errorf("uninstall is only supported on Linux")
