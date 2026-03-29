@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Menu, X, Github, Server, Sun, Moon } from 'lucide-react'
+import { Menu, X, GitBranch, Server, Sun, Moon } from 'lucide-react'
 
 interface NavbarProps {
   theme: 'dark' | 'light'
@@ -71,7 +71,7 @@ export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
               className="ml-1 flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium no-underline transition-colors hover:opacity-80"
               style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
             >
-              <Github className="h-4 w-4" />
+            <GitBranch className="h-4 w-4" />
               GitHub
             </a>
           </div>
@@ -122,7 +122,7 @@ export default function Navbar({ theme, onToggleTheme }: NavbarProps) {
               className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium no-underline transition-colors"
               style={{ color: 'var(--text-secondary)' }}
             >
-              <Github className="h-4 w-4" />
+              <GitBranch className="h-4 w-4" />
               GitHub
             </a>
           </div>

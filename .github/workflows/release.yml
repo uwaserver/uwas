@@ -29,7 +29,7 @@ jobs:
             goarch: amd64
             suffix: windows-amd64.exe
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
         with:
@@ -47,7 +47,7 @@ jobs:
             ./cmd/uwas
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: uwas-${{ matrix.suffix }}
           path: uwas-${{ matrix.suffix }}
@@ -57,15 +57,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          prerelease: true
-          generate_release_notes: false
-          fail_on_unmatched_files: false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --prerelease --notes ""
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --prerelease
