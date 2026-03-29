@@ -286,6 +286,11 @@ export default function Domains() {
 
   /* add/edit form state */
   const [showAdd, setShowAdd] = useState(false);
+  const [domainSearch, setDomainSearch] = useState('');
+
+  const filteredDomains = domainSearch
+    ? domains.filter(d => d.host.toLowerCase().includes(domainSearch.toLowerCase()) || d.type.includes(domainSearch.toLowerCase()))
+    : domains;
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateName>(null);
   const [form, setForm] = useState<DomainFormState>({ ...emptyForm });
   const [submitting, setSubmitting] = useState(false);
@@ -655,7 +660,14 @@ export default function Domains() {
         </div>
       )}
 
-      {/* Domain table */}
+      {/* Domain search + table */}
+      {domains.length > 5 && (
+        <div className="flex items-center gap-3">
+          <input value={domainSearch} onChange={e => setDomainSearch(e.target.value)}
+            placeholder="Search domains..." className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500/50" />
+          <span className="text-xs text-muted-foreground">{filteredDomains.length} of {domains.length}</span>
+        </div>
+      )}
       <div className="rounded-lg border border-border bg-card shadow-md">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -674,10 +686,10 @@ export default function Domains() {
               {loading && (
                 <tr><td colSpan={7} className="px-5 py-8 text-center text-muted-foreground">Loading...</td></tr>
               )}
-              {!loading && domains.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-muted-foreground">No domains configured</td></tr>
+              {!loading && filteredDomains.length === 0 && (
+                <tr><td colSpan={7} className="px-5 py-8 text-center text-muted-foreground">{domainSearch ? 'No domains match search' : 'No domains configured'}</td></tr>
               )}
-              {domains.map(d => {
+              {filteredDomains.map(d => {
                 const isExpanded = expandedHost === d.host;
                 return (
                   <DomainRow

@@ -72,6 +72,21 @@ export default function App() {
       setPinResolver({ resolve, reject });
       setPinOpen(true);
     });
+
+    // Apply white-label branding (favicon + document title)
+    import('@/lib/api').then(({ fetchBranding }) => {
+      fetchBranding().then(b => {
+        if (b.favicon_url) {
+          const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]') || document.createElement('link');
+          link.rel = 'icon';
+          link.href = b.favicon_url;
+          document.head.appendChild(link);
+        }
+        if (b.name) {
+          document.title = b.name;
+        }
+      }).catch(() => {});
+    });
   }, []);
 
   return (
