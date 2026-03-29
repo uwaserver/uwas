@@ -398,6 +398,7 @@ func TestAdminDomainCRUD(t *testing.T) {
 	cfg, _, _ := baseAdminConfig(t)
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hi"), 0644)
+	cfg.Global.WebRoot = dir // root path validation checks against this
 	cfg.Domains = []config.Domain{
 		{Host: cfg.Global.HTTPListen, Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
 	}
@@ -579,6 +580,7 @@ func TestAuditLogRecording(t *testing.T) {
 	cfg, _, _ := baseAdminConfig(t)
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hi"), 0644)
+	cfg.Global.WebRoot = dir
 	cfg.Domains = []config.Domain{
 		{Host: cfg.Global.HTTPListen, Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
 	}
