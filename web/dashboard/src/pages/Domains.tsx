@@ -5,7 +5,7 @@ import { setPinCode, clearPinCode } from '@/lib/api';
 import {
   X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
-  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Cpu,
+  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Cpu, Upload,
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
@@ -585,13 +585,26 @@ export default function Domains() {
             {loading ? 'Loading...' : `${domains.length} domain${domains.length !== 1 ? 's' : ''} configured`}
           </p>
         </div>
-        <button
-          onClick={openAddModal}
-          className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
-        >
-          <Plus size={14} />
-          Add Domain
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => {
+            const input = window.prompt('Paste domain list (one per line):');
+            if (!input) return;
+            const hosts = input.split('\n').map(h => h.trim()).filter(Boolean);
+            if (hosts.length === 0) return;
+            import('@/lib/api').then(({ bulkImportDomains }) => {
+              bulkImportDomains(hosts.map(h => ({ host: h }))).then(res => {
+                setStatus({ ok: true, message: `Added ${res.added.length}, skipped ${res.skipped.length}` });
+                loadDomains();
+              }).catch(e => setStatus({ ok: false, message: (e as Error).message }));
+            });
+          }} className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent">
+            <Upload size={14} /> Bulk Import
+          </button>
+          <button onClick={openAddModal}
+            className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700">
+            <Plus size={14} /> Add Domain
+          </button>
+        </div>
       </div>
 
       {/* Status toast */}
