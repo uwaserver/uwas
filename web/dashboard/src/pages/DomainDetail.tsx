@@ -613,58 +613,17 @@ export default function DomainDetail() {
         </div>
       )}
 
-      {/* ═══ Routes (Location Blocks) ═══ */}
+      {/* ═══ Routes (Location Blocks) + Aliases ═══ */}
       {tab === 'routes' && (
-        <div className="space-y-4">
-          <div className="rounded-lg border border-border bg-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-semibold text-card-foreground">Sub-Path Routes</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Route specific paths to different backends, directories, or redirects (like Nginx location blocks)</p>
-              </div>
-            </div>
-
-            {/* Existing routes */}
-            {(detail as any).locations?.length > 0 ? (
-              <div className="space-y-2 mb-4">
-                {((detail as any).locations as any[]).map((loc: any, i: number) => (
-                  <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
-                    <code className="text-xs font-mono text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded shrink-0">{loc.match}</code>
-                    <ArrowRight size={12} className="text-muted-foreground shrink-0" />
-                    {loc.proxy_pass && <span className="text-xs font-mono text-orange-400">{loc.proxy_pass}</span>}
-                    {loc.root && <span className="text-xs font-mono text-green-400">{loc.root}</span>}
-                    {loc.redirect && <span className="text-xs font-mono text-purple-400">{loc.redirect_code || 301} → {loc.redirect}</span>}
-                    {loc.cache_control && <span className="text-[10px] text-muted-foreground bg-accent px-1.5 py-0.5 rounded">{loc.cache_control}</span>}
-                    {!loc.proxy_pass && !loc.root && !loc.redirect && <span className="text-[10px] text-muted-foreground">headers only</span>}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-border bg-background/50 p-6 text-center mb-4">
-                <Server size={24} className="mx-auto mb-2 text-muted-foreground opacity-30" />
-                <p className="text-xs text-muted-foreground">No routes configured. All paths go to the domain's default handler.</p>
-              </div>
-            )}
-
-            {/* Example config */}
-            <div className="rounded-lg bg-[#0d1117] border border-border/50 p-4">
-              <p className="text-[10px] text-muted-foreground mb-2">Add routes via YAML config or Config Editor:</p>
-              <pre className="text-[10px] text-green-400 font-mono whitespace-pre leading-4">{`locations:
-  - match: "/api/"
-    proxy_pass: "http://127.0.0.1:4000"
-    strip_prefix: true
-  - match: "/blog/"
-    root: "/var/www/blog"
-  - match: "/old-page"
-    redirect: "https://example.com/new-page"
-    redirect_code: 301
-  - match: "/assets/"
-    cache_control: "public, max-age=31536000, immutable"
-    headers:
-      X-CDN: "true"`}</pre>
-            </div>
-          </div>
-        </div>
+        <RoutesEditor host={host} detail={detail} onSave={async (locs, aliases) => {
+          setSaving(true);
+          try {
+            await updateDomain(host, { locations: locs, aliases } as any);
+            setMsg({ ok: true, text: 'Routes saved. Reload applied.' });
+            load();
+          } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
+          finally { setSaving(false); }
+        }} saving={saving} />
       )}
 
       {/* ═══ Files ═══ */}
@@ -688,4 +647,165 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+/* ═══ Routes + Aliases Editor ═══ */
+
+interface RouteRow {
+  match: string;
+  type: 'proxy' | 'static' | 'redirect' | 'headers';
+  target: string; // proxy_pass URL, root path, redirect URL, or cache_control
+  stripPrefix: boolean;
+  redirectCode: number;
+}
+
+function RoutesEditor({ host, detail, onSave, saving }: {
+  host: string;
+  detail: any;
+  onSave: (locations: any[], aliases: string[]) => Promise<void>;
+  saving: boolean;
+}) {
+  const [routes, setRoutes] = useState<RouteRow[]>([]);
+  const [aliases, setAliases] = useState<string[]>([]);
+  const [newAlias, setNewAlias] = useState('');
+
+  // Init from detail
+  useState(() => {
+    const locs = (detail.locations || []) as any[];
+    setRoutes(locs.map((l: any) => ({
+      match: l.match || '',
+      type: l.proxy_pass ? 'proxy' : l.root ? 'static' : l.redirect ? 'redirect' : 'headers',
+      target: l.proxy_pass || l.root || l.redirect || l.cache_control || '',
+      stripPrefix: l.strip_prefix || false,
+      redirectCode: l.redirect_code || 301,
+    })));
+    setAliases(detail.aliases || []);
+  });
+
+  const addRoute = () => setRoutes([...routes, { match: '/', type: 'proxy', target: '', stripPrefix: false, redirectCode: 301 }]);
+  const removeRoute = (i: number) => setRoutes(routes.filter((_, j) => j !== i));
+  const updateRoute = (i: number, patch: Partial<RouteRow>) => {
+    setRoutes(routes.map((r, j) => j === i ? { ...r, ...patch } : r));
+  };
+
+  const handleSave = () => {
+    const locs = routes.filter(r => r.match && r.target).map(r => {
+      const loc: any = { match: r.match };
+      if (r.type === 'proxy') { loc.proxy_pass = r.target; loc.strip_prefix = r.stripPrefix; }
+      else if (r.type === 'static') { loc.root = r.target; }
+      else if (r.type === 'redirect') { loc.redirect = r.target; loc.redirect_code = r.redirectCode; }
+      else { loc.cache_control = r.target; }
+      return loc;
+    });
+    onSave(locs, aliases);
+  };
+
+  const typeColors: Record<string, string> = {
+    proxy: 'text-orange-400 bg-orange-500/10 border-orange-500/30',
+    static: 'text-green-400 bg-green-500/10 border-green-500/30',
+    redirect: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
+    headers: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Aliases */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h3 className="text-sm font-semibold text-card-foreground mb-1">Domain Aliases</h3>
+        <p className="text-xs text-muted-foreground mb-3">Additional hostnames that point to this domain (e.g. www.{host})</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {aliases.map((a, i) => (
+            <span key={i} className="flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs text-foreground">
+              {a}
+              <button onClick={() => setAliases(aliases.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-red-400 ml-1">
+                <Trash2 size={10} />
+              </button>
+            </span>
+          ))}
+          {aliases.length === 0 && <span className="text-xs text-muted-foreground">No aliases</span>}
+        </div>
+        <div className="flex gap-2">
+          <input value={newAlias} onChange={e => setNewAlias(e.target.value)} placeholder={`www.${host}`}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (newAlias.trim()) { setAliases([...aliases, newAlias.trim()]); setNewAlias(''); } } }}
+            className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono text-foreground outline-none focus:border-blue-500/50" />
+          <button type="button" onClick={() => { if (newAlias.trim()) { setAliases([...aliases, newAlias.trim()]); setNewAlias(''); } }}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent/80">
+            <Plus size={12} />
+          </button>
+        </div>
+      </div>
+
+      {/* Routes */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-card-foreground">Sub-Path Routes</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">First match wins. Unmatched paths go to default handler.</p>
+          </div>
+          <button onClick={addRoute} className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+            <Plus size={12} /> Add Route
+          </button>
+        </div>
+
+        {routes.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-background/50 p-6 text-center">
+            <Server size={24} className="mx-auto mb-2 text-muted-foreground opacity-30" />
+            <p className="text-xs text-muted-foreground">No routes. All paths use the domain's default handler.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {routes.map((r, i) => (
+              <div key={i} className={`rounded-lg border p-3 space-y-2 ${typeColors[r.type]}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase">{r.type}</span>
+                  <div className="flex-1" />
+                  <button onClick={() => removeRoute(i)} className="text-muted-foreground hover:text-red-400"><Trash2 size={12} /></button>
+                </div>
+                <div className="grid grid-cols-[1fr_100px_1fr] gap-2 items-center">
+                  <input value={r.match} onChange={e => updateRoute(i, { match: e.target.value })} placeholder="/path/"
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-mono text-foreground outline-none" />
+                  <select value={r.type} onChange={e => updateRoute(i, { type: e.target.value as RouteRow['type'] })}
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none">
+                    <option value="proxy">Proxy</option>
+                    <option value="static">Static</option>
+                    <option value="redirect">Redirect</option>
+                    <option value="headers">Cache</option>
+                  </select>
+                  <input value={r.target} onChange={e => updateRoute(i, { target: e.target.value })}
+                    placeholder={r.type === 'proxy' ? 'http://127.0.0.1:4000' : r.type === 'static' ? '/var/www/docs' : r.type === 'redirect' ? 'https://example.com/new' : 'public, max-age=3600'}
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-mono text-foreground outline-none" />
+                </div>
+                {r.type === 'proxy' && (
+                  <label className="flex items-center gap-1.5 text-[10px]">
+                    <input type="checkbox" checked={r.stripPrefix} onChange={e => updateRoute(i, { stripPrefix: e.target.checked })} />
+                    Strip prefix ({r.match}users → /users)
+                  </label>
+                )}
+                {r.type === 'redirect' && (
+                  <div className="flex items-center gap-2 text-[10px]">
+                    Status:
+                    {[301, 302, 307, 308].map(c => (
+                      <button key={c} type="button" onClick={() => updateRoute(i, { redirectCode: c })}
+                        className={`rounded px-1.5 py-0.5 ${r.redirectCode === c ? 'bg-purple-500/30 text-purple-300' : 'text-muted-foreground hover:text-foreground'}`}>
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Save */}
+      <div className="flex justify-end">
+        <button onClick={handleSave} disabled={saving}
+          className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+          {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+          Save Routes & Aliases
+        </button>
+      </div>
+    </div>
+  );
 }

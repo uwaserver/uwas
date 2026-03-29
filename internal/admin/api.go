@@ -2235,6 +2235,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			if d.Htaccess.Mode != "" {
 				merged.Htaccess = d.Htaccess
 			}
+			// Locations (always replace — empty list clears routes)
+			if len(d.Locations) > 0 || r.URL.Query().Get("replace") == "true" {
+				merged.Locations = d.Locations
+			}
 			// Cache, Security, Compression:
 			// ?replace=true → full replace (allows disabling features)
 			// default → merge (only override non-zero fields)
