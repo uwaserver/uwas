@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { fetchSystem } from '@/lib/api';
+import { fetchSystem, fetchBranding, type BrandingConfig } from '@/lib/api';
 import {
   LayoutDashboard,
   Globe,
@@ -187,11 +187,13 @@ function CollapsibleGroup({ group, onNavClick }: { group: NavGroup; onNavClick?:
 export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [version, setVersion] = useState('');
+  const [branding, setBranding] = useState<BrandingConfig>({});
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
     fetchSystem().then(s => setVersion(s?.version || '')).catch(() => {});
+    fetchBranding().then(setBranding).catch(() => {});
   }, []);
 
   const handleLogout = () => {
@@ -242,11 +244,16 @@ export default function Sidebar() {
       >
         {/* Logo */}
         <div className="flex items-center gap-2.5 border-b border-border px-5 py-5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
-            U
-          </div>
+          {branding.logo_url ? (
+            <img src={branding.logo_url} alt={branding.name || 'UWAS'} className="h-8" />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold text-white"
+              style={{ backgroundColor: branding.primary_color || '#2563eb' }}>
+              {(branding.name || 'UWAS')[0]}
+            </div>
+          )}
           <span className="text-lg font-bold tracking-tight text-foreground">
-            UWAS
+            {branding.name || 'UWAS'}
           </span>
           <span className="ml-auto rounded bg-blue-600/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
             {version || '...'}
