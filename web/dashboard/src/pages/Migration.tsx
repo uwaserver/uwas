@@ -1,15 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
-import { ArrowDownToLine, Loader2, Server, Database, FolderOpen, Key, Lock, Check, AlertTriangle } from 'lucide-react';
-import { fetchDomains, migrateSite, type DomainData, type MigrateResult } from '@/lib/api';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { ArrowDownToLine, Loader2, Server, Database, FolderOpen, Key, Lock, Check, AlertTriangle, Upload } from 'lucide-react';
+import { fetchDomains, migrateSite, migrateCPanel, type DomainData, type MigrateResult, type CPanelImportResult } from '@/lib/api';
 
 type Step = 'form' | 'running' | 'done';
 
 export default function Migration() {
+  const [tab, setTab] = useState<'ssh' | 'cpanel'>('ssh');
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState<Step>('form');
   const [result, setResult] = useState<MigrateResult | null>(null);
   const [error, setError] = useState('');
+
+  // cPanel import state
+  const [cpFile, setCpFile] = useState<File | null>(null);
+  const [cpImportDB, setCpImportDB] = useState(true);
+  const [cpImporting, setCpImporting] = useState(false);
+  const [cpResult, setCpResult] = useState<CPanelImportResult | null>(null);
+  const cpFileRef = useRef<HTMLInputElement>(null);
 
   // Form fields
   const [sourceHost, setSourceHost] = useState('');
@@ -77,10 +85,103 @@ export default function Migration() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-bold sm:text-2xl text-foreground">Site Migration</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Migrate a site from a remote server via SSH. Files are synced with rsync, database is dumped and imported.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Import sites from another server or cPanel backup.</p>
       </div>
+
+      {/* Tab selector */}
+      <div className="flex border-b border-border">
+        <button onClick={() => setTab('ssh')}
+          className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'ssh' ? 'border-blue-500 text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}>
+          <Server size={14} /> SSH Migration
+        </button>
+        <button onClick={() => setTab('cpanel')}
+          className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'cpanel' ? 'border-blue-500 text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}>
+          <Upload size={14} /> cPanel Import
+        </button>
+      </div>
+
+      {/* cPanel Import tab */}
+      {tab === 'cpanel' && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-card-foreground">Import cPanel Backup</h2>
+            <p className="text-xs text-muted-foreground">Upload a cPanel backup file (cpmove-*.tar.gz). Domains, files, SSL certificates, and databases will be extracted and configured automatically.</p>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Backup File (.tar.gz)</label>
+              <input ref={cpFileRef} type="file" accept=".tar.gz,.tgz"
+                onChange={e => setCpFile(e.target.files?.[0] || null)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground file:mr-3 file:rounded file:border-0 file:bg-blue-600 file:px-3 file:py-1 file:text-sm file:text-white" />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-card-foreground cursor-pointer">
+              <input type="checkbox" checked={cpImportDB} onChange={e => setCpImportDB(e.target.checked)}
+                className="rounded border-border" />
+              Import databases (requires MySQL/MariaDB running)
+            </label>
+
+            <button disabled={!cpFile || cpImporting} onClick={async () => {
+              if (!cpFile) return;
+              setCpImporting(true);
+              setCpResult(null);
+              setError('');
+              try {
+                const res = await migrateCPanel(cpFile, cpImportDB);
+                setCpResult(res);
+              } catch (e) { setError((e as Error).message); }
+              finally { setCpImporting(false); }
+            }} className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              {cpImporting ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              {cpImporting ? 'Importing...' : 'Import Backup'}
+            </button>
+          </div>
+
+          {cpResult && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5 space-y-3">
+              <h3 className="text-sm font-semibold text-emerald-400">Import Complete</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.domains.length}</p><p className="text-[10px] text-muted-foreground">Domains</p></div>
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.databases.length}</p><p className="text-[10px] text-muted-foreground">Databases</p></div>
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.ssl_certs}</p><p className="text-[10px] text-muted-foreground">SSL Certs</p></div>
+                <div className="rounded-md bg-background p-3"><p className="text-lg font-bold text-foreground">{cpResult.files_count.toLocaleString()}</p><p className="text-[10px] text-muted-foreground">Files</p></div>
+              </div>
+              {cpResult.domains_added.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Domains added to UWAS:</p>
+                  <div className="flex flex-wrap gap-1">{cpResult.domains_added.map(d => (
+                    <span key={d} className="rounded bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-400">{d}</span>
+                  ))}</div>
+                </div>
+              )}
+              {cpResult.databases.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Databases found:</p>
+                  {cpResult.databases.map(db => (
+                    <div key={db.name} className="flex items-center gap-2 text-xs text-card-foreground">
+                      <Database size={11} /> {db.name} ({db.size_mb.toFixed(1)} MB)
+                    </div>
+                  ))}
+                </div>
+              )}
+              {cpResult.errors.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-amber-400 mb-1">Warnings ({cpResult.errors.length}):</p>
+                  <pre className="max-h-32 overflow-auto rounded bg-background p-2 text-[10px] text-amber-400">
+                    {cpResult.errors.join('\n')}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'ssh' && <>
+      {/* SSH migration content below */}
 
       {error && (
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
@@ -326,6 +427,7 @@ export default function Migration() {
       {loading && (
         <div className="text-center text-sm text-muted-foreground py-12">Loading...</div>
       )}
+      </>}
     </div>
   );
 }

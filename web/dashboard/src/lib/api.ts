@@ -767,6 +767,32 @@ export interface MigrateResult {
 export const migrateSite = (req: MigrateRequest) =>
   api<MigrateResult>('/api/v1/migrate', { method: 'POST', body: JSON.stringify(req) });
 
+export interface CPanelImportResult {
+  status: string;
+  user: string;
+  domains: { domain: string; doc_root: string; type: string; ssl: boolean }[];
+  databases: { name: string; user: string; size_mb: number; imported: boolean }[];
+  ssl_certs: number;
+  files_count: number;
+  domains_added: string[];
+  errors: string[];
+}
+
+export async function migrateCPanel(file: File, importDB: boolean): Promise<CPanelImportResult> {
+  const form = new FormData();
+  form.append('backup', file);
+  if (importDB) form.append('import_db', 'true');
+  const headers: Record<string, string> = {};
+  const t = getToken();
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+  const resp = await fetch('/api/v1/migrate/cpanel', { method: 'POST', headers, body: form });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: resp.statusText }));
+    throw new Error(err.error || resp.statusText);
+  }
+  return resp.json();
+}
+
 // ── Installation Tasks ──────────────────────────────
 
 export interface InstallTask {
