@@ -233,6 +233,31 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Resource gauges */}
+      {sysInfo && (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: 'CPU Load', value: sysInfo.load_1m ? parseFloat(sysInfo.load_1m) : 0, max: sysInfo.cpus || 1, unit: '', color: 'blue' },
+            { label: 'RAM Used', value: sysInfo.memory_alloc ? sysInfo.memory_alloc / (1024 * 1024 * 1024) : 0, max: sysInfo.ram_total_human ? parseFloat(sysInfo.ram_total_human) : 1, unit: 'GB', color: 'purple' },
+            { label: 'Disk Used', value: sysInfo.disk_total_human && sysInfo.disk_free_human ? parseFloat(sysInfo.disk_total_human) - parseFloat(sysInfo.disk_free_human) : 0, max: sysInfo.disk_total_human ? parseFloat(sysInfo.disk_total_human) : 1, unit: 'GB', color: 'emerald' },
+          ].map(g => {
+            const pct = g.max > 0 ? Math.min((g.value / g.max) * 100, 100) : 0;
+            return (
+              <div key={g.label} className="rounded-lg border border-border bg-card p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-muted-foreground">{g.label}</span>
+                  <span className={`text-xs font-semibold text-${g.color}-400`}>{g.value.toFixed(1)}{g.unit} / {g.max.toFixed?.(1) ?? g.max}{g.unit}</span>
+                </div>
+                <div className={`h-2 rounded-full bg-${g.color}-500/10 overflow-hidden`}>
+                  <div className={`h-full rounded-full bg-${g.color}-500 transition-all duration-500`} style={{ width: `${pct}%` }} />
+                </div>
+                <div className="flex justify-end mt-1"><span className="text-[9px] text-muted-foreground">{pct.toFixed(0)}%</span></div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Domains table */}
       <div className="rounded-lg border border-border bg-card shadow-md">
         <div className="border-b border-border px-5 py-4">
