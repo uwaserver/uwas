@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Lock, Shield, RefreshCw, CheckCircle, XCircle, Clock, AlertTriangle,
-  Calendar, Eye, ChevronDown,
+  Calendar, Eye, ChevronDown, Upload,
 } from 'lucide-react';
-import { fetchCerts, renewCert, type CertInfo } from '@/lib/api';
+import { fetchCerts, renewCert, uploadCert, type CertInfo } from '@/lib/api';
 
 function sslModeBadge(mode: string) {
   switch (mode) {
@@ -178,6 +178,28 @@ export default function Certificates() {
     }
   };
 
+  // Upload cert state
+  const [uploadHost, setUploadHost] = useState('');
+  const [uploadCertPEM, setUploadCertPEM] = useState('');
+  const [uploadKeyPEM, setUploadKeyPEM] = useState('');
+  const [uploadChain, setUploadChain] = useState('');
+  const [uploading, setUploading] = useState(false);
+
+  const handleUploadCert = async () => {
+    if (!uploadHost || !uploadCertPEM || !uploadKeyPEM) return;
+    setUploading(true);
+    try {
+      await uploadCert(uploadHost, uploadCertPEM, uploadKeyPEM, uploadChain || undefined);
+      setRenewStatus({ ok: true, message: `Certificate uploaded for ${uploadHost}` });
+      setUploadHost('');
+      setUploadCertPEM('');
+      setUploadKeyPEM('');
+      setUploadChain('');
+      await load();
+    } catch (e) { setRenewStatus({ ok: false, message: (e as Error).message }); }
+    finally { setUploading(false); }
+  };
+
   const load = useCallback(async () => {
     try {
       const result = await fetchCerts();
@@ -219,13 +241,59 @@ export default function Certificates() {
             SSL/TLS certificate management ({certs.length} domains)
           </p>
         </div>
-        <button
-          onClick={load}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
-        >
-          <RefreshCw size={12} /> Refresh
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setUploadHost(uploadHost ? '' : '_new')}
+            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+            <Upload size={12} /> Upload Certificate
+          </button>
+          <button onClick={load}
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Upload certificate form */}
+      {uploadHost && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-blue-400 flex items-center gap-2"><Upload size={14} /> Upload SSL Certificate</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Domain</label>
+              <select value={uploadHost === '_new' ? '' : uploadHost} onChange={e => setUploadHost(e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none">
+                <option value="">Select domain...</option>
+                {certs.map(c => <option key={c.host} value={c.host}>{c.host}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Certificate (PEM)</label>
+            <textarea value={uploadCertPEM} onChange={e => setUploadCertPEM(e.target.value)} rows={4}
+              placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono text-foreground outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Private Key (PEM)</label>
+            <textarea value={uploadKeyPEM} onChange={e => setUploadKeyPEM(e.target.value)} rows={4}
+              placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono text-foreground outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Chain (optional)</label>
+            <textarea value={uploadChain} onChange={e => setUploadChain(e.target.value)} rows={2}
+              placeholder="Intermediate CA certificate (optional)"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-mono text-foreground outline-none" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleUploadCert} disabled={uploading || !uploadHost || uploadHost === '_new' || !uploadCertPEM || !uploadKeyPEM}
+              className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              {uploading ? <RefreshCw size={12} className="animate-spin" /> : <Upload size={12} />} Upload
+            </button>
+            <button onClick={() => setUploadHost('')} className="rounded-md bg-accent px-4 py-2 text-sm text-card-foreground hover:bg-accent/80">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
