@@ -880,6 +880,51 @@ export const fetchDeployStatus = (domain: string) =>
   api<DeployStatus>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`);
 export const fetchDeploys = () => api<DeployStatus[]>('/api/v1/deploys');
 
+// ── Database Explorer ──
+
+export const fetchDBTables = (db: string) =>
+  api<{ name: string; rows: string; data_size: string; engine: string }[]>(`/api/v1/database/explore/${encodeURIComponent(db)}/tables`);
+export const fetchDBColumns = (db: string, table: string) =>
+  api<{ name: string; type: string; nullable: string; key: string; default: string; extra: string }[]>(`/api/v1/database/explore/${encodeURIComponent(db)}/tables/${encodeURIComponent(table)}`);
+export const runDBQuery = (db: string, sql: string, limit?: number) =>
+  api<{ columns: string[]; rows: string[][]; count: number }>(`/api/v1/database/explore/${encodeURIComponent(db)}/query`, { method: 'POST', body: JSON.stringify({ sql, limit }) });
+
+// ── SSL Certificate Upload ──
+
+export const uploadCert = (host: string, cert: string, key: string, chain?: string) =>
+  api<{ status: string }>(`/api/v1/certs/${encodeURIComponent(host)}/upload`, { method: 'POST', body: JSON.stringify({ cert, key, chain }) });
+
+// ── Bulk Domain Import ──
+
+export const bulkImportDomains = (domains: { host: string; type?: string; root?: string; ssl?: string }[]) =>
+  api<{ added: string[]; skipped: string[] }>('/api/v1/domains/import', { method: 'POST', body: JSON.stringify({ domains }) });
+
+// ── 2FA Recovery Codes ──
+
+export const generateRecoveryCodes = () =>
+  api<{ codes: string[]; count: number }>('/api/v1/auth/2fa/recovery-codes', { method: 'POST' });
+export const useRecoveryCode = (code: string) =>
+  api<{ status: string }>('/api/v1/auth/2fa/recover', { method: 'POST', body: JSON.stringify({ code }) });
+
+// ── Notification Preferences ──
+
+export const fetchNotifyPrefs = () => api<Record<string, any>>('/api/v1/settings/notifications');
+export const saveNotifyPrefs = (prefs: Record<string, any>) =>
+  api<{ status: string }>('/api/v1/settings/notifications', { method: 'PUT', body: JSON.stringify(prefs) });
+
+// ── White-Label Branding ──
+
+export interface BrandingConfig {
+  name?: string;
+  logo_url?: string;
+  favicon_url?: string;
+  primary_color?: string;
+  footer_text?: string;
+}
+export const fetchBranding = () => api<BrandingConfig>('/api/v1/settings/branding');
+export const saveBranding = (b: BrandingConfig) =>
+  api<{ status: string }>('/api/v1/settings/branding', { method: 'PUT', body: JSON.stringify(b) });
+
 // ── Web Terminal ──
 
 export function terminalWSURL(pin?: string): string {

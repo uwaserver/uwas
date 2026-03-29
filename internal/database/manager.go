@@ -703,7 +703,20 @@ func backtick(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
-// validDBIdentifier checks that a database/user name contains only safe characters.
+// ValidDBIdentifier checks that a database/user name contains only safe characters.
+func ValidDBIdentifier(s string) bool {
+	return validDBIdentifier(s)
+}
+
+// EscapeSQL escapes a string for safe use in SQL statements.
+func EscapeSQL(s string) string { return escapeSQL(s) }
+
+// BacktickID wraps a name in backticks for use as a SQL identifier.
+func BacktickID(s string) string { return backtick(s) }
+
+// RunSQL executes a SQL statement and returns the output.
+func RunSQL(sql string) (string, error) { return runMySQLFn(sql) }
+
 func validDBIdentifier(s string) bool {
 	if s == "" || len(s) > 64 {
 		return false
