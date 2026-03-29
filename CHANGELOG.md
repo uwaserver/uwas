@@ -5,6 +5,18 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.32] - 2026-03-30
+
+### Fixes
+
+- **Terminal handler nil logger panic** - Linux terminal handler now guards logger calls, preventing nil-pointer panic paths when logger is not initialized.
+- **CI stability** - `internal/admin` terminal handler test no longer fails in Linux CI due to the nil logger panic path.
+
+### Verification
+
+- `go test -p 1 ./...` passes.
+- GitHub Actions CI run `23718438056` passed.
+
 ## [0.0.31] - 2026-03-29
 
 ### Fixes
