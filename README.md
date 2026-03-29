@@ -12,6 +12,9 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
   <img src="assets/banner.jpeg" alt="UWAS Logo" width="100%">
 </p>
 
+> **Note:** This project is currently in development and not yet ready for production use.
+
+
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![CI](https://github.com/uwaserver/uwas/actions/workflows/ci.yml/badge.svg)](https://github.com/uwaserver/uwas/actions/workflows/ci.yml)
@@ -44,7 +47,7 @@ One binary. Zero hassle.
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **36-page Dashboard** — React 19 admin panel with dark/light theme
+- **38-page Dashboard** — React 19 admin panel with dark/light theme
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
 - **WordPress Management** — One-click install, plugin updates, debug mode, error log viewer
 - **DNS Zone Editor** — Full CRUD for Cloudflare, Hetzner, DigitalOcean, Route53
@@ -305,22 +308,22 @@ internal/
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
   htaccess/              → .htaccess parser and converter
-web/dashboard/           → React 19 SPA (36 pages, Vite + TypeScript + Tailwind)
+web/dashboard/           → React 19 SPA (38 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Dashboard
 
-UWAS includes a 35-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
+UWAS includes a 38-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
 
 **Sites:** Dashboard, Domains, Domain Detail, Topology, Certificates, DNS Zone Editor, WordPress, Clone/Staging, Migration, File Manager
 
-**Server:** PHP, PHP Config, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
+**Server:** PHP, PHP Config, Applications, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 
 **Performance:** Cache, Metrics, Analytics, Logs
 
 **Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users
 
-**System:** Config Editor, Webhooks, Backups, Updates, Doctor, Settings
+**System:** Config Editor, Webhooks, Backups, Terminal, Updates, Doctor, Settings
 
 **Auth:** Login (with 2FA/TOTP support)
 

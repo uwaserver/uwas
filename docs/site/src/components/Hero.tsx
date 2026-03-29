@@ -2,9 +2,9 @@ import { ArrowRight, GitBranch } from 'lucide-react'
 
 const stats = [
   { value: '0', label: 'Dependencies', sub: 'ext' },
-  { value: '45', label: 'Test Packages', sub: 'all passing' },
-  { value: '35', label: 'Dashboard Pages', sub: 'built-in' },
-  { value: '170+', label: 'API Endpoints', sub: 'RESTful' },
+  { value: '50+', label: 'Go Packages', sub: 'all tested' },
+  { value: '38', label: 'Dashboard Pages', sub: 'built-in' },
+  { value: '200+', label: 'API Endpoints', sub: 'RESTful' },
   { value: '~14MB', label: 'Binary', sub: 'statically linked' },
 ]
 
@@ -26,7 +26,7 @@ export default function Hero() {
           style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-secondary)' }}
         >
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          v1.0 — Production Ready
+          v0.0.x - Active Development
         </div>
 
         {/* Heading */}
@@ -45,7 +45,7 @@ export default function Hero() {
         >
           A high-performance web server + hosting panel replacing Apache + Nginx + Varnish + Caddy + cPanel.
           Auto HTTPS, built-in cache, PHP/FastCGI, reverse proxy, WordPress management, WAF,
-          and a 35-page dashboard — all in a single binary. Written in pure Go.
+          and a 38-page dashboard - all in a single binary. Written in pure Go.
         </p>
 
         {/* CTA Buttons */}
