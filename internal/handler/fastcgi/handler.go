@@ -116,9 +116,13 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	}
 
 	// Read body fully to detect empty HTML responses (WSOD)
-	var bodyBytes []byte
-	if body != nil {
-		bodyBytes, _ = io.ReadAll(body)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		h.logger.Warn("fastcgi body read failed",
+			"host", domain.Host,
+			"script", scriptFilename,
+			"error", err,
+		)
 	}
 
 	// --- WSOD detection: headers present but body empty ---

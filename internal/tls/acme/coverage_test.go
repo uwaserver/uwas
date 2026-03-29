@@ -1,6 +1,7 @@
 package acme
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -364,7 +365,15 @@ func TestLoadOrCreateAccountKeyExisting(t *testing.T) {
 	}
 
 	// Verify it's the same key.
-	if c.accountKey.PublicKey.X.Cmp(key.PublicKey.X) != 0 {
+	gotKeyBytes, err := ecdsaToECDH(&c.accountKey.PublicKey)
+	if err != nil {
+		t.Fatalf("ecdsaToECDH loaded key: %v", err)
+	}
+	wantKeyBytes, err := ecdsaToECDH(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("ecdsaToECDH source key: %v", err)
+	}
+	if !bytes.Equal(gotKeyBytes, wantKeyBytes) {
 		t.Error("loaded key should match the saved key")
 	}
 }

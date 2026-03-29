@@ -384,7 +384,7 @@ func checkCLI_Disk() cliCheck {
 	if err != nil {
 		return cliCheck{name: "Disk", status: "ok", message: "OK"}
 	}
-	lines := fmt.Sprintf("%s", out)
+	lines := string(out)
 	fields := splitFields(lines)
 	if len(fields) > 4 {
 		return cliCheck{name: "Disk", status: "ok", message: fields[4] + " used"}
@@ -453,9 +453,7 @@ func phpPkgs(mods []string) string {
 func splitFields(s string) []string {
 	lines := make([]string, 0)
 	for _, line := range splitLines(s) {
-		for _, f := range splitWhitespace(line) {
-			lines = append(lines, f)
-		}
+		lines = append(lines, splitWhitespace(line)...)
 	}
 	return lines
 }

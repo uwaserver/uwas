@@ -574,7 +574,7 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 	// Security: enforce open_basedir per domain (chroot PHP to web root + tmp).
 	// NOTE: Caller must hold domainMu (or not depend on lock) since buildDomainINI
 	// is invoked from StartDomain which already holds domainMu.Lock().
-	domainInst, _ := m.domainMap[domain]
+	domainInst := m.domainMap[domain]
 	if domainInst != nil {
 		// Security: UWAS enforced — domain isolation
 		lines = append(lines, "; Security: UWAS enforced — domain isolation")

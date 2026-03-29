@@ -11,37 +11,37 @@ import (
 
 // Manager tracks bandwidth usage per domain and enforces limits.
 type Manager struct {
-	mu       sync.RWMutex
-	limits   map[string]config.BandwidthConfig // host -> config
-	usage    map[string]*DomainUsage           // host -> usage
-	alertFn  func(host string, limitType string, current, limit int64)
+	mu      sync.RWMutex
+	limits  map[string]config.BandwidthConfig // host -> config
+	usage   map[string]*DomainUsage           // host -> usage
+	alertFn func(host string, limitType string, current, limit int64)
 }
 
 // DomainUsage tracks bandwidth usage for a single domain.
 type DomainUsage struct {
-	mu            sync.Mutex
-	MonthlyBytes  int64     `json:"monthly_bytes"`
-	DailyBytes    int64     `json:"daily_bytes"`
-	LastReset     time.Time `json:"last_reset"`
-	DailyReset    time.Time `json:"daily_reset"`
-	LastUpdated   time.Time `json:"last_updated"`
-	Blocked       bool      `json:"blocked"`
-	Throttled     bool      `json:"throttled"`
+	mu           sync.Mutex
+	MonthlyBytes int64     `json:"monthly_bytes"`
+	DailyBytes   int64     `json:"daily_bytes"`
+	LastReset    time.Time `json:"last_reset"`
+	DailyReset   time.Time `json:"daily_reset"`
+	LastUpdated  time.Time `json:"last_updated"`
+	Blocked      bool      `json:"blocked"`
+	Throttled    bool      `json:"throttled"`
 }
 
 // Status represents the current bandwidth status for a domain.
 type Status struct {
-	Host          string    `json:"host"`
-	MonthlyBytes  int64     `json:"monthly_bytes"`
-	DailyBytes    int64     `json:"daily_bytes"`
-	MonthlyLimit  int64     `json:"monthly_limit"`
-	DailyLimit    int64     `json:"daily_limit"`
-	MonthlyPct    float64   `json:"monthly_pct"`
-	DailyPct      float64   `json:"daily_pct"`
-	Blocked       bool      `json:"blocked"`
-	Throttled     bool      `json:"throttled"`
-	LastReset     time.Time `json:"last_reset"`
-	DailyReset    time.Time `json:"daily_reset"`
+	Host         string    `json:"host"`
+	MonthlyBytes int64     `json:"monthly_bytes"`
+	DailyBytes   int64     `json:"daily_bytes"`
+	MonthlyLimit int64     `json:"monthly_limit"`
+	DailyLimit   int64     `json:"daily_limit"`
+	MonthlyPct   float64   `json:"monthly_pct"`
+	DailyPct     float64   `json:"daily_pct"`
+	Blocked      bool      `json:"blocked"`
+	Throttled    bool      `json:"throttled"`
+	LastReset    time.Time `json:"last_reset"`
+	DailyReset   time.Time `json:"daily_reset"`
 }
 
 // NewManager creates a new bandwidth manager.
@@ -271,7 +271,7 @@ func (m *Manager) Middleware() func(http.Handler) http.Handler {
 			if hasLimit {
 				// Check if blocked before processing
 				m.mu.RLock()
-				usage, _ := m.usage[host]
+				usage := m.usage[host]
 				m.mu.RUnlock()
 
 				if usage != nil {
@@ -297,8 +297,8 @@ func (m *Manager) Middleware() func(http.Handler) http.Handler {
 // responseWriter wraps http.ResponseWriter to track bytes written.
 type responseWriter struct {
 	http.ResponseWriter
-	host       string
-	manager    *Manager
+	host         string
+	manager      *Manager
 	bytesWritten int64
 	wroteHeader  bool
 }

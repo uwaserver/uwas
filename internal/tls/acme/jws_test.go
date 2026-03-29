@@ -521,7 +521,10 @@ func TestLoadOrCreateAccountKey(t *testing.T) {
 	}
 
 	// Save the created key for comparison
-	firstKeyX := c.accountKey.PublicKey.X.Bytes()
+	firstKeyBytes, err := ecdsaToECDH(&c.accountKey.PublicKey)
+	if err != nil {
+		t.Fatalf("ecdsaToECDH first key: %v", err)
+	}
 
 	// Second call with a fresh client: should load the existing key from disk
 	c2 := NewClient("https://acme.example.com/directory", dir, log)
@@ -532,8 +535,11 @@ func TestLoadOrCreateAccountKey(t *testing.T) {
 		t.Fatal("accountKey should be set after load")
 	}
 
-	secondKeyX := c2.accountKey.PublicKey.X.Bytes()
-	if !bytes.Equal(firstKeyX, secondKeyX) {
+	secondKeyBytes, err := ecdsaToECDH(&c2.accountKey.PublicKey)
+	if err != nil {
+		t.Fatalf("ecdsaToECDH second key: %v", err)
+	}
+	if !bytes.Equal(firstKeyBytes, secondKeyBytes) {
 		t.Error("loaded key should match the originally created key")
 	}
 }

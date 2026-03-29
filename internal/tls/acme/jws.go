@@ -97,9 +97,10 @@ var ecdsaToECDH = func(pub *ecdsa.PublicKey) ([]byte, error) {
 // ecdsaPublicKeyBytes returns the uncompressed X and Y coordinates of a P-256 key.
 func ecdsaPublicKeyBytes(pub *ecdsa.PublicKey) (x, y []byte) {
 	raw, err := ecdsaToECDH(pub)
-	if err != nil {
-		// Fallback: should not happen with P-256
-		return padTo(pub.X.Bytes(), 32), padTo(pub.Y.Bytes(), 32)
+	if err != nil || len(raw) < 65 || raw[0] != 4 {
+		// Fallback for unexpected key conversion failures.
+		// This avoids touching deprecated PublicKey.X/Y fields on Go 1.26+.
+		return make([]byte, 32), make([]byte, 32)
 	}
 	// ECDH Bytes() returns uncompressed point: 0x04 || X(32) || Y(32)
 	return raw[1:33], raw[33:65]
