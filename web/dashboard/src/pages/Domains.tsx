@@ -717,19 +717,35 @@ export default function Domains() {
               <>
                 <p className="mb-4 text-sm text-muted-foreground">Quick Add &mdash; choose a template or start from scratch</p>
                 <div className="mb-6 grid grid-cols-2 gap-3">
-                  {(Object.entries(templates) as [string, TemplateConfig][]).map(([key, tpl]) => (
-                    <button
-                      key={key}
-                      onClick={() => selectTemplate(key as TemplateName)}
-                      className={`flex items-center gap-3 rounded-lg border p-4 text-left transition hover:ring-1 hover:ring-blue-500 ${tpl.color}`}
-                    >
-                      {tpl.icon}
-                      <div>
-                        <p className="text-sm font-semibold">{tpl.label}</p>
-                        <p className="text-xs opacity-70">{tpl.description}</p>
-                      </div>
-                    </button>
-                  ))}
+                  {(Object.entries(templates) as [string, TemplateConfig][]).map(([key, tpl]) => {
+                    const needsPHP = tpl.form.type === 'php';
+                    const phpMissing = needsPHP && phpInstalls.filter(p => p.sapi !== 'cli').length === 0;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => {
+                          if (phpMissing) return;
+                          selectTemplate(key as TemplateName);
+                        }}
+                        disabled={phpMissing}
+                        className={`flex items-center gap-3 rounded-lg border p-4 text-left transition ${
+                          phpMissing
+                            ? 'opacity-50 cursor-not-allowed border-border'
+                            : `hover:ring-1 hover:ring-blue-500 ${tpl.color}`
+                        }`}
+                      >
+                        {tpl.icon}
+                        <div>
+                          <p className="text-sm font-semibold">{tpl.label}</p>
+                          {phpMissing ? (
+                            <p className="text-xs text-red-400">PHP not installed — <a href="/_uwas/dashboard/php" className="underline hover:text-red-300" onClick={e => e.stopPropagation()}>Install PHP first</a></p>
+                          ) : (
+                            <p className="text-xs opacity-70">{tpl.description}</p>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   onClick={() => selectTemplate('static')}
@@ -767,6 +783,11 @@ export default function Domains() {
                     <select id="add-type" value={form.type} onChange={e => patchField('type', e.target.value)} className={selectCls}>
                       {domainTypes.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
+                    {form.type === 'php' && phpInstalls.filter(p => p.sapi !== 'cli').length === 0 && (
+                      <p className="mt-1 text-[10px] text-red-400">
+                        No PHP-FPM/CGI installed. <a href="/_uwas/dashboard/php" className="underline">Install PHP</a> first.
+                      </p>
+                    )}
                   </FormField>
                   <FormField label="SSL Mode" htmlFor="add-ssl">
                     <select id="add-ssl" value={form.ssl} onChange={e => patchField('ssl', e.target.value)} className={selectCls}>
@@ -1132,7 +1153,7 @@ export default function Domains() {
                     className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-[#475569]">
                     Cancel
                   </button>
-                  <button type="submit" disabled={submitting || !form.host.trim()}
+                  <button type="submit" disabled={submitting || !form.host.trim() || (form.type === 'php' && phpInstalls.filter(p => p.sapi !== 'cli').length === 0)}
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                     {submitting ? (editingHost ? 'Updating...' : 'Adding...') : (editingHost ? 'Update Domain' : 'Add Domain')}
                   </button>
