@@ -18,9 +18,16 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 36-page React dashboard with 179 API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 38-page React dashboard with 200+ API endpoints.
 
 One binary. Zero hassle.
+
+## Current Snapshot (v0.0.31)
+
+- **Dashboard pages:** 38 (`web/dashboard/src/pages`)
+- **Admin API routes:** 200+ (204 route registrations under `/api/v1` in `internal/admin/api.go`)
+- **Go packages:** 50+ (53 from `go list ./...`)
+- **Test status:** `go test -p 1 ./...` passing
 
 ## Features
 

@@ -5,6 +5,26 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.31] - 2026-03-29
+
+### Fixes
+
+- **PHP shutdown/restart race** - `StopDomain` / shutdown flows no longer trigger unintended auto-restart of domain PHP workers.
+- **PHP process stop safety** - stale process entries are now handled safely in `StopFPM` and `StopAll` without nil dereference risk.
+- **Conflict detection robustness** - conflict probing now supports `systemctl is-active` fallback and Apache service variants (`apache2` / `httpd`).
+- **Install reliability** - CLI install flow now returns errors for failed `mkdir`, `systemctl`, and symlink/stat operations instead of silently continuing.
+- **FastCGI response handling** - body read path simplified and hardened; empty/WSOD detection remains intact while removing dead/always-true branches.
+
+### Improvements
+
+- **Go 1.26 compatibility cleanup** - ACME JWS key-byte handling migrated away from deprecated ECDSA public key coordinate field usage in runtime and tests.
+- **Static analysis hygiene** - non-test staticcheck warnings cleaned up across core packages.
+- **Windows test portability** - test-only `echo` helper bootstrap added for CLI/PHP manager test suites where `echo` is not available as an executable.
+
+### Verification
+
+- `go test -p 1 ./...` passes on this branch after changes.
+
 ## [0.0.26] - 2026-03-28
 
 ### Major Features
