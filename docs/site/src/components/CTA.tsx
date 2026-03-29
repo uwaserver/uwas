@@ -1,4 +1,4 @@
-import { ArrowRight, Github } from 'lucide-react'
+import { ArrowRight, GitBranch } from 'lucide-react'
 
 export default function CTA() {
   return (
@@ -42,7 +42,7 @@ export default function CTA() {
                 className="inline-flex items-center gap-2 rounded-lg border bg-transparent px-6 py-3 font-medium no-underline transition-all hover:border-blue-500/50"
                 style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
               >
-                <Github className="h-4 w-4" />
+            <GitBranch className="h-4 w-4" />
                 View Source
               </a>
             </div>

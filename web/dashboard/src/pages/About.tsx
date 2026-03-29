@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Github, ExternalLink, Heart, Shield, Server, Code2, BookOpen, Scale, RefreshCw } from 'lucide-react';
+import { GitBranch, ExternalLink, Heart, Shield, Server, Code2, BookOpen, Scale, RefreshCw } from 'lucide-react';
 import { fetchSystem, fetchHealth, type SystemInfo, type HealthData } from '@/lib/api';
 
 export default function About() {
@@ -30,7 +30,7 @@ export default function About() {
             <div className="mt-3 flex flex-wrap gap-2">
               <a href="https://github.com/uwaserver/uwas" target="_blank" rel="noopener"
                 className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent">
-                <Github size={13} /> GitHub
+                  <GitBranch size={13} /> GitHub
               </a>
               <a href="https://uwaserver.com" target="_blank" rel="noopener"
                 className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent">

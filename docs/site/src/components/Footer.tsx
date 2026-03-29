@@ -1,4 +1,4 @@
-import { Github, Server, Heart } from 'lucide-react'
+import { GitBranch, Server, Heart } from 'lucide-react'
 
 const footerLinks = {
   product: [
@@ -16,7 +16,7 @@ const footerLinks = {
     { label: 'Reverse Proxy', href: 'https://github.com/uwaserver/uwas#proxy', external: true },
   ],
   community: [
-    { label: 'GitHub', href: 'https://github.com/uwaserver/uwas', external: true, icon: Github },
+  { label: 'GitHub', href: 'https://github.com/uwaserver/uwas', external: true, icon: GitBranch },
     { label: 'Issues', href: 'https://github.com/uwaserver/uwas/issues', external: true },
     { label: 'Discussions', href: 'https://github.com/uwaserver/uwas/discussions', external: true },
     { label: 'Changelog', href: 'https://github.com/uwaserver/uwas/blob/main/CHANGELOG.md', external: true },
