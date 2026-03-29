@@ -35,6 +35,7 @@ import {
   setup2FA,
   verify2FA,
   disable2FA,
+  generateRecoveryCodes,
   type HealthData,
   type SystemInfo,
 } from '@/lib/api';
@@ -130,7 +131,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 
 const SECTION_GROUPS: Record<string, SettingsTab> = {
   server: 'general', timeouts: 'general', logging: 'general', branding: 'general',
-  admin: 'security', acme: 'security', users: 'security', mcp: 'security',
+  admin: 'security', acme: 'security', users: 'security', mcp: 'security', oauth: 'security',
   cache: 'performance',
   backup: 'integrations', alerting: 'integrations', trusted_proxies: 'integrations',
 };
@@ -286,6 +287,20 @@ const SECTIONS: SectionDef[] = [
     ],
   },
   {
+    id: 'oauth',
+    title: 'OAuth2 / SSO Login',
+    icon: <Globe size={18} />,
+    iconColor: 'text-violet-400',
+    fields: [
+      { key: 'global.admin.oauth.enabled', label: 'Enable OAuth2 Login', type: 'toggle' },
+      { key: 'global.admin.oauth.google_client_id', label: 'Google Client ID', type: 'text', placeholder: 'xxxx.apps.googleusercontent.com' },
+      { key: 'global.admin.oauth.google_client_secret', label: 'Google Client Secret', type: 'secret', placeholder: 'GOCSPX-xxx' },
+      { key: 'global.admin.oauth.github_client_id', label: 'GitHub Client ID', type: 'text', placeholder: 'Iv1.xxx' },
+      { key: 'global.admin.oauth.github_client_secret', label: 'GitHub Client Secret', type: 'secret', placeholder: 'ghp_xxx' },
+      { key: 'global.admin.oauth.allowed_emails', label: 'Allowed Emails (comma-separated)', type: 'text', placeholder: 'admin@example.com, dev@example.com', help: 'Leave empty to allow any authenticated user' },
+    ],
+  },
+  {
     id: 'branding',
     title: 'White-Label Branding',
     icon: <Paintbrush size={18} />,
@@ -372,6 +387,7 @@ export default function Settings() {
   const [twoFACode, setTwoFACode] = useState('');
   const [twoFALoading, setTwoFALoading] = useState(false);
   const [twoFAError, setTwoFAError] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
 
   // Gather all field keys
   const allFields = SECTIONS.flatMap(s => s.fields);
@@ -892,6 +908,48 @@ export default function Settings() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 2FA Recovery Codes */}
+          {section.id === 'admin' && twoFA?.enabled && (
+            <div className="mt-5 border-t border-border pt-5">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recovery Codes</h3>
+              <p className="text-xs text-muted-foreground mb-3">Generate one-time recovery codes in case you lose access to your authenticator app.</p>
+              {recoveryCodes.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-4 gap-2">
+                    {recoveryCodes.map((code, i) => (
+                      <code key={i} className="rounded bg-accent px-2 py-1.5 text-center text-xs font-mono text-foreground">{code}</code>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-amber-400">Save these codes securely. Each can only be used once.</p>
+                  <button onClick={() => setRecoveryCodes([])} className="text-[10px] text-muted-foreground hover:text-foreground">Dismiss</button>
+                </div>
+              ) : (
+                <button onClick={async () => {
+                  try {
+                    const res = await generateRecoveryCodes();
+                    setRecoveryCodes(res.codes);
+                  } catch (e) { showStatus(false, (e as Error).message); }
+                }} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-card-foreground hover:bg-accent/80">
+                  <ShieldCheck size={12} /> Generate Recovery Codes
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Alerting: Test Notification button */}
+          {section.id === 'alerting' && formValues['global.alerting.enabled'] && (
+            <div className="mt-4 border-t border-border pt-4">
+              <button onClick={async () => {
+                try {
+                  await fetch('/api/v1/notify/test', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('uwas_token') || ''}` } });
+                  showStatus(true, 'Test notification sent to all configured channels');
+                } catch (e) { showStatus(false, (e as Error).message); }
+              }} className="flex items-center gap-1.5 rounded-md bg-yellow-600 px-3 py-2 text-xs font-medium text-white hover:bg-yellow-700">
+                <AlertTriangle size={12} /> Send Test Notification
+              </button>
             </div>
           )}
 
