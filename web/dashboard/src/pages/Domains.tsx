@@ -20,6 +20,7 @@ import {
 interface DomainFormState {
   host: string;
   ip: string;
+  aliases: string;
   type: string;
   root: string;
   ssl: string;
@@ -53,6 +54,7 @@ const sslModes = ['auto', 'manual', 'off'] as const;
 const emptyForm: DomainFormState = {
   host: '',
   ip: '',
+  aliases: '',
   type: 'static',
   root: '',
   ssl: 'auto',
@@ -458,6 +460,7 @@ export default function Domains() {
       const editForm: DomainFormState = {
         host: d.host,
         ip: d.ip ?? '',
+        aliases: d.aliases?.join(', ') ?? '',
         type: d.type,
         root: d.root || '',
         ssl: d.ssl?.mode ?? 'off',
@@ -509,6 +512,9 @@ export default function Domains() {
     };
 
     if (form.ip) payload.ip = form.ip;
+    if (form.aliases.trim()) {
+      payload.aliases = form.aliases.split(',').map(s => s.trim()).filter(Boolean);
+    }
 
     // Only send type-specific fields
     if (form.type === 'proxy' && form.proxyUpstreams.trim()) {
@@ -770,12 +776,19 @@ export default function Domains() {
                   )}
                 </div>
 
-                {/* Host */}
-                <FormField label="Host" htmlFor="add-host">
-                  <input id="add-host" type="text" value={form.host} onChange={e => patchField('host', e.target.value)}
-                    placeholder="example.com" required autoFocus disabled={!!editingHost}
-                    className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
-                </FormField>
+                {/* Host + Aliases */}
+                <div className="grid grid-cols-[1fr_1fr] gap-4">
+                  <FormField label="Host" htmlFor="add-host">
+                    <input id="add-host" type="text" value={form.host} onChange={e => patchField('host', e.target.value)}
+                      placeholder="example.com" required autoFocus disabled={!!editingHost}
+                      className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
+                  </FormField>
+                  <FormField label="Aliases (comma-separated)" htmlFor="add-aliases">
+                    <input id="add-aliases" type="text" value={form.aliases} onChange={e => patchField('aliases', e.target.value)}
+                      placeholder="www.example.com, blog.example.com"
+                      className={inputCls} />
+                  </FormField>
+                </div>
 
                 {/* Type + SSL + IP row */}
                 <div className="grid grid-cols-3 gap-4">

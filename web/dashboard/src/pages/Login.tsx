@@ -1,7 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound, AlertCircle, ShieldCheck, User } from 'lucide-react';
-import { setToken, setTOTPCode, fetchStats, loginUser } from '@/lib/api';
+import { setToken, setTOTPCode, fetchStats, loginUser, fetchBranding, type BrandingConfig } from '@/lib/api';
 
 type Tab = 'apikey' | 'user';
 type Step = 'login' | 'totp';
@@ -9,6 +9,11 @@ type Step = 'login' | 'totp';
 export default function Login() {
   const [tab, setTab] = useState<Tab>('apikey');
   const [step, setStep] = useState<Step>('login');
+  const [branding, setBranding] = useState<BrandingConfig>({});
+
+  useEffect(() => {
+    fetchBranding().then(setBranding).catch(() => {});
+  }, []);
 
   // API key auth
   const [key, setKey] = useState('');
@@ -94,10 +99,15 @@ export default function Login() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-xl font-bold sm:text-2xl text-white shadow-lg shadow-blue-600/25">
-            U
-          </div>
-          <h1 className="text-xl font-bold sm:text-2xl text-foreground">UWAS Dashboard</h1>
+          {branding.logo_url ? (
+            <img src={branding.logo_url} alt={branding.name || 'Dashboard'} className="mx-auto mb-4 h-14" />
+          ) : (
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-xl font-bold sm:text-2xl text-white shadow-lg shadow-blue-600/25"
+              style={branding.primary_color ? { backgroundColor: branding.primary_color } : undefined}>
+              {(branding.name || 'UWAS')[0]}
+            </div>
+          )}
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">{branding.name || 'UWAS Dashboard'}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {step === 'totp' ? 'Enter your 2FA code' : 'Sign in to manage your server'}
           </p>
