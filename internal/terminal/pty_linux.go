@@ -31,7 +31,9 @@ type resizeMsg struct {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := UpgradeWebSocket(w, r)
 	if err != nil {
-		h.Logger.Error("ws upgrade failed", "error", err)
+		if h.Logger != nil {
+			h.Logger.Error("ws upgrade failed", "error", err)
+		}
 		http.Error(w, "websocket upgrade failed", http.StatusBadRequest)
 		return
 	}
@@ -39,7 +41,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	master, slave, err := openPTY()
 	if err != nil {
-		h.Logger.Error("pty open failed", "error", err)
+		if h.Logger != nil {
+			h.Logger.Error("pty open failed", "error", err)
+		}
 		conn.WriteText([]byte("Error: " + err.Error()))
 		return
 	}
@@ -53,14 +57,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	if err := cmd.Start(); err != nil {
-		h.Logger.Error("shell start failed", "error", err)
+		if h.Logger != nil {
+			h.Logger.Error("shell start failed", "error", err)
+		}
 		conn.WriteText([]byte("Error: " + err.Error()))
 		slave.Close()
 		return
 	}
 	slave.Close()
 
-	h.Logger.Info("terminal session started", "pid", cmd.Process.Pid, "shell", h.Shell)
+	if h.Logger != nil {
+		h.Logger.Info("terminal session started", "pid", cmd.Process.Pid, "shell", h.Shell)
+	}
 
 	var wg sync.WaitGroup
 
@@ -106,7 +114,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	_ = cmd.Wait()
-	h.Logger.Info("terminal session ended", "pid", cmd.Process.Pid)
+	if h.Logger != nil {
+		h.Logger.Info("terminal session ended", "pid", cmd.Process.Pid)
+	}
 	wg.Wait()
 }
 
