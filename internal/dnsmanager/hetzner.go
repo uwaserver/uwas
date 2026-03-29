@@ -51,7 +51,7 @@ func (p *HetznerProvider) hetznerRequest(method, path string, body interface{}) 
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("Hetzner %s %s: %d — %s", method, path, resp.StatusCode, string(data))
+		return nil, fmt.Errorf("hetzner %s %s: %d - %s", method, path, resp.StatusCode, string(data))
 	}
 	return data, nil
 }
@@ -97,11 +97,11 @@ func (p *HetznerProvider) ListRecords(zoneID string) ([]Record, error) {
 	}
 	var resp struct {
 		Records []struct {
-			ID      string `json:"id"`
-			Type    string `json:"type"`
-			Name    string `json:"name"`
-			Value   string `json:"value"`
-			TTL     int    `json:"ttl"`
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Name  string `json:"name"`
+			Value string `json:"value"`
+			TTL   int    `json:"ttl"`
 		} `json:"records"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
@@ -124,7 +124,9 @@ func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, erro
 		return nil, err
 	}
 	var resp struct {
-		Record struct{ ID string `json:"id"` } `json:"record"`
+		Record struct {
+			ID string `json:"id"`
+		} `json:"record"`
 	}
 	json.Unmarshal(data, &resp)
 	rec.ID = resp.Record.ID

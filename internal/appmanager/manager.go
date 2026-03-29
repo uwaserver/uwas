@@ -20,10 +20,10 @@ import (
 // AppInstance describes a running application process.
 type AppInstance struct {
 	Domain    string            `json:"domain"`
-	Runtime   string            `json:"runtime"`    // "node", "python", "ruby", "go", "custom"
-	Command   string            `json:"command"`    // actual command being run
-	Port      int               `json:"port"`       // port the app listens on
-	PID       int               `json:"pid"`        // OS process ID (0 if not running)
+	Runtime   string            `json:"runtime"` // "node", "python", "ruby", "go", "custom"
+	Command   string            `json:"command"` // actual command being run
+	Port      int               `json:"port"`    // port the app listens on
+	PID       int               `json:"pid"`     // OS process ID (0 if not running)
 	Running   bool              `json:"running"`
 	Uptime    string            `json:"uptime,omitempty"` // human-readable uptime
 	StartedAt *time.Time        `json:"started_at,omitempty"`
@@ -31,12 +31,12 @@ type AppInstance struct {
 }
 
 type appProcess struct {
-	domain    string
-	runtime   string
-	command   string
-	port      int
-	workDir   string
-	env       map[string]string
+	domain      string
+	runtime     string
+	command     string
+	port        int
+	workDir     string
+	env         map[string]string
 	autoRestart bool
 	cmd         *exec.Cmd
 	startedAt   time.Time
@@ -200,8 +200,8 @@ func (m *Manager) startProcess(app *appProcess) error {
 	// Build environment
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("PORT=%d", app.port))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("HOST=0.0.0.0"))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("NODE_ENV=production"))
+	cmd.Env = append(cmd.Env, "HOST=0.0.0.0")
+	cmd.Env = append(cmd.Env, "NODE_ENV=production")
 	for k, v := range app.env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
@@ -409,9 +409,9 @@ type AppStats struct {
 	Domain    string  `json:"domain"`
 	PID       int     `json:"pid"`
 	Running   bool    `json:"running"`
-	CPUPct    float64 `json:"cpu_percent"`  // percentage of one core
-	MemoryRSS int64   `json:"memory_rss"`   // resident set size in bytes
-	MemoryVMS int64   `json:"memory_vms"`   // virtual memory size in bytes
+	CPUPct    float64 `json:"cpu_percent"` // percentage of one core
+	MemoryRSS int64   `json:"memory_rss"`  // resident set size in bytes
+	MemoryVMS int64   `json:"memory_vms"`  // virtual memory size in bytes
 	Uptime    string  `json:"uptime,omitempty"`
 }
 

@@ -53,7 +53,7 @@ func (s *ServeCommand) Run(args []string) error {
 
 	// If user explicitly specified a config path that doesn't exist, fail immediately
 	if !found && *configPath != "" {
-		return fmt.Errorf("load config: read config: open %s: The system cannot find the file specified.", *configPath)
+		return fmt.Errorf("load config: read config: open %s: The system cannot find the file specified", *configPath)
 	}
 
 	if !found {

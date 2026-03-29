@@ -118,7 +118,7 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 
 	case "fedora":
 		info.Commands = []string{
-			fmt.Sprintf("dnf install -y php-cgi php-fpm php-mysqlnd php-gd php-mbstring"),
+			"dnf install -y php-cgi php-fpm php-mysqlnd php-gd php-mbstring",
 		}
 		info.Notes = "Fedora ships recent PHP versions by default."
 
