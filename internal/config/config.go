@@ -79,13 +79,24 @@ type TimeoutConfig struct {
 }
 
 type AdminConfig struct {
-	Listen     string `yaml:"listen"`
-	Enabled    bool   `yaml:"enabled"`
-	APIKey     string `yaml:"api_key"`
-	PinCode    string `yaml:"pin_code,omitempty"`    // required for destructive operations (delete, uninstall)
-	TOTPSecret string `yaml:"totp_secret,omitempty"` // base32-encoded TOTP secret for 2FA
-	TLSCert    string `yaml:"tls_cert,omitempty"`    // path to TLS certificate for admin API
-	TLSKey     string `yaml:"tls_key,omitempty"`     // path to TLS key for admin API
+	Listen        string         `yaml:"listen"`
+	Enabled       bool           `yaml:"enabled"`
+	APIKey        string         `yaml:"api_key"`
+	PinCode       string         `yaml:"pin_code,omitempty"`
+	TOTPSecret    string         `yaml:"totp_secret,omitempty"`
+	TLSCert       string         `yaml:"tls_cert,omitempty"`
+	TLSKey        string         `yaml:"tls_key,omitempty"`
+	RecoveryCodes []string       `yaml:"recovery_codes,omitempty"` // 2FA recovery codes
+	Branding      BrandingConfig `yaml:"branding,omitempty"`
+}
+
+// BrandingConfig allows white-labeling the dashboard.
+type BrandingConfig struct {
+	Name      string `yaml:"name,omitempty" json:"name,omitempty"`           // e.g. "My Hosting Panel"
+	LogoURL   string `yaml:"logo_url,omitempty" json:"logo_url,omitempty"`   // URL or data: URI
+	FaviconURL string `yaml:"favicon_url,omitempty" json:"favicon_url,omitempty"`
+	PrimaryColor string `yaml:"primary_color,omitempty" json:"primary_color,omitempty"` // hex color
+	FooterText  string `yaml:"footer_text,omitempty" json:"footer_text,omitempty"`
 }
 
 type MCPConfig struct {

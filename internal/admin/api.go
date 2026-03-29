@@ -186,6 +186,22 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
 	s.mux.HandleFunc("GET /api/v1/certs", s.handleCerts)
 	s.mux.HandleFunc("POST /api/v1/certs/{host}/renew", s.handleCertRenew)
+	s.mux.HandleFunc("POST /api/v1/certs/{host}/upload", s.handleCertUpload)
+
+	// Bulk domain import
+	s.mux.HandleFunc("POST /api/v1/domains/import", s.handleBulkDomainImport)
+
+	// 2FA recovery codes
+	s.mux.HandleFunc("POST /api/v1/auth/2fa/recovery-codes", s.handleGenRecoveryCodes)
+	s.mux.HandleFunc("POST /api/v1/auth/2fa/recover", s.handleUseRecoveryCode)
+
+	// Notification preferences
+	s.mux.HandleFunc("GET /api/v1/settings/notifications", s.handleNotifyPrefsGet)
+	s.mux.HandleFunc("PUT /api/v1/settings/notifications", s.handleNotifyPrefsPut)
+
+	// White-label branding
+	s.mux.HandleFunc("GET /api/v1/settings/branding", s.handleBrandingGet)
+	s.mux.HandleFunc("PUT /api/v1/settings/branding", s.handleBrandingPut)
 	s.mux.HandleFunc("GET /api/v1/domains/{host}", s.handleDomainDetail)
 	s.mux.HandleFunc("GET /api/v1/config/raw", s.handleConfigRawGet)
 	s.mux.HandleFunc("PUT /api/v1/config/raw", s.handleConfigRawPut)
@@ -310,6 +326,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/database/docker/{name}/databases/{db}", s.handleDockerDBDropDatabase)
 	s.mux.HandleFunc("GET /api/v1/database/docker/{name}/databases/{db}/export", s.handleDockerDBExport)
 	s.mux.HandleFunc("POST /api/v1/database/docker/{name}/databases/{db}/import", s.handleDockerDBImport)
+
+	// Database explorer (SQL editor, table browser)
+	s.mux.HandleFunc("GET /api/v1/database/explore/{db}/tables", s.handleDBExploreTables)
+	s.mux.HandleFunc("GET /api/v1/database/explore/{db}/tables/{table}", s.handleDBExploreColumns)
+	s.mux.HandleFunc("POST /api/v1/database/explore/{db}/query", s.handleDBExploreQuery)
 
 	s.mux.HandleFunc("POST /api/v1/database/start", s.handleDBStart)
 	s.mux.HandleFunc("POST /api/v1/database/stop", s.handleDBStop)

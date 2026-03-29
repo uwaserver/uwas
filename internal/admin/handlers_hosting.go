@@ -1,6 +1,7 @@
 package admin
 
 import (
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -2173,4 +2174,357 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 		"domains_added": added,
 		"errors":        result.Errors,
 	})
+}
+
+// ── Database Explorer ──────────────────────────────────────────────
+
+func (s *Server) handleDBExploreTables(w http.ResponseWriter, r *http.Request) {
+	db := r.PathValue("db")
+	if db == "" {
+		jsonError(w, "database name required", http.StatusBadRequest)
+		return
+	}
+	if !database.ValidDBIdentifier(db) {
+		jsonError(w, "invalid database name", http.StatusBadRequest)
+		return
+	}
+	sql := fmt.Sprintf("SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, ENGINE, TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = '%s' ORDER BY TABLE_NAME", database.EscapeSQL(db))
+	out, err := database.RunSQL(sql)
+	if err != nil {
+		jsonError(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Parse tab-separated output into JSON
+	var tables []map[string]string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 6 {
+			tables = append(tables, map[string]string{
+				"name":      fields[0],
+				"rows":      fields[1],
+				"data_size": fields[2],
+				"index_size": fields[3],
+				"engine":    fields[4],
+				"collation": fields[5],
+			})
+		}
+	}
+	jsonResponse(w, tables)
+}
+
+func (s *Server) handleDBExploreColumns(w http.ResponseWriter, r *http.Request) {
+	db := r.PathValue("db")
+	table := r.PathValue("table")
+	if !database.ValidDBIdentifier(db) || !database.ValidDBIdentifier(table) {
+		jsonError(w, "invalid name", http.StatusBadRequest)
+		return
+	}
+	sql := fmt.Sprintf("SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION", database.EscapeSQL(db), database.EscapeSQL(table))
+	out, err := database.RunSQL(sql)
+	if err != nil {
+		jsonError(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var columns []map[string]string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 6 {
+			columns = append(columns, map[string]string{
+				"name":     fields[0],
+				"type":     fields[1],
+				"nullable": fields[2],
+				"key":      fields[3],
+				"default":  fields[4],
+				"extra":    fields[5],
+			})
+		}
+	}
+	jsonResponse(w, columns)
+}
+
+func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
+	db := r.PathValue("db")
+	if !database.ValidDBIdentifier(db) {
+		jsonError(w, "invalid database name", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		SQL   string `json:"sql"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.SQL == "" {
+		jsonError(w, "sql required", http.StatusBadRequest)
+		return
+	}
+	// Safety: block dangerous statements
+	upper := strings.ToUpper(strings.TrimSpace(req.SQL))
+	if strings.HasPrefix(upper, "DROP DATABASE") || strings.HasPrefix(upper, "DROP USER") ||
+		strings.HasPrefix(upper, "GRANT") || strings.HasPrefix(upper, "REVOKE") ||
+		strings.HasPrefix(upper, "CREATE USER") || strings.HasPrefix(upper, "ALTER USER") {
+		jsonError(w, "statement not allowed in explorer", http.StatusForbidden)
+		return
+	}
+	// Add LIMIT if SELECT and no LIMIT present
+	if strings.HasPrefix(upper, "SELECT") && !strings.Contains(upper, "LIMIT") {
+		limit := req.Limit
+		if limit <= 0 || limit > 1000 {
+			limit = 100
+		}
+		req.SQL = req.SQL + fmt.Sprintf(" LIMIT %d", limit)
+	}
+	// Use specific database
+	fullSQL := fmt.Sprintf("USE %s;\n%s", database.BacktickID(db), req.SQL)
+	out, err := database.RunSQL(fullSQL)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Parse tab-separated into rows
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) == 0 {
+		jsonResponse(w, map[string]any{"columns": []string{}, "rows": [][]string{}, "affected": out})
+		return
+	}
+	headers := strings.Split(lines[0], "\t")
+	var rows [][]string
+	for _, line := range lines[1:] {
+		if line != "" {
+			rows = append(rows, strings.Split(line, "\t"))
+		}
+	}
+	jsonResponse(w, map[string]any{
+		"columns": headers,
+		"rows":    rows,
+		"count":   len(rows),
+	})
+}
+
+// ── SSL Certificate Upload ─────────────────────────────────────────
+
+func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Cert  string `json:"cert"`
+		Key   string `json:"key"`
+		Chain string `json:"chain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Cert == "" || req.Key == "" {
+		jsonError(w, "cert and key required (PEM format)", http.StatusBadRequest)
+		return
+	}
+
+	certDir := filepath.Join("/var/lib/uwas/certs", host)
+	os.MkdirAll(certDir, 0700)
+	if err := os.WriteFile(filepath.Join(certDir, "cert.pem"), []byte(req.Cert), 0600); err != nil {
+		jsonError(w, "write cert: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(certDir, "key.pem"), []byte(req.Key), 0600); err != nil {
+		jsonError(w, "write key: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if req.Chain != "" {
+		os.WriteFile(filepath.Join(certDir, "chain.pem"), []byte(req.Chain), 0600)
+	}
+
+	// Update domain SSL mode to manual
+	s.configMu.Lock()
+	for i, d := range s.config.Domains {
+		if d.Host == host {
+			s.config.Domains[i].SSL.Mode = "manual"
+			s.config.Domains[i].SSL.Cert = filepath.Join(certDir, "cert.pem")
+			s.config.Domains[i].SSL.Key = filepath.Join(certDir, "key.pem")
+			break
+		}
+	}
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.notifyDomainChange()
+
+	s.RecordAudit("cert.upload", host, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "uploaded", "host": host})
+}
+
+// ── Bulk Domain Import ─────────────────────────────────────────────
+
+func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Domains []struct {
+			Host string `json:"host"`
+			Type string `json:"type"`
+			Root string `json:"root"`
+			SSL  string `json:"ssl"`
+		} `json:"domains"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	s.configMu.Lock()
+	existing := map[string]bool{}
+	for _, d := range s.config.Domains {
+		existing[d.Host] = true
+	}
+
+	var added, skipped []string
+	webRoot := s.config.Global.WebRoot
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
+	for _, d := range req.Domains {
+		if d.Host == "" || existing[d.Host] {
+			skipped = append(skipped, d.Host)
+			continue
+		}
+		dtype := d.Type
+		if dtype == "" {
+			dtype = "static"
+		}
+		sslMode := d.SSL
+		if sslMode == "" {
+			sslMode = "auto"
+		}
+		root := d.Root
+		if root == "" {
+			root = filepath.Join(webRoot, d.Host, "public_html")
+		}
+		s.config.Domains = append(s.config.Domains, config.Domain{
+			Host: d.Host, Type: dtype, Root: root,
+			SSL: config.SSLConfig{Mode: sslMode},
+		})
+		added = append(added, d.Host)
+		existing[d.Host] = true
+	}
+	s.configMu.Unlock()
+
+	if len(added) > 0 {
+		s.persistConfig()
+		s.notifyDomainChange()
+		s.RecordAudit("domain.bulk_import", fmt.Sprintf("%d added", len(added)), ip, true)
+	}
+	jsonResponse(w, map[string]any{"added": added, "skipped": skipped})
+}
+
+// ── 2FA Recovery Codes ─────────────────────────────────────────────
+
+func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	codes := make([]string, 8)
+	for i := range codes {
+		b := make([]byte, 4)
+		crand.Read(b)
+		codes[i] = fmt.Sprintf("%x", b)
+	}
+	// Store hashed codes in config
+	s.configMu.Lock()
+	s.config.Global.Admin.RecoveryCodes = codes
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.RecordAudit("2fa.recovery_codes.generated", "", requestIP(r), true)
+	jsonResponse(w, map[string]any{"codes": codes, "count": len(codes)})
+}
+
+func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	s.configMu.Lock()
+	found := false
+	for i, c := range s.config.Global.Admin.RecoveryCodes {
+		if c == req.Code {
+			// Remove used code
+			s.config.Global.Admin.RecoveryCodes = append(
+				s.config.Global.Admin.RecoveryCodes[:i],
+				s.config.Global.Admin.RecoveryCodes[i+1:]...,
+			)
+			found = true
+			break
+		}
+	}
+	s.configMu.Unlock()
+	if !found {
+		jsonError(w, "invalid recovery code", http.StatusUnauthorized)
+		return
+	}
+	s.persistConfig()
+	s.RecordAudit("2fa.recovery_code.used", "", requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+// ── Notification Preferences ───────────────────────────────────────
+
+func (s *Server) handleNotifyPrefsGet(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	prefs := map[string]any{
+		"alerting": s.config.Global.Alerting,
+		"webhooks": s.config.Global.Webhooks,
+	}
+	s.configMu.RUnlock()
+	jsonResponse(w, prefs)
+}
+
+func (s *Server) handleNotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Alerting config.AlertingConfig `json:"alerting"`
+		Webhooks []config.WebhookConfig `json:"webhooks"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	s.configMu.Lock()
+	s.config.Global.Alerting = req.Alerting
+	s.config.Global.Webhooks = req.Webhooks
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.RecordAudit("settings.notifications", "updated", requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// ── White-Label Branding ───────────────────────────────────────────
+
+func (s *Server) handleBrandingGet(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	branding := s.config.Global.Admin.Branding
+	s.configMu.RUnlock()
+	jsonResponse(w, branding)
+}
+
+func (s *Server) handleBrandingPut(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var branding config.BrandingConfig
+	if err := json.NewDecoder(r.Body).Decode(&branding); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	s.configMu.Lock()
+	s.config.Global.Admin.Branding = branding
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.RecordAudit("settings.branding", "updated", requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "saved"})
 }
