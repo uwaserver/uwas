@@ -5,6 +5,26 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.33] - 2026-03-30
+
+### Improvements
+
+- **GitHub Actions modernization** - CI, Docs and Release workflows upgraded to latest action majors (`checkout@v6`, `setup-node@v6`, `upload-artifact@v7`, `download-artifact@v8`, `deploy-pages@v5`).
+- **Node runtime hardening** - workflows now force JavaScript actions to run on Node 24 to avoid deprecated Node 20 execution paths.
+- **Release pipeline robustness** - release publishing migrated to `gh` CLI upload flow to avoid Node action runtime drift and duplicate-tag edge behavior.
+- **Docs deploy reliability** - Pages artifact packaging now matches deploy-pages requirements with manual `tar` artifact upload.
+- **Docs/README data refresh** - dashboard/API/package metrics refreshed to current values across docs site hero and README sections.
+
+### Security
+
+- **Frontend dependency refresh** - dashboard/docs dependencies updated to latest compatible versions; `npm audit` clean on both projects.
+
+### Verification
+
+- `go test -p 1 ./...` passes.
+- CI runs: `23721368566`, `23721418078`, `23721490599` passed.
+- Docs deploy runs: `23721368569`, `23721493076` passed.
+
 ## [0.0.32] - 2026-03-30
 
 ### Fixes
