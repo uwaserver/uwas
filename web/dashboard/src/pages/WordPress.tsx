@@ -523,9 +523,19 @@ export default function WordPress() {
             <h2 className="text-sm font-semibold text-card-foreground mb-3">Prerequisites</h2>
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm">
-                <span className={`h-2.5 w-2.5 rounded-full ${installableDomains.length > 0 ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                <span className={installableDomains.length > 0 ? 'text-emerald-400' : 'text-red-400'}>
-                  PHP domain without WP {installableDomains.length > 0 ? `(${installableDomains.length} available)` : '— all PHP domains already have WordPress'}
+                <span className={`h-2.5 w-2.5 rounded-full ${phpDomains.length > 0 ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                <span className={phpDomains.length > 0 ? 'text-emerald-400' : 'text-red-400'}>
+                  {phpDomains.length > 0
+                    ? `PHP domains (${phpDomains.length})`
+                    : <>No PHP domains — <a href="/_uwas/dashboard/domains" className="underline">add a PHP domain</a> first</>}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <span className={`h-2.5 w-2.5 rounded-full ${installableDomains.length > 0 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <span className={installableDomains.length > 0 ? 'text-emerald-400' : 'text-amber-400'}>
+                  {installableDomains.length > 0
+                    ? `${installableDomains.length} domain${installableDomains.length > 1 ? 's' : ''} ready for WordPress`
+                    : 'All PHP domains already have WordPress'}
                 </span>
               </div>
               {(() => {
