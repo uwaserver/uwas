@@ -5,6 +5,23 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.34] - 2026-03-30
+
+### Fixes
+
+- **Release workflow publish context** - `GH_REPO` is now explicitly set for `gh` CLI release steps, fixing the `fatal: not a git repository` failure path in tag-triggered release jobs.
+
+### Improvements
+
+- **Release pipeline validation** - release process verified end-to-end with the updated GitHub Actions stack and Node 24 runtime enforcement.
+- **Dependency posture check** - direct Go dependencies and dashboard/docs frontend dependencies re-checked; project remains on latest compatible versions.
+
+### Verification
+
+- `go test -p 1 ./...` passes.
+- `npm run build` passes in `web/dashboard`.
+- `npm run build` passes in `docs/site`.
+
 ## [0.0.33] - 2026-03-30
 
 ### Improvements
