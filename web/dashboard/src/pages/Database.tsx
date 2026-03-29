@@ -8,11 +8,13 @@ import {
   CheckCircle,
   XCircle,
   Copy,
+  Table2,
+  Play,
+  Database as DatabaseIcon,
   Download,
   Upload,
   X,
   AlertTriangle,
-  Play,
   Square,
   RotateCw,
   Stethoscope,
@@ -47,6 +49,9 @@ import {
   type DBUser,
   type DockerDBContainer,
   type DBCreateResult,
+  fetchDBTables,
+  fetchDBColumns,
+  runDBQuery,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -167,6 +172,7 @@ function CredentialsPanel({
 /* -- Main Page ----------------------------------------------------------- */
 
 export default function Database() {
+  const [pageTab, setPageTab] = useState<'manage' | 'explorer'>('manage');
   const [dbStatus, setDbStatus] = useState<DBStatus | null>(null);
   const [databases, setDatabases] = useState<DBInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -367,6 +373,28 @@ export default function Database() {
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
+
+      {/* Tab selector */}
+      <div className="flex border-b border-border">
+        <button onClick={() => setPageTab('manage')}
+          className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            pageTab === 'manage' ? 'border-blue-500 text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}>
+          <HardDrive size={14} /> Management
+        </button>
+        <button onClick={() => setPageTab('explorer')}
+          className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            pageTab === 'explorer' ? 'border-blue-500 text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}>
+          <Table2 size={14} /> SQL Explorer
+        </button>
+      </div>
+
+      {/* SQL Explorer tab */}
+      {pageTab === 'explorer' && <SQLExplorer databases={databases} />}
+
+      {/* Management tab */}
+      {pageTab === 'manage' && <>
 
       {/* Status messages */}
       {status && (
@@ -1001,6 +1029,165 @@ export default function Database() {
               {JSON.stringify(diagData, null, 2)}
             </pre>
           )}
+        </div>
+      )}
+      </>}
+    </div>
+  );
+}
+
+/* ── SQL Explorer Component ──────────────────────────────────────── */
+
+function SQLExplorer({ databases }: { databases: { name: string }[] }) {
+  const [selectedDB, setSelectedDB] = useState('');
+  const [tables, setTables] = useState<{ name: string; rows: string; data_size: string; engine: string }[]>([]);
+  const [selectedTable, setSelectedTable] = useState('');
+  const [columns, setColumns] = useState<{ name: string; type: string; nullable: string; key: string; default: string; extra: string }[]>([]);
+  const [sql, setSQL] = useState('');
+  const [result, setResult] = useState<{ columns: string[]; rows: string[][]; count: number } | null>(null);
+  const [queryError, setQueryError] = useState('');
+  const [running, setRunning] = useState(false);
+
+  const loadTables = async (db: string) => {
+    setSelectedDB(db);
+    setSelectedTable('');
+    setColumns([]);
+    setResult(null);
+    try {
+      const t = await fetchDBTables(db);
+      setTables(t ?? []);
+    } catch { setTables([]); }
+  };
+
+  const loadColumns = async (table: string) => {
+    setSelectedTable(table);
+    try {
+      const c = await fetchDBColumns(selectedDB, table);
+      setColumns(c ?? []);
+    } catch { setColumns([]); }
+    // Auto-fill SQL
+    setSQL(`SELECT * FROM ${table}`);
+  };
+
+  const executeQuery = async () => {
+    if (!selectedDB || !sql.trim()) return;
+    setRunning(true);
+    setQueryError('');
+    setResult(null);
+    try {
+      const r = await runDBQuery(selectedDB, sql.trim());
+      setResult(r);
+    } catch (e) { setQueryError((e as Error).message); }
+    finally { setRunning(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Database selector */}
+      <div className="flex items-center gap-3">
+        <DatabaseIcon size={14} className="text-muted-foreground" />
+        <select value={selectedDB} onChange={e => loadTables(e.target.value)}
+          className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none">
+          <option value="">Select database...</option>
+          {databases.map(db => <option key={db.name} value={db.name}>{db.name}</option>)}
+        </select>
+        {selectedDB && <span className="text-xs text-muted-foreground">{tables.length} tables</span>}
+      </div>
+
+      {selectedDB && (
+        <div className="grid grid-cols-[220px_1fr] gap-4">
+          {/* Left sidebar — tables */}
+          <div className="rounded-lg border border-border bg-card">
+            <div className="border-b border-border px-3 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Tables</div>
+            <div className="max-h-[50vh] overflow-auto">
+              {tables.map(t => (
+                <button key={t.name} onClick={() => loadColumns(t.name)}
+                  className={`w-full text-left px-3 py-2 text-xs hover:bg-accent/50 transition flex items-center justify-between ${
+                    selectedTable === t.name ? 'bg-blue-500/10 text-blue-400' : 'text-card-foreground'
+                  }`}>
+                  <span className="font-mono truncate">{t.name}</span>
+                  <span className="text-[9px] text-muted-foreground shrink-0 ml-2">{t.rows}r</span>
+                </button>
+              ))}
+              {tables.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground text-center">No tables</p>}
+            </div>
+          </div>
+
+          {/* Right — SQL editor + results */}
+          <div className="space-y-3">
+            {/* Column info */}
+            {columns.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {columns.map(c => (
+                  <span key={c.name} className={`rounded px-2 py-0.5 text-[10px] font-mono ${
+                    c.key === 'PRI' ? 'bg-amber-500/15 text-amber-400' :
+                    c.key === 'UNI' ? 'bg-blue-500/15 text-blue-400' :
+                    'bg-accent text-muted-foreground'
+                  }`} title={`${c.type} ${c.nullable === 'YES' ? 'NULL' : 'NOT NULL'} ${c.extra}`}>
+                    {c.name} <span className="opacity-60">{c.type.split('(')[0]}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* SQL editor */}
+            <div className="rounded-lg border border-border bg-[#0d1117] overflow-hidden">
+              <textarea value={sql} onChange={e => setSQL(e.target.value)}
+                onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); executeQuery(); } }}
+                rows={4} placeholder="SELECT * FROM users WHERE id > 10"
+                className="w-full bg-transparent px-4 py-3 text-xs font-mono text-green-400 outline-none resize-none placeholder:text-green-800" />
+              <div className="flex items-center justify-between border-t border-border/30 px-3 py-1.5 bg-[#161b22]">
+                <span className="text-[9px] text-muted-foreground">Ctrl+Enter to run</span>
+                <button onClick={executeQuery} disabled={running || !sql.trim()}
+                  className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                  {running ? <RefreshCw size={10} className="animate-spin" /> : <Play size={10} />} Run
+                </button>
+              </div>
+            </div>
+
+            {/* Error */}
+            {queryError && (
+              <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-400">{queryError}</div>
+            )}
+
+            {/* Results table */}
+            {result && (
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="border-b border-border px-3 py-2 flex items-center justify-between">
+                  <span className="text-[10px] font-medium text-muted-foreground">{result.count} rows</span>
+                </div>
+                <div className="overflow-auto max-h-[40vh]">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-accent/30 text-left">
+                        {result.columns.map(col => (
+                          <th key={col} className="px-3 py-2 font-medium text-muted-foreground whitespace-nowrap">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {result.rows.map((row, i) => (
+                        <tr key={i} className="hover:bg-accent/20">
+                          {row.map((cell, j) => (
+                            <td key={j} className="px-3 py-1.5 font-mono text-card-foreground whitespace-nowrap max-w-[300px] truncate" title={cell}>
+                              {cell === 'NULL' ? <span className="text-muted-foreground italic">NULL</span> : cell}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!selectedDB && (
+        <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center">
+          <Table2 size={32} className="mx-auto mb-3 text-muted-foreground opacity-30" />
+          <p className="text-sm text-muted-foreground">Select a database above to browse tables and run queries</p>
         </div>
       )}
     </div>
