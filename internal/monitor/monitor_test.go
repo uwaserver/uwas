@@ -401,7 +401,7 @@ func TestCheckDomainRedirectType(t *testing.T) {
 	// Redirect type server that returns 301
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Redirect to itself to test the redirect following
-		http.Redirect(w, r, "/destination", 301)
+		http.Redirect(w, r, "/destination", http.StatusMovedPermanently)
 	}))
 	defer srv.Close()
 
@@ -657,7 +657,7 @@ func TestMonitorRedirectLimit(t *testing.T) {
 	redirectCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		redirectCount++
-		http.Redirect(w, r, "/loop", 302)
+		http.Redirect(w, r, "/loop", http.StatusFound)
 	}))
 	defer srv.Close()
 
