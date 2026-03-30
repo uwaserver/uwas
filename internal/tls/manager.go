@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -28,11 +29,11 @@ import (
 
 // Manager handles TLS certificates: loading, ACME issuance, renewal, SNI routing.
 type Manager struct {
-	certs   sync.Map // host → *tls.Certificate
-	acme    *acme.Client
-	config  config.ACMEConfig
-	storage *CertStorage
-	logger  *logger.Logger
+	certs     sync.Map // host → *tls.Certificate
+	acme      *acme.Client
+	config    config.ACMEConfig
+	storage   *CertStorage
+	logger    *logger.Logger
 	domainsMu sync.RWMutex
 	domains   []config.Domain
 
@@ -65,12 +66,18 @@ type Manager struct {
 
 const onDemandMaxPerMinute = 10
 
+const (
+	onDemandAskTimeout      = 5 * time.Second
+	onDemandObtainTimeout   = 2 * time.Minute
+	maxOnDemandAskBodyBytes = 8 << 10 // 8KB
+)
+
 func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logger) *Manager {
 	m := &Manager{
 		config:  cfg,
 		storage: NewCertStorage(cfg.Storage),
 		logger:  log,
-		domains: domains,
+		domains: append([]config.Domain(nil), domains...),
 	}
 
 	// Initialize ACME client if email is configured
@@ -101,7 +108,7 @@ func (m *Manager) LoadExistingCerts() {
 
 // LoadManualCerts loads manually configured certificates.
 func (m *Manager) LoadManualCerts() {
-	for _, d := range m.domains {
+	for _, d := range m.snapshotDomains() {
 		if d.SSL.Mode != "manual" {
 			continue
 		}
@@ -119,6 +126,10 @@ func (m *Manager) LoadManualCerts() {
 // GetCertificate is the tls.Config.GetCertificate callback for SNI routing.
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	name := strings.ToLower(hello.ServerName)
+	handshakeCtx := context.Background()
+	if helloCtx := hello.Context(); helloCtx != nil {
+		handshakeCtx = helloCtx
+	}
 
 	// 1. Exact match
 	if cert, ok := m.certs.Load(name); ok {
@@ -137,12 +148,27 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	if m.config.OnDemand && m.acme != nil {
 		// Check OnDemandAsk URL if configured.
 		if m.config.OnDemandAsk != "" {
-			askURL := m.config.OnDemandAsk + "?domain=" + name
-			resp, err := http.Get(askURL)
+			askURL, err := neturl.Parse(m.config.OnDemandAsk)
+			if err != nil {
+				return nil, fmt.Errorf("invalid on-demand ask URL: %w", err)
+			}
+			query := askURL.Query()
+			query.Set("domain", name)
+			askURL.RawQuery = query.Encode()
+
+			askCtx, cancel := context.WithTimeout(handshakeCtx, onDemandAskTimeout)
+			defer cancel()
+			req, err := http.NewRequestWithContext(askCtx, http.MethodGet, askURL.String(), nil)
+			if err != nil {
+				return nil, fmt.Errorf("on-demand ask request failed for %s: %w", name, err)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				m.logger.Error("on-demand ask failed", "host", name, "error", err)
 				return nil, fmt.Errorf("on-demand ask error for %s: %w", name, err)
 			}
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxOnDemandAskBodyBytes))
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				return nil, fmt.Errorf("on-demand ask rejected %s (status %d)", name, resp.StatusCode)
@@ -154,7 +180,10 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 			return nil, fmt.Errorf("on-demand rate limit exceeded for %s", name)
 		}
 
-		cert, err := m.obtainCert(context.Background(), name)
+		obtainCtx, cancel := context.WithTimeout(handshakeCtx, onDemandObtainTimeout)
+		defer cancel()
+
+		cert, err := m.obtainCert(obtainCtx, name)
 		if err != nil {
 			m.logger.Error("on-demand cert failed", "host", name, "error", err)
 			return nil, err
@@ -216,7 +245,7 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 
 	// Collect domains that need certificates.
 	var pending []string
-	for _, d := range m.domains {
+	for _, d := range m.snapshotDomains() {
 		if d.SSL.Mode != "auto" {
 			continue
 		}
@@ -453,8 +482,17 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 // UpdateDomains updates the domain list (for hot reload).
 func (m *Manager) UpdateDomains(domains []config.Domain) {
 	m.domainsMu.Lock()
-	m.domains = domains
+	m.domains = append([]config.Domain(nil), domains...)
 	m.domainsMu.Unlock()
+}
+
+func (m *Manager) snapshotDomains() []config.Domain {
+	m.domainsMu.RLock()
+	defer m.domainsMu.RUnlock()
+
+	out := make([]config.Domain, len(m.domains))
+	copy(out, m.domains)
+	return out
 }
 
 // stapleOCSP fetches and attaches an OCSP response to the certificate.

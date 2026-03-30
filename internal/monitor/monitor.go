@@ -18,10 +18,12 @@ const (
 
 // Monitor periodically checks domain health.
 type Monitor struct {
-	domains []config.Domain
-	logger  *logger.Logger
-	results sync.Map // host -> *HealthResult
-	client  *http.Client
+	domainsMu sync.RWMutex
+	domains   []config.Domain
+	logger    *logger.Logger
+	resultsMu sync.RWMutex
+	results   map[string]*HealthResult // host -> *HealthResult
+	client    *http.Client
 }
 
 // HealthResult holds the health status of a single domain.
@@ -46,8 +48,9 @@ type Check struct {
 // New creates a new Monitor for the given domains.
 func New(domains []config.Domain, log *logger.Logger) *Monitor {
 	return &Monitor{
-		domains: domains,
+		domains: append([]config.Domain(nil), domains...),
 		logger:  log,
+		results: make(map[string]*HealthResult),
 		client: &http.Client{
 			Timeout: checkTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -63,14 +66,25 @@ func New(domains []config.Domain, log *logger.Logger) *Monitor {
 
 // UpdateDomains updates the domain list for health monitoring.
 func (m *Monitor) UpdateDomains(domains []config.Domain) {
-	m.domains = domains
+	m.domainsMu.Lock()
+	m.domains = append([]config.Domain(nil), domains...)
+	m.domainsMu.Unlock()
+}
+
+func (m *Monitor) snapshotDomains() []config.Domain {
+	m.domainsMu.RLock()
+	defer m.domainsMu.RUnlock()
+
+	out := make([]config.Domain, len(m.domains))
+	copy(out, m.domains)
+	return out
 }
 
 // Start launches goroutines that check each domain every 30 seconds.
 // It blocks until the context is cancelled.
 func (m *Monitor) Start(ctx context.Context) {
 	// Run an initial check immediately for all domains.
-	for _, d := range m.domains {
+	for _, d := range m.snapshotDomains() {
 		m.checkDomain(d)
 	}
 
@@ -82,7 +96,7 @@ func (m *Monitor) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, d := range m.domains {
+			for _, d := range m.snapshotDomains() {
 				m.checkDomain(d)
 			}
 		}
@@ -131,11 +145,13 @@ func (m *Monitor) checkDomain(d config.Domain) {
 		}
 	}
 
-	// Load or create result
-	val, _ := m.results.LoadOrStore(d.Host, &HealthResult{
-		Host: d.Host,
-	})
-	result := val.(*HealthResult)
+	// Load or create result under lock.
+	m.resultsMu.Lock()
+	result, ok := m.results[d.Host]
+	if !ok {
+		result = &HealthResult{Host: d.Host}
+		m.results[d.Host] = result
+	}
 
 	// Append check, keep last maxChecks
 	result.Checks = append(result.Checks, check)
@@ -148,8 +164,7 @@ func (m *Monitor) checkDomain(d config.Domain) {
 	result.ResponseMs = elapsed
 	result.LastCheck = check.Time
 	result.Uptime = calculateUptime(result.Checks)
-
-	m.results.Store(d.Host, result)
+	m.resultsMu.Unlock()
 
 	if status != "up" {
 		m.logger.Warn("domain health check",
@@ -181,14 +196,17 @@ func calculateUptime(checks []Check) float64 {
 // Results returns all domain health results as a slice.
 func (m *Monitor) Results() []HealthResult {
 	var results []HealthResult
-	m.results.Range(func(key, value any) bool {
-		r := value.(*HealthResult)
+
+	m.resultsMu.RLock()
+	defer m.resultsMu.RUnlock()
+
+	for _, r := range m.results {
 		// Return a copy to avoid races
 		cp := *r
 		cp.Checks = make([]Check, len(r.Checks))
 		copy(cp.Checks, r.Checks)
 		results = append(results, cp)
-		return true
-	})
+	}
+
 	return results
 }

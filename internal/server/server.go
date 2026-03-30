@@ -140,6 +140,10 @@ type Server struct {
 
 const maxMirrorBodyBytes = 2 << 20 // 2MB safety cap for mirror body buffering
 
+var locationProxyHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
+
 // New creates a fully initialized server from config.
 func New(cfg *config.Config, log *logger.Logger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1122,7 +1126,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 			proxyReq.Header.Set("X-Forwarded-Host", r.Host)
-			resp, err := http.DefaultClient.Do(proxyReq)
+			resp, err := locationProxyHTTPClient.Do(proxyReq)
 			if err != nil {
 				s.logger.Error("location proxy error", "match", loc.Match, "target", loc.ProxyPass, "error", err)
 				renderDomainError(ctx.Response, http.StatusBadGateway, domain)
