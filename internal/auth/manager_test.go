@@ -1144,10 +1144,13 @@ func TestIsPublicEndpoint(t *testing.T) {
 	}{
 		{"/api/v1/health", true},
 		{"/api/v1/health/check", true},
+		{"/api/v1/healthcheck", false},
 		{"/api/v1/auth/login", true},
 		{"/api/v1/auth/login/", true},
+		{"/api/v1/auth/loginx", false},
 		{"/_uwas/dashboard", true},
 		{"/_uwas/dashboard/settings", true},
+		{"/_uwas/dashboardx", false},
 		{"/api/v1/domains", false},
 		{"/api/v1/users", false},
 		{"/api/v1/auth/logout", false},

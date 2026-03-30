@@ -216,6 +216,21 @@ func TestSendSlackNetworkError(t *testing.T) {
 	}
 }
 
+func TestSendSlackHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	err := sendSlack(srv.URL, testMsg())
+	if err == nil {
+		t.Fatal("expected error for non-2xx status")
+	}
+	if !strings.Contains(err.Error(), "slack webhook returned 502") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // sendTelegram tests
 
 func TestSendTelegramSuccess(t *testing.T) {
