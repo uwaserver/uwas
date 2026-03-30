@@ -3113,7 +3113,7 @@ func TestToWebhookConfigs(t *testing.T) {
 func TestFindPkg(t *testing.T) {
 	p := findPkg("mariadb")
 	if p == nil {
-		t.Error("should find mariadb")
+		t.Fatal("should find mariadb")
 	}
 	if p.name != "MariaDB" {
 		t.Errorf("name = %q", p.name)

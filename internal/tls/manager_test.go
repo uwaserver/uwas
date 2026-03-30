@@ -436,6 +436,7 @@ func TestLoadExistingCertsWithValidCerts(t *testing.T) {
 		}
 		if got == nil {
 			t.Errorf("expected cert for %q, got nil", host)
+			continue
 		}
 		if got.Leaf == nil {
 			t.Errorf("expected parsed Leaf for %q", host)

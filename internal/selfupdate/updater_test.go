@@ -41,11 +41,11 @@ func saveHooks(t *testing.T) {
 
 // githubRelease is a helper to build JSON responses matching the GitHub API format.
 type githubRelease struct {
-	TagName     string         `json:"tag_name"`
-	HTMLURL     string         `json:"html_url"`
-	Body        string         `json:"body"`
-	PublishedAt string         `json:"published_at"`
-	Assets      []githubAsset  `json:"assets"`
+	TagName     string        `json:"tag_name"`
+	HTMLURL     string        `json:"html_url"`
+	Body        string        `json:"body"`
+	PublishedAt string        `json:"published_at"`
+	Assets      []githubAsset `json:"assets"`
 }
 
 type githubAsset struct {
@@ -680,7 +680,7 @@ func TestHookDefaults(t *testing.T) {
 	// Verify the default hooks are set to real implementations
 	client := httpClientFn(5 * time.Second)
 	if client == nil {
-		t.Error("httpClientFn should return a non-nil client")
+		t.Fatal("httpClientFn should return a non-nil client")
 	}
 	if client.Timeout != 5*time.Second {
 		t.Errorf("client timeout = %v, want 5s", client.Timeout)

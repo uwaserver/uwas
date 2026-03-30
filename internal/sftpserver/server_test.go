@@ -2482,7 +2482,7 @@ func TestReadPacket_ShortPacket(t *testing.T) {
 		buf := make([]byte, 6)
 		binary.BigEndian.PutUint32(buf[0:4], 2) // length = 2
 		buf[4] = sshFXPStat                     // not INIT
-		buf[5] = 0                               // only 1 extra byte, need 4
+		buf[5] = 0                              // only 1 extra byte, need 4
 		client.Write(buf)
 	}()
 
@@ -3285,7 +3285,7 @@ func TestSFTP_FStat_DeletedFile(t *testing.T) {
 
 	// FStat - on Windows the file handle still works, on Unix the inode persists
 	sftp.sendPacket(sshFXPFStat, 711, marshalString(handle))
-	pktType, _, payload, err = sftp.recvPacket()
+	pktType, _, _, err = sftp.recvPacket()
 	if err != nil {
 		t.Fatalf("recvPacket: %v", err)
 	}

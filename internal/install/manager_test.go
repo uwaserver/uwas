@@ -71,10 +71,9 @@ func TestSerialExecution(t *testing.T) {
 		cur := atomic.AddInt32(&running, 1)
 		for {
 			old := atomic.LoadInt32(&maxConcurrent)
-			if cur > old {
-				atomic.CompareAndSwapInt32(&maxConcurrent, old, cur)
+			if cur <= old || atomic.CompareAndSwapInt32(&maxConcurrent, old, cur) {
+				break
 			}
-			break
 		}
 		time.Sleep(20 * time.Millisecond)
 		atomic.AddInt32(&running, -1)
