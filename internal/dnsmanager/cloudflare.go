@@ -103,7 +103,9 @@ func (c *CloudflareProvider) ListZones() ([]Zone, error) {
 		return nil, err
 	}
 	var zones []Zone
-	json.Unmarshal(data, &zones)
+	if err := json.Unmarshal(data, &zones); err != nil {
+		return nil, fmt.Errorf("cloudflare: parse zones: %w", err)
+	}
 	return zones, nil
 }
 
@@ -113,7 +115,9 @@ func (c *CloudflareProvider) FindZoneByDomain(domain string) (*Zone, error) {
 		return nil, err
 	}
 	var zones []Zone
-	json.Unmarshal(data, &zones)
+	if err := json.Unmarshal(data, &zones); err != nil {
+		return nil, fmt.Errorf("cloudflare: parse zone lookup: %w", err)
+	}
 	if len(zones) == 0 {
 		return nil, fmt.Errorf("zone not found for %s", domain)
 	}
@@ -126,7 +130,9 @@ func (c *CloudflareProvider) ListRecords(zoneID string) ([]Record, error) {
 		return nil, err
 	}
 	var records []Record
-	json.Unmarshal(data, &records)
+	if err := json.Unmarshal(data, &records); err != nil {
+		return nil, fmt.Errorf("cloudflare: parse records: %w", err)
+	}
 	return records, nil
 }
 
@@ -139,7 +145,9 @@ func (c *CloudflareProvider) CreateRecord(zoneID string, rec Record) (*Record, e
 		return nil, err
 	}
 	var result Record
-	json.Unmarshal(data, &result)
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("cloudflare: parse created record: %w", err)
+	}
 	return &result, nil
 }
 
@@ -152,7 +160,9 @@ func (c *CloudflareProvider) UpdateRecord(zoneID, recordID string, rec Record) (
 		return nil, err
 	}
 	var result Record
-	json.Unmarshal(data, &result)
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("cloudflare: parse updated record: %w", err)
+	}
 	return &result, nil
 }
 

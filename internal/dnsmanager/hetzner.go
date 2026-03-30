@@ -128,7 +128,9 @@ func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, erro
 			ID string `json:"id"`
 		} `json:"record"`
 	}
-	json.Unmarshal(data, &resp)
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("hetzner: parse create record response: %w", err)
+	}
 	rec.ID = resp.Record.ID
 	return &rec, nil
 }
