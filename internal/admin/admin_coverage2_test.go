@@ -2303,6 +2303,65 @@ func TestUpdateDomainReplaceMode(t *testing.T) {
 	}
 }
 
+func TestUpdateDomainBasicAuthCanDisableInMergeMode(t *testing.T) {
+	s := testServer()
+	s.configMu.Lock()
+	s.config.Domains[0].BasicAuth = config.BasicAuthConfig{
+		Enabled: true,
+		Users:   map[string]string{"admin": "secret"},
+		Realm:   "Protected",
+	}
+	s.configMu.Unlock()
+
+	body := strings.NewReader(`{"basic_auth":{"enabled":false}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.com", body)
+	req.SetPathValue("host", "example.com")
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	if s.config.Domains[0].BasicAuth.Enabled {
+		t.Fatal("basic_auth should be disabled")
+	}
+	if len(s.config.Domains[0].BasicAuth.Users) != 0 {
+		t.Fatal("basic_auth users should be cleared")
+	}
+}
+
+func TestUpdateDomainCanClearAliasesAndLocations(t *testing.T) {
+	s := testServer()
+	s.configMu.Lock()
+	s.config.Domains[0].Aliases = []string{"www.example.com"}
+	s.config.Domains[0].Locations = []config.LocationConfig{
+		{Match: "/api/", ProxyPass: "http://127.0.0.1:8080"},
+	}
+	s.configMu.Unlock()
+
+	body := strings.NewReader(`{"aliases":[],"locations":[]}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.com", body)
+	req.SetPathValue("host", "example.com")
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	if len(s.config.Domains[0].Aliases) != 0 {
+		t.Fatalf("aliases len = %d, want 0", len(s.config.Domains[0].Aliases))
+	}
+	if len(s.config.Domains[0].Locations) != 0 {
+		t.Fatalf("locations len = %d, want 0", len(s.config.Domains[0].Locations))
+	}
+}
+
 // =============================================================================
 // SFTP user handlers
 // =============================================================================

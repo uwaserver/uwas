@@ -358,6 +358,177 @@ func TestHandleRequestBasicAuthDefaultRealm(t *testing.T) {
 	}
 }
 
+func TestHandleRequestLocationUsesDomainBasicAuth(t *testing.T) {
+	root := t.TempDir()
+	docs := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docs, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docs, "index.html"), []byte("docs secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "loc-auth-domain.com",
+				Root: root,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				BasicAuth: config.BasicAuthConfig{
+					Enabled: true,
+					Users:   map[string]string{"admin": "pass"},
+				},
+				Locations: []config.LocationConfig{
+					{
+						Match: "/docs/",
+						Root:  docs,
+					},
+				},
+			},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"))
+
+	unauth := httptest.NewRecorder()
+	unauthReq := httptest.NewRequest("GET", "/docs/index.html", nil)
+	unauthReq.Host = "loc-auth-domain.com"
+	s.handleRequest(unauth, unauthReq)
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", unauth.Code)
+	}
+
+	authRec := httptest.NewRecorder()
+	authReq := httptest.NewRequest("GET", "/docs/index.html", nil)
+	authReq.Host = "loc-auth-domain.com"
+	authReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:pass")))
+	s.handleRequest(authRec, authReq)
+	if authRec.Code == http.StatusUnauthorized {
+		t.Fatalf("status = %d, want non-401 after valid basic auth", authRec.Code)
+	}
+}
+
+func TestHandleRequestLocationBasicAuthOverride(t *testing.T) {
+	root := t.TempDir()
+	privateRoot := filepath.Join(root, "private")
+	if err := os.MkdirAll(privateRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateRoot, "panel.html"), []byte("private panel"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "loc-auth-override.com",
+				Root: root,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				Locations: []config.LocationConfig{
+					{
+						Match: "/private/",
+						Root:  privateRoot,
+						BasicAuth: &config.BasicAuthConfig{
+							Enabled: true,
+							Users:   map[string]string{"alice": "secret"},
+							Realm:   "Private Zone",
+						},
+					},
+				},
+			},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"))
+
+	unauth := httptest.NewRecorder()
+	unauthReq := httptest.NewRequest("GET", "/private/panel.html", nil)
+	unauthReq.Host = "loc-auth-override.com"
+	s.handleRequest(unauth, unauthReq)
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", unauth.Code)
+	}
+
+	authRec := httptest.NewRecorder()
+	authReq := httptest.NewRequest("GET", "/private/panel.html", nil)
+	authReq.Host = "loc-auth-override.com"
+	authReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:secret")))
+	s.handleRequest(authRec, authReq)
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", authRec.Code)
+	}
+}
+
+func TestHandleRequestLocationCanDisableDomainBasicAuth(t *testing.T) {
+	root := t.TempDir()
+	publicRoot := filepath.Join(root, "public")
+	if err := os.MkdirAll(publicRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publicRoot, "open.html"), []byte("public file"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret.html"), []byte("secret file"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "loc-disable-auth.com",
+				Root: root,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off"},
+				BasicAuth: config.BasicAuthConfig{
+					Enabled: true,
+					Users:   map[string]string{"admin": "pass"},
+				},
+				Locations: []config.LocationConfig{
+					{
+						Match: "/public/",
+						Root:  publicRoot,
+						BasicAuth: &config.BasicAuthConfig{
+							Enabled: false,
+						},
+					},
+				},
+			},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"))
+
+	publicRec := httptest.NewRecorder()
+	publicReq := httptest.NewRequest("GET", "/public/open.html", nil)
+	publicReq.Host = "loc-disable-auth.com"
+	s.handleRequest(publicRec, publicReq)
+	if publicRec.Code != http.StatusOK {
+		t.Fatalf("public status = %d, want 200", publicRec.Code)
+	}
+
+	secretRec := httptest.NewRecorder()
+	secretReq := httptest.NewRequest("GET", "/secret.html", nil)
+	secretReq.Host = "loc-disable-auth.com"
+	s.handleRequest(secretRec, secretReq)
+	if secretRec.Code != http.StatusUnauthorized {
+		t.Fatalf("secret status = %d, want 401", secretRec.Code)
+	}
+}
+
 // =============================================================================
 // Per-domain CORS — handleRequest coverage
 // =============================================================================

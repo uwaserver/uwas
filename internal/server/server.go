@@ -1044,6 +1044,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		ctx.Response.Header().Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
 	}
 
+	basicAuthChecked := false
+
 	// Per-path location overrides (headers, cache-control, proxy, redirect, static root)
 	for _, loc := range domain.Locations {
 		if !matchLocation(r.URL.Path, loc.Match) {
@@ -1091,6 +1093,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Location-level redirect (e.g. /old-path → https://example.com/new-path)
+		// Per-path Basic Authentication.
+		// If location basic_auth is set, it overrides domain basic_auth for this match.
+		locationBasicAuth := domain.BasicAuth
+		if loc.BasicAuth != nil {
+			locationBasicAuth = *loc.BasicAuth
+		}
+		if !enforceBasicAuth(ctx.Response, r, domain.Host, locationBasicAuth) {
+			return
+		}
+		basicAuthChecked = true
+
 		if loc.Redirect != "" {
 			code := loc.RedirectCode
 			if code == 0 {
@@ -1206,17 +1219,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per-domain Basic Authentication
-	if domain.BasicAuth.Enabled && len(domain.BasicAuth.Users) > 0 {
-		passed := false
-		realm := domain.BasicAuth.Realm
-		if realm == "" {
-			realm = domain.Host
-		}
-		middleware.BasicAuth(domain.BasicAuth.Users, realm)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			passed = true
-		})).ServeHTTP(ctx.Response, r)
-		if !passed {
+	// Per-domain Basic Authentication (unless already evaluated in location matching).
+	if !basicAuthChecked {
+		if !enforceBasicAuth(ctx.Response, r, domain.Host, domain.BasicAuth) {
 			return
 		}
 	}
@@ -2335,4 +2340,22 @@ func matchLocation(path, pattern string) bool {
 	}
 	// Prefix match
 	return strings.HasPrefix(path, pattern)
+}
+
+func enforceBasicAuth(w http.ResponseWriter, r *http.Request, host string, cfg config.BasicAuthConfig) bool {
+	if !cfg.Enabled || len(cfg.Users) == 0 {
+		return true
+	}
+
+	passed := false
+	realm := cfg.Realm
+	if realm == "" {
+		realm = host
+	}
+
+	middleware.BasicAuth(cfg.Users, realm)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		passed = true
+	})).ServeHTTP(w, r)
+
+	return passed
 }

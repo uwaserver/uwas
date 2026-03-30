@@ -207,6 +207,23 @@ export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/
 export const updateDomain = (host: string, domain: Record<string, unknown>) => api<DomainData>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'PUT', body: JSON.stringify(domain) });
 export const deleteDomain = (host: string, cleanup = false) => api<{ status: string }>(`/api/v1/domains/${encodeURIComponent(host)}${cleanup ? '?cleanup=true' : ''}`, { method: 'DELETE' });
 
+export interface BasicAuthRule {
+  enabled?: boolean;
+  users?: Record<string, string>;
+  realm?: string;
+}
+
+export interface DomainLocationRule {
+  match: string;
+  proxy_pass?: string;
+  root?: string;
+  redirect?: string;
+  redirect_code?: number;
+  strip_prefix?: boolean;
+  cache_control?: string;
+  basic_auth?: BasicAuthRule;
+}
+
 export interface DomainDetail {
   host: string;
   ip?: string;
@@ -217,7 +234,8 @@ export interface DomainDetail {
   cache?: { enabled: boolean; ttl: number; rules?: { match: string; ttl: number; bypass: boolean }[] };
   security?: { blocked_paths: string[] | null; waf: { enabled: boolean; rules: string[] | null }; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
   resources?: { cpu_percent?: number; memory_mb?: number; pid_max?: number };
-  basic_auth?: { enabled: boolean; username: string; password: string };
+  basic_auth?: BasicAuthRule;
+  locations?: DomainLocationRule[];
   bandwidth?: { enabled: boolean; monthly_limit: string; daily_limit: string; action: string };
   php?: { fpm_address: string; index_files: string[] | null; timeout: number; upload_max_size: string };
   proxy?: { upstreams: string[] | null; algorithm: string; health_check?: { path: string; interval: string } };

@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -1866,6 +1867,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	if d.Host == "" {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
@@ -2201,11 +2203,24 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	var d config.Domain
-	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+	if err := json.Unmarshal(body, &d); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(body, &raw)
+	_, hasAliases := raw["aliases"]
+	_, hasLocations := raw["locations"]
+	_, hasBasicAuth := raw["basic_auth"]
+	replaceMode := r.URL.Query().Get("replace") == "true"
 
 	s.configMu.Lock()
 	found := false
@@ -2228,7 +2243,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			if d.SSL.Mode != "" {
 				merged.SSL = d.SSL
 			}
-			if len(d.Aliases) > 0 {
+			if hasAliases {
 				merged.Aliases = d.Aliases
 			}
 			// PHP: only override if provided (preserve existing FPM address)
@@ -2265,13 +2280,17 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 				merged.Htaccess = d.Htaccess
 			}
 			// Locations (always replace — empty list clears routes)
-			if len(d.Locations) > 0 || r.URL.Query().Get("replace") == "true" {
+			if hasLocations || replaceMode {
 				merged.Locations = d.Locations
+			}
+			// BasicAuth (replace when provided; enabled=false disables auth)
+			if hasBasicAuth || replaceMode {
+				merged.BasicAuth = d.BasicAuth
 			}
 			// Cache, Security, Compression:
 			// ?replace=true → full replace (allows disabling features)
 			// default → merge (only override non-zero fields)
-			if r.URL.Query().Get("replace") == "true" {
+			if replaceMode {
 				merged.Cache = d.Cache
 				merged.Security = d.Security
 				merged.Compression = d.Compression
