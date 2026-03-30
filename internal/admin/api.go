@@ -1497,6 +1497,11 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 // HTTPServer returns the underlying http.Server for shutdown during upgrades.
 func (s *Server) HTTPServer() *http.Server { return s.httpSrv }
 
+// Close releases background resources used by the admin module.
+func (s *Server) Close() {
+	s.stopAudit()
+}
+
 // SetReloadFunc sets the callback for config reload.
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
 

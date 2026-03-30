@@ -144,6 +144,10 @@ func ListUsers() []User {
 		return nil
 	}
 
+	if _, err := osStatFn(passwdPath); err != nil {
+		return nil
+	}
+
 	data, err := osReadFileFn(passwdPath)
 	if err != nil {
 		return nil

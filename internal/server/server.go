@@ -2069,6 +2069,7 @@ func (s *Server) shutdown() {
 				s.logger.Warn("admin shutdown error", "error", err)
 			}
 		}
+		s.admin.Close()
 	}
 
 	// Stop all app processes (Node.js, Python, etc.)
