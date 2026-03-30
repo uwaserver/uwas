@@ -5,10 +5,8 @@ import {
   Controls,
   type Node,
   type Edge,
-  type OnNodesChange,
   Position,
   MarkerType,
-  applyNodeChanges,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -245,15 +243,6 @@ export default function Topology() {
     [domains, certs, phpMap],
   );
 
-  // Draggable nodes — keep local state so drag doesn't reset
-  const [nodes, setNodes] = useState<Node[]>([]);
-  useEffect(() => { setNodes(initial.nodes); }, [initial.nodes]);
-
-  const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    [],
-  );
-
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center text-muted-foreground">
@@ -273,9 +262,8 @@ export default function Topology() {
 
       <div className="h-[calc(100vh-12rem)] rounded-lg border border-border bg-card shadow-md">
         <ReactFlow
-          nodes={nodes}
+          defaultNodes={initial.nodes}
           edges={initial.edges}
-          onNodesChange={onNodesChange}
           fitView
           proOptions={{ hideAttribution: true }}
           style={{ background: '#1e293b' }}
