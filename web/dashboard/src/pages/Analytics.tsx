@@ -247,7 +247,14 @@ export default function Analytics() {
                     <td className="px-5 py-3 text-right">
                       <button disabled={!!resetting} onClick={async () => {
                         setResetting(bw.host);
-                        try { await resetBandwidth(bw.host); load(); } catch {} finally { setResetting(''); }
+                        try {
+                          await resetBandwidth(bw.host);
+                          load();
+                        } catch (e) {
+                          setError((e as Error).message);
+                        } finally {
+                          setResetting('');
+                        }
                       }} className="rounded bg-accent/50 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">
                         {resetting === bw.host ? <RefreshCw size={10} className="animate-spin inline" /> : null} Reset
                       </button>
