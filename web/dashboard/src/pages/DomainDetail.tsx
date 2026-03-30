@@ -140,6 +140,15 @@ export default function DomainDetail() {
       const cleanedBasicAuthUsers = basicAuthUsers
         .map(u => ({ username: u.username.trim(), password: u.password }))
         .filter(u => u.username && u.password);
+      const seenBasicAuthUsers = new Set<string>();
+      for (const u of cleanedBasicAuthUsers) {
+        if (seenBasicAuthUsers.has(u.username)) {
+          setMsg({ ok: false, text: `Basic Auth username is duplicated: ${u.username}` });
+          setSaving(false);
+          return;
+        }
+        seenBasicAuthUsers.add(u.username);
+      }
       if (basicAuthEnabled && cleanedBasicAuthUsers.length === 0) {
         setMsg({ ok: false, text: 'Basic Auth aktifken en az bir kullanıcı gerekli.' });
         setSaving(false);
