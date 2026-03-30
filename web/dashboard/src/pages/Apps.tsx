@@ -61,7 +61,12 @@ function EnvEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow
   };
   const add = () => onChange([...rows, { key: '', value: '' }]);
   const toggleReveal = (i: number) =>
-    setRevealed(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s; });
+    setRevealed(prev => {
+      const s = new Set(prev);
+      if (s.has(i)) s.delete(i);
+      else s.add(i);
+      return s;
+    });
 
   return (
     <div className="space-y-2">
@@ -188,10 +193,7 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '', sshKey: '', gitToken: '' });
   const logEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (deployStatus) setStep(2);
-  }, [deployStatus]);
+  const activeStep = deployStatus ? 2 : step;
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -203,8 +205,8 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
     { label: 'Deploy', icon: <Rocket size={14} /> },
   ];
 
-  const canNext = step === 0 ? true : step === 1 ? true : false;
-  const canBack = step > 0 && !deploying && !deployStatus;
+  const canNext = activeStep < 2;
+  const canBack = activeStep > 0 && !deploying && !deployStatus;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !deploying && onClose()}>
@@ -232,11 +234,11 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
           {steps.map((s, i) => (
             <div key={i} className="flex items-center">
               <div className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                i === step ? 'bg-blue-600 text-white' :
-                i < step ? 'bg-emerald-500/15 text-emerald-400' :
+                i === activeStep ? 'bg-blue-600 text-white' :
+                i < activeStep ? 'bg-emerald-500/15 text-emerald-400' :
                 'bg-accent text-muted-foreground'
               }`}>
-                {i < step ? <CheckCircle size={12} /> : s.icon}
+                {i < activeStep ? <CheckCircle size={12} /> : s.icon}
                 {s.label}
               </div>
               {i < steps.length - 1 && (
@@ -249,7 +251,7 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
         {/* Content */}
         <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-auto">
           {/* Step 0: Source */}
-          {step === 0 && (
+          {activeStep === 0 && (
             <>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Git Repository URL</label>
@@ -285,7 +287,7 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
           )}
 
           {/* Step 1: Build */}
-          {step === 1 && (
+          {activeStep === 1 && (
             <>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Build Command</label>
@@ -339,7 +341,7 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
           )}
 
           {/* Step 2: Deploy (live output) */}
-          {step === 2 && (
+          {activeStep === 2 && (
             <>
               {deployStatus && (
                 <div className="space-y-3">
@@ -420,12 +422,12 @@ function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: Wi
                 Back
               </button>
             )}
-            {step < 2 && !deploying && (
-              <button onClick={() => canNext ? (step === 1 ? onDeploy(form) : setStep(s => s + 1)) : undefined}
+            {activeStep < 2 && !deploying && (
+              <button onClick={() => canNext ? (activeStep === 1 ? onDeploy(form) : setStep(s => s + 1)) : undefined}
                 className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                  step === 1 ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'
+                  activeStep === 1 ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'
                 }`}>
-                {step === 1 ? <><Rocket size={14} /> Deploy</> : <>Next <ChevronRight size={14} /></>}
+                {activeStep === 1 ? <><Rocket size={14} /> Deploy</> : <>Next <ChevronRight size={14} /></>}
               </button>
             )}
             {deploying && (
