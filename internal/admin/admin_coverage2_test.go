@@ -2362,6 +2362,66 @@ func TestUpdateDomainCanClearAliasesAndLocations(t *testing.T) {
 	}
 }
 
+func TestUpdateDomainRejectsInvalidHostRename(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"host":"bad/host"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.com", body)
+	req.SetPathValue("host", "example.com")
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestUpdateDomainRejectsDuplicateHostRename(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"host":"api.example.com"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.com", body)
+	req.SetPathValue("host", "example.com")
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestUpdateDomainRejectsBasicAuthEnabledWithoutUsers(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"basic_auth":{"enabled":true}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.com", body)
+	req.SetPathValue("host", "example.com")
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestUpdateDomainResellerCannotRenameToUnauthorizedDomain(t *testing.T) {
+	s := testServer()
+	s.SetAuthManager(newMockAuthManager())
+	s.configMu.Lock()
+	s.config.Domains = append(s.config.Domains, config.Domain{
+		Host: "reseller.com", Type: "static", SSL: config.SSLConfig{Mode: "auto"},
+	})
+	s.configMu.Unlock()
+
+	body := strings.NewReader(`{"host":"other.com"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/reseller.com", body)
+	req = withResellerContext(req)
+	req.SetPathValue("host", "reseller.com")
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
 // =============================================================================
 // SFTP user handlers
 // =============================================================================

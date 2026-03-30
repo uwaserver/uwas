@@ -2190,10 +2190,14 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	host := r.PathValue("host")
+	var currentUser *auth.User
 
 	// Check domain permissions for non-admin users
 	if s.authMgr != nil {
 		user, ok := auth.UserFromContext(r.Context())
+		if ok {
+			currentUser = user
+		}
 		if ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, host) {
 				s.RecordAudit("domain.update", "domain: "+host+" (forbidden)", ip, false)
@@ -2213,6 +2217,18 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(body, &d); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	if d.Host != "" && !isValidHostname(d.Host) {
+		s.RecordAudit("domain.update", "domain: "+host+" (invalid hostname)", ip, false)
+		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
+		return
+	}
+	if currentUser != nil && currentUser.Role != auth.RoleAdmin && d.Host != "" && d.Host != host {
+		if !s.authMgr.CanManageDomain(currentUser, d.Host) {
+			s.RecordAudit("domain.update", "domain: "+host+" (forbidden rename)", ip, false)
+			jsonError(w, "forbidden: cannot rename to this domain", http.StatusForbidden)
+			return
+		}
 	}
 
 	var raw map[string]json.RawMessage
@@ -2307,6 +2323,30 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 					merged.Compression = d.Compression
 				}
 			}
+
+			if !isValidHostname(merged.Host) {
+				s.configMu.Unlock()
+				s.RecordAudit("domain.update", "domain: "+host+" (invalid hostname)", ip, false)
+				jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
+				return
+			}
+			if merged.Host != host {
+				for j := range s.config.Domains {
+					if j != i && s.config.Domains[j].Host == merged.Host {
+						s.configMu.Unlock()
+						s.RecordAudit("domain.update", "domain: "+host+" (duplicate rename)", ip, false)
+						jsonError(w, "domain already exists", http.StatusConflict)
+						return
+					}
+				}
+			}
+			if err := validateDomainUpdateConfig(&merged); err != nil {
+				s.configMu.Unlock()
+				s.RecordAudit("domain.update", "domain: "+host+" (validation failed)", ip, false)
+				jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
 			s.config.Domains[i] = merged
 			d = merged // use merged for subsequent operations
 			found = true
@@ -3060,6 +3100,15 @@ func humanDuration(d time.Duration) string {
 
 // validateDomainConfig performs comprehensive pre-save validation.
 func validateDomainConfig(d *config.Domain, s *Server) error {
+	webRoot := "/var/www"
+	if s != nil {
+		s.configMu.RLock()
+		if s.config.Global.WebRoot != "" {
+			webRoot = s.config.Global.WebRoot
+		}
+		s.configMu.RUnlock()
+	}
+
 	// Type validation
 	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "app": true, "redirect": true}
 	if !validTypes[d.Type] {
@@ -3099,16 +3148,25 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 		return fmt.Errorf("redirect type requires a target URL")
 	}
 
+	// BasicAuth sanity
+	if err := validateBasicAuthConfig("domain", d.BasicAuth); err != nil {
+		return err
+	}
+	for i, loc := range d.Locations {
+		if loc.BasicAuth == nil {
+			continue
+		}
+		scope := fmt.Sprintf("location[%d]", i)
+		if loc.Match != "" {
+			scope = fmt.Sprintf("location %q", loc.Match)
+		}
+		if err := validateBasicAuthConfig(scope, *loc.BasicAuth); err != nil {
+			return err
+		}
+	}
+
 	// Root path: must be under web root (prevent serving /etc, /root, etc.)
 	if d.Root != "" && d.Type != "redirect" {
-		webRoot := "/var/www"
-		if s != nil {
-			s.configMu.RLock()
-			if s.config.Global.WebRoot != "" {
-				webRoot = s.config.Global.WebRoot
-			}
-			s.configMu.RUnlock()
-		}
 		if !pathsafe.IsWithinBase(webRoot, d.Root) || !pathsafe.IsWithinBaseResolved(webRoot, d.Root) {
 			return fmt.Errorf("root path must be under %s (got %s)", webRoot, d.Root)
 		}
@@ -3124,6 +3182,73 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 		return fmt.Errorf("rate limit requests cannot be negative")
 	}
 
+	return nil
+}
+
+func validateDomainUpdateConfig(d *config.Domain) error {
+	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "app": true, "redirect": true}
+	if !validTypes[d.Type] {
+		return fmt.Errorf("invalid type %q", d.Type)
+	}
+	validSSL := map[string]bool{"auto": true, "manual": true, "off": true, "": true}
+	if !validSSL[d.SSL.Mode] {
+		return fmt.Errorf("invalid ssl.mode %q", d.SSL.Mode)
+	}
+	if d.SSL.Mode == "manual" && (d.SSL.Cert == "" || d.SSL.Key == "") {
+		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
+	}
+	if err := validateBasicAuthConfig("domain", d.BasicAuth); err != nil {
+		return err
+	}
+	for i, loc := range d.Locations {
+		if loc.BasicAuth == nil {
+			continue
+		}
+		scope := fmt.Sprintf("location[%d]", i)
+		if loc.Match != "" {
+			scope = fmt.Sprintf("location %q", loc.Match)
+		}
+		if err := validateBasicAuthConfig(scope, *loc.BasicAuth); err != nil {
+			return err
+		}
+	}
+	if d.Cache.TTL < 0 {
+		return fmt.Errorf("cache TTL cannot be negative")
+	}
+	if d.Security.RateLimit.Requests < 0 {
+		return fmt.Errorf("rate limit requests cannot be negative")
+	}
+	return nil
+}
+
+func validateBasicAuthConfig(scope string, ba config.BasicAuthConfig) error {
+	if strings.ContainsAny(ba.Realm, "\r\n") {
+		return fmt.Errorf("%s basic_auth realm contains invalid characters", scope)
+	}
+	if !ba.Enabled {
+		return nil
+	}
+	if len(ba.Users) == 0 {
+		return fmt.Errorf("%s basic_auth enabled requires at least one user", scope)
+	}
+	for username, password := range ba.Users {
+		trimmed := strings.TrimSpace(username)
+		if trimmed == "" {
+			return fmt.Errorf("%s basic_auth username cannot be empty", scope)
+		}
+		if trimmed != username {
+			return fmt.Errorf("%s basic_auth username %q has leading/trailing spaces", scope, username)
+		}
+		if strings.ContainsAny(username, ":\r\n") {
+			return fmt.Errorf("%s basic_auth username %q contains invalid characters", scope, username)
+		}
+		if password == "" {
+			return fmt.Errorf("%s basic_auth user %q must have a non-empty password", scope, username)
+		}
+		if strings.ContainsAny(password, "\r\n") {
+			return fmt.Errorf("%s basic_auth user %q password contains invalid characters", scope, username)
+		}
+	}
 	return nil
 }
 
