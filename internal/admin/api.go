@@ -1852,11 +1852,13 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	if s.authMgr != nil {
 		user, ok := auth.UserFromContext(r.Context())
 		if ok && user.Role != auth.RoleAdmin {
-			// Resellers can only add domains in their allowed list
-			if !s.authMgr.CanManageDomain(user, r.URL.Query().Get("host")) {
-				s.RecordAudit("domain.create", "domain: "+r.URL.Query().Get("host")+" (forbidden)", ip, false)
-				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
-				return
+			// Query param host is optional; actual JSON body host is validated below.
+			if qHost := r.URL.Query().Get("host"); qHost != "" {
+				if !s.authMgr.CanManageDomain(user, qHost) {
+					s.RecordAudit("domain.create", "domain: "+qHost+" (forbidden)", ip, false)
+					jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+					return
+				}
 			}
 		}
 	}

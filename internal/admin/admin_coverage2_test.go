@@ -2279,6 +2279,34 @@ func TestAddDomainProxyNoUpstreams(t *testing.T) {
 	}
 }
 
+func TestAddDomainResellerAllowedByBodyHost(t *testing.T) {
+	s := testServer()
+	s.SetAuthManager(newMockAuthManager())
+	body := strings.NewReader(`{"host":"reseller.com","type":"static"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/domains", body)
+	req = withResellerContext(req)
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleAddDomain(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+}
+
+func TestAddDomainResellerForbiddenByBodyHost(t *testing.T) {
+	s := testServer()
+	s.SetAuthManager(newMockAuthManager())
+	body := strings.NewReader(`{"host":"other.com","type":"static"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/domains", body)
+	req = withResellerContext(req)
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.handleAddDomain(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
 func TestUpdateDomainBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
