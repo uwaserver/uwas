@@ -11,6 +11,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/pkg/fastcgi"
 )
@@ -192,18 +193,13 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 		return false
 	}
 
-	// Security: path must stay within document root (resolve symlinks)
-	absRoot, _ := filepath.Abs(domain.Root)
-	absPath, _ := filepath.Abs(filePath)
-	if !strings.HasPrefix(absPath, absRoot) {
+	// Security: path must stay within document root.
+	if !pathsafe.IsWithinBase(domain.Root, filePath) {
 		return false
 	}
-	// Resolve symlinks to prevent cross-domain escape
-	if realPath, err := filepath.EvalSymlinks(filePath); err == nil {
-		realRoot, _ := filepath.EvalSymlinks(domain.Root)
-		if realRoot != "" && !strings.HasPrefix(realPath, realRoot) {
-			return false
-		}
+	// Resolve symlinks to prevent cross-domain escape.
+	if !pathsafe.IsWithinBaseResolved(domain.Root, filePath) {
+		return false
 	}
 
 	f, err := os.Open(filePath)

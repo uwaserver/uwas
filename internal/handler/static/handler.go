@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
 )
 
@@ -191,18 +192,13 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		resolved := expandTryFileVar(candidate, cleanURI)
 		fullPath := filepath.Join(docRoot, filepath.Clean("/"+resolved))
 
-		// Security: path must stay within document root (resolve symlinks)
-		absRoot, _ := filepath.Abs(docRoot)
-		absPath, _ := filepath.Abs(fullPath)
-		if !strings.HasPrefix(absPath, absRoot) {
+		// Security: path must stay within document root.
+		if !pathsafe.IsWithinBase(docRoot, fullPath) {
 			continue
 		}
-		// Resolve symlinks to prevent cross-domain access
-		if realPath, err := filepath.EvalSymlinks(fullPath); err == nil {
-			realRoot, _ := filepath.EvalSymlinks(docRoot)
-			if realRoot != "" && !strings.HasPrefix(realPath, realRoot) {
-				continue // symlink points outside document root
-			}
+		// Resolve symlinks to prevent cross-domain access.
+		if !pathsafe.IsWithinBaseResolved(docRoot, fullPath) {
+			continue
 		}
 
 		stat, err := os.Stat(fullPath)
@@ -238,10 +234,8 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		if !strings.HasPrefix(last, "$") {
 			fullPath := filepath.Join(docRoot, filepath.Clean("/"+last))
 
-			// Security: path must stay within document root
-			absRoot, _ := filepath.Abs(docRoot)
-			absPath, _ := filepath.Abs(fullPath)
-			if !strings.HasPrefix(absPath, absRoot) {
+			// Security: path must stay within document root.
+			if !pathsafe.IsWithinBase(docRoot, fullPath) || !pathsafe.IsWithinBaseResolved(docRoot, fullPath) {
 				return false
 			}
 

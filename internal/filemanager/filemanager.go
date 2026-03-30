@@ -147,18 +147,81 @@ func safePath(baseDir, relPath string) string {
 		return ""
 	}
 	full := filepath.Join(baseDir, relPath)
-	// Ensure result is still under baseDir
-	absBase, _ := absFunc(baseDir)
-	absFull, _ := absFunc(full)
-	if !strings.HasPrefix(absFull, absBase) {
+	// Ensure result is still under baseDir.
+	if !isWithinBase(baseDir, full) {
 		return ""
 	}
-	// Resolve symlinks to prevent cross-domain escape
-	if realFull, err := evalSymlinks(absFull); err == nil {
-		realBase, _ := evalSymlinks(absBase)
-		if realBase != "" && !strings.HasPrefix(realFull, realBase) {
-			return "" // symlink points outside base directory
-		}
+	// Resolve symlinks (including non-existing path tails) to prevent escape via
+	// symlinked parent directories such as "uploads -> /etc".
+	if !isWithinBaseResolved(baseDir, full) {
+		return ""
 	}
+	absFull, _ := absFunc(full)
 	return absFull
+}
+
+func isWithinBase(baseDir, fullPath string) bool {
+	absBase, err := absFunc(baseDir)
+	if err != nil {
+		return false
+	}
+	absFull, err := absFunc(fullPath)
+	if err != nil {
+		return false
+	}
+	return isWithin(absBase, absFull)
+}
+
+func isWithinBaseResolved(baseDir, fullPath string) bool {
+	realBase, err := resolvePath(baseDir)
+	if err != nil {
+		return false
+	}
+	realFull, err := resolvePath(fullPath)
+	if err != nil {
+		return false
+	}
+	return isWithin(realBase, realFull)
+}
+
+func resolvePath(path string) (string, error) {
+	absPath, err := absFunc(path)
+	if err != nil {
+		return "", err
+	}
+	cur := absPath
+	var missing []string
+	for {
+		real, err := evalSymlinks(cur)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				real = filepath.Join(real, missing[i])
+			}
+			return filepath.Clean(real), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+func isWithin(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." {
+		return true
+	}
+	if rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

@@ -26,21 +26,19 @@ import (
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/uwaserver/uwas/internal/admin"
-	"github.com/uwaserver/uwas/internal/appmanager"
-	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
+	"github.com/uwaserver/uwas/internal/appmanager"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
-	"github.com/uwaserver/uwas/internal/database"
-	"github.com/uwaserver/uwas/internal/firewall"
-	"github.com/uwaserver/uwas/internal/cronjob"
-	"github.com/uwaserver/uwas/internal/sftpserver"
-	"github.com/uwaserver/uwas/internal/webhook"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/cronjob"
+	"github.com/uwaserver/uwas/internal/database"
+	"github.com/uwaserver/uwas/internal/deploy"
+	"github.com/uwaserver/uwas/internal/firewall"
 	fcgihandler "github.com/uwaserver/uwas/internal/handler/fastcgi"
 	proxyhandler "github.com/uwaserver/uwas/internal/handler/proxy"
 	"github.com/uwaserver/uwas/internal/handler/static"
@@ -49,11 +47,14 @@ import (
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/rlimit"
 	"github.com/uwaserver/uwas/internal/router"
+	"github.com/uwaserver/uwas/internal/sftpserver"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
+	"github.com/uwaserver/uwas/internal/webhook"
 	"github.com/uwaserver/uwas/pkg/htaccess"
 )
 
@@ -136,6 +137,8 @@ type Server struct {
 	// appMgr manages non-PHP application processes (Node.js, Python, etc.)
 	appMgr *appmanager.Manager
 }
+
+const maxMirrorBodyBytes = 2 << 20 // 2MB safety cap for mirror body buffering
 
 // New creates a fully initialized server from config.
 func New(cfg *config.Config, log *logger.Logger) *Server {
@@ -1143,10 +1146,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				path = strings.TrimPrefix(path, strings.TrimSuffix(loc.Match, "/"))
 			}
 			filePath := filepath.Join(loc.Root, filepath.Clean("/"+path))
-			// Security: must stay within loc.Root
-			absRoot, _ := filepath.Abs(loc.Root)
-			absPath, _ := filepath.Abs(filePath)
-			if !strings.HasPrefix(absPath, absRoot) {
+			// Security: must stay within loc.Root.
+			if !pathsafe.IsWithinBase(loc.Root, filePath) || !pathsafe.IsWithinBaseResolved(loc.Root, filePath) {
 				renderDomainError(ctx.Response, http.StatusForbidden, domain)
 				return
 			}
@@ -1549,14 +1550,37 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 
 	// Request mirroring: fire-and-forget copy to mirror backend
 	if mirror := s.proxyMirrors[domain.Host]; mirror != nil && mirror.ShouldMirror() {
-		// Read body for mirroring (the proxy handler will also read it)
 		var bodyBytes []byte
+		shouldMirror := true
+
+		// Mirror request bodies only when size is known and small enough.
+		// This avoids unbounded buffering for large uploads.
 		if ctx.Request.Body != nil {
-			bodyBytes, _ = io.ReadAll(ctx.Request.Body)
-			ctx.Request.Body.Close()
-			ctx.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			if ctx.Request.ContentLength < 0 || ctx.Request.ContentLength > maxMirrorBodyBytes {
+				shouldMirror = false
+				s.logger.Debug("skipping mirror for large/unknown request body",
+					"host", domain.Host,
+					"content_length", ctx.Request.ContentLength,
+					"limit_bytes", maxMirrorBodyBytes,
+				)
+			} else {
+				limited := io.LimitReader(ctx.Request.Body, maxMirrorBodyBytes+1)
+				buf, err := io.ReadAll(limited)
+				if err != nil {
+					renderDomainError(ctx.Response, http.StatusBadRequest, domain)
+					return
+				}
+				if int64(len(buf)) > maxMirrorBodyBytes {
+					shouldMirror = false
+				}
+				ctx.Request.Body.Close()
+				ctx.Request.Body = io.NopCloser(bytes.NewReader(buf))
+				bodyBytes = buf
+			}
 		}
-		mirror.Send(ctx.Request, bodyBytes)
+		if shouldMirror {
+			mirror.Send(ctx.Request, bodyBytes)
+		}
 	}
 
 	// Canary routing: route a percentage of traffic to canary upstreams
@@ -1826,7 +1850,6 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 
 	return entry
 }
-
 
 // reload re-reads and applies the config file.
 func (s *Server) reload() error {
@@ -2265,13 +2288,13 @@ func toWebhookConfigs(cfgs []config.WebhookConfig) []webhook.WebhookConfig {
 			events[j] = webhook.EventType(e)
 		}
 		result[i] = webhook.WebhookConfig{
-			URL:     cfg.URL,
-			Events:  events,
-			Headers: cfg.Headers,
-			Secret:  cfg.Secret,
+			URL:      cfg.URL,
+			Events:   events,
+			Headers:  cfg.Headers,
+			Secret:   cfg.Secret,
 			RetryMax: cfg.Retry,
-			Timeout: cfg.Timeout.Duration,
-			Enabled: cfg.Enabled,
+			Timeout:  cfg.Timeout.Duration,
+			Enabled:  cfg.Enabled,
 		}
 	}
 	return result

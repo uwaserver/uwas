@@ -21,6 +21,7 @@ import (
 	"github.com/uwaserver/uwas/internal/admin/dashboard"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
+	"github.com/uwaserver/uwas/internal/appmanager"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
@@ -28,7 +29,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
-	"github.com/uwaserver/uwas/internal/webhook"
+	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/install"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -36,13 +37,13 @@ import (
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
-	"github.com/uwaserver/uwas/internal/appmanager"
-	"github.com/uwaserver/uwas/internal/deploy"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/siteuser"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
+	"github.com/uwaserver/uwas/internal/webhook"
 )
 
 // ReloadFunc is called when a config reload is requested.
@@ -254,7 +255,9 @@ func (s *Server) registerRoutes() {
 
 	// Web terminal (WebSocket → PTY) — requires pin for security
 	s.mux.HandleFunc("GET /api/v1/terminal", func(w http.ResponseWriter, r *http.Request) {
-		if !s.requirePin(w, r) { return }
+		if !s.requirePin(w, r) {
+			return
+		}
 		s.terminalHandler().ServeHTTP(w, r)
 	})
 
@@ -2774,15 +2777,15 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 
 	result := map[string]any{
 		// Server
-		"global.http_listen":    g.HTTPListen,
-		"global.https_listen":   g.HTTPSListen,
-		"global.http3":          g.HTTP3Enabled,
-		"global.worker_count":   g.WorkerCount,
+		"global.http_listen":     g.HTTPListen,
+		"global.https_listen":    g.HTTPSListen,
+		"global.http3":           g.HTTP3Enabled,
+		"global.worker_count":    g.WorkerCount,
 		"global.max_connections": g.MaxConnections,
-		"global.pid_file":       g.PIDFile,
-		"global.web_root":       g.WebRoot,
-		"global.log_level":      g.LogLevel,
-		"global.log_format":     g.LogFormat,
+		"global.pid_file":        g.PIDFile,
+		"global.web_root":        g.WebRoot,
+		"global.log_level":       g.LogLevel,
+		"global.log_format":      g.LogFormat,
 		// Timeouts
 		"global.timeouts.read":             g.Timeouts.Read.String(),
 		"global.timeouts.read_header":      g.Timeouts.ReadHeader.String(),
@@ -2793,7 +2796,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 		// Admin
 		"global.admin.enabled": g.Admin.Enabled,
 		"global.admin.listen":  g.Admin.Listen,
-		"global.admin.api_key":  maskSecret(g.Admin.APIKey),
+		"global.admin.api_key": maskSecret(g.Admin.APIKey),
 		// Multi-User Auth
 		"global.users.enabled":        g.Users.Enabled,
 		"global.users.allow_reseller": g.Users.AllowResller,
@@ -2816,17 +2819,17 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 		"global.alerting.telegram_token":   maskSecret(g.Alerting.TelegramToken),
 		"global.alerting.telegram_chat_id": g.Alerting.TelegramChatID,
 		// Backup
-		"global.backup.enabled":  g.Backup.Enabled,
-		"global.backup.provider": g.Backup.Provider,
-		"global.backup.schedule": g.Backup.Schedule,
-		"global.backup.keep":     g.Backup.Keep,
-		"global.backup.local.path":   g.Backup.Local.Path,
-		"global.backup.s3.endpoint":  g.Backup.S3.Endpoint,
-		"global.backup.s3.bucket":    g.Backup.S3.Bucket,
-		"global.backup.s3.region":    g.Backup.S3.Region,
-		"global.backup.sftp.host":    g.Backup.SFTP.Host,
-		"global.backup.sftp.port":    g.Backup.SFTP.Port,
-		"global.backup.sftp.user":    g.Backup.SFTP.User,
+		"global.backup.enabled":     g.Backup.Enabled,
+		"global.backup.provider":    g.Backup.Provider,
+		"global.backup.schedule":    g.Backup.Schedule,
+		"global.backup.keep":        g.Backup.Keep,
+		"global.backup.local.path":  g.Backup.Local.Path,
+		"global.backup.s3.endpoint": g.Backup.S3.Endpoint,
+		"global.backup.s3.bucket":   g.Backup.S3.Bucket,
+		"global.backup.s3.region":   g.Backup.S3.Region,
+		"global.backup.sftp.host":   g.Backup.SFTP.Host,
+		"global.backup.sftp.port":   g.Backup.SFTP.Port,
+		"global.backup.sftp.user":   g.Backup.SFTP.User,
 	}
 	jsonResponse(w, result)
 }
@@ -2847,76 +2850,136 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 		sv := fmt.Sprintf("%v", val)
 		switch key {
 		// Server
-		case "global.http_listen":    g.HTTPListen = sv
-		case "global.https_listen":   g.HTTPSListen = sv
-		case "global.http3":          g.HTTP3Enabled = sv == "true"
-		case "global.worker_count":   g.WorkerCount = sv
-		case "global.max_connections": g.MaxConnections = toInt(val)
-		case "global.pid_file":       g.PIDFile = sv
-		case "global.web_root":       g.WebRoot = sv
-		case "global.log_level":      g.LogLevel = sv
-		case "global.log_format":     g.LogFormat = sv
+		case "global.http_listen":
+			g.HTTPListen = sv
+		case "global.https_listen":
+			g.HTTPSListen = sv
+		case "global.http3":
+			g.HTTP3Enabled = sv == "true"
+		case "global.worker_count":
+			g.WorkerCount = sv
+		case "global.max_connections":
+			g.MaxConnections = toInt(val)
+		case "global.pid_file":
+			g.PIDFile = sv
+		case "global.web_root":
+			g.WebRoot = sv
+		case "global.log_level":
+			g.LogLevel = sv
+		case "global.log_format":
+			g.LogFormat = sv
 		// Timeouts
-		case "global.timeouts.read":             g.Timeouts.Read = parseDur(sv)
-		case "global.timeouts.read_header":      g.Timeouts.ReadHeader = parseDur(sv)
-		case "global.timeouts.write":            g.Timeouts.Write = parseDur(sv)
-		case "global.timeouts.idle":             g.Timeouts.Idle = parseDur(sv)
-		case "global.timeouts.shutdown_grace":   g.Timeouts.ShutdownGrace = parseDur(sv)
-		case "global.timeouts.max_header_bytes": g.Timeouts.MaxHeaderBytes = toInt(val)
+		case "global.timeouts.read":
+			g.Timeouts.Read = parseDur(sv)
+		case "global.timeouts.read_header":
+			g.Timeouts.ReadHeader = parseDur(sv)
+		case "global.timeouts.write":
+			g.Timeouts.Write = parseDur(sv)
+		case "global.timeouts.idle":
+			g.Timeouts.Idle = parseDur(sv)
+		case "global.timeouts.shutdown_grace":
+			g.Timeouts.ShutdownGrace = parseDur(sv)
+		case "global.timeouts.max_header_bytes":
+			g.Timeouts.MaxHeaderBytes = toInt(val)
 		// Admin
-		case "global.admin.enabled": g.Admin.Enabled = sv == "true"
-		case "global.admin.listen":  g.Admin.Listen = sv
-		case "global.admin.api_key": g.Admin.APIKey = sv
+		case "global.admin.enabled":
+			g.Admin.Enabled = sv == "true"
+		case "global.admin.listen":
+			g.Admin.Listen = sv
+		case "global.admin.api_key":
+			g.Admin.APIKey = sv
 		// pin_code is intentionally not settable via API — must be set in YAML config
 		// Multi-User Auth
-		case "global.users.enabled":        g.Users.Enabled = sv == "true"
-		case "global.users.allow_reseller": g.Users.AllowResller = sv == "true"
+		case "global.users.enabled":
+			g.Users.Enabled = sv == "true"
+		case "global.users.allow_reseller":
+			g.Users.AllowResller = sv == "true"
 		// MCP
-		case "global.mcp.enabled": g.MCP.Enabled = sv == "true"
-		case "global.mcp.listen":  g.MCP.Listen = sv
+		case "global.mcp.enabled":
+			g.MCP.Enabled = sv == "true"
+		case "global.mcp.listen":
+			g.MCP.Listen = sv
 		// ACME
-		case "global.acme.email":        g.ACME.Email = sv
-		case "global.acme.ca_url":       g.ACME.CAURL = sv
-		case "global.acme.storage":      g.ACME.Storage = sv
-		case "global.acme.dns_provider": g.ACME.DNSProvider = sv
-		case "global.acme.on_demand":    g.ACME.OnDemand = sv == "true"
-		case "global.acme.on_demand_ask": g.ACME.OnDemandAsk = sv
+		case "global.acme.email":
+			g.ACME.Email = sv
+		case "global.acme.ca_url":
+			g.ACME.CAURL = sv
+		case "global.acme.storage":
+			g.ACME.Storage = sv
+		case "global.acme.dns_provider":
+			g.ACME.DNSProvider = sv
+		case "global.acme.on_demand":
+			g.ACME.OnDemand = sv == "true"
+		case "global.acme.on_demand_ask":
+			g.ACME.OnDemandAsk = sv
 		// Cache
-		case "global.cache.enabled":      g.Cache.Enabled = sv == "true"
-		case "global.cache.memory_limit": g.Cache.MemoryLimit = parseBS(sv)
-		case "global.cache.disk_path":    g.Cache.DiskPath = sv
-		case "global.cache.disk_limit":   g.Cache.DiskLimit = parseBS(sv)
-		case "global.cache.default_ttl":  g.Cache.DefaultTTL = toInt(val)
-		case "global.cache.grace_ttl":    g.Cache.GraceTTL = toInt(val)
-		case "global.cache.stale_while_revalidate": g.Cache.StaleWhileRevalidate = sv == "true"
-		case "global.cache.purge_key":   g.Cache.PurgeKey = sv
+		case "global.cache.enabled":
+			g.Cache.Enabled = sv == "true"
+		case "global.cache.memory_limit":
+			g.Cache.MemoryLimit = parseBS(sv)
+		case "global.cache.disk_path":
+			g.Cache.DiskPath = sv
+		case "global.cache.disk_limit":
+			g.Cache.DiskLimit = parseBS(sv)
+		case "global.cache.default_ttl":
+			g.Cache.DefaultTTL = toInt(val)
+		case "global.cache.grace_ttl":
+			g.Cache.GraceTTL = toInt(val)
+		case "global.cache.stale_while_revalidate":
+			g.Cache.StaleWhileRevalidate = sv == "true"
+		case "global.cache.purge_key":
+			g.Cache.PurgeKey = sv
 		// Alerting
-		case "global.alerting.enabled":          g.Alerting.Enabled = sv == "true"
-		case "global.alerting.webhook_url":      g.Alerting.WebhookURL = sv
-		case "global.alerting.slack_url":        g.Alerting.SlackURL = sv
-		case "global.alerting.telegram_token":   g.Alerting.TelegramToken = sv
-		case "global.alerting.telegram_chat_id": g.Alerting.TelegramChatID = sv
+		case "global.alerting.enabled":
+			g.Alerting.Enabled = sv == "true"
+		case "global.alerting.webhook_url":
+			g.Alerting.WebhookURL = sv
+		case "global.alerting.slack_url":
+			g.Alerting.SlackURL = sv
+		case "global.alerting.telegram_token":
+			g.Alerting.TelegramToken = sv
+		case "global.alerting.telegram_chat_id":
+			g.Alerting.TelegramChatID = sv
 		// Backup
-		case "global.backup.enabled":     g.Backup.Enabled = sv == "true"
-		case "global.backup.provider":    g.Backup.Provider = sv
-		case "global.backup.schedule":    g.Backup.Schedule = sv
-		case "global.backup.keep":        g.Backup.Keep = toInt(val)
-		case "global.backup.local.path":  g.Backup.Local.Path = sv
-		case "global.backup.s3.endpoint": g.Backup.S3.Endpoint = sv
-		case "global.backup.s3.bucket":   g.Backup.S3.Bucket = sv
-		case "global.backup.s3.region":      g.Backup.S3.Region = sv
-		case "global.backup.s3.access_key":  g.Backup.S3.AccessKey = sv
-		case "global.backup.s3.secret_key":  g.Backup.S3.SecretKey = sv
-		case "global.backup.sftp.host":      g.Backup.SFTP.Host = sv
-		case "global.backup.sftp.port":      g.Backup.SFTP.Port = toInt(val)
-		case "global.backup.sftp.user":      g.Backup.SFTP.User = sv
-		case "global.backup.sftp.key_file":  g.Backup.SFTP.KeyFile = sv
-		case "global.backup.sftp.password":  g.Backup.SFTP.Password = sv
-		case "global.backup.sftp.remote_path": g.Backup.SFTP.RemotePath = sv
+		case "global.backup.enabled":
+			g.Backup.Enabled = sv == "true"
+		case "global.backup.provider":
+			g.Backup.Provider = sv
+		case "global.backup.schedule":
+			g.Backup.Schedule = sv
+		case "global.backup.keep":
+			g.Backup.Keep = toInt(val)
+		case "global.backup.local.path":
+			g.Backup.Local.Path = sv
+		case "global.backup.s3.endpoint":
+			g.Backup.S3.Endpoint = sv
+		case "global.backup.s3.bucket":
+			g.Backup.S3.Bucket = sv
+		case "global.backup.s3.region":
+			g.Backup.S3.Region = sv
+		case "global.backup.s3.access_key":
+			g.Backup.S3.AccessKey = sv
+		case "global.backup.s3.secret_key":
+			g.Backup.S3.SecretKey = sv
+		case "global.backup.sftp.host":
+			g.Backup.SFTP.Host = sv
+		case "global.backup.sftp.port":
+			g.Backup.SFTP.Port = toInt(val)
+		case "global.backup.sftp.user":
+			g.Backup.SFTP.User = sv
+		case "global.backup.sftp.key_file":
+			g.Backup.SFTP.KeyFile = sv
+		case "global.backup.sftp.password":
+			g.Backup.SFTP.Password = sv
+		case "global.backup.sftp.remote_path":
+			g.Backup.SFTP.RemotePath = sv
 		// Alerting email
-		case "global.alerting.email_smtp_host": g.Alerting.EmailSMTP = sv
-		case "global.alerting.email_from":      g.Alerting.EmailFrom = sv
-		case "global.alerting.email_to":        g.Alerting.EmailTo = sv
+		case "global.alerting.email_smtp_host":
+			g.Alerting.EmailSMTP = sv
+		case "global.alerting.email_from":
+			g.Alerting.EmailFrom = sv
+		case "global.alerting.email_to":
+			g.Alerting.EmailTo = sv
 		}
 	}
 	s.configMu.Unlock()
@@ -2929,8 +2992,10 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 
 func toInt(v any) int {
 	switch n := v.(type) {
-	case float64: return int(n)
-	case int:     return n
+	case float64:
+		return int(n)
+	case int:
+		return n
 	case string:
 		var i int
 		fmt.Sscanf(n, "%d", &i)
@@ -3020,9 +3085,7 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 			}
 			s.configMu.RUnlock()
 		}
-		absRoot, _ := filepath.Abs(d.Root)
-		absWebRoot, _ := filepath.Abs(webRoot)
-		if !strings.HasPrefix(absRoot, absWebRoot) {
+		if !pathsafe.IsWithinBase(webRoot, d.Root) || !pathsafe.IsWithinBaseResolved(webRoot, d.Root) {
 			return fmt.Errorf("root path must be under %s (got %s)", webRoot, d.Root)
 		}
 	}
@@ -3092,7 +3155,9 @@ func parseBS(s string) config.ByteSize {
 	// Reuse YAML unmarshal logic by creating a temporary wrapper.
 	var b config.ByteSize
 	data := []byte(fmt.Sprintf("val: %s", s))
-	var tmp struct{ Val config.ByteSize `yaml:"val"` }
+	var tmp struct {
+		Val config.ByteSize `yaml:"val"`
+	}
 	if err := yaml.Unmarshal(data, &tmp); err == nil {
 		b = tmp.Val
 	}
@@ -3736,12 +3801,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]any{
-		"status":    "authenticated",
-		"token":     session.Token,
-		"user_id":   session.UserID,
-		"username":  session.Username,
-		"role":      session.Role,
-		"domains":   session.Domains,
+		"status":     "authenticated",
+		"token":      session.Token,
+		"user_id":    session.UserID,
+		"username":   session.Username,
+		"role":       session.Role,
+		"domains":    session.Domains,
 		"expires_at": session.ExpiresAt,
 	})
 }

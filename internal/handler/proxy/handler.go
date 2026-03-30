@@ -24,6 +24,11 @@ type Handler struct {
 	transports sync.Map // domain host → *http.Transport
 }
 
+const (
+	maxRetryBodyBytes        int64 = 8 << 20  // 8MB cap for retryable request buffering
+	maxBufferedResponseBytes int64 = 16 << 20 // 16MB cap for buffer_response mode
+)
+
 func New(log *logger.Logger) *Handler {
 	return &Handler{logger: log}
 }
@@ -101,13 +106,24 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 	// Buffer the request body so we can retry
 	var bodyBytes []byte
 	if ctx.Request.Body != nil {
-		var err error
-		bodyBytes, err = io.ReadAll(ctx.Request.Body)
-		if err != nil {
-			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
-			return
+		// For unknown/large bodies, avoid unbounded memory usage and disable retries.
+		if ctx.Request.ContentLength < 0 || ctx.Request.ContentLength > maxRetryBodyBytes {
+			maxRetries = 0
+		} else {
+			limited := io.LimitReader(ctx.Request.Body, maxRetryBodyBytes+1)
+			var err error
+			bodyBytes, err = io.ReadAll(limited)
+			if err != nil {
+				ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+				return
+			}
+			if int64(len(bodyBytes)) > maxRetryBodyBytes {
+				ctx.Request.Body.Close()
+				ctx.Response.Error(http.StatusRequestEntityTooLarge, "413 Request Entity Too Large")
+				return
+			}
+			ctx.Request.Body.Close()
 		}
-		ctx.Request.Body.Close()
 	}
 
 	tried := make(map[*Backend]bool)
@@ -163,6 +179,8 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		var body io.Reader
 		if bodyBytes != nil {
 			body = bytes.NewReader(bodyBytes)
+		} else if attempt == 0 && ctx.Request.Body != nil {
+			body = ctx.Request.Body
 		}
 
 		proxyReq, err := http.NewRequestWithContext(
@@ -250,7 +268,10 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 		// Write status + body
 		ctx.Response.WriteHeader(resp.StatusCode)
-		if domain.Proxy.BufferResponse {
+		useBufferedResponse := domain.Proxy.BufferResponse &&
+			resp.ContentLength >= 0 &&
+			resp.ContentLength <= maxBufferedResponseBytes
+		if useBufferedResponse {
 			// Buffered mode: read entire upstream response, then write to client.
 			// Frees upstream connection faster for slow clients.
 			body, readErr := io.ReadAll(resp.Body)
