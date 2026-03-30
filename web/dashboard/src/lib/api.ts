@@ -487,7 +487,7 @@ export const dropDatabase = (name: string) =>
   api<{ status: string }>(`/api/v1/database/${encodeURIComponent(name)}`, { method: 'DELETE' });
 export const installDatabase = () => api<{ status: string; task_id?: string }>('/api/v1/database/install', { method: 'POST' });
 export const uninstallDatabase = () => api<{ status: string; output: string }>('/api/v1/database/uninstall', { method: 'POST' });
-export const diagnoseDatabase = () => api<Record<string, any>>('/api/v1/database/diagnose');
+export const diagnoseDatabase = () => api<Record<string, unknown>>('/api/v1/database/diagnose');
 export interface DBUser { user: string; host: string; }
 export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users');
 export const changeDBPassword = (user: string, host: string, password: string) =>
@@ -698,11 +698,11 @@ export function disable2FA(code: string): Promise<{ status: string }> {
 
 // ── Settings (structured key-value) ──────────────────
 
-export function fetchSettings(): Promise<Record<string, any>> {
+export function fetchSettings(): Promise<Record<string, unknown>> {
   return api('/api/v1/settings');
 }
 
-export function saveSettings(updates: Record<string, any>): Promise<{ status: string; updated: number }> {
+export function saveSettings(updates: Record<string, unknown>): Promise<{ status: string; updated: number }> {
   return api('/api/v1/settings', { method: 'PUT', body: JSON.stringify(updates) });
 }
 
@@ -926,8 +926,8 @@ export const useRecoveryCode = (code: string) =>
 
 // ── Notification Preferences ──
 
-export const fetchNotifyPrefs = () => api<Record<string, any>>('/api/v1/settings/notifications');
-export const saveNotifyPrefs = (prefs: Record<string, any>) =>
+export const fetchNotifyPrefs = () => api<Record<string, unknown>>('/api/v1/settings/notifications');
+export const saveNotifyPrefs = (prefs: Record<string, unknown>) =>
   api<{ status: string }>('/api/v1/settings/notifications', { method: 'PUT', body: JSON.stringify(prefs) });
 
 // ── White-Label Branding ──

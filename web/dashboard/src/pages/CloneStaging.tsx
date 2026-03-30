@@ -29,7 +29,7 @@ export default function CloneStaging() {
     if (sourceDomain && !targetDomain) {
       setTargetDomain(`staging.${sourceDomain}`);
     }
-  }, [sourceDomain]);
+  }, [sourceDomain, targetDomain]);
 
   const handleClone = async () => {
     if (!sourceDomain || !targetDomain) return;

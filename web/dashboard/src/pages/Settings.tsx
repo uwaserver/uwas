@@ -369,7 +369,6 @@ const ALL_DYNAMIC_FIELDS: FieldDef[] = [
 // ---------------------------------------------------------------------------
 
 export default function Settings() {
-  const [rawYaml, setRawYaml] = useState(''); // raw YAML for dynamic fields (DNS creds)
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [health, setHealth] = useState<HealthData | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
@@ -402,7 +401,6 @@ export default function Settings() {
         fetchSystem(),
         fetch2FAStatus().catch(() => ({ enabled: false })),
       ]);
-      setRawYaml(raw.content);
       // Prefer structured API values over YAML parsing
       const values: Record<string, string> = {};
       for (const [k, v] of Object.entries(settings)) {
@@ -410,7 +408,7 @@ export default function Settings() {
       }
       // Also parse dynamic fields from YAML (DNS credentials etc.)
       for (const f of ALL_DYNAMIC_FIELDS) {
-        if (!values[f.key]) values[f.key] = yamlGet(rawYaml || raw.content, f.key);
+        if (!values[f.key]) values[f.key] = yamlGet(raw.content, f.key);
       }
       setFormValues(values);
       setHealth(h);
@@ -448,7 +446,7 @@ export default function Settings() {
     setSaving(true);
     try {
       // Build updates from dirty keys
-      const updates: Record<string, any> = {};
+      const updates: Record<string, string | number | boolean> = {};
       for (const key of dirtyKeys) {
         const val = formValues[key] ?? '';
         // Detect field type for proper serialization
@@ -478,7 +476,7 @@ export default function Settings() {
     try {
       // Save via structured API first
       if (dirtyKeys.size > 0) {
-        const updates: Record<string, any> = {};
+        const updates: Record<string, string | number | boolean> = {};
         for (const key of dirtyKeys) {
           const val = formValues[key] ?? '';
           const field = allFields.find(f => f.key === key);

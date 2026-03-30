@@ -228,7 +228,7 @@ export default function Database() {
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   // Diagnose
-  const [diagData, setDiagData] = useState<Record<string, any> | null>(null);
+  const [diagData, setDiagData] = useState<Record<string, unknown> | null>(null);
 
   // Import
   const [importing, setImporting] = useState(false);
