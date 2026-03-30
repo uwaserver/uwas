@@ -127,9 +127,13 @@ func (p *DigitalOceanProvider) CreateRecord(zoneID string, rec Record) (*Record,
 		return nil, err
 	}
 	var resp struct {
-		Record struct{ ID int `json:"id"` } `json:"domain_record"`
+		Record struct {
+			ID int `json:"id"`
+		} `json:"domain_record"`
 	}
-	json.Unmarshal(data, &resp)
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("digitalocean: parse create record response: %w", err)
+	}
 	rec.ID = fmt.Sprintf("%d", resp.Record.ID)
 	return &rec, nil
 }
