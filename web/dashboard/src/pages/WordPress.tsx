@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, ChevronDown, ChevronUp, Bug, FileText, Users, Key, Lock, Database, Trash2 } from 'lucide-react';
 import {
   fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus, fetchDockerDBs,
@@ -35,6 +35,7 @@ export default function WordPress() {
   const [showPasswordForm, setShowPasswordForm] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [siteTab, setSiteTab] = useState<'overview' | 'security' | 'users' | 'optimize'>('overview');
+  const activeSiteRef = useRef('');
 
   const loadSites = useCallback(async () => {
     try {
@@ -153,25 +154,41 @@ export default function WordPress() {
               <div className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-accent/30"
                 onClick={() => {
                   const next = expandedSite === site.domain ? '' : site.domain;
+                  activeSiteRef.current = next;
                   setExpandedSite(next);
                   setSiteTab('overview');
+                  setShowPasswordForm('');
+                  setNewPassword('');
+                  setSiteUsers([]);
+                  setSiteUsersError('');
+                  setSecurity(null);
                   if (next) {
                     // Lazy load: enrich with wp-cli detail (plugins/themes with update info)
                     fetchWPSiteDetail(next).then(enriched => {
                       setSites(prev => prev.map(s => s.domain === next ? enriched : s));
                     }).catch(() => {});
-                    wpSecurityStatus(next).then(setSecurity).catch(() => setSecurity(null));
-                    setSiteUsers([]);
-                    setSiteUsersError('');
+                    wpSecurityStatus(next).then((sec) => {
+                      if (activeSiteRef.current === next) {
+                        setSecurity(sec);
+                      }
+                    }).catch(() => {
+                      if (activeSiteRef.current === next) {
+                        setSecurity(null);
+                      }
+                    });
                     wpListUsers(next)
                       .then(users => {
-                        setSiteUsers(users);
-                        setSiteUsersError('');
+                        if (activeSiteRef.current === next) {
+                          setSiteUsers(users);
+                          setSiteUsersError('');
+                        }
                       })
                       .catch((e) => {
-                        const msg = (e as Error).message || 'Failed to load WordPress users';
-                        setSiteUsers([]);
-                        setSiteUsersError(msg);
+                        if (activeSiteRef.current === next) {
+                          const msg = (e as Error).message || 'Failed to load WordPress users';
+                          setSiteUsers([]);
+                          setSiteUsersError(msg);
+                        }
                       });
                   }
                 }}>

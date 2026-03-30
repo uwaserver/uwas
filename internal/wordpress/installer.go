@@ -1095,6 +1095,46 @@ type WPUser struct {
 	Registered string `json:"registered,omitempty"`
 }
 
+func parseWPCLIStringField(raw json.RawMessage) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+
+	var n json.Number
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&n); err == nil {
+		return n.String(), nil
+	}
+
+	return "", fmt.Errorf("unsupported value: %s", string(raw))
+}
+
+func parseWPCLIRolesField(raw json.RawMessage) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return strings.Join(arr, ","), nil
+	}
+
+	return parseWPCLIStringField(raw)
+}
+
 // ListUsers returns all WordPress users via wp-cli.
 func ListUsers(webRoot string) ([]WPUser, error) {
 	out, err := wpCLI(webRoot, "user", "list", "--fields=ID,user_login,user_email,roles,user_registered", "--format=json")
@@ -1103,18 +1143,32 @@ func ListUsers(webRoot string) ([]WPUser, error) {
 	}
 	out = extractJSON(out)
 	var raw []struct {
-		ID             string `json:"ID"`
-		UserLogin      string `json:"user_login"`
-		UserEmail      string `json:"user_email"`
-		Roles          string `json:"roles"`
-		UserRegistered string `json:"user_registered"`
+		ID             json.RawMessage `json:"ID"`
+		UserLogin      string          `json:"user_login"`
+		UserEmail      string          `json:"user_email"`
+		Roles          json.RawMessage `json:"roles"`
+		UserRegistered string          `json:"user_registered"`
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return nil, fmt.Errorf("parse user list: %w", err)
 	}
 	users := make([]WPUser, len(raw))
 	for i, u := range raw {
-		users[i] = WPUser{ID: u.ID, Login: u.UserLogin, Email: u.UserEmail, Role: u.Roles, Registered: u.UserRegistered}
+		id, err := parseWPCLIStringField(u.ID)
+		if err != nil {
+			return nil, fmt.Errorf("parse user list: invalid ID: %w", err)
+		}
+		role, err := parseWPCLIRolesField(u.Roles)
+		if err != nil {
+			return nil, fmt.Errorf("parse user list: invalid roles: %w", err)
+		}
+		users[i] = WPUser{
+			ID:         id,
+			Login:      u.UserLogin,
+			Email:      u.UserEmail,
+			Role:       role,
+			Registered: u.UserRegistered,
+		}
 	}
 	return users, nil
 }
