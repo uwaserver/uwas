@@ -54,6 +54,7 @@ export default function DomainDetail() {
   const [wpSite, setWpSite] = useState<WPSite | null>(null);
   const [wpSecurity, setWpSecurity] = useState<WPSecurityStatus | null>(null);
   const [wpUsers, setWpUsers] = useState<WPUserInfo[]>([]);
+  const [wpUsersError, setWpUsersError] = useState('');
   const [pwUser, setPwUser] = useState('');
   const [newPw, setNewPw] = useState('');
   const [wpResult, setWpResult] = useState('');
@@ -97,8 +98,21 @@ export default function DomainDetail() {
         const wp = sites?.find(s => s.domain === host);
         setWpSite(wp ?? null);
         if (wp) {
-          wpSecurityStatus(host).then(setWpSecurity).catch(() => {});
-          wpListUsers(host).then(setWpUsers).catch(() => setWpUsers([]));
+          wpSecurityStatus(host).then(setWpSecurity).catch(() => setWpSecurity(null));
+          setWpUsers([]);
+          setWpUsersError('');
+          wpListUsers(host)
+            .then(users => {
+              setWpUsers(users);
+              setWpUsersError('');
+            })
+            .catch((e) => {
+              setWpUsers([]);
+              setWpUsersError((e as Error).message || 'Failed to load WordPress users');
+            });
+        } else {
+          setWpUsers([]);
+          setWpUsersError('');
         }
       }).catch(() => {});
     } catch { /* ignore */ }
@@ -651,9 +665,15 @@ export default function DomainDetail() {
           )}
 
           {/* Users + password change */}
-          {wpUsers.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold text-card-foreground mb-2">Users ({wpUsers.length})</h3>
+          <div>
+            <h3 className="text-sm font-semibold text-card-foreground mb-2">Users ({wpUsers.length})</h3>
+            {wpUsersError ? (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                Failed to load users: {wpUsersError}
+              </div>
+            ) : wpUsers.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No users found (requires wp-cli)</p>
+            ) : (
               <div className="space-y-1">
                 {wpUsers.map(u => (
                   <div key={u.id} className="rounded bg-background px-3 py-2">
@@ -676,8 +696,8 @@ export default function DomainDetail() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
