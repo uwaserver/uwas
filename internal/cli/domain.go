@@ -9,10 +9,15 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 // DomainCommand manages domains via the admin API.
 type DomainCommand struct{}
+
+var apiHTTPClient = &http.Client{
+	Timeout: 15 * time.Second,
+}
 
 func (d *DomainCommand) Name() string        { return "domain" }
 func (d *DomainCommand) Description() string { return "Manage domains (list, add, remove)" }
@@ -237,7 +242,7 @@ func apiRequest(method, url, apiKey string, body io.Reader) ([]byte, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("API request failed: %w", err)
 	}
