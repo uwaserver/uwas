@@ -37,7 +37,9 @@ export default function Migration() {
     try {
       const d = await fetchDomains();
       setDomains(d ?? []);
-    } catch {} finally {
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
       setLoading(false);
     }
   }, []);
