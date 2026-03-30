@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
 )
 
@@ -148,10 +149,7 @@ func SplitScriptPath(originalURI, resolvedPath, docRoot string, indexFiles []str
 
 	// If we have a resolved filesystem path, derive SCRIPT_NAME from it
 	if resolvedPath != "" {
-		absRoot, _ := filepath.Abs(docRoot)
-		absResolved, _ := filepath.Abs(resolvedPath)
-		if strings.HasPrefix(absResolved, absRoot) {
-			rel := absResolved[len(absRoot):]
+		if rel, ok := pathsafe.RelativeToBase(docRoot, resolvedPath); ok {
 			scriptName = filepath.ToSlash(rel)
 			if !strings.HasPrefix(scriptName, "/") {
 				scriptName = "/" + scriptName

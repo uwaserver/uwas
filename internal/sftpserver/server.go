@@ -16,14 +16,15 @@ import (
 	"sync"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 	"golang.org/x/crypto/ssh"
 )
 
 // Config holds SFTP server configuration.
 type Config struct {
-	Listen    string            // e.g. ":2222"
-	HostKey   string            // path to host key, auto-generated if empty
-	Users     map[string]User   // username → user config
+	Listen  string          // e.g. ":2222"
+	HostKey string          // path to host key, auto-generated if empty
+	Users   map[string]User // username → user config
 }
 
 // User represents an SFTP user with chroot jail.
@@ -181,35 +182,35 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *
 
 // SFTP packet types
 const (
-	sshFXPInit          = 1
-	sshFXPVersion       = 2
-	sshFXPOpen          = 3
-	sshFXPClose         = 4
-	sshFXPRead          = 5
-	sshFXPWrite         = 6
-	sshFXPOpenDir       = 11
-	sshFXPReadDir       = 12
-	sshFXPRemove        = 13
-	sshFXPMkDir         = 14
-	sshFXPRmDir         = 15
-	sshFXPRealPath      = 16
-	sshFXPStat          = 17
-	sshFXPRename        = 18
-	sshFXPLStat         = 7
-	sshFXPFStat         = 8
-	sshFXPSetStat       = 9
-	sshFXPStatus        = 101
-	sshFXPHandle        = 102
-	sshFXPData          = 103
-	sshFXPName          = 104
-	sshFXPAttrs         = 105
+	sshFXPInit     = 1
+	sshFXPVersion  = 2
+	sshFXPOpen     = 3
+	sshFXPClose    = 4
+	sshFXPRead     = 5
+	sshFXPWrite    = 6
+	sshFXPOpenDir  = 11
+	sshFXPReadDir  = 12
+	sshFXPRemove   = 13
+	sshFXPMkDir    = 14
+	sshFXPRmDir    = 15
+	sshFXPRealPath = 16
+	sshFXPStat     = 17
+	sshFXPRename   = 18
+	sshFXPLStat    = 7
+	sshFXPFStat    = 8
+	sshFXPSetStat  = 9
+	sshFXPStatus   = 101
+	sshFXPHandle   = 102
+	sshFXPData     = 103
+	sshFXPName     = 104
+	sshFXPAttrs    = 105
 )
 
 // Status codes
 const (
-	sshFXOK              = 0
-	sshFXEOF             = 1
-	sshFXNoSuchFile      = 2
+	sshFXOK               = 0
+	sshFXEOF              = 1
+	sshFXNoSuchFile       = 2
 	sshFXPermissionDenied = 3
 	sshFXFailure          = 4
 )
@@ -309,18 +310,14 @@ func (sess *sftpSession) safePath(p string) string {
 		return sess.root
 	}
 	full := filepath.Join(sess.root, rel)
-	absRoot, _ := filepath.Abs(sess.root)
-	absFull, _ := filepath.Abs(full)
-	if !strings.HasPrefix(absFull, absRoot) {
+	if !pathsafe.IsWithinBase(sess.root, full) {
 		return ""
 	}
-	// Resolve symlinks to prevent chroot escape via symlink
-	if realPath, err := filepath.EvalSymlinks(absFull); err == nil {
-		realRoot, _ := filepath.EvalSymlinks(sess.root)
-		if realRoot != "" && !strings.HasPrefix(realPath, realRoot) {
-			return "" // symlink points outside chroot
-		}
+	// Resolve symlinks to prevent chroot escape via symlink.
+	if !pathsafe.IsWithinBaseResolved(sess.root, full) {
+		return ""
 	}
+	absFull, _ := filepath.Abs(full)
 	return absFull
 }
 
