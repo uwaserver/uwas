@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/smtp"
 	"strings"
@@ -12,8 +13,11 @@ import (
 )
 
 var (
-	telegramAPIBase = "https://api.telegram.org"
-	smtpSendMailFn  = smtp.SendMail
+	telegramAPIBase  = "https://api.telegram.org"
+	smtpSendMailFn   = smtp.SendMail
+	notifyHTTPClient = &http.Client{
+		Timeout: 10 * time.Second,
+	}
 )
 
 // Channel is a notification destination.
@@ -51,11 +55,22 @@ func Send(ch Channel, msg Message) error {
 }
 
 func sendWebhook(url string, msg Message) error {
+	if strings.TrimSpace(url) == "" {
+		return fmt.Errorf("webhook url is required")
+	}
+
 	data, _ := json.Marshal(msg)
-	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := notifyHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("webhook returned %d", resp.StatusCode)
@@ -64,6 +79,10 @@ func sendWebhook(url string, msg Message) error {
 }
 
 func sendSlack(webhookURL string, msg Message) error {
+	if strings.TrimSpace(webhookURL) == "" {
+		return fmt.Errorf("slack webhook_url is required")
+	}
+
 	emoji := "ℹ️"
 	switch msg.Level {
 	case "warning":
@@ -75,11 +94,21 @@ func sendSlack(webhookURL string, msg Message) error {
 		"text": fmt.Sprintf("%s *%s*\n%s\n_%s_", emoji, msg.Title, msg.Body, msg.Source),
 	}
 	data, _ := json.Marshal(payload)
-	resp, err := http.Post(webhookURL, "application/json", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := notifyHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("slack webhook returned %d", resp.StatusCode)
+	}
 	return nil
 }
 

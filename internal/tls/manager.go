@@ -70,6 +70,7 @@ const (
 	onDemandAskTimeout      = 5 * time.Second
 	onDemandObtainTimeout   = 2 * time.Minute
 	maxOnDemandAskBodyBytes = 8 << 10 // 8KB
+	ocspFetchTimeout        = 10 * time.Second
 )
 
 func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logger) *Manager {
@@ -517,12 +518,24 @@ func (m *Manager) stapleOCSP(cert *tls.Certificate, host string) {
 		return
 	}
 
-	httpResp, err := http.Post(leaf.OCSPServer[0], "application/ocsp-request", bytes.NewReader(ocspReq))
+	ocspCtx, cancel := context.WithTimeout(context.Background(), ocspFetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ocspCtx, http.MethodPost, leaf.OCSPServer[0], bytes.NewReader(ocspReq))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/ocsp-request")
+
+	httpResp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		m.logger.Debug("OCSP fetch failed", "host", host, "error", err)
 		return
 	}
 	defer httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusOK {
+		return
+	}
 
 	respBytes, err := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
 	if err != nil {

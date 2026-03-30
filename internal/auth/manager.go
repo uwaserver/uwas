@@ -59,18 +59,18 @@ type Session struct {
 type Permission string
 
 const (
-	PermDomainRead    Permission = "domain:read"
-	PermDomainCreate  Permission = "domain:create"
-	PermDomainUpdate  Permission = "domain:update"
-	PermDomainDelete  Permission = "domain:delete"
-	PermUserRead      Permission = "user:read"
-	PermUserCreate    Permission = "user:create"
-	PermUserUpdate    Permission = "user:update"
-	PermUserDelete    Permission = "user:delete"
-	PermSystemRead    Permission = "system:read"
-	PermSystemConfig  Permission = "system:config"
-	PermBackupManage  Permission = "backup:manage"
-	PermCertManage    Permission = "cert:manage"
+	PermDomainRead   Permission = "domain:read"
+	PermDomainCreate Permission = "domain:create"
+	PermDomainUpdate Permission = "domain:update"
+	PermDomainDelete Permission = "domain:delete"
+	PermUserRead     Permission = "user:read"
+	PermUserCreate   Permission = "user:create"
+	PermUserUpdate   Permission = "user:update"
+	PermUserDelete   Permission = "user:delete"
+	PermSystemRead   Permission = "system:read"
+	PermSystemConfig Permission = "system:config"
+	PermBackupManage Permission = "backup:manage"
+	PermCertManage   Permission = "cert:manage"
 )
 
 // rolePermissions defines permissions for each role.
@@ -95,12 +95,12 @@ var rolePermissions = map[Role][]Permission{
 
 // Manager handles user authentication and authorization.
 type Manager struct {
-	mu       sync.RWMutex
-	users    map[string]*User       // key: username
-	usersByID map[string]*User      // key: user ID
-	sessions map[string]*Session    // key: token
-	dataDir  string
-	apiKey   string                 // Global admin API key (backward compat)
+	mu        sync.RWMutex
+	users     map[string]*User    // key: username
+	usersByID map[string]*User    // key: user ID
+	sessions  map[string]*Session // key: token
+	dataDir   string
+	apiKey    string // Global admin API key (backward compat)
 	jwtSecret []byte
 }
 
@@ -560,11 +560,21 @@ func isPublicEndpoint(path string) bool {
 		"/_uwas/dashboard",
 	}
 	for _, p := range public {
-		if strings.HasPrefix(path, p) {
+		if hasPathPrefixBoundary(path, p) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasPathPrefixBoundary(path, prefix string) bool {
+	if path == prefix {
+		return true
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return strings.HasPrefix(path, prefix)
+	}
+	return strings.HasPrefix(path, prefix+"/")
 }
 
 // contextKey is a private type for context keys.
