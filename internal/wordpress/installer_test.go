@@ -905,6 +905,63 @@ func TestResolveWPCLIBinary_FallbackPath(t *testing.T) {
 	}
 }
 
+func TestListUsers_NumericID(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execLookPathFn = fakeLookPathOK
+	execCommandFn = fakeCmd(`[{"ID":1,"user_login":"admin","user_email":"admin@example.com","roles":"administrator","user_registered":"2026-01-01 00:00:00"}]`)
+
+	users, err := ListUsers(t.TempDir())
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(users))
+	}
+	if users[0].ID != "1" {
+		t.Fatalf("ID = %q, want %q", users[0].ID, "1")
+	}
+	if users[0].Role != "administrator" {
+		t.Fatalf("Role = %q, want %q", users[0].Role, "administrator")
+	}
+}
+
+func TestListUsers_RolesArray(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execLookPathFn = fakeLookPathOK
+	execCommandFn = fakeCmd("Notice: noisy output\n[{\"ID\":\"2\",\"user_login\":\"editor\",\"user_email\":\"editor@example.com\",\"roles\":[\"editor\",\"author\"]}]")
+
+	users, err := ListUsers(t.TempDir())
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(users))
+	}
+	if users[0].Role != "editor,author" {
+		t.Fatalf("Role = %q, want %q", users[0].Role, "editor,author")
+	}
+}
+
+func TestListUsers_InvalidIDType(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execLookPathFn = fakeLookPathOK
+	execCommandFn = fakeCmd(`[{"ID":{"bad":"value"},"user_login":"admin","user_email":"admin@example.com","roles":"administrator"}]`)
+
+	_, err := ListUsers(t.TempDir())
+	if err == nil {
+		t.Fatal("expected parse error for invalid ID type")
+	}
+	if !strings.Contains(err.Error(), "invalid ID") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TestUpdateCore_WithWPCLI
 // ---------------------------------------------------------------------------
