@@ -1208,6 +1208,24 @@ export default function Domains() {
 /*  Domain row + inline detail                                         */
 /* ------------------------------------------------------------------ */
 
+interface DomainRowProps {
+  domain: DomainData;
+  isExpanded: boolean;
+  detail: DomainDetail | null;
+  detailLoading: boolean;
+  certInfo: CertInfo | null;
+  health: DomainHealth | null;
+  confirmDelete: string | null;
+  purgingHost: string | null;
+  cleanupOnDelete: boolean;
+  onToggle: () => void;
+  onEdit: (host: string) => void;
+  onDelete: (host: string) => void | Promise<void>;
+  onConfirmDelete: (host: string | null) => void;
+  onPurge: (host: string) => void | Promise<void>;
+  onCleanupChange: (value: boolean) => void;
+}
+
 function DomainRow({
   domain: d,
   isExpanded,
@@ -1224,7 +1242,10 @@ function DomainRow({
   onConfirmDelete,
   onPurge,
   onCleanupChange,
-}: any) {
+}: DomainRowProps) {
+  const isHealthy = health?.status === 'up';
+  const responseMs = health?.ms ?? 0;
+
   return (
     <>
       {/* Main row */}
@@ -1239,17 +1260,17 @@ function DomainRow({
           <div className="flex items-center gap-2">
             {health ? (
               <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${
-                health.healthy ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'
-              }`} title={health.healthy ? `Up (${health.response_time_ms}ms)` : `Down: ${health.error}`} />
+                isHealthy ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'
+              }`} title={isHealthy ? `Up (${responseMs}ms)` : `Down: ${health.error || 'unreachable'}`} />
             ) : (
               <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-500 shrink-0" title="Health unknown" />
             )}
             <span className="font-mono text-xs">{d.host}</span>
-            {health && !health.healthy && (
+            {health && !isHealthy && (
               <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-medium text-red-400">DOWN</span>
             )}
-            {health?.response_time_ms != null && health.healthy && (
-              <span className="text-[9px] text-muted-foreground">{health.response_time_ms}ms</span>
+            {health && isHealthy && (
+              <span className="text-[9px] text-muted-foreground">{responseMs}ms</span>
             )}
             <RouterLink to={`/domains/${encodeURIComponent(d.host)}`} onClick={e => e.stopPropagation()}
               className="rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-400 hover:bg-blue-500/10 flex items-center gap-0.5"
