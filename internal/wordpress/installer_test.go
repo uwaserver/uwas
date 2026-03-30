@@ -19,18 +19,18 @@ import (
 // ---------------------------------------------------------------------------
 
 type hookSnapshot struct {
-	goos       string
-	execCmd    func(string, ...string) *exec.Cmd
-	lookPath   func(string) (string, error)
-	httpGet    func(string) (*http.Response, error)
-	stat       func(string) (os.FileInfo, error)
-	readFile   func(string) ([]byte, error)
-	writeFile  func(string, []byte, fs.FileMode) error
-	mkdirAll   func(string, fs.FileMode) error
-	removeAll  func(string) error
-	rename     func(string, string) error
-	readDir    func(string) ([]os.DirEntry, error)
-	walkFn     func(string, filepath.WalkFunc) error
+	goos      string
+	execCmd   func(string, ...string) *exec.Cmd
+	lookPath  func(string) (string, error)
+	httpGet   func(string) (*http.Response, error)
+	stat      func(string) (os.FileInfo, error)
+	readFile  func(string) ([]byte, error)
+	writeFile func(string, []byte, fs.FileMode) error
+	mkdirAll  func(string, fs.FileMode) error
+	removeAll func(string) error
+	rename    func(string, string) error
+	readDir   func(string) ([]os.DirEntry, error)
+	walkFn    func(string, filepath.WalkFunc) error
 }
 
 func saveHooks() hookSnapshot {
@@ -882,6 +882,26 @@ func TestHasWPCLI_False(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	if hasWPCLI() {
 		t.Error("expected false")
+	}
+}
+
+func TestResolveWPCLIBinary_FallbackPath(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execLookPathFn = func(name string) (string, error) {
+		if name == "/usr/local/bin/wp" {
+			return name, nil
+		}
+		return "", fmt.Errorf("not found: %s", name)
+	}
+
+	got, err := resolveWPCLIBinary()
+	if err != nil {
+		t.Fatalf("resolveWPCLIBinary: %v", err)
+	}
+	if got != "/usr/local/bin/wp" {
+		t.Fatalf("binary = %q, want %q", got, "/usr/local/bin/wp")
 	}
 }
 
@@ -1979,6 +1999,35 @@ func TestWpCLI_Failure(t *testing.T) {
 	}
 }
 
+func TestWpCLI_UsesResolvedBinary(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execLookPathFn = func(name string) (string, error) {
+		if name == "/usr/local/bin/wp" {
+			return name, nil
+		}
+		return "", fmt.Errorf("not found: %s", name)
+	}
+
+	var calledBinary string
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		calledBinary = name
+		return fakeCmd("wp output")(name, args...)
+	}
+
+	out, err := wpCLI(t.TempDir(), "core", "version")
+	if err != nil {
+		t.Fatalf("wpCLI: %v", err)
+	}
+	if !strings.Contains(out, "wp output") {
+		t.Fatalf("out = %q", out)
+	}
+	if calledBinary != "/usr/local/bin/wp" {
+		t.Fatalf("called binary = %q, want %q", calledBinary, "/usr/local/bin/wp")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TestInstallRequestDefaults
 // ---------------------------------------------------------------------------
@@ -2690,9 +2739,9 @@ type fakeDirEntry struct {
 }
 
 func (f fakeDirEntry) Name() string               { return f.name }
-func (f fakeDirEntry) IsDir() bool                 { return f.isDir }
-func (f fakeDirEntry) Type() fs.FileMode           { return 0 }
-func (f fakeDirEntry) Info() (fs.FileInfo, error)  { return nil, nil }
+func (f fakeDirEntry) IsDir() bool                { return f.isDir }
+func (f fakeDirEntry) Type() fs.FileMode          { return 0 }
+func (f fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func TestScanPluginDirs_DotEntries(t *testing.T) {
 	snap := saveHooks()

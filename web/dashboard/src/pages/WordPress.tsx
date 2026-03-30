@@ -30,6 +30,7 @@ export default function WordPress() {
   const [actionResult, setActionResult] = useState('');
   // New: users, security, password
   const [siteUsers, setSiteUsers] = useState<WPUserInfo[]>([]);
+  const [siteUsersError, setSiteUsersError] = useState('');
   const [security, setSecurity] = useState<WPSecurityStatus | null>(null);
   const [showPasswordForm, setShowPasswordForm] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -160,7 +161,18 @@ export default function WordPress() {
                       setSites(prev => prev.map(s => s.domain === next ? enriched : s));
                     }).catch(() => {});
                     wpSecurityStatus(next).then(setSecurity).catch(() => setSecurity(null));
-                    wpListUsers(next).then(setSiteUsers).catch(() => setSiteUsers([]));
+                    setSiteUsers([]);
+                    setSiteUsersError('');
+                    wpListUsers(next)
+                      .then(users => {
+                        setSiteUsers(users);
+                        setSiteUsersError('');
+                      })
+                      .catch((e) => {
+                        const msg = (e as Error).message || 'Failed to load WordPress users';
+                        setSiteUsers([]);
+                        setSiteUsersError(msg);
+                      });
                   }
                 }}>
                 <div className="flex items-center gap-3">
@@ -404,7 +416,11 @@ export default function WordPress() {
                   {/* ═══ Users Tab ═══ */}
                   {siteTab === 'users' && (<>
                     <div className="space-y-3">
-                      {siteUsers.length === 0 ? (
+                      {siteUsersError ? (
+                        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                          Failed to load users: {siteUsersError}
+                        </div>
+                      ) : siteUsers.length === 0 ? (
                         <p className="text-sm text-muted-foreground py-4">No users found (requires wp-cli)</p>
                       ) : (
                         <div className="space-y-1">

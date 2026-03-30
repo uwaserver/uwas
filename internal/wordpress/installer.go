@@ -461,19 +461,19 @@ type SiteHealth struct {
 	PluginUpdates int    `json:"plugin_updates"` // number of plugin updates
 	ThemeUpdates  int    `json:"theme_updates"`
 	PHPVersion    string `json:"php_version"`
-	Debug         bool   `json:"debug"`          // WP_DEBUG enabled
-	SSL           bool   `json:"ssl"`            // FORCE_SSL_ADMIN
-	FileEdit      bool   `json:"file_edit"`      // DISALLOW_FILE_EDIT
+	Debug         bool   `json:"debug"`     // WP_DEBUG enabled
+	SSL           bool   `json:"ssl"`       // FORCE_SSL_ADMIN
+	FileEdit      bool   `json:"file_edit"` // DISALLOW_FILE_EDIT
 }
 
 // PermissionsReport shows file/directory permission status.
 type PermissionsReport struct {
-	WPConfig    string `json:"wp_config"`    // e.g. "0644 www-data:www-data"
-	WPContent   string `json:"wp_content"`
-	Uploads     string `json:"uploads"`
-	Htaccess    string `json:"htaccess"`
-	Owner       string `json:"owner"`        // detected owner user
-	Writable    bool   `json:"writable"`     // wp-content writable by PHP
+	WPConfig  string `json:"wp_config"` // e.g. "0644 www-data:www-data"
+	WPContent string `json:"wp_content"`
+	Uploads   string `json:"uploads"`
+	Htaccess  string `json:"htaccess"`
+	Owner     string `json:"owner"`    // detected owner user
+	Writable  bool   `json:"writable"` // wp-content writable by PHP
 }
 
 // DetectSites scans domain web roots for WordPress installations.
@@ -631,15 +631,45 @@ func permString(path string) string {
 
 // --- WP-CLI Integration ---
 
+var wpCLIBinaryCandidates = []string{
+	"wp",
+	"/usr/local/bin/wp",
+	"/usr/bin/wp",
+	"/bin/wp",
+	"/snap/bin/wp",
+	"wp-cli",
+	"/usr/local/bin/wp-cli",
+	"/usr/bin/wp-cli",
+	"/bin/wp-cli",
+}
+
+func resolveWPCLIBinary() (string, error) {
+	for _, candidate := range wpCLIBinaryCandidates {
+		if bin, err := execLookPathFn(candidate); err == nil && bin != "" {
+			return bin, nil
+		}
+	}
+	return "", fmt.Errorf("wp-cli not found (tried PATH and common install paths)")
+}
+
+func bestEffortWPCLIBinary() string {
+	if bin, err := resolveWPCLIBinary(); err == nil && bin != "" {
+		return bin
+	}
+	// Preserve legacy behavior: let exec report the concrete failure.
+	return "wp"
+}
+
 // hasWPCLI checks if wp-cli is installed.
 func hasWPCLI() bool {
-	_, err := execLookPathFn("wp")
+	_, err := resolveWPCLIBinary()
 	return err == nil
 }
 
 // wpCLI runs a WP-CLI command in the given web root.
 // It auto-detects the site URL from wp-config.php to avoid HTTP_HOST warnings.
 func wpCLI(webRoot string, args ...string) (string, error) {
+	wpBin := bestEffortWPCLIBinary()
 	allArgs := append([]string{"--path=" + webRoot, "--allow-root", "--no-color"}, args...)
 
 	// Detect site URL to pass --url (avoids "Undefined array key HTTP_HOST" warning)
@@ -647,7 +677,7 @@ func wpCLI(webRoot string, args ...string) (string, error) {
 		allArgs = append([]string{"--url=" + url}, allArgs...)
 	}
 
-	cmd := execCommandFn("wp", allArgs...)
+	cmd := execCommandFn(wpBin, allArgs...)
 	cmd.Dir = webRoot
 	// Separate stdout from stderr — PHP deprecation warnings go to stderr
 	// and corrupt JSON output if mixed via CombinedOutput.
@@ -1058,10 +1088,10 @@ func SetDebugMode(webRoot string, enable bool) error {
 
 // WPUser represents a WordPress user.
 type WPUser struct {
-	ID       string `json:"id"`
-	Login    string `json:"login"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
+	ID         string `json:"id"`
+	Login      string `json:"login"`
+	Email      string `json:"email"`
+	Role       string `json:"role"`
 	Registered string `json:"registered,omitempty"`
 }
 
@@ -1103,7 +1133,7 @@ type SecurityStatus struct {
 	FileEditDisabled   bool   `json:"file_edit_disabled"`
 	DebugEnabled       bool   `json:"debug_enabled"`
 	SSLForced          bool   `json:"ssl_forced"`
-	AutoUpdatesCore    string `json:"auto_updates_core"`    // "true", "false", "minor"
+	AutoUpdatesCore    string `json:"auto_updates_core"` // "true", "false", "minor"
 	AutoUpdatesPlugins bool   `json:"auto_updates_plugins"`
 	AutoUpdatesThemes  bool   `json:"auto_updates_themes"`
 	TablePrefix        string `json:"table_prefix"`
@@ -1191,11 +1221,11 @@ func checkXMLRPCDisabled(webRoot, wpConfig string) bool {
 
 // HardenOptions specifies which security features to enable/disable.
 type HardenOptions struct {
-	DisableXMLRPC      *bool `json:"disable_xmlrpc,omitempty"`
-	DisableFileEdit    *bool `json:"disable_file_edit,omitempty"`
-	ForceSSLAdmin      *bool `json:"force_ssl_admin,omitempty"`
-	DisableWPCron      *bool `json:"disable_wp_cron,omitempty"`
-	BlockDirListing    *bool `json:"block_dir_listing,omitempty"`
+	DisableXMLRPC   *bool `json:"disable_xmlrpc,omitempty"`
+	DisableFileEdit *bool `json:"disable_file_edit,omitempty"`
+	ForceSSLAdmin   *bool `json:"force_ssl_admin,omitempty"`
+	DisableWPCron   *bool `json:"disable_wp_cron,omitempty"`
+	BlockDirListing *bool `json:"block_dir_listing,omitempty"`
 }
 
 // Harden applies security hardening options to a WordPress installation.
@@ -1316,12 +1346,12 @@ func setWPConfigDefine(content, constant string, value bool) string {
 
 // DBOptimizeResult holds results of database cleanup.
 type DBOptimizeResult struct {
-	RevisionsDeleted int    `json:"revisions_deleted"`
-	SpamDeleted      int    `json:"spam_deleted"`
-	TrashDeleted     int    `json:"trash_deleted"`
-	TransientsCleaned int   `json:"transients_cleaned"`
-	TablesOptimized  int    `json:"tables_optimized"`
-	Output           string `json:"output"`
+	RevisionsDeleted  int    `json:"revisions_deleted"`
+	SpamDeleted       int    `json:"spam_deleted"`
+	TrashDeleted      int    `json:"trash_deleted"`
+	TransientsCleaned int    `json:"transients_cleaned"`
+	TablesOptimized   int    `json:"tables_optimized"`
+	Output            string `json:"output"`
 }
 
 // OptimizeDatabase cleans up and optimizes the WordPress database.
