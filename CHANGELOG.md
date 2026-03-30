@@ -5,6 +5,27 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.35-rc.1] - 2026-03-30
+
+### Features
+
+- **Domain + route Basic Auth management** - dashboard and API now support manageable Basic Auth at site root and per-location rules with multi-user credentials.
+
+### Fixes
+
+- **Location auth enforcement consistency** - location-matched requests now correctly apply effective Basic Auth policy (domain default or location override) before route dispatch.
+- **Domain update merge semantics** - `PUT /api/v1/domains/{host}` now correctly handles `basic_auth`, `aliases`, and `locations` in merge mode when fields are intentionally cleared or disabled.
+- **Dashboard modal/state stability** - removed several effect-driven state synchronization loops in Pin modal, deploy wizard, topology graph, and routes editor flows to prevent cascading render risks.
+- **Error handling hardening** - analytics reset and migration load actions now surface API failures instead of silently swallowing exceptions.
+- **Frontend lint/type hygiene** - cleared dashboard lint backlog and tightened several `unknown`/typed interfaces to reduce unsafe dynamic typing paths.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -p 1 ./...` passes.
+- `npm run lint` passes in `web/dashboard`.
+- `npm run build` passes in `web/dashboard`.
+
 ## [0.0.34] - 2026-03-30
 
 ### Fixes
