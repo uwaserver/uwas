@@ -10,7 +10,7 @@ import {
   wpSecurityStatus, wpHarden, wpListUsers, wpChangePassword,
   wpUpdateCore, wpUpdatePlugins, wpFixPermissions, wpToggleDebug,
   wpErrorLog, wpOptimizeDB, wpPluginAction,
-  type DomainDetail as DDType, type DomainAnalytics, type WPSite,
+  type DomainDetail as DDType, type DomainAnalytics, type WPSite, type DomainLocationRule,
   type WPSecurityStatus, type WPUserInfo, type WPPlugin,
 } from '@/lib/api';
 
@@ -732,15 +732,21 @@ export default function DomainDetail() {
 
       {/* ═══ Routes (Location Blocks) + Aliases ═══ */}
       {tab === 'routes' && (
-        <RoutesEditor host={host} detail={detail} onSave={async (locs, aliases) => {
+        <RoutesEditor
+          key={`${JSON.stringify(detail.locations || [])}|${JSON.stringify(detail.aliases || [])}`}
+          host={host}
+          detail={detail}
+          onSave={async (locs, aliases) => {
           setSaving(true);
           try {
-            await updateDomain(host, { locations: locs, aliases } as any);
+            await updateDomain(host, { locations: locs, aliases });
             setMsg({ ok: true, text: 'Routes saved. Reload applied.' });
             load();
           } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
           finally { setSaving(false); }
-        }} saving={saving} />
+          }}
+          saving={saving}
+        />
       )}
 
       {/* ═══ Files ═══ */}
@@ -781,18 +787,13 @@ interface RouteRow {
 
 function RoutesEditor({ host, detail, onSave, saving }: {
   host: string;
-  detail: any;
-  onSave: (locations: any[], aliases: string[]) => Promise<void>;
+  detail: DDType;
+  onSave: (locations: DomainLocationRule[], aliases: string[]) => Promise<void>;
   saving: boolean;
 }) {
-  const [routes, setRoutes] = useState<RouteRow[]>([]);
-  const [aliases, setAliases] = useState<string[]>([]);
-  const [newAlias, setNewAlias] = useState('');
-
-  // Init from detail
-  useState(() => {
-    const locs = (detail.locations || []) as any[];
-    setRoutes(locs.map((l: any) => ({
+  const [routes, setRoutes] = useState<RouteRow[]>(() => {
+    const locs = detail.locations || [];
+    return locs.map((l) => ({
       match: l.match || '',
       type: l.proxy_pass ? 'proxy' : l.root ? 'static' : l.redirect ? 'redirect' : 'headers',
       target: l.proxy_pass || l.root || l.redirect || l.cache_control || '',
@@ -801,9 +802,10 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       basicAuthEnabled: !!l.basic_auth?.enabled,
       basicAuthRealm: l.basic_auth?.realm || '',
       basicAuthUsers: Object.entries(l.basic_auth?.users || {}).map(([u, p]) => `${u}:${String(p)}`).join('\n'),
-    })));
-    setAliases(detail.aliases || []);
+    }));
   });
+  const [aliases, setAliases] = useState<string[]>(() => detail.aliases || []);
+  const [newAlias, setNewAlias] = useState('');
 
   const addRoute = () => setRoutes([...routes, {
     match: '/',
@@ -822,7 +824,7 @@ function RoutesEditor({ host, detail, onSave, saving }: {
 
   const handleSave = () => {
     const locs = routes.filter(r => r.match && r.target).map(r => {
-      const loc: any = { match: r.match };
+      const loc: DomainLocationRule = { match: r.match };
       if (r.type === 'proxy') { loc.proxy_pass = r.target; loc.strip_prefix = r.stripPrefix; }
       else if (r.type === 'static') { loc.root = r.target; }
       else if (r.type === 'redirect') { loc.redirect = r.target; loc.redirect_code = r.redirectCode; }
