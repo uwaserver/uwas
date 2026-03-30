@@ -44,6 +44,11 @@ export default function DomainDetail() {
   const [memoryMB, setMemoryMB] = useState(0);
   const [pidMax, setPidMax] = useState(0);
   const [newBlacklistIP, setNewBlacklistIP] = useState('');
+  const [basicAuthEnabled, setBasicAuthEnabled] = useState(false);
+  const [basicAuthRealm, setBasicAuthRealm] = useState('');
+  const [basicAuthUsers, setBasicAuthUsers] = useState<Array<{ username: string; password: string }>>([]);
+  const [newBasicAuthUser, setNewBasicAuthUser] = useState('');
+  const [newBasicAuthPass, setNewBasicAuthPass] = useState('');
 
   // WordPress
   const [wpSite, setWpSite] = useState<WPSite | null>(null);
@@ -78,6 +83,11 @@ export default function DomainDetail() {
       setCpuPercent(d.resources?.cpu_percent ?? 0);
       setMemoryMB(d.resources?.memory_mb ?? 0);
       setPidMax(d.resources?.pid_max ?? 0);
+      setBasicAuthEnabled(d.basic_auth?.enabled ?? false);
+      setBasicAuthRealm(d.basic_auth?.realm ?? '');
+      setBasicAuthUsers(Object.entries(d.basic_auth?.users || {}).map(([username, password]) => ({ username, password })));
+      setNewBasicAuthUser('');
+      setNewBasicAuthPass('');
 
       // Disk usage
       fetchDiskUsage(host).then(setDiskUsage).catch(() => {});
@@ -113,9 +123,22 @@ export default function DomainDetail() {
     setSaving(true);
     setMsg(null);
     try {
+      const cleanedBasicAuthUsers = basicAuthUsers
+        .map(u => ({ username: u.username.trim(), password: u.password }))
+        .filter(u => u.username && u.password);
+      if (basicAuthEnabled && cleanedBasicAuthUsers.length === 0) {
+        setMsg({ ok: false, text: 'Basic Auth aktifken en az bir kullanıcı gerekli.' });
+        setSaving(false);
+        return;
+      }
+
+      const basicAuthMap = Object.fromEntries(cleanedBasicAuthUsers.map(u => [u.username, u.password]));
       const geoBlockList = geoBlock.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       const geoAllowList = geoAllow.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       await updateDomain(host, {
+        basic_auth: basicAuthEnabled
+          ? { enabled: true, realm: basicAuthRealm.trim() || undefined, users: basicAuthMap }
+          : { enabled: false },
         security: {
           waf: { enabled: wafEnabled },
           rate_limit: rateLimitReqs > 0 ? { requests: rateLimitReqs, window: rateLimitWindow } : undefined,
@@ -347,6 +370,100 @@ export default function DomainDetail() {
                 <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${hotlinkEnabled ? 'left-[22px]' : 'left-0.5'}`} />
               </button>
             </div>
+          </div>
+
+          {/* Root Basic Auth */}
+          <div className="rounded-lg bg-card border border-border px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-card-foreground">Basic Auth (Root)</p>
+                <p className="text-[10px] text-muted-foreground">Site genelinde kullanıcı/şifre koruması (çok kullanıcı destekli)</p>
+              </div>
+              <button
+                onClick={() => setBasicAuthEnabled(!basicAuthEnabled)}
+                className={`relative h-6 w-11 rounded-full transition ${basicAuthEnabled ? 'bg-emerald-500' : 'bg-slate-600'}`}
+              >
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${basicAuthEnabled ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+
+            {basicAuthEnabled && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Realm (opsiyonel)</label>
+                  <input
+                    value={basicAuthRealm}
+                    onChange={e => setBasicAuthRealm(e.target.value)}
+                    placeholder={host}
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  {basicAuthUsers.map((u, i) => (
+                    <div key={i} className="grid grid-cols-2 gap-2">
+                      <input
+                        value={u.username}
+                        onChange={e => setBasicAuthUsers(basicAuthUsers.map((x, j) => j === i ? { ...x, username: e.target.value } : x))}
+                        placeholder="username"
+                        className="rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={u.password}
+                          onChange={e => setBasicAuthUsers(basicAuthUsers.map((x, j) => j === i ? { ...x, password: e.target.value } : x))}
+                          type="password"
+                          placeholder="password"
+                          className="flex-1 rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono"
+                        />
+                        <button
+                          onClick={() => setBasicAuthUsers(basicAuthUsers.filter((_, j) => j !== i))}
+                          className="rounded bg-red-600 px-2 py-1.5 text-xs text-white hover:bg-red-700"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={newBasicAuthUser}
+                    onChange={e => setNewBasicAuthUser(e.target.value)}
+                    placeholder="new username"
+                    className="rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      value={newBasicAuthPass}
+                      onChange={e => setNewBasicAuthPass(e.target.value)}
+                      type="password"
+                      placeholder="new password"
+                      className="flex-1 rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none font-mono"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && newBasicAuthUser.trim() && newBasicAuthPass) {
+                          setBasicAuthUsers([...basicAuthUsers, { username: newBasicAuthUser.trim(), password: newBasicAuthPass }]);
+                          setNewBasicAuthUser('');
+                          setNewBasicAuthPass('');
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (!newBasicAuthUser.trim() || !newBasicAuthPass) return;
+                        setBasicAuthUsers([...basicAuthUsers, { username: newBasicAuthUser.trim(), password: newBasicAuthPass }]);
+                        setNewBasicAuthUser('');
+                        setNewBasicAuthPass('');
+                      }}
+                      className="rounded bg-blue-600 px-2 py-1.5 text-xs text-white hover:bg-blue-700"
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Rate Limit */}
@@ -657,6 +774,9 @@ interface RouteRow {
   target: string; // proxy_pass URL, root path, redirect URL, or cache_control
   stripPrefix: boolean;
   redirectCode: number;
+  basicAuthEnabled: boolean;
+  basicAuthRealm: string;
+  basicAuthUsers: string;
 }
 
 function RoutesEditor({ host, detail, onSave, saving }: {
@@ -678,11 +798,23 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       target: l.proxy_pass || l.root || l.redirect || l.cache_control || '',
       stripPrefix: l.strip_prefix || false,
       redirectCode: l.redirect_code || 301,
+      basicAuthEnabled: !!l.basic_auth?.enabled,
+      basicAuthRealm: l.basic_auth?.realm || '',
+      basicAuthUsers: Object.entries(l.basic_auth?.users || {}).map(([u, p]) => `${u}:${String(p)}`).join('\n'),
     })));
     setAliases(detail.aliases || []);
   });
 
-  const addRoute = () => setRoutes([...routes, { match: '/', type: 'proxy', target: '', stripPrefix: false, redirectCode: 301 }]);
+  const addRoute = () => setRoutes([...routes, {
+    match: '/',
+    type: 'proxy',
+    target: '',
+    stripPrefix: false,
+    redirectCode: 301,
+    basicAuthEnabled: false,
+    basicAuthRealm: '',
+    basicAuthUsers: '',
+  }]);
   const removeRoute = (i: number) => setRoutes(routes.filter((_, j) => j !== i));
   const updateRoute = (i: number, patch: Partial<RouteRow>) => {
     setRoutes(routes.map((r, j) => j === i ? { ...r, ...patch } : r));
@@ -695,6 +827,27 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       else if (r.type === 'static') { loc.root = r.target; }
       else if (r.type === 'redirect') { loc.redirect = r.target; loc.redirect_code = r.redirectCode; }
       else { loc.cache_control = r.target; }
+      if (r.basicAuthEnabled) {
+        const users = Object.fromEntries(
+          r.basicAuthUsers
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean)
+            .map(line => {
+              const idx = line.indexOf(':');
+              if (idx <= 0) return ['', ''];
+              const user = line.slice(0, idx).trim();
+              const pass = line.slice(idx + 1).trim();
+              return [user, pass];
+            })
+            .filter(([u, p]) => u && p),
+        );
+        loc.basic_auth = {
+          enabled: true,
+          realm: r.basicAuthRealm || undefined,
+          users,
+        };
+      }
       return loc;
     });
     onSave(locs, aliases);
@@ -792,6 +945,36 @@ function RoutesEditor({ host, detail, onSave, saving }: {
                     ))}
                   </div>
                 )}
+
+                <div className="rounded-md border border-border/60 bg-background/60 p-2 space-y-2">
+                  <label className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>Basic Auth (Bu Route)</span>
+                    <input
+                      type="checkbox"
+                      checked={r.basicAuthEnabled}
+                      onChange={e => updateRoute(i, { basicAuthEnabled: e.target.checked })}
+                    />
+                  </label>
+
+                  {r.basicAuthEnabled && (
+                    <div className="space-y-2">
+                      <input
+                        value={r.basicAuthRealm}
+                        onChange={e => updateRoute(i, { basicAuthRealm: e.target.value })}
+                        placeholder="Realm (opsiyonel)"
+                        className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none"
+                      />
+                      <textarea
+                        value={r.basicAuthUsers}
+                        onChange={e => updateRoute(i, { basicAuthUsers: e.target.value })}
+                        placeholder={'username1:password1\\nusername2:password2'}
+                        rows={3}
+                        className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono text-foreground outline-none"
+                      />
+                      <p className="text-[10px] text-muted-foreground">Format: her satır `kullanıcı:şifre`</p>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
