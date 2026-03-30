@@ -44,23 +44,23 @@ type Event struct {
 
 // WebhookConfig defines a webhook endpoint configuration.
 type WebhookConfig struct {
-	URL       string            `json:"url" yaml:"url"`
-	Events    []EventType       `json:"events" yaml:"events"`       // empty = all events
-	Headers   map[string]string `json:"headers" yaml:"headers"`     // custom headers
-	Secret    string            `json:"secret" yaml:"secret"`       // for HMAC signature
-	RetryMax  int               `json:"retry_max" yaml:"retry_max"` // max retries, default 3
-	Timeout   time.Duration     `json:"timeout" yaml:"timeout"`     // default 30s
-	Enabled   bool              `json:"enabled" yaml:"enabled"`
+	URL      string            `json:"url" yaml:"url"`
+	Events   []EventType       `json:"events" yaml:"events"`       // empty = all events
+	Headers  map[string]string `json:"headers" yaml:"headers"`     // custom headers
+	Secret   string            `json:"secret" yaml:"secret"`       // for HMAC signature
+	RetryMax int               `json:"retry_max" yaml:"retry_max"` // max retries, default 3
+	Timeout  time.Duration     `json:"timeout" yaml:"timeout"`     // default 30s
+	Enabled  bool              `json:"enabled" yaml:"enabled"`
 }
 
 // Manager handles webhook event delivery.
 type Manager struct {
-	mu        sync.RWMutex
-	webhooks  []WebhookConfig
-	client    *http.Client
-	queue     chan *queuedEvent
-	dataDir   string
-	logger    Logger
+	mu       sync.RWMutex
+	webhooks []WebhookConfig
+	client   *http.Client
+	queue    chan *queuedEvent
+	dataDir  string
+	logger   Logger
 }
 
 // Logger interface for logging.
@@ -72,9 +72,9 @@ type Logger interface {
 }
 
 type queuedEvent struct {
-	webhook   WebhookConfig
-	event     Event
-	attempts  int
+	webhook  WebhookConfig
+	event    Event
+	attempts int
 }
 
 // NewManager creates a new webhook manager.
@@ -91,6 +91,11 @@ func NewManager(dataDir string, logger Logger) *Manager {
 
 	// Start worker goroutine
 	go m.worker()
+
+	// Keep the history path resolved early for future persistence hooks.
+	if historyPath := m.historyFile(); historyPath != "" {
+		m.logger.Debug("webhook history path", "path", historyPath)
+	}
 
 	return m
 }
