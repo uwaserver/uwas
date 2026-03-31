@@ -2267,12 +2267,34 @@ func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "sql required", http.StatusBadRequest)
 		return
 	}
-	// Safety: block dangerous statements
-	upper := strings.ToUpper(strings.TrimSpace(req.SQL))
-	if strings.HasPrefix(upper, "DROP DATABASE") || strings.HasPrefix(upper, "DROP USER") ||
-		strings.HasPrefix(upper, "GRANT") || strings.HasPrefix(upper, "REVOKE") ||
-		strings.HasPrefix(upper, "CREATE USER") || strings.HasPrefix(upper, "ALTER USER") {
-		jsonError(w, "statement not allowed in explorer", http.StatusForbidden)
+	// Safety: only allow read-only statements (allowlist approach).
+	// Strip leading comments and whitespace to prevent comment-based bypass.
+	trimmed := strings.TrimSpace(req.SQL)
+	for strings.HasPrefix(trimmed, "/*") {
+		if end := strings.Index(trimmed, "*/"); end >= 0 {
+			trimmed = strings.TrimSpace(trimmed[end+2:])
+		} else {
+			break
+		}
+	}
+	for strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "#") {
+		if nl := strings.IndexByte(trimmed, '\n'); nl >= 0 {
+			trimmed = strings.TrimSpace(trimmed[nl+1:])
+		} else {
+			trimmed = ""
+		}
+	}
+	upper := strings.ToUpper(trimmed)
+	// Block multi-statement queries (semicolons).
+	if strings.Contains(req.SQL, ";") {
+		jsonError(w, "multi-statement queries not allowed", http.StatusForbidden)
+		return
+	}
+	// Only allow SELECT, SHOW, DESCRIBE, EXPLAIN.
+	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "SHOW") &&
+		!strings.HasPrefix(upper, "DESCRIBE") && !strings.HasPrefix(upper, "DESC ") &&
+		!strings.HasPrefix(upper, "EXPLAIN") {
+		jsonError(w, "only SELECT, SHOW, DESCRIBE, EXPLAIN are allowed in explorer", http.StatusForbidden)
 		return
 	}
 	// Add LIMIT if SELECT and no LIMIT present

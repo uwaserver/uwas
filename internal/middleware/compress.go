@@ -54,8 +54,21 @@ const (
 // selectEncoding inspects the Accept-Encoding header and returns the best
 // supported encoding. Brotli is preferred over gzip when both are present.
 func selectEncoding(acceptEncoding string) encodingType {
-	hasBr := strings.Contains(acceptEncoding, "br")
-	hasGzip := strings.Contains(acceptEncoding, "gzip")
+	hasBr := false
+	hasGzip := false
+	for _, part := range strings.Split(acceptEncoding, ",") {
+		token := strings.TrimSpace(part)
+		// Strip quality value (e.g. "br;q=0.9" → "br")
+		if idx := strings.IndexByte(token, ';'); idx >= 0 {
+			token = strings.TrimSpace(token[:idx])
+		}
+		switch token {
+		case "br":
+			hasBr = true
+		case "gzip":
+			hasGzip = true
+		}
+	}
 
 	if hasBr {
 		return encodingBrotli

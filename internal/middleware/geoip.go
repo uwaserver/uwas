@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -180,12 +181,19 @@ func lookupCountry(ip string, db map[string]string, cache *geoCache) string {
 }
 
 func lookupExternal(ip string) string {
+	// Validate that ip looks like a real IP address to prevent URL injection.
+	if net.ParseIP(ip) == nil {
+		return ""
+	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get("http://ip-api.com/json/" + ip + "?fields=countryCode")
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body) // drain body to allow connection reuse
+		resp.Body.Close()
+	}()
 	var result struct {
 		CountryCode string `json:"countryCode"`
 	}

@@ -223,11 +223,14 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 		// Create DB
 		execCommandFn(bin, "-u", "root", "-e",
 			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", req.DBName)).Run()
-		// Create user
+		// Create user — escape single quotes to prevent SQL injection
+		safeUser := strings.ReplaceAll(req.DBUser, "'", "\\'")
+		safePass := strings.ReplaceAll(req.DBPass, "'", "\\'")
+		safeName := strings.ReplaceAll(req.DBName, "`", "``")
 		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", req.DBUser, req.DBPass)).Run()
+			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", safeUser, safePass)).Run()
 		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES", req.DBName, req.DBUser)).Run()
+			fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).Run()
 
 		// Import
 		importCmd := execCommandFn(bin, "-u", "root", req.DBName)

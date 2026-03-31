@@ -59,7 +59,9 @@ var wafBodyPatterns = []*regexp.Regexp{
 
 // SecurityGuard blocks access to sensitive paths and detects attacks in URL, query, and body.
 func SecurityGuard(log *logger.Logger, blockedPaths []string, wafEnabled bool, stats *SecurityStats) Middleware {
-	allBlocked := append(defaultBlockedPaths, blockedPaths...)
+	allBlocked := make([]string, 0, len(defaultBlockedPaths)+len(blockedPaths))
+	allBlocked = append(allBlocked, defaultBlockedPaths...)
+	allBlocked = append(allBlocked, blockedPaths...)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

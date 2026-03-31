@@ -362,10 +362,12 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 
 func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttempts int) (*Order, error) {
 	for i := 0; i < maxAttempts; i++ {
+		wait := time.NewTimer(time.Duration(i+1) * time.Second)
 		select {
 		case <-ctx.Done():
+			wait.Stop()
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(i+1) * time.Second):
+		case <-wait.C:
 		}
 
 		resp, err := c.signedRequest(ctx, url, nil) // POST-as-GET
