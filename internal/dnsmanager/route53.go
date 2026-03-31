@@ -151,7 +151,7 @@ func (p *Route53Provider) changeRecord(zoneID, action string, rec Record) (*Reco
       </Change>
     </Changes>
   </ChangeBatch>
-</ChangeResourceRecordSetsRequest>`, action, name, rec.Type, ttl, rec.Content)
+</ChangeResourceRecordSetsRequest>`, action, xmlEscape(name), xmlEscape(rec.Type), ttl, xmlEscape(rec.Content))
 
 	_, err := p.r53Request("POST", "/hostedzone/"+zoneID+"/rrset", []byte(xmlBody))
 	if err != nil {
@@ -271,4 +271,11 @@ func NewProvider(providerType string, credentials map[string]string) (Provider, 
 	default:
 		return nil, fmt.Errorf("unknown DNS provider: %s", providerType)
 	}
+}
+
+// xmlEscape escapes a string for safe inclusion in XML text content.
+func xmlEscape(s string) string {
+	var buf bytes.Buffer
+	xml.EscapeText(&buf, []byte(s))
+	return buf.String()
 }

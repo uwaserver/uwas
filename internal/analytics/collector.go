@@ -72,7 +72,10 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 	if stats.Paths == nil {
 		stats.Paths = make(map[string]int64)
 	}
-	stats.Paths[path]++
+	const maxPaths = 50000
+	if len(stats.Paths) < maxPaths {
+		stats.Paths[path]++
+	}
 
 	stats.HourlyViews[hour]++
 

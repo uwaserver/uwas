@@ -456,16 +456,21 @@ func (m *Manager) saveUsers() {
 		return
 	}
 
-	// Ensure directory exists
+	// Ensure directory exists (0700: contains credential files)
 	dir := filepath.Dir(file)
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return
+	}
 
 	users := make([]*User, 0, len(m.users))
 	for _, user := range m.users {
 		users = append(users, user)
 	}
 
-	data, _ := json.MarshalIndent(users, "", "  ")
+	data, err := json.MarshalIndent(users, "", "  ")
+	if err != nil {
+		return
+	}
 	os.WriteFile(file, data, 0600)
 }
 

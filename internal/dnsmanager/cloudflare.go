@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -110,7 +111,7 @@ func (c *CloudflareProvider) ListZones() ([]Zone, error) {
 }
 
 func (c *CloudflareProvider) FindZoneByDomain(domain string) (*Zone, error) {
-	data, err := c.do("GET", "/zones?name="+domain+"&per_page=1", nil)
+	data, err := c.do("GET", "/zones?name="+url.QueryEscape(domain)+"&per_page=1", nil)
 	if err != nil {
 		return nil, err
 	}
