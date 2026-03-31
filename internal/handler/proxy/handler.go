@@ -241,6 +241,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 			// If there are more retries available, continue to next backend
 			if attempt < maxRetries && isRetryableError(err) {
+				cancel() // release context from this failed attempt
 				continue
 			}
 

@@ -106,7 +106,12 @@ func (a *Alerter) RecordRequest(isError bool) {
 		start++
 	}
 	if start > 0 {
-		a.errorWindow = a.errorWindow[start:]
+		a.errorWindow = append([]errorEntry(nil), a.errorWindow[start:]...)
+	}
+	// Cap the window size to prevent unbounded growth under high load.
+	const maxWindowSize = 100000
+	if len(a.errorWindow) > maxWindowSize {
+		a.errorWindow = append([]errorEntry(nil), a.errorWindow[len(a.errorWindow)-maxWindowSize:]...)
 	}
 
 	// Calculate error rate

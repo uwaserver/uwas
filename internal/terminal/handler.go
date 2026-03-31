@@ -84,7 +84,8 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 		if _, err := io.ReadFull(c.reader, ext); err != nil {
 			return nil, err
 		}
-		payloadLen = int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
+		payloadLen = int(ext[0])<<56 | int(ext[1])<<48 | int(ext[2])<<40 | int(ext[3])<<32 |
+			int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
 	}
 
 	if payloadLen > maxWSPayload {

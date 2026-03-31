@@ -227,10 +227,14 @@ func (m *Manager) GetStatus(host string) *Status {
 // GetAllStatus returns bandwidth status for all domains.
 func (m *Manager) GetAllStatus() []Status {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	hosts := make([]string, 0, len(m.limits))
+	for host := range m.limits {
+		hosts = append(hosts, host)
+	}
+	m.mu.RUnlock()
 
 	var statuses []Status
-	for host := range m.limits {
+	for _, host := range hosts {
 		if status := m.GetStatus(host); status != nil {
 			statuses = append(statuses, *status)
 		}
@@ -289,6 +293,11 @@ func (m *Manager) Middleware() func(http.Handler) http.Handler {
 
 			// Wrap response writer to capture bytes written
 			rw := &responseWriter{ResponseWriter: w, host: host, manager: m}
+			defer func() {
+				if rw.bytesWritten > 0 {
+					m.Record(host, rw.bytesWritten)
+				}
+			}()
 			next.ServeHTTP(rw, r)
 		})
 	}
