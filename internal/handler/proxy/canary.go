@@ -80,7 +80,13 @@ func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain,
 	}
 
 	// Set stickiness cookie
-	ctx.Response.Header().Set("Set-Cookie", cookieName+"=true; Path=/; HttpOnly")
+	http.SetCookie(ctx.Response, &http.Cookie{
+		Name:     cookieName,
+		Value:    "true",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	// Set canary header on response
 	ctx.Response.Header().Set("X-Canary", "true")

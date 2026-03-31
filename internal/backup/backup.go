@@ -742,6 +742,11 @@ func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
 			return err
 		}
 
+		// Skip symlinks to prevent archiving files outside the web root.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
 		rel, err := filepath.Rel(srcDir, path)
 		if err != nil {
 			return err

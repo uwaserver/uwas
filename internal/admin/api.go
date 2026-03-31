@@ -2131,12 +2131,16 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cleanup: stop PHP, remove SFTP user, delete files
+	// Cleanup: stop PHP, stop app, remove cron jobs, remove SFTP user, delete files
 	if cleanup {
 		if s.phpMgr != nil {
 			s.phpMgr.StopDomain(host)
 			s.phpMgr.UnassignDomain(host)
 		}
+		if s.appMgr != nil {
+			s.appMgr.Stop(host)
+		}
+		cronjob.RemoveByDomain(host)
 		siteuser.DeleteUser(host)
 		// Delete web root — only the domain-specific directory.
 		// Safety: never delete system dirs, shared roots, or paths too close to /
