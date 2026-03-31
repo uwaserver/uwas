@@ -248,6 +248,7 @@ export default function Backups() {
       await restoreBackup(restoreTarget.name, restoreTarget.provider);
       setRestoreTarget(null);
       setStatus({ ok: true, message: `Backup restored: ${restoreTarget.name}. A reload may be required for changes to take effect.` });
+      await load();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
     } finally {

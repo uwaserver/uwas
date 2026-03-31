@@ -61,8 +61,19 @@ export default function Security() {
     if (expanded === host) { setExpanded(''); return; }
     setExpanded(host);
     setStatus(null);
+    // Reset edit state immediately to prevent cross-domain data bleed
+    setDetail(null);
+    setWafEnabled(false);
+    setRateLimitReqs(0);
+    setRateLimitWindow('1m');
+    setBlockedPaths([]);
+    setIpWhitelist([]);
+    setIpBlacklist([]);
+    setHotlinkEnabled(false);
     try {
       const d = await fetchDomainDetail(host);
+      // Guard: only apply if this domain is still the expanded one
+      if (host !== expanded) return;
       setDetail(d);
       setWafEnabled(d.security?.waf?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);

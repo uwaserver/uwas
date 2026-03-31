@@ -21,6 +21,7 @@ import {
   writeFile,
   deleteFile,
   createDir,
+  uploadFile,
   fetchDiskUsage,
   type DomainData,
   type FileEntry,
@@ -206,9 +207,8 @@ export default function FileManager() {
     setUploading(true);
     setError('');
     try {
-      const text = await file.text();
       const path = currentPath === '.' ? file.name : `${currentPath}/${file.name}`;
-      await writeFile(selectedDomain, path, text);
+      await uploadFile(selectedDomain, path, file);
       await loadFiles();
     } catch (err) {
       setError((err as Error).message);
