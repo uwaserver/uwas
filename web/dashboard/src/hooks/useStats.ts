@@ -43,9 +43,10 @@ export function useStats(interval = 3000) {
       pollingId = setInterval(refresh, interval);
     }
 
-    function startSSE() {
+    async function startSSE() {
       try {
-        es = new EventSource(sseStatsURL());
+        const url = await sseStatsURL();
+        es = new EventSource(url);
 
         es.onmessage = (event) => {
           try {

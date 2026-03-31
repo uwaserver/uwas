@@ -1,7 +1,9 @@
 package admin
 
 import (
+	crand "crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -131,8 +133,17 @@ type Server struct {
 	rateLimit map[string]*rateLimitEntry
 	rlDone    chan struct{}
 
+	// Short-lived auth tickets for SSE/WebSocket (avoids token in URL query params).
+	ticketMu sync.Mutex
+	tickets  map[string]*authTicket
+
 	// Auth manager for multi-user support
 	authMgr AuthManager
+}
+
+type authTicket struct {
+	token   string // the real session token or API key
+	created time.Time
 }
 
 // AuthManager interface for authentication (implemented by auth.Manager)
@@ -183,6 +194,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/domains/{host}", s.handleDeleteDomain)
 	s.mux.HandleFunc("PUT /api/v1/domains/{host}", s.handleUpdateDomain)
 	s.mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
+	s.mux.HandleFunc("POST /api/v1/auth/ticket", s.handleAuthTicket)
 	s.mux.HandleFunc("GET /api/v1/sse/stats", s.handleSSEStats)
 	s.mux.HandleFunc("GET /api/v1/sse/logs", s.handleSSELogs)
 	s.mux.HandleFunc("GET /api/v1/config/export", s.handleConfigExport)
@@ -595,7 +607,33 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				}
 			}
 
-			// Also check token query param for SSE/WebSocket (can't set headers)
+			// Check ticket query param for SSE/WebSocket (short-lived, single-use).
+			if !authenticated {
+				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+					if realToken := s.redeemTicket(ticket); realToken != "" {
+						// Try as session token first
+						if session, err := s.authMgr.ValidateSession(realToken); err == nil {
+							if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
+								authenticated = true
+								user = u
+							}
+						}
+						// Try as API key
+						if !authenticated {
+							if u, err := s.authMgr.AuthenticateAPIKey(realToken); err == nil {
+								authenticated = true
+								user = u
+							}
+						}
+					}
+					if authenticated {
+						q := r.URL.Query()
+						q.Del("ticket")
+						r.URL.RawQuery = q.Encode()
+					}
+				}
+			}
+			// Also check token query param for SSE/WebSocket (legacy fallback)
 			if !authenticated {
 				if token := r.URL.Query().Get("token"); token != "" {
 					if session, err := s.authMgr.ValidateSession(token); err == nil {
@@ -604,14 +642,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 							user = u
 						}
 					}
-					// Also try as multi-user API key
 					if !authenticated {
 						if u, err := s.authMgr.AuthenticateAPIKey(token); err == nil {
 							authenticated = true
 							user = u
 						}
 					}
-					// Only strip token from URL after all checks
 					if authenticated {
 						q := r.URL.Query()
 						q.Del("token")
@@ -624,7 +660,14 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Fall back to legacy API key auth if multi-user auth failed or not enabled
 		if !authenticated && apiKey != "" {
 			authHeader := r.Header.Get("Authorization")
-			// Also check token query param for SSE/WebSocket
+			// Check ticket query param first (preferred), then legacy token param
+			if authHeader == "" {
+				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+					if realToken := s.redeemTicket(ticket); realToken != "" {
+						authHeader = "Bearer " + realToken
+					}
+				}
+			}
 			if authHeader == "" {
 				if token := r.URL.Query().Get("token"); token != "" {
 					authHeader = "Bearer " + token
@@ -1510,6 +1553,59 @@ func (s *Server) HTTPServer() *http.Server { return s.httpSrv }
 // Close releases background resources used by the admin module.
 func (s *Server) Close() {
 	s.stopAudit()
+}
+
+// handleAuthTicket issues a short-lived, single-use ticket that can be passed
+// as a query parameter for SSE/WebSocket connections. This avoids putting the
+// real token in the URL (which leaks into logs, Referer, browser history).
+func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
+	// The caller is already authenticated (middleware ran).
+	// Extract the token they used to authenticate.
+	authHeader := r.Header.Get("Authorization")
+	realToken := strings.TrimPrefix(authHeader, "Bearer ")
+	if realToken == "" || realToken == authHeader {
+		jsonError(w, "bearer token required", http.StatusBadRequest)
+		return
+	}
+
+	b := make([]byte, 20)
+	if _, err := crand.Read(b); err != nil {
+		jsonError(w, "entropy failure", http.StatusInternalServerError)
+		return
+	}
+	ticket := hex.EncodeToString(b)
+
+	s.ticketMu.Lock()
+	if s.tickets == nil {
+		s.tickets = make(map[string]*authTicket)
+	}
+	// Prune expired tickets (older than 30s).
+	now := time.Now()
+	for k, t := range s.tickets {
+		if now.Sub(t.created) > 30*time.Second {
+			delete(s.tickets, k)
+		}
+	}
+	s.tickets[ticket] = &authTicket{token: realToken, created: now}
+	s.ticketMu.Unlock()
+
+	jsonResponse(w, map[string]string{"ticket": ticket})
+}
+
+// redeemTicket exchanges a single-use ticket for the real auth token.
+// Returns empty string if the ticket is invalid or expired.
+func (s *Server) redeemTicket(ticket string) string {
+	s.ticketMu.Lock()
+	defer s.ticketMu.Unlock()
+	t, ok := s.tickets[ticket]
+	if !ok {
+		return ""
+	}
+	delete(s.tickets, ticket) // single-use
+	if time.Since(t.created) > 30*time.Second {
+		return ""
+	}
+	return t.token
 }
 
 // SetReloadFunc sets the callback for config reload.

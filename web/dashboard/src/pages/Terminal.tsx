@@ -20,7 +20,7 @@ export default function TerminalPage() {
       setError('Pin required to access terminal.');
       return;
     }
-    const url = terminalWSURL(pin);
+    const url = await terminalWSURL(pin);
     const ws = new WebSocket(url);
     wsRef.current = ws;
 

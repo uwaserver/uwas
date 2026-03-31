@@ -583,9 +583,20 @@ export interface UpdateInfo { current_version: string; latest_version: string; u
 export const checkUpdate = () => api<UpdateInfo>('/api/v1/system/update-check');
 export const performUpdate = () => api<{ status: string; from: string; to: string; message: string }>('/api/v1/system/update', { method: 'POST' });
 
-/** SSE stats endpoint URL (with auth token as query param for EventSource). */
-export function sseStatsURL(): string {
-  const params = token ? `?token=${encodeURIComponent(token)}` : '';
+/** Obtain a short-lived, single-use ticket for SSE/WebSocket auth. */
+async function obtainTicket(): Promise<string> {
+  try {
+    const res = await api<{ ticket: string }>('/api/v1/auth/ticket', { method: 'POST' });
+    return res.ticket;
+  } catch {
+    return '';
+  }
+}
+
+/** SSE stats endpoint URL (uses short-lived ticket instead of real token). */
+export async function sseStatsURL(): Promise<string> {
+  const ticket = await obtainTicket();
+  const params = ticket ? `?ticket=${encodeURIComponent(ticket)}` : '';
   return `${BASE}/api/v1/sse/stats${params}`;
 }
 
@@ -945,11 +956,12 @@ export const saveBranding = (b: BrandingConfig) =>
 
 // ── Web Terminal ──
 
-export function terminalWSURL(pin?: string): string {
+export async function terminalWSURL(pin?: string): Promise<string> {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = import.meta.env.DEV ? '127.0.0.1:9443' : window.location.host;
   const params = new URLSearchParams();
-  if (token) params.set('token', token);
+  const ticket = await obtainTicket();
+  if (ticket) params.set('ticket', ticket);
   if (pin) params.set('pin', pin);
   const qs = params.toString();
   return `${proto}//${host}/api/v1/terminal${qs ? '?' + qs : ''}`;
