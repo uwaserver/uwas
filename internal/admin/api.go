@@ -2381,6 +2381,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	_, hasAliases := raw["aliases"]
 	_, hasLocations := raw["locations"]
 	_, hasBasicAuth := raw["basic_auth"]
+	_, hasSecurity := raw["security"]
+	_, hasCache := raw["cache"]
 	replaceMode := r.URL.Query().Get("replace") == "true"
 
 	s.configMu.Lock()
@@ -2465,12 +2467,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 				merged.Security = d.Security
 				merged.Compression = d.Compression
 			} else {
-				if d.Cache.TTL > 0 || d.Cache.Enabled {
+				if hasCache {
 					merged.Cache = d.Cache
 				}
-				if len(d.Security.BlockedPaths) > 0 || d.Security.WAF.Enabled ||
-					len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 ||
-					len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
+				if hasSecurity {
 					merged.Security = d.Security
 				}
 				if d.Compression.Enabled || len(d.Compression.Algorithms) > 0 {

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   fetchDomainDetail, updateDomain, fetchDomainStats, fetchDiskUsage,
-  fetchAnalytics, fetchWPSites,
+  fetchDomainAnalytics, fetchWPSites,
   wpSecurityStatus, wpHarden, wpListUsers, wpChangePassword,
   wpUpdateCore, wpUpdatePlugins, wpFixPermissions, wpToggleDebug,
   wpErrorLog, wpOptimizeDB, wpPluginAction,
@@ -66,11 +66,11 @@ export default function DomainDetail() {
       const [d, statsMap, an] = await Promise.all([
         fetchDomainDetail(host),
         fetchDomainStats().catch(() => ({})),
-        fetchAnalytics().catch(() => []),
+        fetchDomainAnalytics(host).catch(() => null),
       ]);
       setDetail(d);
       setStats((statsMap as Record<string, typeof stats>)[host] ?? null);
-      setAnalytics((an as DomainAnalytics[])?.find(a => a.host === host) ?? null);
+      setAnalytics(an);
 
       // Security state
       setWafEnabled(d.security?.waf?.enabled ?? false);
@@ -616,7 +616,7 @@ export default function DomainDetail() {
               Debug {wpSite.health.debug ? 'ON' : 'OFF'}
             </button>
             <button onClick={() => doAction('Optimize DB', async () => { const r = await wpOptimizeDB(host); setWpResult(r.output); })} disabled={!!actionLoading} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">Optimize DB</button>
-            <button onClick={() => doAction('Error Log', async () => { const r = await wpErrorLog(host); setWpResult(r.log || r.message || 'No log'); })} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">Error Log</button>
+            <button onClick={() => doAction('Error Log', async () => { const r = await wpErrorLog(host); setWpResult(r.log || r.message || 'No log'); })} disabled={!!actionLoading} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">Error Log</button>
           </div>
 
           {wpResult && (

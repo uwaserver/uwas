@@ -284,6 +284,7 @@ export const fetchAuditLog = () => api<AuditEntry[]>('/api/v1/audit');
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
 export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');
 export const fetchAnalytics = () => api<DomainAnalytics[]>('/api/v1/analytics');
+export const fetchDomainAnalytics = (host: string) => api<DomainAnalytics>(`/api/v1/analytics/${encodeURIComponent(host)}`);
 export const fetchConfigRaw = () => api<{ content: string }>('/api/v1/config/raw');
 export const saveConfigRaw = (content: string) => api<{ status: string }>('/api/v1/config/raw', { method: 'PUT', body: JSON.stringify({ content }) });
 export const fetchDomainConfigRaw = (host: string) => api<{ content: string }>(`/api/v1/config/domains/${encodeURIComponent(host)}/raw`);
