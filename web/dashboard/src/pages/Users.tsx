@@ -160,14 +160,18 @@ export default function Users() {
     }
   };
 
+  const [deleting, setDeleting] = useState(false);
   const handleDelete = async (domain: string) => {
+    setDeleting(true);
     try {
       await deleteUser(domain);
       setConfirmDelete(null);
       if (expandedUser === domain) setExpandedUser(null);
-      load();
+      await load();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -336,7 +340,7 @@ export default function Users() {
                         {confirmDelete === u.domain ? (
                           <span className="flex items-center gap-2">
                             <span className="text-xs text-red-400">Delete?</span>
-                            <button onClick={() => handleDelete(u.domain)} className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700">Yes</button>
+                            <button onClick={() => handleDelete(u.domain)} disabled={deleting} className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50">{deleting ? '...' : 'Yes'}</button>
                             <button onClick={() => setConfirmDelete(null)} className="rounded bg-accent px-2 py-1 text-xs text-card-foreground">No</button>
                           </span>
                         ) : (

@@ -48,13 +48,16 @@ export default function AdminUsers() {
     finally { setCreating(false); }
   };
 
+  const [deleting, setDeleting] = useState(false);
   const handleDelete = async (username: string) => {
+    setDeleting(true);
     try {
       await deleteAdminUser(username);
       setConfirmDelete(null);
       setStatus(`User ${username} deleted`);
       await load();
     } catch (e) { setError((e as Error).message); }
+    finally { setDeleting(false); }
   };
 
   const handleChangePw = async (username: string) => {
@@ -234,7 +237,7 @@ export default function AdminUsers() {
                           <button disabled={!!actionLoading} onClick={() => handleRegenKey(u.username)} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground" title="Regenerate API key"><Key size={12} /></button>
                           {confirmDelete === u.username ? (
                             <span className="flex items-center gap-1">
-                              <button onClick={() => handleDelete(u.username)} className="rounded bg-red-600 px-2 py-1 text-xs text-white">Yes</button>
+                              <button onClick={() => handleDelete(u.username)} disabled={deleting} className="rounded bg-red-600 px-2 py-1 text-xs text-white disabled:opacity-50">{deleting ? '...' : 'Yes'}</button>
                               <button onClick={() => setConfirmDelete(null)} className="rounded bg-accent px-2 py-1 text-xs">No</button>
                             </span>
                           ) : (
