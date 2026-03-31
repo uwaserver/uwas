@@ -28,19 +28,19 @@ export default function About() {
               One binary to serve them all. Replaces Apache + Nginx + Varnish + Caddy + cPanel with a single Go binary.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <a href="https://github.com/uwaserver/uwas" target="_blank" rel="noopener"
+              <a href="https://github.com/uwaserver/uwas" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent">
                   <GitBranch size={13} /> GitHub
               </a>
-              <a href="https://uwaserver.com" target="_blank" rel="noopener"
+              <a href="https://uwaserver.com" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent">
                 <ExternalLink size={13} /> Website
               </a>
-              <a href="https://github.com/uwaserver/uwas/releases" target="_blank" rel="noopener"
+              <a href="https://github.com/uwaserver/uwas/releases" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent">
                 <RefreshCw size={13} /> Releases
               </a>
-              <a href="https://github.com/uwaserver/uwas/issues" target="_blank" rel="noopener"
+              <a href="https://github.com/uwaserver/uwas/issues" target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-md bg-card border border-border px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent">
                 <BookOpen size={13} /> Issues
               </a>
@@ -79,7 +79,7 @@ export default function About() {
               Free for community use. You can use, modify, and distribute UWAS under the AGPL-3.0 license.
               Modifications must be shared under the same license.
             </p>
-            <a href="https://github.com/uwaserver/uwas/blob/main/LICENSE" target="_blank" rel="noopener"
+            <a href="https://github.com/uwaserver/uwas/blob/main/LICENSE" target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1 mt-2 text-xs text-emerald-400 hover:underline">
               Read License <ExternalLink size={10} />
             </a>
@@ -90,7 +90,7 @@ export default function About() {
               For enterprise and proprietary use without AGPL obligations.
               Includes priority support and SLAs.
             </p>
-            <a href="https://uwaserver.com/enterprise" target="_blank" rel="noopener"
+            <a href="https://uwaserver.com/enterprise" target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1 mt-2 text-xs text-blue-400 hover:underline">
               Enterprise Licensing <ExternalLink size={10} />
             </a>
@@ -150,7 +150,7 @@ export default function About() {
       <div className="text-center py-4">
         <p className="flex items-center justify-center gap-1 text-xs text-muted-foreground">
           Made with <Heart size={12} className="text-red-500" /> by
-          <a href="https://github.com/uwaserver" target="_blank" rel="noopener" className="text-blue-400 hover:underline">UWAS Team</a>
+          <a href="https://github.com/uwaserver" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">UWAS Team</a>
         </p>
         <p className="text-[10px] text-muted-foreground mt-1">
           <Shield size={10} className="inline mr-1" />

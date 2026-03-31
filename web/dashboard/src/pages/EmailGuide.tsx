@@ -159,11 +159,11 @@ export default function EmailGuide() {
       {/* Testing link */}
       <div className="text-xs text-muted-foreground flex items-center gap-1">
         Test your email config:
-        <a href="https://mxtoolbox.com" target="_blank" rel="noopener" className="text-blue-400 hover:underline flex items-center gap-0.5">
+        <a href="https://mxtoolbox.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline flex items-center gap-0.5">
           MXToolbox <ExternalLink size={10} />
         </a>
         <span className="mx-1">|</span>
-        <a href="https://mail-tester.com" target="_blank" rel="noopener" className="text-blue-400 hover:underline flex items-center gap-0.5">
+        <a href="https://mail-tester.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline flex items-center gap-0.5">
           Mail-tester <ExternalLink size={10} />
         </a>
       </div>

@@ -219,7 +219,7 @@ export default function DomainDetail() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold sm:text-2xl text-foreground">{host}</h1>
-              <a href={siteUrl} target="_blank" rel="noopener" className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700">
+              <a href={siteUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700">
                 Visit <ExternalLink size={10} />
               </a>
             </div>
@@ -246,11 +246,11 @@ export default function DomainDetail() {
           <div className="flex-1 flex items-center gap-2 rounded-md bg-card px-3 py-1.5 text-xs text-muted-foreground font-mono">
             <Lock size={10} className="text-emerald-400" />{siteUrl}
           </div>
-          <a href={siteUrl} target="_blank" rel="noopener" className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+          <a href={siteUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
             <ExternalLink size={11} /> Visit Site
           </a>
           {wpSite && (
-            <a href={wpSite.admin_url} target="_blank" rel="noopener" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">
+            <a href={wpSite.admin_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">
               WP Admin
             </a>
           )}
@@ -603,7 +603,7 @@ export default function DomainDetail() {
 
           {/* WP quick actions */}
           <div className="flex flex-wrap gap-2">
-            <a href={wpSite.admin_url} target="_blank" rel="noopener" className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">WP Admin <ExternalLink size={11} /></a>
+            <a href={wpSite.admin_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">WP Admin <ExternalLink size={11} /></a>
             <button onClick={() => doAction('Update Core', () => wpUpdateCore(host))} disabled={!!actionLoading} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">
               {actionLoading === 'Update Core' ? <RefreshCw size={11} className="animate-spin" /> : null} Update Core
             </button>
@@ -616,7 +616,7 @@ export default function DomainDetail() {
               Debug {wpSite.health.debug ? 'ON' : 'OFF'}
             </button>
             <button onClick={() => doAction('Optimize DB', async () => { const r = await wpOptimizeDB(host); setWpResult(r.output); })} disabled={!!actionLoading} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent disabled:opacity-50">Optimize DB</button>
-            <button onClick={async () => { const r = await wpErrorLog(host); setWpResult(r.log || r.message || 'No log'); }} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">Error Log</button>
+            <button onClick={() => doAction('Error Log', async () => { const r = await wpErrorLog(host); setWpResult(r.log || r.message || 'No log'); })} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-card-foreground hover:bg-accent">Error Log</button>
           </div>
 
           {wpResult && (

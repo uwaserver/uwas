@@ -108,7 +108,9 @@ type Manager struct {
 func NewManager(dataDir, globalAPIKey string) *Manager {
 	// Generate JWT secret if not exists
 	jwtSecret := make([]byte, 32)
-	rand.Read(jwtSecret)
+	if _, err := rand.Read(jwtSecret); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 
 	m := &Manager{
 		users:     make(map[string]*User),
@@ -483,7 +485,9 @@ func (m *Manager) usersFile() string {
 
 func generateID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return base64.URLEncoding.EncodeToString(b)
 }
 

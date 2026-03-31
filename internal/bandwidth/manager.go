@@ -81,6 +81,7 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	m.mu.RLock()
 	limit, hasLimit := m.limits[host]
 	usage, hasUsage := m.usage[host]
+	alertFn := m.alertFn
 	m.mu.RUnlock()
 
 	if !hasLimit || !limit.Enabled {
@@ -120,21 +121,21 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	dailyLimit := int64(limit.DailyLimit)
 
 	// Send alerts at thresholds (before block/throttle returns)
-	if m.alertFn != nil {
+	if alertFn != nil {
 		if monthlyLimit > 0 {
 			pct := float64(usage.MonthlyBytes) / float64(monthlyLimit)
 			if pct >= 0.9 && pct < 0.91 {
-				m.alertFn(host, "monthly_90", usage.MonthlyBytes, monthlyLimit)
+				alertFn(host, "monthly_90", usage.MonthlyBytes, monthlyLimit)
 			} else if pct >= 1.0 && pct < 1.01 {
-				m.alertFn(host, "monthly_exceeded", usage.MonthlyBytes, monthlyLimit)
+				alertFn(host, "monthly_exceeded", usage.MonthlyBytes, monthlyLimit)
 			}
 		}
 		if dailyLimit > 0 {
 			pct := float64(usage.DailyBytes) / float64(dailyLimit)
 			if pct >= 0.9 && pct < 0.91 {
-				m.alertFn(host, "daily_90", usage.DailyBytes, dailyLimit)
+				alertFn(host, "daily_90", usage.DailyBytes, dailyLimit)
 			} else if pct >= 1.0 && pct < 1.01 {
-				m.alertFn(host, "daily_exceeded", usage.DailyBytes, dailyLimit)
+				alertFn(host, "daily_exceeded", usage.DailyBytes, dailyLimit)
 			}
 		}
 	}
