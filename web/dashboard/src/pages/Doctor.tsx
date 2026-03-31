@@ -1,19 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Stethoscope, Wrench, CheckCircle, AlertTriangle, XCircle, Sparkles } from 'lucide-react';
-import { fetchDoctorReport, fetchDoctorFix } from '@/lib/api';
-
-interface Check {
-  name: string;
-  status: 'ok' | 'warn' | 'fail' | 'fixed';
-  message: string;
-  fix?: string;
-  how_to?: string;
-}
-
-interface DoctorReport {
-  checks: Check[];
-  summary: string;
-}
+import { fetchDoctorReport, fetchDoctorFix, type DoctorReport } from '@/lib/api';
 
 const statusIcon = (s: string) => {
   switch (s) {
