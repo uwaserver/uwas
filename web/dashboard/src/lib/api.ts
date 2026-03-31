@@ -237,8 +237,8 @@ export interface DomainDetail {
   basic_auth?: BasicAuthRule;
   locations?: DomainLocationRule[];
   bandwidth?: { enabled: boolean; monthly_limit: string; daily_limit: string; action: string };
-  php?: { fpm_address: string; index_files: string[] | null; timeout: number; upload_max_size: string };
-  proxy?: { upstreams: string[] | null; algorithm: string; health_check?: { path: string; interval: string } };
+  php?: { fpm_address: string; index_files: string[] | null; timeout: string | number; upload_max_size: string };
+  proxy?: { upstreams: { address: string; weight: number }[] | null; algorithm: string; health_check?: { path: string; interval: string } };
   redirect?: { target: string; status: number; preserve_path: boolean };
   app?: { runtime: string; command: string; port: number; auto_restart: boolean };
   htaccess?: { mode: string };
