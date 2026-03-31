@@ -133,6 +133,9 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 		return err
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("telegram API returned %d", resp.StatusCode)
+	}
 	return nil
 }
 

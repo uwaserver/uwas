@@ -116,9 +116,9 @@ func PublicIP() string {
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
 		buf := make([]byte, 64)
 		n, _ := resp.Body.Read(buf)
+		resp.Body.Close()
 		ip := strings.TrimSpace(string(buf[:n]))
 		if net.ParseIP(ip) != nil {
 			return ip

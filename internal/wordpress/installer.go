@@ -235,7 +235,8 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	if err != nil {
 		return err
 	}
-	written, _ := io.Copy(f, resp.Body)
+	const maxWPDownload = 100 << 20 // 100MB safety cap
+	written, _ := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
 	f.Close()
 	log.WriteString(fmt.Sprintf("Downloaded %.1f MB\n", float64(written)/1024/1024))
 

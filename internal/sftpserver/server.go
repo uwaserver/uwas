@@ -163,7 +163,7 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *
 	defer ch.Close()
 
 	for req := range reqs {
-		if req.Type != "subsystem" || string(req.Payload[4:]) != "sftp" {
+		if req.Type != "subsystem" || len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
 			if req.WantReply {
 				req.Reply(req.Type == "subsystem", nil)
 			}

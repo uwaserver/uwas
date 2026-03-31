@@ -84,7 +84,10 @@ func ParseFlags(s string) Flags {
 			f.NoEscape = true
 		case strings.HasPrefix(upper, "R="):
 			code, _ := strconv.Atoi(part[2:])
-			if code == 0 {
+			switch code {
+			case 301, 302, 303, 307, 308:
+				// valid redirect codes
+			default:
 				code = 302
 			}
 			f.Redirect = code

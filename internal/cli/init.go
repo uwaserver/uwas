@@ -108,7 +108,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 
 	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, pinCode, dir, webRoot, acmeEmail)
 
-	if err := os.WriteFile(cfgPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(configContent), 0600); err != nil {
 		return "", fmt.Errorf("write default config: %w", err)
 	}
 

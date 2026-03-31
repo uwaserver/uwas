@@ -45,6 +45,9 @@ type User struct {
 // PrepareWebRoot creates the domain directory structure with proper ownership.
 // Structure: /var/www/domain.com/public_html/ (owned by www-data:www-data, 755)
 func PrepareWebRoot(webRootBase, hostname string) (string, error) {
+	if strings.ContainsAny(hostname, `/\`) || strings.Contains(hostname, "..") || hostname == "" {
+		return "", fmt.Errorf("invalid hostname: %s", hostname)
+	}
 	if runtimeGOOS == "windows" {
 		dir := filepath.Join(webRootBase, hostname)
 		return dir, osMkdirAllFn(dir, 0755)
