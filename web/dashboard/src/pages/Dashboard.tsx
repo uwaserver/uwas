@@ -238,8 +238,8 @@ export default function Dashboard() {
         <div className="grid grid-cols-3 gap-3">
           {[
             { label: 'CPU Load', value: sysInfo.load_1m ? parseFloat(sysInfo.load_1m) : 0, max: sysInfo.cpus || 1, unit: '', color: 'blue' },
-            { label: 'RAM Used', value: sysInfo.memory_alloc ? sysInfo.memory_alloc / (1024 * 1024 * 1024) : 0, max: sysInfo.ram_total_human ? parseFloat(sysInfo.ram_total_human) : 1, unit: 'GB', color: 'purple' },
-            { label: 'Disk Used', value: sysInfo.disk_total_human && sysInfo.disk_free_human ? parseFloat(sysInfo.disk_total_human) - parseFloat(sysInfo.disk_free_human) : 0, max: sysInfo.disk_total_human ? parseFloat(sysInfo.disk_total_human) : 1, unit: 'GB', color: 'emerald' },
+            { label: 'RAM Used', value: (sysInfo.ram_total_bytes && sysInfo.ram_available_bytes) ? (sysInfo.ram_total_bytes - sysInfo.ram_available_bytes) / (1024 ** 3) : 0, max: sysInfo.ram_total_bytes ? sysInfo.ram_total_bytes / (1024 ** 3) : 1, unit: 'GB', color: 'purple' },
+            { label: 'Disk Used', value: (sysInfo.disk_total_bytes && sysInfo.disk_free_bytes) ? (sysInfo.disk_total_bytes - sysInfo.disk_free_bytes) / (1024 ** 3) : 0, max: sysInfo.disk_total_bytes ? sysInfo.disk_total_bytes / (1024 ** 3) : 1, unit: 'GB', color: 'emerald' },
           ].map(g => {
             const pct = g.max > 0 ? Math.min((g.value / g.max) * 100, 100) : 0;
             return (

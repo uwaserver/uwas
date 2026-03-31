@@ -1661,34 +1661,43 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := make([]healthResult, len(domains))
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	for i, d := range domains {
-		hr := healthResult{Host: d.Host}
-		scheme := "http"
-		if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
-			scheme = "https"
-		}
-		url := fmt.Sprintf("%s://%s/", scheme, d.Host)
-
-		start := time.Now()
-		resp, err := client.Get(url)
-		hr.Ms = time.Since(start).Milliseconds()
-
-		if err != nil {
-			hr.Status = "down"
-			hr.Error = err.Error()
-		} else {
-			resp.Body.Close()
-			hr.Code = resp.StatusCode
-			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-				hr.Status = "up"
-			} else {
-				hr.Status = "error"
-			}
-		}
-		results[i] = hr
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
 	}
+
+	var wg sync.WaitGroup
+	for i, d := range domains {
+		wg.Add(1)
+		go func(idx int, dom config.Domain) {
+			defer wg.Done()
+			hr := healthResult{Host: dom.Host}
+			scheme := "http"
+			if dom.SSL.Mode == "auto" || dom.SSL.Mode == "manual" {
+				scheme = "https"
+			}
+			url := fmt.Sprintf("%s://%s/", scheme, dom.Host)
+
+			start := time.Now()
+			resp, err := client.Get(url)
+			hr.Ms = time.Since(start).Milliseconds()
+
+			if err != nil {
+				hr.Status = "down"
+				hr.Error = err.Error()
+			} else {
+				resp.Body.Close()
+				hr.Code = resp.StatusCode
+				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+					hr.Status = "up"
+				} else {
+					hr.Status = "error"
+				}
+			}
+			results[idx] = hr
+		}(i, d)
+	}
+	wg.Wait()
 
 	jsonResponse(w, results)
 }
