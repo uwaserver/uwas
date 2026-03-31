@@ -1835,7 +1835,7 @@ func (s *Server) persistConfig() {
 			s.logger.Error("failed to marshal domain", "host", d.Host, "error", err)
 			continue
 		}
-		if err := os.WriteFile(fpath, domData, 0644); err != nil {
+		if err := os.WriteFile(fpath, domData, 0600); err != nil {
 			s.logger.Error("failed to write domain file", "path", fpath, "error", err)
 		}
 	}

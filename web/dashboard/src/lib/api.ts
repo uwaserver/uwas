@@ -1,11 +1,11 @@
 const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
-let token = localStorage.getItem('uwas_token') || '';
+let token = sessionStorage.getItem('uwas_token') || '';
 let totpCode = '';
 
 export function setToken(t: string) {
   token = t;
-  localStorage.setItem('uwas_token', t);
+  sessionStorage.setItem('uwas_token', t);
 }
 
 export function getToken() {
@@ -15,13 +15,13 @@ export function getToken() {
 export function clearToken() {
   token = '';
   totpCode = '';
-  localStorage.removeItem('uwas_token');
-  localStorage.removeItem('uwas_totp_verified');
+  sessionStorage.removeItem('uwas_token');
+  sessionStorage.removeItem('uwas_totp_verified');
 }
 
 export function setTOTPCode(code: string) {
   totpCode = code;
-  localStorage.setItem('uwas_totp_verified', 'true');
+  sessionStorage.setItem('uwas_totp_verified', 'true');
 }
 
 // Pin code for destructive operations
@@ -59,7 +59,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   if (res.status === 403) {
     const body = await res.json().catch(() => ({ error: '' }));
     if (body.error === '2fa_required') {
-      localStorage.removeItem('uwas_totp_verified');
+      sessionStorage.removeItem('uwas_totp_verified');
       totpCode = '';
       window.location.href = '/_uwas/dashboard/login?2fa=required';
       throw new Error('2FA required');

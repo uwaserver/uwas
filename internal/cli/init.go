@@ -65,7 +65,9 @@ func findConfig(explicit string) (string, bool) {
 // generateAPIKey creates a random 32-char hex API key.
 func generatePinCode() string {
 	b := make([]byte, 3)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	// 6-digit numeric pin
 	n := int(b[0])<<16 | int(b[1])<<8 | int(b[2])
 	return fmt.Sprintf("%06d", n%1000000)
@@ -73,7 +75,9 @@ func generatePinCode() string {
 
 func generateAPIKey() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -119,7 +123,7 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 	// Write .env file
 	envPath := filepath.Join(dir, ".env")
 	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, generateAPIKey())
-	os.WriteFile(envPath, []byte(envContent), 0644)
+	os.WriteFile(envPath, []byte(envContent), 0600)
 
 	fmt.Printf("\n  %s Created default configuration\n", colorize("*", "green"))
 	fmt.Printf("    Config:    %s\n", cfgPath)
