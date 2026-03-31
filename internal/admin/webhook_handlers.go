@@ -37,6 +37,7 @@ func (s *Server) handleWebhookList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req config.WebhookConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -111,6 +112,7 @@ func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		URL string `json:"url"`
 	}

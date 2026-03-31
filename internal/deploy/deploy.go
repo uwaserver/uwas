@@ -304,7 +304,10 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 		return fmt.Errorf("docker run: %w\n%s", err, out)
 	}
 	containerID := strings.TrimSpace(out)
-	log.WriteString("Container: " + containerID[:12] + "\n")
+	if len(containerID) > 12 {
+		containerID = containerID[:12]
+	}
+	log.WriteString("Container: " + containerID + "\n")
 
 	// Get assigned host port
 	if portOut, err := runCmd(appRoot, nil, "docker", "port", containerName, fmt.Sprintf("%d", port)); err == nil {

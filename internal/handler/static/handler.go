@@ -112,7 +112,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		w.Header().Set("ETag", generateETag(origInfo)+"-"+c.encoding)
 
 		http.ServeContent(w, r, filepath.Base(path), origInfo.ModTime(), f)
-		f.Close()
+		_ = f.Close()
 		return true
 	}
 

@@ -358,6 +358,9 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			outPath = filepath.Join(m.domainsDir, rel)
+			if !isInsideDir(outPath, m.domainsDir) {
+				continue // zip-slip: path traversal attempt
+			}
 		case strings.HasPrefix(hdr.Name, "certs/"):
 			if certsDir == "" {
 				continue
@@ -367,6 +370,9 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			outPath = filepath.Join(certsDir, rel)
+			if !isInsideDir(outPath, certsDir) {
+				continue // zip-slip: path traversal attempt
+			}
 		case strings.HasPrefix(hdr.Name, "sites/"):
 			// Restore domain web content to web root
 			if m.webRoot == "" {
@@ -377,6 +383,9 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			outPath = filepath.Join(m.webRoot, rel)
+			if !isInsideDir(outPath, m.webRoot) {
+				continue // zip-slip: path traversal attempt
+			}
 		case hdr.Name == "databases/all-databases.sql" || hdr.Name == "databases/native-all-databases.sql":
 			// Import database dump via mysql
 			if hdr.Typeflag != tar.TypeDir {
@@ -750,4 +759,17 @@ func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
 
 		return addFileToTar(tw, path, archiveName)
 	})
+}
+
+// isInsideDir checks that resolved path is inside the base directory (zip-slip guard).
+func isInsideDir(path, base string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(abs, baseAbs+string(filepath.Separator)) || abs == baseAbs
 }

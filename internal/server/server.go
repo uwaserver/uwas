@@ -132,7 +132,7 @@ type Server struct {
 	esiProcessor *cache.ESIProcessor
 
 	// locationLimiters holds per-location rate limit counters.
-	locationLimiters *sync.Map
+	locationLimiters sync.Map
 
 	// appMgr manages non-PHP application processes (Node.js, Python, etc.)
 	appMgr *appmanager.Manager
@@ -884,6 +884,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Strip internal ESI header from external requests to prevent ESI bypass/leak.
+	r.Header.Del("X-ESI-Subrequest")
+
 	ctx := router.AcquireContext(w, r)
 	defer router.ReleaseContext(ctx)
 
@@ -1067,9 +1070,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				clientAddr, _, _ = net.SplitHostPort(r.RemoteAddr)
 			}
 			limiterKey := domain.Host + "|" + loc.Match + "|" + clientAddr
-			if s.locationLimiters == nil {
-				s.locationLimiters = &sync.Map{}
-			}
 			val, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{})
 			entry := val.(*rateLimitEntry)
 			window := loc.RateLimit.Window.Duration
@@ -1704,14 +1704,14 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		}
 	}
 
-	// 4. Apply ErrorDocument — merge into domain's ErrorPages
-	for code, page := range ruleSet.raw.ErrorDocuments {
-		if domain.ErrorPages == nil {
-			domain.ErrorPages = make(map[int]string)
+	// 4. Apply ErrorDocument — build a merged map once and atomically assign.
+	// This avoids concurrent map writes from parallel requests.
+	if len(ruleSet.raw.ErrorDocuments) > 0 && domain.ErrorPages == nil {
+		merged := make(map[int]string, len(ruleSet.raw.ErrorDocuments))
+		for code, page := range ruleSet.raw.ErrorDocuments {
+			merged[code] = page
 		}
-		if _, exists := domain.ErrorPages[code]; !exists {
-			domain.ErrorPages[code] = page
-		}
+		domain.ErrorPages = merged // single atomic pointer write; subsequent reads are safe
 	}
 
 	// 5. Apply php_value / php_flag — pass as PHP_VALUE env var
