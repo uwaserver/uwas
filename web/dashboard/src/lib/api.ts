@@ -970,8 +970,10 @@ export async function terminalWSURL(pin?: string): Promise<string> {
 // requestPin returns a promise that resolves with the user's pin code.
 // Uses the global PinModal from App.tsx.
 // Doctor
-export const fetchDoctorReport = () => api<{ checks: Array<{ name: string; status: string; message: string; fix?: string; how_to?: string }>; summary: string }>('/api/v1/doctor');
-export const fetchDoctorFix = () => api<{ checks: Array<{ name: string; status: string; message: string; fix?: string; how_to?: string }>; summary: string }>('/api/v1/doctor/fix', { method: 'POST' });
+export interface DoctorCheck { name: string; status: 'ok' | 'warn' | 'fail' | 'fixed'; message: string; fix?: string; how_to?: string }
+export interface DoctorReport { checks: DoctorCheck[]; summary: string }
+export const fetchDoctorReport = () => api<DoctorReport>('/api/v1/doctor');
+export const fetchDoctorFix = () => api<DoctorReport>('/api/v1/doctor/fix', { method: 'POST' });
 
 // Notification test
 export const sendNotifyTest = () => api<{ status: string }>('/api/v1/notify/test', { method: 'POST' });
