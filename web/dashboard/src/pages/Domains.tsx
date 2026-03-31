@@ -1487,7 +1487,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
         {detail.type === 'php' && detail.php && (
           <InfoCard icon={<FileCode size={16} />} title="PHP / FPM">
             <DetailRow label="FPM Address" value={<span className="font-mono">{detail.php.fpm_address}</span>} />
-            <DetailRow label="Timeout" value={detail.php.timeout > 0 ? `${detail.php.timeout}s` : '--'} />
+            <DetailRow label="Timeout" value={Number(detail.php.timeout) > 0 ? `${detail.php.timeout}s` : '--'} />
             <DetailRow label="Upload Max" value={detail.php.upload_max_size || '--'} />
             {detail.php.index_files && detail.php.index_files.length > 0 && (
               <DetailRow label="Index Files" value={detail.php.index_files.join(', ')} />
@@ -1518,7 +1518,7 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
                 {detail.proxy.upstreams.map((u, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs">
                     <Server size={10} className="text-orange-400" />
-                    <span className="font-mono text-card-foreground">{u}</span>
+                    <span className="font-mono text-card-foreground">{u.address}</span>
                   </div>
                 ))}
               </div>

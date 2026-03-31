@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, ShieldAlert, Bot, Link2Off, Gauge, RefreshCw, ChevronDown, ChevronUp, Save, Plus, Trash2, Globe } from 'lucide-react';
 import {
   fetchSecurityStats, fetchSecurityBlocked, fetchDomains, fetchDomainDetail, updateDomain,
@@ -28,6 +28,7 @@ export default function Security() {
   const [loading, setLoading] = useState(true);
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [expanded, setExpanded] = useState('');
+  const expandedRef = useRef('');
   const [detail, setDetail] = useState<DomainDetail | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -58,8 +59,9 @@ export default function Security() {
   }, [load]);
 
   const openDomain = async (host: string) => {
-    if (expanded === host) { setExpanded(''); return; }
+    if (expanded === host) { setExpanded(''); expandedRef.current = ''; return; }
     setExpanded(host);
+    expandedRef.current = host;
     setStatus(null);
     // Reset edit state immediately to prevent cross-domain data bleed
     setDetail(null);
@@ -73,7 +75,7 @@ export default function Security() {
     try {
       const d = await fetchDomainDetail(host);
       // Guard: only apply if this domain is still the expanded one
-      if (host !== expanded) return;
+      if (host !== expandedRef.current) return;
       setDetail(d);
       setWafEnabled(d.security?.waf?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);

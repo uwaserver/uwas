@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Package, Download, Check, RefreshCw, AlertTriangle, Trash2, Shield } from 'lucide-react';
 import { fetchPackages, installPackage, removePackage, fetchTasks, type PackageInfo } from '@/lib/api';
 
@@ -11,6 +11,8 @@ export default function Packages() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [confirmRemove, setConfirmRemove] = useState<PackageInfo | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const load = useCallback(async () => {
     try { setPackages((await fetchPackages()) ?? []); }
@@ -26,11 +28,11 @@ export default function Packages() {
       if (active) {
         setActing(active.name);
         setSuccess(`${active.action === 'remove' ? 'Removing' : 'Installing'} ${active.name}...`);
-        const poll = setInterval(async () => {
+        pollRef.current = setInterval(async () => {
           const ts = await fetchTasks().catch(() => []);
           const t = ts?.find(x => x.id === active.id);
           if (!t || (t.status !== 'running' && t.status !== 'queued')) {
-            clearInterval(poll);
+            clearInterval(pollRef.current);
             setActing('');
             if (t?.status === 'done') setSuccess(`${active.name} ${active.action === 'remove' ? 'removed' : 'installed'}!`);
             else if (t?.status === 'error') setError(t.error || 'Operation failed');
@@ -39,6 +41,7 @@ export default function Packages() {
         }, 3000);
       }
     }).catch(() => {});
+    return () => { clearInterval(pollRef.current); clearTimeout(timeoutRef.current); };
   }, [load]);
 
   const handleInstall = async (pkg: PackageInfo) => {
@@ -47,15 +50,15 @@ export default function Packages() {
     try {
       await installPackage(pkg.id);
       setSuccess(`Installing ${pkg.name}...`);
-      const poll = setInterval(async () => {
+      clearInterval(pollRef.current);
+      clearTimeout(timeoutRef.current);
+      pollRef.current = setInterval(async () => {
         try {
           const updated = (await fetchPackages()).find(p => p.id === pkg.id);
-          if (updated?.installed) { clearInterval(poll); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
-        } catch { clearInterval(poll); setActing(''); }
+          if (updated?.installed) { clearInterval(pollRef.current); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
+        } catch { clearInterval(pollRef.current); setActing(''); }
       }, 3000);
-      const timeout = setTimeout(() => { clearInterval(poll); setActing(''); }, 120000);
-      // Cleanup on unmount handled by React effect lifecycle; this is fire-and-forget
-      void timeout;
+      timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); setActing(''); }, 120000);
     } catch (e) { setError((e as Error).message); setActing(''); }
   };
 
@@ -66,14 +69,15 @@ export default function Packages() {
     try {
       await removePackage(pkg.id);
       setSuccess(`Removing ${pkg.name}...`);
-      const poll = setInterval(async () => {
+      clearInterval(pollRef.current);
+      clearTimeout(timeoutRef.current);
+      pollRef.current = setInterval(async () => {
         try {
           const updated = (await fetchPackages()).find(p => p.id === pkg.id);
-          if (!updated?.installed) { clearInterval(poll); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
-        } catch { clearInterval(poll); setActing(''); }
+          if (!updated?.installed) { clearInterval(pollRef.current); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
+        } catch { clearInterval(pollRef.current); setActing(''); }
       }, 3000);
-      const timeout = setTimeout(() => { clearInterval(poll); setActing(''); }, 120000);
-      void timeout;
+      timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); setActing(''); }, 120000);
     } catch (e) { setError((e as Error).message); setActing(''); }
   };
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { UserPlus, Trash2, RefreshCw, Copy, Check, FolderOpen, Key, ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 import {
   fetchUsers, createUser, deleteUser, fetchDomains,
@@ -310,8 +310,8 @@ export default function Users() {
             </thead>
             <tbody className="divide-y divide-border">
               {users.map(u => (
-                <>
-                  <tr key={u.username} className="bg-background hover:bg-card/50">
+                <Fragment key={u.username}>
+                  <tr className="bg-background hover:bg-card/50">
                     <td className="px-2 py-3">
                       <button
                         onClick={() => setExpandedUser(expandedUser === u.domain ? null : u.domain)}
@@ -355,13 +355,13 @@ export default function Users() {
                     </td>
                   </tr>
                   {expandedUser === u.domain && (
-                    <tr key={`${u.username}-keys`}>
+                    <tr>
                       <td colSpan={5} className="p-0">
                         <SSHKeyPanel domain={u.domain} />
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
