@@ -2,11 +2,13 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,6 +65,9 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	session.Run("mkdir -p " + p.remotePath)
 	session.Close()
 
+	if err := safeBackupFilename(filename); err != nil {
+		return err
+	}
 	// Use SCP-style upload via a shell command.
 	remoteDest := path.Join(p.remotePath, filename)
 	session, err = client.NewSession()
@@ -98,6 +103,9 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 }
 
 func (p *SFTPProvider) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
+	if err := safeBackupFilename(filename); err != nil {
+		return nil, err
+	}
 	client, err := p.dial(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sftp connect: %w", err)
@@ -186,6 +194,9 @@ func (p *SFTPProvider) List(ctx context.Context) ([]BackupInfo, error) {
 }
 
 func (p *SFTPProvider) Delete(ctx context.Context, filename string) error {
+	if err := safeBackupFilename(filename); err != nil {
+		return err
+	}
 	client, err := p.dial(ctx)
 	if err != nil {
 		return fmt.Errorf("sftp connect: %w", err)
@@ -262,4 +273,17 @@ type sshReadCloser struct {
 func (r *sshReadCloser) Close() error {
 	r.session.Close()
 	return r.client.Close()
+}
+
+// safeBackupFilename rejects filenames that could inject shell metacharacters.
+var safeBackupFilenameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+func safeBackupFilename(name string) error {
+	if name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, "/\\") {
+		return errors.New("invalid backup filename")
+	}
+	if !safeBackupFilenameRe.MatchString(name) {
+		return errors.New("backup filename contains unsafe characters")
+	}
+	return nil
 }

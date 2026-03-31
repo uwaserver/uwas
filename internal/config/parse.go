@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"unicode"
@@ -41,7 +40,7 @@ func parseByteSize(s string) (ByteSize, error) {
 	default:
 		return 0, fmt.Errorf("unknown byte unit %q in %q", unit, s)
 	}
-	if result < 0 || result > math.MaxInt64 {
+	if result < 0 || result >= 1<<63 {
 		return 0, fmt.Errorf("byte size %q overflows int64", s)
 	}
 	return ByteSize(result), nil
