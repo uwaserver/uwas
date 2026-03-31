@@ -2,7 +2,7 @@
 
 ## Project
 
-UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. It replaces Apache + Nginx + Varnish + Caddy + cPanel. Features: auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 35-page React dashboard with 170+ API endpoints.
+UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. It replaces Apache + Nginx + Varnish + Caddy + cPanel. Features: auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 39-page React dashboard with 200+ API endpoints.
 
 ## Build
 
@@ -24,21 +24,25 @@ cd web/dashboard && npm run build
 ```
 cmd/uwas/            CLI entry point (18 commands)
 internal/
-  admin/             API server (185+ routes) + dashboard embed + TOTP auth
+  admin/             API server (200+ routes) + dashboard embed + TOTP auth
   alerting/          Alert thresholds + notifications
   analytics/         Per-domain traffic analytics
   appmanager/        Node.js/Python/Ruby/Go process management (like phpmanager but generic)
+  auth/              Multi-user auth (roles, sessions, API keys, JWT)
   backup/            Local/S3/SFTP backup + restore
+  bandwidth/         Per-domain bandwidth limits + throttling
   cache/             L1 memory (256-shard LRU) → L2 disk + ESI (Edge Side Includes)
   cli/               CLI commands (serve, stop, cert, php, user, domain, install, doctor...)
   config/            Config structs + Duration/ByteSize types + MarshalYAML
   cronjob/           Cron job management (per-domain)
   database/          MySQL/MariaDB management (create DB/user, install, start/stop)
+  deploy/            Git clone/pull + Docker-based application deployment
   dnschecker/        DNS record verification (A/MX/NS/TXT) + server IP match
   dnsmanager/        Cloudflare DNS record CRUD + sync
   doctor/            System diagnostics + auto-fix (PHP, permissions, config, ports)
   filemanager/       Web file manager (browse/edit/upload/delete/disk-usage)
   firewall/          UFW management via API
+  install/           System package installer task queue
   handler/
     fastcgi/         PHP-CGI/FPM handler + X-Accel-Redirect + X-Sendfile
     proxy/           Reverse proxy + load balancing + circuit breaker + canary + mirror
@@ -50,30 +54,33 @@ internal/
   migrate/           Apache/Nginx config migration
   monitor/           Health monitoring + domain health checks
   notify/            Webhook, Slack, Telegram, Email (SMTP) channels + SMTP relay
+  pathsafe/          Path traversal guard (symlink-resolving containment check)
   phpmanager/        PHP detect, install, start/stop, per-domain assign, config, auto-restart
   rewrite/           Apache mod_rewrite compatible engine (RewriteCond, -f/-d/-l/-s)
   rlimit/            Per-domain resource limits via Linux cgroups v2 (CPU/memory/PID)
   router/            VHost routing + unknown host tracking
   selfupdate/        Binary self-update from GitHub releases
   server/            Main HTTP/HTTPS/HTTP3 server + request dispatch + ESI assembly
-  terminal/          WebSocket-to-PTY bridge for browser-based shell (Linux)
   serverip/          Server IP detection (interfaces + public IP)
   services/          systemd service management (start/stop/restart)
+  sftpserver/        SFTP server (SSH + chroot file access)
   siteuser/          SFTP user management (chroot jail + SSH keys)
+  terminal/          WebSocket-to-PTY bridge for browser-based shell (Linux)
   tls/               SNI cert selection + ACME auto-issuance + retry + on-demand
+  webhook/           Outbound webhook delivery (event queue + retry + HMAC signing)
   wordpress/         One-click WordPress install (DB + config + permissions + mu-plugin)
 pkg/
   fastcgi/           FastCGI protocol implementation + connection pool
   htaccess/          .htaccess parser (IfModule, RewriteCond, Header, Expires, ErrorDocument)
-web/dashboard/       React SPA (33 pages, Vite + TypeScript + Tailwind)
+web/dashboard/       React SPA (39 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Stats
 
 - 50 Go packages, all with tests (all passing)
-- 38 dashboard pages, 190+ API endpoints
+- 39 dashboard pages, 200+ API endpoints
 - 18 CLI commands
-- ~14MB single binary (linux/amd64)
+- ~15MB single binary (linux/amd64)
 
 ## Conventions
 
@@ -114,11 +121,14 @@ web/dashboard/       React SPA (33 pages, Vite + TypeScript + Tailwind)
 - Path traversal: checked in static handler, file manager, X-Accel-Redirect, X-Sendfile
 - Domain validation: hostname regex rejects injection/traversal characters
 - WAF body scan: first 64KB scanned, full body restored via MultiReader (no truncation)
+- SSE/WebSocket auth: short-lived single-use tickets (token never in URL query params)
+- Config file permissions: 0600 for all files containing secrets (api_key, pin, passwords)
+- Credential generation: all uses of `crypto/rand.Read` check errors (panic on failure)
 
 ## Testing
 
 ```bash
-go test -p 1 ./...                   # All tests (40 packages, serial for reliability)
+go test -p 1 ./...                   # All tests (50 packages, serial for reliability)
 go test ./internal/cache/            # Single package
 go test -v -run TestWordPress ./...  # Specific test
 ```
@@ -134,7 +144,7 @@ go test -v -run TestWordPress ./...  # Specific test
 - **Add dashboard page**: Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to sidebar group in `Sidebar.tsx`
 - **Add API function**: Add to `web/dashboard/src/lib/api.ts` with proper TypeScript interface
 
-## Dashboard Pages (38)
+## Dashboard Pages (39)
 
 Sites: Domains, Domain Detail, Topology, Certificates, DNS, WordPress, Clone/Staging, Migration, File Manager
 Server: PHP, PHP Config, Applications, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
@@ -142,4 +152,4 @@ Performance: Cache, Metrics, Analytics, Logs
 Security: Security, Firewall, Unknown Domains, Audit Log, Admin Users
 System: Config Editor, Webhooks, Backups, Terminal, Updates, Settings, Doctor
 Auth: Login (with 2FA/TOTP support)
-Overview: Dashboard (stats, health, graphs)
+Overview: Dashboard (stats, health, graphs), About
