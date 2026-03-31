@@ -2197,7 +2197,7 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		// If domain already has a working FPM address (from config file), register it
 		if d.PHP.FPMAddress != "" && isAddrReachable(d.PHP.FPMAddress) {
 			// Register in phpMgr so it shows in PHP page domain list
-			phpMgr.RegisterExistingDomain(d.Host, defaultVer, d.PHP.FPMAddress, d.Root)
+			phpMgr.RegisterExistingDomain(d.Host, defaultVer, d.PHP.FPMAddress, d.Root, d.PHP.ConfigOverrides)
 			s.logger.Info("using configured PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
 			continue
 		}

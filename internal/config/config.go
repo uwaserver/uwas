@@ -391,11 +391,12 @@ type SSLConfig struct {
 }
 
 type PHPConfig struct {
-	FPMAddress string            `yaml:"fpm_address,omitempty" json:"fpm_address,omitempty"`
-	IndexFiles []string          `yaml:"index_files,omitempty" json:"index_files,omitempty"`
-	MaxUpload  ByteSize          `yaml:"max_upload,omitempty" json:"max_upload,omitempty"`
-	Timeout    Duration          `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	Env        map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	FPMAddress      string            `yaml:"fpm_address,omitempty" json:"fpm_address,omitempty"`
+	IndexFiles      []string          `yaml:"index_files,omitempty" json:"index_files,omitempty"`
+	MaxUpload       ByteSize          `yaml:"max_upload,omitempty" json:"max_upload,omitempty"`
+	Timeout         Duration          `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Env             map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	ConfigOverrides map[string]string `yaml:"config_overrides,omitempty" json:"config_overrides,omitempty"` // per-domain php.ini overrides (memory_limit, etc.)
 }
 
 // AppConfig holds configuration for non-PHP application processes (Node.js, Python, etc.).

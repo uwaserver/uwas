@@ -246,6 +246,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/php/{version}/extensions", s.handlePHPExtensions)
 	s.mux.HandleFunc("POST /api/v1/php/{version}/start", s.handlePHPStart)
 	s.mux.HandleFunc("POST /api/v1/php/{version}/stop", s.handlePHPStop)
+	s.mux.HandleFunc("POST /api/v1/php/{version}/restart", s.handlePHPRestart)
 
 	// Per-domain PHP instances
 	s.mux.HandleFunc("GET /api/v1/php/domains", s.handlePHPDomainsList)
@@ -1255,7 +1256,12 @@ func (s *Server) handlePHPConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "updated", "key": req.Key, "value": req.Value})
+	// Auto-restart PHP so updated ini takes effect
+	restarted := false
+	if err := s.phpMgr.RestartFPM(version); err == nil {
+		restarted = true
+	}
+	jsonResponse(w, map[string]any{"status": "updated", "key": req.Key, "value": req.Value, "restarted": restarted})
 }
 
 func (s *Server) handlePHPExtensions(w http.ResponseWriter, r *http.Request) {
@@ -1311,6 +1317,20 @@ func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
 }
 
+func (s *Server) handlePHPRestart(w http.ResponseWriter, r *http.Request) {
+	if s.phpMgr == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
+	version := r.PathValue("version")
+
+	if err := s.phpMgr.RestartFPM(version); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "restarted", "version": version})
+}
+
 func (s *Server) handlePHPConfigRawGet(w http.ResponseWriter, r *http.Request) {
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
@@ -1344,7 +1364,12 @@ func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Info("PHP config raw updated", "version", version)
-	jsonResponse(w, map[string]string{"status": "saved", "version": version})
+	// Auto-restart PHP so updated ini takes effect
+	restarted := false
+	if err := s.phpMgr.RestartFPM(version); err == nil {
+		restarted = true
+	}
+	jsonResponse(w, map[string]any{"status": "saved", "version": version, "restarted": restarted})
 }
 
 func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
@@ -1569,11 +1594,74 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "updated", "domain": domain, "key": req.Key, "value": req.Value})
+
+	// Persist overrides to domain YAML so they survive restarts
+	s.persistDomainPHPOverrides(domain)
+
+	// Restart domain PHP so updated config takes effect
+	restarted := false
+	if err := s.phpMgr.RestartDomain(domain); err == nil {
+		restarted = true
+	}
+	jsonResponse(w, map[string]any{"status": "updated", "domain": domain, "key": req.Key, "value": req.Value, "restarted": restarted})
 }
 
 // HTTPServer returns the underlying http.Server for shutdown during upgrades.
 func (s *Server) HTTPServer() *http.Server { return s.httpSrv }
+
+// persistDomainPHPOverrides saves the current in-memory PHP config overrides
+// for a domain into its domains.d/*.yaml file so they survive server restarts.
+func (s *Server) persistDomainPHPOverrides(domain string) {
+	overrides := s.phpMgr.GetDomainConfig(domain)
+
+	path, err := s.domainFilePath(domain)
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: bad domain path", "domain", domain, "error", err)
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: read failed", "domain", domain, "error", err)
+		return
+	}
+
+	var domCfg config.Domain
+	if err := yaml.Unmarshal(data, &domCfg); err != nil {
+		s.logger.Warn("cannot persist PHP overrides: parse failed", "domain", domain, "error", err)
+		return
+	}
+
+	domCfg.PHP.ConfigOverrides = overrides
+
+	out, err := yaml.Marshal(&domCfg)
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: marshal failed", "domain", domain, "error", err)
+		return
+	}
+
+	// Atomic write: temp + rename
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".uwas-php-cfg-*.yaml")
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: temp file failed", "domain", domain, "error", err)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return
+	}
+	tmp.Close()
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		s.logger.Warn("cannot persist PHP overrides: rename failed", "domain", domain, "error", err)
+		return
+	}
+
+	s.logger.Info("persisted PHP config overrides", "domain", domain, "count", len(overrides))
+}
 
 // Close releases background resources used by the admin module.
 func (s *Server) Close() {
@@ -2152,7 +2240,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			if len(phpStatus) > 0 {
 				ver = phpStatus[0].Version
 			}
-			s.phpMgr.RegisterExistingDomain(d.Host, ver, d.PHP.FPMAddress, d.Root)
+			s.phpMgr.RegisterExistingDomain(d.Host, ver, d.PHP.FPMAddress, d.Root, d.PHP.ConfigOverrides)
 			s.logger.Info("using user-provided PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
 		} else {
 			// Auto-assign: prefer FPM socket, fallback to CGI TCP port

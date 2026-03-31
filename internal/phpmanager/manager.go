@@ -147,18 +147,23 @@ func (m *Manager) AssignDomainWithRoot(domain, version, webRoot string) (*Domain
 
 // RegisterExistingDomain registers a domain that already has a working PHP
 // address (from config file). This ensures it appears in GetDomainInstances().
-func (m *Manager) RegisterExistingDomain(domain, version, listenAddr, webRoot string) {
+// If overrides is non-nil, they are loaded as the initial per-domain config.
+func (m *Manager) RegisterExistingDomain(domain, version, listenAddr, webRoot string, overrides map[string]string) {
 	m.domainMu.Lock()
 	defer m.domainMu.Unlock()
 	if _, exists := m.domainMap[domain]; exists {
 		return // already registered
+	}
+	co := make(map[string]string, len(overrides))
+	for k, v := range overrides {
+		co[k] = v
 	}
 	m.domainMap[domain] = &domainInstance{
 		domain:          domain,
 		version:         version,
 		listenAddr:      listenAddr,
 		webRoot:         webRoot,
-		configOverrides: make(map[string]string),
+		configOverrides: co,
 	}
 }
 
@@ -415,6 +420,31 @@ func (m *Manager) StopDomain(domain string) error {
 	}
 
 	m.logger.Info("stopped PHP-CGI for domain", "domain", domain)
+	return nil
+}
+
+// RestartDomain gracefully restarts the per-domain PHP process so that
+// updated config overrides take effect.
+func (m *Manager) RestartDomain(domain string) error {
+	m.domainMu.RLock()
+	inst, exists := m.domainMap[domain]
+	if !exists {
+		m.domainMu.RUnlock()
+		return fmt.Errorf("domain %s has no PHP assignment", domain)
+	}
+	if inst.proc == nil {
+		m.domainMu.RUnlock()
+		return fmt.Errorf("PHP for domain %s is not running", domain)
+	}
+	m.domainMu.RUnlock()
+
+	if err := m.StopDomain(domain); err != nil {
+		return fmt.Errorf("restart domain: stop failed: %w", err)
+	}
+	if err := m.StartDomain(domain); err != nil {
+		return fmt.Errorf("restart domain: start failed: %w", err)
+	}
+	m.logger.Info("restarted PHP for domain", "domain", domain)
 	return nil
 }
 
@@ -960,6 +990,31 @@ func (m *Manager) findInstall(version string) (PHPInstall, bool) {
 	return fallback, hasFallback
 }
 
+// findInstallPtr returns a pointer to the installation in the slice so that
+// mutations (e.g. populating ConfigFile) persist in the cache.
+func (m *Manager) findInstallPtr(version string) (*PHPInstall, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var fallback *PHPInstall
+
+	for i := range m.installations {
+		inst := &m.installations[i]
+		if inst.Version == version || strings.HasPrefix(inst.Version, version) {
+			if inst.SAPI == "cgi-fcgi" || inst.SAPI == "fpm-fcgi" {
+				return inst, true
+			}
+			if fallback == nil {
+				fallback = inst
+			}
+		}
+	}
+	if fallback != nil {
+		return fallback, true
+	}
+	return nil, false
+}
+
 // GetConfig reads key php.ini settings for the given PHP version.
 func (m *Manager) GetConfig(version string) (PHPConfig, error) {
 	inst, ok := m.findInstall(version)
@@ -1047,7 +1102,7 @@ func (m *Manager) GetConfigRaw(version string) (string, error) {
 
 // SetConfigRaw writes the entire php.ini file content.
 func (m *Manager) SetConfigRaw(version, content string) error {
-	inst, ok := m.findInstall(version)
+	inst, ok := m.findInstallPtr(version)
 	if !ok {
 		return fmt.Errorf("PHP %s not found", version)
 	}
@@ -1065,7 +1120,7 @@ func (m *Manager) SetConfigRaw(version, content string) error {
 // SetConfig updates a single php.ini directive for the given PHP version.
 // It rewrites the ini file in place.
 func (m *Manager) SetConfig(version, key, value string) error {
-	inst, ok := m.findInstall(version)
+	inst, ok := m.findInstallPtr(version)
 	if !ok {
 		return fmt.Errorf("PHP %s not found", version)
 	}
@@ -1252,6 +1307,31 @@ func (m *Manager) StopFPM(version string) error {
 
 	m.processes.Delete(version)
 	m.logger.Info("stopped PHP-CGI", "version", version)
+	return nil
+}
+
+// RestartFPM gracefully restarts the PHP process for the given version.
+// It stops the running process and starts a new one with the same listen address,
+// ensuring that updated php.ini settings take effect.
+func (m *Manager) RestartFPM(version string) error {
+	val, ok := m.processes.Load(version)
+	if !ok {
+		return fmt.Errorf("PHP %s is not running", version)
+	}
+	info, ok := val.(*processInfo)
+	if !ok || info == nil {
+		m.processes.Delete(version)
+		return fmt.Errorf("PHP %s has stale process entry", version)
+	}
+	listenAddr := info.listenAddr
+
+	if err := m.StopFPM(version); err != nil {
+		return fmt.Errorf("restart: stop failed: %w", err)
+	}
+	if err := m.StartFPM(version, listenAddr); err != nil {
+		return fmt.Errorf("restart: start failed: %w", err)
+	}
+	m.logger.Info("restarted PHP", "version", version, "listen", listenAddr)
 	return nil
 }
 
