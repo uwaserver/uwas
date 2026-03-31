@@ -280,8 +280,7 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	// Respond to ping
 	if event == "ping" {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"pong"}`))
+		jsonResponse(w, map[string]string{"status": "pong"})
 		return
 	}
 

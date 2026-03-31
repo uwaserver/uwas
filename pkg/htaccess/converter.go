@@ -1,6 +1,7 @@
 package htaccess
 
 import (
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -181,7 +182,11 @@ func Convert(directives []Directive) *RuleSet {
 
 		case "authuserfile":
 			if len(d.Args) > 0 {
-				rules.AuthUserFile = d.Args[0]
+				// Reject absolute paths and traversal to prevent reading arbitrary files.
+				f := d.Args[0]
+				if !filepath.IsAbs(f) && !strings.Contains(f, "..") {
+					rules.AuthUserFile = f
+				}
 			}
 
 		case "require":

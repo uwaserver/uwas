@@ -36,6 +36,7 @@ import {
   verify2FA,
   disable2FA,
   generateRecoveryCodes,
+  sendNotifyTest,
   type HealthData,
   type SystemInfo,
 } from '@/lib/api';
@@ -942,7 +943,7 @@ export default function Settings() {
             <div className="mt-4 border-t border-border pt-4">
               <button onClick={async () => {
                 try {
-                  await fetch('/api/v1/notify/test', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('uwas_token') || ''}` } });
+                  await sendNotifyTest();
                   showStatus(true, 'Test notification sent to all configured channels');
                 } catch (e) { showStatus(false, (e as Error).message); }
               }} className="flex items-center gap-1.5 rounded-md bg-yellow-600 px-3 py-2 text-xs font-medium text-white hover:bg-yellow-700">

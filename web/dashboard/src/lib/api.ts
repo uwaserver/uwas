@@ -957,6 +957,13 @@ export function terminalWSURL(pin?: string): string {
 
 // requestPin returns a promise that resolves with the user's pin code.
 // Uses the global PinModal from App.tsx.
+// Doctor
+export const fetchDoctorReport = () => api<{ checks: Array<{ name: string; status: string; message: string; fix?: string; how_to?: string }>; summary: string }>('/api/v1/doctor');
+export const fetchDoctorFix = () => api<{ checks: Array<{ name: string; status: string; message: string; fix?: string; how_to?: string }>; summary: string }>('/api/v1/doctor/fix', { method: 'POST' });
+
+// Notification test
+export const sendNotifyTest = () => api<{ status: string }>('/api/v1/notify/test', { method: 'POST' });
+
 export function requestPin(): Promise<string> {
   return new Promise((resolve, reject) => {
     if (pinCode) { resolve(pinCode); return; }

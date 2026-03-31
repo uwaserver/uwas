@@ -245,7 +245,7 @@ export default function WordPress() {
 
                     {/* Quick actions */}
                     <div className="flex flex-wrap gap-2">
-                      <a href={site.admin_url} target="_blank" rel="noopener"
+                      <a href={site.admin_url} target="_blank" rel="noopener noreferrer"
                         className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                         WP Admin <ExternalLink size={11} />
                       </a>
@@ -644,7 +644,7 @@ export default function WordPress() {
                     </div>
                   ))}
               </div>
-              <a href={status.admin_url} target="_blank" rel="noopener"
+              <a href={status.admin_url} target="_blank" rel="noopener noreferrer"
                 className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
                 Open WordPress Setup <ExternalLink size={13} />
               </a>

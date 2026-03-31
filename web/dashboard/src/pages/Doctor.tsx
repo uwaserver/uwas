@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Stethoscope, Wrench, CheckCircle, AlertTriangle, XCircle, Sparkles } from 'lucide-react';
-
-const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
+import { fetchDoctorReport, fetchDoctorFix } from '@/lib/api';
 
 interface Check {
   name: string;
@@ -14,17 +13,6 @@ interface Check {
 interface DoctorReport {
   checks: Check[];
   summary: string;
-}
-
-async function fetchDoctor(fix: boolean): Promise<DoctorReport> {
-  const token = localStorage.getItem('uwas_token') || '';
-  const url = fix ? `${BASE}/api/v1/doctor/fix` : `${BASE}/api/v1/doctor`;
-  const res = await fetch(url, {
-    method: fix ? 'POST' : 'GET',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
 }
 
 const statusIcon = (s: string) => {
@@ -56,7 +44,7 @@ export default function Doctor() {
   const runDiagnose = useCallback(async () => {
     setLoading(true);
     setError('');
-    try { setReport(await fetchDoctor(false)); }
+    try { setReport(await fetchDoctorReport()); }
     catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, []);
@@ -64,7 +52,7 @@ export default function Doctor() {
   const runFix = useCallback(async () => {
     setFixing(true);
     setError('');
-    try { setReport(await fetchDoctor(true)); }
+    try { setReport(await fetchDoctorFix()); }
     catch (e) { setError((e as Error).message); }
     finally { setFixing(false); }
   }, []);
