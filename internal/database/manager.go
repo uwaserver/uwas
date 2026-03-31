@@ -543,6 +543,9 @@ type DBUser struct {
 
 // ExportDatabase exports a database to SQL using mysqldump.
 func ExportDatabase(name string) ([]byte, error) {
+	if !validDBIdentifier(name) {
+		return nil, fmt.Errorf("invalid database name: %s", name)
+	}
 	// Try mariadb-dump first, then mysqldump
 	for _, bin := range []string{"mariadb-dump", "mysqldump"} {
 		path, err := execLookPathFn(bin)
@@ -564,6 +567,9 @@ func ExportDatabase(name string) ([]byte, error) {
 
 // ImportDatabase imports SQL data into a database.
 func ImportDatabase(name string, sqlData []byte) error {
+	if !validDBIdentifier(name) {
+		return fmt.Errorf("invalid database name: %s", name)
+	}
 	for _, client := range []string{"mariadb", "mysql"} {
 		bin, err := execLookPathFn(client)
 		if err != nil {

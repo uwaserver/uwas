@@ -66,11 +66,13 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 
 	s.configMu.Lock()
 	s.config.Global.Webhooks = append(s.config.Global.Webhooks, req)
+	webhooks := make([]config.WebhookConfig, len(s.config.Global.Webhooks))
+	copy(webhooks, s.config.Global.Webhooks)
 	s.configMu.Unlock()
 
 	// Update webhook manager
 	if s.webhookMgr != nil {
-		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(s.config.Global.Webhooks))
+		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
 	}
 
 	s.RecordAudit("webhook.create", req.URL, requestIP(r), true)

@@ -1802,7 +1802,7 @@ func (s *Server) persistConfig() {
 	}
 	// Atomic write: temp file + rename to prevent corruption on crash
 	tmpMain := s.configPath + ".tmp"
-	if err := os.WriteFile(tmpMain, mainData, 0644); err != nil {
+	if err := os.WriteFile(tmpMain, mainData, 0600); err != nil {
 		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
 		return
 	}

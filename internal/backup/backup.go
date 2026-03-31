@@ -389,7 +389,8 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		case hdr.Name == "databases/all-databases.sql" || hdr.Name == "databases/native-all-databases.sql":
 			// Import database dump via mysql
 			if hdr.Typeflag != tar.TypeDir {
-				data, _ := io.ReadAll(tr)
+				const maxDumpSize = 2 << 30 // 2GB
+				data, _ := io.ReadAll(io.LimitReader(tr, maxDumpSize))
 				if len(data) > 0 {
 					importDatabaseDump(data, m.logger)
 				}
