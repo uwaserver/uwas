@@ -17,19 +17,19 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
-[![CI](https://github.com/uwaserver/uwas/actions/workflows/ci.yml/badge.svg)](https://github.com/uwaserver/uwas/actions/workflows/ci.yml)
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 38-page React dashboard with 200+ API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 38-page React dashboard with 205+ API endpoints.
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.0.35-rc.1)
+## Current Snapshot (v0.0.38)
 
 - **Dashboard pages:** 38 (`web/dashboard/src/pages`)
-- **Admin API routes:** 200+ (204 route registrations under `/api/v1` in `internal/admin/api.go`)
-- **Go packages:** 50+ (53 from `go list ./...`)
+- **Admin API routes:** 205+ (route registrations under `/api/v1` in `internal/admin/api.go`)
+- **Go packages:** 52 (from `go list ./...`)
+- **CLI commands:** 19
 - **Test status:** `go test -p 1 ./...` passing
 
 ## Features
@@ -37,7 +37,7 @@ One binary. Zero hassle.
 ### Web Server
 - **Auto HTTPS** — Let's Encrypt certificates with zero configuration
 - **HTTP/3 (QUIC)** — Via quic-go with Alt-Svc header advertisement
-- **Built-in Cache** — Varnish-level caching with grace mode, tag-based purge
+- **Built-in Cache** — Varnish-level caching with grace mode, tag-based purge, ESI (Edge Side Includes)
 - **PHP Ready** — FastCGI with connection pooling and .htaccess support
 - **Per-domain PHP** — Multiple PHP versions per domain with auto-port assignment, crash auto-restart
 - **Load Balancer** — 5 algorithms, health checks, circuit breaker, canary routing
@@ -48,6 +48,8 @@ One binary. Zero hassle.
 
 ### Hosting Control Panel
 - **38-page Dashboard** — React 19 admin panel with dark/light theme
+- **App Manager** — Deploy and manage Node.js, Python, Ruby, Go applications
+- **Web Terminal** — Browser-based shell via WebSocket-to-PTY bridge
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
 - **WordPress Management** — One-click install, plugin updates, debug mode, error log viewer
 - **DNS Zone Editor** — Full CRUD for Cloudflare, Hetzner, DigitalOcean, Route53
@@ -69,14 +71,16 @@ One binary. Zero hassle.
 - **Prometheus Metrics** — p50/p95/p99 latency percentiles
 - **Audit Logging** — Track all admin actions with timestamps and IPs
 - **IP Access Control** — Per-domain whitelist/blacklist
+- **Resource Limits** — Per-domain CPU/memory/PID limits via Linux cgroups v2
 
 ### DevOps
+- **Git Deploy** — Git clone/pull + Docker-based application deployment
 - **AI-Native** — MCP server for LLM-driven management
 - **Nginx/Apache Migration** — CLI config converter
 - **Hot-Reload** — All per-domain chains rebuild on SIGHUP (zero downtime)
 - **Self-Update** — Binary auto-update from GitHub releases
 - **CI/CD** — GitHub Actions for build, test, release automation
-- **Single Binary** — ~14MB, no dependencies, just download and run
+- **Single Binary** — ~15MB, no dependencies, just download and run
 
 ## Install
 
@@ -226,12 +230,17 @@ uwas cache    stats          Cache statistics
 uwas cache    purge          Purge cache
 uwas status                  Server status via admin API
 uwas reload                  Hot-reload configuration
+uwas stop                    Stop running server
+uwas restart                 Restart running server
 uwas migrate  nginx <file>   Convert Nginx config to UWAS
 uwas migrate  apache <file>  Convert Apache config to UWAS
 uwas backup                  Create config backup
 uwas restore                 Restore from backup
 uwas php      list           List detected PHP versions
 uwas php      start <ver>    Start PHP-FPM for version
+uwas install                 Install as systemd service
+uwas uninstall               Remove systemd service
+uwas user     list           List admin users
 uwas doctor                  System diagnostics + auto-fix
 uwas help                    Show help
 ```
@@ -265,19 +274,22 @@ Request Flow:
 ## Project Layout
 
 ```
-cmd/uwas/                → CLI entry point (18 commands)
+cmd/uwas/                → CLI entry point (19 commands)
 internal/
-  admin/                 → REST API (179 routes) + dashboard embed + TOTP auth
+  admin/                 → REST API (205+ routes) + dashboard embed + TOTP auth
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
+  appmanager/            → Node.js/Python/Ruby/Go process management
   auth/                  → Multi-user RBAC (admin/reseller/user) + session + TOTP 2FA
   backup/                → Local/S3/SFTP backup + restore + scheduling
   bandwidth/             → Per-domain bandwidth limits (throttle/block)
-  cache/                 → L1 memory (256-shard LRU) + L2 disk cache
+  build/                 → Build metadata (version, commit, date) via ldflags
+  cache/                 → L1 memory (256-shard LRU) + L2 disk cache + ESI
   cli/                   → CLI framework and commands
   config/                → YAML parser, validation, defaults, ByteSize/Duration types
   cronjob/               → Cron job management + execution monitoring
   database/              → MySQL/MariaDB management + Docker container support
+  deploy/                → Git clone/pull + Docker-based application deployment
   dnsmanager/            → Cloudflare, Route53, Hetzner, DigitalOcean DNS CRUD
   dnschecker/            → DNS record verification (A/MX/NS/TXT)
   doctor/                → System diagnostics + auto-fix
@@ -287,6 +299,7 @@ internal/
     fastcgi/             → PHP handler, CGI environment builder
     proxy/               → Reverse proxy, load balancing, WebSocket, circuit breaker
     static/              → Static files, MIME, ETag, pre-compressed, SPA
+  install/               → System package installer task queue
   logger/                → Structured logger (slog wrapper)
   mcp/                   → MCP server for AI management
   metrics/               → Prometheus-compatible metrics
@@ -294,13 +307,18 @@ internal/
   migrate/               → Nginx/Apache converter + SSH site migration + clone
   monitor/               → Uptime monitoring per domain
   notify/                → Webhook, Slack, Telegram, Email (SMTP) channels
+  pathsafe/              → Path traversal guard (symlink-resolving containment check)
   phpmanager/            → PHP detect, install, start/stop, per-domain assign
   rewrite/               → URL rewrite engine (Apache mod_rewrite compatible)
+  rlimit/                → Per-domain resource limits via Linux cgroups v2
   router/                → Virtual host routing, request context
   selfupdate/            → Binary self-update from GitHub releases
   server/                → HTTP/HTTPS/HTTP3 server + request dispatch + log rotation
+  serverip/              → Server IP detection (interfaces + public IP)
+  services/              → systemd service management (start/stop/restart)
   sftpserver/            → Built-in SFTP server (pure Go, chroot per domain)
   siteuser/              → SFTP user management (chroot jail + SSH keys)
+  terminal/              → WebSocket-to-PTY bridge for browser-based shell
   tls/                   → TLS manager, ACME client, auto-renewal, cert expiry alerts
     acme/                → RFC 8555 ACME protocol, JWS signing
   webhook/               → Event-driven webhook delivery (11 events, HMAC, retry)
