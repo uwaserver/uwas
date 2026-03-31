@@ -137,6 +137,12 @@ type Server struct {
 	ticketMu sync.Mutex
 	tickets  map[string]*authTicket
 
+	// Cached expensive system info (apt updates, web root disk usage).
+	sysInfoCacheMu   sync.Mutex
+	sysInfoCacheTime time.Time
+	sysInfoPkgUpdates string
+	sysInfoDiskUsed   int64
+
 	// Auth manager for multi-user support
 	authMgr AuthManager
 }
@@ -869,9 +875,27 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 				result["timezone"] = tz[idx+9:]
 			}
 		}
-		// Package updates available
-		if out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
-			result["package_updates"] = strings.TrimSpace(string(out))
+		// Package updates available (cached — expensive subprocess)
+		s.sysInfoCacheMu.Lock()
+		if time.Since(s.sysInfoCacheTime) > 10*time.Minute {
+			if out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
+				s.sysInfoPkgUpdates = strings.TrimSpace(string(out))
+			}
+			// Web root disk usage (cached together)
+			s.configMu.RLock()
+			wr := s.config.Global.WebRoot
+			s.configMu.RUnlock()
+			if wr != "" {
+				if du, err := filemanager.DiskUsage(wr); err == nil {
+					s.sysInfoDiskUsed = du
+				}
+			}
+			s.sysInfoCacheTime = time.Now()
+		}
+		pkgUpdates := s.sysInfoPkgUpdates
+		s.sysInfoCacheMu.Unlock()
+		if pkgUpdates != "" {
+			result["package_updates"] = pkgUpdates
 		}
 	}
 
@@ -884,11 +908,12 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	result["web_root"] = webRoot
 	result["domain_count"] = domainCount
 
-	if webRoot != "" {
-		if du, err := filemanager.DiskUsage(webRoot); err == nil {
-			result["disk_used_bytes"] = du
-			result["disk_used_human"] = formatDiskSize(du)
-		}
+	s.sysInfoCacheMu.Lock()
+	diskUsedCached := s.sysInfoDiskUsed
+	s.sysInfoCacheMu.Unlock()
+	if diskUsedCached > 0 {
+		result["disk_used_bytes"] = diskUsedCached
+		result["disk_used_human"] = formatDiskSize(diskUsedCached)
 	}
 
 	jsonResponse(w, result)
@@ -1742,6 +1767,7 @@ func (s *Server) handleSSEStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
+	p50, p95, p99, max := s.metrics.Percentiles()
 	stats := map[string]any{
 		"requests_total": s.metrics.RequestsTotal.Load(),
 		"cache_hits":     s.metrics.CacheHits.Load(),
@@ -1749,6 +1775,11 @@ func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
 		"active_conns":   s.metrics.ActiveConns.Load(),
 		"bytes_sent":     s.metrics.BytesSent.Load(),
 		"uptime":         humanDuration(time.Since(s.metrics.StartTime)),
+		"slow_requests":  s.metrics.SlowRequests.Load(),
+		"latency_p50_ms": p50 * 1000,
+		"latency_p95_ms": p95 * 1000,
+		"latency_p99_ms": p99 * 1000,
+		"latency_max_ms": max * 1000,
 	}
 	data, _ := json.Marshal(stats)
 	fmt.Fprintf(w, "data: %s\n\n", data)
@@ -2658,6 +2689,9 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 					ci.Issuer = info.Issuer
 					ci.Expiry = info.Expiry.Format(time.RFC3339)
 					ci.DaysLeft = info.DaysLeft
+					if info.DaysLeft <= 0 {
+						ci.Status = "expired"
+					}
 				}
 			}
 		}
