@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -1732,8 +1733,10 @@ func TestRestoreCommandRunParseError(t *testing.T) {
 }
 
 func TestBackupCreateFileError(t *testing.T) {
-	// Try to create backup at an impossible path
-	err := createBackup("/nonexistent/dir/backup.tar.gz", "uwas.yaml", "/nonexistent")
+	// Use a file (not a directory) as parent — impossible on all platforms
+	notADir := filepath.Join(t.TempDir(), "notadir")
+	os.WriteFile(notADir, []byte("x"), 0644)
+	err := createBackup(filepath.Join(notADir, "backup.tar.gz"), "/nonexistent/config.yaml", "/nonexistent/certs")
 	if err == nil {
 		t.Fatal("expected error for impossible output path")
 	}
