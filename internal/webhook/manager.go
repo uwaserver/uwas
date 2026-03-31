@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -59,6 +60,7 @@ type Manager struct {
 	webhooks []WebhookConfig
 	client   *http.Client
 	queue    chan *queuedEvent
+	closed   atomic.Bool
 	dataDir  string
 	logger   Logger
 }
@@ -102,7 +104,9 @@ func NewManager(dataDir string, logger Logger) *Manager {
 
 // Close stops the webhook manager worker goroutine.
 func (m *Manager) Close() {
-	close(m.queue)
+	if m.closed.CompareAndSwap(false, true) {
+		close(m.queue)
+	}
 }
 
 // UpdateWebhooks updates the webhook configurations.
@@ -114,6 +118,9 @@ func (m *Manager) UpdateWebhooks(configs []WebhookConfig) {
 
 // Fire sends a webhook event to all matching webhooks.
 func (m *Manager) Fire(eventType EventType, data any) {
+	if m.closed.Load() {
+		return
+	}
 	event := Event{
 		ID:        generateID(),
 		Type:      eventType,
@@ -150,6 +157,9 @@ func (m *Manager) Fire(eventType EventType, data any) {
 
 // FireTo sends a webhook event directly to a specific URL, bypassing subscription matching.
 func (m *Manager) FireTo(url string, eventType EventType, data any) {
+	if m.closed.Load() {
+		return
+	}
 	event := Event{
 		ID:        generateID(),
 		Type:      eventType,

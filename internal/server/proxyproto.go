@@ -41,6 +41,7 @@ func (c *proxyProtoConn) Read(b []byte) (int, error) {
 		c.reader = bufio.NewReader(c.Conn)
 		line, err := c.reader.ReadString('\n')
 		if err != nil {
+			// reader is initialized, so subsequent reads work even on header parse failure
 			return 0, fmt.Errorf("proxy protocol: %w", err)
 		}
 		line = strings.TrimRight(line, "\r\n")

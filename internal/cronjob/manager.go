@@ -116,7 +116,10 @@ func writeCrontab(content string) error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	tmp.WriteString(content)
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write crontab temp file: %w", err)
+	}
 	tmp.Close()
 	return execCommandFn("crontab", tmp.Name()).Run()
 }

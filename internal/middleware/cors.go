@@ -50,7 +50,18 @@ func CORS(cfg CORSConfig) Middleware {
 			h.Set("Access-Control-Allow-Headers", headers)
 
 			if cfg.AllowCredentials {
-				h.Set("Access-Control-Allow-Credentials", "true")
+				// CORS spec forbids wildcard origin with credentials.
+				// Only reflect credentials for explicitly listed origins.
+				isWildcard := false
+				for _, a := range cfg.AllowedOrigins {
+					if a == "*" {
+						isWildcard = true
+						break
+					}
+				}
+				if !isWildcard {
+					h.Set("Access-Control-Allow-Credentials", "true")
+				}
 			}
 
 			// Preflight

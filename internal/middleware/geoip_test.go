@@ -52,16 +52,20 @@ func TestExtractIP(t *testing.T) {
 		t.Errorf("geoExtractIP = %q", ip)
 	}
 
+	// XFF and X-Real-IP are intentionally ignored to prevent GeoIP bypass.
+	// The RealIP middleware rewrites RemoteAddr for trusted proxies.
 	req2 := httptest.NewRequest("GET", "/", nil)
+	req2.RemoteAddr = "10.0.0.1:1234"
 	req2.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
-	if ip := geoExtractIP(req2); ip != "1.2.3.4" {
-		t.Errorf("geoExtractIP XFF = %q", ip)
+	if ip := geoExtractIP(req2); ip != "10.0.0.1" {
+		t.Errorf("geoExtractIP should use RemoteAddr, got %q", ip)
 	}
 
 	req3 := httptest.NewRequest("GET", "/", nil)
+	req3.RemoteAddr = "10.0.0.2:5678"
 	req3.Header.Set("X-Real-IP", "9.8.7.6")
-	if ip := geoExtractIP(req3); ip != "9.8.7.6" {
-		t.Errorf("geoExtractIP XRI = %q", ip)
+	if ip := geoExtractIP(req3); ip != "10.0.0.2" {
+		t.Errorf("geoExtractIP should use RemoteAddr, got %q", ip)
 	}
 }
 

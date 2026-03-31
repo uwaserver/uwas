@@ -86,11 +86,16 @@ func substituteVars(value string, r *http.Request) string {
 
 	result := value
 	result = strings.ReplaceAll(result, "$remote_addr", extractRemoteAddr(r))
-	result = strings.ReplaceAll(result, "$host", r.Host)
-	result = strings.ReplaceAll(result, "$uri", r.URL.RequestURI())
-	result = strings.ReplaceAll(result, "$request_id", r.Header.Get("X-Request-ID"))
+	result = strings.ReplaceAll(result, "$host", sanitizeHeaderValue(r.Host))
+	result = strings.ReplaceAll(result, "$uri", sanitizeHeaderValue(r.URL.RequestURI()))
+	result = strings.ReplaceAll(result, "$request_id", sanitizeHeaderValue(r.Header.Get("X-Request-ID")))
 
 	return result
+}
+
+// sanitizeHeaderValue strips CR and LF characters to prevent header injection.
+func sanitizeHeaderValue(v string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(v)
 }
 
 // extractRemoteAddr extracts the IP from the request's RemoteAddr,

@@ -15,6 +15,11 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 	var b strings.Builder
 	b.WriteString(r.Method)
 	b.WriteByte('|')
+	if r.TLS != nil {
+		b.WriteString("https|")
+	} else {
+		b.WriteString("http|")
+	}
 	b.WriteString(r.Host)
 	b.WriteByte('|')
 	b.WriteString(r.URL.Path)

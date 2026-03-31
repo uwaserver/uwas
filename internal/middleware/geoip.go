@@ -85,13 +85,9 @@ func GeoIP(cfg GeoIPConfig) Middleware {
 }
 
 func geoExtractIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.SplitN(xff, ",", 2)
-		return strings.TrimSpace(parts[0])
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
+	// Use only r.RemoteAddr to prevent GeoIP bypass via spoofed headers.
+	// Trusted proxy headers are already handled by the RealIP middleware
+	// which rewrites r.RemoteAddr before this middleware runs.
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return host
 }

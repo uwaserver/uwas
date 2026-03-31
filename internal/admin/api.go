@@ -3492,7 +3492,7 @@ func (s *Server) domainFilePath(host string) (string, error) {
 		domainsDir = filepath.Join(baseDir, domainsDir)
 	}
 
-	return filepath.Join(domainsDir, host+".yaml"), nil
+	return filepath.Join(domainsDir, clean+".yaml"), nil
 }
 
 // --- MCP ---
@@ -3513,6 +3513,7 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "MCP not enabled", http.StatusServiceUnavailable)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
@@ -3821,6 +3822,7 @@ func (s *Server) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Code string `json:"code"`
 	}
@@ -3881,6 +3883,7 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Code string `json:"code"`
 	}
@@ -4136,8 +4139,9 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 	s.RecordAudit("auth.user.create", req.Username+" ("+req.Role+")", ip, true)
 
 	user.Password = "" // Mask password hash
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	jsonResponse(w, user)
+	json.NewEncoder(w).Encode(user)
 }
 
 func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {

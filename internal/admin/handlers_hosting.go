@@ -2,6 +2,7 @@ package admin
 
 import (
 	crand "crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -978,7 +979,13 @@ func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/sql")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.sql", name))
+	safeName := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '_'
+	}, name)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.sql"`, safeName))
 	w.Write(data)
 }
 
@@ -1094,8 +1101,9 @@ func (s *Server) handleDockerDBCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.RecordAudit("docker_db.create", fmt.Sprintf("engine: %s, name: %s, port: %d", req.Engine, req.Name, req.Port), requestIP(r), true)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	jsonResponse(w, container)
+	json.NewEncoder(w).Encode(container)
 }
 
 func (s *Server) handleDockerDBStart(w http.ResponseWriter, r *http.Request) {
@@ -1188,7 +1196,13 @@ func (s *Server) handleDockerDBExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/sql")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_%s.sql", name, db))
+	safeName := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '_'
+	}, name+"_"+db)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.sql"`, safeName))
 	w.Write([]byte(dump))
 }
 
@@ -2351,6 +2365,10 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.ContainsAny(host, `/\.`) || strings.Contains(host, "..") {
+		jsonError(w, "invalid hostname", http.StatusBadRequest)
+		return
+	}
 	certDir := filepath.Join("/var/lib/uwas/certs", host)
 	os.MkdirAll(certDir, 0700)
 	if err := os.WriteFile(filepath.Join(certDir, "cert.pem"), []byte(req.Cert), 0600); err != nil {
@@ -2476,7 +2494,7 @@ func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Lock()
 	found := false
 	for i, c := range s.config.Global.Admin.RecoveryCodes {
-		if c == req.Code {
+		if subtle.ConstantTimeCompare([]byte(c), []byte(req.Code)) == 1 {
 			// Remove used code
 			s.config.Global.Admin.RecoveryCodes = append(
 				s.config.Global.Admin.RecoveryCodes[:i],
