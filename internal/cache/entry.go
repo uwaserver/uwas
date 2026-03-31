@@ -123,7 +123,7 @@ func (r *CachedResponse) Serialize() []byte {
 
 // Deserialize decodes a cached response from disk storage.
 func Deserialize(data []byte) (*CachedResponse, error) {
-	if len(data) < 28 {
+	if len(data) < 32 {
 		return nil, errCorrupt
 	}
 

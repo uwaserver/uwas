@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"unicode"
@@ -27,16 +28,21 @@ func parseByteSize(s string) (ByteSize, error) {
 		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
 	}
 
+	var result float64
 	switch strings.ToUpper(unit) {
 	case "", "B":
-		return ByteSize(num), nil
+		result = num
 	case "K", "KB":
-		return ByteSize(num * float64(KB)), nil
+		result = num * float64(KB)
 	case "M", "MB":
-		return ByteSize(num * float64(MB)), nil
+		result = num * float64(MB)
 	case "G", "GB":
-		return ByteSize(num * float64(GB)), nil
+		result = num * float64(GB)
 	default:
 		return 0, fmt.Errorf("unknown byte unit %q in %q", unit, s)
 	}
+	if result < 0 || result > math.MaxInt64 {
+		return 0, fmt.Errorf("byte size %q overflows int64", s)
+	}
+	return ByteSize(result), nil
 }

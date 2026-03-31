@@ -110,6 +110,32 @@ func Remove(schedule, command string) error {
 	return writeCrontab(strings.Join(filtered, "\n"))
 }
 
+// RemoveByDomain removes all UWAS-managed cron jobs for a given domain.
+func RemoveByDomain(domain string) error {
+	if runtimeGOOS == "windows" {
+		return fmt.Errorf("cron not supported on Windows")
+	}
+	existing, _ := execCommandFn("crontab", "-l").Output()
+	lines := strings.Split(string(existing), "\n")
+	var filtered []string
+	skipNext := false
+	marker := fmt.Sprintf("%s [%s]", uwasMarker, domain)
+
+	for _, line := range lines {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if strings.Contains(line, marker) {
+			skipNext = true // skip the comment line and the next job line
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	return writeCrontab(strings.Join(filtered, "\n"))
+}
+
 func writeCrontab(content string) error {
 	tmp, err := os.CreateTemp("", "uwas-crontab-*")
 	if err != nil {
