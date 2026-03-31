@@ -36,6 +36,7 @@ export default function WordPress() {
   const [newPassword, setNewPassword] = useState('');
   const [siteTab, setSiteTab] = useState<'overview' | 'security' | 'users' | 'optimize'>('overview');
   const activeSiteRef = useRef('');
+  const installPollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const loadSites = useCallback(async () => {
     try {
@@ -64,6 +65,7 @@ export default function WordPress() {
     });
     fetchDBStatus().then(s => setMysqlOk(s?.installed === true && s?.running === true)).catch(() => {});
     fetchDockerDBs().then(r => setDockerDBs((r?.containers ?? []).filter(c => c.running))).catch(() => {});
+    return () => { clearInterval(installPollRef.current); };
   }, [loadSites]);
 
   const phpDomains = domains.filter(d => d.type === 'php');
@@ -77,16 +79,17 @@ export default function WordPress() {
     setStatus(null);
     try {
       await installWordPress(selectedDomain, dbHost);
-      const poll = setInterval(async () => {
+      clearInterval(installPollRef.current);
+      installPollRef.current = setInterval(async () => {
         try {
           const st = await fetchWPInstallStatus();
           setStatus(st);
           if (st.status !== 'running') {
-            clearInterval(poll);
+            clearInterval(installPollRef.current);
             setInstalling(false);
             if (st.status === 'done') loadSites();
           }
-        } catch { clearInterval(poll); setInstalling(false); }
+        } catch { clearInterval(installPollRef.current); setInstalling(false); }
       }, 2000);
     } catch (e) {
       setError((e as Error).message);
