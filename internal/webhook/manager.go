@@ -147,21 +147,25 @@ func (m *Manager) Fire(eventType EventType, data any) {
 			attempts: 0,
 		}
 
-		m.sendToQueue(qe, eventType)
+		m.sendToQueue(qe, string(eventType))
 	}
 }
 
 // sendToQueue safely sends to the queue, recovering from a closed-channel panic.
-func (m *Manager) sendToQueue(qe *queuedEvent, eventType EventType) {
+func (m *Manager) sendToQueue(qe *queuedEvent, label string) {
 	defer func() {
 		if r := recover(); r != nil {
-			// channel was closed between closed.Load() and the send
+			// Expect only "send on closed channel" — re-panic on anything else.
+			if s, ok := r.(string); ok && s == "send on closed channel" {
+				return
+			}
+			panic(r)
 		}
 	}()
 	select {
 	case m.queue <- qe:
 	default:
-		m.logger.Error("webhook queue full, dropping event", "event", eventType)
+		m.logger.Error("webhook queue full, dropping event", "label", label)
 	}
 }
 
@@ -195,11 +199,7 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 	}
 
 	qe := &queuedEvent{webhook: wh, event: event}
-	select {
-	case m.queue <- qe:
-	default:
-		m.logger.Error("webhook queue full, dropping test event", "url", url)
-	}
+	m.sendToQueue(qe, url)
 }
 
 // worker processes the webhook queue.

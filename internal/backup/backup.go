@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -737,14 +738,22 @@ func dumpAllDatabasesReal() ([]byte, error) {
 }
 
 func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
-	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip symlinks to prevent archiving files outside the web root.
-		if info.Mode()&os.ModeSymlink != 0 {
+		// Skip symlinks (files and directories) to prevent archiving outside the web root.
+		if d.Type()&fs.ModeSymlink != 0 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
 		}
 
 		rel, err := filepath.Rel(srcDir, path)
@@ -753,7 +762,7 @@ func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
 		}
 		archiveName := filepath.ToSlash(filepath.Join(archivePrefix, rel))
 
-		if info.IsDir() {
+		if d.IsDir() {
 			hdr := &tar.Header{
 				Name:     archiveName + "/",
 				Typeflag: tar.TypeDir,
