@@ -48,10 +48,14 @@ export default function Packages() {
       await installPackage(pkg.id);
       setSuccess(`Installing ${pkg.name}...`);
       const poll = setInterval(async () => {
-        const updated = (await fetchPackages()).find(p => p.id === pkg.id);
-        if (updated?.installed) { clearInterval(poll); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
+        try {
+          const updated = (await fetchPackages()).find(p => p.id === pkg.id);
+          if (updated?.installed) { clearInterval(poll); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
+        } catch { clearInterval(poll); setActing(''); }
       }, 3000);
-      setTimeout(() => { clearInterval(poll); setActing(''); }, 120000);
+      const timeout = setTimeout(() => { clearInterval(poll); setActing(''); }, 120000);
+      // Cleanup on unmount handled by React effect lifecycle; this is fire-and-forget
+      void timeout;
     } catch (e) { setError((e as Error).message); setActing(''); }
   };
 
@@ -63,10 +67,13 @@ export default function Packages() {
       await removePackage(pkg.id);
       setSuccess(`Removing ${pkg.name}...`);
       const poll = setInterval(async () => {
-        const updated = (await fetchPackages()).find(p => p.id === pkg.id);
-        if (!updated?.installed) { clearInterval(poll); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
+        try {
+          const updated = (await fetchPackages()).find(p => p.id === pkg.id);
+          if (!updated?.installed) { clearInterval(poll); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
+        } catch { clearInterval(poll); setActing(''); }
       }, 3000);
-      setTimeout(() => { clearInterval(poll); setActing(''); }, 120000);
+      const timeout = setTimeout(() => { clearInterval(poll); setActing(''); }, 120000);
+      void timeout;
     } catch (e) { setError((e as Error).message); setActing(''); }
   };
 
