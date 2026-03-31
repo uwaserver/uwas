@@ -2470,7 +2470,10 @@ func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) 
 	codes := make([]string, 8)
 	for i := range codes {
 		b := make([]byte, 4)
-		crand.Read(b)
+		if _, err := crand.Read(b); err != nil {
+			jsonError(w, "entropy failure", http.StatusInternalServerError)
+			return
+		}
 		codes[i] = fmt.Sprintf("%x", b)
 	}
 	// Store hashed codes in config

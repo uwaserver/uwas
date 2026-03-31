@@ -194,7 +194,9 @@ func domainToUsername(hostname string) string {
 
 func generatePassword() string {
 	b := make([]byte, 12)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 

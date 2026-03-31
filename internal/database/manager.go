@@ -701,7 +701,9 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 
 func generateDBPassword() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
