@@ -133,6 +133,7 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 		var err error
 
 		defer func() {
+			m.mu.Lock()
 			status.Duration = time.Since(status.StartedAt).Truncate(time.Millisecond).String()
 			status.Log = log.String()
 			if err != nil {
@@ -141,6 +142,7 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 			} else {
 				status.Status = "running"
 			}
+			m.mu.Unlock()
 			if m.logger != nil {
 				if err != nil {
 					m.logger.Error("deploy failed", "domain", req.Domain, "error", err)
@@ -163,7 +165,9 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 
 func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *DeployStatus, log *strings.Builder) error {
 	// Step 1: Git clone or pull
+	m.mu.Lock()
 	status.Status = "deploying"
+	m.mu.Unlock()
 	gitDir := filepath.Join(appRoot, ".git")
 
 	// Build git environment for private repo access
@@ -230,7 +234,9 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 
 	// Get commit SHA
 	if sha, err := runCmd(appRoot, nil, "git", "rev-parse", "--short", "HEAD"); err == nil {
+		m.mu.Lock()
 		status.CommitSHA = strings.TrimSpace(sha)
+		m.mu.Unlock()
 		log.WriteString("Commit: " + status.CommitSHA + "\n")
 	}
 
@@ -240,7 +246,9 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 		buildCmd = detectBuildCmd(appRoot)
 	}
 	if buildCmd != "" {
+		m.mu.Lock()
 		status.Status = "building"
+		m.mu.Unlock()
 		log.WriteString("$ " + buildCmd + "\n")
 		if out, err := runShell(appRoot, req.Env, buildCmd); err != nil {
 			return fmt.Errorf("build failed: %w\n%s", err, out)
@@ -273,7 +281,9 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 	runCmd(appRoot, nil, "docker", "rm", containerName)
 
 	// Build image
+	m.mu.Lock()
 	status.Status = "building"
+	m.mu.Unlock()
 	imageName := containerName + ":latest"
 	log.WriteString("$ docker build -t " + imageName + " -f " + dockerfile + " .\n")
 	if out, err := runCmd(appRoot, req.Env, "docker", "build", "-t", imageName, "-f", dockerfile, "."); err != nil {
@@ -366,6 +376,9 @@ func runCmd(dir string, env map[string]string, name string, args ...string) (str
 }
 
 func runShell(dir string, env map[string]string, command string) (string, error) {
+	if strings.ContainsAny(command, "\x00") {
+		return "", fmt.Errorf("command contains null byte")
+	}
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()

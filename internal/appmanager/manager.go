@@ -273,10 +273,12 @@ func (m *Manager) monitorProcess(app *appProcess, logFile *os.File) {
 
 	// Auto-restart after backoff (re-check stopCh to avoid zombie restart)
 	if app.autoRestart {
+		backoff := time.NewTimer(2 * time.Second)
 		select {
 		case <-app.stopCh:
+			backoff.Stop()
 			return // stopped during backoff
-		case <-time.After(2 * time.Second):
+		case <-backoff.C:
 		}
 		// Final check before restart
 		select {

@@ -128,8 +128,7 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 		"parse_mode": "HTML",
 	}
 	data, _ := json.Marshal(payload)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(data))
+	resp, err := notifyHTTPClient.Post(url, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

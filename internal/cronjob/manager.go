@@ -64,6 +64,12 @@ func Add(job Job) error {
 		return fmt.Errorf("cron not supported on Windows")
 	}
 
+	// Reject newlines/carriage returns to prevent crontab injection.
+	if strings.ContainsAny(job.Schedule, "\n\r") || strings.ContainsAny(job.Command, "\n\r") ||
+		strings.ContainsAny(job.Domain, "\n\r") || strings.ContainsAny(job.Comment, "\n\r") {
+		return fmt.Errorf("cron fields must not contain newlines")
+	}
+
 	existing, _ := execCommandFn("crontab", "-l").Output()
 	comment := fmt.Sprintf("%s [%s] %s", uwasMarker, job.Domain, job.Comment)
 	entry := fmt.Sprintf("%s\n%s %s\n", comment, job.Schedule, job.Command)

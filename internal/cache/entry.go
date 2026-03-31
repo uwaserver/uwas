@@ -95,13 +95,12 @@ func (r *CachedResponse) Serialize() []byte {
 	binary.BigEndian.PutUint32(b4, uint32(headerCount))
 	buf = append(buf, b4...)
 
-	b2 := make([]byte, 2)
 	for k, vals := range r.Headers {
 		for _, v := range vals {
-			binary.BigEndian.PutUint16(b2, uint16(len(k)))
-			buf = append(buf, b2...)
-			binary.BigEndian.PutUint16(b2, uint16(len(v)))
-			buf = append(buf, b2...)
+			binary.BigEndian.PutUint32(b4, uint32(len(k)))
+			buf = append(buf, b4...)
+			binary.BigEndian.PutUint32(b4, uint32(len(v)))
+			buf = append(buf, b4...)
 			buf = append(buf, k...)
 			buf = append(buf, v...)
 		}
@@ -148,13 +147,13 @@ func Deserialize(data []byte) (*CachedResponse, error) {
 
 	r.Headers = make(http.Header)
 	for i := 0; i < headerCount; i++ {
-		if pos+4 > len(data) {
+		if pos+8 > len(data) {
 			return nil, errCorrupt
 		}
-		keyLen := int(binary.BigEndian.Uint16(data[pos:]))
-		pos += 2
-		valLen := int(binary.BigEndian.Uint16(data[pos:]))
-		pos += 2
+		keyLen := int(binary.BigEndian.Uint32(data[pos:]))
+		pos += 4
+		valLen := int(binary.BigEndian.Uint32(data[pos:]))
+		pos += 4
 		if pos+keyLen+valLen > len(data) {
 			return nil, errCorrupt
 		}

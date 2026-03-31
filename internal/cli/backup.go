@@ -54,10 +54,7 @@ func createBackup(output, configPath, certsDir string) error {
 	defer outFile.Close()
 
 	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
-
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
 
 	var fileCount int
 
@@ -115,6 +112,14 @@ func createBackup(output, configPath, certsDir string) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: error walking certs dir: %v\n", err)
 		}
+	}
+
+	if err := tw.Close(); err != nil {
+		gw.Close()
+		return fmt.Errorf("finalize tar: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return fmt.Errorf("finalize gzip: %w", err)
 	}
 
 	fmt.Printf("Backup created: %s (%d files)\n", output, fileCount)

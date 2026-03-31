@@ -35,6 +35,7 @@ type Collector struct {
 	PHPRequests      atomic.Int64
 	ProxyRequests    atomic.Int64
 	RedirectRequests atomic.Int64
+	AppRequests      atomic.Int64
 
 	// Per-domain bandwidth and request tracking
 	domainStats sync.Map // host → *DomainStats
@@ -138,6 +139,8 @@ func (c *Collector) RecordHandlerType(handlerType string) {
 		c.ProxyRequests.Add(1)
 	case "redirect":
 		c.RedirectRequests.Add(1)
+	case "app":
+		c.AppRequests.Add(1)
 	}
 }
 

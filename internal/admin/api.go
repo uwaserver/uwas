@@ -1067,6 +1067,7 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 
 	// Sync legacy status from task in background
 	go func() {
+		timeout := time.After(10 * time.Minute)
 		for {
 			t := s.taskMgr.Get(task.ID)
 			if t == nil || (t.Status != "running" && t.Status != "queued") {
@@ -1077,12 +1078,20 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 					s.phpInstallStatus.Error = t.Error
 				}
 				s.phpInstallMu.Unlock()
-				break
+				return
 			}
 			s.phpInstallMu.Lock()
 			s.phpInstallStatus.Output = t.Output
 			s.phpInstallMu.Unlock()
-			time.Sleep(500 * time.Millisecond)
+			select {
+			case <-timeout:
+				s.phpInstallMu.Lock()
+				s.phpInstallStatus.Status = "failed"
+				s.phpInstallStatus.Error = "timed out waiting for PHP install"
+				s.phpInstallMu.Unlock()
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
 	}()
 
@@ -1687,7 +1696,7 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 			entries := s.logEntries
 			s.logMu.Unlock()
 
-			if entries == nil || pos == lastSeen {
+			if len(entries) == 0 || pos == lastSeen {
 				continue
 			}
 
@@ -1908,7 +1917,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 
 	// Check for duplicates.
 	for _, existing := range s.config.Domains {
-		if existing.Host == d.Host {
+		if strings.EqualFold(existing.Host, d.Host) {
 			s.configMu.Unlock()
 			s.RecordAudit("domain.create", "domain: "+d.Host+" (duplicate)", ip, false)
 			jsonError(w, "domain already exists", http.StatusConflict)
@@ -2334,7 +2343,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 			if merged.Host != host {
 				for j := range s.config.Domains {
-					if j != i && s.config.Domains[j].Host == merged.Host {
+					if j != i && strings.EqualFold(s.config.Domains[j].Host, merged.Host) {
 						s.configMu.Unlock()
 						s.RecordAudit("domain.update", "domain: "+host+" (duplicate rename)", ip, false)
 						jsonError(w, "domain already exists", http.StatusConflict)

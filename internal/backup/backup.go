@@ -229,7 +229,9 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 			ModTime: time.Now(),
 		}
 		if err := tw.WriteHeader(hdr); err == nil {
-			tw.Write(dbDump)
+			if _, err := tw.Write(dbDump); err != nil {
+				m.logger.Error("backup: failed to write DB dump to tar", "error", err)
+			}
 		}
 	}
 
@@ -247,7 +249,9 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 				ModTime: time.Now(),
 			}
 			if err := tw.WriteHeader(hdr); err == nil {
-				tw.Write(dump)
+				if _, err := tw.Write(dump); err != nil {
+					m.logger.Error("backup: failed to write docker DB dump to tar", "container", name, "error", err)
+				}
 			}
 			m.logger.Info("backup: docker DB dumped", "container", name, "size", len(dump))
 		}
@@ -263,7 +267,11 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 		return nil, err
 	}
 
-	stat, _ := tmpFile.Stat()
+	stat, statErr := tmpFile.Stat()
+	if statErr != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("stat backup file: %w", statErr)
+	}
 	size := stat.Size()
 	tmpFile.Close()
 
@@ -629,14 +637,27 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 				Mode: 0644, ModTime: time.Now(),
 			}
 			if tw.WriteHeader(hdr) == nil {
-				tw.Write(dump)
+				if _, wErr := tw.Write(dump); wErr != nil {
+					return nil, fmt.Errorf("write database dump to tar: %w", wErr)
+				}
 			}
 		}
 	}
 
-	tw.Close()
-	gw.Close()
-	stat, _ := tmpFile.Stat()
+	if err := tw.Close(); err != nil {
+		gw.Close()
+		tmpFile.Close()
+		return nil, fmt.Errorf("finalize tar: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("finalize gzip: %w", err)
+	}
+	stat, statErr := tmpFile.Stat()
+	if statErr != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("stat backup file: %w", statErr)
+	}
 	size := stat.Size()
 	tmpFile.Close()
 

@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -199,5 +200,10 @@ func updateWPConfigURLs(path, domain string, log *strings.Builder) {
 }
 
 func generatePassword() string {
-	return fmt.Sprintf("uwas_%d", time.Now().UnixNano()%100000000)
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback — should never happen.
+		return fmt.Sprintf("uwas_%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("uwas_%x", b)
 }

@@ -1234,16 +1234,21 @@ func TestGeneratePassword(t *testing.T) {
 
 func TestGeneratePasswordFormat(t *testing.T) {
 	p := generatePassword()
-	// Verify format: "uwas_" followed by digits.
+	// Verify format: "uwas_" followed by hex characters (crypto/rand).
 	if !strings.HasPrefix(p, "uwas_") {
 		t.Errorf("password = %q, should have uwas_ prefix", p)
 	}
 	suffix := strings.TrimPrefix(p, "uwas_")
 	for _, c := range suffix {
-		if c < '0' || c > '9' {
-			t.Errorf("password suffix should be digits, got %q", suffix)
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("password suffix should be hex, got %q", suffix)
 			break
 		}
+	}
+	// Verify uniqueness (crypto/rand should produce different values).
+	p2 := generatePassword()
+	if p == p2 {
+		t.Errorf("two generated passwords should differ: %q", p)
 	}
 }
 
