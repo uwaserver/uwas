@@ -179,17 +179,24 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 func (m *Manager) Authenticate(username, password string) (*Session, error) {
 	m.mu.RLock()
 	user, exists := m.users[username]
-	m.mu.RUnlock()
-
 	if !exists {
+		m.mu.RUnlock()
 		return nil, errors.New("invalid credentials")
 	}
+	// Snapshot fields under the lock to avoid racing with UpdateUser.
+	enabled := user.Enabled
+	passwordHash := user.Password
+	userID := user.ID
+	role := user.Role
+	domains := make([]string, len(user.Domains))
+	copy(domains, user.Domains)
+	m.mu.RUnlock()
 
-	if !user.Enabled {
+	if !enabled {
 		return nil, errors.New("user disabled")
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
 		return nil, errors.New("invalid credentials")
 	}
 
@@ -200,10 +207,10 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 
 	session := &Session{
 		Token:     generateToken(),
-		UserID:    user.ID,
-		Username:  user.Username,
-		Role:      user.Role,
-		Domains:   user.Domains,
+		UserID:    userID,
+		Username:  username,
+		Role:      role,
+		Domains:   domains,
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}

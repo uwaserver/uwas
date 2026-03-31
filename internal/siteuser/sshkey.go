@@ -34,7 +34,9 @@ func AddSSHKey(webRootBase, hostname, pubKey string) error {
 		return err
 	}
 	defer f.Close()
-	f.WriteString(pubKey + "\n")
+	if _, err := f.WriteString(pubKey + "\n"); err != nil {
+		return fmt.Errorf("write SSH key: %w", err)
+	}
 
 	// Fix ownership
 	chown(sshDir, username, username)
