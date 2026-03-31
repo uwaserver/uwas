@@ -255,12 +255,14 @@ export default function PHP() {
     patchRow(domain, { configSaving: true });
     setStatus(null);
     try {
+      let restarted = false;
       for (const [key, value] of Object.entries(row.configEdits)) {
         if (row.configData[key] !== value) {
-          await updateDomainPHPConfig(domain, key, value);
+          const res = await updateDomainPHPConfig(domain, key, value) as { status: string; restarted?: boolean };
+          if (res?.restarted) restarted = true;
         }
       }
-      setStatus({ ok: true, message: `Config saved for ${domain}` });
+      setStatus({ ok: true, message: `Config saved for ${domain}${restarted ? ' — PHP restarted' : ''}` });
       const fresh = await fetchDomainPHPConfig(domain);
       patchRow(domain, { configData: fresh, configEdits: { ...fresh }, configDirty: false, configSaving: false });
     } catch (e) {

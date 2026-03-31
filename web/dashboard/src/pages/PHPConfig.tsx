@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Save, RefreshCw, Code, Sliders, CheckCircle, Zap } from 'lucide-react';
+import { Save, RefreshCw, Code, Sliders, CheckCircle, Zap, RotateCw } from 'lucide-react';
 import {
   fetchPHP, fetchPHPConfig, updatePHPConfigKey, fetchPHPConfigRaw, savePHPConfigRaw,
+  restartPHP,
 } from '@/lib/api';
 
 const popularSettings = [
@@ -40,6 +41,7 @@ export default function PHPConfig() {
   const [rawDirty, setRawDirty] = useState(false);
   const [rawSaving, setRawSaving] = useState(false);
   const [applyingPreset, setApplyingPreset] = useState('');
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     fetchPHP().then(p => {
@@ -69,6 +71,19 @@ export default function PHPConfig() {
     setTimeout(() => setStatus(null), 4000);
   };
 
+  const handleRestart = async () => {
+    if (!selectedVer) return;
+    setRestarting(true);
+    try {
+      await restartPHP(selectedVer);
+      showStatus(true, `PHP ${selectedVer} restarted`);
+    } catch (e) {
+      showStatus(false, (e as Error).message);
+    } finally {
+      setRestarting(false);
+    }
+  };
+
   const dirtyKeys = popularSettings.filter(s => (formValues[s.key] ?? '') !== (savedValues[s.key] ?? '')).map(s => s.key);
   const hasDirty = dirtyKeys.length > 0;
 
@@ -84,11 +99,13 @@ export default function PHPConfig() {
     }
     setSavingAll(true);
     try {
+      let restarted = false;
       for (const key of dirtyKeys) {
-        await updatePHPConfigKey(selectedVer, key, formValues[key] ?? '');
+        const res = await updatePHPConfigKey(selectedVer, key, formValues[key] ?? '') as { status: string; restarted?: boolean };
+        if (res?.restarted) restarted = true;
       }
       setSavedValues({ ...formValues });
-      showStatus(true, `${dirtyKeys.length} setting${dirtyKeys.length > 1 ? 's' : ''} saved`);
+      showStatus(true, `${dirtyKeys.length} setting${dirtyKeys.length > 1 ? 's' : ''} saved${restarted ? ' — PHP restarted' : ''}`);
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {
@@ -99,12 +116,14 @@ export default function PHPConfig() {
   const handlePreset = async (preset: typeof presets[0]) => {
     setApplyingPreset(preset.name);
     try {
+      let restarted = false;
       for (const [k, v] of Object.entries(preset.values)) {
-        await updatePHPConfigKey(selectedVer, k, v);
+        const res = await updatePHPConfigKey(selectedVer, k, v) as { status: string; restarted?: boolean };
+        if (res?.restarted) restarted = true;
       }
       setFormValues(prev => ({ ...prev, ...preset.values }));
       setSavedValues(prev => ({ ...prev, ...preset.values }));
-      showStatus(true, `${preset.name} preset applied (${Object.keys(preset.values).length} settings)`);
+      showStatus(true, `${preset.name} preset applied (${Object.keys(preset.values).length} settings)${restarted ? ' — PHP restarted' : ''}`);
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {
@@ -115,10 +134,10 @@ export default function PHPConfig() {
   const handleRawSave = async () => {
     setRawSaving(true);
     try {
-      await savePHPConfigRaw(selectedVer, rawContent);
+      const res = await savePHPConfigRaw(selectedVer, rawContent) as { status: string; restarted?: boolean };
       setRawDirty(false);
-      showStatus(true, 'php.ini saved');
-      fetchPHPConfig(selectedVer).then(cfg => setFormValues(cfg ?? {})).catch(() => {});
+      showStatus(true, `php.ini saved${res?.restarted ? ' — PHP restarted' : ''}`);
+      fetchPHPConfig(selectedVer).then(cfg => { const c = cfg ?? {}; setFormValues(c); setSavedValues(c); }).catch(() => {});
     } catch (e) {
       showStatus(false, (e as Error).message);
     } finally {
@@ -131,8 +150,15 @@ export default function PHPConfig() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">PHP Configuration</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Edit php.ini — changes take effect after PHP restart.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Edit php.ini — PHP auto-restarts after saving.</p>
         </div>
+        {selectedVer && (
+          <button onClick={handleRestart} disabled={restarting}
+            className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent disabled:opacity-50">
+            <RotateCw size={14} className={restarting ? 'animate-spin' : ''} />
+            {restarting ? 'Restarting...' : 'Restart PHP'}
+          </button>
+        )}
       </div>
 
       {/* Version + tab selector */}
@@ -226,7 +252,7 @@ export default function PHPConfig() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              Full php.ini — <span className="text-amber-400">restart PHP after saving</span>
+              Full php.ini — <span className="text-emerald-400">PHP auto-restarts after saving</span>
             </p>
             <button onClick={handleRawSave} disabled={rawSaving || !rawDirty}
               className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">

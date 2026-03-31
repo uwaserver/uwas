@@ -312,6 +312,9 @@ export const savePHPConfigRaw = (version: string, content: string) => api<{ stat
 export const fetchPHPConfig = (version: string) => api<Record<string, string>>(`/api/v1/php/${version}/config`);
 export const updatePHPConfigKey = (version: string, key: string, value: string) => api<{ status: string }>(`/api/v1/php/${version}/config`, { method: 'PUT', body: JSON.stringify({ key, value }) });
 export const disablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/disable`, { method: 'POST' });
+export const startPHP = (version: string, listenAddr?: string) => api<{ status: string }>(`/api/v1/php/${version}/start`, { method: 'POST', body: JSON.stringify({ listen_addr: listenAddr }) });
+export const stopPHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/stop`, { method: 'POST' });
+export const restartPHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/restart`, { method: 'POST' });
 
 export interface PHPInstallInfo {
   distro: string;
@@ -450,8 +453,30 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
   form.append('file', file);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}/api/v1/files/${encodeURIComponent(domain)}/upload`, { method: 'POST', headers, body: form });
+  if (totpCode) headers['X-TOTP-Code'] = totpCode;
+  if (pinCode) headers['X-Pin-Code'] = pinCode;
+  const url = `${BASE}/api/v1/files/${encodeURIComponent(domain)}/upload`;
+  const res = await fetch(url, { method: 'POST', headers, body: form });
   if (res.status === 401) { clearToken(); window.location.href = '/_uwas/dashboard/login'; throw new Error('Unauthorized'); }
+  if (res.status === 403) {
+    const body = await res.json().catch(() => ({ error: '' }));
+    if (body.error === '2fa_required') {
+      sessionStorage.removeItem('uwas_totp_verified');
+      totpCode = '';
+      window.location.href = '/_uwas/dashboard/login?2fa=required';
+      throw new Error('2FA required');
+    }
+    if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
+      const pin = await new Promise<string>((resolve, reject) => { pinPromptCallback!(resolve, reject); });
+      pinCode = pin;
+      headers['X-Pin-Code'] = pin;
+      const retryRes = await fetch(url, { method: 'POST', headers, body: form });
+      pinCode = '';
+      if (!retryRes.ok) { const e = await retryRes.json().catch(() => ({ error: retryRes.statusText })); throw new Error(e.error || retryRes.statusText); }
+      return retryRes.json();
+    }
+    throw new Error(body.error || 'Forbidden');
+  }
   if (!res.ok) { const e = await res.json().catch(() => ({ error: res.statusText })); throw new Error(e.error || res.statusText); }
   return res.json();
 }
