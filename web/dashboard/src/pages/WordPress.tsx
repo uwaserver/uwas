@@ -62,7 +62,7 @@ export default function WordPress() {
         });
       }).catch(() => {});
     });
-    fetchDBStatus().then(s => setMysqlOk(s?.installed && s?.running)).catch(() => {});
+    fetchDBStatus().then(s => setMysqlOk(s?.installed === true && s?.running === true)).catch(() => {});
     fetchDockerDBs().then(r => setDockerDBs((r?.containers ?? []).filter(c => c.running))).catch(() => {});
   }, [loadSites]);
 

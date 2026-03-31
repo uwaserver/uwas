@@ -156,11 +156,11 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
     }
 
     // Domain → Proxy backend
-    if (d.type === 'proxy' && d.root) {
+    if (d.type === 'proxy') {
       const backendId = `backend-${i}`;
       nodes.push({
         id: backendId,
-        data: { label: d.root },
+        data: { label: 'Upstream Backend' },
         position: { x: 850, y: yPos },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
@@ -184,7 +184,7 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
       const appId = `app-${i}`;
       nodes.push({
         id: appId,
-        data: { label: `App Process\n127.0.0.1:${d.root || '3000'}` },
+        data: { label: 'App Process' },
         position: { x: 850, y: yPos },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
