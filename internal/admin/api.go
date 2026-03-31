@@ -2258,7 +2258,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cleanup: stop PHP, stop app, remove cron jobs, remove SFTP user, delete files
+	// Cleanup: stop PHP, stop app, remove cron jobs, purge cache, remove SFTP user, delete files
 	if cleanup {
 		if s.phpMgr != nil {
 			s.phpMgr.StopDomain(host)
@@ -2266,6 +2266,9 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.appMgr != nil {
 			s.appMgr.Stop(host)
+		}
+		if s.cache != nil {
+			s.cache.PurgeByTag("site:" + host)
 		}
 		cronjob.RemoveByDomain(host)
 		siteuser.DeleteUser(host)
@@ -2399,7 +2402,16 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 				merged.Root = d.Root
 			}
 			if d.SSL.Mode != "" {
-				merged.SSL = d.SSL
+				merged.SSL.Mode = d.SSL.Mode
+				if d.SSL.Cert != "" {
+					merged.SSL.Cert = d.SSL.Cert
+				}
+				if d.SSL.Key != "" {
+					merged.SSL.Key = d.SSL.Key
+				}
+				if d.SSL.MinVersion != "" {
+					merged.SSL.MinVersion = d.SSL.MinVersion
+				}
 			}
 			if hasAliases {
 				merged.Aliases = d.Aliases

@@ -473,7 +473,7 @@ export default function Domains() {
         cacheTTL: String(d.cache?.ttl ?? 3600),
         phpFpmAddress: d.php?.fpm_address ?? '',
         phpIndexFiles: d.php?.index_files?.join(', ') ?? 'index.php,index.html',
-        proxyUpstreams: d.proxy?.upstreams?.join(', ') ?? '',
+        proxyUpstreams: d.proxy?.upstreams?.map(u => typeof u === 'string' ? u : u.address).join(', ') ?? '',
         proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
         redirectTarget: d.redirect?.target ?? '',
         redirectCode: String(d.redirect?.status ?? 301),
@@ -557,6 +557,23 @@ export default function Domains() {
         port: parseInt(form.appPort, 10) || 3000,
         auto_restart: true,
         env: Object.keys(env).length > 0 ? env : undefined,
+      };
+    }
+
+    // Cache settings
+    if (form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0) {
+      payload.cache = {
+        enabled: form.cacheEnabled,
+        ttl: parseInt(form.cacheTTL, 10) || 3600,
+      };
+    }
+
+    // Security settings
+    const blocked = form.blockedPaths.split(',').map(s => s.trim()).filter(Boolean);
+    if (form.wafEnabled || blocked.length > 0) {
+      payload.security = {
+        waf: { enabled: form.wafEnabled },
+        blocked_paths: blocked.length > 0 ? blocked : undefined,
       };
     }
 
