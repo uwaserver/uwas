@@ -4395,7 +4395,10 @@ func TestPHPInstallCommand_WithVersion(t *testing.T) {
 }
 
 func TestCreateBackup_InvalidOutputPath(t *testing.T) {
-	err := createBackup("/nonexistent/dir/backup.tar.gz", "config.yaml", "/certs")
+	// Use a file (not a directory) as parent — impossible on all platforms
+	notADir := filepath.Join(t.TempDir(), "notadir")
+	os.WriteFile(notADir, []byte("x"), 0644)
+	err := createBackup(filepath.Join(notADir, "backup.tar.gz"), "/nonexistent/config.yaml", "/nonexistent/certs")
 	if err == nil {
 		t.Fatal("expected error for invalid output path")
 	}
