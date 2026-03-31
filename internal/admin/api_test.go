@@ -1183,3 +1183,63 @@ func TestMCPCallInvalidJSON(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+// ── Ticket Auth Tests ──
+
+func TestAuthTicketIssueAndRedeem(t *testing.T) {
+	s := testServer()
+
+	// Issue a ticket
+	req := httptest.NewRequest("POST", "/api/v1/auth/ticket", nil)
+	req.Header.Set("Authorization", "Bearer test-token-123")
+	rec := httptest.NewRecorder()
+	s.handleAuthTicket(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("ticket issue status = %d, want 200", rec.Code)
+	}
+	var resp map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	ticket := resp["ticket"]
+	if ticket == "" {
+		t.Fatal("ticket should not be empty")
+	}
+
+	// Redeem the ticket
+	token := s.redeemTicket(ticket)
+	if token != "test-token-123" {
+		t.Errorf("redeemed token = %q, want %q", token, "test-token-123")
+	}
+
+	// Second redeem should fail (single-use)
+	token2 := s.redeemTicket(ticket)
+	if token2 != "" {
+		t.Errorf("second redeem should return empty, got %q", token2)
+	}
+}
+
+func TestAuthTicketExpiry(t *testing.T) {
+	s := testServer()
+	s.tickets = make(map[string]*authTicket)
+	s.tickets["expired-ticket"] = &authTicket{
+		token:   "old-token",
+		created: time.Now().Add(-60 * time.Second), // 60s ago, well past 30s TTL
+	}
+
+	token := s.redeemTicket("expired-ticket")
+	if token != "" {
+		t.Errorf("expired ticket should return empty, got %q", token)
+	}
+}
+
+func TestAuthTicketMissingBearer(t *testing.T) {
+	s := testServer()
+
+	req := httptest.NewRequest("POST", "/api/v1/auth/ticket", nil)
+	rec := httptest.NewRecorder()
+	s.handleAuthTicket(rec, req)
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400 for missing bearer", rec.Code)
+	}
+}

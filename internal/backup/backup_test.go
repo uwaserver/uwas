@@ -2703,3 +2703,50 @@ func TestSFTPProviderDialConnRefused(t *testing.T) {
 		t.Fatal("expected error for non-SSH server")
 	}
 }
+
+func TestIsInsideDir(t *testing.T) {
+	tests := []struct {
+		path, base string
+		want       bool
+	}{
+		{"/var/www/site/file.txt", "/var/www/site", true},
+		{"/var/www/site", "/var/www/site", true},
+		{"/var/www/site/sub/deep", "/var/www/site", true},
+		{"/etc/passwd", "/var/www/site", false},
+		{"/var/www/site/../../../etc/passwd", "/var/www/site", false},
+		{"/var/www/other", "/var/www/site", false},
+	}
+	for _, tt := range tests {
+		got := isInsideDir(tt.path, tt.base)
+		if got != tt.want {
+			t.Errorf("isInsideDir(%q, %q) = %v, want %v", tt.path, tt.base, got, tt.want)
+		}
+	}
+}
+
+func TestSafeBackupFilename(t *testing.T) {
+	valid := []string{
+		"uwas-backup-2026-03-31.tar.gz",
+		"uwas-domain-backup-example.com.tar.gz",
+		"backup_2026.tar.gz",
+	}
+	for _, name := range valid {
+		if err := safeBackupFilename(name); err != nil {
+			t.Errorf("safeBackupFilename(%q) = %v, want nil", name, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"../etc/passwd",
+		"file; rm -rf /",
+		"back`up.tar.gz",
+		"path/to/file.tar.gz",
+		"file\x00name",
+	}
+	for _, name := range invalid {
+		if err := safeBackupFilename(name); err == nil {
+			t.Errorf("safeBackupFilename(%q) = nil, want error", name)
+		}
+	}
+}

@@ -1527,3 +1527,59 @@ func TestMonitor_Execute_EmptyDomain(t *testing.T) {
 		t.Errorf("Domain = %q, want empty", rec.Domain)
 	}
 }
+
+func TestRemoveByDomain(t *testing.T) {
+	origExec := execCommandFn
+	origGOOS := runtimeGOOS
+	defer func() { execCommandFn = origExec; runtimeGOOS = origGOOS }()
+	runtimeGOOS = "linux"
+
+	// Simulate existing crontab with jobs for two domains
+	crontab := strings.Join([]string{
+		"# UWAS managed [example.com] backup",
+		"0 2 * * * /usr/bin/uwas backup example.com",
+		"# UWAS managed [other.com] cleanup",
+		"30 3 * * 0 /usr/bin/uwas cleanup other.com",
+		"# UWAS managed [example.com] renew",
+		"0 4 * * * /usr/bin/uwas cert renew",
+		"",
+	}, "\n")
+
+	var written string
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		if name == "crontab" && len(args) == 1 && args[0] == "-l" {
+			return exec.Command("echo", crontab)
+		}
+		if name == "crontab" && len(args) == 1 {
+			// Read the temp file to capture what was written
+			data, _ := os.ReadFile(args[0])
+			written = string(data)
+			return exec.Command("true")
+		}
+		return exec.Command("true")
+	}
+
+	err := RemoveByDomain("example.com")
+	if err != nil {
+		t.Fatalf("RemoveByDomain: %v", err)
+	}
+
+	// Should keep other.com jobs, remove example.com jobs
+	if strings.Contains(written, "example.com") {
+		t.Error("example.com jobs should be removed")
+	}
+	if !strings.Contains(written, "other.com") {
+		t.Error("other.com jobs should be kept")
+	}
+}
+
+func TestRemoveByDomainWindows(t *testing.T) {
+	origGOOS := runtimeGOOS
+	defer func() { runtimeGOOS = origGOOS }()
+	runtimeGOOS = "windows"
+
+	err := RemoveByDomain("example.com")
+	if err == nil {
+		t.Error("expected error on Windows")
+	}
+}
