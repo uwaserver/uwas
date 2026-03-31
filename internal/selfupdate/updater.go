@@ -22,7 +22,11 @@ const (
 
 // Testable hooks
 var (
-	githubAPIBase  = "https://api.github.com"
+	githubAPIBase          = "https://api.github.com"
+	isTrustedDownloadURL = func(u string) bool {
+		return strings.HasPrefix(u, "https://github.com/") ||
+			strings.HasPrefix(u, "https://objects.githubusercontent.com/")
+	}
 	httpClientFn   = func(timeout time.Duration) *http.Client { return &http.Client{Timeout: timeout} }
 	osExecutableFn = os.Executable
 	osRenameFn     = os.Rename
@@ -127,6 +131,10 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 func Update(downloadURL string) error {
 	if downloadURL == "" {
 		return fmt.Errorf("no download URL for %s/%s", runtimeGOOS, runtimeGOARCH)
+	}
+	// Only allow downloads from trusted GitHub domains.
+	if !isTrustedDownloadURL(downloadURL) {
+		return fmt.Errorf("untrusted download URL: %s", downloadURL)
 	}
 
 	// Download to temp file

@@ -267,7 +267,9 @@ Match User %s
 		return
 	}
 
-	osWriteFileFn(sshdConfigPath, []byte(content), 0644)
+	if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
+		return // don't reload sshd if config write failed
+	}
 
 	// Reload sshd — try both service names
 	if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {

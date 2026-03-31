@@ -228,13 +228,14 @@ func DockerDBExecSQL(containerName, sql string) (string, error) {
 			"--batch", "--skip-column-names", "-e", sql}
 	}
 
-	cmd := dockerExecCommandFn(args[0], args[1:]...)
-	// Pass through env from container
-	if !strings.Contains(image, "postgres") {
-		cmd = dockerExecCommandFn("docker", "exec", fullName, "sh", "-c",
-			fmt.Sprintf(`mariadb -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names -e '%s' 2>/dev/null || mysql -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names -e '%s' 2>/dev/null`,
-				strings.ReplaceAll(sql, "'", "'\"'\"'"),
-				strings.ReplaceAll(sql, "'", "'\"'\"'")))
+	var cmd *exec.Cmd
+	if strings.Contains(image, "postgres") {
+		cmd = dockerExecCommandFn(args[0], args[1:]...)
+	} else {
+		// Use stdin to pass SQL — avoids shell escaping issues entirely.
+		cmd = dockerExecCommandFn("docker", "exec", "-i", fullName, "sh", "-c",
+			`mariadb -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names 2>/dev/null || mysql -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names 2>/dev/null`)
+		cmd.Stdin = strings.NewReader(sql)
 	}
 
 	out, err := cmd.CombinedOutput()

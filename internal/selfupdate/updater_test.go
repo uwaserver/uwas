@@ -25,6 +25,9 @@ func saveHooks(t *testing.T) {
 	origOsCreateTempFn := osCreateTempFn
 	origRuntimeGOOS := runtimeGOOS
 	origRuntimeGOARCH := runtimeGOARCH
+	origIsTrustedDownloadURL := isTrustedDownloadURL
+	// Allow any URL in tests (test servers use localhost).
+	isTrustedDownloadURL = func(string) bool { return true }
 	t.Cleanup(func() {
 		githubAPIBase = origGithubAPIBase
 		httpClientFn = origHttpClientFn
@@ -36,6 +39,7 @@ func saveHooks(t *testing.T) {
 		osCreateTempFn = origOsCreateTempFn
 		runtimeGOOS = origRuntimeGOOS
 		runtimeGOARCH = origRuntimeGOARCH
+		isTrustedDownloadURL = origIsTrustedDownloadURL
 	})
 }
 

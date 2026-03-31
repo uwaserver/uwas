@@ -107,10 +107,10 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				if err != nil {
 					continue
 				}
-				defer f.Close()
 
 				w.Header().Set("Content-Type", c.accept)
 				http.ServeContent(w, r, filepath.Base(diskPath), info.ModTime(), f)
+				f.Close()
 				return
 			}
 
@@ -125,12 +125,13 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 
 				if converted := convertImage(srcPath, dstPath, c.format); converted {
 					if f, err := os.Open(dstPath); err == nil {
-						defer f.Close()
 						if info, err := f.Stat(); err == nil {
 							w.Header().Set("Content-Type", c.accept)
 							http.ServeContent(w, r, filepath.Base(dstPath), info.ModTime(), f)
+							f.Close()
 							return
 						}
+						f.Close()
 					}
 				}
 			}

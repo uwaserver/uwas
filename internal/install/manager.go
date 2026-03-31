@@ -83,7 +83,14 @@ func (m *Manager) Submit(taskType, name, action string, fn TaskFunc) *Task {
 	m.tasks[id] = task
 	m.mu.Unlock()
 
-	m.queue <- &queueEntry{task: task, fn: fn}
+	select {
+	case m.queue <- &queueEntry{task: task, fn: fn}:
+	case <-m.stopCh:
+		m.mu.Lock()
+		task.Status = StatusError
+		task.Error = "manager stopped"
+		m.mu.Unlock()
+	}
 	return task
 }
 
