@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
@@ -361,6 +362,5 @@ func (c *Collector) Handler() (allHandler, hostHandler http.HandlerFunc) {
 // in the hot path. We import it here since this is the API response path.
 func writeJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	// Use a local import to keep the package lightweight.
-	jsonEncode(w, data)
+	json.NewEncoder(w).Encode(data)
 }
