@@ -3,7 +3,6 @@ package migrate
 import (
 	"archive/tar"
 	"compress/gzip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -307,29 +306,6 @@ func readCPanelDocRoot(path string) string {
 		return filepath.Base(docRoot)
 	}
 	return ""
-}
-
-// GenerateUWASConfig creates UWAS domain YAML configs from cPanel import results.
-func GenerateUWASConfig(result *CPanelResult, webRoot string) []map[string]any {
-	var configs []map[string]any
-	for _, dom := range result.Domains {
-		cfg := map[string]any{
-			"host": dom.Domain,
-			"type": "php",
-			"root": filepath.Join(webRoot, dom.Domain, "public_html"),
-			"ssl":  map[string]string{"mode": "auto"},
-		}
-		if dom.SSL {
-			cfg["ssl"] = map[string]string{"mode": "manual"}
-		}
-		configs = append(configs, cfg)
-	}
-	return configs
-}
-
-// ExportCPanelResultJSON returns JSON summary for API response.
-func ExportCPanelResultJSON(result *CPanelResult) ([]byte, error) {
-	return json.MarshalIndent(result, "", "  ")
 }
 
 // copyDir recursively copies a directory.
