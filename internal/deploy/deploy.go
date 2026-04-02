@@ -16,6 +16,12 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
+// Testable hooks — can be overridden in tests to mock command execution.
+var (
+	runCmdFn   = runCmdImpl
+	runShellFn = runShellImpl
+)
+
 // DeployRequest describes a deployment action.
 type DeployRequest struct {
 	Domain      string            `json:"domain"`
@@ -365,6 +371,10 @@ func detectBuildCmd(appRoot string) string {
 }
 
 func runCmd(dir string, env map[string]string, name string, args ...string) (string, error) {
+	return runCmdFn(dir, env, name, args...)
+}
+
+func runCmdImpl(dir string, env map[string]string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
@@ -379,6 +389,10 @@ func runCmd(dir string, env map[string]string, name string, args ...string) (str
 }
 
 func runShell(dir string, env map[string]string, command string) (string, error) {
+	return runShellFn(dir, env, command)
+}
+
+func runShellImpl(dir string, env map[string]string, command string) (string, error) {
 	if strings.ContainsAny(command, "\x00") {
 		return "", fmt.Errorf("command contains null byte")
 	}
