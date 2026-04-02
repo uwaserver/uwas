@@ -12,6 +12,14 @@ import (
 
 const cgroupBase = "/sys/fs/cgroup/uwas"
 
+// Testable hooks — can be overridden in tests.
+var (
+	osMkdirAllFn  = os.MkdirAll
+	osWriteFileFn = os.WriteFile
+	osRemoveFn    = os.Remove
+	runtimeGOOS   = func() string { return runtime.GOOS }
+)
+
 // Limits defines resource constraints for a domain.
 type Limits struct {
 	// CPUPercent is the max CPU usage as a percentage (e.g. 50 = 50% of one core).
@@ -27,7 +35,7 @@ type Limits struct {
 // Returns the cgroup path so a process can be assigned to it.
 // No-op on non-Linux.
 func Apply(domain string, limits Limits) (cgroupPath string, err error) {
-	if runtime.GOOS != "linux" {
+	if runtimeGOOS() != "linux" {
 		return "", nil
 	}
 	if limits.CPUPercent == 0 && limits.MemoryMB == 0 && limits.PIDMax == 0 {
@@ -35,7 +43,7 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	}
 
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := osMkdirAllFn(path, 0755); err != nil {
 		return "", fmt.Errorf("create cgroup %s: %w", path, err)
 	}
 
@@ -44,7 +52,7 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	if limits.CPUPercent > 0 {
 		quota := limits.CPUPercent * 1000 // percent → microseconds per 100ms period
 		val := fmt.Sprintf("%d 100000", quota)
-		if err := os.WriteFile(filepath.Join(path, "cpu.max"), []byte(val), 0644); err != nil {
+		if err := osWriteFileFn(filepath.Join(path, "cpu.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set cpu.max: %w", err)
 		}
 	}
@@ -52,7 +60,7 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	// Memory limit: memory.max in bytes
 	if limits.MemoryMB > 0 {
 		val := strconv.FormatInt(int64(limits.MemoryMB)*1024*1024, 10)
-		if err := os.WriteFile(filepath.Join(path, "memory.max"), []byte(val), 0644); err != nil {
+		if err := osWriteFileFn(filepath.Join(path, "memory.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set memory.max: %w", err)
 		}
 	}
@@ -60,7 +68,7 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	// PID limit: pids.max
 	if limits.PIDMax > 0 {
 		val := strconv.Itoa(limits.PIDMax)
-		if err := os.WriteFile(filepath.Join(path, "pids.max"), []byte(val), 0644); err != nil {
+		if err := osWriteFileFn(filepath.Join(path, "pids.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set pids.max: %w", err)
 		}
 	}
@@ -70,20 +78,20 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 
 // AssignPID moves a process into the domain's cgroup.
 func AssignPID(cgroupPath string, pid int) error {
-	if runtime.GOOS != "linux" || cgroupPath == "" {
+	if runtimeGOOS() != "linux" || cgroupPath == "" {
 		return nil
 	}
 	procsFile := filepath.Join(cgroupPath, "cgroup.procs")
-	return os.WriteFile(procsFile, []byte(strconv.Itoa(pid)), 0644)
+	return osWriteFileFn(procsFile, []byte(strconv.Itoa(pid)), 0644)
 }
 
 // Remove deletes the cgroup for a domain.
 func Remove(domain string) error {
-	if runtime.GOOS != "linux" {
+	if runtimeGOOS() != "linux" {
 		return nil
 	}
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
-	return os.Remove(path) // rmdir — only works if empty (no processes)
+	return osRemoveFn(path) // rmdir — only works if empty (no processes)
 }
 
 // sanitizeDomain converts a domain name to a safe cgroup directory name.

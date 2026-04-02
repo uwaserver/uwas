@@ -17,6 +17,14 @@ import (
 	"github.com/uwaserver/uwas/internal/rlimit"
 )
 
+// Testable hooks — can be overridden in tests.
+var (
+	execCommandFn = exec.Command
+	osMkdirAllFn  = os.MkdirAll
+	osOpenFileFn  = os.OpenFile
+	osStatFn      = os.Stat
+)
+
 // AppInstance describes a running application process.
 type AppInstance struct {
 	Domain    string            `json:"domain"`
@@ -62,34 +70,34 @@ func New(log *logger.Logger) *Manager {
 }
 
 // detectCommand infers the start command from project files if not explicitly set.
-func detectCommand(runtime, workDir string) string {
-	switch runtime {
+func detectCommand(runtimeName, workDir string) string {
+	switch runtimeName {
 	case "node":
 		// Check for package.json start script
-		if _, err := os.Stat(filepath.Join(workDir, "package.json")); err == nil {
+		if _, err := osStatFn(filepath.Join(workDir, "package.json")); err == nil {
 			return "npm start"
 		}
 		// Check for common entry points
 		for _, f := range []string{"server.js", "index.js", "app.js"} {
-			if _, err := os.Stat(filepath.Join(workDir, f)); err == nil {
+			if _, err := osStatFn(filepath.Join(workDir, f)); err == nil {
 				return "node " + f
 			}
 		}
 	case "python":
 		// Check for common WSGI/ASGI patterns
-		if _, err := os.Stat(filepath.Join(workDir, "manage.py")); err == nil {
+		if _, err := osStatFn(filepath.Join(workDir, "manage.py")); err == nil {
 			return "python manage.py runserver 0.0.0.0:${PORT}"
 		}
 		for _, f := range []string{"app.py", "main.py", "wsgi.py"} {
-			if _, err := os.Stat(filepath.Join(workDir, f)); err == nil {
+			if _, err := osStatFn(filepath.Join(workDir, f)); err == nil {
 				return "python " + f
 			}
 		}
-		if _, err := os.Stat(filepath.Join(workDir, "requirements.txt")); err == nil {
+		if _, err := osStatFn(filepath.Join(workDir, "requirements.txt")); err == nil {
 			return "gunicorn app:app -b 0.0.0.0:${PORT}"
 		}
 	case "ruby":
-		if _, err := os.Stat(filepath.Join(workDir, "config.ru")); err == nil {
+		if _, err := osStatFn(filepath.Join(workDir, "config.ru")); err == nil {
 			return "bundle exec puma -p ${PORT}"
 		}
 	case "go":
@@ -190,9 +198,9 @@ func (m *Manager) startProcess(app *appProcess) error {
 	// Build exec.Cmd — use shell for complex commands
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/C", cmdStr)
+		cmd = execCommandFn("cmd", "/C", cmdStr)
 	} else {
-		cmd = exec.Command("sh", "-c", cmdStr)
+		cmd = execCommandFn("sh", "-c", cmdStr)
 	}
 
 	cmd.Dir = app.workDir
@@ -208,8 +216,8 @@ func (m *Manager) startProcess(app *appProcess) error {
 
 	// Capture stdout/stderr to a log file
 	logDir := filepath.Join(filepath.Dir(app.workDir), "logs")
-	os.MkdirAll(logDir, 0755)
-	logFile, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	osMkdirAllFn(logDir, 0755)
+	logFile, err := osOpenFileFn(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err == nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
