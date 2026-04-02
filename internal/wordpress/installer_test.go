@@ -2823,3 +2823,105 @@ func TestScanPluginDirs_DotEntries(t *testing.T) {
 		t.Errorf("name = %q", plugins[0].Name)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ChangeUserPassword tests
+// ---------------------------------------------------------------------------
+
+func TestChangeUserPasswordError(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execCommandFn = fakeCmdFail("user not found")
+
+	err := ChangeUserPassword("/var/www/wp", "admin", "newpassword123")
+	if err == nil {
+		t.Error("expected error for failed password change")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetSecurityStatus tests
+// ---------------------------------------------------------------------------
+
+func TestGetSecurityStatus(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	// Mock file existence checks
+	osStatFn = func(name string) (os.FileInfo, error) {
+		return nil, nil // file exists
+	}
+
+	// Mock config file reading
+	osReadFileFn = func(name string) ([]byte, error) {
+		return []byte("define('DISALLOW_FILE_EDIT', true);"), nil
+	}
+
+	execCommandFn = fakeCmd(`{"core": "up to date", "plugins": 0, "themes": 0}`)
+
+	status := GetSecurityStatus("/var/www/wp")
+	// Just verify it doesn't panic - function returns a struct
+	_ = status
+}
+
+// ---------------------------------------------------------------------------
+// containsDefineTrue tests
+// ---------------------------------------------------------------------------
+
+func TestContainsDefineTrue(t *testing.T) {
+	tests := []struct {
+		content string
+		key     string
+		want    bool
+	}{
+		{"define('TEST', true);", "TEST", true},
+		{"define('TEST', false);", "TEST", false},
+		{"define( 'TEST' , true );", "TEST", true},
+		// Note: function only matches single quotes
+		{"define('OTHER', true);", "TEST", false},
+		{"", "TEST", false},
+	}
+
+	for _, tt := range tests {
+		got := containsDefineTrue(tt.content, tt.key)
+		if got != tt.want {
+			t.Errorf("containsDefineTrue(%q, %q) = %v, want %v", tt.content, tt.key, got, tt.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Harden tests
+// ---------------------------------------------------------------------------
+
+func TestHardenConfigNotFound(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	osStatFn = func(name string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	}
+
+	_, err := Harden("/var/www/wp", HardenOptions{})
+	if err == nil {
+		t.Error("expected error when config not found")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OptimizeDatabase tests
+// ---------------------------------------------------------------------------
+
+func TestOptimizeDatabase(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execCommandFn = fakeCmd("Database optimized.")
+
+	_, err := OptimizeDatabase("/var/www/wp")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+

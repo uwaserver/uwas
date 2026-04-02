@@ -1,6 +1,8 @@
 package router
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -16,6 +18,67 @@ func TestNewUnknownHostTracker(t *testing.T) {
 	}
 	if tracker.blocked == nil {
 		t.Error("blocked map should be initialized")
+	}
+}
+
+// TestSetPersistPath tests setting persistence path.
+func TestSetPersistPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistFile := filepath.Join(tmpDir, "blocked.txt")
+
+	tracker := NewUnknownHostTracker()
+	tracker.SetPersistPath(persistFile)
+
+	if tracker.filePath != persistFile {
+		t.Errorf("filePath = %q, want %q", tracker.filePath, persistFile)
+	}
+}
+
+// TestSetPersistPathWithExistingFile tests loading blocked hosts from existing file.
+func TestSetPersistPathWithExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistFile := filepath.Join(tmpDir, "blocked.txt")
+
+	// Create a file with blocked hosts
+	content := "evil.com\nspammer.net\n"
+	if err := os.WriteFile(persistFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create persist file: %v", err)
+	}
+
+	tracker := NewUnknownHostTracker()
+	tracker.SetPersistPath(persistFile)
+
+	// Check that blocked hosts were loaded
+	if !tracker.IsBlocked("evil.com") {
+		t.Error("evil.com should be blocked after loading from file")
+	}
+	if !tracker.IsBlocked("spammer.net") {
+		t.Error("spammer.net should be blocked after loading from file")
+	}
+}
+
+// TestSetPersistPathPersistence tests that blocked hosts are persisted.
+func TestSetPersistPathPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistFile := filepath.Join(tmpDir, "blocked.txt")
+
+	tracker := NewUnknownHostTracker()
+	tracker.SetPersistPath(persistFile)
+
+	// Block some hosts
+	tracker.Block("evil.com")
+	tracker.Block("spammer.net")
+
+	// Create a new tracker and load from the same file
+	tracker2 := NewUnknownHostTracker()
+	tracker2.SetPersistPath(persistFile)
+
+	// Check that blocked hosts were persisted
+	if !tracker2.IsBlocked("evil.com") {
+		t.Error("evil.com should be persisted and loaded")
+	}
+	if !tracker2.IsBlocked("spammer.net") {
+		t.Error("spammer.net should be persisted and loaded")
 	}
 }
 

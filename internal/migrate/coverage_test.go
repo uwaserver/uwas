@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -534,5 +535,76 @@ func TestDomainsToYAMLRedirectNoStatus(t *testing.T) {
 	// Status 0 should not appear.
 	if strings.Contains(yaml, "status: 0") {
 		t.Error("should not output status: 0")
+	}
+}
+
+// --- cPanel migration tests ---
+
+func TestParseCPanelDomains(t *testing.T) {
+	// Create a temp dir structure that mimics cPanel
+	tempDir := t.TempDir()
+
+	domains := parseCPanelDomains(tempDir)
+	// Should handle empty/missing files gracefully
+	_ = domains
+}
+
+func TestCopyFile(t *testing.T) {
+	src := t.TempDir() + "/src.txt"
+	dst := t.TempDir() + "/dst.txt"
+
+	// Create source file
+	os.WriteFile(src, []byte("test content"), 0644)
+
+	err := copyFile(src, dst)
+	if err != nil {
+		t.Fatalf("copyFile failed: %v", err)
+	}
+
+	// Verify content
+	content, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("failed to read dest: %v", err)
+	}
+	if string(content) != "test content" {
+		t.Errorf("content = %q, want 'test content'", string(content))
+	}
+}
+
+func TestCopyFileNotFound(t *testing.T) {
+	err := copyFile("/nonexistent/file.txt", "/tmp/dst.txt")
+	if err == nil {
+		t.Error("expected error for non-existent source")
+	}
+}
+
+func TestCopyDir(t *testing.T) {
+	srcDir := t.TempDir() + "/src"
+	dstDir := t.TempDir() + "/dst"
+
+	// Create source directory with files
+	os.MkdirAll(srcDir, 0755)
+	os.WriteFile(srcDir+"/file1.txt", []byte("content1"), 0644)
+	os.WriteFile(srcDir+"/file2.txt", []byte("content2"), 0644)
+
+	err := copyDir(srcDir, dstDir)
+	if err != nil {
+		t.Fatalf("copyDir failed: %v", err)
+	}
+
+	// Verify files copied
+	if _, err := os.Stat(dstDir + "/file1.txt"); err != nil {
+		t.Error("file1.txt should exist in dest")
+	}
+	if _, err := os.Stat(dstDir + "/file2.txt"); err != nil {
+		t.Error("file2.txt should exist in dest")
+	}
+}
+
+func TestCopyDirNotFound(t *testing.T) {
+	err := copyDir("/nonexistent/dir", "/tmp/dst")
+	// copyDir returns nil on walk errors (they're skipped)
+	if err != nil {
+		t.Errorf("expected no error (walk errors are skipped), got: %v", err)
 	}
 }

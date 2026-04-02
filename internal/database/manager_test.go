@@ -1374,3 +1374,75 @@ func TestImportDatabase_AllMethodsFail(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// Test ValidDBIdentifier
+func TestValidDBIdentifier(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"empty", "", false},
+		{"too_long", strings.Repeat("a", 65), false},
+		{"valid_lowercase", "mydb", true},
+		{"valid_uppercase", "MyDB", true},
+		{"valid_mixed", "My_DB_123", true},
+		{"valid_with_dash", "my-db", true},
+		{"invalid_space", "my db", false},
+		{"invalid_special", "my@db", false},
+		{"valid_underscore", "my_db", true},
+		{"valid_numeric", "db123", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ValidDBIdentifier(tt.input)
+			if result != tt.expected {
+				t.Errorf("ValidDBIdentifier(%q) = %v, expected %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// Test EscapeSQL
+func TestEscapeSQL(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"hello", "hello"},
+		{"it's", "it\\'s"},
+		{"backslash\\", "backslash\\\\"},
+		{"quote\"", "quote\\\""},
+		{"null\x00char", "nullchar"},
+		{"complex\\'\"", "complex\\\\\\'\\\""},
+	}
+
+	for _, tt := range tests {
+		result := EscapeSQL(tt.input)
+		if result != tt.expected {
+			t.Errorf("EscapeSQL(%q) = %q, expected %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+// Test BacktickID
+func TestBacktickID(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"mydb", "`mydb`"},
+		{"my`db", "`my``db`"},
+		{"`backtick", "```backtick`"},
+		{"backtick`", "`backtick```"},
+		{"`multiple`backticks`", "```multiple``backticks```"},
+	}
+
+	for _, tt := range tests {
+		result := BacktickID(tt.input)
+		if result != tt.expected {
+			t.Errorf("BacktickID(%q) = %q, expected %q", tt.input, result, tt.expected)
+		}
+	}
+}

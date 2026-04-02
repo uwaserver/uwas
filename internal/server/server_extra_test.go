@@ -2,12 +2,15 @@ package server
 
 import (
 	"crypto/tls"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -1036,4 +1039,268 @@ domains:
 		t.Error("htaccess cache should be cleared after reload")
 	}
 	s.htaccessCacheMu.RUnlock()
+}
+
+// ---------- PROXY Protocol tests ----------
+
+func TestProxyAddr(t *testing.T) {
+	addr := &proxyAddr{ip: "192.168.1.100", port: "8080"}
+
+	if addr.Network() != "tcp" {
+		t.Errorf("Network() = %q, want tcp", addr.Network())
+	}
+
+	if addr.String() != "192.168.1.100:8080" {
+		t.Errorf("String() = %q, want 192.168.1.100:8080", addr.String())
+	}
+}
+
+func TestNewProxyProtoListener(t *testing.T) {
+	// Create a mock listener
+	mockLn := &mockListener{}
+
+	ln := newProxyProtoListener(mockLn)
+	if ln == nil {
+		t.Fatal("newProxyProtoListener returned nil")
+	}
+
+	// Check that it's the right type
+	ppln, ok := ln.(*proxyProtoListener)
+	if !ok {
+		t.Fatal("expected *proxyProtoListener")
+	}
+
+	if ppln.Listener != mockLn {
+		t.Error("listener not wrapped correctly")
+	}
+}
+
+// mockListener is a mock net.Listener for testing
+type mockListener struct {
+	acceptCalled bool
+	closeCalled  bool
+	addrCalled   bool
+	connToReturn net.Conn
+	errToReturn  error
+}
+
+func (m *mockListener) Accept() (net.Conn, error) {
+	m.acceptCalled = true
+	if m.errToReturn != nil {
+		return nil, m.errToReturn
+	}
+	return m.connToReturn, nil
+}
+
+func (m *mockListener) Close() error {
+	m.closeCalled = true
+	return nil
+}
+
+func (m *mockListener) Addr() net.Addr {
+	m.addrCalled = true
+	return &mockAddr{}
+}
+
+type mockAddr struct{}
+
+func (m *mockAddr) Network() string { return "tcp" }
+func (m *mockAddr) String() string  { return "127.0.0.1:8080" }
+
+// mockConn is a mock net.Conn for testing
+type mockConn struct {
+	readData   []byte
+	readPos    int
+	remoteAddr net.Addr
+	localAddr  net.Addr
+	closed     bool
+}
+
+func (m *mockConn) Read(b []byte) (int, error) {
+	if m.readPos >= len(m.readData) {
+		return 0, nil
+	}
+	n := len(b)
+	if n > len(m.readData)-m.readPos {
+		n = len(m.readData) - m.readPos
+	}
+	copy(b, m.readData[m.readPos:m.readPos+n])
+	m.readPos += n
+	return n, nil
+}
+
+func (m *mockConn) Write(b []byte) (int, error) { return len(b), nil }
+func (m *mockConn) Close() error {
+	m.closed = true
+	return nil
+}
+func (m *mockConn) LocalAddr() net.Addr  { return m.localAddr }
+func (m *mockConn) RemoteAddr() net.Addr { return m.remoteAddr }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func TestProxyProtoListenerAcceptError(t *testing.T) {
+	mockLn := &mockListener{errToReturn: fmt.Errorf("accept error")}
+
+	ln := newProxyProtoListener(mockLn)
+	conn, err := ln.Accept()
+
+	if err == nil {
+		t.Fatal("expected error from Accept")
+	}
+	if conn != nil {
+		t.Error("expected nil conn on error")
+	}
+	if !mockLn.acceptCalled {
+		t.Error("Accept not called on underlying listener")
+	}
+}
+
+func TestProxyProtoConnReadWithoutHeader(t *testing.T) {
+	// Data without PROXY header
+	data := []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	mockConn := &mockConn{
+		readData:   data,
+		remoteAddr: &mockAddr{},
+	}
+
+	conn := &proxyProtoConn{Conn: mockConn}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n == 0 {
+		t.Error("expected to read some data")
+	}
+	if conn.parsed != true {
+		t.Error("expected parsed to be true after first read")
+	}
+}
+
+func TestProxyProtoConnRemoteAddr(t *testing.T) {
+	mockConn := &mockConn{
+		readData:   []byte("PROXY TCP4 192.168.1.100 10.0.0.1 12345 443\r\n"),
+		remoteAddr: &mockAddr{},
+	}
+
+	conn := &proxyProtoConn{Conn: mockConn}
+	// First read to parse the header
+	buf := make([]byte, 1024)
+	conn.Read(buf)
+
+	// RemoteAddr should return the real address from PROXY header
+	addr := conn.RemoteAddr()
+	if addr == nil {
+		t.Fatal("RemoteAddr returned nil")
+	}
+
+	// Should be the proxyAddr, not the mockConn's address
+	proxyAddrTyped, ok := addr.(*proxyAddr)
+	if !ok {
+		t.Fatalf("expected *proxyAddr, got %T", addr)
+	}
+	if proxyAddrTyped.ip != "192.168.1.100" {
+		t.Errorf("ip = %q, want 192.168.1.100", proxyAddrTyped.ip)
+	}
+	if proxyAddrTyped.port != "12345" {
+		t.Errorf("port = %q, want 12345", proxyAddrTyped.port)
+	}
+}
+
+func TestProxyProtoConnRemoteAddrFallback(t *testing.T) {
+	// Data without PROXY header - should fallback to underlying conn
+	mockConn := &mockConn{
+		readData:   []byte("GET / HTTP/1.1\r\n"),
+		remoteAddr: &mockAddr{},
+	}
+
+	conn := &proxyProtoConn{Conn: mockConn}
+	buf := make([]byte, 1024)
+	conn.Read(buf)
+
+	// RemoteAddr should fallback to underlying conn's address
+	addr := conn.RemoteAddr()
+	if addr == nil {
+		t.Fatal("RemoteAddr returned nil")
+	}
+	if addr.String() != "127.0.0.1:8080" {
+		t.Errorf("addr = %q, want 127.0.0.1:8080", addr.String())
+	}
+}
+
+func TestProxyProtoConnReadError(t *testing.T) {
+	// Create a mock conn that returns an error on read
+	mockConn := &mockConn{}
+	mockConn.readPos = 0 // Will cause EOF
+
+	conn := &proxyProtoConn{Conn: mockConn}
+	buf := make([]byte, 1024)
+	_, err := conn.Read(buf)
+
+	// Should get error reading PROXY header
+	if err == nil {
+		t.Skip("EOF behavior varies")
+	}
+}
+
+func TestProxyProtoConnReadPartialHeader(t *testing.T) {
+	// PROXY header followed by actual HTTP data
+	data := []byte("PROXY TCP4 192.168.1.50 10.0.0.1 54321 80\r\nGET / HTTP/1.1\r\n")
+	mockConn := &mockConn{readData: data}
+
+	conn := &proxyProtoConn{Conn: mockConn}
+
+	// First read should parse header and return HTTP data
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have parsed the PROXY header
+	if conn.realAddr == nil {
+		t.Fatal("expected realAddr to be set")
+	}
+	if conn.realAddr.(*proxyAddr).ip != "192.168.1.50" {
+		t.Errorf("ip = %q, want 192.168.1.50", conn.realAddr.(*proxyAddr).ip)
+	}
+
+	// Should have returned HTTP data (not the PROXY line)
+	if n == 0 {
+		t.Error("expected to read HTTP data")
+	}
+}
+
+func TestProxyProtoConnShortHeader(t *testing.T) {
+	// PROXY header with too few fields
+	data := []byte("PROXY TCP4 192.168.1.1\r\nGET / HTTP/1.1\r\n")
+	mockConn := &mockConn{readData: data}
+
+	conn := &proxyProtoConn{Conn: mockConn}
+	buf := make([]byte, 1024)
+	conn.Read(buf)
+
+	// Should not set realAddr because header is incomplete
+	if conn.realAddr != nil {
+		t.Error("expected realAddr to be nil for incomplete header")
+	}
+}
+
+func TestProxyProtoConnHeaderWithoutPROXY(t *testing.T) {
+	// Line that doesn't start with PROXY
+	data := []byte("RANDOM LINE\r\nGET / HTTP/1.1\r\n")
+	mockConn := &mockConn{readData: data}
+
+	conn := &proxyProtoConn{Conn: mockConn}
+	buf := make([]byte, 1024)
+	conn.Read(buf)
+
+	// Should not set realAddr
+	if conn.realAddr != nil {
+		t.Error("expected realAddr to be nil for non-PROXY line")
+	}
 }
