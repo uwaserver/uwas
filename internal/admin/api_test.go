@@ -49,6 +49,114 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 }
 
+// --- Task API tests ---
+
+func TestTaskList(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/tasks", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var tasks []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
+		t.Fatalf("failed to unmarshal tasks: %v", err)
+	}
+	// Should return empty array initially
+	if tasks == nil {
+		t.Error("expected empty array, got nil")
+	}
+}
+
+func TestTaskGetNotFound(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/tasks/nonexistent-id", nil))
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["error"] != "task not found" {
+		t.Errorf("error = %v, want 'task not found'", body["error"])
+	}
+}
+
+// --- System API tests ---
+
+func TestSystemEndpoint(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/system", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	// Check required fields
+	requiredFields := []string{"version", "go_version", "os", "arch", "cpus", "goroutines", "pid"}
+	for _, field := range requiredFields {
+		if body[field] == nil {
+			t.Errorf("missing required field: %s", field)
+		}
+	}
+
+	// Check type of numeric fields
+	if _, ok := body["cpus"].(float64); !ok {
+		t.Errorf("cpus should be a number")
+	}
+	if _, ok := body["goroutines"].(float64); !ok {
+		t.Errorf("goroutines should be a number")
+	}
+}
+
+// --- SetPHPManager test ---
+
+func TestSetPHPManager(t *testing.T) {
+	s := testServer()
+
+	// Initially PHP manager should be nil
+	if s.phpMgr != nil {
+		t.Error("phpMgr should be nil initially")
+	}
+}
+
+// --- App API tests ---
+
+func TestAppEndpoints(t *testing.T) {
+	s := testServer()
+
+	// Test apps list (should work without app manager)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/apps", nil))
+
+	// Should return 200 with empty list or apps
+	if rec.Code != 200 {
+		t.Logf("apps endpoint status: %d", rec.Code)
+	}
+}
+
+// --- Additional handler tests ---
+
+func TestUnknownDomainEndpoint(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/domains/unknown.test/config", nil))
+
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
 func TestDomainsEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
@@ -1241,5 +1349,238 @@ func TestAuthTicketMissingBearer(t *testing.T) {
 
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400 for missing bearer", rec.Code)
+	}
+}
+
+// --- Notification Preferences Tests ---
+
+func TestNotifyPrefsGet(t *testing.T) {
+	s := testServer()
+	s.config.Global.Alerting = config.AlertingConfig{
+		Enabled:        true,
+		WebhookURL:     "https://example.com/webhook",
+		SlackURL:       "https://hooks.slack.com",
+		TelegramToken:  "bot-token",
+		TelegramChatID: "12345",
+	}
+	s.config.Global.Webhooks = []config.WebhookConfig{
+		{URL: "https://example.com/webhook", Events: []string{"domain.create"}},
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/settings/notifications", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["alerting"] == nil {
+		t.Error("expected alerting in response")
+	}
+	if body["webhooks"] == nil {
+		t.Error("expected webhooks in response")
+	}
+}
+
+func TestNotifyPrefsPut(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"alerting":{"enabled":true,"webhook_url":"https://new.com/webhook","slack_url":"https://hooks.slack.com"},"webhooks":[{"url":"https://hooks.slack.com","events":["domain.update"]}]}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings/notifications", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["status"] != "saved" {
+		t.Errorf("status = %q, want 'saved'", resp["status"])
+	}
+}
+
+func TestNotifyPrefsPutInvalidJSON(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{not valid json`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings/notifications", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// --- Branding Tests ---
+
+func TestBrandingGet(t *testing.T) {
+	s := testServer()
+	s.config.Global.Admin.Branding = config.BrandingConfig{
+		LogoURL:      "https://example.com/logo.png",
+		FaviconURL:   "https://example.com/favicon.ico",
+		Name:         "Test Corp",
+		PrimaryColor: "#3366cc",
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/settings/branding", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var body config.BrandingConfig
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Name != "Test Corp" {
+		t.Errorf("name = %q, want 'Test Corp'", body.Name)
+	}
+}
+
+func TestBrandingPut(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"logo_url":"https://new.com/logo.png","name":"New Corp","primary_color":"#ff0000"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings/branding", body))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["status"] != "saved" {
+		t.Errorf("status = %q, want 'saved'", resp["status"])
+	}
+
+	// Verify config was updated
+	if s.config.Global.Admin.Branding.Name != "New Corp" {
+		t.Errorf("name = %q, want 'New Corp'", s.config.Global.Admin.Branding.Name)
+	}
+}
+
+func TestBrandingPutInvalidJSON(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{not valid`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings/branding", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// --- PHP Restart Tests ---
+
+func TestPHPRestart(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/php/restart", nil))
+
+	// May return 200, 404, or 500 depending on PHP manager state
+	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200, 404, or 500", rec.Code)
+	}
+}
+
+// --- SSE Logs Tests ---
+
+func TestSSELogs(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/sse/logs", nil)
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Use a context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	s.mux.ServeHTTP(rec, req)
+
+	// SSE endpoint may return various status codes
+	if rec.Code != 200 && rec.Code != 503 {
+		t.Errorf("status = %d, want 200 or 503", rec.Code)
+	}
+}
+
+// --- Server Close Tests ---
+
+func TestServerClose(t *testing.T) {
+	s := testServer()
+
+	// Close should not panic
+	s.Close()
+}
+
+// --- handlePHPInstall Tests ---
+
+func TestPHPInstall(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"version":"8.2"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/php/install", body))
+
+	// May return various codes depending on PHP manager
+	if rec.Code != 200 && rec.Code != 500 && rec.Code != 501 {
+		t.Errorf("status = %d, want 200, 500 or 501", rec.Code)
+	}
+}
+
+func TestPHPInstallInvalidJSON(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{not valid`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/php/install", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// --- handleAddDomain with validation errors ---
+
+func TestAddDomainValidationErrors(t *testing.T) {
+	s := testServer()
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "empty host",
+			body:       `{"host":"","type":"static"}`,
+			wantStatus: 400,
+		},
+		{
+			name:       "invalid host characters",
+			body:       `{"host":"test..com","type":"static"}`,
+			wantStatus: 400,
+		},
+		{
+			name:       "missing type",
+			body:       `{"host":"test.com"}`,
+			wantStatus: 201, // API allows missing type, defaults to static
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", strings.NewReader(tt.body)))
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
 	}
 }

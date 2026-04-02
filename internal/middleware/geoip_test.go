@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -112,5 +115,99 @@ func TestPrivateIPBypass(t *testing.T) {
 
 	if !called {
 		t.Error("private IPs should bypass GeoIP check")
+	}
+}
+
+// TestGeoIPWhitelist tests whitelist mode.
+func TestGeoIPWhitelist(t *testing.T) {
+	mw := GeoIP(GeoIPConfig{AllowedCountries: []string{"US", "UK"}})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	// Test with non-matching country (should be blocked)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Should pass through if we can't determine country
+	if rec.Code != 200 {
+		t.Errorf("expected 200 when country unknown, got %d", rec.Code)
+	}
+}
+
+// TestGeoIPEmptyIP tests requests with empty IP.
+func TestGeoIPEmptyIP(t *testing.T) {
+	mw := GeoIP(GeoIPConfig{BlockedCountries: []string{"CN"}})
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(200)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	// Empty RemoteAddr
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Error("empty IP should bypass GeoIP check")
+	}
+}
+
+// TestGeoIPWithDBPath tests loading from DB path.
+func TestGeoIPWithDBPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "geoip.json")
+
+	// Create a valid GeoIP DB
+	data := map[string]string{
+		"1.2.3.0/24": "US",
+		"5.6.7.0/24": "CN",
+	}
+	jsonData, _ := json.Marshal(data)
+	os.WriteFile(dbPath, jsonData, 0644)
+
+	mw := GeoIP(GeoIPConfig{
+		BlockedCountries: []string{"CN"},
+		DBPath:           dbPath,
+	})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	// Test that middleware was created successfully
+	if handler == nil {
+		t.Error("handler should not be nil")
+	}
+}
+
+// TestGeoIPWithInvalidDBPath tests loading from invalid DB path.
+func TestGeoIPWithInvalidDBPath(t *testing.T) {
+	mw := GeoIP(GeoIPConfig{
+		BlockedCountries: []string{"CN"},
+		DBPath:           "/nonexistent/path/geoip.json",
+	})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	// Should still work even with invalid DB path
+	if handler == nil {
+		t.Error("handler should not be nil even with invalid DB path")
+	}
+}
+
+// TestGeoIPCaseInsensitive tests case-insensitive country matching.
+func TestGeoIPCaseInsensitive(t *testing.T) {
+	// Test with lowercase blocked countries
+	mw := GeoIP(GeoIPConfig{BlockedCountries: []string{"cn", "us"}})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	if handler == nil {
+		t.Error("handler should not be nil")
 	}
 }

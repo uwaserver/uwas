@@ -876,3 +876,4 @@ func TestDomainRawGetReadError(t *testing.T) {
 	// Restore permissions for cleanup
 	os.Chmod(domainFile, 0644)
 }
+

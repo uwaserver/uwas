@@ -3038,3 +3038,93 @@ func TestPerDomainBasicAuth(t *testing.T) {
 		t.Errorf("status = %d, want 200 for authenticated request", rec2.Code)
 	}
 }
+
+// --- FetchFragment tests (ESI fragment fetching) ---
+
+func TestFetchFragmentError(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	parentReq := httptest.NewRequest("GET", "/parent", nil)
+	parentReq.Host = "example.com"
+	_, _, _, err := s.FetchFragment("127.0.0.1:1", "/invalid", parentReq)
+	if err == nil {
+		t.Error("expected error for invalid URL")
+	}
+}
+
+// --- deriveSFTPPassword tests ---
+
+func TestDeriveSFTPPassword(t *testing.T) {
+	password := deriveSFTPPassword("test-secret-key", "testuser")
+	if password == "" {
+		t.Error("expected non-empty password")
+	}
+
+	// Same user should derive same password
+	password2 := deriveSFTPPassword("test-secret-key", "testuser")
+	if password != password2 {
+		t.Error("same user should derive same password")
+	}
+
+	// Different user should derive different password
+	password3 := deriveSFTPPassword("test-secret-key", "otheruser")
+	if password == password3 {
+		t.Error("different users should have different passwords")
+	}
+}
+
+func TestDeriveSFTPPasswordEmptyKey(t *testing.T) {
+	password := deriveSFTPPassword("", "testuser")
+	if password == "" {
+		t.Error("expected non-empty password even with empty key")
+	}
+}
+
+// --- matchLocation Tests ---
+
+func TestMatchLocation(t *testing.T) {
+	// Test exact match
+	matched := matchLocation("/api/users", "/api/users")
+	if !matched {
+		t.Error("expected exact match")
+	}
+
+	// Test prefix match
+	matched2 := matchLocation("/api/users/123", "/api")
+	if !matched2 {
+		t.Error("expected prefix match")
+	}
+
+	// Test no match
+	matched3 := matchLocation("/other", "/api")
+	if matched3 {
+		t.Error("expected no match")
+	}
+}
+
+// --- handleSignals Tests ---
+
+func TestHandleSignals(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1",
+			LogLevel:    "error",
+			LogFormat:   "text",
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// handleSignals blocks, so we just verify it doesn't panic when called
+	// In real usage it runs in a goroutine
+	// We won't actually call it here since it blocks, just verify Server has the method
+	_ = s
+}

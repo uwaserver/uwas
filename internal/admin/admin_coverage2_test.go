@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/appmanager"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/config"
@@ -3681,3 +3683,164 @@ func TestMigrateWithLocalRoot(t *testing.T) {
 		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// =============================================================================
+// Additional coverage: handleSystem endpoint
+// =============================================================================
+
+func TestHandleSystemEndpoint(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.handleSystem(rec, httptest.NewRequest("GET", "/api/v1/system", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+
+	// Check required fields exist
+	requiredFields := []string{"version", "go_version", "os", "arch", "cpus", "goroutines", "pid"}
+	for _, field := range requiredFields {
+		if body[field] == nil {
+			t.Errorf("missing required field: %s", field)
+		}
+	}
+
+	// Check numeric fields
+	if cpus, ok := body["cpus"].(float64); !ok || cpus <= 0 {
+		t.Error("cpus should be a positive number")
+	}
+}
+
+// =============================================================================
+// Additional coverage: SetPHPManager
+// =============================================================================
+
+func TestSetPHPManagerSetsManager(t *testing.T) {
+	s := testServer()
+	if s.phpMgr != nil {
+		t.Fatal("phpMgr should be nil initially")
+	}
+
+	// Create a PHP manager and set it
+	pm := testPHPManager()
+	s.SetPHPManager(pm)
+
+	if s.phpMgr == nil {
+		t.Error("phpMgr should be set after SetPHPManager")
+	}
+}
+
+// =============================================================================
+// Additional coverage: handleAppStart endpoint
+// =============================================================================
+
+func TestHandleAppStartNoManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/apps/example.com/start", nil)
+	req.SetPathValue("domain", "example.com")
+	s.handleAppStart(rec, req)
+	if rec.Code != 501 {
+		t.Errorf("status = %d, want 501 (no app manager)", rec.Code)
+	}
+}
+
+func TestHandleAppStartWithManager(t *testing.T) {
+	s := testServer()
+	am := appmanager.New(nil)
+	s.SetAppManager(am)
+
+	// Register an app first
+	am.Register("testapp.com", config.AppConfig{
+		Runtime: "node",
+		Command: "echo hello",
+		Port:    9999,
+	}, t.TempDir())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/apps/testapp.com/start", nil)
+	req.SetPathValue("domain", "testapp.com")
+	s.handleAppStart(rec, req)
+	// May fail on Windows but exercises the code path
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d", rec.Code)
+	}
+}
+
+// =============================================================================
+// Additional coverage: handleDBStart endpoint
+// =============================================================================
+
+func TestHandleDBStartNoManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/database/start", nil)
+	s.handleDBStart(rec, req)
+	// May return 500 or 501 depending on implementation
+	if rec.Code != 500 && rec.Code != 501 {
+		t.Errorf("status = %d, want 500 or 501", rec.Code)
+	}
+}
+
+// =============================================================================
+// Additional coverage: handleDockerDBStart endpoint
+// =============================================================================
+
+func TestHandleDockerDBStart(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/database/docker/start", strings.NewReader(`{"type":"mariadb"}`))
+	s.handleDockerDBStart(rec, req)
+	// Should start task, may fail but exercises code
+	if rec.Code != 200 {
+		t.Logf("status = %d (docker may not be available)", rec.Code)
+	}
+}
+
+// =============================================================================
+// Additional coverage: handleServiceStart endpoint
+// =============================================================================
+
+func TestHandleServiceStart(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/services/nginx/start", nil)
+	req.SetPathValue("name", "nginx")
+	s.handleServiceStart(rec, req)
+	// May fail on Windows but exercises the code path
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d", rec.Code)
+	}
+}
+
+// =============================================================================
+// Additional coverage: Start method (Server)
+// =============================================================================
+
+func TestServerStart(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{Listen: "127.0.0.1:0"},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	// Start the server in a goroutine
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		s.Start()
+	}()
+
+	// Give it time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop the server
+	if s.httpSrv != nil {
+		s.httpSrv.Shutdown(ctx)
+	}
+}
+

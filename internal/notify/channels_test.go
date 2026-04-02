@@ -601,3 +601,23 @@ func TestSendEmailMultipleRecipients(t *testing.T) {
 		t.Errorf("unexpected recipients: %v", capturedTo)
 	}
 }
+
+func TestSendWebhookEmptyURL(t *testing.T) {
+	err := sendWebhook("", testMsg())
+	if err == nil {
+		t.Fatal("expected error for empty webhook URL")
+	}
+	if !strings.Contains(err.Error(), "webhook url is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSendSlackEmptyURL(t *testing.T) {
+	err := sendSlack("", testMsg())
+	if err == nil {
+		t.Fatal("expected error for empty slack webhook URL")
+	}
+	if !strings.Contains(err.Error(), "slack webhook_url is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}

@@ -612,3 +612,67 @@ func TestStatusStruct(t *testing.T) {
 		t.Errorf("Rules[1].Action = %q, want %q", st.Rules[1].Action, "DENY")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SetAdminPort tests
+// ---------------------------------------------------------------------------
+
+func TestSetAdminPort(t *testing.T) {
+	// Clear protected ports before test
+	protectedPorts = make(map[string]bool)
+
+	SetAdminPort("9443")
+	if !protectedPorts["9443"] {
+		t.Error("expected port 9443 to be protected")
+	}
+}
+
+func TestSetAdminPortWithHost(t *testing.T) {
+	protectedPorts = make(map[string]bool)
+
+	SetAdminPort("0.0.0.0:9443")
+	if !protectedPorts["9443"] {
+		t.Error("expected port 9443 to be protected from host:port format")
+	}
+}
+
+func TestSetAdminPortEmpty(t *testing.T) {
+	protectedPorts = make(map[string]bool)
+
+	SetAdminPort("")
+	if len(protectedPorts) != 0 {
+		t.Error("expected no protected ports for empty input")
+	}
+}
+
+func TestSetAdminPortColonOnly(t *testing.T) {
+	protectedPorts = make(map[string]bool)
+
+	SetAdminPort(":8080")
+	if !protectedPorts["8080"] {
+		t.Error("expected port 8080 to be protected from :port format")
+	}
+}
+
+func TestDenyPortProtectedAdminPort(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	// Clear and set protected ports
+	protectedPorts = make(map[string]bool)
+	SetAdminPort("9999")
+
+	// Should be able to allow protected port
+	err := AllowPort("9999", "tcp")
+	if err != nil {
+		t.Errorf("AllowPort() error = %v, want nil", err)
+	}
+
+	// Should NOT be able to deny protected port
+	err = DenyPort("9999", "tcp")
+	if err == nil {
+		t.Error("DenyPort() expected error for protected admin port")
+	}
+}
