@@ -246,6 +246,81 @@ export default function Cache() {
           </div>
         </div>
       )}
+
+      {/* Redis L3 Cache */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-card-foreground">
+          <Database className="h-5 w-5 text-purple-500" />
+          Redis L3 Cache
+        </h3>
+        <p className="text-sm text-muted-foreground mb-4">
+          Configure Redis as an L3 cache layer for distributed caching across multiple UWAS instances.
+        </p>
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="rounded border-border"
+                defaultChecked={false}
+              />
+              <span className="text-sm text-foreground">Enable Redis Cache</span>
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Redis Address</label>
+              <input
+                type="text"
+                defaultValue="localhost:6379"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="localhost:6379"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Database (DB)</label>
+              <input
+                type="number"
+                defaultValue={0}
+                min={0}
+                max={15}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1">Password (optional)</label>
+            <input
+              type="password"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Redis password"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1">Key Prefix</label>
+            <input
+              type="text"
+              defaultValue="uwas"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="uwas"
+            />
+            <p className="text-xs text-muted-foreground mt-1">Prefix for all cache keys in Redis</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Test Connection
+            </button>
+            <button
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
+            >
+              Save Configuration
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

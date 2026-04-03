@@ -126,16 +126,25 @@ type ACMEConfig struct {
 }
 
 type CacheConfig struct {
-	Enabled              bool     `yaml:"enabled"`
-	MemoryLimit          ByteSize `yaml:"memory_limit"`
-	DiskPath             string   `yaml:"disk_path"`
-	DiskLimit            ByteSize `yaml:"disk_limit"`
-	DefaultTTL           int      `yaml:"default_ttl"`
-	GraceTTL             int      `yaml:"grace_ttl"`
-	StaleWhileRevalidate bool     `yaml:"stale_while_revalidate"`
-	PurgeKey             string   `yaml:"purge_key"`
-	VaryByQuery          bool     `yaml:"vary_by_query"`       // include query string in cache key
-	VaryByHeaders        []string `yaml:"vary_by_headers"`     // include specific request headers in cache key
+	Enabled              bool         `yaml:"enabled"`
+	MemoryLimit          ByteSize     `yaml:"memory_limit"`
+	DiskPath             string       `yaml:"disk_path"`
+	DiskLimit            ByteSize     `yaml:"disk_limit"`
+	DefaultTTL           int          `yaml:"default_ttl"`
+	GraceTTL             int          `yaml:"grace_ttl"`
+	StaleWhileRevalidate bool         `yaml:"stale_while_revalidate"`
+	PurgeKey             string       `yaml:"purge_key"`
+	VaryByQuery          bool         `yaml:"vary_by_query"`       // include query string in cache key
+	VaryByHeaders        []string     `yaml:"vary_by_headers"`     // include specific request headers in cache key
+	Redis                RedisConfig  `yaml:"redis"`               // L3 Redis cache
+}
+
+type RedisConfig struct {
+	Enabled  bool     `yaml:"enabled"`
+	Addr     string   `yaml:"addr"`      // "localhost:6379"
+	Password string   `yaml:"password"`
+	DB       int      `yaml:"db"`
+	Prefix   string   `yaml:"prefix"`    // key prefix
 }
 
 type AlertingConfig struct {
