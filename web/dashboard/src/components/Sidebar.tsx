@@ -43,6 +43,7 @@ import {
   Info,
   Terminal,
   Box,
+  Cloud,
 } from 'lucide-react';
 import { clearToken } from '@/lib/api';
 import { useTheme } from '@/hooks/useTheme';
@@ -72,6 +73,7 @@ const groups: NavGroup[] = [
       { to: '/topology', label: 'Topology', icon: Network },
       { to: '/certificates', label: 'Certificates', icon: Lock },
       { to: '/dns', label: 'DNS', icon: Waypoints },
+      { to: '/cloudflare', label: 'Cloudflare', icon: Cloud },
       { to: '/wordpress', label: 'WordPress', icon: Zap },
       { to: '/clone', label: 'Clone / Staging', icon: Copy },
       { to: '/migrate', label: 'Migration', icon: ArrowDownToLine },

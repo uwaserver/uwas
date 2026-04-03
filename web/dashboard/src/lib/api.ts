@@ -1027,3 +1027,58 @@ export function requestPin(): Promise<string> {
     }
   });
 }
+
+// ── Cloudflare Integration ──
+
+export interface CloudflareStatus {
+  connected: boolean;
+  email?: string;
+  account_id?: string;
+}
+
+export interface CloudflareTunnel {
+  id: string;
+  name: string;
+  domain: string;
+  token: string;
+  running: boolean;
+  connections?: number;
+  created_at?: string;
+}
+
+export interface CloudflareZone {
+  id: string;
+  name: string;
+  status: string;
+  plan?: string;
+}
+
+export const fetchCloudflareStatus = () => api<CloudflareStatus>('/api/v1/cloudflare/status');
+
+export const connectCloudflare = (token: string, accountId: string) =>
+  api<{ status: string }>('/api/v1/cloudflare/connect', { method: 'POST', body: JSON.stringify({ token, account_id: accountId }) });
+
+export const disconnectCloudflare = () =>
+  api<{ status: string }>('/api/v1/cloudflare/disconnect', { method: 'POST' });
+
+export const fetchCloudflareTunnels = () => api<CloudflareTunnel[]>('/api/v1/cloudflare/tunnels');
+
+export const createCloudflareTunnel = (name: string, domain: string) =>
+  api<CloudflareTunnel>('/api/v1/cloudflare/tunnels', { method: 'POST', body: JSON.stringify({ name, domain }) });
+
+export const deleteCloudflareTunnel = (id: string) =>
+  api<{ status: string }>(`/api/v1/cloudflare/tunnels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+export const startCloudflareTunnel = (id: string) =>
+  api<{ status: string }>(`/api/v1/cloudflare/tunnels/${encodeURIComponent(id)}/start`, { method: 'POST' });
+
+export const stopCloudflareTunnel = (id: string) =>
+  api<{ status: string }>(`/api/v1/cloudflare/tunnels/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+
+export const purgeCloudflareCache = (url?: string, everything = false) =>
+  api<{ status: string }>('/api/v1/cloudflare/cache/purge', { method: 'POST', body: JSON.stringify({ url, everything }) });
+
+export const fetchCloudflareZones = () => api<CloudflareZone[]>('/api/v1/cloudflare/zones');
+
+export const syncCloudflareDNS = (zoneId: string) =>
+  api<{ status: string; records_synced: number }>(`/api/v1/cloudflare/zones/${encodeURIComponent(zoneId)}/sync`, { method: 'POST' });

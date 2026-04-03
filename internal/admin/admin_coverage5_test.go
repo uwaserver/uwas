@@ -887,3 +887,117 @@ func TestHandleDeployWebhookEndpoint2(t *testing.T) {
 		t.Errorf("status = %d, want 200, 400, 404, 500, or 501", rec.Code)
 	}
 }
+
+// Cloudflare handlers tests
+
+func TestHandleCloudflareStatus_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cloudflare/status", nil))
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleCloudflareConnect_InvalidJSON(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{invalid json}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareConnect_MissingFields(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"token":""}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareDisconnect_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/disconnect", nil))
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleCloudflareTunnels_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cloudflare/tunnels", nil))
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleCloudflareTunnelCreate_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"test","domain":"example.com"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels", body))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareTunnelDelete_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/cloudflare/tunnels/test-id", nil))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareTunnelStart_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/test-id/start", nil))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareTunnelStop_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/test-id/stop", nil))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareCachePurge_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"url":"https://example.com","everything":false}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/cache/purge", body))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleCloudflareZones_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cloudflare/zones", nil))
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleCloudflareZoneSync_NotConnected(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/zones/test-id/sync", nil))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
