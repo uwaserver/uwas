@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -2141,58 +2142,37 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result)
 }
 
-// handleMigrateCPanel imports a cPanel backup archive (cpmove-*.tar.gz).
-// Expects multipart upload with "backup" file field.
-func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
-
-	r.Body = http.MaxBytesReader(w, r.Body, 10<<30) // 10GB max backup
-	if err := r.ParseMultipartForm(256 << 20); err != nil {
-		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	file, header, err := r.FormFile("backup")
+// saveUploadedFile saves uploaded file to temp location and returns path.
+func saveUploadedFile(r *http.Request, fieldName string) (string, *multipart.FileHeader, error) {
+	file, header, err := r.FormFile(fieldName)
 	if err != nil {
-		jsonError(w, "backup file required", http.StatusBadRequest)
-		return
+		return "", nil, fmt.Errorf("backup file required")
 	}
 	defer file.Close()
 
 	tmp, err := os.CreateTemp("", "uwas-cpanel-upload-*.tar.gz")
 	if err != nil {
-		jsonError(w, "create temp file: "+err.Error(), http.StatusInternalServerError)
-		return
+		return "", nil, fmt.Errorf("create temp file: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := io.Copy(tmp, file); err != nil {
 		tmp.Close()
-		jsonError(w, "save upload: "+err.Error(), http.StatusInternalServerError)
-		return
+		return "", nil, fmt.Errorf("save upload: %w", err)
 	}
 	tmp.Close()
+	return tmp.Name(), header, nil
+}
 
-	s.configMu.RLock()
-	webRoot := s.config.Global.WebRoot
-	s.configMu.RUnlock()
-	if webRoot == "" {
-		webRoot = "/var/www"
-	}
-
-	importDB := r.FormValue("import_db") == "true"
-	s.RecordAudit("migrate.cpanel", header.Filename, ip, true)
-
-	result, err := migrate.ImportCPanelBackup(tmp.Name(), webRoot, importDB)
-	if err != nil {
-		jsonError(w, "import failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+// createDomainsFromMigration creates domain configs from migration result.
+func (s *Server) createDomainsFromMigration(result *migrate.CPanelResult, webRoot string) []string {
 	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	existingHosts := map[string]bool{}
 	for _, d := range s.config.Domains {
 		existingHosts[d.Host] = true
 	}
+
 	var added []string
 	for _, dom := range result.Domains {
 		if dom.Domain == "" || dom.Domain == "unknown" || existingHosts[dom.Domain] {
@@ -2207,8 +2187,44 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 		s.config.Domains = append(s.config.Domains, newDomain)
 		added = append(added, dom.Domain)
 	}
-	s.configMu.Unlock()
 
+	return added
+}
+
+// handleMigrateCPanel imports a cPanel backup archive (cpmove-*.tar.gz).
+// Expects multipart upload with "backup" file field.
+func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<30) // 10GB max backup
+	if err := r.ParseMultipartForm(256 << 20); err != nil {
+		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	tmpPath, header, err := saveUploadedFile(r, "backup")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
+
+	importDB := r.FormValue("import_db") == "true"
+	s.RecordAudit("migrate.cpanel", header.Filename, ip, true)
+
+	result, err := migrate.ImportCPanelBackup(tmpPath, webRoot, importDB)
+	if err != nil {
+		jsonError(w, "import failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	added := s.createDomainsFromMigration(result, webRoot)
 	if len(added) > 0 {
 		s.persistConfig()
 		s.notifyDomainChange()
