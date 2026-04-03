@@ -124,12 +124,55 @@ func (m *Manager) LoadManualCerts() {
 	}
 }
 
+// isDomainConfigured checks if a domain is in the configured domains list.
+// It supports exact match, wildcard match, and alias match.
+// If no domains are configured, returns true to allow all (backward compatibility).
+func (m *Manager) isDomainConfigured(host string) bool {
+	m.domainsMu.RLock()
+	defer m.domainsMu.RUnlock()
+
+	// If no domains configured, allow all (for backward compatibility in tests/dev)
+	if len(m.domains) == 0 {
+		return true
+	}
+
+	for _, d := range m.domains {
+		domainHost := strings.ToLower(d.Host)
+		// Exact match
+		if domainHost == host {
+			return true
+		}
+		// Wildcard match: *.example.com matches sub.example.com
+		if strings.HasPrefix(domainHost, "*.") {
+			suffix := domainHost[2:] // Remove "*."
+			if strings.HasSuffix(host, "."+suffix) || host == suffix {
+				return true
+			}
+		}
+		// Check aliases
+		for _, alias := range d.Aliases {
+			if strings.ToLower(alias) == host {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // GetCertificate is the tls.Config.GetCertificate callback for SNI routing.
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	name := strings.ToLower(hello.ServerName)
 	handshakeCtx := context.Background()
 	if helloCtx := hello.Context(); helloCtx != nil {
 		handshakeCtx = helloCtx
+	}
+
+	// 0. Check if domain is in whitelist (configured domains)
+	// This prevents generating certificates for unknown subdomains like imap2, postmaster, etc.
+	if !m.isDomainConfigured(name) {
+		// Domain not configured - return error to reject the connection
+		// This prevents self-signed cert generation for unknown domains
+		return nil, fmt.Errorf("domain %s not configured", name)
 	}
 
 	// 1. Exact match

@@ -73,27 +73,57 @@ func getUFWStatus() Status {
 
 func parseUFWRule(line string) Rule {
 	// Format: [ 1] 80/tcp                     ALLOW IN    Anywhere
+	// Format: [ 2] 22/tcp                     ALLOW IN    Anywhere (v6)
+	// Format: [ 3] Anywhere on eth0           DENY IN     192.168.1.100
 	r := Rule{}
 
-	// Extract number
-	if idx := strings.Index(line, "]"); idx > 0 {
-		numStr := strings.TrimSpace(line[1:idx])
-		fmt.Sscanf(numStr, "%d", &r.Number)
-		line = strings.TrimSpace(line[idx+1:])
+	// Clean the line - remove extra spaces and normalize
+	line = strings.TrimSpace(line)
+
+	// Extract number: [ 1] or [1]
+	if !strings.HasPrefix(line, "[") {
+		return r
 	}
 
-	parts := strings.Fields(line)
+	closeBracket := strings.Index(line, "]")
+	if closeBracket <= 0 {
+		return r
+	}
+
+	numStr := strings.TrimSpace(line[1:closeBracket])
+	fmt.Sscanf(numStr, "%d", &r.Number)
+
+	// Get the rest after ]
+	rest := strings.TrimSpace(line[closeBracket+1:])
+
+	// Split by multiple spaces to get parts
+	parts := strings.Fields(rest)
 	if len(parts) < 3 {
 		return r
 	}
 
-	r.To = parts[0]
-	if strings.Contains(parts[0], "/") {
-		pp := strings.SplitN(parts[0], "/", 2)
-		r.Port = pp[0]
-		r.Proto = pp[1]
+	// First part is usually port/proto or interface info
+	firstPart := parts[0]
+
+	// Check if it contains port/proto like "80/tcp"
+	if strings.Contains(firstPart, "/") {
+		pp := strings.SplitN(firstPart, "/", 2)
+		if len(pp) == 2 {
+			r.Port = pp[0]
+			r.Proto = pp[1]
+			r.To = firstPart
+		}
+	} else if firstPart == "Anywhere" {
+		// Anywhere with interface? Like "Anywhere on eth0"
+		r.To = firstPart
+		if len(parts) >= 3 && strings.ToLower(parts[1]) == "on" {
+			r.To = firstPart + " " + parts[1] + " " + parts[2]
+		}
+	} else {
+		r.To = firstPart
 	}
 
+	// Find action (ALLOW, DENY, REJECT)
 	for _, p := range parts {
 		up := strings.ToUpper(p)
 		if up == "ALLOW" || up == "DENY" || up == "REJECT" {
@@ -102,8 +132,13 @@ func parseUFWRule(line string) Rule {
 		}
 	}
 
-	if idx := strings.Index(line, "Anywhere"); idx >= 0 {
-		r.From = "Anywhere"
+	// Find From (usually "Anywhere" or an IP)
+	for _, p := range parts {
+		lowerP := strings.ToLower(p)
+		if lowerP == "anywhere" {
+			r.From = "Anywhere"
+			break
+		}
 	}
 
 	return r

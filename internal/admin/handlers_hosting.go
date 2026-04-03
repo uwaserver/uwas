@@ -460,6 +460,41 @@ func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Check if file is an image - serve binary with proper content type
+	lowerPath := strings.ToLower(path)
+	if strings.HasSuffix(lowerPath, ".png") ||
+		strings.HasSuffix(lowerPath, ".jpg") ||
+		strings.HasSuffix(lowerPath, ".jpeg") ||
+		strings.HasSuffix(lowerPath, ".gif") ||
+		strings.HasSuffix(lowerPath, ".webp") ||
+		strings.HasSuffix(lowerPath, ".svg") ||
+		strings.HasSuffix(lowerPath, ".ico") {
+
+		// Set appropriate content type
+		contentType := "application/octet-stream"
+		switch {
+		case strings.HasSuffix(lowerPath, ".png"):
+			contentType = "image/png"
+		case strings.HasSuffix(lowerPath, ".jpg") || strings.HasSuffix(lowerPath, ".jpeg"):
+			contentType = "image/jpeg"
+		case strings.HasSuffix(lowerPath, ".gif"):
+			contentType = "image/gif"
+		case strings.HasSuffix(lowerPath, ".webp"):
+			contentType = "image/webp"
+		case strings.HasSuffix(lowerPath, ".svg"):
+			contentType = "image/svg+xml"
+		case strings.HasSuffix(lowerPath, ".ico"):
+			contentType = "image/x-icon"
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+		w.Write(data)
+		return
+	}
+
+	// For text files, return as JSON
 	jsonResponse(w, map[string]string{"content": string(data), "path": path})
 }
 
