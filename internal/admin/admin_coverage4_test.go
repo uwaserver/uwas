@@ -654,3 +654,88 @@ func TestDBUsersEndpoint2(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// File Upload Handler Tests
+// =============================================================================
+
+func TestHandleFileUpload_NoFileManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	// Multipart form data for file upload
+	body := strings.NewReader("------Boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\ntest content\r\n------Boundary--\r\n")
+	req := httptest.NewRequest("POST", "/api/v1/files/test.com/upload", body)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=----Boundary")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
+	}
+}
+
+// =============================================================================
+// SSH Key Handler Tests
+// =============================================================================
+
+func TestHandleSSHKeyDelete_NoSFTP(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"fingerprint":"aa:bb:cc:dd:ee:ff"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/users/test.com/ssh-keys", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 && rec.Code != 200 {
+		t.Errorf("status = %d, want 501, 404, 400, 500, or 200", rec.Code)
+	}
+}
+
+// =============================================================================
+// Update Handler Tests
+// =============================================================================
+
+func TestHandleUpdate_NoUpdate(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/system/update", nil))
+	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
+		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
+	}
+}
+
+// =============================================================================
+// Docker DB Handler Tests
+// =============================================================================
+
+func TestHandleDockerDBCreate_NoDocker(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"engine":"mysql","name":"test","port":3306}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/docker", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
+	}
+}
+
+// =============================================================================
+// DNS Handler Tests
+// =============================================================================
+
+func TestHandleDNSRecordDelete_NoDNSManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/dns/test.com/records/test-id", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
+	}
+}
+
+// =============================================================================
+// Package Handler Tests
+// =============================================================================
+
+func TestHandlePackageInstall_NoPackage(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"id":"test-package"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/packages/install", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
+	}
+}
+

@@ -1873,3 +1873,183 @@ func TestInstancesEmptyManager(t *testing.T) {
 		t.Errorf("expected 0 instances, got %d", len(instances))
 	}
 }
+
+// =============================================================================
+// Additional coverage tests
+// =============================================================================
+
+// TestStatsNotRunning2 tests Stats on non-running app.
+func TestStatsNotRunning2(t *testing.T) {
+	m := New(nil)
+	m.Register("stats-test.com", config.AppConfig{
+		Command: "sleep 60",
+		Runtime: "custom",
+		Port:    9000,
+	}, "/tmp")
+
+	stats := m.Stats("stats-test.com")
+	if stats == nil {
+		t.Fatal("expected non-nil stats")
+	}
+	if stats.Running {
+		t.Error("expected not running")
+	}
+	if stats.PID != 0 {
+		t.Error("expected PID to be 0")
+	}
+}
+
+// TestStopNotRunning2 tests Stop on non-running app.
+func TestStopNotRunning2(t *testing.T) {
+	m := New(nil)
+	m.Register("stop-notrunning.com", config.AppConfig{
+		Command: "sleep 60",
+		Runtime: "custom",
+		Port:    9001,
+	}, "/tmp")
+
+	err := m.Stop("stop-notrunning.com")
+	// Should error because not running
+	if err == nil {
+		t.Error("expected error when stopping non-running app")
+	}
+}
+
+// TestStopNonExistent tests Stop on non-existent app.
+func TestStopNonExistent(t *testing.T) {
+	m := New(nil)
+
+	err := m.Stop("nonexistent.com")
+	if err == nil {
+		t.Error("expected error when stopping non-existent app")
+	}
+}
+
+// TestGetNonExistent tests Get on non-existent domain.
+func TestGetNonExistent(t *testing.T) {
+	m := New(nil)
+
+	result := m.Get("nonexistent.com")
+	if result != nil {
+		t.Error("expected nil for non-existent domain")
+	}
+}
+
+// TestInstancesWithMultiple tests Instances with multiple apps.
+func TestInstancesWithMultiple(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process tests skipped on Windows")
+	}
+
+	dir := t.TempDir()
+	m := New(nil)
+
+	// Register multiple apps
+	domains := []string{"inst1.com", "inst2.com", "inst3.com"}
+	for i, domain := range domains {
+		m.Register(domain, config.AppConfig{
+			Command: "sleep 60",
+			Runtime: "custom",
+			Port:    9100 + i,
+		}, dir)
+	}
+
+	// Start only first two
+	for i := 0; i < 2; i++ {
+		if err := m.Start(domains[i]); err != nil {
+			t.Fatalf("failed to start %s: %v", domains[i], err)
+		}
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	instances := m.Instances()
+	if len(instances) != 3 {
+		t.Errorf("expected 3 instances, got %d", len(instances))
+	}
+
+	// Verify running status
+	runningCount := 0
+	for _, inst := range instances {
+		if inst.Running {
+			runningCount++
+		}
+	}
+	if runningCount != 2 {
+		t.Errorf("expected 2 running, got %d", runningCount)
+	}
+
+	// Cleanup
+	m.StopAll()
+}
+
+// TestMonitorProcessAutoRestart tests monitorProcess auto-restart behavior.
+func TestMonitorProcessAutoRestart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process tests skipped on Windows")
+	}
+
+	dir := t.TempDir()
+	m := New(nil)
+
+	// Create a script that exits quickly
+	script := `#!/bin/sh
+sleep 0.1
+exit 1`
+	scriptPath := dir + "/crash.sh"
+	os.WriteFile(scriptPath, []byte(script), 0755)
+
+	m.Register("autorestart.com", config.AppConfig{
+		Command: scriptPath,
+		Runtime: "custom",
+		Port:    9200,
+	}, dir)
+
+	if err := m.Start("autorestart.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for first start
+	time.Sleep(200 * time.Millisecond)
+	inst1 := m.Get("autorestart.com")
+	if !inst1.Running {
+		t.Fatal("expected running after first start")
+	}
+	firstPID := inst1.PID
+
+	// Wait for auto-restart
+	time.Sleep(2500 * time.Millisecond)
+
+	inst2 := m.Get("autorestart.com")
+	if !inst2.Running {
+		t.Error("expected auto-restart to have restarted the process")
+	}
+	if inst2.PID == firstPID {
+		t.Error("expected different PID after restart")
+	}
+
+	m.Stop("autorestart.com")
+}
+
+// TestRestartNotRunning2 tests Restart on non-running app.
+func TestRestartNotRunning2(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process tests skipped on Windows")
+	}
+
+	dir := t.TempDir()
+	m := New(nil)
+
+	m.Register("restart-test.com", config.AppConfig{
+		Command: "sleep 60",
+		Runtime: "custom",
+		Port:    9300,
+	}, dir)
+
+	// Try to restart without starting first
+	err := m.Restart("restart-test.com")
+	// Should error because not running
+	if err == nil {
+		t.Error("expected error when restarting non-running app")
+	}
+}
