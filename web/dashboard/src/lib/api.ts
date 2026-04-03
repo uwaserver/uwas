@@ -955,6 +955,8 @@ export const fetchDBColumns = (db: string, table: string) =>
 export const runDBQuery = (db: string, sql: string, limit?: number) =>
   api<{ columns: string[]; rows: string[][]; count: number }>(`/api/v1/database/explore/${encodeURIComponent(db)}/query`, { method: 'POST', body: JSON.stringify({ sql, limit }) });
 
+export const queryDB = runDBQuery;
+
 // ── SSL Certificate Upload ──
 
 export const uploadCert = (host: string, cert: string, key: string, chain?: string) =>
