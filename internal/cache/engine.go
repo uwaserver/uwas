@@ -9,10 +9,11 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
-// Engine is the main cache interface combining L1 memory + L2 disk.
+// Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
 	memory       *MemoryCache
 	disk         *DiskCache
+	redis        *RedisCache
 	logger       *logger.Logger
 	VaryHeaders  []string // additional headers to include in cache key (from config)
 }
@@ -35,7 +36,7 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
 	return e
 }
 
-// Get looks up a cache entry: L1 (memory) → L2 (disk) → miss.
+// Get looks up a cache entry: L1 (memory) → L2 (disk) → L3 (Redis) → miss.
 func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
 	key := GenerateKey(r, e.varyKeys())
 
@@ -51,6 +52,23 @@ func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
 		if err == nil && resp != nil {
 			if resp.IsFresh() || resp.IsStale() {
 				e.memory.Set(key, resp) // promote
+				if resp.IsFresh() {
+					return resp, StatusHit
+				}
+				return resp, StatusStale
+			}
+		}
+	}
+
+	// L3: Redis (promote to memory on hit)
+	if e.redis != nil {
+		resp, err := e.redis.Get(key)
+		if err == nil && resp != nil {
+			if resp.IsFresh() || resp.IsStale() {
+				e.memory.Set(key, resp) // promote
+				if e.disk != nil {
+					go e.disk.Set(key, resp) // also promote to disk
+				}
 				if resp.IsFresh() {
 					return resp, StatusHit
 				}
@@ -81,6 +99,15 @@ func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
 			}
 		}()
 	}
+
+	// Async Redis write
+	if e.redis != nil {
+		go func() {
+			if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
+				e.logger.Warn("redis cache write failed", "key", key, "error", err)
+			}
+		}()
+	}
 }
 
 // GetByKey looks up a cache entry by explicit key (for ESI fragments).
@@ -91,6 +118,18 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 	}
 	if e.disk != nil {
 		resp, err := e.disk.Get(key)
+		if err == nil && resp != nil {
+			if resp.IsFresh() || resp.IsStale() {
+				e.memory.Set(key, resp)
+				if resp.IsFresh() {
+					return resp, StatusHit
+				}
+				return resp, StatusStale
+			}
+		}
+	}
+	if e.redis != nil {
+		resp, err := e.redis.Get(key)
 		if err == nil && resp != nil {
 			if resp.IsFresh() || resp.IsStale() {
 				e.memory.Set(key, resp)
@@ -114,6 +153,13 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 			}
 		}()
 	}
+	if e.redis != nil {
+		go func() {
+			if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
+				e.logger.Warn("redis cache write failed", "key", key, "error", err)
+			}
+		}()
+	}
 }
 
 // PurgeByTag removes entries matching tags from both L1 and L2.
@@ -127,6 +173,14 @@ func (e *Engine) PurgeAll() {
 	if e.disk != nil {
 		e.disk.PurgeAll()
 	}
+	if e.redis != nil {
+		e.redis.Close()
+	}
+}
+
+// SetRedis attaches a Redis cache to the engine.
+func (e *Engine) SetRedis(redis *RedisCache) {
+	e.redis = redis
 }
 
 // Stats returns cache statistics.

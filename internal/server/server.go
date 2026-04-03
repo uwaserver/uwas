@@ -160,6 +160,17 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			log,
 		)
 		cacheEngine.VaryHeaders = cfg.Global.Cache.VaryByHeaders
+
+		// L3: Redis cache
+		if cfg.Global.Cache.Redis.Enabled {
+			redisCache, err := cache.NewRedisCache(cfg.Global.Cache.Redis, log)
+			if err != nil {
+				log.Warn("failed to initialize Redis cache", "error", err)
+			} else if redisCache != nil {
+				cacheEngine.SetRedis(redisCache)
+				log.Info("Redis L3 cache enabled", "addr", cfg.Global.Cache.Redis.Addr)
+			}
+		}
 	}
 
 	// Alerting engine
