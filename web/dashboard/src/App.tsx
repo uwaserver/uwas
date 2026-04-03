@@ -17,6 +17,7 @@ import Certificates from '@/pages/Certificates';
 import PHP from '@/pages/PHP';
 import Backups from '@/pages/Backups';
 import Database from '@/pages/Database';
+import DBExplorer from '@/pages/DBExplorer';
 import DNS from '@/pages/DNS';
 import AuditLog from '@/pages/AuditLog';
 import UnknownDomains from '@/pages/UnknownDomains';
@@ -126,6 +127,7 @@ export default function App() {
         <Route path="/php-config" element={<PHPConfig />} />
         <Route path="/backups" element={<Backups />} />
         <Route path="/database" element={<Database />} />
+        <Route path="/db-explorer" element={<DBExplorer />} />
         <Route path="/wordpress" element={<WordPress />} />
         <Route path="/clone" element={<CloneStaging />} />
         <Route path="/migrate" element={<Migration />} />

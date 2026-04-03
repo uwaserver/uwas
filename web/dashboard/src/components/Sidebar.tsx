@@ -86,6 +86,7 @@ const groups: NavGroup[] = [
       { to: '/php-config', label: 'PHP Config', icon: Settings },
       { to: '/apps', label: 'Applications', icon: Box },
       { to: '/database', label: 'Database', icon: HardDrive },
+      { to: '/db-explorer', label: 'DB Explorer', icon: Database },
       { to: '/users', label: 'SFTP Users', icon: Users },
       { to: '/cron', label: 'Cron Jobs', icon: Clock },
       { to: '/services', label: 'Services', icon: Activity },
