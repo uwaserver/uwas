@@ -2006,24 +2006,25 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result)
 }
 
-func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+// validateCloneRequest validates the clone request and returns the parsed request or error.
+func (s *Server) validateCloneRequest(r *http.Request) (migrate.CloneRequest, error) {
 	var req migrate.CloneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
+		return req, fmt.Errorf("invalid JSON: %w", err)
 	}
 	if req.SourceDomain == "" || req.TargetDomain == "" {
-		jsonError(w, "source_domain and target_domain required", http.StatusBadRequest)
-		return
+		return req, fmt.Errorf("source_domain and target_domain required")
 	}
+	return req, nil
+}
+
+// resolveClonePaths resolves source and target root paths for cloning.
+func (s *Server) resolveClonePaths(req *migrate.CloneRequest) error {
 	if req.SourceRoot == "" {
 		req.SourceRoot = s.domainRoot(req.SourceDomain)
 	}
 	if req.SourceRoot == "" {
-		jsonError(w, "source domain not found", http.StatusBadRequest)
-		return
+		return fmt.Errorf("source domain not found")
 	}
 	if req.TargetRoot == "" {
 		s.configMu.RLock()
@@ -2034,81 +2035,108 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 		}
 		req.TargetRoot = filepath.Join(webRoot, req.TargetDomain, "public_html")
 	}
-	// Auto-detect source DB from wp-config
-	if req.SourceDB == "" {
-		wpCfg := filepath.Join(req.SourceRoot, "wp-config.php")
-		if data, err := os.ReadFile(wpCfg); err == nil {
-			content := string(data)
-			for _, line := range strings.Split(content, "\n") {
-				if strings.Contains(line, "DB_NAME") {
-					parts := strings.Split(line, "'")
-					if len(parts) >= 4 {
-						req.SourceDB = parts[3]
-					}
-				}
-				if strings.Contains(line, "DB_USER") && req.DBUser == "" {
-					parts := strings.Split(line, "'")
-					if len(parts) >= 4 {
-						req.DBUser = parts[3]
-					}
-				}
-				if strings.Contains(line, "DB_PASSWORD") && req.DBPass == "" {
-					parts := strings.Split(line, "'")
-					if len(parts) >= 4 {
-						req.DBPass = parts[3]
-					}
-				}
+	return nil
+}
+
+// detectWordPressDB auto-detects database credentials from wp-config.php.
+func detectWordPressDB(req *migrate.CloneRequest) {
+	if req.SourceDB != "" {
+		return
+	}
+	wpCfg := filepath.Join(req.SourceRoot, "wp-config.php")
+	data, err := os.ReadFile(wpCfg)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "DB_NAME") {
+			parts := strings.Split(line, "'")
+			if len(parts) >= 4 {
+				req.SourceDB = parts[3]
+			}
+		}
+		if strings.Contains(line, "DB_USER") && req.DBUser == "" {
+			parts := strings.Split(line, "'")
+			if len(parts) >= 4 {
+				req.DBUser = parts[3]
+			}
+		}
+		if strings.Contains(line, "DB_PASSWORD") && req.DBPass == "" {
+			parts := strings.Split(line, "'")
+			if len(parts) >= 4 {
+				req.DBPass = parts[3]
 			}
 		}
 	}
+}
+
+// autoCreateDomainForClone creates domain config after successful clone.
+func (s *Server) autoCreateDomainForClone(req *migrate.CloneRequest, result *migrate.CloneResult) {
+	if result.Status != "done" && result.Status != "completed" {
+		return
+	}
+
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
+	// Find source domain config to copy settings
+	var sourceCfg *config.Domain
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == req.SourceDomain {
+			sourceCfg = &s.config.Domains[i]
+			break
+		}
+	}
+
+	// Check target doesn't already exist
+	for _, d := range s.config.Domains {
+		if d.Host == req.TargetDomain {
+			return
+		}
+	}
+
+	newDomain := config.Domain{
+		Host:     req.TargetDomain,
+		Root:     req.TargetRoot,
+		Type:     "php",
+		SSL:      config.SSLConfig{Mode: "auto"},
+		Htaccess: config.HtaccessConfig{Mode: "import"},
+	}
+	// Copy settings from source if available
+	if sourceCfg != nil {
+		newDomain.Type = sourceCfg.Type
+		newDomain.PHP = sourceCfg.PHP
+		newDomain.Cache = sourceCfg.Cache
+		newDomain.Security = sourceCfg.Security
+	}
+	s.config.Domains = append(s.config.Domains, newDomain)
+	s.persistConfig()
+	s.notifyDomainChange()
+	s.logger.Info("clone: auto-created domain", "domain", req.TargetDomain, "root", req.TargetRoot)
+}
+
+func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
+	ip := requestIP(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	req, err := s.validateCloneRequest(r)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := s.resolveClonePaths(&req); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	detectWordPressDB(&req)
+
 	s.RecordAudit("clone.start", req.SourceDomain+" → "+req.TargetDomain, ip, true)
 	result := migrate.Clone(req)
 
-	// Auto-create domain config for the cloned site
-	if result.Status == "done" || result.Status == "completed" {
-		s.configMu.Lock()
-		// Find source domain config to copy settings
-		var sourceCfg *config.Domain
-		for i := range s.config.Domains {
-			if s.config.Domains[i].Host == req.SourceDomain {
-				sourceCfg = &s.config.Domains[i]
-				break
-			}
-		}
-
-		// Check target doesn't already exist
-		exists := false
-		for _, d := range s.config.Domains {
-			if d.Host == req.TargetDomain {
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			newDomain := config.Domain{
-				Host: req.TargetDomain,
-				Root: req.TargetRoot,
-				Type: "php",
-				SSL:  config.SSLConfig{Mode: "auto"},
-				Htaccess: config.HtaccessConfig{Mode: "import"},
-			}
-			// Copy settings from source if available
-			if sourceCfg != nil {
-				newDomain.Type = sourceCfg.Type
-				newDomain.PHP = sourceCfg.PHP
-				newDomain.Cache = sourceCfg.Cache
-				newDomain.Security = sourceCfg.Security
-			}
-			s.config.Domains = append(s.config.Domains, newDomain)
-			s.configMu.Unlock()
-			s.persistConfig()
-			s.notifyDomainChange()
-			s.logger.Info("clone: auto-created domain", "domain", req.TargetDomain, "root", req.TargetRoot)
-		} else {
-			s.configMu.Unlock()
-		}
-	}
+	s.autoCreateDomainForClone(&req, result)
 
 	jsonResponse(w, result)
 }
