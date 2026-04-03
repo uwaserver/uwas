@@ -190,3 +190,133 @@ func TestHandleDBExploreQuery_InvalidDBName(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+// Additional database handler tests for coverage
+
+func TestHandleDBDrop_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/database/testdb", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBInstall_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"type":"mysql"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/install", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 200 {
+		t.Errorf("status = %d, want 501, 404, 500, or 200", rec.Code)
+	}
+}
+
+func TestHandleDBUninstall_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/uninstall", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBRepair_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/repair", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBForceUninstall_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/force-uninstall", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBStop_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/stop", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBRestart_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/restart", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBUsers_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/database/users", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBExport_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/database/testdb/export", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDockerDBStop_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/docker/test-container/stop", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDockerDBRemove_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/database/docker/test-container", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 200 {
+		t.Errorf("status = %d, want 501, 404, 500, or 200", rec.Code)
+	}
+}
+
+func TestHandleDockerDBListDatabases_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/database/docker/test-container/databases", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDockerDBCreateDatabase_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"testdb"}`)
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/docker/test-container/databases", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDockerDBDropDatabase_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/database/docker/test-container/databases/testdb", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}

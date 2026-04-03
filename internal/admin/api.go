@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	crand "crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -469,6 +470,19 @@ func (s *Server) registerRoutes() {
 	// MCP endpoints
 	s.mux.HandleFunc("GET /api/v1/mcp/tools", s.handleMCPTools)
 	s.mux.HandleFunc("POST /api/v1/mcp/call", s.handleMCPCall)
+
+	// Cloudflare integration
+	s.mux.HandleFunc("GET /api/v1/cloudflare/status", s.handleCloudflareStatus)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/connect", s.handleCloudflareConnect)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/disconnect", s.handleCloudflareDisconnect)
+	s.mux.HandleFunc("GET /api/v1/cloudflare/tunnels", s.handleCloudflareTunnels)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/tunnels", s.handleCloudflareTunnelCreate)
+	s.mux.HandleFunc("DELETE /api/v1/cloudflare/tunnels/{id}", s.handleCloudflareTunnelDelete)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/tunnels/{id}/start", s.handleCloudflareTunnelStart)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/tunnels/{id}/stop", s.handleCloudflareTunnelStop)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/cache/purge", s.handleCloudflareCachePurge)
+	s.mux.HandleFunc("GET /api/v1/cloudflare/zones", s.handleCloudflareZones)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/sync", s.handleCloudflareZoneSync)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -4709,4 +4723,587 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// --- Cloudflare Integration ---
+
+type cloudflareTunnel struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Domain      string    `json:"domain"`
+	Token       string    `json:"token"`
+	Running     bool      `json:"running"`
+	Connections int       `json:"connections,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+}
+
+type cloudflareState struct {
+	Token      string             `json:"token"`
+	AccountID  string             `json:"account_id"`
+	Email      string             `json:"email"`
+	Tunnels    []cloudflareTunnel `json:"tunnels"`
+	Connected  bool               `json:"connected"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
+var (
+	cloudflareMu     sync.RWMutex
+	cloudflareConfig *cloudflareState
+)
+
+func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) {
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+
+	if cfg == nil {
+		jsonResponse(w, map[string]any{
+			"connected": false,
+		})
+		return
+	}
+
+	jsonResponse(w, map[string]any{
+		"connected":   cfg.Connected,
+		"email":       cfg.Email,
+		"account_id":  cfg.AccountID,
+	})
+}
+
+func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Token     string `json:"token"`
+		AccountID string `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Token == "" || req.AccountID == "" {
+		jsonError(w, "token and account_id are required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate token by fetching zones
+	email, err := s.validateCloudflareToken(req.Token, req.AccountID)
+	if err != nil {
+		jsonError(w, "invalid token: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cloudflareMu.Lock()
+	cloudflareConfig = &cloudflareState{
+		Token:     req.Token,
+		AccountID: req.AccountID,
+		Email:     email,
+		Tunnels:   []cloudflareTunnel{},
+		Connected: true,
+		UpdatedAt: time.Now(),
+	}
+	cloudflareMu.Unlock()
+
+	s.RecordAudit("cloudflare.connect", "account: "+req.AccountID, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "connected"})
+}
+
+func (s *Server) validateCloudflareToken(token, accountID string) (string, error) {
+	// Call Cloudflare API to validate token and get user info
+	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success bool `json:"success"`
+		Result  struct {
+			ID        string `json:"id"`
+			Status    string `json:"status"`
+			ExpiresOn string `json:"expires_on"`
+		} `json:"result"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if !result.Success {
+		if len(result.Errors) > 0 {
+			return "", fmt.Errorf("%s", result.Errors[0].Message)
+		}
+		return "", fmt.Errorf("token validation failed")
+	}
+
+	// Get account info
+	req2, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/accounts/"+accountID, nil)
+	if err != nil {
+		return "", err
+	}
+	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.Header.Set("Content-Type", "application/json")
+
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		return "", err
+	}
+	defer resp2.Body.Close()
+
+	var accResult struct {
+		Success bool `json:"success"`
+		Result  struct {
+			Name string `json:"name"`
+		} `json:"result"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&accResult); err != nil {
+		return "", err
+	}
+	if !accResult.Success {
+		if len(accResult.Errors) > 0 {
+			return "", fmt.Errorf("%s", accResult.Errors[0].Message)
+		}
+		return "", fmt.Errorf("account validation failed")
+	}
+
+	return accResult.Result.Name, nil
+}
+
+func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Request) {
+	cloudflareMu.Lock()
+	oldCfg := cloudflareConfig
+	cloudflareConfig = nil
+	cloudflareMu.Unlock()
+
+	if oldCfg != nil {
+		s.RecordAudit("cloudflare.disconnect", "account: "+oldCfg.AccountID, requestIP(r), true)
+	}
+
+	jsonResponse(w, map[string]string{"status": "disconnected"})
+}
+
+func (s *Server) handleCloudflareTunnels(w http.ResponseWriter, r *http.Request) {
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+
+	if cfg == nil || !cfg.Connected {
+		jsonResponse(w, []cloudflareTunnel{})
+		return
+	}
+
+	// Return stored tunnels (in-memory for now, could be persisted)
+	jsonResponse(w, cfg.Tunnels)
+}
+
+func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Request) {
+	cloudflareMu.Lock()
+	defer cloudflareMu.Unlock()
+
+	if cloudflareConfig == nil || !cloudflareConfig.Connected {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Name   string `json:"name"`
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Domain == "" {
+		jsonError(w, "name and domain are required", http.StatusBadRequest)
+		return
+	}
+
+	// Generate a unique ID and token for the tunnel
+	tunnelID := generateCloudflareID()
+	token := generateCloudflareToken()
+
+	tunnel := cloudflareTunnel{
+		ID:        tunnelID,
+		Name:      req.Name,
+		Domain:    req.Domain,
+		Token:     token,
+		Running:   false,
+		CreatedAt: time.Now(),
+	}
+
+	cloudflareConfig.Tunnels = append(cloudflareConfig.Tunnels, tunnel)
+	cloudflareConfig.UpdatedAt = time.Now()
+
+	s.RecordAudit("cloudflare.tunnel.create", req.Name+" ("+req.Domain+")", requestIP(r), true)
+	jsonResponse(w, tunnel)
+}
+
+func generateCloudflareID() string {
+	b := make([]byte, 16)
+	crand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func generateCloudflareToken() string {
+	b := make([]byte, 32)
+	crand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		jsonError(w, "tunnel id required", http.StatusBadRequest)
+		return
+	}
+
+	cloudflareMu.Lock()
+	defer cloudflareMu.Unlock()
+
+	if cloudflareConfig == nil {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	// Find and remove tunnel
+	found := false
+	newTunnels := make([]cloudflareTunnel, 0, len(cloudflareConfig.Tunnels))
+	for _, t := range cloudflareConfig.Tunnels {
+		if t.ID == id {
+			found = true
+			continue
+		}
+		newTunnels = append(newTunnels, t)
+	}
+
+	if !found {
+		jsonError(w, "tunnel not found", http.StatusNotFound)
+		return
+	}
+
+	cloudflareConfig.Tunnels = newTunnels
+	cloudflareConfig.UpdatedAt = time.Now()
+
+	s.RecordAudit("cloudflare.tunnel.delete", "id: "+id, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		jsonError(w, "tunnel id required", http.StatusBadRequest)
+		return
+	}
+
+	cloudflareMu.Lock()
+	defer cloudflareMu.Unlock()
+
+	if cloudflareConfig == nil {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	// Find tunnel and mark as running
+	found := false
+	for i := range cloudflareConfig.Tunnels {
+		if cloudflareConfig.Tunnels[i].ID == id {
+			cloudflareConfig.Tunnels[i].Running = true
+			cloudflareConfig.Tunnels[i].Connections = 1
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		jsonError(w, "tunnel not found", http.StatusNotFound)
+		return
+	}
+
+	cloudflareConfig.UpdatedAt = time.Now()
+
+	s.RecordAudit("cloudflare.tunnel.start", "id: "+id, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "started"})
+}
+
+func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		jsonError(w, "tunnel id required", http.StatusBadRequest)
+		return
+	}
+
+	cloudflareMu.Lock()
+	defer cloudflareMu.Unlock()
+
+	if cloudflareConfig == nil {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	// Find tunnel and mark as stopped
+	found := false
+	for i := range cloudflareConfig.Tunnels {
+		if cloudflareConfig.Tunnels[i].ID == id {
+			cloudflareConfig.Tunnels[i].Running = false
+			cloudflareConfig.Tunnels[i].Connections = 0
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		jsonError(w, "tunnel not found", http.StatusNotFound)
+		return
+	}
+
+	cloudflareConfig.UpdatedAt = time.Now()
+
+	s.RecordAudit("cloudflare.tunnel.stop", "id: "+id, requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request) {
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+
+	if cfg == nil || !cfg.Connected {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		URL       string `json:"url"`
+		Everything bool   `json:"everything"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Call Cloudflare API to purge cache
+	err := s.purgeCloudflareCache(cfg.Token, req.URL, req.Everything)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.RecordAudit("cloudflare.cache.purge", "url: "+req.URL+", everything: "+fmt.Sprintf("%v", req.Everything), requestIP(r), true)
+	jsonResponse(w, map[string]string{"status": "purged"})
+}
+
+func (s *Server) purgeCloudflareCache(token, url string, everything bool) error {
+	// Get zones first
+	zones, err := s.fetchCloudflareZones(token)
+	if err != nil {
+		return err
+	}
+
+	for _, zone := range zones {
+		var payload []byte
+		if everything {
+			payload = []byte(`{"purge_everything":true}`)
+		} else if url != "" {
+			payload = []byte(`{"files":["` + url + `"]}`)
+		} else {
+			continue
+		}
+
+		req, err := http.NewRequest("POST", "https://api.cloudflare.com/client/v4/zones/"+zone.ID+"/purge_cache", bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+	}
+
+	return nil
+}
+
+func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request) {
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+
+	if cfg == nil || !cfg.Connected {
+		jsonResponse(w, []any{})
+		return
+	}
+
+	zones, err := s.fetchCloudflareZones(cfg.Token)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, zones)
+}
+
+func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
+	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Plan   struct {
+				Name string `json:"name"`
+			} `json:"plan"`
+		} `json:"result"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if !result.Success {
+		if len(result.Errors) > 0 {
+			return nil, fmt.Errorf("%s", result.Errors[0].Message)
+		}
+		return nil, fmt.Errorf("failed to fetch zones")
+	}
+
+	zones := make([]cloudflareZone, len(result.Result))
+	for i, z := range result.Result {
+		zones[i] = cloudflareZone{
+			ID:     z.ID,
+			Name:   z.Name,
+			Status: z.Status,
+			Plan:   z.Plan.Name,
+		}
+	}
+	return zones, nil
+}
+
+type cloudflareZone struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Plan   string `json:"plan,omitempty"`
+}
+
+func (s *Server) handleCloudflareZoneSync(w http.ResponseWriter, r *http.Request) {
+	zoneID := r.PathValue("id")
+	if zoneID == "" {
+		jsonError(w, "zone id required", http.StatusBadRequest)
+		return
+	}
+
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+
+	if cfg == nil || !cfg.Connected {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch DNS records from Cloudflare and sync with local DNS
+	records, err := s.fetchCloudflareDNSRecords(cfg.Token, zoneID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.RecordAudit("cloudflare.dns.sync", "zone: "+zoneID, requestIP(r), true)
+	jsonResponse(w, map[string]any{
+		"status":         "synced",
+		"records_synced": len(records),
+	})
+}
+
+func (s *Server) fetchCloudflareDNSRecords(token, zoneID string) ([]cloudflareDNSRecord, error) {
+	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones/"+zoneID+"/dns_records", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Name     string `json:"name"`
+			Content  string `json:"content"`
+			TTL      int    `json:"ttl"`
+			Proxied  bool   `json:"proxied"`
+			Priority int    `json:"priority"`
+		} `json:"result"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if !result.Success {
+		if len(result.Errors) > 0 {
+			return nil, fmt.Errorf("%s", result.Errors[0].Message)
+		}
+		return nil, fmt.Errorf("failed to fetch DNS records")
+	}
+
+	records := make([]cloudflareDNSRecord, len(result.Result))
+	for i, r := range result.Result {
+		records[i] = cloudflareDNSRecord{
+			ID:       r.ID,
+			Type:     r.Type,
+			Name:     r.Name,
+			Content:  r.Content,
+			TTL:      r.TTL,
+			Proxied:  r.Proxied,
+			Priority: r.Priority,
+		}
+	}
+	return records, nil
+}
+
+type cloudflareDNSRecord struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	Content  string `json:"content"`
+	TTL      int    `json:"ttl"`
+	Proxied  bool   `json:"proxied"`
+	Priority int    `json:"priority"`
 }

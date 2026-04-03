@@ -42,6 +42,7 @@ import DomainDetail from '@/pages/DomainDetail';
 import About from '@/pages/About';
 import Apps from '@/pages/Apps';
 import TerminalPage from '@/pages/Terminal';
+import Cloudflare from '@/pages/Cloudflare';
 
 function RequireAuth() {
   if (!getToken()) {
@@ -150,6 +151,7 @@ export default function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/apps" element={<Apps />} />
         <Route path="/terminal" element={<TerminalPage />} />
+        <Route path="/cloudflare" element={<Cloudflare />} />
         <Route path="/about" element={<About />} />
       </Route>
 
