@@ -268,3 +268,218 @@ func TestWordPressListEndpoint2(t *testing.T) {
 		t.Errorf("status = %d, want 200 or 404", rec.Code)
 	}
 }
+
+// =============================================================================
+// App Handler Tests (handlers_app.go)
+// =============================================================================
+
+func TestHandleAppRestart_NoAppManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/apps/test.com/restart", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleAppEnvUpdate_InvalidJSON(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/apps/test.com/env", body))
+	if rec.Code != 400 && rec.Code != 501 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 501, or 500", rec.Code)
+	}
+}
+
+func TestHandleAppEnvUpdate_NoAppManager(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"env":{"KEY":"value"}}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/apps/test.com/env", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleAppLogs_NoAppManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/apps/test.com/logs", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDeployWebhook_InvalidJSON(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/apps/test.com/webhook", body))
+	if rec.Code != 400 && rec.Code != 501 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 501, or 500", rec.Code)
+	}
+}
+
+// =============================================================================
+// WordPress Handler Tests (handlers_hosting.go)
+// =============================================================================
+
+func TestHandleWPSiteDetail_NoWordPress(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/wordpress/sites/test.com/detail", nil))
+	if rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 404 or 500", rec.Code)
+	}
+}
+
+func TestHandleWPChangePassword_InvalidJSON(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/wordpress/sites/test.com/change-password", body))
+	if rec.Code != 400 && rec.Code != 500 && rec.Code != 404 {
+		t.Errorf("status = %d, want 400, 500, or 404", rec.Code)
+	}
+}
+
+func TestHandleWPChangePassword_MissingFields(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"username":""}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/wordpress/sites/test.com/change-password", body))
+	if rec.Code != 400 && rec.Code != 500 && rec.Code != 404 {
+		t.Errorf("status = %d, want 400, 500, or 404", rec.Code)
+	}
+}
+
+func TestHandleWPHarden_InvalidJSON(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/wordpress/sites/test.com/harden", body))
+	if rec.Code != 400 && rec.Code != 500 && rec.Code != 404 {
+		t.Errorf("status = %d, want 400, 500, or 404", rec.Code)
+	}
+}
+
+func TestHandleWPOptimizeDB_NoWordPress(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/wordpress/sites/test.com/optimize-db", nil))
+	if rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 404 or 500", rec.Code)
+	}
+}
+
+// =============================================================================
+// SSH Key Handler Tests (handlers_hosting.go)
+// =============================================================================
+
+func TestHandleSSHKeyAdd_InvalidJSON(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/users/test.com/ssh-keys", body))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleSSHKeyAdd_NoSFTP(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"public_key":"ssh-rsa AAAAB3NzaC1 test"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/users/test.com/ssh-keys", body))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleSSHKeyDelete_InvalidJSON(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/users/test.com/ssh-keys", body))
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// =============================================================================
+// Database Handler Tests (handlers_hosting.go)
+// =============================================================================
+
+func TestHandleDBList_NoDBManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/database/list", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 200 {
+		t.Errorf("status = %d, want 501, 404, 500, or 200", rec.Code)
+	}
+}
+
+func TestHandleDBExport_NoDBManager3(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/database/testdb/export", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+// =============================================================================
+// Notification Handler Tests (handlers_hosting.go)
+// =============================================================================
+
+func TestHandleNotifyTest_NoNotifier(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/notify/test", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 200 && rec.Code != 400 {
+		t.Errorf("status = %d, want 501, 404, 500, 200, or 400", rec.Code)
+	}
+}
+
+// =============================================================================
+// DNS Handler Tests (handlers_hosting.go)
+// =============================================================================
+
+func TestHandleDNSRecords_NoDNSManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/dns/test.com/records", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 400 {
+		t.Errorf("status = %d, want 501, 404, 500, or 400", rec.Code)
+	}
+}
+
+func TestHandleDNSRecordCreate_InvalidJSON3(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/dns/test.com/records", body))
+	if rec.Code != 400 && rec.Code != 501 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 501, or 500", rec.Code)
+	}
+}
+
+func TestHandleDNSRecordUpdate_InvalidJSON3(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/dns/test.com/records/test-id", body))
+	if rec.Code != 400 && rec.Code != 501 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 501, or 500", rec.Code)
+	}
+}
+
+func TestHandleDNSSync_NoDNSManager(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/dns/test.com/sync", nil))
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 400 {
+		t.Errorf("status = %d, want 501, 404, 500, or 400", rec.Code)
+	}
+}

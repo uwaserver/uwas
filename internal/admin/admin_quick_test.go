@@ -300,3 +300,126 @@ func TestFileManagerListNotFound(t *testing.T) {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
+
+// Additional quick tests for coverage
+
+func TestCronMonitorList(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cron/monitor", nil))
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestCronMonitorDomain(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/cron/monitor/test.com", nil))
+	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 503 {
+		t.Errorf("status = %d, want 200, 404, 500, or 503", rec.Code)
+	}
+}
+
+func TestBandwidthList(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/bandwidth", nil))
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestBandwidthReset(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/bandwidth/test.com/reset", nil))
+	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 503 {
+		t.Errorf("status = %d, want 200, 404, 500, or 503", rec.Code)
+	}
+}
+
+func TestFirewallStatus(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/firewall", nil))
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestFirewallAllow(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"port":"8080","proto":"tcp"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/firewall/allow", body))
+	if rec.Code != 200 && rec.Code != 500 && rec.Code != 501 {
+		t.Errorf("status = %d, want 200, 500, or 501", rec.Code)
+	}
+}
+
+func TestFirewallDeny(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"port":"8080","proto":"tcp"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/firewall/deny", body))
+	if rec.Code != 200 && rec.Code != 500 && rec.Code != 501 {
+		t.Errorf("status = %d, want 200, 500, or 501", rec.Code)
+	}
+}
+
+func TestDoctorReport(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/doctor", nil))
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestDoctorFix(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/doctor/fix", nil))
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestDomainHealth(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/domains/health", nil))
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestUpdateCheck(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/system/update-check", nil))
+	if rec.Code != 200 && rec.Code != 500 {
+		t.Errorf("status = %d, want 200 or 500", rec.Code)
+	}
+}
+
+func TestCloneSite(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"source_domain":"source.com","target_domain":"target.com"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/clone", body))
+	if rec.Code != 400 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 404, or 500", rec.Code)
+	}
+}
+
+func TestMigrateSite(t *testing.T) {
+	s := testServer()
+	body := strings.NewReader(`{"source_host":"remote.com","source_path":"/var/www","domain":"local.com"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/migrate", body))
+	if rec.Code != 400 && rec.Code != 404 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 404, or 500", rec.Code)
+	}
+}

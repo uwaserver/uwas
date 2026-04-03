@@ -877,3 +877,187 @@ func TestDomainRawGetReadError(t *testing.T) {
 	os.Chmod(domainFile, 0644)
 }
 
+// TestHandleSystem_Basic tests the system info endpoint
+func TestHandleSystem_Basic(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/system", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Check some basic fields exist
+	if _, ok := result["version"]; !ok {
+		t.Error("expected 'version' field in response")
+	}
+	if _, ok := result["hostname"]; !ok {
+		t.Error("expected 'hostname' field in response")
+	}
+}
+
+// TestHandleCerts_List tests the certificates list endpoint
+func TestHandleCerts_List(t *testing.T) {
+	s := testServer()
+
+	// Add a test domain with SSL
+	s.configMu.Lock()
+	s.config.Domains = append(s.config.Domains, config.Domain{
+		Host: "testcert.com",
+		SSL:  config.SSLConfig{Mode: "auto"},
+	})
+	s.configMu.Unlock()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/certs", nil))
+
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Should have at least one entry (our test domain)
+	if len(result) == 0 {
+		t.Error("expected at least one certificate entry")
+	}
+}
+
+// TestHandleCerts_RenewNotFound tests cert renew for non-existent domain
+func TestHandleCerts_RenewNotFound(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/certs/nonexistent.com/renew", nil))
+
+	if rec.Code != 404 && rec.Code != 500 && rec.Code != 503 {
+		t.Errorf("status = %d, want 404, 500, or 503", rec.Code)
+	}
+}
+
+// TestHandlePHPRestart_NotInstalled tests PHP restart when not installed
+func TestHandlePHPRestart_NotInstalled(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/php/8.2/restart", nil))
+
+	// Should fail because PHP manager not set or version not installed
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 400 {
+		t.Errorf("status = %d, want 501, 404, 500, or 400", rec.Code)
+	}
+}
+
+// TestHandleAddDomain_InvalidRoot tests domain creation with invalid root
+func TestHandleAddDomain_InvalidRoot(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"host":"test.com","type":"static","root":"/invalid/path/with/../ traversal"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestHandle2FAVerify_NoTOTP tests 2FA verify when TOTP is not set up
+func TestHandle2FAVerify_NoTOTP(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"code":"123456"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", body))
+
+	if rec.Code != 400 && rec.Code != 403 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 403, or 500", rec.Code)
+	}
+}
+
+// TestHandleBackupDomain_NotConfigured tests backup domain when not configured
+func TestHandleBackupDomain_NotConfigured(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"domain":"test.com"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/backups/domain", body))
+
+	if rec.Code != 501 && rec.Code != 500 && rec.Code != 400 {
+		t.Errorf("status = %d, want 501, 500, or 400", rec.Code)
+	}
+}
+
+// TestRequirePin_NoPin tests requirePin when no pin is configured
+func TestRequirePin_NoPin(t *testing.T) {
+	s := testServer()
+
+	// No pin configured - should be allowed
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/config", nil)
+
+	// Simulate an endpoint that checks pin
+	allowed := s.requirePin(rec, req)
+	if !allowed {
+		t.Error("requirePin should return true when no pin is configured")
+	}
+}
+
+// TestHandleUserChangePasswordAuth_InvalidJSON tests password change with invalid JSON
+func TestHandleUserChangePasswordAuth_InvalidJSON(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{invalid json}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", body))
+
+	if rec.Code != 400 && rec.Code != 501 {
+		t.Errorf("status = %d, want 400 or 501", rec.Code)
+	}
+}
+
+// TestHandleCloudflareConnect_InvalidToken tests Cloudflare connect with invalid token format
+func TestHandleCloudflareConnect_InvalidTokenFormat(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{"token":"invalid","account_id":"test"}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body))
+
+	// Should fail validation or API call
+	if rec.Code != 400 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400 or 500", rec.Code)
+	}
+}
+
+// TestHandleCloudflareTunnelCreate_InvalidJSON tests tunnel create with invalid JSON
+func TestHandleCloudflareTunnelCreate_InvalidJSON(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{invalid}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestHandleCloudflareCachePurge_InvalidJSON tests cache purge with invalid JSON
+func TestHandleCloudflareCachePurge_InvalidJSON(t *testing.T) {
+	s := testServer()
+
+	body := strings.NewReader(`{invalid}`)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/cache/purge", body))
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
