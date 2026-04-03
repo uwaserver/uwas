@@ -42,6 +42,15 @@ const INTERVAL_OPTIONS = [
   { value: '7d', label: 'Every 7 days' },
 ];
 
+const CRON_PRESETS = [
+  { value: '', label: 'Simple Interval (above)' },
+  { value: '0 2 * * *', label: 'Daily at 2:00 AM' },
+  { value: '0 */6 * * *', label: 'Every 6 hours' },
+  { value: '0 0 * * 0', label: 'Weekly (Sunday midnight)' },
+  { value: '0 0 1 * *', label: 'Monthly (1st midnight)' },
+  { value: '0 */12 * * *', label: 'Every 12 hours' },
+];
+
 function providerBadge(provider: string) {
   switch (provider) {
     case 'local':
