@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Database,
   Table2,
@@ -16,28 +16,43 @@ import {
   fetchDatabases,
   fetchDBTables,
   fetchDBColumns,
-  queryDB,
+  runDBQuery,
   type DBInfo,
-  type DBTable,
-  type DBColumn,
 } from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+
+interface DBTable {
+  name: string;
+  rows: string;
+  data_size: string;
+  engine: string;
+}
+
+interface DBColumn {
+  name: string;
+  type: string;
+  nullable: string;
+  key: string;
+  default: string;
+  extra: string;
+}
 
 interface QueryResult {
   columns: string[];
   rows: any[][];
   count: number;
+}
+
+// Simple card component with header and content
+function SimpleCard({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
+        {icon}
+        <h3 className="font-semibold text-card-foreground">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
 }
 
 export default function DBExplorer() {
@@ -117,7 +132,7 @@ export default function DBExplorer() {
       setLoading(true);
       setError('');
       setSuccess('');
-      const result = await queryDB(selectedDB, query);
+      const result = await runDBQuery(selectedDB, query);
       setQueryResult(result);
       setSuccess(`Query executed successfully. ${result.count} rows returned.`);
     } catch (err: any) {
@@ -148,7 +163,7 @@ export default function DBExplorer() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground">
             <Database className="h-6 w-6" />
             Database Explorer
           </h1>
@@ -156,54 +171,57 @@ export default function DBExplorer() {
             Browse tables, execute SQL queries, and explore your database structure
           </p>
         </div>
-        <Button variant="outline" onClick={loadDatabases} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+        <button
+          onClick={loadDatabases}
+          disabled={loading}
+          className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
-        </Button>
+        </button>
       </div>
 
       {/* Alerts */}
       {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-red-800">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4" />
+            <span>{error}</span>
+          </div>
+        </div>
       )}
       {success && (
-        <Alert className="bg-green-50 border-green-200">
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-          <AlertDescription className="text-green-800">{success}</AlertDescription>
-        </Alert>
+        <div className="rounded-md border border-green-200 bg-green-50 p-4 text-green-800">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            <span>{success}</span>
+          </div>
+        </div>
       )}
 
       <div className="grid grid-cols-12 gap-4">
         {/* Left Sidebar - Database & Tables */}
-        <Card className="col-span-3 h-[calc(100vh-280px)]">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Database className="h-4 w-4" />
-              Database
-            </CardTitle>
-            <Select value={selectedDB} onValueChange={setSelectedDB}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select database" />
-              </SelectTrigger>
-              <SelectContent>
-                {databases.map((db) => (
-                  <SelectItem key={db.name} value={db.name}>
-                    {db.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </CardHeader>
-          <CardContent className="pt-0 overflow-y-auto h-[calc(100%-80px)]">
-            <div className="space-y-1">
+        <div className="col-span-3">
+          <SimpleCard title="Database" icon={<Database className="h-4 w-4" />}>
+            <select
+              value={selectedDB}
+              onChange={(e) => setSelectedDB(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Select database</option>
+              {databases.map((db) => (
+                <option key={db.name} value={db.name}>
+                  {db.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="mt-4 space-y-1 max-h-96 overflow-y-auto">
               {tables.map((table) => (
                 <div key={table.name}>
                   <button
                     onClick={() => toggleTableExpand(table.name)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors text-left ${
                       selectedTable === table.name ? 'bg-accent' : ''
                     }`}
                   >
@@ -214,15 +232,13 @@ export default function DBExplorer() {
                     )}
                     <Table2 className="h-4 w-4 text-blue-500" />
                     <span className="flex-1 truncate">{table.name}</span>
-                    <Badge variant="secondary" className="text-xs">
-                      {table.rows}
-                    </Badge>
+                    <span className="text-xs text-muted-foreground">{table.rows}</span>
                   </button>
                   {expandedTables.has(table.name) && (
                     <div className="ml-6 mt-1 space-y-1">
                       <button
                         onClick={() => selectTableForQuery(table.name)}
-                        className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-left"
+                        className="w-full flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-left text-muted-foreground"
                       >
                         <Search className="h-3 w-3" />
                         SELECT *
@@ -232,54 +248,40 @@ export default function DBExplorer() {
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </SimpleCard>
+        </div>
 
         {/* Main Content - Query Editor & Results */}
         <div className="col-span-9 space-y-4">
           {/* Query Editor */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Play className="h-4 w-4" />
-                SQL Query
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter SQL query..."
-                className="w-full h-24 p-3 font-mono text-sm border rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-                spellCheck={false}
-              />
-              <div className="flex justify-end">
-                <Button
-                  onClick={executeQuery}
-                  disabled={!selectedDB || !query.trim() || loading}
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-2" />
-                  )}
-                  Execute Query
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <SimpleCard title="SQL Query" icon={<Play className="h-4 w-4" />}>
+            <textarea
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Enter SQL query..."
+              className="w-full h-24 p-3 font-mono text-sm border border-border rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-ring bg-background text-foreground"
+              spellCheck={false}
+            />
+            <div className="flex justify-end mt-3">
+              <button
+                onClick={executeQuery}
+                disabled={!selectedDB || !query.trim() || loading}
+                className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+                Execute Query
+              </button>
+            </div>
+          </SimpleCard>
 
           {/* Results Table */}
           {queryResult && (
-            <Card className="h-[calc(100vh-480px)]">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Table2 className="h-4 w-4" />
-                  Results
-                  <Badge variant="secondary">{queryResult.count} rows</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0 overflow-auto h-[calc(100%-60px)]">
+            <SimpleCard title={`Results (${queryResult.count} rows)`} icon={<Table2 className="h-4 w-4" />}>
+              <div className="overflow-auto max-h-96">
                 <table className="w-full text-sm">
                   <thead className="bg-muted sticky top-0">
                     <tr>
@@ -316,20 +318,14 @@ export default function DBExplorer() {
                     ))}
                   </tbody>
                 </table>
-              </CardContent>
-            </Card>
+              </div>
+            </SimpleCard>
           )}
 
           {/* Table Structure */}
           {selectedTable && columns.length > 0 && !queryResult && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Columns className="h-4 w-4" />
-                  Table Structure: {selectedTable}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0 overflow-auto max-h-64">
+            <SimpleCard title={`Table Structure: ${selectedTable}`} icon={<Columns className="h-4 w-4" />}>
+              <div className="overflow-auto max-h-64">
                 <table className="w-full text-sm">
                   <thead className="bg-muted">
                     <tr>
@@ -347,15 +343,17 @@ export default function DBExplorer() {
                         <td className="px-3 py-2 font-medium">{col.name}</td>
                         <td className="px-3 py-2 text-muted-foreground">{col.type}</td>
                         <td className="px-3 py-2">
-                          <Badge variant={col.nullable === 'YES' ? 'secondary' : 'default'}>
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            col.nullable === 'YES' ? 'bg-secondary text-secondary-foreground' : 'bg-primary text-primary-foreground'
+                          }`}>
                             {col.nullable}
-                          </Badge>
+                          </span>
                         </td>
                         <td className="px-3 py-2">
                           {col.key && (
-                            <Badge variant="outline" className="text-yellow-600">
+                            <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-yellow-600 border-yellow-200">
                               {col.key}
-                            </Badge>
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
@@ -368,8 +366,8 @@ export default function DBExplorer() {
                     ))}
                   </tbody>
                 </table>
-              </CardContent>
-            </Card>
+              </div>
+            </SimpleCard>
           )}
         </div>
       </div>
