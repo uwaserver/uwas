@@ -51,7 +51,11 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/_uwas/dashboard/login';
+    // Avoid redirect loop if already on login page
+    const currentPath = window.location.pathname;
+    if (!currentPath.includes('/login')) {
+      window.location.href = '/_uwas/dashboard/login';
+    }
     throw new Error('Unauthorized');
   }
 
@@ -457,7 +461,14 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
   if (pinCode) headers['X-Pin-Code'] = pinCode;
   const url = `${BASE}/api/v1/files/${encodeURIComponent(domain)}/upload`;
   const res = await fetch(url, { method: 'POST', headers, body: form });
-  if (res.status === 401) { clearToken(); window.location.href = '/_uwas/dashboard/login'; throw new Error('Unauthorized'); }
+  if (res.status === 401) {
+    clearToken();
+    const currentPath = window.location.pathname;
+    if (!currentPath.includes('/login')) {
+      window.location.href = '/_uwas/dashboard/login';
+    }
+    throw new Error('Unauthorized');
+  }
   if (res.status === 403) {
     const body = await res.json().catch(() => ({ error: '' }));
     if (body.error === '2fa_required') {
@@ -648,7 +659,10 @@ export async function fetchConfigExport(): Promise<void> {
 
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/_uwas/dashboard/login';
+    const currentPath = window.location.pathname;
+    if (!currentPath.includes('/login')) {
+      window.location.href = '/_uwas/dashboard/login';
+    }
     throw new Error('Unauthorized');
   }
 

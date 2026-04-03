@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
@@ -1366,10 +1367,14 @@ func (m *Manager) Status() []PHPStatus {
 		// Check for UWAS-managed process
 		if val, ok := m.processes.Load(inst.Version); ok {
 			info := val.(*processInfo)
-			st.Running = true
-			st.ListenAddr = info.listenAddr
-			if info.cmd != nil && info.cmd.Process != nil {
+			// Verify the process is actually running
+			if info.cmd != nil && info.cmd.Process != nil && m.isProcessRunning(info.cmd.Process.Pid) {
+				st.Running = true
+				st.ListenAddr = info.listenAddr
 				st.PID = info.cmd.Process.Pid
+			} else {
+				// Process is dead, clean up
+				m.processes.Delete(inst.Version)
 			}
 		}
 
@@ -1407,6 +1412,25 @@ func (m *Manager) Status() []PHPStatus {
 		statuses = append(statuses, st)
 	}
 	return statuses
+}
+
+// isProcessRunning checks if a process with the given PID is actually running.
+func (m *Manager) isProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	// Try to find the process - this works on both Unix and Windows
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// On Unix, signal 0 checks if process exists without sending a real signal
+	// On Windows, this may not work, so we just rely on FindProcess success
+	if runtime.GOOS != "windows" {
+		return p.Signal(syscall.Signal(0)) == nil
+	}
+	// On Windows, FindProcess succeeding is enough indication the process exists
+	return true
 }
 
 // EnableVersion enables all binaries of a PHP version for use.

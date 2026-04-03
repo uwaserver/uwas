@@ -135,6 +135,19 @@ export default function FileManager() {
       navigateTo(entry.path);
       return;
     }
+
+    // Check if file is an image
+    const lowerName = entry.name.toLowerCase();
+    if (lowerName.endsWith('.png') || lowerName.endsWith('.jpg') ||
+        lowerName.endsWith('.jpeg') || lowerName.endsWith('.gif') ||
+        lowerName.endsWith('.webp') || lowerName.endsWith('.svg') ||
+        lowerName.endsWith('.ico')) {
+      // Open image in a new tab
+      const imageUrl = `/api/v1/files/${selectedDomain}/read?path=${encodeURIComponent(entry.path)}`;
+      window.open(imageUrl, '_blank');
+      return;
+    }
+
     // Open text editor
     setError('');
     try {
