@@ -709,10 +709,6 @@ func (m *Manager) domainPHPFromInstance(inst *domainInstance) *DomainPHP {
 		// System php-fpm registered without proc — still running via system service
 		dp.Running = true
 		dp.PID = -1
-	} else if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
-		// System php-fpm registered without sentinel proc — still running
-		dp.Running = true
-		dp.PID = -1
 	}
 	return dp
 }

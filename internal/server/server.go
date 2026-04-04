@@ -1015,6 +1015,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		clientAddr := ctx.RemoteIP
 		if clientAddr == "" {
 			clientAddr, _, _ = net.SplitHostPort(r.RemoteAddr)
+			if clientAddr == "" {
+				clientAddr = r.RemoteAddr
+			}
 		}
 		for _, ip := range domain.Maintenance.AllowedIPs {
 			if clientAddr == ip {
@@ -1094,6 +1097,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			clientAddr := ctx.RemoteIP
 			if clientAddr == "" {
 				clientAddr, _, _ = net.SplitHostPort(r.RemoteAddr)
+				if clientAddr == "" {
+					clientAddr = r.RemoteAddr
+				}
 			}
 			limiterKey := domain.Host + "|" + loc.Match + "|" + clientAddr
 			val, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{})
@@ -1233,8 +1239,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain rate limiting
 	if rl := s.domainRateLimiters[domain.Host]; rl != nil {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if ip == "" {
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || ip == "" {
 			ip = r.RemoteAddr
 		}
 		if !rl.Allow(ip) {
