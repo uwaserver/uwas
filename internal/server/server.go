@@ -838,7 +838,15 @@ func (s *Server) startHTTPS() error {
 
 // handleHTTP handles port 80: ACME challenges, HTTPS redirect, or serve non-SSL domains.
 // Unknown/blocked domains are rejected immediately — they never touch the middleware chain.
+// Wrapped in recovery to prevent panics from crashing the connection handler.
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			s.logger.Error("panic recovered in handleHTTP", "error", rec, "path", r.URL.Path)
+			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
+		}
+	}()
+
 	// ACME challenges must pass through (for cert issuance).
 	if s.tlsMgr.HandleHTTPChallenge(w, r) {
 		return
@@ -1034,6 +1042,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		ctx.Response.Header().Set("Retry-After", "3600")
 		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
 		return
+	}
+
+	// Per-domain WAF (Content-Type aware, with bypass path support)
+	if domain.Security.WAF.Enabled {
+		wafMW := middleware.DomainWAF(s.logger, domain.Security.WAF.BypassPaths, s.securityStats)
+		wafPassed := false
+		wafMW(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			wafPassed = true
+		})).ServeHTTP(ctx.Response, r)
+		if !wafPassed {
+			return
+		}
 	}
 
 	// Per-domain security headers (CSP, COEP, COOP, CORP, Permissions-Policy)
@@ -1505,23 +1525,40 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 	}
 
 	if domain.Type == "php" && strings.HasSuffix(resolved, ".php") {
-		// Ensure FPM address is set — fall back to phpMgr's actual listen addr.
-		if domain.PHP.FPMAddress == "" && s.phpMgr != nil {
+		// Resolve FPM address without mutating domain.PHP.FPMAddress (avoids data race).
+		fpmAddr := domain.PHP.FPMAddress
+		if fpmAddr == "" && s.phpMgr != nil {
 			for _, inst := range s.phpMgr.GetDomainInstances() {
 				if inst.Domain == domain.Host && inst.Running {
-					domain.PHP.FPMAddress = inst.ListenAddr
+					fpmAddr = inst.ListenAddr
 					break
 				}
 			}
-			// Still empty? Try global default.
-			if domain.PHP.FPMAddress == "" {
-				domain.PHP.FPMAddress = "127.0.0.1:9000"
+			if fpmAddr == "" {
+				fpmAddr = "127.0.0.1:9000"
 			}
 		}
-		s.php.Serve(ctx, domain)
+		// Merge per-request htaccess PHP override into env without mutating domain.
+		if len(ctx.PHPEnvOverride) > 0 || fpmAddr != domain.PHP.FPMAddress {
+			merged := make(map[string]string, len(domain.PHP.Env)+len(ctx.PHPEnvOverride))
+			for k, v := range domain.PHP.Env {
+				merged[k] = v
+			}
+			for k, v := range ctx.PHPEnvOverride {
+				merged[k] = v
+			}
+			origAddr := domain.PHP.FPMAddress
+			origEnv := domain.PHP.Env
+			domain.PHP.FPMAddress = fpmAddr
+			domain.PHP.Env = merged
+			s.php.Serve(ctx, domain)
+			domain.PHP.FPMAddress = origAddr
+			domain.PHP.Env = origEnv
+		} else {
+			s.php.Serve(ctx, domain)
+		}
 		return
 	}
-
 	// Image optimization: serve pre-converted WebP/AVIF if available
 	if _, ok := s.imageOptChains[domain.Host]; ok {
 		accept := ctx.Request.Header.Get("Accept")
@@ -1720,7 +1757,7 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		domain.ErrorPages = merged // single atomic pointer write; subsequent reads are safe
 	}
 
-	// 5. Apply php_value / php_flag — pass as PHP_VALUE env var
+	// 5. Apply php_value / php_flag — store per-request override instead of mutating domain.
 	// PHP-FPM reads PHP_VALUE and PHP_ADMIN_VALUE from FastCGI env to override ini settings.
 	if len(ruleSet.raw.PHPValues) > 0 || len(ruleSet.raw.PHPFlags) > 0 {
 		var phpValues []string
@@ -1730,10 +1767,9 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		for k, v := range ruleSet.raw.PHPFlags {
 			phpValues = append(phpValues, k+" = "+v)
 		}
-		if domain.PHP.Env == nil {
-			domain.PHP.Env = make(map[string]string)
+		ctx.PHPEnvOverride = map[string]string{
+			"PHP_VALUE": strings.Join(phpValues, "\n"),
 		}
-		domain.PHP.Env["PHP_VALUE"] = strings.Join(phpValues, "\n")
 	}
 }
 
@@ -1775,9 +1811,11 @@ func parseExpiresDuration(expr string) string {
 
 // htaccessCacheEntry holds both raw and compiled htaccess rules.
 type htaccessCacheEntry struct {
-	raw           *htaccess.RuleSet
-	compiledRules []*rewrite.Rule
-	modTime       time.Time // file modification time for auto-invalidation
+	raw            *htaccess.RuleSet
+	compiledRules  []*rewrite.Rule
+	modTime        time.Time // file modification time for auto-invalidation
+	errorPages     map[int]string // precomputed ErrorDocument map (immutable after parseHtaccessFull)
+	errorPagesOnce sync.Once     // ensures domain.ErrorPages is set at most once
 }
 
 func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
@@ -1861,6 +1899,15 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 			rule.Flags.Last = true
 			entry.compiledRules = append(entry.compiledRules, rule)
 		}
+	}
+
+	// Precompute ErrorDocument map (immutable, avoids concurrent map writes on domain)
+	if len(ruleSet.ErrorDocuments) > 0 {
+		pages := make(map[int]string, len(ruleSet.ErrorDocuments))
+		for code, page := range ruleSet.ErrorDocuments {
+			pages[code] = page
+		}
+		entry.errorPages = pages
 	}
 
 	return entry
@@ -2289,10 +2336,23 @@ func (s *Server) removePID() {
 	}
 }
 
+// regexCache caches compiled regex patterns to avoid recompilation on every request.
+var regexCache sync.Map
+
 // matchPath checks if a URL path matches a regex pattern from cache rules.
 func matchPath(path, pattern string) bool {
-	matched, err := regexp.MatchString(pattern, path)
-	return err == nil && matched
+	var re *regexp.Regexp
+	if v, ok := regexCache.Load(pattern); ok {
+		re = v.(*regexp.Regexp)
+	} else {
+		var err error
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return false
+		}
+		regexCache.Store(pattern, re)
+	}
+	return re.MatchString(path)
 }
 
 // toWebhookConfigs converts config.WebhookConfig to webhook.WebhookConfig.
@@ -2337,10 +2397,18 @@ type rateLimitEntry struct {
 // Regex match (prefix ~): "~\\.php$" matches "/index.php"
 func matchLocation(path, pattern string) bool {
 	if strings.HasPrefix(pattern, "~") {
-		// Regex match
-		re, err := regexp.Compile(strings.TrimSpace(pattern[1:]))
-		if err != nil {
-			return false
+		// Regex match — use cache to avoid recompiling on every request
+		regexStr := strings.TrimSpace(pattern[1:])
+		var re *regexp.Regexp
+		if v, ok := regexCache.Load(regexStr); ok {
+			re = v.(*regexp.Regexp)
+		} else {
+			var err error
+			re, err = regexp.Compile(regexStr)
+			if err != nil {
+				return false
+			}
+			regexCache.Store(regexStr, re)
 		}
 		return re.MatchString(path)
 	}

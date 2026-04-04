@@ -33,8 +33,9 @@ type RequestContext struct {
 	PathInfo     string
 
 	// State
-	CacheStatus string
-	Upstream    string
+	CacheStatus   string
+	Upstream      string
+	PHPEnvOverride map[string]string // htaccess-derived PHP_VALUE override (per-request, not mutated on domain)
 
 	// Metrics
 	BytesSent int64
