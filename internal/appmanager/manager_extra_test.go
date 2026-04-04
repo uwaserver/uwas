@@ -57,10 +57,15 @@ func TestMonitorProcess_AutoRestart(t *testing.T) {
 		cmd.Process.Kill()
 	}
 
-	// Wait for auto-restart (2s backoff + start)
-	time.Sleep(4000 * time.Millisecond)
-
-	inst2 := m.Get("autorestart.com")
+	// Poll for auto-restart (2s backoff + start, with retries for slow CI)
+	var inst2 *AppInstance
+	for i := 0; i < 20; i++ {
+		time.Sleep(500 * time.Millisecond)
+		inst2 = m.Get("autorestart.com")
+		if inst2.Running && inst2.PID != firstPID {
+			break
+		}
+	}
 	if !inst2.Running {
 		t.Errorf("expected auto-restart to have restarted the process (PID=%d)", inst2.PID)
 	}
