@@ -26,7 +26,7 @@ func TestMonitorProcess_AutoRestart(t *testing.T) {
 
 	// Create a short-lived script that exits quickly
 	script := `#!/bin/sh
-sleep 0.1
+sleep 1
 exit 1`
 	scriptPath := dir + "/crash.sh"
 	os.WriteFile(scriptPath, []byte(script), 0755)
@@ -47,7 +47,7 @@ exit 1`
 	}
 
 	// Wait for first start
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	inst1 := m.Get("autorestart.com")
 	if !inst1.Running {
 		t.Fatal("expected running after first start")
@@ -415,6 +415,9 @@ func TestStop_AlreadyStopped(t *testing.T) {
 	if err := m.Stop("alreadystopped.com"); err != nil {
 		t.Errorf("first stop failed: %v", err)
 	}
+
+	// Wait for monitorProcess goroutine to clean up
+	time.Sleep(200 * time.Millisecond)
 
 	// Second stop should return error (already stopped)
 	err := m.Stop("alreadystopped.com")
