@@ -1102,7 +1102,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			limiterKey := domain.Host + "|" + loc.Match + "|" + clientAddr
-			val, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{})
+			val, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{lastAccess: time.Now()})
 			entry := val.(*rateLimitEntry)
 			window := loc.RateLimit.Window.Duration
 			if window == 0 {
@@ -1110,17 +1110,27 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			now := time.Now()
 			entry.mu.Lock()
-			if now.Sub(entry.windowStart) > window {
+			// Evict stale entry (>10x window since last access) and treat as new.
+			if now.Sub(entry.lastAccess) > 10*window {
 				entry.windowStart = now
-				entry.count = 0
-			}
-			entry.count++
-			exceeded := entry.count > int64(loc.RateLimit.Requests)
-			entry.mu.Unlock()
-			if exceeded {
-				ctx.Response.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
-				renderDomainError(ctx.Response, http.StatusTooManyRequests, domain)
-				return
+				entry.count = 1
+				entry.lastAccess = now
+				entry.mu.Unlock()
+				s.locationLimiters.Delete(limiterKey)
+			} else {
+				if now.Sub(entry.windowStart) > window {
+					entry.windowStart = now
+					entry.count = 0
+				}
+				entry.count++
+				exceeded := entry.count > int64(loc.RateLimit.Requests)
+				entry.lastAccess = now
+				entry.mu.Unlock()
+				if exceeded {
+					ctx.Response.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
+					renderDomainError(ctx.Response, http.StatusTooManyRequests, domain)
+					return
+				}
 			}
 		}
 
@@ -2396,6 +2406,7 @@ type rateLimitEntry struct {
 	mu          sync.Mutex
 	windowStart time.Time
 	count       int64
+	lastAccess  time.Time
 }
 
 // matchLocation checks if a URL path matches a location pattern.
