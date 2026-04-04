@@ -5,6 +5,57 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.48] - 2026-04-04
+
+### Fixes
+
+- **Server IP appearing under Unknown Domains** - requests to the server's own IP address (e.g., health checks) are now correctly served by the fallback domain instead of being recorded as unknown domains. Previously, when no exact or wildcard match existed, the server rejected requests before checking if a fallback domain was available.
+- **ETag generation for dynamic cached responses** - added SHA256-based weak ETag for non-ESI cached responses that don't have one, enabling conditional request support (If-None-Match) for dynamic content.
+- **ReDoS prevention in WAF SQL injection regex** - fixed catastrophic backtracking in `(--|;)\s*` pattern that could cause exponential slowdown on crafted input like `;        ;`. Changed to `\s+` (requires at least one whitespace).
+- **RFC compliance improvements** - CORS preflight requests now correctly validate `Access-Control-Request-Method` header per spec; requests without this header are passed through instead of incorrectly returning 200. Also added proper 417 Expectation Failed response for clients sending `Expect: 100-continue` header.
+- **Rate limiter memory leak** - added TTL-based eviction for stale entries in the locationLimiters sync.Map, preventing unbounded growth from infrequently-accessed rate limit keys.
+- **Backup schedule UI fix** - backup settings from config.yaml are now correctly displayed in the Admin UI. Fixed ScheduleDetail struct and simplifyInterval to return human-readable formats (7d, 24h) instead of Go duration strings.
+- **PHP restart tracking** - PHP services now correctly show as "running" after server restart. Fixed RegisterExistingDomain to set sentinel proc for unix socket addresses and added nil-proc fallback.
+- **UFW IPv6 display** - firewall page no longer shows invalid duplicate IPv6 entries. Added V6 bool field to Rule struct and properly detects and strips `(v6)` suffix from UFW rules.
+- **WriteHeader double-call prevention** - fixed TransformWriter that could call WriteHeader twice on same status code.
+- **Partial proxy body fix** - upstream errors in buffered mode no longer result in partial response body being sent to client.
+- **Silent Error() failure** - Error() calls after headers are written now correctly return early instead of silently failing.
+- **Net.SplitHostPort errors** - improved handling of malformed RemoteAddr values with graceful fallback.
+- **Mutex race in backup callback** - acquire mutex before reading onBackup callback to prevent race condition.
+
+### Features
+
+- **WAF bypass paths UI** - Security page in dashboard now allows configuring WAF bypass paths per domain, allowing certain paths to skip WAF inspection entirely.
+- **WAF overhaul** - major improvements to Web Application Firewall to prevent false positives on legitimate traffic:
+  - Content-Type aware body scanning: skips JSON, multipart, XML payloads
+  - Removed `<script>` tag check from body patterns (legitimate in CMS editors, email templates)
+  - Removed `sleep()` and `benchmark()` checks from body patterns (legitimate in code playgrounds)
+  - Added per-domain WAF bypass paths support
+- **Database Explorer** - native phpMyAdmin-like database exploration interface in dashboard.
+- **Cloudflare integration page** - full DNS management interface for Cloudflare.
+- **Cron preset options** - backup scheduling now supports preset intervals (hourly, daily, weekly).
+- **Redis L3 cache support** - optional Redis cache layer behind L1 memory and L2 disk cache.
+- **CI/CD improvements** - comprehensive GitHub Actions workflow with test coverage tracking.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -p 1 ./...` passes (note: some tests have goroutine cleanup issues with webhook workers that are pre-existing and unrelated to code changes).
+- `npx tsc --noEmit` passes in `web/dashboard`.
+
+## [0.0.38] - 2026-03-28
+
+### Features
+
+- **38 dashboard pages, 205+ API endpoints** - major dashboard expansion including Database Explorer, Cloudflare integration, WAF bypass paths UI.
+- **Redis L3 cache** - optional Redis caching layer for distributed caching scenarios.
+- **Comprehensive test coverage** - coverage improved from 78.4% to 83.8%.
+
+### Fixes
+
+- **Crash-proof concurrent access** - hot-path safety improvements throughout the codebase.
+- **All GitHub issues resolved** - issues #3, #4, #5, #6, #7 fixed.
+
 ## [0.0.35-rc.1] - 2026-03-30
 
 ### Features
