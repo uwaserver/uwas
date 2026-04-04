@@ -860,6 +860,7 @@ func TestInstallCmd_Success(t *testing.T) {
 	origStat := installOsStat
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
+	origMkdirAll := installOsMkdirAll
 
 	installRuntimeGOOS = "linux"
 	installOsGetuid = func() int { return 0 }
@@ -871,6 +872,7 @@ func TestInstallCmd_Success(t *testing.T) {
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("echo", "mocked")
 	}
+	installOsMkdirAll = func(path string, perm os.FileMode) error { return nil }
 	defer func() {
 		installRuntimeGOOS = origGOOS
 		installOsGetuid = origGetuid
@@ -880,6 +882,7 @@ func TestInstallCmd_Success(t *testing.T) {
 		installOsStat = origStat
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
+		installOsMkdirAll = origMkdirAll
 	}()
 
 	c := &InstallCmd{}
@@ -923,6 +926,7 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 	origStat := installOsStat
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
+	origMkdirAll := installOsMkdirAll
 
 	installRuntimeGOOS = "linux"
 	installOsGetuid = func() int { return 0 }
@@ -947,6 +951,7 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("echo", "mocked")
 	}
+	installOsMkdirAll = func(path string, perm os.FileMode) error { return nil }
 	defer func() {
 		installRuntimeGOOS = origGOOS
 		installOsGetuid = origGetuid
@@ -956,6 +961,7 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 		installOsStat = origStat
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
+		installOsMkdirAll = origMkdirAll
 	}()
 
 	c := &InstallCmd{}

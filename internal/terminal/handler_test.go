@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 )
 
@@ -209,6 +210,9 @@ func TestWSConnReadMessageExtendedLength(t *testing.T) {
 // --- Non-Linux handler test ---
 
 func TestHandlerServeHTTPNonLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("non-Linux handler test skipped on Linux")
+	}
 	h := New(nil)
 	req := httptest.NewRequest("GET", "/terminal", nil)
 	w := httptest.NewRecorder()

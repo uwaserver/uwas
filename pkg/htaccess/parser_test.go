@@ -237,7 +237,7 @@ Header unset X-Powered-By`))
 func TestConvertAuthDirectives(t *testing.T) {
 	input := `AuthType Basic
 AuthName "Restricted Area"
-AuthUserFile /etc/apache2/.htpasswd
+AuthUserFile .htpasswd
 Require valid-user`
 
 	directives, err := Parse(strings.NewReader(input))
@@ -252,8 +252,8 @@ Require valid-user`
 	if rules.AuthName != "Restricted Area" {
 		t.Errorf("AuthName = %q, want 'Restricted Area'", rules.AuthName)
 	}
-	if rules.AuthUserFile != "/etc/apache2/.htpasswd" {
-		t.Errorf("AuthUserFile = %q, want /etc/apache2/.htpasswd", rules.AuthUserFile)
+	if rules.AuthUserFile != ".htpasswd" {
+		t.Errorf("AuthUserFile = %q, want .htpasswd", rules.AuthUserFile)
 	}
 	if rules.Require != "valid-user" {
 		t.Errorf("Require = %q, want valid-user", rules.Require)

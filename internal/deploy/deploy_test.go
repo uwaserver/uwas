@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -933,10 +934,14 @@ func TestDeployDocker_InvalidDockerfilePath(t *testing.T) {
 	}
 	var log strings.Builder
 
-	// Test with absolute Windows path
+	// Test with absolute path (use platform-appropriate absolute path)
+	absPath := "/etc/passwd/malicious"
+	if runtime.GOOS == "windows" {
+		absPath = "C:\\Windows\\System32\\malicious"
+	}
 	req := DeployRequest{
 		Domain:     "test.com",
-		DockerFile: "C:\\Windows\\System32\\malicious.exe",
+		DockerFile: absPath,
 		DockerPort: 3000,
 	}
 
