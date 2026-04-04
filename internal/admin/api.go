@@ -3970,11 +3970,7 @@ func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
-	interval, active := s.backupMgr.ScheduleStatus()
-	jsonResponse(w, map[string]any{
-		"interval": interval.String(),
-		"active":   active,
-	})
+	jsonResponse(w, s.backupMgr.ScheduleDetail())
 }
 
 func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request) {
@@ -3989,16 +3985,22 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Interval string `json:"interval"`
 		Enabled  *bool  `json:"enabled"`
+		Keep     int    `json:"keep"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Update keep count if provided
+	if req.Keep > 0 {
+		s.backupMgr.SetKeepCount(req.Keep)
+	}
+
 	if req.Enabled != nil && !*req.Enabled {
 		s.backupMgr.ScheduleBackup(0)
 		s.RecordAudit("backup.schedule", "disabled", ip, true)
-		jsonResponse(w, map[string]any{"status": "stopped", "active": false})
+		jsonResponse(w, s.backupMgr.ScheduleDetail())
 		return
 	}
 
@@ -4008,8 +4010,14 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 	}
 	d, err := time.ParseDuration(req.Interval)
 	if err != nil {
-		jsonError(w, "invalid interval: "+err.Error(), http.StatusBadRequest)
-		return
+		// Try common formats: "24h", "7d"
+		switch req.Interval {
+		case "7d":
+			d = 7 * 24 * time.Hour
+		default:
+			jsonError(w, "invalid interval: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if d < time.Minute {
 		jsonError(w, "interval must be at least 1m", http.StatusBadRequest)
@@ -4018,11 +4026,7 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 
 	s.backupMgr.ScheduleBackup(d)
 	s.RecordAudit("backup.schedule", "interval: "+d.String(), ip, true)
-	jsonResponse(w, map[string]any{
-		"status":   "scheduled",
-		"interval": d.String(),
-		"active":   true,
-	})
+	jsonResponse(w, s.backupMgr.ScheduleDetail())
 }
 
 // ── 2FA / TOTP ──────────────────────────────────────────────────────────────

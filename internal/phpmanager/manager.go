@@ -159,13 +159,18 @@ func (m *Manager) RegisterExistingDomain(domain, version, listenAddr, webRoot st
 	for k, v := range overrides {
 		co[k] = v
 	}
-	m.domainMap[domain] = &domainInstance{
+	inst := &domainInstance{
 		domain:          domain,
 		version:         version,
 		listenAddr:      listenAddr,
 		webRoot:         webRoot,
 		configOverrides: co,
 	}
+	// For system php-fpm sockets, set sentinel proc so Running reports true.
+	if strings.HasPrefix(listenAddr, "unix:") || strings.HasPrefix(listenAddr, "/") {
+		inst.proc = &processInfo{listenAddr: listenAddr}
+	}
+	m.domainMap[domain] = inst
 }
 
 // AssignDomain assigns a PHP version to a domain.
@@ -697,10 +702,17 @@ func (m *Manager) domainPHPFromInstance(inst *domainInstance) *DomainPHP {
 			dp.Running = true
 			dp.PID = inst.proc.cmd.Process.Pid
 		} else if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
-			// System php-fpm — no cmd but still running
 			dp.Running = true
 			dp.PID = -1 // system-managed
 		}
+	} else if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
+		// System php-fpm registered without proc — still running via system service
+		dp.Running = true
+		dp.PID = -1
+	} else if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
+		// System php-fpm registered without sentinel proc — still running
+		dp.Running = true
+		dp.PID = -1
 	}
 	return dp
 }

@@ -258,8 +258,8 @@ func TestHandleBackupScheduleGetWithManager(t *testing.T) {
 
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["active"] != false {
-		t.Errorf("active = %v, want false", body["active"])
+	if body["enabled"] != false {
+		t.Errorf("enabled = %v, want false", body["enabled"])
 	}
 }
 
@@ -304,11 +304,14 @@ func TestHandleBackupSchedulePutEnable(t *testing.T) {
 
 	var resp map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp["status"] != "scheduled" {
-		t.Errorf("status = %v, want 'scheduled'", resp["status"])
+	if resp["enabled"] != true {
+		t.Errorf("enabled = %v, want true", resp["enabled"])
 	}
-	if resp["active"] != true {
-		t.Errorf("active = %v, want true", resp["active"])
+	if resp["interval"] == nil {
+		t.Errorf("interval is missing")
+	}
+	if resp["keep"] == nil {
+		t.Errorf("keep is missing")
 	}
 }
 
@@ -330,8 +333,8 @@ func TestHandleBackupSchedulePutDisable(t *testing.T) {
 
 	var resp map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp["active"] != false {
-		t.Errorf("active = %v, want false", resp["active"])
+	if resp["enabled"] != false {
+		t.Errorf("enabled = %v, want false", resp["enabled"])
 	}
 }
 

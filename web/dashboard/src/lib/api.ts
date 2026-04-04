@@ -499,7 +499,7 @@ export const addCronJob = (job: { schedule: string; command: string; domain?: st
 export const deleteCronJob = (schedule: string, command: string) => api<{ status: string }>('/api/v1/cron', { method: 'DELETE', body: JSON.stringify({ schedule, command }) });
 
 // Firewall
-export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; }
+export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; v6?: boolean; }
 export interface FirewallStatus { active: boolean; backend: string; rules: FirewallRule[]; }
 export const fetchFirewall = () => api<FirewallStatus>('/api/v1/firewall');
 export const firewallAllow = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto }) });
