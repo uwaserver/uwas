@@ -23,6 +23,7 @@ func TestMonitorProcess_AutoRestart(t *testing.T) {
 	dir := t.TempDir()
 	log := logger.New("error", "text")
 	m := New(log)
+	defer m.StopAll()
 
 	// Use a long-running process, kill it to trigger auto-restart
 	m.Register("autorestart.com", config.AppConfig{
