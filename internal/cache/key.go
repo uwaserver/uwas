@@ -5,14 +5,29 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
+
+// pool for strings.Builder to reduce allocations.
+var builderPool = sync.Pool{
+	New: func() interface{} {
+		b := new(strings.Builder)
+		return b
+	},
+}
 
 // GenerateKey creates a cache key from the request.
 // The key is the full canonical string (method|host|path|query|vary) so that
 // collisions are impossible. The FNV-1a hash is only used for disk sharding
 // via HashKey.
 func GenerateKey(r *http.Request, varyHeaders []string) string {
-	var b strings.Builder
+	b := builderPool.Get().(*strings.Builder)
+	b.Reset()
+	defer builderPool.Put(b)
+
+	// Pre-allocate based on typical URL lengths
+	b.Grow(300 + len(r.URL.RawQuery) + len(r.Host) + len(r.URL.Path))
+
 	b.WriteString(r.Method)
 	b.WriteByte('|')
 	if r.TLS != nil {
