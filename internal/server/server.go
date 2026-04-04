@@ -623,19 +623,13 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 		}
 	}
 
-	// Security guard with WAF
+	// Security guard (blocked paths only) + bot guard
 	var blockedPaths []string
-	wafEnabled := false
 	for _, d := range s.config.Domains {
 		blockedPaths = append(blockedPaths, d.Security.BlockedPaths...)
-		if d.Security.WAF.Enabled {
-			wafEnabled = true
-		}
 	}
-	if len(blockedPaths) > 0 || wafEnabled {
-		mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, wafEnabled, s.securityStats))
-		mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
-	}
+	mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, s.securityStats))
+	mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
 
 	mws = append(mws, middleware.AccessLog(s.logger))
 

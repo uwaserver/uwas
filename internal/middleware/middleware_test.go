@@ -353,7 +353,7 @@ func TestCORSBlockedOrigin(t *testing.T) {
 func TestSecurityGuardBlockedPath(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, false, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := SecurityGuard(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -370,7 +370,7 @@ func TestSecurityGuardBlockedPath(t *testing.T) {
 func TestSecurityGuardAllowedPath(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, false, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := SecurityGuard(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -384,7 +384,7 @@ func TestSecurityGuardAllowedPath(t *testing.T) {
 func TestSecurityGuardWAF(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 

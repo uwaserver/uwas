@@ -1722,6 +1722,7 @@ func TestHandleHTTPNonSSLDomainPassthrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/page.html", nil)
 	req.Host = "plain.com"
+	req.Header.Set("User-Agent", "test")
 	s.handleHTTP(rec, req)
 
 	if rec.Code != 200 {
