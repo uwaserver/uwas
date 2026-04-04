@@ -120,7 +120,12 @@ func DomainWAF(log *logger.Logger, bypassPaths []string, stats *SecurityStats) M
 					stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 				}
 				log.Warn("WAF blocked request (URL)", "path", path, "remote", r.RemoteAddr)
-				http.Error(w, "403 Forbidden", http.StatusForbidden)
+				if r.Header.Get("Expect") != "" {
+					// Client is waiting for 100 Continue — send 417 so it knows not to send body
+					http.Error(w, "417 Expectation Failed", http.StatusExpectationFailed)
+				} else {
+					http.Error(w, "403 Forbidden", http.StatusForbidden)
+				}
 				return
 			}
 
