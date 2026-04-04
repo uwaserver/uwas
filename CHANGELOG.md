@@ -5,6 +5,34 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.49] - 2026-04-05
+
+### Features
+
+- **DNS-01 ACME challenge support** - ACME client now supports DNS-01 challenge for automated certificate issuance via Cloudflare, DigitalOcean, Hetzner, and Route53 DNS providers.
+- **htaccess IfModule module checking** - IfModule directives now properly check whether the referenced Apache module is loaded, instead of always processing the block contents.
+- **htaccess RewriteBase support** - mod_rewrite RewriteBase directive is now parsed and stored for use in rewrite rule processing.
+- **Cache PurgeByTag across all layers** - PurgeByTag now correctly purges entries from all cache layers (L1 memory, L2 disk, L3 Redis).
+- **Backup cron scheduling** - backups can now be scheduled using cron expressions (e.g., `0 2 * * *` for daily at 2 AM) in addition to simple interval.
+- **htpasswd file BasicAuth** - BasicAuth middleware now supports reading credentials from htpasswd files with APR1-MD5, bcrypt, SHA1, and MD5 password formats.
+- **Security headers** - additional security headers added: ReferrerPolicy, StrictTransportSecurity (HSTS), X-Content-Type-Options, XSS-Protection.
+- **Mirror MaxBodyBytes configurable** - proxy mirror MaxBodyBytes is now configurable per domain instead of hardcoded 2MB.
+- **System stats bar on all pages** - every dashboard page now shows real-time CPU, RAM, Disk usage, Load Average, and Uptime in a fixed top bar.
+
+### Fixes
+
+- **Self-update restart** - fixed self-update restart mechanism that was incorrectly sending SIGHUP to itself instead of using proper systemctl restart or re-exec.
+- **TestHandleRequestBlockedUnknownHostHTTPS** - fixed pre-existing test failure after commit 6775695 changed unknown host handling to use fallback domain.
+- **TLS self-signed certificate improvements** - self-signed certificates now use configurable validity period (default 24h) and random serial numbers.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -p 1 ./...` passes.
+- `npx tsc --noEmit` passes in `web/dashboard`.
+- `npm run build` passes in `web/dashboard`.
+- Test coverage: 83% → 86.1%
+
 ## [0.0.48] - 2026-04-04
 
 ### Fixes
