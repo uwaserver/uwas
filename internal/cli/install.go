@@ -19,6 +19,7 @@ var (
 	installOsRemove     = os.Remove
 	installOsSymlink    = os.Symlink
 	installOsStat       = os.Stat
+	installOsMkdirAll   = os.MkdirAll
 )
 
 // InstallCmd installs UWAS as a system service.
@@ -74,11 +75,11 @@ func installUWAS(args []string) error {
 	}
 
 	// 2. Create config directory
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := installOsMkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("create %s: %w", configDir, err)
 	}
 	domainsDir := filepath.Join(configDir, "domains.d")
-	if err := os.MkdirAll(domainsDir, 0755); err != nil {
+	if err := installOsMkdirAll(domainsDir, 0755); err != nil {
 		return fmt.Errorf("create %s: %w", domainsDir, err)
 	}
 	fmt.Printf("  ✓ Config directory: %s\n", configDir)

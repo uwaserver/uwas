@@ -54,8 +54,8 @@ exit 1`
 	}
 	firstPID := inst1.PID
 
-	// Wait for auto-restart (process crashes after 0.1s, auto-restart after 2s backoff)
-	time.Sleep(2500 * time.Millisecond)
+	// Wait for auto-restart (process crashes after 1s, auto-restart after 2s backoff)
+	time.Sleep(5000 * time.Millisecond)
 
 	inst2 := m.Get("autorestart.com")
 	if !inst2.Running {
