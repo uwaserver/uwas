@@ -1767,26 +1767,30 @@ func TestHandleHTTPManualSSLRedirect(t *testing.T) {
 	}
 }
 
-// --- handleHTTP: unknown host passes through to handler ---
+// --- handleHTTP: unknown host hits fallback domain, served as 404 (no content) ---
 
 func TestHandleHTTPUnknownHost(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("hello"), 0644)
+
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{
-			{Host: "known.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+			{Host: "known.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
 		},
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/index.html", nil)
 	req.Host = "unknown.com"
+	req.Header.Set("User-Agent", "test-agent")
 	s.handleHTTP(rec, req)
 
-	// Unknown host gets 421 Misdirected Request
-	if rec.Code != 421 {
-		t.Errorf("status = %d, want 421 for unknown host", rec.Code)
+	// Unknown host is served by fallback domain (known.com).
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (fallback domain should serve unknown hosts)", rec.Code)
 	}
 }
 

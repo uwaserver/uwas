@@ -1803,11 +1803,10 @@ func TestStartHTTPServeError(t *testing.T) {
 // =============================================================================
 
 func TestHandleHTTPUnknownHostFirstTime421(t *testing.T) {
+	// No domains configured — no fallback, unknown host is recorded and rejected.
 	cfg := &config.Config{
 		Global: config.GlobalConfig{WorkerCount: "1", LogLevel: "error", LogFormat: "text"},
-		Domains: []config.Domain{
-			{Host: "known.local", Root: t.TempDir(), Type: "static", SSL: config.SSLConfig{Mode: "off"}},
-		},
+		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)

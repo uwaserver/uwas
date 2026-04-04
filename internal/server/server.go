@@ -852,8 +852,11 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Unknown domains: track + reject immediately.
-	if !s.vhosts.IsConfigured(r.Host) {
+	// Unknown domains: track + reject only if no fallback domain exists.
+	// If a fallback domain is configured, serve it regardless of IsConfigured.
+	domain := s.vhosts.Lookup(r.Host)
+	if domain == nil {
+		// No configured domain and no fallback — record as unknown and reject.
 		blocked := s.unknownHosts.Record(r.Host)
 		if blocked {
 			w.Header().Set("Connection", "close")
@@ -863,10 +866,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-
-	// Configured domain — redirect to HTTPS if SSL enabled.
-	domain := s.vhosts.Lookup(r.Host)
-	if domain != nil && (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") {
+	if domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual" {
 		target := "https://" + r.Host + r.URL.RequestURI()
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
@@ -990,19 +990,6 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	domain := s.vhosts.Lookup(r.Host)
 	if domain == nil {
 		renderErrorPage(ctx.Response, http.StatusNotFound)
-		return
-	}
-
-	// Track and reject unconfigured hosts hitting the fallback domain.
-	if !s.vhosts.IsConfigured(r.Host) {
-		blocked := s.unknownHosts.Record(r.Host)
-		if blocked {
-			ctx.Response.Header().Set("Connection", "close")
-			renderErrorPage(ctx.Response, http.StatusForbidden)
-			return
-		}
-		// Not blocked but unconfigured — serve 421 Misdirected Request.
-		renderErrorPage(ctx.Response, 421)
 		return
 	}
 
