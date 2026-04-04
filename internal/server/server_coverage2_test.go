@@ -807,11 +807,10 @@ func TestHandleRequestHeaderTransforms(t *testing.T) {
 // =============================================================================
 
 func TestHandleHTTPBlockedUnknownHost(t *testing.T) {
+	// No domains configured — no fallback, unknown hosts are recorded and rejected.
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
-		Domains: []config.Domain{
-			{Host: "mysite.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
-		},
+		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
@@ -2426,9 +2425,8 @@ func TestNewNoRewritesEmptyCache(t *testing.T) {
 func TestHandleHTTPDomainLookupNil(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
-		Domains: []config.Domain{
-			{Host: "exists.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
-		},
+		// No domains configured — Lookup returns nil, request should be rejected as unknown.
+		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
@@ -2441,6 +2439,37 @@ func TestHandleHTTPDomainLookupNil(t *testing.T) {
 
 	if rec.Code != 421 {
 		t.Errorf("status = %d, want 421", rec.Code)
+	}
+}
+
+// =============================================================================
+// handleHTTP — unknown host hitting fallback domain should be served, not rejected
+// =============================================================================
+
+func TestHandleHTTPFallbackDomainServesUnknownHost(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file in the temp dir so there's something to serve.
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("Hello from fallback"), 0644)
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Domains: []config.Domain{
+			{Host: "fallback.com", Root: dir, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	// Request for unknown host should be served by fallback domain (not rejected as unknown).
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "any-other-host.com"
+	req.Header.Set("User-Agent", "test-agent")
+	s.handleHTTP(rec, req)
+
+	// Should be served (200), not rejected with 421.
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (fallback domain should serve unknown hosts)", rec.Code)
 	}
 }
 

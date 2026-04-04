@@ -135,11 +135,10 @@ func TestApplyRewritesCacheHit(t *testing.T) {
 
 // TestHandleHTTPUnknownHostServesContent tests that unknown hosts on non-SSL go through the handler chain.
 func TestHandleHTTPUnknownHostServes404(t *testing.T) {
+	// No domains configured — no fallback, unknown host is rejected.
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
-		Domains: []config.Domain{
-			{Host: "known.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
-		},
+		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
