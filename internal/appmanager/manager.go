@@ -140,15 +140,6 @@ func (m *Manager) Register(domain string, appCfg config.AppConfig, webRoot strin
 	}
 
 	autoRestart := appCfg.AutoRestart
-	// Default to true if not explicitly set (zero value is false, but we want true default)
-	// Config should set auto_restart: false to disable
-	if appCfg.Command != "" || appCfg.Runtime != "" {
-		// Only default to true if app is actually configured
-		autoRestart = true
-	}
-	if !appCfg.AutoRestart && appCfg.Command != "" {
-		autoRestart = appCfg.AutoRestart
-	}
 
 	m.apps[domain] = &appProcess{
 		domain:      domain,
