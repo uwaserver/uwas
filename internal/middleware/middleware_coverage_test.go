@@ -333,25 +333,25 @@ func TestSecurityGuardWAFBodyScan(t *testing.T) {
 	log := logger.New("error", "text")
 	stats := NewSecurityStats()
 
-	handler := SecurityGuard(log, nil, true, stats)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, stats)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
-	// POST with malicious body
-	body := `<script>alert(document.cookie)</script>`
+	// POST with javascript: protocol in body (this IS a body pattern)
+	body := `data=javascript:alert(document.cookie)`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/form", strings.NewReader(body))
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403 for XSS in POST body", rec.Code)
+		t.Errorf("status = %d, want 403 for javascript: XSS in POST body", rec.Code)
 	}
 }
 
 func TestSecurityGuardWAFBodyScanSQLi(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -368,7 +368,7 @@ func TestSecurityGuardWAFBodyScanSQLi(t *testing.T) {
 func TestSecurityGuardWAFBodyScanPHP(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -385,24 +385,25 @@ func TestSecurityGuardWAFBodyScanPHP(t *testing.T) {
 func TestSecurityGuardWAFBodyScanPATCH(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
-	body := `data=sleep(5)`
+	// PATCH with php:// wrapper in body (this IS a body pattern)
+	body := `data=php://filter/convert.base64-encode/resource=index`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PATCH", "/api/item", strings.NewReader(body))
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403 for sleep() in PATCH body", rec.Code)
+		t.Errorf("status = %d, want 403 for php:// wrapper in PATCH body", rec.Code)
 	}
 }
 
 func TestSecurityGuardWAFSafeBody(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -419,7 +420,7 @@ func TestSecurityGuardWAFSafeBody(t *testing.T) {
 func TestSecurityGuardWAFGETNotScannedBody(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -437,7 +438,7 @@ func TestSecurityGuardWAFStatsOnURLBlock(t *testing.T) {
 	log := logger.New("error", "text")
 	stats := NewSecurityStats()
 
-	handler := SecurityGuard(log, nil, true, stats)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, stats)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -458,7 +459,7 @@ func TestSecurityGuardBlockedPathWithStats(t *testing.T) {
 	log := logger.New("error", "text")
 	stats := NewSecurityStats()
 
-	handler := SecurityGuard(log, nil, false, stats)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := SecurityGuard(log, nil, stats)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
@@ -481,10 +482,10 @@ func TestMatchWAFBody(t *testing.T) {
 		body string
 		want bool
 	}{
-		{`<script>alert(1)</script>`, true},
+		{`<script>alert(1)</script>`, false}, // not in body patterns
 		{`javascript: foo()`, true},
 		{`UNION SELECT * FROM users`, true},
-		{`sleep(5)`, true},
+		{`sleep(5)`, false}, // not in body patterns
 		{`php://input`, true},
 		{`normal form data`, false},
 		{`<p>Hello World</p>`, false},
@@ -499,11 +500,15 @@ func TestMatchWAFBody(t *testing.T) {
 }
 
 func TestMatchWAFBodyDecoded(t *testing.T) {
-	// Test where decoded differs from raw
-	raw := "%3Cscript%3Ealert(1)%3C/script%3E"
-	decoded := "<script>alert(1)</script>"
+	// Test where decoded differs from raw - use javascript: which IS a body pattern
+	raw := "data=%6A%61%76%61%73%63%72%69%70%74%3A%61%6C%65%72%74%28%31%29"
+	decoded := "data=javascript:alert(1)"
 	if !matchWAFBody(raw, decoded) {
-		t.Error("should detect XSS in decoded body")
+		t.Error("should detect XSS javascript: protocol in decoded body")
+	}
+	// <script> is NOT in body patterns (CMS editors submit HTML)
+	if matchWAFBody("<script>alert(1)</script>", "<script>alert(1)</script>") {
+		t.Error("should NOT block <script> in body (CMS editors need this)")
 	}
 }
 
@@ -577,18 +582,18 @@ func TestCompressSkipAlreadyEncoded(t *testing.T) {
 func TestSecurityGuardWAFBodyEncoded(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
-	// URL-encoded script tag in body
-	body := `data=%3Cscript%3Ealert(1)%3C%2Fscript%3E`
+	// URL-encoded javascript: protocol in body (this IS a body pattern)
+	body := `data=%6A%61%76%61%73%63%72%69%70%74%3A%61%6C%65%72%74(1)`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/form", strings.NewReader(body))
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403 for encoded XSS in POST body", rec.Code)
+		t.Errorf("status = %d, want 403 for encoded javascript: XSS in POST body", rec.Code)
 	}
 }
 
@@ -805,7 +810,7 @@ func TestImageOptOpenErrorFallsThrough(t *testing.T) {
 func TestSecurityGuardWAFAllURLPatterns(t *testing.T) {
 	log := logger.New("error", "text")
 
-	handler := SecurityGuard(log, nil, true, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 

@@ -476,8 +476,9 @@ type RateLimitConfig struct {
 }
 
 type WAFConfig struct {
-	Enabled bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Rules   []string `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Enabled     bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	BypassPaths []string `yaml:"bypass_paths,omitempty" json:"bypass_paths,omitempty"` // skip WAF for these path prefixes
+	Rules       []string `yaml:"rules,omitempty" json:"rules,omitempty"`
 }
 
 type HeadersConfig struct {

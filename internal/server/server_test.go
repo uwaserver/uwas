@@ -557,6 +557,7 @@ func TestHandleHTTPNonSSLDomain(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/index.html", nil)
 	req.Host = "plain.com"
+	req.Header.Set("User-Agent", "test")
 	s.handleHTTP(rec, req)
 
 	// Non-SSL domain should serve content, not redirect
@@ -1238,6 +1239,7 @@ func TestHandleHTTPNonSSLServesContent(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/data.json", nil)
 	req.Host = "api.local"
+	req.Header.Set("User-Agent", "test")
 	s.handleHTTP(rec, req)
 
 	if rec.Code != 200 {

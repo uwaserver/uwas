@@ -182,6 +182,7 @@ func TestBuildMiddlewareChainReturnsWorkingHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/test.html", nil)
 	req.Host = "chain.test"
+	req.Header.Set("User-Agent", "test")
 	s.handler.ServeHTTP(rec, req)
 
 	if rec.Code != 200 {
