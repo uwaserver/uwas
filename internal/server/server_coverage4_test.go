@@ -607,9 +607,10 @@ func TestHandleRequestDomainNotFound(t *testing.T) {
 
 	s.handleRequest(rec, req)
 
-	// Unknown hosts get 421 (Misdirected) since they're not configured
-	if rec.Code != 421 {
-		t.Errorf("expected 421 for unconfigured domain, got %d", rec.Code)
+	// Unknown hosts are served by the fallback domain (known.example.com).
+	// Since the root is an empty temp dir, the static handler returns 404.
+	if rec.Code != 404 {
+		t.Errorf("expected 404 for unknown host served by fallback domain, got %d", rec.Code)
 	}
 }
 

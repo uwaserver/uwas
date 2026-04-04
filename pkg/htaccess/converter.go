@@ -6,9 +6,46 @@ import (
 	"strings"
 )
 
+// loadedModules tracks which Apache modules are "loaded" in UWAS.
+// UWAS natively supports equivalent functionality for these modules.
+var loadedModules = map[string]bool{
+	"mod_rewrite.c":   true, // UWAS rewrite engine is fully compatible
+	"mod_headers.c":   true, // UWAS supports custom headers
+	"mod_expires.c":   true, // UWAS cache supports expires
+	"mod_alias.c":     true, // UWAS supports Redirect/RedirectMatch
+	"mod_deflate.c":   true, // UWAS gzip/brotli compression
+	"mod_auth.c":      true, // UWAS supports BasicAuth
+	"mod_auth_basic.c": true,
+	"mod_authn_file.c": true,
+	"mod_authz_core.c": true,
+	"mod_authz_user.c": true,
+	"mod_dir.c":        true, // DirectoryIndex, DirectorySlash
+	"mod_autoindex.c": true, // DirectoryListing
+	"mod_env.c":       true, // SetEnv/SetEnvIf (tracked but not enforced)
+	"mod_mime.c":      true, // MIME type handling
+	"mod_negotiation.c": true, // MultiViews
+	"mod_setenvif.c":  true, // SetEnvIf
+	"mod_php.c":       false, // PHP handling is via FastCGI, not mod_php
+	"mod_fcgid.c":     true, // UWAS FastCGI support
+	"mod_proxy.c":     true, // UWAS proxy support
+	"mod_proxy_http.c": true,
+	"mod_ssl.c":       false, // TLS handled by Go, not mod_ssl
+}
+
+// IsModuleLoaded returns true if the given module is loaded.
+func IsModuleLoaded(module string) bool {
+	return loadedModules[strings.ToLower(module)]
+}
+
+// SetModuleLoaded allows tests to override module availability.
+func SetModuleLoaded(module string, loaded bool) {
+	loadedModules[strings.ToLower(module)] = loaded
+}
+
 // RuleSet represents the converted internal rules from .htaccess directives.
 type RuleSet struct {
 	RewriteEnabled   bool
+	RewriteBase      string // base path for rewrites (e.g. "/" or "/subdir/")
 	Rewrites         []RewriteRule
 	Redirects        []RedirectRule
 	ErrorDocuments   map[int]string
@@ -85,6 +122,16 @@ func Convert(directives []Directive) *RuleSet {
 		case "rewriteengine":
 			if len(d.Args) > 0 {
 				rules.RewriteEnabled = strings.EqualFold(d.Args[0], "on")
+			}
+
+		case "rewritebase":
+			if len(d.Args) > 0 {
+				base := d.Args[0]
+				// Ensure base ends with /
+				if base != "/" && !strings.HasSuffix(base, "/") {
+					base += "/"
+				}
+				rules.RewriteBase = base
 			}
 
 		case "rewritecond":
@@ -211,9 +258,12 @@ func Convert(directives []Directive) *RuleSet {
 			// Block directives: <IfModule>, <FilesMatch>, etc.
 			if len(d.Block) > 0 {
 				if strings.EqualFold(d.Name, "IfModule") {
-					// IfModule always evaluates to true in UWAS
-					blockRules := Convert(d.Block)
-					rules.Merge(blockRules)
+					// Check if the module is actually loaded.
+					if len(d.Args) > 0 && IsModuleLoaded(d.Args[0]) {
+						blockRules := Convert(d.Block)
+						rules.Merge(blockRules)
+					}
+					// If module is not loaded, silently skip the block (Apache behavior).
 				} else if strings.EqualFold(d.Name, "FilesMatch") || strings.EqualFold(d.Name, "Files") {
 					pattern := ""
 					if len(d.Args) > 0 {

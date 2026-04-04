@@ -34,6 +34,14 @@ var (
 	thumbprintFunc = jwkThumbprint
 )
 
+// DNSProvider interface for DNS-01 challenge solving.
+type DNSProvider interface {
+	// PresentDNSChallenge creates a TXT record for the given domain with the given value.
+	PresentDNSChallenge(domain, token, keyAuth string) error
+	// CleanupDNSChallenge removes the TXT record after challenge validation.
+	CleanupDNSChallenge(domain, token, keyAuth string) error
+}
+
 // Client implements the ACME protocol (RFC 8555) for automated certificate issuance.
 type Client struct {
 	directoryURL string
@@ -44,6 +52,7 @@ type Client struct {
 	httpClient   *http.Client
 	storageDir   string
 	logger       *logger.Logger
+	dnsProvider  DNSProvider
 
 	// HTTP-01 challenge tokens: token → keyAuthorization
 	httpTokens sync.Map
@@ -95,6 +104,11 @@ func NewClient(directoryURL, storageDir string, log *logger.Logger) *Client {
 		},
 		logger: log,
 	}
+}
+
+// SetDNSProvider sets the DNS provider for DNS-01 challenges.
+func (c *Client) SetDNSProvider(provider DNSProvider) {
+	c.dnsProvider = provider
 }
 
 // ObtainCertificate performs the full ACME flow for the given domains.
@@ -325,7 +339,12 @@ func (c *Client) getAuthorization(ctx context.Context, url string) (*Authorizati
 }
 
 func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error {
-	// Find HTTP-01 challenge
+	thumbprint, err := thumbprintFunc(&c.accountKey.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	// Try HTTP-01 first, then DNS-01 if no HTTP-01 available.
 	var challenge *Challenge
 	for i := range authz.Challenges {
 		if authz.Challenges[i].Type == "http-01" {
@@ -333,18 +352,29 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 			break
 		}
 	}
-	if challenge == nil {
-		return fmt.Errorf("no http-01 challenge available")
+
+	// If no HTTP-01, try DNS-01 if we have a DNS provider configured.
+	if challenge == nil && c.dnsProvider != nil {
+		for i := range authz.Challenges {
+			if authz.Challenges[i].Type == "dns-01" {
+				challenge = &authz.Challenges[i]
+				break
+			}
+		}
 	}
 
-	// Compute key authorization
-	thumbprint, err := thumbprintFunc(&c.accountKey.PublicKey)
-	if err != nil {
-		return err
+	if challenge == nil {
+		return fmt.Errorf("no supported challenge available (tried http-01 and dns-01)")
 	}
+
 	keyAuth := challenge.Token + "." + thumbprint
 
-	// Serve the challenge token
+	// Handle DNS-01 challenge.
+	if challenge.Type == "dns-01" && c.dnsProvider != nil {
+		return c.solveDNS01(ctx, authz.Identifier.Value, challenge, keyAuth)
+	}
+
+	// Handle HTTP-01 challenge.
 	c.httpTokens.Store(challenge.Token, keyAuth)
 	defer c.httpTokens.Delete(challenge.Token)
 
@@ -358,6 +388,37 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 	// Wait for challenge validation
 	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)
 	return err
+}
+
+// solveDNS01 performs the DNS-01 challenge flow.
+func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Challenge, keyAuth string) error {
+	// Create TXT record for _acme-challenge.<domain>
+	dnsName := "_acme-challenge." + domain
+	if err := c.dnsProvider.PresentDNSChallenge(dnsName, challenge.Token, keyAuth); err != nil {
+		return fmt.Errorf("dns-01 present: %w", err)
+	}
+
+	// Tell ACME server we're ready
+	resp, err := c.signedRequest(ctx, challenge.URL, map[string]any{})
+	if err != nil {
+		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
+		return err
+	}
+	resp.Body.Close()
+
+	// Wait for challenge validation
+	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)
+	if err != nil {
+		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
+		return err
+	}
+
+	// Clean up the TXT record after successful validation.
+	if err := c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth); err != nil {
+		c.logger.Warn("failed to cleanup dns-01 challenge", "domain", domain, "error", err)
+	}
+
+	return nil
 }
 
 func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttempts int) (*Order, error) {

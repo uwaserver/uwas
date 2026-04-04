@@ -47,6 +47,7 @@ type BackupManager struct {
 	cancel    context.CancelFunc
 	running   bool
 	schedule  time.Duration
+	cronExpr  string // cron expression for scheduling (e.g. "0 2 * * *")
 	keepCount int
 
 	lastBackup time.Time // time of last successful backup
@@ -518,6 +519,158 @@ func (m *BackupManager) ScheduleStatus() (interval time.Duration, active bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.schedule, m.running
+}
+
+// ScheduleBackupCron starts the automatic backup goroutine using a cron expression.
+// The expression is a 5-field cron: "minute hour day month weekday"
+// Example: "0 2 * * *" = daily at 2:00 AM
+// Supports: * (any), numbers, ranges (1-5), steps (*/5), lists (1,3,5)
+func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.cronExpr = cronExpr
+	if cronExpr == "" {
+		m.running = false
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	m.running = true
+
+	provider := m.cfg.Provider
+	if provider == "" {
+		provider = "local"
+	}
+
+	go func() {
+		for {
+			next := nextCronRun(cronExpr)
+			if next.IsZero() {
+				return
+			}
+			wait := time.Until(next)
+			if wait <= 0 {
+				wait = time.Minute // safety: if we're already past, wait 1 min
+			}
+
+			select {
+			case <-time.After(wait):
+				info, err := m.CreateBackup(provider)
+				if err != nil {
+					m.logger.Error("scheduled backup failed", "error", err)
+				}
+				m.mu.Lock()
+				cb := m.onBackup
+				m.mu.Unlock()
+				if cb != nil {
+					cb(info, err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// nextCronRun returns the next time a cron expression should fire.
+// Returns zero time if the expression is invalid.
+func nextCronRun(expr string) time.Time {
+	fields := strings.Fields(expr)
+	if len(fields) != 5 {
+		return time.Time{}
+	}
+	// minute hour day month weekday
+	minuteField, hourField, dayField, monthField, weekdayField := fields[0], fields[1], fields[2], fields[3], fields[4]
+
+	loc := time.Local
+	now := time.Now().In(loc)
+	year := now.Year()
+
+	// Try up to 2 years ahead
+	for i := 0; i < 365*2; i++ {
+		candidate := time.Date(year+i/12/30, time.Month(1+(i/30)%12), 1+(i%30), 0, 0, 0, 0, loc)
+
+		// Check month
+		if !matchCronField(int(candidate.Month()), monthField) {
+			continue
+		}
+		// Check day of month
+		if !matchCronField(candidate.Day(), dayField) {
+			continue
+		}
+		// Check weekday
+		if !matchCronField(int(candidate.Weekday())%7, weekdayField) {
+			continue
+		}
+
+		// Find matching hour
+		for h := 0; h < 24; h++ {
+			if !matchCronField(h, hourField) {
+				continue
+			}
+			// Find matching minute
+			for min := 0; min < 60; min++ {
+				if !matchCronField(min, minuteField) {
+					continue
+				}
+				next := time.Date(year+i/365, candidate.Month(), candidate.Day(), h, min, 0, 0, loc)
+				if next.After(now) {
+					return next
+				}
+			}
+		}
+	}
+	return time.Time{}
+}
+
+// matchCronField checks if a value matches a cron field pattern.
+func matchCronField(value int, field string) bool {
+	if field == "*" {
+		return true
+	}
+	// Handle step values: */5
+	if strings.HasPrefix(field, "*/") {
+		step := parseInt(strings.TrimPrefix(field, "*/"))
+		if step > 0 && value%step == 0 {
+			return true
+		}
+		return false
+	}
+	// Handle ranges: 1-5
+	if strings.Contains(field, "-") {
+		parts := strings.Split(field, "-")
+		if len(parts) == 2 {
+			low := parseInt(parts[0])
+			high := parseInt(parts[1])
+			return value >= low && value <= high
+		}
+	}
+	// Handle lists: 1,3,5
+	if strings.Contains(field, ",") {
+		for _, v := range strings.Split(field, ",") {
+			if parseInt(v) == value {
+				return true
+			}
+		}
+		return false
+	}
+	// Handle single value
+	return parseInt(field) == value
+}
+
+func parseInt(s string) int {
+	n := 0
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		}
+	}
+	return n
 }
 
 // SetKeepCount updates the number of backups to retain.

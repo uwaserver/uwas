@@ -41,7 +41,8 @@ type GlobalConfig struct {
 type BackupConfig struct {
 	Enabled  bool              `yaml:"enabled"`
 	Provider string            `yaml:"provider"` // local | s3 | sftp
-	Schedule string            `yaml:"schedule"` // duration string e.g. "24h"
+	Schedule string            `yaml:"schedule"` // duration string e.g. "24h" (fallback if Cron is empty)
+	Cron     string            `yaml:"cron"`     // cron expression e.g. "0 2 * * *" (5-field, local timezone)
 	Keep     int               `yaml:"keep"`     // keep last N backups
 	Local    BackupLocalConfig `yaml:"local"`
 	S3       BackupS3Config    `yaml:"s3"`
@@ -116,13 +117,14 @@ type MCPConfig struct {
 }
 
 type ACMEConfig struct {
-	Email          string            `yaml:"email"`
-	CAURL          string            `yaml:"ca_url"`
-	Storage        string            `yaml:"storage"`
-	DNSProvider    string            `yaml:"dns_provider"`
-	DNSCredentials map[string]string `yaml:"dns_credentials"`
-	OnDemand       bool              `yaml:"on_demand"`
-	OnDemandAsk    string            `yaml:"on_demand_ask"`
+	Email             string            `yaml:"email"`
+	CAURL             string            `yaml:"ca_url"`
+	Storage           string            `yaml:"storage"`
+	DNSProvider       string            `yaml:"dns_provider"`
+	DNSCredentials    map[string]string `yaml:"dns_credentials"`
+	OnDemand          bool              `yaml:"on_demand"`
+	OnDemandAsk       string            `yaml:"on_demand_ask"`
+	SelfSignedValidity Duration         `yaml:"self_signed_validity"` // validity period for self-signed fallback certs (default 24h)
 }
 
 type CacheConfig struct {
@@ -175,9 +177,10 @@ type UsersConfig struct {
 }
 
 type MirrorConfig struct {
-	Enabled bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
-	Percent int    `yaml:"percent,omitempty" json:"percent,omitempty"`
+	Enabled     bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Backend     string `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Percent     int    `yaml:"percent,omitempty" json:"percent,omitempty"`
+	MaxBodyBytes int   `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"` // max body size for mirror requests (default 2MB)
 }
 
 type Domain struct {
@@ -257,6 +260,10 @@ type SecurityHeadersConfig struct {
 	CrossOriginEmbedder     string `yaml:"cross_origin_embedder_policy,omitempty" json:"cross_origin_embedder_policy,omitempty"`   // require-corp, unsafe-none
 	CrossOriginOpener       string `yaml:"cross_origin_opener_policy,omitempty" json:"cross_origin_opener_policy,omitempty"`       // same-origin, same-origin-allow-popups, unsafe-none
 	CrossOriginResource     string `yaml:"cross_origin_resource_policy,omitempty" json:"cross_origin_resource_policy,omitempty"`   // same-origin, same-site, cross-origin
+	ReferrerPolicy          string `yaml:"referrer_policy,omitempty" json:"referrer_policy,omitempty"`                         // no-referrer, no-referrer-when-downgrade, same-origin, strict-origin-when-cross-origin, etc.
+	StrictTransportSecurity string `yaml:"strict_transport_security,omitempty" json:"strict_transport_security,omitempty"`       // HSTS header, e.g. "max-age=31536000; includeSubDomains"
+	XContentTypeOptions     string `yaml:"x_content_type_options,omitempty" json:"x_content_type_options,omitempty"`           // nosniff
+	XSSProtection          string `yaml:"x_xss_protection,omitempty" json:"x_xss_protection,omitempty"`                     // 1; mode=block
 }
 
 // MarshalYAML produces clean YAML by omitting zero-value nested structs.

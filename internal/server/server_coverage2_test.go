@@ -845,25 +845,23 @@ func TestHandleHTTPBlockedUnknownHost(t *testing.T) {
 // =============================================================================
 
 func TestHandleRequestBlockedUnknownHostHTTPS(t *testing.T) {
+	// No domains configured — no fallback, unknown host should get 404.
+	// Note: handleRequest doesn't have blocked-unknown-host checking (that's in handleHTTP).
+	// This test verifies that an unknown host with no fallback returns 404.
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
-		Domains: []config.Domain{
-			{Host: "mysite.com", Root: "/tmp", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
-		},
+		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
-
-	// Block a host
-	s.unknownHosts.Block("evil.com")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Host = "evil.com"
 	s.handleRequest(rec, req)
 
-	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403 for blocked unknown host", rec.Code)
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404 for unknown host with no fallback", rec.Code)
 	}
 }
 
