@@ -500,8 +500,11 @@ func (m *BackupManager) ScheduleBackup(interval time.Duration) {
 				if err != nil {
 					m.logger.Error("scheduled backup failed", "error", err)
 				}
-				if m.onBackup != nil {
-					m.onBackup(info, err)
+				m.mu.Lock()
+				cb := m.onBackup
+				m.mu.Unlock()
+				if cb != nil {
+					cb(info, err)
 				}
 			case <-ctx.Done():
 				return
