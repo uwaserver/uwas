@@ -24,15 +24,9 @@ func TestMonitorProcess_AutoRestart(t *testing.T) {
 	log := logger.New("error", "text")
 	m := New(log)
 
-	// Create a short-lived script that exits quickly
-	script := `#!/bin/sh
-sleep 1
-exit 1`
-	scriptPath := dir + "/crash.sh"
-	os.WriteFile(scriptPath, []byte(script), 0755)
-
+	// Use a long-running process, kill it to trigger auto-restart
 	m.Register("autorestart.com", config.AppConfig{
-		Command: scriptPath,
+		Command: "sleep 60",
 		Runtime: "custom",
 		Port:    9001,
 	}, dir)
@@ -54,14 +48,23 @@ exit 1`
 	}
 	firstPID := inst1.PID
 
-	// Wait for auto-restart (process crashes after 1s, auto-restart after 2s backoff)
-	time.Sleep(5000 * time.Millisecond)
+	// Kill the process to trigger auto-restart
+	m.mu.Lock()
+	app := m.apps["autorestart.com"]
+	cmd := app.cmd
+	m.mu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		cmd.Process.Kill()
+	}
+
+	// Wait for auto-restart (2s backoff + start)
+	time.Sleep(4000 * time.Millisecond)
 
 	inst2 := m.Get("autorestart.com")
 	if !inst2.Running {
-		t.Error("expected auto-restart to have restarted the process")
+		t.Errorf("expected auto-restart to have restarted the process (PID=%d)", inst2.PID)
 	}
-	if inst2.PID == firstPID {
+	if inst2.Running && inst2.PID == firstPID {
 		t.Error("expected different PID after restart")
 	}
 
