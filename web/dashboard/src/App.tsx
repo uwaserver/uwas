@@ -1,48 +1,57 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { getToken, onPinRequired } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import PinModal from '@/components/PinModal';
 import Login from '@/pages/Login';
-import Dashboard from '@/pages/Dashboard';
-import Domains from '@/pages/Domains';
-import Topology from '@/pages/Topology';
-import Cache from '@/pages/Cache';
-import Metrics from '@/pages/Metrics';
-import Logs from '@/pages/Logs';
-import Settings from '@/pages/Settings';
-import Analytics from '@/pages/Analytics';
-import ConfigEditor from '@/pages/ConfigEditor';
-import Certificates from '@/pages/Certificates';
-import PHP from '@/pages/PHP';
-import Backups from '@/pages/Backups';
-import Database from '@/pages/Database';
-import DBExplorer from '@/pages/DBExplorer';
-import DNS from '@/pages/DNS';
-import AuditLog from '@/pages/AuditLog';
-import UnknownDomains from '@/pages/UnknownDomains';
-import Users from '@/pages/Users';
-import FileManager from '@/pages/FileManager';
-import CronJobs from '@/pages/CronJobs';
-import Firewall from '@/pages/Firewall';
-import Updates from '@/pages/Updates';
-import Security from '@/pages/Security';
-import EmailGuide from '@/pages/EmailGuide';
-import WordPress from '@/pages/WordPress';
-import PHPConfig from '@/pages/PHPConfig';
-import IPManagement from '@/pages/IPManagement';
-import Services from '@/pages/Services';
-import Packages from '@/pages/Packages';
-import Doctor from '@/pages/Doctor';
-import CloneStaging from '@/pages/CloneStaging';
-import Migration from '@/pages/Migration';
-import Webhooks from '@/pages/Webhooks';
-import AdminUsers from '@/pages/AdminUsers';
-import DomainDetail from '@/pages/DomainDetail';
-import About from '@/pages/About';
-import Apps from '@/pages/Apps';
-import TerminalPage from '@/pages/Terminal';
-import Cloudflare from '@/pages/Cloudflare';
+
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Domains = lazy(() => import('@/pages/Domains'));
+const Topology = lazy(() => import('@/pages/Topology'));
+const Cache = lazy(() => import('@/pages/Cache'));
+const Metrics = lazy(() => import('@/pages/Metrics'));
+const Logs = lazy(() => import('@/pages/Logs'));
+const Settings = lazy(() => import('@/pages/Settings'));
+const Analytics = lazy(() => import('@/pages/Analytics'));
+const ConfigEditor = lazy(() => import('@/pages/ConfigEditor'));
+const Certificates = lazy(() => import('@/pages/Certificates'));
+const PHP = lazy(() => import('@/pages/PHP'));
+const Backups = lazy(() => import('@/pages/Backups'));
+const Database = lazy(() => import('@/pages/Database'));
+const DBExplorer = lazy(() => import('@/pages/DBExplorer'));
+const DNS = lazy(() => import('@/pages/DNS'));
+const AuditLog = lazy(() => import('@/pages/AuditLog'));
+const UnknownDomains = lazy(() => import('@/pages/UnknownDomains'));
+const Users = lazy(() => import('@/pages/Users'));
+const FileManager = lazy(() => import('@/pages/FileManager'));
+const CronJobs = lazy(() => import('@/pages/CronJobs'));
+const Firewall = lazy(() => import('@/pages/Firewall'));
+const Updates = lazy(() => import('@/pages/Updates'));
+const Security = lazy(() => import('@/pages/Security'));
+const EmailGuide = lazy(() => import('@/pages/EmailGuide'));
+const WordPress = lazy(() => import('@/pages/WordPress'));
+const PHPConfig = lazy(() => import('@/pages/PHPConfig'));
+const IPManagement = lazy(() => import('@/pages/IPManagement'));
+const Services = lazy(() => import('@/pages/Services'));
+const Packages = lazy(() => import('@/pages/Packages'));
+const Doctor = lazy(() => import('@/pages/Doctor'));
+const CloneStaging = lazy(() => import('@/pages/CloneStaging'));
+const Migration = lazy(() => import('@/pages/Migration'));
+const Webhooks = lazy(() => import('@/pages/Webhooks'));
+const AdminUsers = lazy(() => import('@/pages/AdminUsers'));
+const DomainDetail = lazy(() => import('@/pages/DomainDetail'));
+const About = lazy(() => import('@/pages/About'));
+const Apps = lazy(() => import('@/pages/Apps'));
+const TerminalPage = lazy(() => import('@/pages/Terminal'));
+const Cloudflare = lazy(() => import('@/pages/Cloudflare'));
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
 
 function RequireAuth() {
   if (!getToken()) {
@@ -52,7 +61,9 @@ function RequireAuth() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <main className="flex-1 overflow-y-auto p-4 pt-16 sm:p-6 sm:pt-6 lg:p-8">
-        <Outlet />
+        <Suspense fallback={<PageLoader />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

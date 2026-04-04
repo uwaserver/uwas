@@ -67,7 +67,7 @@ dashboard-dev:
 # ── Utility ─────────────────────────────────────────────────
 
 clean:
-	rm -rf bin/ coverage.out
+	rm -rf bin/ *.out
 	go clean -testcache
 
 all: check build

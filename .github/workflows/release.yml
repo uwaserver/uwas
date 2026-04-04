@@ -11,7 +11,33 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 -timeout 600s -p 1 ./...
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/dashboard/package-lock.json
+
+      - name: Build dashboard
+        working-directory: web/dashboard
+        run: npm ci && npm run build
+
   release:
+    needs: validate
     runs-on: ubuntu-latest
     strategy:
       matrix:
