@@ -2000,9 +2000,10 @@ func TestMonitorProcessAutoRestart(t *testing.T) {
 
 	// Use a long-running process, kill it to trigger auto-restart
 	m.Register("autorestart.com", config.AppConfig{
-		Command: "sleep 60",
-		Runtime: "custom",
-		Port:    9200,
+		Command:     "sleep 60",
+		Runtime:     "custom",
+		Port:        9200,
+		AutoRestart: true,
 	}, dir)
 
 	if err := m.Start("autorestart.com"); err != nil {
