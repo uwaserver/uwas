@@ -321,6 +321,7 @@ func TestCORSPreflight(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("OPTIONS", "/api/data", nil)
 	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 204 {
@@ -1280,6 +1281,8 @@ func TestCORSCustomConfig(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("OPTIONS", "/api", nil)
 	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "X-Custom")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 204 {
