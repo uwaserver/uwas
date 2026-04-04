@@ -64,8 +64,8 @@ func CORS(cfg CORSConfig) Middleware {
 				}
 			}
 
-			// Preflight
-			if r.Method == http.MethodOptions {
+			// Preflight — must have Access-Control-Request-Method per CORS spec
+			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 				h.Set("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
 				w.WriteHeader(http.StatusNoContent)
 				return
