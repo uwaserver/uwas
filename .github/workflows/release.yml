@@ -24,7 +24,14 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -count=1 -timeout 600s -p 1 ./...
+        run: go test -v -count=1 -timeout 600s -p 1 ./... 2>&1 | tee /tmp/test-output.log
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: /tmp/test-output.log
 
       - uses: actions/setup-node@v6
         with:
