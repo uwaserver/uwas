@@ -469,7 +469,7 @@ func TestUpstreamPoolAllCopy(t *testing.T) {
 func TestProxyHandlerTimeout504(t *testing.T) {
 	// Start a backend that hangs long enough to trigger the read timeout
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(3 * time.Second)
 		w.WriteHeader(200)
 	}))
 	defer upstream.Close()
@@ -482,7 +482,7 @@ func TestProxyHandlerTimeout504(t *testing.T) {
 	// Create a request with a deadline already set on its context.
 	// The handler checks ctx.Request.Context().Err() for DeadlineExceeded.
 	req := httptest.NewRequest("GET", "/slow", nil)
-	reqCtx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(req.Context(), 200*time.Millisecond)
 	defer cancel()
 	req = req.WithContext(reqCtx)
 
@@ -490,7 +490,7 @@ func TestProxyHandlerTimeout504(t *testing.T) {
 	ctx := newTestContext(rec, req)
 
 	domain := newTestDomain()
-	domain.Proxy.Timeouts.Read = config.Duration{Duration: 50 * time.Millisecond}
+	domain.Proxy.Timeouts.Read = config.Duration{Duration: 200 * time.Millisecond}
 
 	h.Serve(ctx, domain, pool, balancer)
 
