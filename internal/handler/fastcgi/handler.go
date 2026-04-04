@@ -28,6 +28,10 @@ func New(log *logger.Logger) *Handler {
 
 // Serve processes a PHP request via FastCGI.
 func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
+	if domain.PHP.FPMAddress == "" {
+		ctx.Response.Error(502, "502 Bad Gateway — no PHP-FPM address configured")
+		return
+	}
 	client := h.getClient(domain.PHP.FPMAddress)
 
 	// Split script name and path info using both original URI and resolved path
