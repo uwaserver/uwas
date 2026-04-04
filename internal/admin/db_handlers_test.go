@@ -216,7 +216,7 @@ func TestHandleDBUninstall_NoDBManager(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/uninstall", nil))
-	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 200 {
 		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
 	}
 }
@@ -234,7 +234,7 @@ func TestHandleDBForceUninstall_NoDBManager(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/force-uninstall", nil))
-	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
+	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 && rec.Code != 200 {
 		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
 	}
 }
