@@ -28,7 +28,7 @@ var defaultBlockedPaths = []string{
 var wafURLPatterns = []*regexp.Regexp{
 	// SQL injection
 	regexp.MustCompile(`(?i)(union\s+select|insert\s+into|delete\s+from|drop\s+table|alter\s+table)`),
-	regexp.MustCompile(`(?i)(--|;)\s*(drop|alter|delete|insert|update)`),
+	regexp.MustCompile(`(?i)(--|;)\s+(drop|alter|delete|insert|update)`),
 	regexp.MustCompile(`(?i)(sleep\s*\(|benchmark\s*\(|load_file\s*\(|into\s+outfile)`),
 	// XSS in URL
 	regexp.MustCompile(`(?i)<script[^>]*>`),
