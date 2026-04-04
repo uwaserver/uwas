@@ -236,7 +236,7 @@ export interface DomainDetail {
   ssl: { mode: string; cert: string; key: string; min_version: string };
   root: string;
   cache?: { enabled: boolean; ttl: number; rules?: { match: string; ttl: number; bypass: boolean }[] };
-  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; rules: string[] | null }; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
+  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; bypass_paths?: string[] | null; rules?: string[] | null }; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
   resources?: { cpu_percent?: number; memory_mb?: number; pid_max?: number };
   basic_auth?: BasicAuthRule;
   locations?: DomainLocationRule[];

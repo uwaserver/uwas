@@ -43,6 +43,8 @@ export default function Security() {
   const [ipBlacklist, setIpBlacklist] = useState<string[]>([]);
   const [newBlacklistIP, setNewBlacklistIP] = useState('');
   const [hotlinkEnabled, setHotlinkEnabled] = useState(false);
+  const [wafBypassPaths, setWafBypassPaths] = useState<string[]>([]);
+  const [newBypassPath, setNewBypassPath] = useState('');
 
   const load = useCallback(() => {
     Promise.all([fetchSecurityStats(), fetchSecurityBlocked()])
@@ -84,6 +86,7 @@ export default function Security() {
       setIpWhitelist(d.security?.ip_whitelist ?? []);
       setIpBlacklist(d.security?.ip_blacklist ?? []);
       setHotlinkEnabled(d.security?.hotlink_protection?.enabled ?? false);
+      setWafBypassPaths(d.security?.waf?.bypass_paths ?? []);
     } catch { setDetail(null); }
   };
 
@@ -93,7 +96,7 @@ export default function Security() {
     try {
       await updateDomain(host, {
         security: {
-          waf: { enabled: wafEnabled },
+          waf: { enabled: wafEnabled, bypass_paths: wafBypassPaths.length > 0 ? wafBypassPaths : undefined },
           rate_limit: rateLimitReqs > 0 ? { requests: rateLimitReqs, window: rateLimitWindow } : undefined,
           blocked_paths: blockedPaths.length > 0 ? blockedPaths : undefined,
           ip_whitelist: ipWhitelist.length > 0 ? ipWhitelist : undefined,
@@ -265,6 +268,32 @@ export default function Security() {
                           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${wafEnabled ? 'left-[22px]' : 'left-0.5'}`} />
                         </button>
                       </div>
+
+                      {/* WAF Bypass Paths */}
+                      {wafEnabled && (
+                        <div className="rounded-lg bg-background px-4 py-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <p className="text-sm font-medium text-card-foreground">WAF Bypass Paths</p>
+                              <p className="text-[10px] text-muted-foreground">Skip WAF for these path prefixes (API webhooks, etc.)</p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {wafBypassPaths.map((p, i) => (
+                              <span key={i} className="inline-flex items-center gap-1 rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200">
+                                {p}
+                                <button onClick={() => setWafBypassPaths(wafBypassPaths.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400"><Trash2 size={10} /></button>
+                              </span>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <input value={newBypassPath} onChange={e => setNewBypassPath(e.target.value)}
+                              placeholder="/api/webhooks/" className="flex-1 rounded bg-slate-800 px-2 py-1 text-xs border border-border text-foreground" />
+                            <button onClick={() => { if (newBypassPath) { setWafBypassPaths([...wafBypassPaths, newBypassPath]); setNewBypassPath(''); } }}
+                              className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-500"><Plus size={10} /> Add</button>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Hotlink */}
                       <div className="flex items-center justify-between rounded-lg bg-background px-4 py-3">
