@@ -46,7 +46,6 @@ type transformWriter struct {
 
 func (tw *transformWriter) WriteHeader(code int) {
 	if tw.headerWritten {
-		tw.ResponseWriter.WriteHeader(code)
 		return
 	}
 	tw.headerWritten = true
