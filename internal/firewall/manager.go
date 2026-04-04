@@ -23,6 +23,7 @@ type Rule struct {
 	Port    string `json:"port,omitempty"`
 	Proto   string `json:"proto,omitempty"`
 	Comment string `json:"comment,omitempty"`
+	V6      bool   `json:"v6,omitempty"` // IPv6 rule (Anywhere (v6))
 }
 
 // Status returns firewall status and rules.
@@ -77,10 +78,8 @@ func parseUFWRule(line string) Rule {
 	// Format: [ 3] Anywhere on eth0           DENY IN     192.168.1.100
 	r := Rule{}
 
-	// Clean the line - remove extra spaces and normalize
 	line = strings.TrimSpace(line)
 
-	// Extract number: [ 1] or [1]
 	if !strings.HasPrefix(line, "[") {
 		return r
 	}
@@ -93,19 +92,21 @@ func parseUFWRule(line string) Rule {
 	numStr := strings.TrimSpace(line[1:closeBracket])
 	fmt.Sscanf(numStr, "%d", &r.Number)
 
-	// Get the rest after ]
 	rest := strings.TrimSpace(line[closeBracket+1:])
 
-	// Split by multiple spaces to get parts
+	// Detect IPv6 rule — UFW appends "(v6)" suffix
+	if strings.HasSuffix(rest, "(v6)") {
+		r.V6 = true
+		rest = strings.TrimSpace(rest[:len(rest)-4])
+	}
+
 	parts := strings.Fields(rest)
 	if len(parts) < 3 {
 		return r
 	}
 
-	// First part is usually port/proto or interface info
 	firstPart := parts[0]
 
-	// Check if it contains port/proto like "80/tcp"
 	if strings.Contains(firstPart, "/") {
 		pp := strings.SplitN(firstPart, "/", 2)
 		if len(pp) == 2 {
@@ -114,7 +115,6 @@ func parseUFWRule(line string) Rule {
 			r.To = firstPart
 		}
 	} else if firstPart == "Anywhere" {
-		// Anywhere with interface? Like "Anywhere on eth0"
 		r.To = firstPart
 		if len(parts) >= 3 && strings.ToLower(parts[1]) == "on" {
 			r.To = firstPart + " " + parts[1] + " " + parts[2]
@@ -132,12 +132,16 @@ func parseUFWRule(line string) Rule {
 		}
 	}
 
-	// Find From (usually "Anywhere" or an IP)
+	// Find From (usually "Anywhere" or an IP/CIDR)
 	for _, p := range parts {
 		lowerP := strings.ToLower(p)
 		if lowerP == "anywhere" {
 			r.From = "Anywhere"
 			break
+		}
+		// IPv4 or IPv6 source address (contains '.' or ':')
+		if !r.V6 && (strings.Contains(p, ".") || strings.Contains(p, ":")) && r.From == "" {
+			r.From = p
 		}
 	}
 

@@ -36,6 +36,7 @@ export default function Firewall() {
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showV6, setShowV6] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -125,6 +126,8 @@ export default function Firewall() {
   };
 
   const rules: FirewallRule[] = fw?.rules ?? [];
+  const filteredRules = showV6 ? rules : rules.filter(r => !r.v6);
+  const v6Count = rules.filter(r => r.v6).length;
 
   if (loading) {
     return (
@@ -281,8 +284,16 @@ export default function Firewall() {
 
       {/* Rules table */}
       <div className="rounded-lg border border-border bg-card shadow-md">
-        <div className="border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-card-foreground">Firewall Rules ({rules.length})</h2>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-card-foreground">Firewall Rules ({filteredRules.length})</h2>
+          {v6Count > 0 && (
+            <button
+              onClick={() => setShowV6(!showV6)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              {showV6 ? 'Hide' : 'Show'} {v6Count} IPv6 rule{v6Count > 1 ? 's' : ''}
+            </button>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -297,7 +308,7 @@ export default function Firewall() {
               </tr>
             </thead>
             <tbody>
-              {rules.map(rule => (
+              {filteredRules.map(rule => (
                 <tr
                   key={rule.number}
                   className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
@@ -346,7 +357,7 @@ export default function Firewall() {
                   </td>
                 </tr>
               ))}
-              {rules.length === 0 && (
+              {filteredRules.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
                     <ShieldCheck size={32} className="mx-auto mb-3 opacity-40" />

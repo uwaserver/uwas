@@ -249,12 +249,8 @@ func TestParseUFWRule_IPv6(t *testing.T) {
 	if r.From != "Anywhere" {
 		t.Errorf("From = %q, want %q", r.From, "Anywhere")
 	}
-	// No slash in port, so Port and Proto should be empty
-	if r.Port != "" {
-		t.Errorf("Port = %q, want empty", r.Port)
-	}
-	if r.Proto != "" {
-		t.Errorf("Proto = %q, want empty", r.Proto)
+	if !r.V6 {
+		t.Errorf("V6 = false, want true")
 	}
 	if r.To != "443" {
 		t.Errorf("To = %q, want %q", r.To, "443")
@@ -276,9 +272,9 @@ func TestParseUFWRule_WithFrom(t *testing.T) {
 	if r.Proto != "tcp" {
 		t.Errorf("Proto = %q, want %q", r.Proto, "tcp")
 	}
-	// From should be empty because "Anywhere" is not in the line
-	if r.From != "" {
-		t.Errorf("From = %q, want empty (specific IP source)", r.From)
+	// From should contain the specific IP source
+	if r.From != "192.168.1.100" {
+		t.Errorf("From = %q, want %q", r.From, "192.168.1.100")
 	}
 }
 

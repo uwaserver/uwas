@@ -49,6 +49,9 @@ type BackupManager struct {
 	schedule  time.Duration
 	keepCount int
 
+	lastBackup time.Time // time of last successful backup
+	startedAt  time.Time // when the scheduler was started
+
 	configPath string
 	certsDir   string
 	webRoot    string   // base dir for all domain web roots
@@ -292,6 +295,11 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 
 	m.logger.Info("backup created", "name", filename, "provider", provider, "size", size)
 
+	// Track last backup time.
+	m.mu.Lock()
+	m.lastBackup = time.Now().UTC()
+	m.mu.Unlock()
+
 	// Prune old backups.
 	m.pruneOld(provider)
 
@@ -507,6 +515,15 @@ func (m *BackupManager) ScheduleStatus() (interval time.Duration, active bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.schedule, m.running
+}
+
+// SetKeepCount updates the number of backups to retain.
+func (m *BackupManager) SetKeepCount(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n > 0 {
+		m.keepCount = n
+	}
 }
 
 // Stop stops any running scheduled backup.
@@ -787,4 +804,50 @@ func isInsideDir(path, base string) bool {
 		return false
 	}
 	return strings.HasPrefix(abs, baseAbs+string(filepath.Separator)) || abs == baseAbs
+}
+
+// ScheduleDetail returns the current backup schedule details for the admin UI.
+type ScheduleDetail struct {
+	Enabled    bool   `json:"enabled"`
+	Interval  string `json:"interval"`
+	Keep      int    `json:"keep"`
+	LastBackup string `json:"last_backup,omitempty"`
+	NextBackup string `json:"next_backup,omitempty"`
+	Provider  string `json:"provider"`
+}
+
+func (m *BackupManager) ScheduleDetail() ScheduleDetail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	provider := m.cfg.Provider
+	if provider == "" {
+		provider = "local"
+	}
+
+	simplifyInterval := func(d time.Duration) string {
+		days := int(d.Hours() / 24)
+		if days > 0 && d%time.Hour == 0 {
+			return fmt.Sprintf("%dd", days)
+		}
+		if d%time.Hour == 0 {
+			return fmt.Sprintf("%dh", int(d/time.Hour))
+		}
+		return d.String()
+	}
+
+	var lastBak, nextBak string
+	if m.running && m.schedule > 0 && !m.lastBackup.IsZero() {
+		lastBak = m.lastBackup.UTC().Format(time.RFC3339)
+		nextBak = m.lastBackup.Add(m.schedule).UTC().Format(time.RFC3339)
+	}
+
+	return ScheduleDetail{
+		Enabled:    m.running,
+		Interval:  simplifyInterval(m.schedule),
+		Keep:      m.keepCount,
+		Provider:  provider,
+		LastBackup: lastBak,
+		NextBackup: nextBak,
+	}
 }
