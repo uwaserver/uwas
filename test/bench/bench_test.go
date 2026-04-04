@@ -139,3 +139,17 @@ func BenchmarkCacheKeyGenerate(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkContextAcquireRelease measures context pool acquisition speed.
+func BenchmarkContextAcquireRelease(b *testing.B) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test?a=1", nil)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			ctx := router.AcquireContext(rec, req)
+			router.ReleaseContext(ctx)
+		}
+	})
+}

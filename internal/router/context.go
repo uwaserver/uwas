@@ -2,7 +2,6 @@ package router
 
 import (
 	"crypto/rand"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -85,6 +84,18 @@ func generateID() string {
 	b[6] = (b[6] & 0x0F) | 0x70
 	b[8] = (b[8] & 0x3F) | 0x80
 
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	// Format without fmt.Sprintf: manually hex encode
+	const hex = "0123456789abcdef"
+	var sb [36]byte // UUID string length
+	// 8-4-4-4-12 = 36 chars
+	for i, j := 0, 0; i < 16; i++ {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			sb[j] = '-'
+			j++
+		}
+		sb[j] = hex[b[i]>>4]
+		sb[j+1] = hex[b[i]&0xF]
+		j += 2
+	}
+	return string(sb[:])
 }
