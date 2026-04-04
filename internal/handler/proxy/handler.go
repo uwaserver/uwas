@@ -280,6 +280,9 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			cancel()
 			if readErr != nil {
 				h.logger.Error("error reading upstream response body", "backend", backend.URL.String(), "error", readErr)
+				// Do not write partial body — upstream connection was broken.
+				// Headers already sent; cannot change status code.
+				return
 			}
 			if len(body) > 0 {
 				ctx.Response.Write(body)

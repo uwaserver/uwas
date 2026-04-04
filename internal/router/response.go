@@ -70,5 +70,9 @@ func (w *ResponseWriter) Unwrap() http.ResponseWriter {
 
 // Error writes an error response.
 func (w *ResponseWriter) Error(code int, msg string) {
+	if w.headerWritten {
+		// Headers already sent — cannot change status code, just log
+		return
+	}
 	http.Error(w, msg, code)
 }
