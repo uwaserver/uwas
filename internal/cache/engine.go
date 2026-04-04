@@ -162,9 +162,20 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 	}
 }
 
-// PurgeByTag removes entries matching tags from both L1 and L2.
+// PurgeByTag removes entries matching tags from L1, L2, and L3.
 func (e *Engine) PurgeByTag(tags ...string) int {
-	return e.memory.PurgeByTag(tags...)
+	count := e.memory.PurgeByTag(tags...)
+	if e.disk != nil {
+		count += e.disk.PurgeByTag(tags...)
+	}
+	if e.redis != nil {
+		for _, tag := range tags {
+			if err := e.redis.PurgeByTag(tag); err != nil {
+				e.logger.Warn("redis PurgeByTag failed", "tag", tag, "error", err)
+			}
+		}
+	}
+	return count
 }
 
 // PurgeAll clears all caches.

@@ -391,3 +391,39 @@ func TestConvertErrorDocumentMultiWordValue(t *testing.T) {
 		t.Errorf("503 = %q", rules.ErrorDocuments[503])
 	}
 }
+
+// TestSetModuleLoaded covers the SetModuleLoaded function.
+func TestSetModuleLoaded(t *testing.T) {
+	// Save original state
+	origModRewrite := loadedModules["mod_rewrite.c"]
+	defer func() { loadedModules["mod_rewrite.c"] = origModRewrite }()
+
+	// Set module to false
+	SetModuleLoaded("mod_rewrite.c", false)
+	if IsModuleLoaded("mod_rewrite.c") {
+		t.Error("mod_rewrite.c should be false after SetModuleLoaded(false)")
+	}
+
+	// Set module to true
+	SetModuleLoaded("mod_rewrite.c", true)
+	if !IsModuleLoaded("mod_rewrite.c") {
+		t.Error("mod_rewrite.c should be true after SetModuleLoaded(true)")
+	}
+
+	// Case insensitivity
+	SetModuleLoaded("MOD_REWRITE.C", false)
+	if IsModuleLoaded("mod_rewrite.c") {
+		t.Error("mod_rewrite.c should be false (case insensitive)")
+	}
+
+	// Unknown module should return false by default
+	if IsModuleLoaded("mod_unknown.c") {
+		t.Error("unknown module should return false")
+	}
+
+	// Set unknown module to true
+	SetModuleLoaded("mod_unknown.c", true)
+	if !IsModuleLoaded("mod_unknown.c") {
+		t.Error("mod_unknown.c should be true after SetModuleLoaded(true)")
+	}
+}

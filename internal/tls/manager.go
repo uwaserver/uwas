@@ -84,6 +84,16 @@ func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logg
 	// Initialize ACME client if email is configured
 	if cfg.Email != "" {
 		m.acme = acme.NewClient(cfg.CAURL, cfg.Storage, log)
+
+		// Wire up DNS provider for DNS-01 challenges if configured.
+		if cfg.DNSProvider != "" {
+			if dp, err := NewACMEDNSProvider(cfg.DNSProvider, cfg.DNSCredentials, log); err == nil {
+				m.acme.SetDNSProvider(dp)
+				log.Info("ACME DNS-01 provider configured", "provider", cfg.DNSProvider)
+			} else {
+				log.Warn("failed to initialize ACME DNS provider", "provider", cfg.DNSProvider, "error", err)
+			}
+		}
 	}
 
 	return m
@@ -260,12 +270,23 @@ func (m *Manager) generateSelfSigned(host string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	validity := m.config.SelfSignedValidity.Duration
+	if validity <= 0 {
+		validity = 24 * time.Hour
+	}
+
+	serial := big.NewInt(1)
+	if serialNumber, err := rand.Int(rand.Reader, big.NewInt(1<<62)); err == nil {
+		serial = serialNumber
+	}
+
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
 		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotAfter:     time.Now().Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

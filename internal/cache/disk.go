@@ -89,6 +89,51 @@ func (dc *DiskCache) PurgeAll() error {
 	return os.RemoveAll(dc.baseDir)
 }
 
+// PurgeByTag removes all cache entries matching any of the given tags.
+func (dc *DiskCache) PurgeByTag(tags ...string) int {
+	var count int
+	tagSet := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		tagSet[t] = true
+	}
+
+	filepath.WalkDir(dc.baseDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".cache" {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+
+		resp, err := Deserialize(data)
+		if err != nil {
+			// Remove corrupt entries.
+			os.Remove(path)
+			return nil
+		}
+
+		// Check if any tag matches.
+		for _, t := range resp.Tags {
+			if tagSet[t] {
+				if info, err := d.Info(); err == nil {
+					dc.usedBytes.Add(-info.Size())
+				}
+				os.Remove(path)
+				count++
+				break
+			}
+		}
+		return nil
+	})
+
+	return count
+}
+
 func (dc *DiskCache) path(key string) string {
 	d1, d2 := KeyPrefix(key)
 	return filepath.Join(dc.baseDir, d1, d2, HashKey(key)+".cache")

@@ -138,8 +138,6 @@ type Server struct {
 	appMgr *appmanager.Manager
 }
 
-const maxMirrorBodyBytes = 2 << 20 // 2MB safety cap for mirror body buffering
-
 var locationProxyHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
@@ -487,9 +485,10 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		// Request mirroring
 		if d.Proxy.Mirror.Enabled && d.Proxy.Mirror.Backend != "" {
 			s.proxyMirrors[d.Host] = proxyhandler.NewMirror(proxyhandler.MirrorConfig{
-				Enabled: d.Proxy.Mirror.Enabled,
-				Backend: d.Proxy.Mirror.Backend,
-				Percent: d.Proxy.Mirror.Percent,
+				Enabled:      d.Proxy.Mirror.Enabled,
+				Backend:      d.Proxy.Mirror.Backend,
+				Percent:      d.Proxy.Mirror.Percent,
+				MaxBodyBytes: d.Proxy.Mirror.MaxBodyBytes,
 			}, log)
 		}
 	}
@@ -643,6 +642,11 @@ func (s *Server) Start() error {
 	if s.config.Global.WorkerCount != "auto" {
 		if n, err := strconv.Atoi(s.config.Global.WorkerCount); err == nil && n > 0 {
 			workers = n
+		} else {
+			s.logger.Warn("invalid worker_count, falling back to NumCPU",
+				"value", s.config.Global.WorkerCount,
+				"fallback", workers,
+			)
 		}
 	}
 	runtime.GOMAXPROCS(workers)
@@ -709,7 +713,10 @@ func (s *Server) Start() error {
 
 	// Backup scheduler
 	if s.backupMgr != nil {
-		if sched := s.config.Global.Backup.Schedule; sched != "" {
+		if cron := s.config.Global.Backup.Cron; cron != "" {
+			s.backupMgr.ScheduleBackupCron(cron)
+			s.logger.Info("backup scheduler started", "cron", cron)
+		} else if sched := s.config.Global.Backup.Schedule; sched != "" {
 			if d, err := time.ParseDuration(sched); err == nil && d > 0 {
 				s.backupMgr.ScheduleBackup(d)
 				s.logger.Info("backup scheduler started", "interval", d)
@@ -1046,7 +1053,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per-domain security headers (CSP, COEP, COOP, CORP, Permissions-Policy)
+	// Per-domain security headers (CSP, COEP, COOP, CORP, Permissions-Policy, HSTS, etc.)
 	if sh := domain.SecurityHeaders; sh.ContentSecurityPolicy != "" {
 		ctx.Response.Header().Set("Content-Security-Policy", sh.ContentSecurityPolicy)
 	}
@@ -1061,6 +1068,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if sh := domain.SecurityHeaders; sh.CrossOriginResource != "" {
 		ctx.Response.Header().Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
+	}
+	if sh := domain.SecurityHeaders; sh.ReferrerPolicy != "" {
+		ctx.Response.Header().Set("Referrer-Policy", sh.ReferrerPolicy)
+	}
+	if sh := domain.SecurityHeaders; sh.StrictTransportSecurity != "" {
+		ctx.Response.Header().Set("Strict-Transport-Security", sh.StrictTransportSecurity)
+	}
+	if sh := domain.SecurityHeaders; sh.XContentTypeOptions != "" {
+		ctx.Response.Header().Set("X-Content-Type-Options", sh.XContentTypeOptions)
+	}
+	if sh := domain.SecurityHeaders; sh.XSSProtection != "" {
+		ctx.Response.Header().Set("X-XSS-Protection", sh.XSSProtection)
 	}
 
 	basicAuthChecked := false
@@ -1613,25 +1632,26 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 	if mirror := s.proxyMirrors[domain.Host]; mirror != nil && mirror.ShouldMirror() {
 		var bodyBytes []byte
 		shouldMirror := true
+		maxBytes := int64(mirror.MaxBodyBytes())
 
 		// Mirror request bodies only when size is known and small enough.
 		// This avoids unbounded buffering for large uploads.
 		if ctx.Request.Body != nil {
-			if ctx.Request.ContentLength < 0 || ctx.Request.ContentLength > maxMirrorBodyBytes {
+			if ctx.Request.ContentLength < 0 || ctx.Request.ContentLength > maxBytes {
 				shouldMirror = false
 				s.logger.Debug("skipping mirror for large/unknown request body",
 					"host", domain.Host,
 					"content_length", ctx.Request.ContentLength,
-					"limit_bytes", maxMirrorBodyBytes,
+					"limit_bytes", maxBytes,
 				)
 			} else {
-				limited := io.LimitReader(ctx.Request.Body, maxMirrorBodyBytes+1)
+				limited := io.LimitReader(ctx.Request.Body, maxBytes+1)
 				buf, err := io.ReadAll(limited)
 				if err != nil {
 					renderDomainError(ctx.Response, http.StatusBadRequest, domain)
 					return
 				}
-				if int64(len(buf)) > maxMirrorBodyBytes {
+				if int64(len(buf)) > maxBytes {
 					shouldMirror = false
 				}
 				ctx.Request.Body.Close()
@@ -1893,8 +1913,15 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 
 	// Compile rewrite rules
 	if ruleSet.RewriteEnabled {
+		base := ruleSet.RewriteBase // may be "/" or "/subdir/" or ""
 		for _, rw := range ruleSet.Rewrites {
-			rule, err := rewrite.ParseRule(rw.Pattern, rw.Target, rw.Flags)
+			target := rw.Target
+			// RewriteBase is prepended to relative targets (those not starting with /).
+			// Apache behavior: RewriteBase only affects targets that don't start with /.
+			if base != "" && target != "" && target != "-" && !strings.HasPrefix(target, "/") {
+				target = base + target
+			}
+			rule, err := rewrite.ParseRule(rw.Pattern, target, rw.Flags)
 			if err != nil {
 				continue
 			}
@@ -2123,10 +2150,12 @@ func (s *Server) shutdown() {
 			s.logger.Warn("https shutdown error", "error", err)
 		}
 	}
+
+	// HTTP/3 (QUIC) graceful shutdown: quic-go http3.Server doesn't have a
+	// Shutdown() method, so we close it immediately. This is acceptable since
+	// QUIC connections are established quickly and browsers retry on TCP.
 	if s.h3srv != nil {
-		if err := s.h3srv.Close(); err != nil {
-			s.logger.Warn("http/3 shutdown error", "error", err)
-		}
+		s.h3srv.Close()
 	}
 
 	// Gracefully shut down the admin API server.

@@ -1865,3 +1865,115 @@ func TestLoadOrCreateAccountKeyGenerateError(t *testing.T) {
 		t.Error("expected error when key generation fails")
 	}
 }
+
+// mockDNSProviderForACME is a mock DNS provider for testing.
+type mockDNSProviderForACME struct {
+	presentErr    error
+	cleanupErr    error
+	presentCalled bool
+	cleanupCalled bool
+}
+
+func (m *mockDNSProviderForACME) PresentDNSChallenge(domain, token, keyAuth string) error {
+	m.presentCalled = true
+	return m.presentErr
+}
+
+func (m *mockDNSProviderForACME) CleanupDNSChallenge(domain, token, keyAuth string) error {
+	m.cleanupCalled = true
+	return m.cleanupErr
+}
+
+func TestSetDNSProvider(t *testing.T) {
+	log := logger.New("error", "text")
+	c := NewClient("https://example.com", t.TempDir(), log)
+
+	if c.dnsProvider != nil {
+		t.Error("dnsProvider should be nil initially")
+	}
+
+	mockProv := &mockDNSProviderForACME{}
+	c.SetDNSProvider(mockProv)
+
+	if c.dnsProvider == nil {
+		t.Error("dnsProvider should not be nil after SetDNSProvider")
+	}
+	if c.dnsProvider != mockProv {
+		t.Error("dnsProvider should be the mock provider we set")
+	}
+}
+
+func TestSolveDNS01ProviderPresentError(t *testing.T) {
+	// Test solveDNS01 when PresentDNSChallenge fails
+	log := logger.New("error", "text")
+	c := NewClient("https://example.com", t.TempDir(), log)
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c.accountKey = key
+
+	mockProv := &mockDNSProviderForACME{
+		presentErr: fmt.Errorf("DNS provider error"),
+	}
+	c.SetDNSProvider(mockProv)
+
+	thumbprint, _ := thumbprintFunc(&c.accountKey.PublicKey)
+	challenge := &Challenge{
+		Type:   "dns-01",
+		URL:    "https://example.com/chall/1",
+		Token:  "tok1",
+		Status: "pending",
+	}
+
+	err := c.solveDNS01(context.Background(), "example.com", challenge, thumbprint)
+	if err == nil {
+		t.Error("expected error when PresentDNSChallenge fails")
+	}
+}
+
+func TestSolveDNS01ProviderCleanupError(t *testing.T) {
+	// Test solveDNS01 when CleanupDNSChallenge fails after successful validation.
+	// The cleanup error is logged as warning, not returned, so this test
+	// verifies the warning path rather than the error return.
+	log := logger.New("error", "text")
+	c := NewClient("https://example.com", t.TempDir(), log)
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c.accountKey = key
+
+	nonceCount := 0
+	var mockServer *httptest.Server
+	mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonceCount++
+		w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
+		if r.URL.Path == "/chall/1" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"valid"}`))
+		}
+	}))
+	defer mockServer.Close()
+
+	c.directory = &Directory{
+		NewNonce: mockServer.URL + "/nonce",
+	}
+
+	mockProv := &mockDNSProviderForACME{
+		cleanupErr: fmt.Errorf("DNS cleanup error"),
+	}
+	c.SetDNSProvider(mockProv)
+
+	thumbprint, _ := thumbprintFunc(&c.accountKey.PublicKey)
+	challenge := &Challenge{
+		Type:   "dns-01",
+		URL:    mockServer.URL + "/chall/1",
+		Token:  "tok1",
+		Status: "pending",
+	}
+
+	// After successful validation, cleanup error is logged but not returned.
+	// This test verifies the path completes without error despite cleanup failure.
+	err := c.solveDNS01(context.Background(), "example.com", challenge, thumbprint)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !mockProv.cleanupCalled {
+		t.Error("cleanup should have been called")
+	}
+}
