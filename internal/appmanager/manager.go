@@ -301,15 +301,16 @@ func (m *Manager) Stop(domain string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("domain %s not registered", domain)
 	}
+	// Close stopCh to prevent auto-restart, even if cmd is nil (monitor may be in backoff)
+	close(app.stopCh)
+	app.stopCh = make(chan struct{}) // reset for next start
+
 	// Snapshot cmd under lock to avoid race with monitorProcess setting cmd=nil
 	cmd := app.cmd
 	if cmd == nil || cmd.Process == nil {
 		m.mu.Unlock()
 		return fmt.Errorf("domain %s is not running", domain)
 	}
-
-	close(app.stopCh)
-	app.stopCh = make(chan struct{}) // reset for next start
 	m.mu.Unlock()
 
 	if err := cmd.Process.Kill(); err != nil {
