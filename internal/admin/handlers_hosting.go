@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/build"
@@ -873,13 +872,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Auto-restart after response is sent
 	go func() {
 		time.Sleep(500 * time.Millisecond) // let response flush
-		// Try systemctl restart first (cleanest)
-		if err := exec.Command("systemctl", "restart", "uwas").Run(); err != nil {
-			// Fallback: send SIGHUP to self for graceful reload
-			if p, err := os.FindProcess(os.Getpid()); err == nil {
-				p.Signal(syscall.SIGHUP)
-			}
-		}
+		selfupdate.RestartSelf() // tries systemctl restart uwas, falls back to re-exec
 	}()
 }
 
