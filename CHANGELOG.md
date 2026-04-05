@@ -5,6 +5,19 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.51] - 2026-04-05
+
+### Fixes
+
+- **Dashboard system stats refresh** - system stats bar now refreshes every 2 seconds instead of 10 seconds for near real-time CPU, RAM, disk monitoring.
+- **Dashboard dist to .gitignore** - build output directory added to .gitignore to reduce repository size.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -p 1 ./...` passes.
+- `npm run build` passes in `web/dashboard`.
+
 ## [0.0.50] - 2026-04-05
 
 ### Performance
