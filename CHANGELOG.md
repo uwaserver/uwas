@@ -5,6 +5,24 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.50] - 2026-04-05
+
+### Performance
+
+- **Context acquire/release** - optimized with manual hex encoding, 53% faster (239ns → 76ns), 49% less memory (283B → 144B), 67% fewer allocations (9 → 3).
+- **Cache key generation** - added strings.Builder pooling and eliminated strings.Join allocation, 43% faster (~3500ns → 1964ns), 1 fewer allocation.
+- **Request ID generation** - replaced fmt.Sprintf with manual hex encoding in middleware.
+- **ETag generation** - replaced fmt.Sprintf with manual hex encoding for static file ETag and dynamic response ETag.
+- **Traceparent header** - replaced fmt.Sprintf + hex.EncodeToString with fixed-size buffer and manual hex encoding in proxy handler.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -p 1 ./...` passes.
+- `npx tsc --noEmit` passes in `web/dashboard`.
+- `npm run build` passes in `web/dashboard`.
+- Benchmark suite: ContextAcquireRelease 76ns/op, CacheKeyGenerate 1964ns/op, VHostLookup 36ns/op.
+
 ## [0.0.49] - 2026-04-05
 
 ### Features
