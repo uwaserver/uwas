@@ -2,7 +2,6 @@ package static
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -120,9 +119,66 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 }
 
 func generateETag(info fs.FileInfo) string {
-	raw := fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
-	hash := sha256.Sum256([]byte(raw))
-	return fmt.Sprintf(`W/"%x"`, hash[:8])
+	// Build raw string without fmt.Sprintf: mtime-size (max ~40 bytes)
+	mtime := info.ModTime().UnixNano()
+	size := info.Size()
+	var raw [64]byte
+	n := 0
+	// Write mtime
+	if mtime < 0 {
+		raw[n] = '-'
+		n++
+		mtime = -mtime
+	}
+	mtimeDigits := [20]byte{}
+	mtimeLen := 0
+	for mtime > 0 {
+		mtimeDigits[mtimeLen] = byte('0' + mtime%10)
+		mtimeLen++
+		mtime /= 10
+	}
+	if mtimeLen == 0 {
+		mtimeDigits[0] = '0'
+		mtimeLen = 1
+	}
+	for i := mtimeLen - 1; i >= 0; i-- {
+		raw[n] = mtimeDigits[i]
+		n++
+	}
+	raw[n] = '-'
+	n++
+	// Write size
+	sizeDigits := [20]byte{}
+	sizeLen := 0
+	if size == 0 {
+		sizeDigits[0] = '0'
+		sizeLen = 1
+	} else {
+		for size > 0 {
+			sizeDigits[sizeLen] = byte('0' + size%10)
+			sizeLen++
+			size /= 10
+		}
+	}
+	for i := sizeLen - 1; i >= 0; i-- {
+		raw[n] = sizeDigits[i]
+		n++
+	}
+
+	hash := sha256.Sum256(raw[:n])
+
+	// Manual hex encoding: W/"<8-byte-hash-hex>" = 21 bytes total
+	const hex = "0123456789abcdef"
+	var etag [21]byte
+	etag[0] = 'W'
+	etag[1] = '/'
+	etag[2] = '"'
+	for i := 0; i < 8; i++ {
+		etag[3+i*2] = hex[hash[i]>>4]
+		etag[4+i*2] = hex[hash[i]&0xF]
+	}
+	etag[19] = '"'
+	return string(etag[:20]) // 21 bytes: W/" + 16 hex + " = 3 + 16 + 1
 }
 
 // ResolveRequest handles try_files logic and path resolution for a request.
