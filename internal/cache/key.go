@@ -42,9 +42,15 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 
 	// Sorted query params for consistency
 	if r.URL.RawQuery != "" {
+		// Split and sort for cache key consistency (key=a&b vs key=b&a)
 		params := strings.Split(r.URL.RawQuery, "&")
 		sort.Strings(params)
-		b.WriteString(strings.Join(params, "&"))
+		for i, p := range params {
+			if i > 0 {
+				b.WriteByte('&')
+			}
+			b.WriteString(p)
+		}
 	}
 
 	// Vary headers
