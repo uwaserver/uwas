@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -355,9 +353,29 @@ func generateTraceparent() string {
 	var spanID [8]byte
 	rand.Read(traceID[:])
 	rand.Read(spanID[:])
-	return fmt.Sprintf("00-%s-%s-01",
-		hex.EncodeToString(traceID[:]),
-		hex.EncodeToString(spanID[:]))
+
+	// Manual hex encoding: 00- (3) + 32 trace + - (1) + 16 span + -01 (3) = 55 bytes
+	const hexChars = "0123456789abcdef"
+	var buf [55]byte
+	// 00-
+	buf[0], buf[1], buf[2] = '0', '0', '-'
+	// trace-id (16 bytes → 32 hex chars)
+	for i, j := 0, 3; i < 16; i++ {
+		buf[j] = hexChars[traceID[i]>>4]
+		buf[j+1] = hexChars[traceID[i]&0xF]
+		j += 2
+	}
+	// -
+	buf[35] = '-'
+	// span-id (8 bytes → 16 hex chars)
+	for i, j := 0, 36; i < 8; i++ {
+		buf[j] = hexChars[spanID[i]>>4]
+		buf[j+1] = hexChars[spanID[i]&0xF]
+		j += 2
+	}
+	// -01
+	buf[52], buf[53], buf[54] = '-', '0', '1'
+	return string(buf[:])
 }
 
 // IsWebSocketUpgrade checks if the request is a WebSocket upgrade.
