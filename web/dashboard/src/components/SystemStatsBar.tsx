@@ -8,7 +8,7 @@ export default function SystemStatsBar() {
   useEffect(() => {
     const load = () => fetchSystem().then(setSys).catch(() => {});
     load();
-    const id = setInterval(load, 10000);
+    const id = setInterval(load, 2000);
     return () => clearInterval(id);
   }, []);
 
