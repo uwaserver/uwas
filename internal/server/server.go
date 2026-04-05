@@ -1479,8 +1479,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			// Generate ETag for non-ESI dynamic responses to support conditional requests.
 			if !isESI && hdrs.Get("ETag") == "" && len(capturedBody) > 0 {
 				hash := sha256.Sum256(capturedBody)
-				etag := fmt.Sprintf(`"%x"`, hash[:16])
-				hdrs.Set("ETag", etag)
+				var etag [34]byte
+				etag[0] = '"'
+				hex.Encode(etag[1:33], hash[:16])
+				etag[33] = '"'
+				hdrs.Set("ETag", string(etag[:]))
 			}
 			s.cache.Set(r, &cache.CachedResponse{
 				StatusCode:  ctx.Response.StatusCode(),
