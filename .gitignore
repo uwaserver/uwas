@@ -45,6 +45,9 @@ docs/site/node_modules/
 # ── Build output (site) ──
 docs/site/dist/
 
+# ── Dashboard build output ──
+internal/admin/dashboard/dist/
+
 # ── Demo / temp ──
 demo/
 
