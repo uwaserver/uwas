@@ -186,9 +186,11 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 // Returns true if a file was served (caller should return).
 func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain, headers http.Header) bool {
 	var filePath string
+	isAccel := false
 	if accel := headers.Get("X-Accel-Redirect"); accel != "" {
 		headers.Del("X-Accel-Redirect")
 		filePath = filepath.Join(domain.Root, filepath.Clean("/"+accel))
+		isAccel = true
 	} else if sendfile := headers.Get("X-Sendfile"); sendfile != "" {
 		headers.Del("X-Sendfile")
 		filePath = sendfile
@@ -197,16 +199,47 @@ func (h *Handler) tryServeFile(ctx *router.RequestContext, domain *config.Domain
 		return false
 	}
 
-	// Security: path must stay within document root.
-	if !pathsafe.IsWithinBase(domain.Root, filePath) {
-		return false
-	}
-	// Resolve symlinks to prevent cross-domain escape.
-	if !pathsafe.IsWithinBaseResolved(domain.Root, filePath) {
+	// Normalize and validate: reject actual path traversal (..) even after Clean().
+	// Note: Clean() normalizes slash style (C:/ → C:\) on Windows, so we only
+	// block when Clean adds or removes path components (not just style change).
+	cleanPath := filepath.Clean(filePath)
+	if strings.Contains(cleanPath, "..") || filepath.IsAbs(filePath) != filepath.IsAbs(cleanPath) {
+		h.logger.Warn("x-sendfile path traversal attempt blocked",
+			"host", domain.Host,
+			"path", filePath,
+			"cleaned", cleanPath,
+		)
 		return false
 	}
 
-	f, err := os.Open(filePath)
+	// X-Accel-Redirect is always relative to domain.Root (already joined above).
+	// X-Sendfile is an absolute path — validate against domain.Root + InternalAliases.
+	if isAccel {
+		// Validate against domain.Root.
+		if !pathsafe.IsWithinBase(domain.Root, cleanPath) || !pathsafe.IsWithinBaseResolved(domain.Root, cleanPath) {
+			return false
+		}
+	} else {
+		// For X-Sendfile, check against all allowed bases: domain.Root + InternalAliases.
+		allowedBases := []string{domain.Root}
+		allowedBases = append(allowedBases, domain.InternalAliases...)
+		allowed := false
+		for _, base := range allowedBases {
+			if pathsafe.IsWithinBase(base, cleanPath) && pathsafe.IsWithinBaseResolved(base, cleanPath) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			h.logger.Warn("x-sendfile path outside allowed roots",
+				"host", domain.Host,
+				"path", cleanPath,
+			)
+			return false
+		}
+	}
+
+	f, err := os.Open(cleanPath)
 	if err != nil {
 		return false // fall through to normal response
 	}

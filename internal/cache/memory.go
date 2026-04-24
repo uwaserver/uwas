@@ -12,12 +12,14 @@ const shardCount = 256
 
 // MemoryCache is a sharded in-memory cache with LRU eviction.
 type MemoryCache struct {
-	shards    [shardCount]shard
-	maxBytes  int64
-	usedBytes atomic.Int64
-	hits      atomic.Int64
-	misses    atomic.Int64
-	stales    atomic.Int64
+	shards        [shardCount]shard
+	maxBytes      int64
+	usedBytes     atomic.Int64
+	hits          atomic.Int64
+	misses        atomic.Int64
+	stales        atomic.Int64
+	cleanupCtx    context.Context
+	cleanupCancel context.CancelFunc
 }
 
 type shard struct {
@@ -201,20 +203,28 @@ func shardIdx(key string) uint8 {
 }
 
 // StartCleanup runs periodic eviction of expired entries.
-// The goroutine exits when ctx is cancelled.
+// The goroutine exits when ctx is cancelled or Close is called.
 func (mc *MemoryCache) StartCleanup(ctx context.Context, interval time.Duration) {
+	mc.cleanupCtx, mc.cleanupCancel = context.WithCancel(ctx)
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-mc.cleanupCtx.Done():
 				return
 			case <-ticker.C:
 				mc.cleanExpired()
 			}
 		}
 	}()
+}
+
+// Close stops the cleanup goroutine.
+func (mc *MemoryCache) Close() {
+	if mc.cleanupCancel != nil {
+		mc.cleanupCancel()
+	}
 }
 
 func (mc *MemoryCache) cleanExpired() {

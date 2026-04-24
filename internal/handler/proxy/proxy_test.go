@@ -642,9 +642,9 @@ func TestNewHealthCheckerDefaults(t *testing.T) {
 	}
 }
 
-// --- circuit.go: HalfOpen max requests exceeded ---
+// --- circuit.go: HalfOpen CAS single probe ---
 
-func TestCircuitBreakerHalfOpenMaxExceeded(t *testing.T) {
+func TestCircuitBreakerHalfOpenCAS(t *testing.T) {
 	cb := NewCircuitBreaker(2, 50*time.Millisecond)
 
 	// Trip the breaker
@@ -657,22 +657,22 @@ func TestCircuitBreakerHalfOpenMaxExceeded(t *testing.T) {
 	// Wait for timeout to transition to half-open
 	time.Sleep(60 * time.Millisecond)
 
-	// First Allow() transitions from Open to HalfOpen (resets halfOpenCount=0, returns true)
+	// First Allow() transitions from Open to HalfOpen, claims probe slot via CAS, returns true
 	if !cb.Allow() {
-		t.Fatal("first call should be allowed (transitions to half-open)")
+		t.Fatal("first call should be allowed (transitions to half-open, claims slot)")
 	}
 	if cb.State() != CircuitHalfOpen {
 		t.Fatal("should be half-open now")
 	}
 
-	// Second Allow() enters HalfOpen path: halfOpenCount(0) < halfOpenMax(1) → increments to 1, returns true
-	if !cb.Allow() {
-		t.Fatal("second call should be allowed (halfOpenCount < halfOpenMax)")
+	// Second Allow() in HalfOpen: CAS on probeSlot fails (slot already claimed), returns false
+	if cb.Allow() {
+		t.Error("second call should be rejected in half-open (probeSlot already claimed)")
 	}
 
-	// Third Allow(): halfOpenCount(1) < halfOpenMax(1) is false → rejected
+	// Third Allow() in HalfOpen: still rejected
 	if cb.Allow() {
-		t.Error("third call should be rejected in half-open (max exceeded)")
+		t.Error("third call should be rejected in half-open (probeSlot still claimed)")
 	}
 }
 

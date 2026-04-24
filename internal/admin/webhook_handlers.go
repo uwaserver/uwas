@@ -55,6 +55,12 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SSRF check: block private IPs, localhost, cloud metadata endpoints
+	if err := config.IsSSRFSafe(req.URL); err != nil {
+		jsonError(w, "URL is not allowed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Set defaults
 	if req.Retry == 0 {
 		req.Retry = 3
@@ -125,6 +131,12 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 
 	if req.URL == "" {
 		jsonError(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+
+	// SSRF check: block private IPs, localhost, cloud metadata endpoints
+	if err := config.IsSSRFSafe(req.URL); err != nil {
+		jsonError(w, "URL is not allowed: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 

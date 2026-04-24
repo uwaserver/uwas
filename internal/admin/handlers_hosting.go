@@ -564,7 +564,7 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB limit
+	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB total request limit
 	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
 		return
@@ -574,9 +574,17 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		dir = "."
 	}
 
+	// Enforce per-file size limit (50MB per file)
+	const maxFileSize = 50 << 20
+
 	var uploaded []string
 	for _, fHeaders := range r.MultipartForm.File {
 		for _, fh := range fHeaders {
+			// Reject files that exceed per-file limit
+			if fh.Size > maxFileSize {
+				jsonError(w, fmt.Sprintf("file %q exceeds maximum size of %d MB", fh.Filename, maxFileSize>>20), http.StatusBadRequest)
+				return
+			}
 			src, err := fh.Open()
 			if err != nil {
 				continue

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -18,15 +19,16 @@ type Manager struct {
 }
 
 // DomainUsage tracks bandwidth usage for a single domain.
+// Counters use atomic.Int64 to prevent race conditions on concurrent updates.
 type DomainUsage struct {
 	mu           sync.Mutex
-	MonthlyBytes int64     `json:"monthly_bytes"`
-	DailyBytes   int64     `json:"daily_bytes"`
-	LastReset    time.Time `json:"last_reset"`
-	DailyReset   time.Time `json:"daily_reset"`
-	LastUpdated  time.Time `json:"last_updated"`
-	Blocked      bool      `json:"blocked"`
-	Throttled    bool      `json:"throttled"`
+	MonthlyBytes atomic.Int64 `json:"-"`
+	DailyBytes   atomic.Int64 `json:"-"`
+	LastReset    time.Time     `json:"last_reset"`
+	DailyReset   time.Time     `json:"daily_reset"`
+	LastUpdated  time.Time     `json:"last_updated"`
+	Blocked      bool          `json:"blocked"`
+	Throttled    bool          `json:"throttled"`
 }
 
 // Status represents the current bandwidth status for a domain.
@@ -97,24 +99,28 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 
 	now := time.Now()
 
-	// Check if we need to reset counters
+	// Check if we need to reset counters using atomic CAS for window swap
 	if now.Sub(usage.LastReset) > 30*24*time.Hour {
-		usage.MonthlyBytes = 0
+		usage.MonthlyBytes.Store(0)
 		usage.LastReset = now
 		usage.Blocked = false
 		usage.Throttled = false
 	}
 	if now.Sub(usage.DailyReset) > 24*time.Hour {
-		usage.DailyBytes = 0
+		usage.DailyBytes.Store(0)
 		usage.DailyReset = now
 		usage.Blocked = false
 		usage.Throttled = false
 	}
 
-	// Add bytes
-	usage.MonthlyBytes += bytes
-	usage.DailyBytes += bytes
+	// Add bytes atomically
+	usage.MonthlyBytes.Add(bytes)
+	usage.DailyBytes.Add(bytes)
 	usage.LastUpdated = now
+
+	// Load current values for limit checks
+	monthlyBytes := usage.MonthlyBytes.Load()
+	dailyBytes := usage.DailyBytes.Load()
 
 	// Check limits
 	monthlyLimit := int64(limit.MonthlyLimit)
@@ -123,27 +129,27 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	// Send alerts at thresholds (before block/throttle returns)
 	if alertFn != nil {
 		if monthlyLimit > 0 {
-			pct := float64(usage.MonthlyBytes) / float64(monthlyLimit)
+			pct := float64(monthlyBytes) / float64(monthlyLimit)
 			if pct >= 0.9 && pct < 0.91 {
-				alertFn(host, "monthly_90", usage.MonthlyBytes, monthlyLimit)
+				alertFn(host, "monthly_90", monthlyBytes, monthlyLimit)
 			} else if pct >= 1.0 && pct < 1.01 {
-				alertFn(host, "monthly_exceeded", usage.MonthlyBytes, monthlyLimit)
+				alertFn(host, "monthly_exceeded", monthlyBytes, monthlyLimit)
 			}
 		}
 		if dailyLimit > 0 {
-			pct := float64(usage.DailyBytes) / float64(dailyLimit)
+			pct := float64(dailyBytes) / float64(dailyLimit)
 			if pct >= 0.9 && pct < 0.91 {
-				alertFn(host, "daily_90", usage.DailyBytes, dailyLimit)
+				alertFn(host, "daily_90", dailyBytes, dailyLimit)
 			} else if pct >= 1.0 && pct < 1.01 {
-				alertFn(host, "daily_exceeded", usage.DailyBytes, dailyLimit)
+				alertFn(host, "daily_exceeded", dailyBytes, dailyLimit)
 			}
 		}
 	}
 
 	// Block if exceeded hard limit
 	if limit.Action == "block" {
-		if (monthlyLimit > 0 && usage.MonthlyBytes >= monthlyLimit) ||
-			(dailyLimit > 0 && usage.DailyBytes >= dailyLimit) {
+		if (monthlyLimit > 0 && monthlyBytes >= monthlyLimit) ||
+			(dailyLimit > 0 && dailyBytes >= dailyLimit) {
 			usage.Blocked = true
 			return true, false
 		}
@@ -152,12 +158,12 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	// Throttle if exceeded threshold (80% for throttle, 100% for block)
 	if limit.Action == "throttle" || limit.Action == "" {
 		throttleThreshold := int64(float64(monthlyLimit) * 0.8)
-		if monthlyLimit > 0 && usage.MonthlyBytes >= throttleThreshold {
+		if monthlyLimit > 0 && monthlyBytes >= throttleThreshold {
 			usage.Throttled = true
 			return false, true
 		}
 		throttleThreshold = int64(float64(dailyLimit) * 0.8)
-		if dailyLimit > 0 && usage.DailyBytes >= throttleThreshold {
+		if dailyLimit > 0 && dailyBytes >= throttleThreshold {
 			usage.Throttled = true
 			return false, true
 		}
@@ -200,13 +206,15 @@ func (m *Manager) GetStatus(host string) *Status {
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
 
+	monthlyBytes := usage.MonthlyBytes.Load()
+	dailyBytes := usage.DailyBytes.Load()
 	monthlyLimit := int64(limit.MonthlyLimit)
 	dailyLimit := int64(limit.DailyLimit)
 
 	status := &Status{
 		Host:         host,
-		MonthlyBytes: usage.MonthlyBytes,
-		DailyBytes:   usage.DailyBytes,
+		MonthlyBytes: monthlyBytes,
+		DailyBytes:   dailyBytes,
 		MonthlyLimit: monthlyLimit,
 		DailyLimit:   dailyLimit,
 		Blocked:      usage.Blocked,
@@ -216,10 +224,10 @@ func (m *Manager) GetStatus(host string) *Status {
 	}
 
 	if monthlyLimit > 0 {
-		status.MonthlyPct = float64(usage.MonthlyBytes) / float64(monthlyLimit) * 100
+		status.MonthlyPct = float64(monthlyBytes) / float64(monthlyLimit) * 100
 	}
 	if dailyLimit > 0 {
-		status.DailyPct = float64(usage.DailyBytes) / float64(dailyLimit) * 100
+		status.DailyPct = float64(dailyBytes) / float64(dailyLimit) * 100
 	}
 
 	return status
@@ -255,8 +263,8 @@ func (m *Manager) Reset(host string) {
 
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
-	usage.MonthlyBytes = 0
-	usage.DailyBytes = 0
+	usage.MonthlyBytes.Store(0)
+	usage.DailyBytes.Store(0)
 	usage.LastReset = time.Now()
 	usage.DailyReset = time.Now()
 	usage.Blocked = false

@@ -39,6 +39,17 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 		return nil, fmt.Errorf("get connection: %w", err)
 	}
 
+	// Track whether the connection is healthy for deferred cleanup decision.
+	// If broken is true, we discard the connection; otherwise return it to pool.
+	broken := false
+	defer func() {
+		if broken {
+			c.pool.Discard(cn)
+		} else {
+			c.pool.Put(cn)
+		}
+	}()
+
 	// Set read/write deadline to prevent hanging forever
 	deadline := time.Now().Add(60 * time.Second)
 	if d, ok := ctx.Deadline(); ok {
@@ -53,19 +64,19 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 	// 1. FCGI_BEGIN_REQUEST
 	beginBody := EncodeBeginRequest(RoleResponder, FlagKeepConn)
 	if err := WriteRecord(bw, TypeBeginRequest, requestID, beginBody); err != nil {
-		c.pool.Discard(cn)
+		broken = true
 		return nil, fmt.Errorf("write begin: %w", err)
 	}
 
 	// 2. FCGI_PARAMS
 	params := EncodeParams(env)
 	if err := WriteRecord(bw, TypeParams, requestID, params); err != nil {
-		c.pool.Discard(cn)
+		broken = true
 		return nil, fmt.Errorf("write params: %w", err)
 	}
 	// Empty params record signals end of params
 	if err := WriteRecord(bw, TypeParams, requestID, nil); err != nil {
-		c.pool.Discard(cn)
+		broken = true
 		return nil, fmt.Errorf("write params end: %w", err)
 	}
 
@@ -76,7 +87,7 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 			n, readErr := stdin.Read(buf)
 			if n > 0 {
 				if err := WriteRecord(bw, TypeStdin, requestID, buf[:n]); err != nil {
-					c.pool.Discard(cn)
+					broken = true
 					return nil, fmt.Errorf("write stdin: %w", err)
 				}
 			}
@@ -84,20 +95,20 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 				break
 			}
 			if readErr != nil {
-				c.pool.Discard(cn)
+				broken = true
 				return nil, fmt.Errorf("read stdin: %w", readErr)
 			}
 		}
 	}
 	// Empty stdin record signals end of input
 	if err := WriteRecord(bw, TypeStdin, requestID, nil); err != nil {
-		c.pool.Discard(cn)
+		broken = true
 		return nil, fmt.Errorf("write stdin end: %w", err)
 	}
 
 	// Flush all buffered writes
 	if err := bw.Flush(); err != nil {
-		c.pool.Discard(cn)
+		broken = true
 		return nil, fmt.Errorf("flush: %w", err)
 	}
 
@@ -108,7 +119,7 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 	for {
 		rec, err := ReadRecord(br)
 		if err != nil {
-			c.pool.Discard(cn)
+			broken = true
 			return nil, fmt.Errorf("read record: %w", err)
 		}
 
@@ -125,7 +136,6 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 			if len(rec.Content) >= 4 {
 				resp.AppStatus = binary.BigEndian.Uint32(rec.Content[0:4])
 			}
-			c.pool.Put(cn)
 			return resp, nil
 		}
 	}

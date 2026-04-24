@@ -53,6 +53,7 @@ type Session struct {
 	Domains   []string  `json:"domains,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	LastStep  int64     `json:"last_step,omitempty"` // TOTP step (Unix/30) last used — prevents replay
 }
 
 // Permission represents a specific action that can be performed.

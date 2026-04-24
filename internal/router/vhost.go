@@ -3,17 +3,22 @@ package router
 import (
 	"sort"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/uwaserver/uwas/internal/config"
 )
 
-// VHostRouter routes incoming requests to domain configurations based on Host header.
-type VHostRouter struct {
-	mu        sync.RWMutex
+// vhostMap holds the read-mostly routing data. Swapped atomically on reload.
+type vhostMap struct {
 	exact     map[string]*config.Domain // exact host → domain
 	wildcards []wildcardEntry           // sorted by length desc (longest match first)
 	fallback  *config.Domain            // default if nothing matches
+}
+
+// VHostRouter routes incoming requests to domain configurations based on Host header.
+type VHostRouter struct {
+	// current is swapped atomically on reload — readers see either old or new, never partial.
+	current atomic.Pointer[vhostMap]
 }
 
 type wildcardEntry struct {
@@ -22,14 +27,13 @@ type wildcardEntry struct {
 }
 
 func NewVHostRouter(domains []config.Domain) *VHostRouter {
-	r := &VHostRouter{
-		exact: make(map[string]*config.Domain),
-	}
-	r.load(domains)
+	r := &VHostRouter{}
+	r.store(domains)
 	return r
 }
 
-func (r *VHostRouter) load(domains []config.Domain) {
+// store builds a new vhostMap and atomically swaps it.
+func (r *VHostRouter) store(domains []config.Domain) {
 	exact := make(map[string]*config.Domain, len(domains)*2)
 	var wildcards []wildcardEntry
 	var fallback *config.Domain
@@ -74,11 +78,12 @@ func (r *VHostRouter) load(domains []config.Domain) {
 		return len(wildcards[i].suffix) > len(wildcards[j].suffix)
 	})
 
-	r.mu.Lock()
-	r.exact = exact
-	r.wildcards = wildcards
-	r.fallback = fallback
-	r.mu.Unlock()
+	m := &vhostMap{
+		exact:    exact,
+		wildcards: wildcards,
+		fallback: fallback,
+	}
+	r.current.Store(m)
 }
 
 // Lookup finds the domain config for a given host.
@@ -89,23 +94,22 @@ func (r *VHostRouter) Lookup(host string) *config.Domain {
 	}
 	host = strings.ToLower(host)
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	m := r.current.Load()
 
 	// 1. Exact match
-	if d, ok := r.exact[host]; ok {
+	if d, ok := m.exact[host]; ok {
 		return d
 	}
 
 	// 2. Wildcard match (longest suffix first)
-	for _, wc := range r.wildcards {
+	for _, wc := range m.wildcards {
 		if strings.HasSuffix(host, wc.suffix) {
 			return wc.domain
 		}
 	}
 
 	// 3. Default fallback
-	return r.fallback
+	return m.fallback
 }
 
 // IsConfigured returns true if the host matches a configured domain (exact or wildcard),
@@ -117,16 +121,15 @@ func (r *VHostRouter) IsConfigured(host string) bool {
 	}
 	host = strings.ToLower(host)
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	m := r.current.Load()
 
 	// Check exact — both raw host and port-stripped form may be in the map.
-	if _, ok := r.exact[host]; ok {
+	if _, ok := m.exact[host]; ok {
 		return true
 	}
 
 	// Check wildcards
-	for _, wc := range r.wildcards {
+	for _, wc := range m.wildcards {
 		if strings.HasSuffix(host, wc.suffix) {
 			return true
 		}
@@ -136,5 +139,5 @@ func (r *VHostRouter) IsConfigured(host string) bool {
 
 // Update replaces all domain configurations (hot reload).
 func (r *VHostRouter) Update(domains []config.Domain) {
-	r.load(domains)
+	r.store(domains)
 }

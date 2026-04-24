@@ -10,6 +10,8 @@ import (
 	"net/smtp"
 	"strings"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 var (
@@ -59,6 +61,11 @@ func sendWebhook(url string, msg Message) error {
 		return fmt.Errorf("webhook url is required")
 	}
 
+	// SSRF check
+	if err := config.IsSSRFSafe(url); err != nil {
+		return fmt.Errorf("webhook URL not allowed: %w", err)
+	}
+
 	data, _ := json.Marshal(msg)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
@@ -81,6 +88,11 @@ func sendWebhook(url string, msg Message) error {
 func sendSlack(webhookURL string, msg Message) error {
 	if strings.TrimSpace(webhookURL) == "" {
 		return fmt.Errorf("slack webhook_url is required")
+	}
+
+	// SSRF check
+	if err := config.IsSSRFSafe(webhookURL); err != nil {
+		return fmt.Errorf("slack webhook URL not allowed: %w", err)
 	}
 
 	emoji := "ℹ️"

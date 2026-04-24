@@ -81,7 +81,6 @@ func CheckUpdate(currentVersion string) (*ReleaseInfo, error) {
 		}
 	} else {
 		// Fallback: get first release from /releases (includes pre-releases)
-		resp.Body.Close()
 		url = fmt.Sprintf("%s/repos/%s/%s/releases?per_page=1", githubAPIBase, repoOwner, repoName)
 		resp2, err := client.Get(url)
 		if err != nil {

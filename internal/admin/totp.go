@@ -29,22 +29,23 @@ func GenerateTOTPSecret() (string, error) {
 }
 
 // ValidateTOTP checks if the given code matches the TOTP for the secret,
-// allowing ±1 time step for clock skew.
-func ValidateTOTP(secret, code string) bool {
+// allowing ±1 time step for clock skew. Returns the matched step (Unix
+// seconds / 30) on success, or -1 on failure.
+func ValidateTOTP(secret, code string) (bool, int64) {
 	secret = strings.TrimSpace(strings.ToUpper(secret))
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
 	if err != nil {
-		return false
+		return false, -1
 	}
 
 	now := time.Now().Unix()
 	for i := -totpWindow; i <= totpWindow; i++ {
 		counter := uint64((now / totpPeriod) + int64(i))
 		if generateCode(key, counter) == code {
-			return true
+			return true, int64(now / totpPeriod)
 		}
 	}
-	return false
+	return false, -1
 }
 
 // generateCode computes a single TOTP code for the given key and counter.

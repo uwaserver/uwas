@@ -149,8 +149,9 @@ type Server struct {
 }
 
 type authTicket struct {
-	token   string // the real session token or API key
-	created time.Time
+	token     string    // the real session token or API key
+	created  time.Time // when the ticket was issued
+	expiresAt time.Time // when the ticket expires
 }
 
 // AuthManager interface for authentication (implemented by auth.Manager)
@@ -740,9 +741,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				jsonError(w, "2fa_required", http.StatusForbidden)
 				return
 			}
-			if !ValidateTOTP(totpSecret, totpCode) {
+			valid, _ := ValidateTOTP(totpSecret, totpCode)
+			if !valid {
 				s.recordAuthFailure(ip)
 				jsonError(w, "invalid 2FA code", http.StatusForbidden)
+				return
+			}
+		}
+
+		// CSRF protection: state-changing methods must send X-Requested-With header.
+		// This guards against cross-site request forgery attacks.
+		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
+			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
+				jsonError(w, "csrf: invalid origin", http.StatusForbidden)
 				return
 			}
 		}
@@ -1668,6 +1679,12 @@ func (s *Server) persistDomainPHPOverrides(domain string) {
 		return
 	}
 	tmp.Close()
+
+	// On Windows, Rename fails if target exists - remove target first then rename
+	if runtime.GOOS == "windows" {
+		_ = os.Remove(path) // ignore error if file doesn't exist
+	}
+
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		s.logger.Warn("cannot persist PHP overrides: rename failed", "domain", domain, "error", err)
@@ -1702,25 +1719,28 @@ func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	ticket := hex.EncodeToString(b)
 
+	const ticketTTL = 30 * time.Second
+
 	s.ticketMu.Lock()
 	if s.tickets == nil {
 		s.tickets = make(map[string]*authTicket)
 	}
-	// Prune expired tickets (older than 30s).
+	// Prune expired tickets.
 	now := time.Now()
 	for k, t := range s.tickets {
-		if now.Sub(t.created) > 30*time.Second {
+		if now.After(t.expiresAt) {
 			delete(s.tickets, k)
 		}
 	}
-	s.tickets[ticket] = &authTicket{token: realToken, created: now}
+	s.tickets[ticket] = &authTicket{token: realToken, created: now, expiresAt: now.Add(ticketTTL)}
 	s.ticketMu.Unlock()
 
-	jsonResponse(w, map[string]string{"ticket": ticket})
+	jsonResponse(w, map[string]any{"ticket": ticket, "expires_at": now.Add(ticketTTL)})
 }
 
 // redeemTicket exchanges a single-use ticket for the real auth token.
 // Returns empty string if the ticket is invalid or expired.
+// Uses atomic delete — single-use: once redeemed, the ticket is deleted.
 func (s *Server) redeemTicket(ticket string) string {
 	s.ticketMu.Lock()
 	defer s.ticketMu.Unlock()
@@ -1728,10 +1748,12 @@ func (s *Server) redeemTicket(ticket string) string {
 	if !ok {
 		return ""
 	}
-	delete(s.tickets, ticket) // single-use
-	if time.Since(t.created) > 30*time.Second {
+	if time.Now().After(t.expiresAt) {
+		delete(s.tickets, ticket)
 		return ""
 	}
+	// Single-use: delete now so it cannot be redeemed again, then return the token.
+	delete(s.tickets, ticket)
 	return t.token
 }
 
@@ -2036,8 +2058,14 @@ func (s *Server) persistConfig() {
 		return
 	}
 	if err := os.Rename(tmpMain, s.configPath); err != nil {
-		s.logger.Error("failed to rename config", "path", s.configPath, "error", err)
-		return
+		// On Windows, Rename fails if target exists — remove target first then rename
+		if runtime.GOOS == "windows" {
+			_ = os.Remove(s.configPath)
+		}
+		if err := os.Rename(tmpMain, s.configPath); err != nil {
+			s.logger.Error("failed to rename config", "path", s.configPath, "error", err)
+			return
+		}
 	}
 
 	// 2. Write each domain to its own file in domains.d/
@@ -4107,7 +4135,8 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !ValidateTOTP(secret, req.Code) {
+	valid, _ := ValidateTOTP(secret, req.Code)
+	if !valid {
 		jsonError(w, "invalid code", http.StatusUnauthorized)
 		return
 	}
@@ -4153,7 +4182,8 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !ValidateTOTP(secret, req.Code) {
+	valid, _ := ValidateTOTP(secret, req.Code)
+	if !valid {
 		jsonError(w, "invalid code", http.StatusUnauthorized)
 		return
 	}

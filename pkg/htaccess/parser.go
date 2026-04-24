@@ -2,9 +2,24 @@ package htaccess
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
+
+const (
+	// MaxDirectives is the maximum number of directives allowed in an .htaccess file.
+	// Prevents ReDoS by limiting rule count.
+	MaxDirectives = 200
+	// MaxLineLength is the maximum length of a single line in .htaccess.
+	MaxLineLength = 4096
+	// MaxPatternLength is the maximum length of a regex pattern.
+	MaxPatternLength = 1024
+)
+
+// ErrTooManyDirectives is returned when .htaccess has more than MaxDirectives.
+var ErrTooManyDirectives = errors.New("too many directives, maximum is 200")
 
 // Directive represents a parsed .htaccess directive.
 type Directive struct {
@@ -17,9 +32,13 @@ type Directive struct {
 // Parse reads an Apache .htaccess file and returns parsed directives.
 func Parse(reader io.Reader) ([]Directive, error) {
 	scanner := bufio.NewScanner(reader)
+	// Increase buffer size for long lines (e.g., long regex patterns)
+	scanner.Buffer(make([]byte, 256), MaxLineLength)
+
 	var directives []Directive
 	var blockStack []*Directive
 	lineNum := 0
+	directiveCount := 0
 
 	for scanner.Scan() {
 		lineNum++
@@ -30,13 +49,28 @@ func Parse(reader io.Reader) ([]Directive, error) {
 			continue
 		}
 
+		// Reject overly long lines (potential ReDoS vector)
+		if len(line) > MaxLineLength {
+			return nil, fmt.Errorf("line %d exceeds maximum length %d", lineNum, MaxLineLength)
+		}
+
 		// Handle line continuation (\)
 		for strings.HasSuffix(line, "\\") {
 			if !scanner.Scan() {
 				break
 			}
 			lineNum++
-			line = line[:len(line)-1] + " " + strings.TrimSpace(scanner.Text())
+			nextLine := scanner.Text()
+			if len(line)+len(nextLine) > MaxLineLength {
+				return nil, fmt.Errorf("line continuation exceeds maximum length %d", MaxLineLength)
+			}
+			line = line[:len(line)-1] + " " + strings.TrimSpace(nextLine)
+		}
+
+		// Enforce directive count limit
+		directiveCount++
+		if directiveCount > MaxDirectives {
+			return nil, ErrTooManyDirectives
 		}
 
 		// Block open: <IfModule mod_rewrite.c>

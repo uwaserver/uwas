@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ocsp"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -36,6 +37,9 @@ type Manager struct {
 	logger    *logger.Logger
 	domainsMu sync.RWMutex
 	domains   []config.Domain
+
+	// singleflight per host to prevent parallel ACME issuance for same host.
+	obtainFlight sync.Map // host → singleflight.Group
 
 	// On-demand rate limiting: max 10 certs per minute.
 	onDemandCount atomic.Int64
@@ -403,31 +407,49 @@ func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate
 		return nil, fmt.Errorf("ACME client not configured")
 	}
 
-	var cert *tls.Certificate
-	var certPEM, keyPEM []byte
-	var err error
-	if m.acmeObtainFunc != nil {
-		cert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, []string{host})
-	} else {
-		cert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, []string{host})
-	}
+	// Get or create singleflight group for this host.
+	g := &singleflight.Group{}
+	gVal, _ := m.obtainFlight.LoadOrStore(host, g)
+
+	// Use singleflight so only one caller does the actual ACME issuance.
+	// Subsequent callers for the same host block until the first completes.
+	v, err, _ := gVal.(*singleflight.Group).Do("", func() (any, error) {
+		// Double-check: another caller may have just stored the cert.
+		if cert, ok := m.certs.Load(host); ok {
+			return cert.(*tls.Certificate), nil
+		}
+
+		var cert *tls.Certificate
+		var certPEM, keyPEM []byte
+		var err error
+		if m.acmeObtainFunc != nil {
+			cert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, []string{host})
+		} else {
+			cert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, []string{host})
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// OCSP staple (best-effort)
+		m.stapleOCSP(cert, host)
+
+		// Store in memory
+		m.certs.Store(host, cert)
+
+		// Persist to disk
+		if err := m.storage.Save(host, cert, keyPEM, certPEM); err != nil {
+			m.logger.Warn("failed to persist cert", "host", host, "error", err)
+		}
+
+		m.logger.Info("certificate obtained", "host", host)
+		return cert, nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
-
-	// OCSP staple (best-effort)
-	m.stapleOCSP(cert, host)
-
-	// Store in memory
-	m.certs.Store(host, cert)
-
-	// Persist to disk
-	if err := m.storage.Save(host, cert, keyPEM, certPEM); err != nil {
-		m.logger.Warn("failed to persist cert", "host", host, "error", err)
-	}
-
-	m.logger.Info("certificate obtained", "host", host)
-	return cert, nil
+	return v.(*tls.Certificate), nil
 }
 
 // onDemandAllow checks the on-demand rate limiter. Returns true if the

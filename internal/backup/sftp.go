@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // SFTPProvider uploads backups to a remote server via SFTP/SCP over SSH.
@@ -238,10 +240,46 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 		return nil, fmt.Errorf("no SSH auth method configured (set key_file or password)")
 	}
 
+	// Use known_hosts for TOFU (Trust On First Use) — validates against ~/.ssh/known_hosts
+	// and auto-accepts new hosts on first connection.
+	knownHostsFile := os.ExpandEnv("$HOME/.ssh/known_hosts")
+	hostKeyCallback, err := knownhosts.New(knownHostsFile)
+	if err != nil {
+		// File doesn't exist — create it empty so we can write new hosts
+		f, err := os.OpenFile(knownHostsFile, os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return nil, fmt.Errorf("create known_hosts: %w", err)
+		}
+		f.Close()
+		hostKeyCallback, err = knownhosts.New(knownHostsFile)
+		if err != nil {
+			return nil, fmt.Errorf("init knownhosts: %w", err)
+		}
+	}
+	// Wrap knownhosts.New to auto-accept new hosts (TOFU) — append new keys to known_hosts
+	trustedHostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := hostKeyCallback(hostname, remote, key)
+		if err != nil {
+			// Check if it's a known host with key changed (MITM) — reject for security
+			if keyErr, ok := err.(*knownhosts.KeyError); ok && len(keyErr.Want) > 0 {
+				return err // Reject MITM attempts
+			}
+			// Unknown host — accept and append to known_hosts (TOFU)
+			hostEntry := fmt.Sprintf("%s %s %s", hostname, key.Type(), base64.StdEncoding.EncodeToString(key.Marshal()))
+			f, fErr := os.OpenFile(knownHostsFile, os.O_APPEND|os.O_WRONLY, 0600)
+			if fErr == nil {
+				f.WriteString(string(hostEntry) + "\n")
+				f.Close()
+			}
+			return nil
+		}
+		return nil
+	}
+
 	config := &ssh.ClientConfig{
 		User:            p.user,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: trustedHostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
 

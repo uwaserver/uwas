@@ -15,12 +15,8 @@ import (
 	"github.com/uwaserver/uwas/internal/router"
 )
 
-// TestCircuitBreakerAllowDefaultFallthrough covers the default case in
-// Allow() switch (line 66) which is reached when state has an unexpected value.
-// Since Go's zero value for CircuitState is CircuitClosed (0), and there are
-// only 3 defined states, the default fallthrough at line 66 is dead code.
-// However, we can cover the HalfOpen rejection path (line 63-64) by
-// exceeding halfOpenMax.
+// TestCircuitBreakerHalfOpenRejectExcess covers the HalfOpen rejection path
+// where a second concurrent probe is rejected via CAS on probeSlot.
 func TestCircuitBreakerHalfOpenRejectExcess(t *testing.T) {
 	cb := NewCircuitBreaker(2, 50*time.Millisecond)
 
@@ -35,21 +31,14 @@ func TestCircuitBreakerHalfOpenRejectExcess(t *testing.T) {
 	// Wait for timeout to transition to half-open
 	time.Sleep(60 * time.Millisecond)
 
-	// First Allow() transitions to half-open and allows through
+	// First Allow() transitions to half-open and claims the probe slot
 	if !cb.Allow() {
 		t.Error("first call in half-open should be allowed")
 	}
 
-	// Manually set state back to half-open with count already at max
-	// (RecordSuccess would close it, and RecordFailure would open it)
-	cb.mu.Lock()
-	cb.state = CircuitHalfOpen
-	cb.halfOpenCount = cb.halfOpenMax
-	cb.mu.Unlock()
-
-	// Now Allow() in half-open with count >= max should be rejected
+	// Second Allow() in half-open should be rejected because probeSlot is already taken
 	if cb.Allow() {
-		t.Error("call in half-open at max count should be rejected")
+		t.Error("second call in half-open should be rejected (probeSlot already claimed)")
 	}
 }
 

@@ -91,11 +91,12 @@ type Server struct {
 	webhookMgr     *webhook.Manager
 	authMgr        *auth.Manager
 	sftpSrv        *sftpserver.Server
-	proxyPools     map[string]*proxyhandler.UpstreamPool
-	proxyBalancers map[string]proxyhandler.Balancer
-	proxyMirrors   map[string]*proxyhandler.Mirror
-	proxyBreakers  map[string]*proxyhandler.CircuitBreaker
-	proxyCanaries  map[string]*proxyhandler.CanaryRouter
+	proxyPools      map[string]*proxyhandler.UpstreamPool
+	proxyBalancers  map[string]proxyhandler.Balancer
+	proxyHealthChks map[string]*proxyhandler.HealthChecker
+	proxyMirrors    map[string]*proxyhandler.Mirror
+	proxyBreakers   map[string]*proxyhandler.CircuitBreaker
+	proxyCanaries   map[string]*proxyhandler.CanaryRouter
 
 	unknownHosts  *router.UnknownHostTracker
 	securityStats *middleware.SecurityStats
@@ -188,9 +189,10 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		alerter:        alerter,
 		ctx:            ctx,
 		cancel:         cancel,
-		proxyPools:     make(map[string]*proxyhandler.UpstreamPool),
-		proxyBalancers: make(map[string]proxyhandler.Balancer),
-		proxyMirrors:   make(map[string]*proxyhandler.Mirror),
+		proxyPools:      make(map[string]*proxyhandler.UpstreamPool),
+		proxyBalancers:  make(map[string]proxyhandler.Balancer),
+		proxyHealthChks: make(map[string]*proxyhandler.HealthChecker),
+		proxyMirrors:    make(map[string]*proxyhandler.Mirror),
 		proxyBreakers:  make(map[string]*proxyhandler.CircuitBreaker),
 		proxyCanaries:  make(map[string]*proxyhandler.CanaryRouter),
 		unknownHosts:   router.NewUnknownHostTracker(),
@@ -467,6 +469,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 				Rise:      d.Proxy.HealthCheck.Rise,
 			}, log)
 			hc.Start(ctx)
+			s.proxyHealthChks[d.Host] = hc
 		}
 
 		// Circuit breaker
@@ -523,7 +526,9 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			if window == 0 {
 				window = time.Minute
 			}
-			s.domainRateLimiters[d.Host] = middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
+			rl := middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
+			rl.SetTrustedProxies(s.config.Global.TrustedProxies)
+			s.domainRateLimiters[d.Host] = rl
 		}
 	}
 
@@ -2044,9 +2049,15 @@ func (s *Server) reload() error {
 	}
 	s.imageOptChains = newImageOpt
 
-	// Rebuild proxy pools and balancers
+	// Stop old proxy health checkers before rebuilding
+	for _, hc := range s.proxyHealthChks {
+		hc.Stop()
+	}
+
+	// Rebuild proxy pools, balancers, and health checkers
 	newPools := make(map[string]*proxyhandler.UpstreamPool)
 	newBalancers := make(map[string]proxyhandler.Balancer)
+	newHealthChks := make(map[string]*proxyhandler.HealthChecker)
 	for _, d := range newCfg.Domains {
 		if d.Type == "proxy" && len(d.Proxy.Upstreams) > 0 {
 			var ups []proxyhandler.UpstreamConfig
@@ -2055,10 +2066,23 @@ func (s *Server) reload() error {
 			}
 			newPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
 			newBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
+
+			if d.Proxy.HealthCheck.Path != "" {
+				hc := proxyhandler.NewHealthChecker(newPools[d.Host], proxyhandler.HealthConfig{
+					Path:      d.Proxy.HealthCheck.Path,
+					Interval:  d.Proxy.HealthCheck.Interval.Duration,
+					Timeout:   d.Proxy.HealthCheck.Timeout.Duration,
+					Threshold: d.Proxy.HealthCheck.Threshold,
+					Rise:      d.Proxy.HealthCheck.Rise,
+				}, s.logger)
+				hc.Start(s.ctx)
+				newHealthChks[d.Host] = hc
+			}
 		}
 	}
 	s.proxyPools = newPools
 	s.proxyBalancers = newBalancers
+	s.proxyHealthChks = newHealthChks
 
 	// Update bandwidth manager with new domain configs
 	if s.bwMgr != nil {
@@ -2206,7 +2230,7 @@ func (s *Server) shutdown() {
 
 	// Stop built-in SFTP server.
 	if s.sftpSrv != nil {
-		s.sftpSrv.Stop()
+		s.sftpSrv.Shutdown()
 	}
 
 	s.logger.Info("shutdown complete")

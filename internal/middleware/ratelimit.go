@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,10 +15,11 @@ const shardCount = 256
 
 // RateLimiter implements a sharded token bucket rate limiter.
 type RateLimiter struct {
-	shards  [shardCount]rateShard
-	limit   int
-	window  time.Duration
-	cleanup atomic.Bool
+	shards         [shardCount]rateShard
+	limit          int
+	window         time.Duration
+	cleanup        atomic.Bool
+	trustedProxies []*net.IPNet
 }
 
 type rateShard struct {
@@ -34,7 +36,7 @@ type bucket struct {
 // The ctx parameter controls the lifetime of the background cleanup goroutine.
 func NewRateLimiter(ctx context.Context, limit int, window time.Duration) *RateLimiter {
 	rl := &RateLimiter{
-		limit:  limit,
+		limit: limit,
 		window: window,
 	}
 	for i := range rl.shards {
@@ -45,6 +47,31 @@ func NewRateLimiter(ctx context.Context, limit int, window time.Duration) *RateL
 	go rl.cleanupLoop(ctx)
 
 	return rl
+}
+
+// SetTrustedProxies configures CIDR ranges for trusted reverse proxies.
+// Only X-Forwarded-For / X-Real-IP from these IPs will be trusted.
+func (rl *RateLimiter) SetTrustedProxies(cidrs []string) {
+	rl.trustedProxies = nil
+	for _, cidr := range cidrs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err == nil {
+			rl.trustedProxies = append(rl.trustedProxies, ipNet)
+		}
+	}
+}
+
+// isTrustedProxy checks if the given IP is in the trusted proxies list.
+func (rl *RateLimiter) isTrustedProxy(ip net.IP) bool {
+	if rl.trustedProxies == nil {
+		return false
+	}
+	for _, ipNet := range rl.trustedProxies {
+		if ipNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // RateLimit returns middleware that enforces per-IP rate limiting.
@@ -58,7 +85,7 @@ func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware 
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := clientIP(r)
+			ip := clientIP(rl, r)
 			if !rl.Allow(ip) {
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
 				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
@@ -136,10 +163,40 @@ func shardIndex(key string) uint8 {
 	return uint8(h)
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+func clientIP(rl *RateLimiter, r *http.Request) string {
+	remoteIP := func() string {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return r.RemoteAddr
+		}
+		return host
+	}()
+
+	// If we have trusted proxies configured, check X-Forwarded-For and X-Real-IP
+	if rl != nil && rl.trustedProxies != nil {
+		rip := net.ParseIP(remoteIP)
+		if rip != nil && rl.isTrustedProxy(rip) {
+			// Trust X-Forwarded-For from trusted proxies
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				// Take the leftmost IP (original client) from comma-separated list
+				if idx := strings.Index(xff, ","); idx != -1 {
+					xff = xff[:idx]
+				}
+				xff = strings.TrimSpace(xff)
+				if xff != "" {
+					return xff
+				}
+			}
+			// Fall back to X-Real-IP
+			if xri := r.Header.Get("X-Real-IP"); xri != "" {
+				xri = strings.TrimSpace(xri)
+				if xri != "" {
+					return xri
+				}
+			}
+		}
 	}
-	return host
+
+	// Otherwise use RemoteAddr directly (no spoofing possible)
+	return remoteIP
 }

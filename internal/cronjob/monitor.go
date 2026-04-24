@@ -54,6 +54,8 @@ type Monitor struct {
 	maxHistory int
 	alertFn   func(domain, command, output string, exitCode int)
 	dataDir   string
+	// Per-job overlap guard: prevents concurrent execution of the same job.
+	running   map[string]bool // key: domain:command, true if job is currently running
 }
 
 // NewMonitor creates a new cron job monitor.
@@ -62,6 +64,7 @@ func NewMonitor(dataDir string) *Monitor {
 		history:    make(map[string][]ExecutionRecord),
 		maxHistory: 100, // Keep last 100 executions per job
 		dataDir:    dataDir,
+		running:    make(map[string]bool),
 	}
 	m.loadHistory()
 	return m
@@ -85,7 +88,33 @@ func (m *Monitor) RecordExecution(record ExecutionRecord) {
 }
 
 // Execute runs a cron job and records the result.
+// If the job is already running (overlap), it returns immediately with an error.
 func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
+	key := m.jobKey(domain, command)
+
+	// Overlap guard: skip if already running
+	m.mu.Lock()
+	if m.running[key] {
+		m.mu.Unlock()
+		return ExecutionRecord{
+			ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
+			Domain:   domain,
+			Command:  command,
+			Schedule: schedule,
+			Success:  false,
+			Error:    "skipped: job already running",
+		}
+	}
+	m.running[key] = true
+	m.mu.Unlock()
+
+	// Ensure we mark the job as not running when done
+	defer func() {
+		m.mu.Lock()
+		delete(m.running, key)
+		m.mu.Unlock()
+	}()
+
 	record := ExecutionRecord{
 		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
 		Domain:    domain,

@@ -247,6 +247,14 @@ func (m *Manager) startProcess(app *appProcess) error {
 }
 
 func (m *Manager) monitorProcess(app *appProcess, logFile *os.File) {
+	defer func() {
+		if r := recover(); r != nil {
+			if m.logger != nil {
+				m.logger.Error("app monitor panic recovered", "domain", app.domain, "panic", r)
+			}
+		}
+	}()
+
 	if app.cmd == nil {
 		return
 	}
@@ -354,11 +362,16 @@ func (m *Manager) StopAll() {
 
 // Instances returns all registered app instances.
 func (m *Manager) Instances() []AppInstance {
+	// Take a snapshot of current apps under lock, then release lock before processing.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]AppInstance, 0, len(m.apps))
+	apps := make([]*appProcess, 0, len(m.apps))
 	for _, app := range m.apps {
+		apps = append(apps, app)
+	}
+	m.mu.RUnlock()
+
+	result := make([]AppInstance, 0, len(apps))
+	for _, app := range apps {
 		inst := AppInstance{
 			Domain:  app.domain,
 			Runtime: app.runtime,

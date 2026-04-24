@@ -67,20 +67,26 @@ func New(log *logger.Logger) *Manager {
 // Deploy performs a git clone/pull → build → signals the app manager to restart.
 // Returns immediately; deployment runs in background. Poll Status() for progress.
 // safeGitURL rejects dangerous git transport protocols (ext::, file://) and
-// ensures URLs are HTTPS, SSH, or plain paths only.
+// ensures URLs are HTTPS, SSH, or git@ URIs only.
 func safeGitURL(u string) error {
 	if u == "" {
 		return nil
 	}
 	lower := strings.ToLower(u)
+	// Reject dangerous protocols
 	if strings.HasPrefix(lower, "ext::") {
 		return fmt.Errorf("ext:: protocol not allowed in git URLs")
 	}
 	if strings.HasPrefix(lower, "file://") {
 		return fmt.Errorf("file:// protocol not allowed in git URLs")
 	}
+	// Reject command-line option injection in URLs
 	if strings.Contains(lower, "--upload-pack") || strings.Contains(lower, "--receive-pack") {
 		return fmt.Errorf("git option injection not allowed")
+	}
+	// Whitelist allowed schemes: https://, ssh://, git@
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "ssh://") && !strings.HasPrefix(lower, "git@") {
+		return fmt.Errorf("only https://, ssh://, and git@ URIs are allowed")
 	}
 	return nil
 }
@@ -194,7 +200,7 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 		if _, err := os.Stat(cleanKey); err != nil {
 			return fmt.Errorf("SSH key not found: %s", cleanKey)
 		}
-		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cleanKey)
+		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null", cleanKey)
 		log.WriteString("Using SSH key: " + cleanKey + "\n")
 	}
 
@@ -225,13 +231,13 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 			return fmt.Errorf("git fetch: %w\n%s", err, redactURL(out))
 		}
 		log.WriteString("$ git reset --hard origin/" + branch + "\n")
-		if out, err := runCmd(appRoot, gitEnv, "git", "reset", "--hard", "origin/"+branch); err != nil {
+		if out, err := runCmd(appRoot, gitEnv, "git", "reset", "--hard", "--", "origin/"+branch); err != nil {
 			return fmt.Errorf("git reset: %w\n%s", err, redactURL(out))
 		}
 	} else if gitURL != "" {
 		// Fresh clone
 		log.WriteString("$ git clone -b " + branch + " <repo>\n")
-		if out, err := runCmd(filepath.Dir(appRoot), gitEnv, "git", "clone", "-b", branch, gitURL, appRoot); err != nil {
+		if out, err := runCmd(filepath.Dir(appRoot), gitEnv, "git", "clone", "-b", branch, "--", gitURL, "--", appRoot); err != nil {
 			return fmt.Errorf("git clone: %w\n%s", err, redactURL(out))
 		}
 	} else {

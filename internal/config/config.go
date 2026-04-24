@@ -39,14 +39,16 @@ type GlobalConfig struct {
 }
 
 type BackupConfig struct {
-	Enabled  bool              `yaml:"enabled"`
-	Provider string            `yaml:"provider"` // local | s3 | sftp
-	Schedule string            `yaml:"schedule"` // duration string e.g. "24h" (fallback if Cron is empty)
-	Cron     string            `yaml:"cron"`     // cron expression e.g. "0 2 * * *" (5-field, local timezone)
-	Keep     int               `yaml:"keep"`     // keep last N backups
-	Local    BackupLocalConfig `yaml:"local"`
-	S3       BackupS3Config    `yaml:"s3"`
-	SFTP     BackupSFTPConfig  `yaml:"sftp"`
+	Enabled      bool              `yaml:"enabled"`
+	Provider     string            `yaml:"provider"`   // local | s3 | sftp
+	Schedule     string            `yaml:"schedule"`   // duration string e.g. "24h" (fallback if Cron is empty)
+	Cron         string            `yaml:"cron"`       // cron expression e.g. "0 2 * * *" (5-field, local timezone)
+	Keep         int               `yaml:"keep"`       // keep last N backups
+	MaxFileSize  int64             `yaml:"max_file_size"`  // max bytes per file (default 500MB)
+	MaxTotalSize int64             `yaml:"max_total_size"` // max bytes total (default 10GB)
+	Local        BackupLocalConfig `yaml:"local"`
+	S3           BackupS3Config    `yaml:"s3"`
+	SFTP         BackupSFTPConfig  `yaml:"sftp"`
 }
 
 type BackupLocalConfig struct {
@@ -214,6 +216,7 @@ type Domain struct {
 	Maintenance       MaintenanceConfig       `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
 	Locations         []LocationConfig        `yaml:"locations,omitempty" json:"locations,omitempty"`
 	SecurityHeaders   SecurityHeadersConfig   `yaml:"security_headers,omitempty" json:"security_headers,omitempty"`
+	InternalAliases   []string                `yaml:"internal_aliases,omitempty" json:"internal_aliases,omitempty"` // allowed path prefixes for X-Accel-Redirect/X-Sendfile
 }
 
 // MaintenanceConfig enables a 503 maintenance page for the domain.
@@ -518,18 +521,19 @@ type RotateConfig struct {
 }
 
 type ProxyConfig struct {
-	Upstreams      []Upstream        `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Algorithm      string            `yaml:"algorithm,omitempty" json:"algorithm,omitempty"`
-	HealthCheck    HealthCheckConfig `yaml:"health_check,omitempty" json:"health_check,omitempty"`
-	Sticky         StickyConfig      `yaml:"sticky,omitempty" json:"sticky,omitempty"`
-	CircuitBreaker CircuitConfig     `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
-	WebSocket      bool              `yaml:"websocket,omitempty" json:"websocket,omitempty"`
-	GRPC           bool              `yaml:"grpc,omitempty" json:"grpc,omitempty"`             // enable gRPC/h2c proxy
-	Timeouts       ProxyTimeouts     `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
-	MaxRetries     int               `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
-	Canary         CanaryConfig      `yaml:"canary,omitempty" json:"canary,omitempty"`
-	Mirror         MirrorConfig      `yaml:"mirror,omitempty" json:"mirror,omitempty"`
-	BufferResponse bool              `yaml:"buffer_response,omitempty" json:"buffer_response,omitempty"` // buffer entire upstream response
+	Upstreams            []Upstream        `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Algorithm            string            `yaml:"algorithm,omitempty" json:"algorithm,omitempty"`
+	HealthCheck          HealthCheckConfig `yaml:"health_check,omitempty" json:"health_check,omitempty"`
+	Sticky               StickyConfig      `yaml:"sticky,omitempty" json:"sticky,omitempty"`
+	CircuitBreaker       CircuitConfig     `yaml:"circuit_breaker,omitempty" json:"circuit_breaker,omitempty"`
+	WebSocket            bool              `yaml:"websocket,omitempty" json:"websocket,omitempty"`
+	GRPC                 bool              `yaml:"grpc,omitempty" json:"grpc,omitempty"`             // enable gRPC/h2c proxy
+	Timeouts             ProxyTimeouts     `yaml:"timeouts,omitempty" json:"timeouts,omitempty"`
+	MaxRetries           int               `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
+	Canary               CanaryConfig      `yaml:"canary,omitempty" json:"canary,omitempty"`
+	Mirror               MirrorConfig      `yaml:"mirror,omitempty" json:"mirror,omitempty"`
+	BufferResponse       bool              `yaml:"buffer_response,omitempty" json:"buffer_response,omitempty"` // buffer entire upstream response
+	AllowPrivateUpstreams bool             `yaml:"allow_private_upstreams,omitempty" json:"allow_private_upstreams,omitempty"` // allow private IP upstreams (default false for SSRF protection)
 }
 
 type CanaryConfig struct {

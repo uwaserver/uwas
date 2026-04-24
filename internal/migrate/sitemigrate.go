@@ -111,7 +111,7 @@ func Migrate(req MigrateRequest) *MigrateResult {
 
 // buildSSHOpts builds the SSH command options string for rsync.
 func buildSSHOpts(port, sshKey string) string {
-	opts := fmt.Sprintf("ssh -p %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", port)
+	opts := fmt.Sprintf("ssh -p %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null", port)
 	if sshKey != "" {
 		opts += " -i " + sshKey
 	}
@@ -131,7 +131,7 @@ func buildRsyncArgs(sshOpts, src, dst string) []string {
 func buildSSHArgs(port, sshKey, sourceHost, remoteCmd string) []string {
 	args := []string{
 		"-p", port,
-		"-o", "StrictHostKeyChecking=no",
+		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=/dev/null",
 	}
 	if sshKey != "" {

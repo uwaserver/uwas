@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // EventType represents a webhook event type.
@@ -174,6 +176,13 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 	if m.closed.Load() {
 		return
 	}
+
+	// SSRF check
+	if err := config.IsSSRFSafe(url); err != nil {
+		m.logger.Warn("webhook SSRF blocked", "url", url, "error", err)
+		return
+	}
+
 	event := Event{
 		ID:        generateID(),
 		Type:      eventType,
@@ -211,6 +220,12 @@ func (m *Manager) worker() {
 
 // deliver sends a webhook with retry logic.
 func (m *Manager) deliver(qe *queuedEvent) {
+	// SSRF check before attempting delivery
+	if err := config.IsSSRFSafe(qe.webhook.URL); err != nil {
+		m.logger.Warn("webhook SSRF blocked", "url", qe.webhook.URL, "error", err)
+		return
+	}
+
 	maxRetries := qe.webhook.RetryMax
 	if maxRetries == 0 {
 		maxRetries = 3

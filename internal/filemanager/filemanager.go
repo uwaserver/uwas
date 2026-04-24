@@ -7,8 +7,61 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// DefaultMaxUpload is the default maximum upload size (100MB).
+const DefaultMaxUpload = 100 << 20
+
+// QuotaTracker tracks disk usage per user/domain for upload quotas.
+type QuotaTracker struct {
+	mu     sync.Mutex
+	usage  map[string]int64 // key: "user:domain" or "domain"
+	limit  int64
+}
+
+// NewQuotaTracker creates a quota tracker with the given limit per unit.
+func NewQuotaTracker(limit int64) *QuotaTracker {
+	return &QuotaTracker{
+		usage: make(map[string]int64),
+		limit: limit,
+	}
+}
+
+// Usage returns current bytes used for a key.
+func (q *QuotaTracker) Usage(key string) int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.usage[key]
+}
+
+// Check returns nil if the upload would fit within quota, error otherwise.
+func (q *QuotaTracker) Check(key string, size int64) error {
+	if q.limit <= 0 {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.usage[key]+size > q.limit {
+		return fmt.Errorf("quota exceeded: %d + %d > %d limit", q.usage[key], size, q.limit)
+	}
+	return nil
+}
+
+// Add adds bytes to the usage counter for key.
+func (q *QuotaTracker) Add(key string, size int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.usage[key] += size
+}
+
+// Reset clears usage for a key.
+func (q *QuotaTracker) Reset(key string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.usage, key)
+}
 
 // Testable hooks for filesystem operations.
 var (

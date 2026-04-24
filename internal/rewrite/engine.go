@@ -3,9 +3,14 @@ package rewrite
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 const maxRewrites = 10 // loop detection
+
+// rewriteTimeout is the wall-clock time limit for rewrite processing.
+// Prevents ReDoS when user-controlled .htaccess contains malicious regexes.
+const rewriteTimeout = 50 * time.Millisecond
 
 // Result is the outcome of rewrite processing.
 type Result struct {
@@ -29,13 +34,19 @@ func NewEngine(rules []*Rule) *Engine {
 }
 
 // Process evaluates all rules against the request URI.
+// Uses a wall-clock timeout to prevent ReDoS from malicious regexes.
 func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 	result := &Result{
 		URI:   uri,
 		Query: queryString,
 	}
 
+	deadline := time.Now().Add(rewriteTimeout)
 	for iteration := 0; iteration < maxRewrites; iteration++ {
+		if time.Now().After(deadline) {
+			// Timeout — stop processing to prevent ReDoS
+			return result
+		}
 		changed := false
 
 		for i := 0; i < len(e.rules); i++ {

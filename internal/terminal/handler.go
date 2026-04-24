@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/logger"
@@ -14,13 +15,60 @@ import (
 
 // Handler upgrades HTTP to WebSocket and bridges to a PTY shell.
 type Handler struct {
-	Logger *logger.Logger
-	Shell  string
+	Logger        *logger.Logger
+	Shell         string
+	AllowedOrigin string // If set, only this origin is allowed (e.g., "https://panel.example.com")
 }
 
 // New creates a terminal handler.
 func New(log *logger.Logger) *Handler {
 	return &Handler{Logger: log, Shell: defaultShell()}
+}
+
+// CheckOrigin validates the Origin header against the allowed origin.
+// If AllowedOrigin is empty, allow but verify host matches (same-origin fallback).
+// Returns true if the request origin is allowed.
+func (h *Handler) CheckOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// No Origin header — allow (some clients don't send it)
+		return true
+	}
+
+	// If AllowedOrigin is explicitly set, validate against it.
+	if h.AllowedOrigin != "" {
+		allowed, err := url.Parse(h.AllowedOrigin)
+		if err != nil {
+			return false
+		}
+
+		reqOrigin, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+
+		// Strict comparison: scheme, host, and port must match.
+		if reqOrigin.Scheme != allowed.Scheme {
+			return false
+		}
+		if reqOrigin.Host != allowed.Host {
+			return false
+		}
+		return true
+	}
+
+	// No AllowedOrigin configured: fall back to checking Origin host matches request host.
+	// This prevents cross-site WebSocket hijacking while allowing the browser's same-origin requests.
+	reqOrigin, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	// Reject if origin scheme is not https (WebSocket should only be used over HTTPS).
+	if reqOrigin.Scheme != "https" {
+		return false
+	}
+	// Allow only if origin host matches request host (same-origin).
+	return reqOrigin.Host == r.Host
 }
 
 // --- Minimal WebSocket implementation (no external dependency) ---
@@ -33,10 +81,16 @@ type WSConn struct {
 }
 
 // UpgradeWebSocket performs the HTTP→WebSocket handshake.
-func UpgradeWebSocket(w http.ResponseWriter, r *http.Request) (*WSConn, error) {
+func (h *Handler) UpgradeWebSocket(w http.ResponseWriter, r *http.Request) (*WSConn, error) {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return nil, fmt.Errorf("not a websocket request (Upgrade: %q)", r.Header.Get("Upgrade"))
 	}
+
+	// Strict origin check: prevent cross-site WebSocket hijacking
+	if !h.CheckOrigin(r) {
+		return nil, fmt.Errorf("origin %q not allowed", r.Header.Get("Origin"))
+	}
+
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		return nil, fmt.Errorf("server does not support hijacking")

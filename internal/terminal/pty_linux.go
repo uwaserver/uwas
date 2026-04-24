@@ -29,7 +29,7 @@ type resizeMsg struct {
 
 // ServeHTTP handles the WebSocket upgrade and PTY bridge.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := UpgradeWebSocket(w, r)
+	conn, err := h.UpgradeWebSocket(w, r)
 	if err != nil {
 		if h.Logger != nil {
 			h.Logger.Error("ws upgrade failed", "error", err)

@@ -48,22 +48,23 @@ func TestValidateTOTP(t *testing.T) {
 	code := fmt.Sprintf("%06d", truncated%uint32(math.Pow10(6)))
 
 	// Must accept correct code
-	if !ValidateTOTP(secret, code) {
+	valid, _ := ValidateTOTP(secret, code)
+	if !valid {
 		t.Fatalf("valid code %s was rejected", code)
 	}
 
 	// Must reject wrong code
-	if ValidateTOTP(secret, "000000") && code != "000000" {
+	if ok, _ := ValidateTOTP(secret, "000000"); ok && code != "000000" {
 		t.Fatal("accepted invalid code 000000")
 	}
 
 	// Must reject empty
-	if ValidateTOTP(secret, "") {
+	if ok, _ := ValidateTOTP(secret, ""); ok {
 		t.Fatal("accepted empty code")
 	}
 
 	// Must reject bad secret
-	if ValidateTOTP("INVALIDSECRET!!!", code) {
+	if ok, _ := ValidateTOTP("INVALIDSECRET!!!", code); ok {
 		t.Fatal("accepted code with bad secret")
 	}
 }
