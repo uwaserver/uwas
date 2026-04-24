@@ -12,7 +12,7 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
   <img src="assets/banner.jpeg" alt="UWAS Logo" width="100%">
 </p>
 
-> **Note:** This project is currently in development and not yet ready for production use.
+> **Note:** UWAS is production-ready with 50+ installed instances.
 
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -24,13 +24,14 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.0.38)
+## Current Snapshot (v0.0.53)
 
 - **Dashboard pages:** 38 (`web/dashboard/src/pages`)
 - **Admin API routes:** 205+ (route registrations under `/api/v1` in `internal/admin/api.go`)
 - **Go packages:** 52 (from `go list ./...`)
 - **CLI commands:** 19
 - **Test status:** `go test -p 1 ./...` passing
+- **52 security/stability bugs fixed** (see [CHANGELOG](CHANGELOG.md))
 
 ## Features
 
