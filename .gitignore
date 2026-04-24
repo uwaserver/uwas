@@ -46,7 +46,7 @@ docs/site/node_modules/
 docs/site/dist/
 
 # ── Dashboard build output ──
-internal/admin/dashboard/dist/
+# NOTE: dist/ is now committed to allow release builds to include the dashboard
 
 # ── Demo / temp ──
 demo/
