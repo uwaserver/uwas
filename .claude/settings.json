@@ -1,9 +1,10 @@
 {
+  // Autonomous agent session — no user confirmation requested
+  "auto_tool_call": true,
+  "tool_search_limit": 20,
+  "initial_read_profile": "deep",
   "permissions": {
     "allow": [
-      "Read(D:\\Codebox\\PROJECTS\\UWAS\\*)",
-      "Write(D:\\Codebox\\PROJECTS\\UWAS\\*)",
-      "Edit(D:\\Codebox\\PROJECTS\\UWAS\\*)",
       "mcp__dfmt__dfmt.read",
       "mcp__dfmt__dfmt.exec",
       "mcp__dfmt__dfmt.fetch",

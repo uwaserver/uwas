@@ -410,6 +410,8 @@ func TestConfigReloadE2E(t *testing.T) {
 
 	// Trigger reload via admin API
 	req, _ := http.NewRequest("POST", fmt.Sprintf("http://%s/api/v1/reload", adminAddr), nil)
+	req.Header.Set("Authorization", "Bearer test-api-key-for-reload")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp2, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("reload request: %v", err)
@@ -485,6 +487,7 @@ func writeConfig(t *testing.T, path, httpAddr, adminAddr, root string) {
   admin:
     enabled: true
     listen: "%s"
+    api_key: "test-api-key-for-reload"
   timeouts:
     read: 5s
     write: 5s
