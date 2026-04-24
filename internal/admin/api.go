@@ -751,10 +751,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		// CSRF protection: state-changing methods must send X-Requested-With header.
 		// This guards against cross-site request forgery attacks.
+		// Allow requests from same origin (dashboard to itself) or with valid X-Requested-With.
 		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
 			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
-				jsonError(w, "csrf: invalid origin", http.StatusForbidden)
-				return
+				// Also allow if Origin/Referer matches Host (same-origin request from dashboard)
+				origin := r.Header.Get("Origin")
+				referer := r.Header.Get("Referer")
+				host := r.Host
+				sameOrigin := (origin != "" && strings.Contains(origin, host)) ||
+					(referer != "" && strings.Contains(referer, host))
+				if !sameOrigin {
+					jsonError(w, "csrf: invalid origin", http.StatusForbidden)
+					return
+				}
 			}
 		}
 
