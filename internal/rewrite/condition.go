@@ -18,6 +18,11 @@ type Condition struct {
 
 // ParseCondition parses a RewriteCond from variable, pattern, and flags.
 func ParseCondition(variable, pattern, flags string) (*Condition, error) {
+	// Limit pattern length to prevent ReDoS (catastrophic backtracking)
+	if len(pattern) > 1024 {
+		return nil, ErrPatternTooLong
+	}
+
 	c := &Condition{
 		Variable:   variable,
 		RawPattern: pattern,

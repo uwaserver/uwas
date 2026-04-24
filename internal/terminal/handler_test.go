@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/logger"
 )
 
 func TestComputeAcceptKey(t *testing.T) {
@@ -33,7 +35,8 @@ func TestUpgradeWebSocketNotWebsocket(t *testing.T) {
 	req.Header.Set("Upgrade", "http") // not websocket
 	w := httptest.NewRecorder()
 
-	_, err := UpgradeWebSocket(w, req)
+	h := &Handler{Logger: &logger.Logger{}}
+	_, err := h.UpgradeWebSocket(w, req)
 	if err == nil {
 		t.Error("expected error for non-websocket upgrade")
 	}
@@ -47,7 +50,8 @@ func TestUpgradeWebSocketNoHijack(t *testing.T) {
 	req.Header.Set("Upgrade", "websocket")
 	w := httptest.NewRecorder() // httptest.ResponseRecorder doesn't support hijacking
 
-	_, err := UpgradeWebSocket(w, req)
+	h := &Handler{Logger: &logger.Logger{}}
+	_, err := h.UpgradeWebSocket(w, req)
 	if err == nil {
 		t.Error("expected error for non-hijackable response writer")
 	}

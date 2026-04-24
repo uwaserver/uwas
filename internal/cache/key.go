@@ -20,13 +20,23 @@ var builderPool = sync.Pool{
 // The key is the full canonical string (method|host|path|query|vary) so that
 // collisions are impossible. The FNV-1a hash is only used for disk sharding
 // via HashKey.
+//
+// Host is normalized: lowercase + port stripped to ensure Example.com:80
+// and example.com produce the same cache key.
 func GenerateKey(r *http.Request, varyHeaders []string) string {
 	b := builderPool.Get().(*strings.Builder)
 	b.Reset()
 	defer builderPool.Put(b)
 
+	// Normalize host: lowercase + strip port
+	host := r.Host
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	host = strings.ToLower(host)
+
 	// Pre-allocate based on typical URL lengths
-	b.Grow(300 + len(r.URL.RawQuery) + len(r.Host) + len(r.URL.Path))
+	b.Grow(300 + len(r.URL.RawQuery) + len(host) + len(r.URL.Path))
 
 	b.WriteString(r.Method)
 	b.WriteByte('|')
@@ -35,7 +45,7 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 	} else {
 		b.WriteString("http|")
 	}
-	b.WriteString(r.Host)
+	b.WriteString(host)
 	b.WriteByte('|')
 	b.WriteString(r.URL.Path)
 	b.WriteByte('|')

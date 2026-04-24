@@ -1,12 +1,12 @@
 package proxy
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // CircuitState represents the circuit breaker state.
-type CircuitState int
+type CircuitState int32
 
 const (
 	CircuitClosed   CircuitState = iota // normal operation
@@ -16,14 +16,15 @@ const (
 
 // CircuitBreaker implements the circuit breaker pattern per backend.
 type CircuitBreaker struct {
-	mu            sync.Mutex
-	state         CircuitState
-	failures      int
-	threshold     int           // failures to trip open
-	timeout       time.Duration // time before half-open
-	lastFailure   time.Time
-	halfOpenMax   int // max requests in half-open
-	halfOpenCount int
+	threshold   int           // failures to trip open
+	timeout     time.Duration // time before half-open
+	lastFailure atomic.Int64  // UnixNano timestamp
+	failures    atomic.Int32
+
+	// state is accessed atomically; half-open probe is gated by a CAS on probeSlot.
+	// probeSlot: 0 = no probe in flight, 1 = probe in flight
+	state     atomic.Int32
+	probeSlot atomic.Int32
 }
 
 // NewCircuitBreaker creates a circuit breaker.
@@ -35,65 +36,70 @@ func NewCircuitBreaker(threshold int, timeout time.Duration) *CircuitBreaker {
 		timeout = 30 * time.Second
 	}
 	return &CircuitBreaker{
-		threshold:   threshold,
-		timeout:     timeout,
-		halfOpenMax: 1,
+		threshold: threshold,
+		timeout:   timeout,
 	}
 }
 
 // Allow checks if a request should be allowed through.
 func (cb *CircuitBreaker) Allow() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	state := CircuitState(cb.state.Load())
 
-	switch cb.state {
+	switch state {
 	case CircuitClosed:
 		return true
 	case CircuitOpen:
-		if time.Since(cb.lastFailure) >= cb.timeout {
-			cb.state = CircuitHalfOpen
-			cb.halfOpenCount = 0
-			return true
+		if time.Since(time.Unix(0, cb.lastFailure.Load())) >= cb.timeout {
+			// Try to transition to half-open using CAS
+			if cb.state.CompareAndSwap(int32(CircuitOpen), int32(CircuitHalfOpen)) {
+				// Claim the probe slot for this first probe request
+				cb.probeSlot.Store(1)
+				return true
+			}
+			// Another goroutine won the transition; check if it's now half-open
+			if CircuitState(cb.state.Load()) == CircuitHalfOpen {
+				return cb.allowHalfOpenProbe()
+			}
 		}
 		return false
 	case CircuitHalfOpen:
-		if cb.halfOpenCount < cb.halfOpenMax {
-			cb.halfOpenCount++
-			return true
-		}
-		return false
+		return cb.allowHalfOpenProbe()
 	}
 	return true
 }
 
+// allowHalfOpenProbe uses CAS to ensure only ONE probe request enters half-open at a time.
+func (cb *CircuitBreaker) allowHalfOpenProbe() bool {
+	// Try to claim the probe slot with CAS
+	if cb.probeSlot.CompareAndSwap(0, 1) {
+		return true
+	}
+	return false
+}
+
 // RecordSuccess records a successful request.
 func (cb *CircuitBreaker) RecordSuccess() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	if cb.state == CircuitHalfOpen {
-		cb.state = CircuitClosed
-		cb.failures = 0
+	if CircuitState(cb.state.Load()) == CircuitHalfOpen {
+		cb.state.Store(int32(CircuitClosed))
+		cb.failures.Store(0)
+		cb.probeSlot.Store(0) // reset probe slot when closing from half-open
+		return
 	}
-	cb.failures = 0
+	cb.failures.Store(0)
 }
 
 // RecordFailure records a failed request.
 func (cb *CircuitBreaker) RecordFailure() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	cb.failures.Add(1)
+	cb.lastFailure.Store(time.Now().UnixNano())
 
-	cb.failures++
-	cb.lastFailure = time.Now()
-
-	if cb.failures >= cb.threshold {
-		cb.state = CircuitOpen
+	if cb.failures.Load() >= int32(cb.threshold) {
+		cb.state.Store(int32(CircuitOpen))
+		cb.probeSlot.Store(0)
 	}
 }
 
 // State returns the current state.
 func (cb *CircuitBreaker) State() CircuitState {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.state
+	return CircuitState(cb.state.Load())
 }

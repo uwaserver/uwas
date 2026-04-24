@@ -42,7 +42,8 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 		connectTimeout = domain.Proxy.Timeouts.Connect.Duration
 	}
 
-	headerTimeout := 60 * time.Second
+	// ResponseHeaderTimeout: default 30s, prevents slowloris on upstream connections
+	headerTimeout := 30 * time.Second
 	if domain.Proxy.Timeouts.Read.Duration > 0 {
 		headerTimeout = domain.Proxy.Timeouts.Read.Duration
 	}
@@ -164,6 +165,17 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		upstreamURL := *backend.URL
 		upstreamURL.Path = ctx.Request.URL.Path
 		upstreamURL.RawQuery = ctx.Request.URL.RawQuery
+
+		// SSRF protection: check if upstream resolves to a private IP
+		if !domain.Proxy.AllowPrivateUpstreams {
+			if err := config.IsSSRFSafe(upstreamURL.String()); err != nil {
+				backend.ActiveConns.Add(-1)
+				backend.TotalFails.Add(1)
+				h.logger.Warn("proxy SSRF blocked", "upstream", upstreamURL.String(), "error", err)
+				ctx.Response.Error(http.StatusForbidden, "403 Forbidden — upstream blocked (SSRF protection)")
+				return
+			}
+		}
 
 		// Per-backend timeout via request context
 		readTimeout := 60 * time.Second
@@ -354,6 +366,18 @@ func generateTraceparent() string {
 	rand.Read(traceID[:])
 	rand.Read(spanID[:])
 
+	// Ensure trace-id is not all zeros (invalid trace)
+	allZero := true
+	for _, b := range traceID {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		traceID[0] = 0x01 // Set at least one byte to non-zero
+	}
+
 	// Manual hex encoding: 00- (3) + 32 trace + - (1) + 16 span + -01 (3) = 55 bytes
 	const hexChars = "0123456789abcdef"
 	var buf [55]byte
@@ -395,7 +419,6 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 		ctx.Response.Error(http.StatusInternalServerError, "WebSocket hijack not supported")
 		return
 	}
-	defer clientConn.Close()
 
 	// Connect to upstream
 	backendAddr := backend.URL.Host
@@ -411,9 +434,9 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 	if err != nil {
 		h.logger.Error("websocket upstream connect failed", "backend", backendAddr, "error", err)
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		clientConn.Close()
 		return
 	}
-	defer upstreamConn.Close()
 
 	// Forward the original HTTP request (including Upgrade headers) to the backend
 	upstreamURL := *backend.URL
@@ -436,21 +459,33 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 	upstreamConn.Write([]byte("Host: " + ctx.Request.Host + "\r\n"))
 	upstreamConn.Write([]byte("\r\n"))
 
-	// Bidirectional copy
-	done := make(chan struct{}, 2)
+	// Bidirectional copy with WaitGroup for graceful shutdown on error
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	closeBoth := func() {
+		// Close both directions on error from either direction
+		clientConn.Close()
+		upstreamConn.Close()
+	}
 
 	go func() {
-		io.Copy(upstreamConn, clientBuf)
-		done <- struct{}{}
+		defer wg.Done()
+		if _, err := io.Copy(upstreamConn, clientBuf); err != nil {
+			h.logger.Debug("websocket client→backend copy error", "error", err)
+		}
+		closeBoth()
 	}()
 
 	go func() {
-		io.Copy(clientConn, upstreamConn)
-		done <- struct{}{}
+		defer wg.Done()
+		if _, err := io.Copy(clientConn, upstreamConn); err != nil {
+			h.logger.Debug("websocket backend→client copy error", "error", err)
+		}
+		closeBoth()
 	}()
 
-	// Wait for either direction to finish
-	<-done
-
+	// Wait for both directions to finish
+	wg.Wait()
 	h.logger.Debug("websocket connection closed", "backend", backendAddr, "path", ctx.Request.URL.Path)
 }

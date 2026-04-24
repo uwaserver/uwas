@@ -128,7 +128,9 @@ func TestConditionSymlink(t *testing.T) {
 // TestConditionSizeGtZero covers the -s test type.
 func TestConditionSizeGtZero(t *testing.T) {
 	cond, _ := ParseCondition("%{REQUEST_FILENAME}", "-s", "")
-	vars := &Variables{RequestFilename: "/nonexistent/path"}
+	// Use t.TempDir() to create a path that is guaranteed non-existent and
+	// won't be resolved as a relative path on Windows.
+	vars := &Variables{RequestFilename: t.TempDir() + "/nonexistent_file"}
 	matched, _ := cond.Evaluate(vars)
 	if matched {
 		t.Error("-s should not match non-existent path")

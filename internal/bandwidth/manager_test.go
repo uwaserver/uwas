@@ -12,6 +12,13 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 )
 
+// newAtomicInt64 creates an atomic.Int64 with the given value.
+func newAtomicInt64(v int64) *atomic.Int64 {
+	var a atomic.Int64
+	a.Store(v)
+	return &a
+}
+
 func testDomains(bw config.BandwidthConfig) []config.Domain {
 	return []config.Domain{
 		{Host: "example.com", Bandwidth: bw},
@@ -1589,8 +1596,8 @@ func TestResponseWriterFlushMultipleTimes(t *testing.T) {
 
 func TestDomainUsageJSONRoundTrip(t *testing.T) {
 	du := &DomainUsage{
-		MonthlyBytes: 1234,
-		DailyBytes:   567,
+		MonthlyBytes: *newAtomicInt64(1234),
+		DailyBytes:   *newAtomicInt64(567),
 		LastReset:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		DailyReset:   time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC),
 		LastUpdated:  time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC),
@@ -1608,9 +1615,8 @@ func TestDomainUsageJSONRoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal error: %v", err)
 	}
 
-	if decoded.MonthlyBytes != du.MonthlyBytes {
-		t.Errorf("MonthlyBytes mismatch: %d vs %d", decoded.MonthlyBytes, du.MonthlyBytes)
-	}
+	// MonthlyBytes and DailyBytes have json:"-" tags so they are not serialized.
+	// Only Blocked, Throttled, and time fields should be compared.
 	if decoded.Blocked != du.Blocked {
 		t.Errorf("Blocked mismatch: %v vs %v", decoded.Blocked, du.Blocked)
 	}

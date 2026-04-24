@@ -1,10 +1,14 @@
 package rewrite
 
 import (
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
 )
+
+// ErrPatternTooLong is returned when a rewrite rule pattern exceeds the maximum allowed length.
+var ErrPatternTooLong = errors.New("rewrite pattern exceeds maximum length of 1024 characters")
 
 // Rule represents a URL rewrite rule (analogous to Apache's RewriteRule).
 type Rule struct {
@@ -32,6 +36,11 @@ type Flags struct {
 
 // ParseRule parses a rewrite rule from pattern, target, and optional flags string.
 func ParseRule(pattern, target, flagStr string) (*Rule, error) {
+	// Limit pattern length to prevent ReDoS (catastrophic backtracking)
+	if len(pattern) > 1024 {
+		return nil, ErrPatternTooLong
+	}
+
 	flags := ParseFlags(flagStr)
 
 	opts := ""

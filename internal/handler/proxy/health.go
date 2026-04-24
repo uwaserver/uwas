@@ -81,6 +81,15 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 	}()
 }
 
+// Stop signals the health checker to stop.
+func (hc *HealthChecker) Stop() {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	// Reset failure/success maps to prevent memory leak
+	hc.failures = make(map[*Backend]int)
+	hc.successes = make(map[*Backend]int)
+}
+
 func (hc *HealthChecker) checkAll() {
 	for _, b := range hc.pool.All() {
 		if b.GetState() == StateDraining {

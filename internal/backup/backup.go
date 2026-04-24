@@ -344,8 +344,24 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 	}
 	defer gr.Close()
 
+	// Set default limits.
+	maxFileSize := m.cfg.MaxFileSize
+	if maxFileSize <= 0 {
+		maxFileSize = 500 * 1 << 20 // 500MB
+	}
+	maxTotalSize := m.cfg.MaxTotalSize
+	if maxTotalSize <= 0 {
+		maxTotalSize = 10 << 30 // 10GB
+	}
+
 	tr := tar.NewReader(gr)
+	var totalRead int64
 	for {
+		// Check total size limit before reading next header.
+		if totalRead >= maxTotalSize {
+			return fmt.Errorf("backup exceeds max total size limit (%d bytes)", maxTotalSize)
+		}
+
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
@@ -401,6 +417,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			if hdr.Typeflag != tar.TypeDir {
 				const maxDumpSize = 2 << 30 // 2GB
 				data, _ := io.ReadAll(io.LimitReader(tr, maxDumpSize))
+				totalRead += int64(len(data))
 				if len(data) > 0 {
 					importDatabaseDump(data, m.logger)
 				}
@@ -417,7 +434,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			continue
 		}
 
-		// Write file.
+		// Write file with size limit.
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
@@ -425,11 +442,17 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		if err != nil {
 			return fmt.Errorf("create %s: %w", outPath, err)
 		}
-		if _, err := io.Copy(f, tr); err != nil {
-			f.Close()
+		limited := io.LimitReader(tr, maxFileSize)
+		written, err := io.Copy(f, limited)
+		totalRead += written
+		f.Close()
+		if err != nil {
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
-		f.Close()
+		// If we hit the per-file limit, the file may be truncated.
+		if written >= maxFileSize {
+			return fmt.Errorf("file %s exceeds max size limit (%d bytes)", hdr.Name, maxFileSize)
+		}
 	}
 
 	m.logger.Info("backup restored", "name", name, "provider", provider)

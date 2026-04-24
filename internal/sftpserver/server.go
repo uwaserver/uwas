@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/pathsafe"
@@ -42,6 +44,7 @@ type Server struct {
 	sshCfg   *ssh.ServerConfig
 	mu       sync.RWMutex
 	users    map[string]User
+	wg       sync.WaitGroup
 }
 
 // New creates a new SFTP server.
@@ -120,18 +123,33 @@ func (s *Server) Stop() {
 	}
 }
 
+// Shutdown waits for all active connections to finish before returning.
+func (s *Server) Shutdown() {
+	s.Stop()
+	s.wg.Wait()
+}
+
 func (s *Server) acceptLoop() {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			return // listener closed
+			if errors.Is(err, net.ErrClosed) {
+				return // listener closed gracefully
+			}
+			// Transient error — brief backoff before retry
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
+		s.wg.Add(1)
 		go s.handleConn(conn)
 	}
 }
 
 func (s *Server) handleConn(nConn net.Conn) {
-	defer nConn.Close()
+	defer func() {
+		nConn.Close()
+		s.wg.Done()
+	}()
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(nConn, s.sshCfg)
 	if err != nil {

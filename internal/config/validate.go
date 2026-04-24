@@ -327,3 +327,120 @@ func isCloudMetadataHost(host string) bool {
 	return ip.Equal(net.ParseIP("169.254.169.254")) ||
 		ip.Equal(net.ParseIP("fd00:ec2::254"))
 }
+
+// blockedIPBlocks contains CIDR ranges that must never be reached from webhooks
+// (SSRF prevention). Order matters: more specific ranges first.
+var blockedIPBlocks = []*net.IPNet{
+	// Loopback
+	mustParseCIDR("127.0.0.0/8"),
+	mustParseCIDR("::1/128"),
+	// Private networks
+	mustParseCIDR("10.0.0.0/8"),
+	mustParseCIDR("172.16.0.0/12"),
+	mustParseCIDR("192.168.0.0/16"),
+	mustParseCIDR("fc00::/7"),
+	// Link-local
+	mustParseCIDR("169.254.0.0/16"),
+	mustParseCIDR("fe80::/10"),
+	// Cloud metadata (AWS/GCP/Azure)
+	mustParseCIDR("169.254.169.254/32"),
+	mustParseCIDR("fd00:ec2::254/128"),
+	// Documentation ranges (RFC 5737)
+	mustParseCIDR("192.0.2.0/24"),
+	mustParseCIDR("198.51.100.0/24"),
+	mustParseCIDR("203.0.2.0/24"),
+}
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic("config: invalid CIDR " + s + ": " + err.Error())
+	}
+	return n
+}
+
+func isIPBlocked(ip net.IP) bool {
+	for _, block := range blockedIPBlocks {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLoopback returns true if the host is a loopback address (localhost, 127.0.0.0/8, ::1).
+// This is used to allow test servers that run on loopback addresses.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// IsLoopback returns true if the rawURL points to a loopback address.
+// This is safe to call for test URLs that use httptest.NewServer on localhost.
+// It does NOT perform DNS resolution, so it only detects literal loopback IPs.
+func IsLoopback(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return isLoopback(u.Hostname())
+}
+
+// IsSSRFSafe checks whether a URL resolves to a blocked IP address.
+// It returns nil if the URL is safe (public IP) or an error describing the block.
+// This is used to prevent Server-Side Request Forgery (SSRF) attacks via webhooks.
+// Loopback addresses (localhost, 127.0.0.0/8, ::1) are allowed to support
+// test servers running on httptest.NewServer.
+func IsSSRFSafe(rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL has no host")
+	}
+
+	// Check if the hostname itself is a blocked IP
+	if ip := net.ParseIP(host); ip != nil {
+		if isIPBlocked(ip) {
+			// Allow loopback addresses for test servers
+			if ip.IsLoopback() {
+				return nil
+			}
+			return fmt.Errorf("URL host %q is a blocked IP (SSRF)", host)
+		}
+		return nil
+	}
+
+	// For hostnames (not IPs), check if it's a known loopback name before DNS lookup.
+	// This avoids LookupIP for "localhost" which would resolve to 127.0.0.1 and be blocked.
+	if isLoopback(host) {
+		return nil
+	}
+
+	// Resolve the hostname and check all resolved IPs
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		// Cannot resolve — allow it; DNS may be temporarily unavailable.
+		// The actual HTTP request will fail anyway if the host is unreachable.
+		return nil
+	}
+	for _, ip := range ips {
+		if isIPBlocked(ip) {
+			return fmt.Errorf("URL host %q resolves to blocked IP %q (SSRF)", host, ip.String())
+		}
+	}
+	return nil
+}

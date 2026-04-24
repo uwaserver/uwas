@@ -1313,7 +1313,7 @@ func TestShardIndexEmptyKey(t *testing.T) {
 func TestClientIPRateLimitNoPort(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "1.2.3.4" // no port
-	got := clientIP(req)
+	got := clientIP(nil, req)
 	if got != "1.2.3.4" {
 		t.Errorf("clientIP = %q, want 1.2.3.4", got)
 	}
