@@ -84,6 +84,8 @@ func baseAdminConfig(t *testing.T) (*config.Config, string, string) {
 func adminReq(method, url string, body io.Reader) *http.Request {
 	req, _ := http.NewRequest(method, url, body)
 	req.Header.Set("Authorization", "Bearer test-api-key")
+	// CSRF protection: state-changing requests must include this header
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	return req
 }
 
@@ -701,8 +703,10 @@ func TestConfigReload(t *testing.T) {
 	writeConfig(t, cfgPath, addr, adminAddr, dir2)
 
 	// Trigger reload via admin API
-	req, _ := http.NewRequest("POST", adminBase+"/api/v1/reload", nil)
-	resp2, err := client.Do(req)
+	reloadReq, _ := http.NewRequest("POST", adminBase+"/api/v1/reload", nil)
+	reloadReq.Header.Set("Authorization", "Bearer test-api-key-for-reload")
+	reloadReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	resp2, err := client.Do(reloadReq)
 	if err != nil {
 		t.Fatal(err)
 	}

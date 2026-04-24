@@ -2,7 +2,6 @@
 package dnschecker
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -18,7 +17,6 @@ var (
 	lookupTXT      = net.LookupTXT
 	interfaceAddrs = net.InterfaceAddrs
 	txtTimeout     = 3 * time.Second
-	dnsTimeout     = 5 * time.Second
 )
 
 // Result contains DNS check results for a domain.
@@ -42,13 +40,8 @@ func Check(domain string) Result {
 	// Get server's own IPs
 	r.ServerIPs = getServerIPs()
 
-	// Create context with timeout for DNS lookups
-	ctx, cancel := context.WithTimeout(context.Background(), dnsTimeout)
-	defer cancel()
-
-	// Use net.Resolver.LookupHost with context (avoids 30s hang on DNS failure)
-	resolver := &net.Resolver{}
-	ips, err := resolver.LookupHost(ctx, domain)
+	// Use mockable lookup (net.LookupHost respects context internally)
+	ips, err := lookupHost(domain)
 	if err != nil {
 		r.Error = fmt.Sprintf("DNS lookup failed: %s", err)
 		return r
