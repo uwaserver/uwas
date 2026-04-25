@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,8 +140,8 @@ type Server struct {
 	tickets  map[string]*authTicket
 
 	// Cached expensive system info (apt updates, web root disk usage).
-	sysInfoCacheMu   sync.Mutex
-	sysInfoCacheTime time.Time
+	sysInfoCacheMu    sync.Mutex
+	sysInfoCacheTime  time.Time
 	sysInfoPkgUpdates string
 	sysInfoDiskUsed   int64
 
@@ -150,7 +151,7 @@ type Server struct {
 
 type authTicket struct {
 	token     string    // the real session token or API key
-	created  time.Time // when the ticket was issued
+	created   time.Time // when the ticket was issued
 	expiresAt time.Time // when the ticket expires
 }
 
@@ -754,12 +755,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Allow requests from same origin (dashboard to itself) or with valid X-Requested-With.
 		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
 			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
-				// Also allow if Origin/Referer matches Host (same-origin request from dashboard)
+				// Also allow if Origin/Referer exactly matches the dashboard origin.
 				origin := r.Header.Get("Origin")
 				referer := r.Header.Get("Referer")
-				host := r.Host
-				sameOrigin := (origin != "" && strings.Contains(origin, host)) ||
-					(referer != "" && strings.Contains(referer, host))
+				sameOrigin := origin != "" && isAllowedOrigin(origin, r)
+				if !sameOrigin && referer != "" {
+					if u, err := url.Parse(referer); err == nil {
+						sameOrigin = isAllowedOrigin(u.Scheme+"://"+u.Host, r)
+					}
+				}
 				if !sameOrigin {
 					jsonError(w, "csrf: invalid origin", http.StatusForbidden)
 					return
@@ -2021,6 +2025,60 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func (s *Server) requireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {
+	if s.canAccessDomain(r, domain) {
+		return true
+	}
+	if action != "" {
+		s.RecordAudit(action, "domain: "+domain+" (forbidden)", requestIP(r), false)
+	}
+	jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
+	return false
+}
+
+func (s *Server) canAccessDomain(r *http.Request, domain string) bool {
+	if s.authMgr == nil {
+		return true
+	}
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok || user.Role == auth.RoleAdmin {
+		return true
+	}
+	return s.authMgr.CanManageDomain(user, domain)
+}
+
+type adminUserResponse struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	Role      auth.Role `json:"role"`
+	Domains   []string  `json:"domains,omitempty"`
+	APIKey    string    `json:"api_key,omitempty"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	LastLogin time.Time `json:"last_login,omitempty"`
+}
+
+func adminUserDTO(user *auth.User, revealAPIKey bool) adminUserResponse {
+	apiKey := maskSecret(user.APIKey)
+	if revealAPIKey {
+		apiKey = user.APIKey
+	}
+	return adminUserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		Role:      user.Role,
+		Domains:   append([]string(nil), user.Domains...),
+		APIKey:    apiKey,
+		Enabled:   user.Enabled,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		LastLogin: user.LastLogin,
+	}
 }
 
 // --- Domain CRUD ---
@@ -4300,17 +4358,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, map[string]any{
-		"id":         user.ID,
-		"username":   user.Username,
-		"email":      user.Email,
-		"role":       user.Role,
-		"domains":    user.Domains,
-		"api_key":    maskSecret(user.APIKey),
-		"enabled":    user.Enabled,
-		"created_at": user.CreatedAt,
-		"last_login": user.LastLogin,
-	})
+	jsonResponse(w, adminUserDTO(user, false))
 }
 
 func (s *Server) handleUserListAuth(w http.ResponseWriter, r *http.Request) {
@@ -4327,21 +4375,17 @@ func (s *Server) handleUserListAuth(w http.ResponseWriter, r *http.Request) {
 
 	// Only admin can list all users; resellers can only see themselves
 	if user.Role != auth.RoleAdmin {
-		jsonResponse(w, []*auth.User{user})
+		jsonResponse(w, []adminUserResponse{adminUserDTO(user, false)})
 		return
 	}
 
 	users := s.authMgr.ListUsers()
-	if users == nil {
-		users = []*auth.User{}
-	}
-
-	// Mask password hashes
+	result := make([]adminUserResponse, 0, len(users))
 	for _, u := range users {
-		u.Password = ""
+		result = append(result, adminUserDTO(u, false))
 	}
 
-	jsonResponse(w, users)
+	jsonResponse(w, result)
 }
 
 func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
@@ -4370,8 +4414,7 @@ func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user.Password = "" // Mask password hash
-	jsonResponse(w, user)
+	jsonResponse(w, adminUserDTO(user, false))
 }
 
 func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
@@ -4429,10 +4472,9 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	s.RecordAudit("auth.user.create", req.Username+" ("+req.Role+")", ip, true)
 
-	user.Password = "" // Mask password hash
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(adminUserDTO(user, true))
 }
 
 func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
@@ -4476,6 +4518,7 @@ func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Enabled != nil {
 		updates.Enabled = *req.Enabled
+		updates.EnabledSet = true
 	}
 	if req.Domains != nil {
 		// Only admin can change domains
@@ -4591,23 +4634,23 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Users can only change their own password unless they're admin
-	if currentUser.Role != auth.RoleAdmin && currentUser.Username != username {
-		// Regular users must provide current password
+	if currentUser.Role == auth.RoleAdmin {
+		updates := &auth.User{Password: req.NewPassword}
+		if err := s.authMgr.UpdateUser(username, updates); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if currentUser.Username != username {
+			jsonError(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		if req.CurrentPassword == "" {
 			jsonError(w, "current_password required", http.StatusBadRequest)
 			return
 		}
 		if err := s.authMgr.ChangePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
 			jsonError(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-	} else if currentUser.Role == auth.RoleAdmin {
-		// Admin can change password without current password
-		// Use UpdateUser directly
-		updates := &auth.User{Password: req.NewPassword}
-		if err := s.authMgr.UpdateUser(username, updates); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -4781,12 +4824,12 @@ type cloudflareTunnel struct {
 }
 
 type cloudflareState struct {
-	Token      string             `json:"token"`
-	AccountID  string             `json:"account_id"`
-	Email      string             `json:"email"`
-	Tunnels    []cloudflareTunnel `json:"tunnels"`
-	Connected  bool               `json:"connected"`
-	UpdatedAt  time.Time          `json:"updated_at"`
+	Token     string             `json:"token"`
+	AccountID string             `json:"account_id"`
+	Email     string             `json:"email"`
+	Tunnels   []cloudflareTunnel `json:"tunnels"`
+	Connected bool               `json:"connected"`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 var (
@@ -4807,9 +4850,9 @@ func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	jsonResponse(w, map[string]any{
-		"connected":   cfg.Connected,
-		"email":       cfg.Email,
-		"account_id":  cfg.AccountID,
+		"connected":  cfg.Connected,
+		"email":      cfg.Email,
+		"account_id": cfg.AccountID,
 	})
 }
 
@@ -5128,7 +5171,7 @@ func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Reque
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		URL       string `json:"url"`
+		URL        string `json:"url"`
 		Everything bool   `json:"everything"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

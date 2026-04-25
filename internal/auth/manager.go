@@ -31,17 +31,18 @@ const (
 
 // User represents a system user with authentication credentials.
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Password  string    `json:"password_hash,omitempty"` // bcrypt hash
-	Role      Role      `json:"role"`
-	Domains   []string  `json:"domains,omitempty"` // For resellers: managed domains
-	APIKey    string    `json:"api_key,omitempty"` // Per-user API key
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	LastLogin time.Time `json:"last_login,omitempty"`
+	ID         string    `json:"id"`
+	Username   string    `json:"username"`
+	Email      string    `json:"email"`
+	Password   string    `json:"password_hash,omitempty"` // bcrypt hash
+	Role       Role      `json:"role"`
+	Domains    []string  `json:"domains,omitempty"` // For resellers: managed domains
+	APIKey     string    `json:"api_key,omitempty"` // Per-user API key
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	LastLogin  time.Time `json:"last_login,omitempty"`
+	EnabledSet bool      `json:"-"`
 }
 
 // Session represents an authenticated session.
@@ -173,7 +174,7 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 	m.usersByID[user.ID] = user
 	m.saveUsers()
 
-	return user, nil
+	return cloneUser(user), nil
 }
 
 // Authenticate validates credentials and returns a session.
@@ -241,7 +242,7 @@ func (m *Manager) AuthenticateAPIKey(key string) (*User, error) {
 
 	for _, user := range m.users {
 		if user.Enabled && subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
-			return user, nil
+			return cloneUser(user), nil
 		}
 	}
 
@@ -307,7 +308,10 @@ func (m *Manager) GetUser(username string) (*User, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	user, exists := m.users[username]
-	return user, exists
+	if !exists {
+		return nil, false
+	}
+	return cloneUser(user), true
 }
 
 // GetUserByID returns a user by ID.
@@ -315,7 +319,10 @@ func (m *Manager) GetUserByID(id string) (*User, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	user, exists := m.usersByID[id]
-	return user, exists
+	if !exists {
+		return nil, false
+	}
+	return cloneUser(user), true
 }
 
 // ListUsers returns all users.
@@ -325,7 +332,7 @@ func (m *Manager) ListUsers() []*User {
 
 	result := make([]*User, 0, len(m.users))
 	for _, user := range m.users {
-		result = append(result, user)
+		result = append(result, cloneUser(user))
 	}
 	return result
 }
@@ -356,13 +363,25 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 	if updates.Domains != nil {
 		user.Domains = updates.Domains
 	}
-	if updates.Enabled != user.Enabled {
+	if updates.EnabledSet {
 		user.Enabled = updates.Enabled
 	}
 
 	user.UpdatedAt = time.Now()
 	m.saveUsers()
 	return nil
+}
+
+func cloneUser(user *User) *User {
+	if user == nil {
+		return nil
+	}
+	copyUser := *user
+	if user.Domains != nil {
+		copyUser.Domains = append([]string(nil), user.Domains...)
+	}
+	copyUser.EnabledSet = false
+	return &copyUser
 }
 
 // DeleteUser deletes a user.

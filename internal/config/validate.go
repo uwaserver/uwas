@@ -328,27 +328,55 @@ func isCloudMetadataHost(host string) bool {
 		ip.Equal(net.ParseIP("fd00:ec2::254"))
 }
 
-// blockedIPBlocks contains CIDR ranges that must never be reached from webhooks
-// (SSRF prevention). Order matters: more specific ranges first.
-var blockedIPBlocks = []*net.IPNet{
-	// Loopback
+var loopbackIPBlocks = []*net.IPNet{
 	mustParseCIDR("127.0.0.0/8"),
 	mustParseCIDR("::1/128"),
-	// Private networks
+}
+
+var privateIPBlocks = []*net.IPNet{
 	mustParseCIDR("10.0.0.0/8"),
 	mustParseCIDR("172.16.0.0/12"),
 	mustParseCIDR("192.168.0.0/16"),
 	mustParseCIDR("fc00::/7"),
-	// Link-local
-	mustParseCIDR("169.254.0.0/16"),
-	mustParseCIDR("fe80::/10"),
-	// Cloud metadata (AWS/GCP/Azure)
+}
+
+var cloudMetadataIPBlocks = []*net.IPNet{
 	mustParseCIDR("169.254.169.254/32"),
 	mustParseCIDR("fd00:ec2::254/128"),
-	// Documentation ranges (RFC 5737)
+}
+
+var linkLocalIPBlocks = []*net.IPNet{
+	mustParseCIDR("169.254.0.0/16"),
+	mustParseCIDR("fe80::/10"),
+}
+
+var documentationIPBlocks = []*net.IPNet{
 	mustParseCIDR("192.0.2.0/24"),
 	mustParseCIDR("198.51.100.0/24"),
 	mustParseCIDR("203.0.2.0/24"),
+}
+
+// blockedIPBlocks contains CIDR ranges that must never be reached by external
+// callbacks such as webhooks (SSRF prevention). Order matters: more specific
+// ranges first.
+var blockedIPBlocks = concatIPBlocks(
+	cloudMetadataIPBlocks,
+	loopbackIPBlocks,
+	privateIPBlocks,
+	linkLocalIPBlocks,
+	documentationIPBlocks,
+)
+
+func concatIPBlocks(groups ...[]*net.IPNet) []*net.IPNet {
+	var total int
+	for _, group := range groups {
+		total += len(group)
+	}
+	blocks := make([]*net.IPNet, 0, total)
+	for _, group := range groups {
+		blocks = append(blocks, group...)
+	}
+	return blocks
 }
 
 func mustParseCIDR(s string) *net.IPNet {
@@ -361,6 +389,39 @@ func mustParseCIDR(s string) *net.IPNet {
 
 func isIPBlocked(ip net.IP) bool {
 	for _, block := range blockedIPBlocks {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+type urlSafetyPolicy struct {
+	allowLoopback bool
+	allowPrivate  bool
+}
+
+func ipBlockedReason(ip net.IP, policy urlSafetyPolicy) string {
+	if inAnyIPBlock(ip, cloudMetadataIPBlocks) {
+		return "cloud metadata endpoint"
+	}
+	if inAnyIPBlock(ip, loopbackIPBlocks) && !policy.allowLoopback {
+		return "loopback address"
+	}
+	if inAnyIPBlock(ip, privateIPBlocks) && !policy.allowPrivate {
+		return "private address"
+	}
+	if inAnyIPBlock(ip, linkLocalIPBlocks) {
+		return "link-local address"
+	}
+	if inAnyIPBlock(ip, documentationIPBlocks) {
+		return "documentation address"
+	}
+	return ""
+}
+
+func inAnyIPBlock(ip net.IP, blocks []*net.IPNet) bool {
+	for _, block := range blocks {
 		if block.Contains(ip) {
 			return true
 		}
@@ -394,12 +455,35 @@ func IsLoopback(rawURL string) bool {
 	return isLoopback(u.Hostname())
 }
 
-// IsSSRFSafe checks whether a URL resolves to a blocked IP address.
-// It returns nil if the URL is safe (public IP) or an error describing the block.
-// This is used to prevent Server-Side Request Forgery (SSRF) attacks via webhooks.
-// Loopback addresses (localhost, 127.0.0.0/8, ::1) are allowed to support
-// test servers running on httptest.NewServer.
+// IsWebhookURLSafe checks whether a URL resolves to an address that external
+// callbacks must not reach, including loopback, private, link-local, metadata,
+// and documentation ranges.
+func IsWebhookURLSafe(rawURL string) error {
+	return isURLSafe(rawURL, urlSafetyPolicy{})
+}
+
+// IsProxyUpstreamSafe checks whether a reverse proxy upstream is safe when
+// private upstreams are disabled. Loopback is allowed because UWAS commonly
+// proxies local application processes, but private/link-local/metadata ranges
+// remain blocked unless the domain explicitly enables private upstreams.
+func IsProxyUpstreamSafe(rawURL string) error {
+	return isURLSafe(rawURL, urlSafetyPolicy{allowLoopback: true})
+}
+
+// IsPrivateProxyUpstreamSafe allows private upstream addresses for domains that
+// explicitly opt into them, while still blocking metadata, link-local, and
+// documentation ranges.
+func IsPrivateProxyUpstreamSafe(rawURL string) error {
+	return isURLSafe(rawURL, urlSafetyPolicy{allowLoopback: true, allowPrivate: true})
+}
+
+// IsSSRFSafe is kept for older callers. New code should use IsWebhookURLSafe
+// or IsProxyUpstreamSafe so the intended trust boundary is explicit.
 func IsSSRFSafe(rawURL string) error {
+	return IsWebhookURLSafe(rawURL)
+}
+
+func isURLSafe(rawURL string, policy urlSafetyPolicy) error {
 	if rawURL == "" {
 		return nil
 	}
@@ -414,19 +498,14 @@ func IsSSRFSafe(rawURL string) error {
 
 	// Check if the hostname itself is a blocked IP
 	if ip := net.ParseIP(host); ip != nil {
-		if isIPBlocked(ip) {
-			// Allow loopback addresses for test servers
-			if ip.IsLoopback() {
-				return nil
-			}
-			return fmt.Errorf("URL host %q is a blocked IP (SSRF)", host)
+		if reason := ipBlockedReason(ip, policy); reason != "" {
+			return fmt.Errorf("URL host %q is a blocked %s (SSRF)", host, reason)
 		}
 		return nil
 	}
 
 	// For hostnames (not IPs), check if it's a known loopback name before DNS lookup.
-	// This avoids LookupIP for "localhost" which would resolve to 127.0.0.1 and be blocked.
-	if isLoopback(host) {
+	if policy.allowLoopback && isLoopback(host) {
 		return nil
 	}
 
@@ -438,8 +517,8 @@ func IsSSRFSafe(rawURL string) error {
 		return nil
 	}
 	for _, ip := range ips {
-		if isIPBlocked(ip) {
-			return fmt.Errorf("URL host %q resolves to blocked IP %q (SSRF)", host, ip.String())
+		if reason := ipBlockedReason(ip, policy); reason != "" {
+			return fmt.Errorf("URL host %q resolves to blocked %s %q (SSRF)", host, reason, ip.String())
 		}
 	}
 	return nil

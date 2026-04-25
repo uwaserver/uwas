@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -64,7 +65,7 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	if err != nil {
 		return err
 	}
-	session.Run("mkdir -p " + p.remotePath)
+	_ = session.Run("mkdir -p -- " + shellQuote(p.remotePath))
 	session.Close()
 
 	if err := safeBackupFilename(filename); err != nil {
@@ -92,7 +93,7 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- session.Run("cat > " + remoteDest)
+		errCh <- session.Run("cat > " + shellQuote(remoteDest))
 	}()
 
 	if _, err := stdin.Write(content); err != nil {
@@ -127,7 +128,7 @@ func (p *SFTPProvider) Download(ctx context.Context, filename string) (io.ReadCl
 		return nil, err
 	}
 
-	if err := session.Start("cat " + remoteSrc); err != nil {
+	if err := session.Start("cat -- " + shellQuote(remoteSrc)); err != nil {
 		session.Close()
 		client.Close()
 		return nil, err
@@ -151,8 +152,9 @@ func (p *SFTPProvider) List(ctx context.Context) ([]BackupInfo, error) {
 
 	// List files with size and modification time.
 	// Use stat-style output: filename size mtime(epoch)
+	quotedRemotePath := shellQuote(p.remotePath)
 	cmd := fmt.Sprintf(`find %s -maxdepth 1 -name '*.tar.gz' -printf '%%f\t%%s\t%%T@\n' 2>/dev/null || ls -1 %s/*.tar.gz 2>/dev/null`,
-		p.remotePath, p.remotePath)
+		quotedRemotePath, quotedRemotePath)
 	out, err := session.Output(cmd)
 	if err != nil {
 		// Empty directory is not an error.
@@ -212,7 +214,7 @@ func (p *SFTPProvider) Delete(ctx context.Context, filename string) error {
 	defer session.Close()
 
 	remotePath := path.Join(p.remotePath, filename)
-	return session.Run("rm -f " + remotePath)
+	return session.Run("rm -f -- " + shellQuote(remotePath))
 }
 
 // --- SSH helpers ---
@@ -242,7 +244,17 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 
 	// Use known_hosts for TOFU (Trust On First Use) — validates against ~/.ssh/known_hosts
 	// and auto-accepts new hosts on first connection.
-	knownHostsFile := os.ExpandEnv("$HOME/.ssh/known_hosts")
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		return nil, fmt.Errorf("home directory not found for known_hosts")
+	}
+	knownHostsFile := filepath.Join(home, ".ssh", "known_hosts")
+	if err := os.MkdirAll(filepath.Dir(knownHostsFile), 0700); err != nil {
+		return nil, fmt.Errorf("create known_hosts dir: %w", err)
+	}
 	hostKeyCallback, err := knownhosts.New(knownHostsFile)
 	if err != nil {
 		// File doesn't exist — create it empty so we can write new hosts
@@ -324,4 +336,11 @@ func safeBackupFilename(name string) error {
 		return errors.New("backup filename contains unsafe characters")
 	}
 	return nil
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

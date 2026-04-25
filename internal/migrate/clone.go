@@ -16,8 +16,8 @@ type CloneRequest struct {
 	TargetDomain string `json:"target_domain"` // e.g. staging.example.com
 	SourceRoot   string `json:"source_root"`
 	TargetRoot   string `json:"target_root"`
-	SourceDB     string `json:"source_db"`     // source database name
-	TargetDB     string `json:"target_db"`     // target database name (auto if empty)
+	SourceDB     string `json:"source_db"` // source database name
+	TargetDB     string `json:"target_db"` // target database name (auto if empty)
 	DBUser       string `json:"db_user"`
 	DBPass       string `json:"db_pass"`
 }
@@ -64,6 +64,23 @@ func Clone(req CloneRequest) *CloneResult {
 		req.TargetDB = strings.ReplaceAll(req.TargetDB, "-", "_")
 		if len(req.TargetDB) > 60 {
 			req.TargetDB = req.TargetDB[:60]
+		}
+	}
+	if req.SourceDB != "" {
+		if !validMigrateDBIdentifier(req.SourceDB) {
+			result.Status = "error"
+			result.Error = "invalid source database name"
+			return result
+		}
+		if !validMigrateDBIdentifier(req.TargetDB) {
+			result.Status = "error"
+			result.Error = "invalid target database name"
+			return result
+		}
+		if req.DBUser != "" && !validMigrateDBIdentifier(req.DBUser) {
+			result.Status = "error"
+			result.Error = "invalid database user"
+			return result
 		}
 	}
 
@@ -129,6 +146,13 @@ func cloneFilesReal(src, dst string, log *strings.Builder) error {
 
 // cloneDBReal creates a copy of a database.
 func cloneDBReal(srcDB, dstDB, user, pass string, log *strings.Builder) error {
+	if !validMigrateDBIdentifier(srcDB) || !validMigrateDBIdentifier(dstDB) {
+		return fmt.Errorf("invalid database identifier")
+	}
+	if user != "" && !validMigrateDBIdentifier(user) {
+		return fmt.Errorf("invalid database user")
+	}
+
 	for _, client := range []string{"mariadb", "mysql"} {
 		bin, err := execLookPathFn(client)
 		if err != nil {
@@ -137,14 +161,14 @@ func cloneDBReal(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 
 		// Create target database
 		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", dstDB)).Run()
+			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", sqlIdent(dstDB))).Run()
 
 		// Create user if provided
 		if user != "" && pass != "" {
 			execCommandFn(bin, "-u", "root", "-e",
-				fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", user, pass)).Run()
+				fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", sqlString(user), sqlString(pass))).Run()
 			execCommandFn(bin, "-u", "root", "-e",
-				fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES", dstDB, user)).Run()
+				fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", sqlIdent(dstDB), sqlString(user))).Run()
 		}
 
 		// Dump source and pipe to target

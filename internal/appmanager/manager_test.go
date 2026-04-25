@@ -1479,6 +1479,9 @@ func TestStartProcessWithMocks(t *testing.T) {
 	// Mock exec.Command
 	execCommandFn = func(name string, arg ...string) *exec.Cmd {
 		// Return a command that does nothing
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/C", "echo test")
+		}
 		return exec.Command("echo", "test")
 	}
 
@@ -1504,6 +1507,9 @@ func TestMonitorProcess(t *testing.T) {
 
 	// Mock exec.Command to return a quick-exiting process
 	execCommandFn = func(name string, arg ...string) *exec.Cmd {
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/C", "echo test")
+		}
 		return exec.Command("echo", "test")
 	}
 

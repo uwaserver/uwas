@@ -641,7 +641,7 @@ func TestUpdateUserEnabled(t *testing.T) {
 	m.CreateUser("alice", "", "secret", RoleAdmin, nil)
 
 	// Disable user
-	err := m.UpdateUser("alice", &User{Enabled: false})
+	err := m.UpdateUser("alice", &User{Enabled: false, EnabledSet: true})
 	if err != nil {
 		t.Fatalf("UpdateUser: %v", err)
 	}

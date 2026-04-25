@@ -18,11 +18,11 @@ import (
 
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/config"
-	"github.com/uwaserver/uwas/internal/doctor"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/dnschecker"
 	"github.com/uwaserver/uwas/internal/dnsmanager"
+	"github.com/uwaserver/uwas/internal/doctor"
 	"github.com/uwaserver/uwas/internal/filemanager"
 	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/middleware"
@@ -51,6 +51,9 @@ func (s *Server) handleWPInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Domain == "" {
 		jsonError(w, "domain is required", http.StatusBadRequest)
+		return
+	}
+	if !s.requireDomainAccess(w, r, req.Domain, "wordpress.install") {
 		return
 	}
 
@@ -113,6 +116,9 @@ func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RLock()
 	var domains []wordpress.DomainInfo
 	for _, d := range s.config.Domains {
+		if !s.canAccessDomain(r, d.Host) {
+			continue
+		}
 		domains = append(domains, wordpress.DomainInfo{Host: d.Host, WebRoot: d.Root})
 	}
 	s.configMu.RUnlock()
@@ -127,9 +133,8 @@ func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request) {
 // handleWPSiteDetail returns enriched info (plugins, themes via wp-cli) for a single site.
 func (s *Server) handleWPSiteDetail(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.detail")
+	if !ok {
 		return
 	}
 	if !wordpress.IsWordPress(root) {
@@ -150,9 +155,8 @@ func (s *Server) handleWPSiteDetail(w http.ResponseWriter, r *http.Request) {
 // handleWPUpdateCore triggers WP core update via WP-CLI.
 func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.update_core")
+	if !ok {
 		return
 	}
 	if !wordpress.IsWordPress(root) {
@@ -170,9 +174,8 @@ func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request) {
 // handleWPUpdatePlugins updates all plugins via WP-CLI.
 func (s *Server) handleWPUpdatePlugins(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.update_plugins")
+	if !ok {
 		return
 	}
 	out, err := wordpress.UpdateAllPlugins(root)
@@ -188,9 +191,8 @@ func (s *Server) handleWPPluginAction(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
 	action := r.PathValue("action")
 	plugin := r.PathValue("plugin")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.plugin")
+	if !ok {
 		return
 	}
 	var out string
@@ -218,9 +220,8 @@ func (s *Server) handleWPPluginAction(w http.ResponseWriter, r *http.Request) {
 // handleWPFixPermissions fixes file permissions for a WordPress site.
 func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.fix_permissions")
+	if !ok {
 		return
 	}
 	out, err := wordpress.FixPermissions(root)
@@ -234,9 +235,8 @@ func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request) 
 // handleWPReinstall re-downloads WordPress core files without touching wp-content or DB.
 func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.reinstall")
+	if !ok {
 		return
 	}
 	if !wordpress.IsWordPress(root) {
@@ -254,9 +254,8 @@ func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request) {
 // handleWPToggleDebug enables or disables WP_DEBUG + display_errors + error logging.
 func (s *Server) handleWPToggleDebug(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.debug")
+	if !ok {
 		return
 	}
 	if !wordpress.IsWordPress(root) {
@@ -285,9 +284,8 @@ func (s *Server) handleWPToggleDebug(w http.ResponseWriter, r *http.Request) {
 // handleWPErrorLog reads the WordPress debug.log file.
 func (s *Server) handleWPErrorLog(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.error_log")
+	if !ok {
 		return
 	}
 
@@ -312,9 +310,8 @@ func (s *Server) handleWPErrorLog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWPUsers(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.users")
+	if !ok {
 		return
 	}
 	users, err := wordpress.ListUsers(root)
@@ -327,9 +324,8 @@ func (s *Server) handleWPUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWPChangePassword(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.change_password")
+	if !ok {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -359,9 +355,8 @@ func (s *Server) handleWPChangePassword(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleWPSecurityStatus(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.security")
+	if !ok {
 		return
 	}
 	status := wordpress.GetSecurityStatus(root)
@@ -370,9 +365,8 @@ func (s *Server) handleWPSecurityStatus(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleWPHarden(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.harden")
+	if !ok {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -392,9 +386,8 @@ func (s *Server) handleWPHarden(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWPOptimizeDB(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "wordpress.optimize_db")
+	if !ok {
 		return
 	}
 	result, err := wordpress.OptimizeDatabase(root)
@@ -422,11 +415,22 @@ func (s *Server) domainRoot(domain string) string {
 	return ""
 }
 
-func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
+func (s *Server) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, domain, action string) (string, bool) {
+	if !s.requireDomainAccess(w, r, domain, action) {
+		return "", false
+	}
 	root := s.domainRoot(domain)
 	if root == "" {
-		jsonError(w, fmt.Sprintf("domain %q not configured or has no web root", domain), http.StatusNotFound)
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return "", false
+	}
+	return root, true
+}
+
+func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.list")
+	if !ok {
 		return
 	}
 	// Auto-create root if it doesn't exist
@@ -448,9 +452,8 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.read")
+	if !ok {
 		return
 	}
 	path := r.URL.Query().Get("path")
@@ -499,9 +502,8 @@ func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.write")
+	if !ok {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
@@ -522,9 +524,8 @@ func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.delete")
+	if !ok {
 		return
 	}
 	path := r.URL.Query().Get("path")
@@ -537,9 +538,8 @@ func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.mkdir")
+	if !ok {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -559,9 +559,8 @@ func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.upload")
+	if !ok {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB total request limit
@@ -604,9 +603,8 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "file.disk_usage")
+	if !ok {
 		return
 	}
 	bytes, err := filemanager.DiskUsage(root)
@@ -669,7 +667,9 @@ func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Schedule string `json:"schedule"`
@@ -737,7 +737,9 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	numStr := r.PathValue("number")
 	var num int
 	fmt.Sscanf(numStr, "%d", &num)
@@ -761,7 +763,9 @@ func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	if err := firewall.Disable(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -818,7 +822,9 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	domain := r.PathValue("domain")
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
@@ -855,7 +861,9 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	info, err := selfupdate.CheckUpdate(build.Version)
 	if err != nil {
 		jsonError(w, "check failed: "+err.Error(), http.StatusInternalServerError)
@@ -880,7 +888,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Auto-restart after response is sent
 	go func() {
 		time.Sleep(500 * time.Millisecond) // let response flush
-		selfupdate.RestartSelf() // tries systemctl restart uwas, falls back to re-exec
+		selfupdate.RestartSelf()           // tries systemctl restart uwas, falls back to re-exec
 	}()
 }
 
@@ -936,7 +944,9 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := database.DropDatabase(name, name, "localhost"); err != nil {
 		jsonError(w, "drop database: "+err.Error(), http.StatusInternalServerError)
@@ -1043,7 +1053,9 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	out, err := database.UninstallService()
 	if err != nil {
@@ -1070,7 +1082,9 @@ func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	out, err := database.ForceUninstall()
 	if err != nil {
@@ -1162,7 +1176,9 @@ func (s *Server) handleDockerDBStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := database.RemoveDockerDB(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1213,7 +1229,9 @@ func (s *Server) handleDockerDBCreateDatabase(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	db := r.PathValue("db")
 	if err := database.DockerDBDropDatabase(name, db); err != nil {
@@ -1461,7 +1479,9 @@ func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	domain := r.PathValue("domain")
 	recordID := r.PathValue("id")
 	cf := s.getDNSProvider()
@@ -1699,7 +1719,7 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]healthResult, len(domains))
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
 
@@ -1819,10 +1839,10 @@ type PackageInfo struct {
 	Installed   bool   `json:"installed"`
 	Version     string `json:"version,omitempty"`
 	Category    string `json:"category"`
-	Required    bool   `json:"required"`           // true if UWAS needs this
-	UsedBy      string `json:"used_by,omitempty"`   // what uses it: "WordPress", "Image Optimization", etc
-	Warning     string `json:"warning,omitempty"`    // uninstall warning
-	CanRemove   bool   `json:"can_remove"`           // false if critical dependency
+	Required    bool   `json:"required"`          // true if UWAS needs this
+	UsedBy      string `json:"used_by,omitempty"` // what uses it: "WordPress", "Image Optimization", etc
+	Warning     string `json:"warning,omitempty"` // uninstall warning
+	CanRemove   bool   `json:"can_remove"`        // false if critical dependency
 }
 
 type knownPkg struct {
@@ -2306,12 +2326,12 @@ func (s *Server) handleDBExploreTables(w http.ResponseWriter, r *http.Request) {
 		fields := strings.Split(line, "\t")
 		if len(fields) >= 6 {
 			tables = append(tables, map[string]string{
-				"name":      fields[0],
-				"rows":      fields[1],
-				"data_size": fields[2],
+				"name":       fields[0],
+				"rows":       fields[1],
+				"data_size":  fields[2],
 				"index_size": fields[3],
-				"engine":    fields[4],
-				"collation": fields[5],
+				"engine":     fields[4],
+				"collation":  fields[5],
 			})
 		}
 	}
@@ -2621,7 +2641,7 @@ func (s *Server) handleNotifyPrefsGet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		Alerting config.AlertingConfig `json:"alerting"`
+		Alerting config.AlertingConfig  `json:"alerting"`
 		Webhooks []config.WebhookConfig `json:"webhooks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

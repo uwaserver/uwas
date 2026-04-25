@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/database"
 )
 
 // Testable hooks — replaced in tests to avoid real exec/HTTP/filesystem calls.
@@ -193,15 +195,23 @@ add_filter('got_rewrite', '__return_true');
 }
 
 func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) error {
+	if !database.ValidDBIdentifier(dbName) {
+		return fmt.Errorf("invalid database name")
+	}
+	if !database.ValidDBIdentifier(dbUser) {
+		return fmt.Errorf("invalid database user")
+	}
+
 	// Try mysql client
 	if _, err := execLookPathFn("mysql"); err != nil {
 		return fmt.Errorf("mysql client not found")
 	}
 
+	dbIdent := database.BacktickID(dbName)
 	cmds := []string{
-		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", escSQL(dbName)),
+		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", dbIdent),
 		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';", escSQL(dbUser), escSQL(dbHost), escSQL(dbPass)),
-		fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s';", escSQL(dbName), escSQL(dbUser), escSQL(dbHost)),
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';", dbIdent, escSQL(dbUser), escSQL(dbHost)),
 		"FLUSH PRIVILEGES;",
 	}
 

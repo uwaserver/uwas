@@ -81,6 +81,8 @@ type queuedEvent struct {
 	attempts int
 }
 
+var webhookURLSafetyCheck = config.IsWebhookURLSafe
+
 // NewManager creates a new webhook manager.
 func NewManager(dataDir string, logger Logger) *Manager {
 	m := &Manager{
@@ -178,7 +180,7 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 	}
 
 	// SSRF check
-	if err := config.IsSSRFSafe(url); err != nil {
+	if err := webhookURLSafetyCheck(url); err != nil {
 		m.logger.Warn("webhook SSRF blocked", "url", url, "error", err)
 		return
 	}
@@ -221,7 +223,7 @@ func (m *Manager) worker() {
 // deliver sends a webhook with retry logic.
 func (m *Manager) deliver(qe *queuedEvent) {
 	// SSRF check before attempting delivery
-	if err := config.IsSSRFSafe(qe.webhook.URL); err != nil {
+	if err := webhookURLSafetyCheck(qe.webhook.URL); err != nil {
 		m.logger.Warn("webhook SSRF blocked", "url", qe.webhook.URL, "error", err)
 		return
 	}

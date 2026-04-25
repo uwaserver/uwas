@@ -1709,6 +1709,68 @@ func TestCreateMySQLDB_FallbackSudo(t *testing.T) {
 	}
 }
 
+func TestCreateMySQLDB_RejectsUnsafeIdentifiers(t *testing.T) {
+	tests := []struct {
+		name string
+		db   string
+		user string
+		want string
+	}{
+		{"db_backtick", "wp`evil", "wp_user", "invalid database name"},
+		{"db_option", "--all-databases", "wp_user", "invalid database name"},
+		{"user_quote", "wp_test", "bad'user", "invalid database user"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := saveHooks()
+			defer restoreHooks(snap)
+
+			execLookPathFn = fakeLookPathOK
+			execCalled := false
+			execCommandFn = func(name string, args ...string) *exec.Cmd {
+				execCalled = true
+				return fakeCmd("OK")(name, args...)
+			}
+
+			var log strings.Builder
+			err := createMySQLDB(tt.db, tt.user, "testpass", "localhost", &log)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			if execCalled {
+				t.Fatal("mysql command should not run for unsafe identifiers")
+			}
+		})
+	}
+}
+
+func TestCreateMySQLDB_UsesSafeSQLIdentifier(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	execLookPathFn = fakeLookPathOK
+	var gotSQL string
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		if len(args) >= 4 && args[2] == "-e" {
+			gotSQL = args[3]
+		}
+		return fakeCmd("Query OK\n")(name, args...)
+	}
+
+	var log strings.Builder
+	err := createMySQLDB("wp-test", "wp_user", "testpass", "localhost", &log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotSQL, "CREATE DATABASE IF NOT EXISTS `wp-test`") {
+		t.Fatalf("CREATE DATABASE did not use backtick identifier: %s", gotSQL)
+	}
+	if !strings.Contains(gotSQL, "GRANT ALL PRIVILEGES ON `wp-test`.*") {
+		t.Fatalf("GRANT did not use backtick identifier: %s", gotSQL)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TestEnsurePHPExtensions
 // ---------------------------------------------------------------------------
@@ -2924,4 +2986,3 @@ func TestOptimizeDatabase(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
-

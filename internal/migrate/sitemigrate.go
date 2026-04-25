@@ -143,8 +143,8 @@ func buildSSHArgs(port, sshKey, sourceHost, remoteCmd string) []string {
 
 // buildMysqldumpCmd builds the remote mysqldump command string.
 func buildMysqldumpCmd(dbHost, dbUser, dbPass, dbName string) string {
-	return fmt.Sprintf("mysqldump -h %s -u %s -p'%s' --single-transaction --quick %s",
-		dbHost, dbUser, dbPass, dbName)
+	return fmt.Sprintf("mysqldump -h %s -u %s -p%s --single-transaction --quick %s",
+		shellQuote(dbHost), shellQuote(dbUser), shellQuote(dbPass), shellQuote(dbName))
 }
 
 // syncFilesReal uses rsync to copy files from remote server.
@@ -178,6 +178,15 @@ func syncFilesReal(req MigrateRequest, log *strings.Builder) string {
 
 // migrateDBReal dumps remote database and imports locally.
 func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
+	if !validMigrateDBIdentifier(req.DBName) {
+		log.WriteString("invalid database name\n")
+		return "error: invalid database name"
+	}
+	if req.DBUser != "" && !validMigrateDBIdentifier(req.DBUser) {
+		log.WriteString("invalid database user\n")
+		return "error: invalid database user"
+	}
+
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
@@ -222,15 +231,14 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 		}
 		// Create DB
 		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", req.DBName)).Run()
-		// Create user — escape single quotes to prevent SQL injection
-		safeUser := strings.ReplaceAll(req.DBUser, "'", "\\'")
-		safePass := strings.ReplaceAll(req.DBPass, "'", "\\'")
-		safeName := strings.ReplaceAll(req.DBName, "`", "``")
+			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", sqlIdent(req.DBName))).Run()
+		safeUser := sqlString(req.DBUser)
+		safePass := sqlString(req.DBPass)
+		safeName := sqlIdent(req.DBName)
 		execCommandFn(bin, "-u", "root", "-e",
 			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", safeUser, safePass)).Run()
 		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).Run()
+			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).Run()
 
 		// Import
 		importCmd := execCommandFn(bin, "-u", "root", req.DBName)

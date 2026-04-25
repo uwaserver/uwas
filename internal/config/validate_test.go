@@ -125,6 +125,54 @@ func TestValidateTrustedProxies_InvalidCIDR(t *testing.T) {
 	expectValidationError(t, cfg, "trusted_proxies[0]")
 }
 
+// --- URL SSRF Safety Tests ---
+
+func TestWebhookURLSafetyBlocksInternalTargets(t *testing.T) {
+	tests := []string{
+		"http://localhost:8080/hook",
+		"http://127.0.0.1:8080/hook",
+		"http://10.0.0.1/hook",
+		"http://172.16.0.1/hook",
+		"http://192.168.1.10/hook",
+		"http://169.254.169.254/latest/meta-data/",
+	}
+
+	for _, rawURL := range tests {
+		if err := IsWebhookURLSafe(rawURL); err == nil {
+			t.Errorf("IsWebhookURLSafe(%q) = nil, want blocked", rawURL)
+		}
+	}
+}
+
+func TestProxyUpstreamSafetyAllowsLoopbackButBlocksInternalRanges(t *testing.T) {
+	for _, rawURL := range []string{"http://localhost:3000", "http://127.0.0.1:3000"} {
+		if err := IsProxyUpstreamSafe(rawURL); err != nil {
+			t.Errorf("IsProxyUpstreamSafe(%q) = %v, want nil", rawURL, err)
+		}
+	}
+
+	for _, rawURL := range []string{"http://10.0.0.1:3000", "http://169.254.169.254/latest/meta-data/"} {
+		if err := IsProxyUpstreamSafe(rawURL); err == nil {
+			t.Errorf("IsProxyUpstreamSafe(%q) = nil, want blocked", rawURL)
+		}
+	}
+}
+
+func TestPrivateProxyUpstreamSafetyStillBlocksMetadata(t *testing.T) {
+	if err := IsPrivateProxyUpstreamSafe("http://10.0.0.1:3000"); err != nil {
+		t.Errorf("IsPrivateProxyUpstreamSafe(private IP) = %v, want nil", err)
+	}
+	if err := IsPrivateProxyUpstreamSafe("http://169.254.169.254/latest/meta-data/"); err == nil {
+		t.Error("IsPrivateProxyUpstreamSafe(metadata) = nil, want blocked")
+	}
+}
+
+func TestIsSSRFSafeUsesWebhookPolicy(t *testing.T) {
+	if err := IsSSRFSafe("http://127.0.0.1:8080/hook"); err == nil {
+		t.Error("IsSSRFSafe(loopback) = nil, want blocked")
+	}
+}
+
 // --- Proxy Upstream Tests ---
 
 func TestValidateProxyUpstreams_Valid(t *testing.T) {

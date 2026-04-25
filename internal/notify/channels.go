@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	telegramAPIBase  = "https://api.telegram.org"
-	smtpSendMailFn   = smtp.SendMail
-	notifyHTTPClient = &http.Client{
+	telegramAPIBase      = "https://api.telegram.org"
+	smtpSendMailFn       = smtp.SendMail
+	notifyURLSafetyCheck = config.IsWebhookURLSafe
+	notifyHTTPClient     = &http.Client{
 		Timeout: 10 * time.Second,
 	}
 )
@@ -62,7 +63,7 @@ func sendWebhook(url string, msg Message) error {
 	}
 
 	// SSRF check
-	if err := config.IsSSRFSafe(url); err != nil {
+	if err := notifyURLSafetyCheck(url); err != nil {
 		return fmt.Errorf("webhook URL not allowed: %w", err)
 	}
 
@@ -91,7 +92,7 @@ func sendSlack(webhookURL string, msg Message) error {
 	}
 
 	// SSRF check
-	if err := config.IsSSRFSafe(webhookURL); err != nil {
+	if err := notifyURLSafetyCheck(webhookURL); err != nil {
 		return fmt.Errorf("slack webhook URL not allowed: %w", err)
 	}
 

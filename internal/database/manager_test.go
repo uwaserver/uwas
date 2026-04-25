@@ -145,12 +145,12 @@ func fakeStatFor(paths ...string) func(string) (fs.FileInfo, error) {
 
 type fakeFileInfo struct{}
 
-func (fakeFileInfo) Name() string      { return "fake" }
-func (fakeFileInfo) Size() int64       { return 0 }
-func (fakeFileInfo) Mode() fs.FileMode { return 0755 }
+func (fakeFileInfo) Name() string       { return "fake" }
+func (fakeFileInfo) Size() int64        { return 0 }
+func (fakeFileInfo) Mode() fs.FileMode  { return 0755 }
 func (fakeFileInfo) ModTime() time.Time { return time.Time{} }
-func (fakeFileInfo) IsDir() bool       { return true }
-func (fakeFileInfo) Sys() any          { return nil }
+func (fakeFileInfo) IsDir() bool        { return true }
+func (fakeFileInfo) Sys() any           { return nil }
 
 // ── TestHelperProcess ─────────────────────────────────────────────────────
 
@@ -552,8 +552,8 @@ func TestDiagnoseService(t *testing.T) {
 	runtimeGOOS = "linux"
 	execCommandFn = fakeCmdRouter(map[string]cmdRoute{
 		"systemctl is-active": {stdout: "active", exitCode: 0},
-		"journalctl":         {stdout: "Mar 26 server started", exitCode: 0},
-		"df":                 {stdout: "Filesystem  Size  Used  Avail  Use%  Mounted\n/dev/sda1  50G  10G  40G  20%  /", exitCode: 0},
+		"journalctl":          {stdout: "Mar 26 server started", exitCode: 0},
+		"df":                  {stdout: "Filesystem  Size  Used  Avail  Use%  Mounted\n/dev/sda1  50G  10G  40G  20%  /", exitCode: 0},
 	}, cmdRoute{stdout: "", exitCode: 0})
 	osStatFn = fakeStatFor("/run/mysqld/mysqld.sock", "/var/lib/mysql")
 	osReadFileFn = func(name string) ([]byte, error) {
@@ -1388,6 +1388,7 @@ func TestValidDBIdentifier(t *testing.T) {
 		{"valid_uppercase", "MyDB", true},
 		{"valid_mixed", "My_DB_123", true},
 		{"valid_with_dash", "my-db", true},
+		{"invalid_leading_dash", "-mydb", false},
 		{"invalid_space", "my db", false},
 		{"invalid_special", "my@db", false},
 		{"valid_underscore", "my_db", true},

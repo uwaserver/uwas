@@ -20,7 +20,14 @@ func (s *Server) handleAppList(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, []any{})
 		return
 	}
-	jsonResponse(w, s.appMgr.Instances())
+	instances := s.appMgr.Instances()
+	filtered := make([]any, 0, len(instances))
+	for _, inst := range instances {
+		if s.canAccessDomain(r, inst.Domain) {
+			filtered = append(filtered, inst)
+		}
+	}
+	jsonResponse(w, filtered)
 }
 
 func (s *Server) handleAppGet(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +36,9 @@ func (s *Server) handleAppGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "app.read") {
+		return
+	}
 	inst := s.appMgr.Get(domain)
 	if inst == nil {
 		jsonError(w, "app not found: "+domain, http.StatusNotFound)
@@ -43,6 +53,9 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "app.start") {
+		return
+	}
 	if err := s.appMgr.Start(domain); err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
@@ -57,6 +70,9 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "app.stop") {
+		return
+	}
 	if err := s.appMgr.Stop(domain); err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
@@ -71,6 +87,9 @@ func (s *Server) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "app.restart") {
+		return
+	}
 	if err := s.appMgr.Restart(domain); err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
@@ -90,6 +109,9 @@ func (s *Server) handleAppStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "app.stats") {
+		return
+	}
 	stats := s.appMgr.Stats(domain)
 	if stats == nil {
 		jsonError(w, "app not found: "+domain, http.StatusNotFound)
@@ -106,6 +128,9 @@ func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "app.env.update") {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Env     map[string]string `json:"env"`
@@ -142,9 +167,8 @@ func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	root := s.domainRoot(domain)
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
+	root, ok := s.authorizedDomainRoot(w, r, domain, "app.logs")
+	if !ok {
 		return
 	}
 
@@ -176,6 +200,9 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := r.PathValue("domain")
 	req.Domain = domain
+	if !s.requireDomainAccess(w, r, domain, "deploy.start") {
+		return
+	}
 
 	root := s.domainRoot(domain)
 	if root == "" {
@@ -201,6 +228,9 @@ func (s *Server) handleDeployStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "deploy.status") {
+		return
+	}
 	status := s.deployMgr.Status(domain)
 	if status == nil {
 		jsonError(w, "no deployment found", http.StatusNotFound)
@@ -214,7 +244,14 @@ func (s *Server) handleDeployList(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, []any{})
 		return
 	}
-	jsonResponse(w, s.deployMgr.AllStatuses())
+	statuses := s.deployMgr.AllStatuses()
+	filtered := make([]deploy.DeployStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if s.canAccessDomain(r, status.Domain) {
+			filtered = append(filtered, status)
+		}
+	}
+	jsonResponse(w, filtered)
 }
 
 // handleDeployWebhook handles GitHub/GitLab push webhooks for auto-deploy.
@@ -244,6 +281,10 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RLock()
 	secret := s.config.Global.Admin.APIKey // use API key as webhook secret
 	s.configMu.RUnlock()
+	if secret == "" {
+		jsonError(w, "webhook secret is not configured", http.StatusForbidden)
+		return
+	}
 
 	if secret != "" {
 		// GitHub: X-Hub-Signature-256 = sha256=HMAC

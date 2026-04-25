@@ -21,6 +21,7 @@ func (l *testLogger) Warn(msg string, args ...any)  {}
 func (l *testLogger) Error(msg string, args ...any) {}
 
 func newTestManager() *Manager {
+	webhookURLSafetyCheck = func(string) error { return nil }
 	return NewManager("", &testLogger{})
 }
 
@@ -81,8 +82,8 @@ func TestFireEventFiltering(t *testing.T) {
 		{URL: srv.URL, Events: []EventType{EventDomainDelete}, Enabled: true, RetryMax: 1, Timeout: 5 * time.Second},
 	})
 
-	m.Fire(EventDomainAdd, map[string]any{"host": "a.com"})       // should NOT match
-	m.Fire(EventDomainDelete, map[string]any{"host": "b.com"})    // should match
+	m.Fire(EventDomainAdd, map[string]any{"host": "a.com"})    // should NOT match
+	m.Fire(EventDomainDelete, map[string]any{"host": "b.com"}) // should match
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -260,11 +261,11 @@ func TestHeaders(t *testing.T) {
 
 	m.UpdateWebhooks([]WebhookConfig{
 		{
-			URL:     srv.URL,
-			Enabled: true,
-			Headers: map[string]string{"X-Custom": "hello"},
+			URL:      srv.URL,
+			Enabled:  true,
+			Headers:  map[string]string{"X-Custom": "hello"},
 			RetryMax: 1,
-			Timeout: 5 * time.Second,
+			Timeout:  5 * time.Second,
 		},
 	})
 
