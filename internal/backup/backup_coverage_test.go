@@ -640,6 +640,16 @@ func TestDumpDatabaseNotFound(t *testing.T) {
 	}
 }
 
+func TestDumpDatabaseRejectsUnsafeName(t *testing.T) {
+	_, err := dumpDatabaseReal("--all-databases")
+	if err == nil {
+		t.Fatal("expected invalid database name error")
+	}
+	if !strings.Contains(err.Error(), "invalid database name") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDumpAllDatabasesNotFound(t *testing.T) {
 	_, err := dumpAllDatabasesReal()
 	if err == nil {
@@ -769,6 +779,26 @@ func TestCreateDomainBackupWithDBDump(t *testing.T) {
 	}
 	if !found {
 		t.Error("database/mydb.sql not found in archive")
+	}
+}
+
+func TestCreateDomainBackupRejectsUnsafeDBName(t *testing.T) {
+	old := dumpDatabaseFunc
+	defer func() { dumpDatabaseFunc = old }()
+
+	dumpCalled := false
+	dumpDatabaseFunc = func(dbName string) ([]byte, error) {
+		dumpCalled = true
+		return []byte("-- should not run"), nil
+	}
+
+	m, _ := testManager(t)
+	_, err := m.CreateDomainBackup("example.com", "", "../evil", "mem")
+	if err == nil {
+		t.Fatal("expected invalid database name error")
+	}
+	if dumpCalled {
+		t.Fatal("dumpDatabase should not be called for invalid database name")
 	}
 }
 

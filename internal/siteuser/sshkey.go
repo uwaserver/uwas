@@ -12,6 +12,9 @@ func AddSSHKey(webRootBase, hostname, pubKey string) error {
 	if runtimeGOOS == "windows" {
 		return fmt.Errorf("SSH key management not supported on Windows")
 	}
+	if err := validateSiteHostname(hostname); err != nil {
+		return err
+	}
 
 	username := domainToUsername(hostname)
 	domainDir := filepath.Join(webRootBase, hostname)
@@ -47,6 +50,9 @@ func AddSSHKey(webRootBase, hostname, pubKey string) error {
 
 // RemoveSSHKey removes a public SSH key from a domain user's authorized_keys.
 func RemoveSSHKey(webRootBase, hostname, pubKeyFingerprint string) error {
+	if err := validateSiteHostname(hostname); err != nil {
+		return err
+	}
 	domainDir := filepath.Join(webRootBase, hostname)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
 
@@ -71,6 +77,9 @@ func RemoveSSHKey(webRootBase, hostname, pubKeyFingerprint string) error {
 
 // ListSSHKeys returns the SSH public keys for a domain user.
 func ListSSHKeys(webRootBase, hostname string) []string {
+	if validateSiteHostname(hostname) != nil {
+		return nil
+	}
 	domainDir := filepath.Join(webRootBase, hostname)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
 

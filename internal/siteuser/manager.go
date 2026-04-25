@@ -45,8 +45,8 @@ type User struct {
 // PrepareWebRoot creates the domain directory structure with proper ownership.
 // Structure: /var/www/domain.com/public_html/ (owned by www-data:www-data, 755)
 func PrepareWebRoot(webRootBase, hostname string) (string, error) {
-	if strings.ContainsAny(hostname, `/\`) || strings.Contains(hostname, "..") || hostname == "" {
-		return "", fmt.Errorf("invalid hostname: %s", hostname)
+	if err := validateSiteHostname(hostname); err != nil {
+		return "", err
 	}
 	if runtimeGOOS == "windows" {
 		dir := filepath.Join(webRootBase, hostname)
@@ -71,6 +71,9 @@ func PrepareWebRoot(webRootBase, hostname string) (string, error) {
 func CreateUser(webRootBase, hostname string) (*User, string, error) {
 	if runtimeGOOS == "windows" {
 		return nil, "", fmt.Errorf("user management not supported on Windows")
+	}
+	if err := validateSiteHostname(hostname); err != nil {
+		return nil, "", err
 	}
 
 	username := domainToUsername(hostname)
@@ -134,6 +137,9 @@ func DeleteUser(hostname string) error {
 	if runtimeGOOS == "windows" {
 		return nil
 	}
+	if err := validateSiteHostname(hostname); err != nil {
+		return err
+	}
 	username := domainToUsername(hostname)
 	if !userExists(username) {
 		return nil
@@ -178,6 +184,26 @@ func ListUsers() []User {
 		})
 	}
 	return users
+}
+
+func validateSiteHostname(hostname string) error {
+	if hostname == "" || len(hostname) > 253 || strings.TrimSpace(hostname) != hostname {
+		return fmt.Errorf("invalid hostname: %s", hostname)
+	}
+	if strings.ContainsAny(hostname, `/\:*?"<>|`+"\r\n\t ") || strings.Contains(hostname, "..") {
+		return fmt.Errorf("invalid hostname: %s", hostname)
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("invalid hostname: %s", hostname)
+		}
+		for _, c := range label {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+				return fmt.Errorf("invalid hostname: %s", hostname)
+			}
+		}
+	}
+	return nil
 }
 
 // domainToUsername converts a hostname to a valid Unix username.

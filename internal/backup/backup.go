@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
@@ -53,10 +54,10 @@ type BackupManager struct {
 	lastBackup time.Time // time of last successful backup
 	startedAt  time.Time // when the scheduler was started
 
-	configPath string
-	certsDir   string
-	webRoot    string   // base dir for all domain web roots
-	domainsDir string   // domains.d/ config directory
+	configPath  string
+	certsDir    string
+	webRoot     string   // base dir for all domain web roots
+	domainsDir  string   // domains.d/ config directory
 	domainRoots []string // individual domain web roots to backup
 
 	// onBackup is called after each backup attempt (scheduled or manual).
@@ -383,9 +384,10 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			if rel == "" {
 				continue
 			}
-			outPath = filepath.Join(m.domainsDir, rel)
-			if !isInsideDir(outPath, m.domainsDir) {
-				continue // zip-slip: path traversal attempt
+			var ok bool
+			outPath, ok = safeRestorePath(m.domainsDir, rel)
+			if !ok {
+				continue // path traversal or symlink escape attempt
 			}
 		case strings.HasPrefix(hdr.Name, "certs/"):
 			if certsDir == "" {
@@ -395,9 +397,10 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			if rel == "" {
 				continue
 			}
-			outPath = filepath.Join(certsDir, rel)
-			if !isInsideDir(outPath, certsDir) {
-				continue // zip-slip: path traversal attempt
+			var ok bool
+			outPath, ok = safeRestorePath(certsDir, rel)
+			if !ok {
+				continue // path traversal or symlink escape attempt
 			}
 		case strings.HasPrefix(hdr.Name, "sites/"):
 			// Restore domain web content to web root
@@ -408,9 +411,10 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			if rel == "" {
 				continue
 			}
-			outPath = filepath.Join(m.webRoot, rel)
-			if !isInsideDir(outPath, m.webRoot) {
-				continue // zip-slip: path traversal attempt
+			var ok bool
+			outPath, ok = safeRestorePath(m.webRoot, rel)
+			if !ok {
+				continue // path traversal or symlink escape attempt
 			}
 		case hdr.Name == "databases/all-databases.sql" || hdr.Name == "databases/native-all-databases.sql":
 			// Import database dump via mysql
@@ -804,6 +808,9 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 	if p == nil {
 		return nil, fmt.Errorf("unknown backup provider %q", provider)
 	}
+	if dbName != "" && !database.ValidDBIdentifier(dbName) {
+		return nil, fmt.Errorf("invalid database name %q", dbName)
+	}
 
 	ts := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("uwas-domain-%s-%s.tar.gz", domain, ts)
@@ -894,6 +901,9 @@ func dumpDatabase(dbName string) ([]byte, error) {
 }
 
 func dumpDatabaseReal(dbName string) ([]byte, error) {
+	if !database.ValidDBIdentifier(dbName) {
+		return nil, fmt.Errorf("invalid database name %q", dbName)
+	}
 	mysqldump, err := exec.LookPath("mysqldump")
 	if err != nil {
 		return nil, err
@@ -985,14 +995,71 @@ func isInsideDir(path, base string) bool {
 	return strings.HasPrefix(abs, baseAbs+string(filepath.Separator)) || abs == baseAbs
 }
 
+// safeRestorePath joins an archive-relative path to a restore root while
+// rejecting traversal and existing symlink escapes.
+func safeRestorePath(base, rel string) (string, bool) {
+	if base == "" || rel == "" || filepath.IsAbs(rel) {
+		return "", false
+	}
+	rel = filepath.Clean(filepath.FromSlash(rel))
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", false
+	}
+
+	target := filepath.Join(base, rel)
+	if !isInsideDir(target, base) {
+		return "", false
+	}
+
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", false
+	}
+	baseReal, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		baseReal = baseAbs
+	}
+
+	if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+
+	existing := target
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", false
+		}
+		existing = parent
+	}
+
+	existingReal, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", false
+	}
+
+	if isInsideDir(existing, baseAbs) {
+		if !isInsideDir(existingReal, baseReal) {
+			return "", false
+		}
+	} else if !isInsideDir(baseAbs, existingReal) {
+		return "", false
+	}
+
+	return target, true
+}
+
 // ScheduleDetail returns the current backup schedule details for the admin UI.
 type ScheduleDetail struct {
 	Enabled    bool   `json:"enabled"`
-	Interval  string `json:"interval"`
-	Keep      int    `json:"keep"`
+	Interval   string `json:"interval"`
+	Keep       int    `json:"keep"`
 	LastBackup string `json:"last_backup,omitempty"`
 	NextBackup string `json:"next_backup,omitempty"`
-	Provider  string `json:"provider"`
+	Provider   string `json:"provider"`
 }
 
 func (m *BackupManager) ScheduleDetail() ScheduleDetail {
@@ -1023,9 +1090,9 @@ func (m *BackupManager) ScheduleDetail() ScheduleDetail {
 
 	return ScheduleDetail{
 		Enabled:    m.running,
-		Interval:  simplifyInterval(m.schedule),
-		Keep:      m.keepCount,
-		Provider:  provider,
+		Interval:   simplifyInterval(m.schedule),
+		Keep:       m.keepCount,
+		Provider:   provider,
 		LastBackup: lastBak,
 		NextBackup: nextBak,
 	}

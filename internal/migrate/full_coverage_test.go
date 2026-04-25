@@ -1416,17 +1416,29 @@ func TestBuildMysqldumpCmd(t *testing.T) {
 	if !strings.Contains(cmd, "mysqldump") {
 		t.Error("should contain mysqldump")
 	}
-	if !strings.Contains(cmd, "-h localhost") {
+	if !strings.Contains(cmd, "-h 'localhost'") {
 		t.Error("should contain -h localhost")
 	}
-	if !strings.Contains(cmd, "-u root") {
+	if !strings.Contains(cmd, "-u 'root'") {
 		t.Error("should contain -u root")
 	}
 	if !strings.Contains(cmd, "-p'secret'") {
 		t.Error("should contain password")
 	}
-	if !strings.Contains(cmd, "mydb") {
+	if !strings.Contains(cmd, "'mydb'") {
 		t.Error("should contain database name")
+	}
+}
+
+func TestBuildMysqldumpCmdShellQuotes(t *testing.T) {
+	cmd := buildMysqldumpCmd("localhost;id", "root user", "pa'ss", "db;whoami")
+	for _, unsafe := range []string{"localhost;id", "root user", "db;whoami"} {
+		if strings.Contains(cmd, unsafe+" ") {
+			t.Fatalf("command contains unquoted unsafe value %q: %s", unsafe, cmd)
+		}
+	}
+	if !strings.Contains(cmd, `-p'pa'\''ss'`) {
+		t.Fatalf("password was not safely shell quoted: %s", cmd)
 	}
 }
 
@@ -1797,6 +1809,20 @@ func TestMigrateDBRealDumpSuccessImportFail(t *testing.T) {
 	}
 }
 
+func TestMigrateDBRealRejectsUnsafeDBName(t *testing.T) {
+	var log strings.Builder
+	result := migrateDBReal(MigrateRequest{
+		SourceHost: "user@1.2.3.4",
+		SourcePort: "22",
+		DBName:     "-e",
+		DBUser:     "user",
+		DBPass:     "pass",
+	}, &log)
+	if result != "error: invalid database name" {
+		t.Errorf("result = %q, want invalid database name", result)
+	}
+}
+
 func TestCloneFilesRealSuccess(t *testing.T) {
 	origCmd := execCommandFn
 	defer func() { execCommandFn = origCmd }()
@@ -1839,6 +1865,16 @@ func TestCloneDBRealNoClient(t *testing.T) {
 	err := cloneDBReal("srcdb", "dstdb", "user", "pass", &log)
 	if err == nil || !strings.Contains(err.Error(), "mysql client not found") {
 		t.Errorf("err = %v, want 'mysql client not found'", err)
+	}
+}
+
+func TestCloneDBRealRejectsUnsafeIdentifiers(t *testing.T) {
+	var log strings.Builder
+	if err := cloneDBReal("srcdb", "-dst", "user", "pass", &log); err == nil {
+		t.Fatal("expected invalid database identifier error")
+	}
+	if err := cloneDBReal("srcdb", "dstdb", "-user", "pass", &log); err == nil {
+		t.Fatal("expected invalid database user error")
 	}
 }
 

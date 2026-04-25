@@ -124,8 +124,8 @@ func TestSafeBranch(t *testing.T) {
 		{"branch;rm -rf /", false},
 		{"branch|cat /etc/passwd", false},
 		{"branch$(whoami)", false},
-		{"", true}, // empty is technically valid
-		{" branch", false}, // space not allowed
+		{"", true},          // empty is technically valid
+		{" branch", false},  // space not allowed
 		{"branch\n", false}, // newline not allowed
 	}
 
@@ -295,7 +295,13 @@ func TestDeployRequestInvalidBranch(t *testing.T) {
 // --- runCmd and runShell tests ---
 
 func TestRunCmdSuccess(t *testing.T) {
-	out, err := runCmd("", nil, "echo", "hello", "world")
+	name := "echo"
+	args := []string{"hello", "world"}
+	if runtime.GOOS == "windows" {
+		name = "cmd"
+		args = []string{"/c", "echo hello world"}
+	}
+	out, err := runCmd("", nil, name, args...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -325,7 +331,13 @@ func TestRunCmdWithDir(t *testing.T) {
 }
 
 func TestRunCmdWithEnv(t *testing.T) {
-	out, err := runCmd("", map[string]string{"TEST_VAR": "test_value"}, "sh", "-c", "echo $TEST_VAR")
+	name := "sh"
+	args := []string{"-c", "echo $TEST_VAR"}
+	if runtime.GOOS == "windows" {
+		name = "cmd"
+		args = []string{"/c", "echo %TEST_VAR%"}
+	}
+	out, err := runCmd("", map[string]string{"TEST_VAR": "test_value"}, name, args...)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -359,7 +371,11 @@ func TestRunShellSuccess(t *testing.T) {
 }
 
 func TestRunShellWithEnv(t *testing.T) {
-	out, err := runShell("", map[string]string{"MY_VAR": "my_value"}, "echo $MY_VAR")
+	command := "echo $MY_VAR"
+	if runtime.GOOS == "windows" {
+		command = "echo %MY_VAR%"
+	}
+	out, err := runShell("", map[string]string{"MY_VAR": "my_value"}, command)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

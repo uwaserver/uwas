@@ -1196,6 +1196,21 @@ func TestSFTPProviderNameAndDefaults(t *testing.T) {
 	}
 }
 
+func TestShellQuote(t *testing.T) {
+	tests := map[string]string{
+		"":                "''",
+		"/backups/uwas":   "'/backups/uwas'",
+		"/backups;whoami": "'/backups;whoami'",
+		"/backups/a b":    "'/backups/a b'",
+		"/backups/o'hare": `'/backups/o'\''hare'`,
+	}
+	for in, want := range tests {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestSFTPProviderCustomValues(t *testing.T) {
 	p := NewSFTPProvider("sftp.example.com", 2222, "admin", "/path/to/key", "", "/custom/path")
 	if p.host != "sftp.example.com" {
@@ -1946,7 +1961,7 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 		// Handle commands used by SFTPProvider.
 		switch {
 		case strings.HasPrefix(cmd, "mkdir -p "):
-			dir := strings.TrimPrefix(cmd, "mkdir -p ")
+			dir := testShellArg(strings.TrimPrefix(cmd, "mkdir -p "))
 			// Map to storage dir.
 			localDir := filepath.Join(storageDir, filepath.FromSlash(dir))
 			os.MkdirAll(localDir, 0755)
@@ -1954,7 +1969,7 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 
 		case strings.HasPrefix(cmd, "cat > "):
 			// Write stdin to the file.
-			dest := strings.TrimPrefix(cmd, "cat > ")
+			dest := testShellArg(strings.TrimPrefix(cmd, "cat > "))
 			localDest := filepath.Join(storageDir, filepath.FromSlash(dest))
 			os.MkdirAll(filepath.Dir(localDest), 0755)
 			data, _ := io.ReadAll(channel)
@@ -1963,7 +1978,7 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 
 		case strings.HasPrefix(cmd, "cat "):
 			// Read file and send to stdout.
-			src := strings.TrimPrefix(cmd, "cat ")
+			src := testShellArg(strings.TrimPrefix(cmd, "cat "))
 			localSrc := filepath.Join(storageDir, filepath.FromSlash(src))
 			data, err := os.ReadFile(localSrc)
 			if err != nil {
@@ -1974,7 +1989,7 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 			}
 
 		case strings.HasPrefix(cmd, "rm -f "):
-			target := strings.TrimPrefix(cmd, "rm -f ")
+			target := testShellArg(strings.TrimPrefix(cmd, "rm -f "))
 			localTarget := filepath.Join(storageDir, filepath.FromSlash(target))
 			os.Remove(localTarget)
 			channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
@@ -1985,7 +2000,7 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 			parts := strings.Fields(cmd)
 			var dir string
 			if len(parts) > 1 {
-				dir = parts[1]
+				dir = testShellArg(parts[1])
 			}
 			localDir := filepath.Join(storageDir, filepath.FromSlash(dir))
 			entries, _ := os.ReadDir(localDir)
@@ -2007,6 +2022,35 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 		}
 		return
 	}
+}
+
+func testShellArg(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "-- ")
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "'") {
+		var b strings.Builder
+		escaped := false
+		for i := 1; i < len(s); i++ {
+			if escaped {
+				b.WriteByte(s[i])
+				escaped = false
+				continue
+			}
+			if s[i] == '\\' {
+				escaped = true
+				continue
+			}
+			if s[i] == '\'' {
+				return b.String()
+			}
+			b.WriteByte(s[i])
+		}
+	}
+	if i := strings.IndexByte(s, ' '); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func TestSFTPProviderUploadAndDownload(t *testing.T) {
@@ -2210,7 +2254,7 @@ func handleSSHSessionLsFallback(channel ssh.Channel, requests <-chan *ssh.Reques
 			parts := strings.Fields(cmd)
 			var dir string
 			if len(parts) > 1 {
-				dir = parts[1]
+				dir = testShellArg(parts[1])
 			}
 			localDir := filepath.Join(storageDir, filepath.FromSlash(dir))
 			entries, _ := os.ReadDir(localDir)
@@ -2721,6 +2765,43 @@ func TestIsInsideDir(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("isInsideDir(%q, %q) = %v, want %v", tt.path, tt.base, got, tt.want)
 		}
+	}
+}
+
+func TestSafeRestorePath(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+
+	tests := []struct {
+		name string
+		rel  string
+		want bool
+	}{
+		{name: "normal file", rel: "example.com/index.html", want: true},
+		{name: "nested clean", rel: "example.com/../example.com/app.php", want: true},
+		{name: "parent traversal", rel: "../outside.txt", want: false},
+		{name: "absolute", rel: filepath.Join(base, "absolute.txt"), want: false},
+		{name: "empty", rel: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := safeRestorePath(base, tt.rel)
+			if ok != tt.want {
+				t.Errorf("safeRestorePath(%q) ok = %v, want %v", tt.rel, ok, tt.want)
+			}
+		})
+	}
+
+	linkPath := filepath.Join(base, "link")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, ok := safeRestorePath(base, "link/secret.txt"); ok {
+		t.Error("safeRestorePath allowed restore through symlink outside base")
+	}
+	if _, ok := safeRestorePath(base, "link"); ok {
+		t.Error("safeRestorePath allowed replacing an existing symlink")
 	}
 }
 

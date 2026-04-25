@@ -1,4 +1,3 @@
-
 package admin
 
 import (
@@ -56,7 +55,7 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSRF check: block private IPs, localhost, cloud metadata endpoints
-	if err := config.IsSSRFSafe(req.URL); err != nil {
+	if err := config.IsWebhookURLSafe(req.URL); err != nil {
 		jsonError(w, "URL is not allowed: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -86,7 +85,9 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) { return }
+	if !s.requirePin(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		jsonError(w, "webhook ID required", http.StatusBadRequest)
@@ -135,7 +136,7 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSRF check: block private IPs, localhost, cloud metadata endpoints
-	if err := config.IsSSRFSafe(req.URL); err != nil {
+	if err := config.IsWebhookURLSafe(req.URL); err != nil {
 		jsonError(w, "URL is not allowed: "+err.Error(), http.StatusBadRequest)
 		return
 	}

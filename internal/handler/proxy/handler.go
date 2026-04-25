@@ -166,15 +166,18 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		upstreamURL.Path = ctx.Request.URL.Path
 		upstreamURL.RawQuery = ctx.Request.URL.RawQuery
 
-		// SSRF protection: check if upstream resolves to a private IP
-		if !domain.Proxy.AllowPrivateUpstreams {
-			if err := config.IsSSRFSafe(upstreamURL.String()); err != nil {
-				backend.ActiveConns.Add(-1)
-				backend.TotalFails.Add(1)
-				h.logger.Warn("proxy SSRF blocked", "upstream", upstreamURL.String(), "error", err)
-				ctx.Response.Error(http.StatusForbidden, "403 Forbidden — upstream blocked (SSRF protection)")
-				return
-			}
+		// SSRF protection: local app upstreams are allowed, but metadata and
+		// link-local ranges remain blocked even when private upstreams are enabled.
+		ssrfCheck := config.IsProxyUpstreamSafe
+		if domain.Proxy.AllowPrivateUpstreams {
+			ssrfCheck = config.IsPrivateProxyUpstreamSafe
+		}
+		if err := ssrfCheck(upstreamURL.String()); err != nil {
+			backend.ActiveConns.Add(-1)
+			backend.TotalFails.Add(1)
+			h.logger.Warn("proxy SSRF blocked", "upstream", upstreamURL.String(), "error", err)
+			ctx.Response.Error(http.StatusForbidden, "403 Forbidden — upstream blocked (SSRF protection)")
+			return
 		}
 
 		// Per-backend timeout via request context

@@ -75,8 +75,6 @@ func fakeExecCommandFail(command string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-
-
 // fakeExecCommandUseraddFailIDFail makes useradd fail AND id fail (user doesn't exist).
 func fakeExecCommandUseraddFailIDFail(command string, args ...string) *exec.Cmd {
 	cs := []string{"-test.run=TestHelperProcess", "--", command}
@@ -188,6 +186,58 @@ func TestPrepareWebRoot_MkdirFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "create web root") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSiteHostname(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want bool
+	}{
+		{"domain", "example.com", true},
+		{"uppercase", "EXAMPLE.com", true},
+		{"single_label", "localhost", true},
+		{"empty", "", false},
+		{"path_separator", "example.com/../../etc", false},
+		{"backslash", `example.com\evil`, false},
+		{"newline", "example.com\nMatch User root", false},
+		{"colon", "example.com:22", false},
+		{"space", "example com", false},
+		{"wildcard", "*.example.com", false},
+		{"double_dot", "example..com", false},
+		{"leading_dash", "-example.com", false},
+		{"trailing_dash", "example-.com", false},
+		{"long_label", strings.Repeat("a", 64) + ".com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSiteHostname(tt.host)
+			if (err == nil) != tt.want {
+				t.Fatalf("validateSiteHostname(%q) error = %v, want valid=%v", tt.host, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestPrepareWebRootRejectsUnsafeHostname(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	runtimeGOOS = "linux"
+	called := false
+	osMkdirAllFn = func(path string, perm os.FileMode) error {
+		called = true
+		return nil
+	}
+
+	_, err := PrepareWebRoot(t.TempDir(), "example.com\nMatch User root")
+	if err == nil {
+		t.Fatal("expected invalid hostname error")
+	}
+	if called {
+		t.Fatal("mkdir should not be called for invalid hostname")
 	}
 }
 
@@ -362,6 +412,30 @@ func TestCreateUser_MkdirFail(t *testing.T) {
 	}
 }
 
+func TestCreateUserRejectsUnsafeHostname(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	runtimeGOOS = "linux"
+	called := false
+	osMkdirAllFn = func(path string, perm os.FileMode) error {
+		called = true
+		return nil
+	}
+	execCommandFn = func(command string, args ...string) *exec.Cmd {
+		called = true
+		return fakeExecCommand(command, args...)
+	}
+
+	_, _, err := CreateUser(t.TempDir(), "example.com:bad")
+	if err == nil {
+		t.Fatal("expected invalid hostname error")
+	}
+	if called {
+		t.Fatal("system operations should not run for invalid hostname")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests: manager.go — DeleteUser
 // ---------------------------------------------------------------------------
@@ -403,6 +477,26 @@ func TestDeleteUser_UserNotExists(t *testing.T) {
 	err := DeleteUser("nouser.com")
 	if err != nil {
 		t.Fatalf("expected nil when user doesn't exist, got: %v", err)
+	}
+}
+
+func TestDeleteUserRejectsUnsafeHostname(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	runtimeGOOS = "linux"
+	called := false
+	execCommandFn = func(command string, args ...string) *exec.Cmd {
+		called = true
+		return fakeExecCommand(command, args...)
+	}
+
+	err := DeleteUser("example.com\nroot")
+	if err == nil {
+		t.Fatal("expected invalid hostname error")
+	}
+	if called {
+		t.Fatal("user lookup/delete should not run for invalid hostname")
 	}
 }
 
@@ -729,6 +823,34 @@ func TestAddSSHKey_MkdirFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "create .ssh") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSSHKeyFunctionsRejectUnsafeHostname(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	runtimeGOOS = "linux"
+	called := false
+	osMkdirAllFn = func(path string, perm os.FileMode) error {
+		called = true
+		return nil
+	}
+
+	err := AddSSHKey(t.TempDir(), "../evil", "ssh-rsa AAAA test@host")
+	if err == nil {
+		t.Fatal("expected AddSSHKey to reject invalid hostname")
+	}
+	if called {
+		t.Fatal("AddSSHKey should not create directories for invalid hostname")
+	}
+
+	if err := RemoveSSHKey(t.TempDir(), "example.com:bad", "AAAA"); err == nil {
+		t.Fatal("expected RemoveSSHKey to reject invalid hostname")
+	}
+
+	if keys := ListSSHKeys(t.TempDir(), "example.com\nbad"); keys != nil {
+		t.Fatalf("expected ListSSHKeys to return nil for invalid hostname, got %v", keys)
 	}
 }
 

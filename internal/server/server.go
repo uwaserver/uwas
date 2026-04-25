@@ -84,13 +84,13 @@ type Server struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 
-	alerter        *alerting.Alerter
-	backupMgr      *backup.BackupManager
-	bwMgr          *bandwidth.Manager
-	cronMonitor    *cronjob.Monitor
-	webhookMgr     *webhook.Manager
-	authMgr        *auth.Manager
-	sftpSrv        *sftpserver.Server
+	alerter         *alerting.Alerter
+	backupMgr       *backup.BackupManager
+	bwMgr           *bandwidth.Manager
+	cronMonitor     *cronjob.Monitor
+	webhookMgr      *webhook.Manager
+	authMgr         *auth.Manager
+	sftpSrv         *sftpserver.Server
 	proxyPools      map[string]*proxyhandler.UpstreamPool
 	proxyBalancers  map[string]proxyhandler.Balancer
 	proxyHealthChks map[string]*proxyhandler.HealthChecker
@@ -176,30 +176,30 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	alerter := alerting.New(cfg.Global.Alerting.Enabled, cfg.Global.Alerting.WebhookURL, log)
 
 	s := &Server{
-		config:         cfg,
-		logger:         log,
-		vhosts:         router.NewVHostRouter(cfg.Domains),
-		static:         static.New(),
-		php:            fcgihandler.New(log),
-		proxy:          proxyhandler.New(log),
-		tlsMgr:         uwastls.NewManager(cfg.Global.ACME, cfg.Domains, log),
-		cache:          cacheEngine,
-		metrics:        m,
-		analytics:      analytics.New(),
-		alerter:        alerter,
-		ctx:            ctx,
-		cancel:         cancel,
+		config:          cfg,
+		logger:          log,
+		vhosts:          router.NewVHostRouter(cfg.Domains),
+		static:          static.New(),
+		php:             fcgihandler.New(log),
+		proxy:           proxyhandler.New(log),
+		tlsMgr:          uwastls.NewManager(cfg.Global.ACME, cfg.Domains, log),
+		cache:           cacheEngine,
+		metrics:         m,
+		analytics:       analytics.New(),
+		alerter:         alerter,
+		ctx:             ctx,
+		cancel:          cancel,
 		proxyPools:      make(map[string]*proxyhandler.UpstreamPool),
 		proxyBalancers:  make(map[string]proxyhandler.Balancer),
 		proxyHealthChks: make(map[string]*proxyhandler.HealthChecker),
 		proxyMirrors:    make(map[string]*proxyhandler.Mirror),
-		proxyBreakers:  make(map[string]*proxyhandler.CircuitBreaker),
-		proxyCanaries:  make(map[string]*proxyhandler.CanaryRouter),
-		unknownHosts:   router.NewUnknownHostTracker(),
-		securityStats:  middleware.NewSecurityStats(),
-		htaccessCache:  make(map[string][]*rewrite.Rule),
-		rewriteCache:   make(map[string]*rewrite.Engine),
-		domainLogs:     newDomainLogManager(),
+		proxyBreakers:   make(map[string]*proxyhandler.CircuitBreaker),
+		proxyCanaries:   make(map[string]*proxyhandler.CanaryRouter),
+		unknownHosts:    router.NewUnknownHostTracker(),
+		securityStats:   middleware.NewSecurityStats(),
+		htaccessCache:   make(map[string][]*rewrite.Rule),
+		rewriteCache:    make(map[string]*rewrite.Engine),
+		domainLogs:      newDomainLogManager(),
 	}
 
 	// Pre-compile rewrite rules for each domain.
@@ -1179,6 +1179,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			if r.URL.RawQuery != "" {
 				targetURL += "?" + r.URL.RawQuery
 			}
+			ssrfCheck := config.IsProxyUpstreamSafe
+			if domain.Proxy.AllowPrivateUpstreams {
+				ssrfCheck = config.IsPrivateProxyUpstreamSafe
+			}
+			if err := ssrfCheck(targetURL); err != nil {
+				s.logger.Warn("location proxy SSRF blocked", "match", loc.Match, "target", targetURL, "error", err)
+				renderDomainError(ctx.Response, http.StatusForbidden, domain)
+				return
+			}
 			// Simple single-backend proxy for location blocks
 			proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 			if err != nil {
@@ -1850,9 +1859,9 @@ func parseExpiresDuration(expr string) string {
 type htaccessCacheEntry struct {
 	raw            *htaccess.RuleSet
 	compiledRules  []*rewrite.Rule
-	modTime        time.Time // file modification time for auto-invalidation
+	modTime        time.Time      // file modification time for auto-invalidation
 	errorPages     map[int]string // precomputed ErrorDocument map (immutable after parseHtaccessFull)
-	errorPagesOnce sync.Once     // ensures domain.ErrorPages is set at most once
+	errorPagesOnce sync.Once      // ensures domain.ErrorPages is set at most once
 }
 
 func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {

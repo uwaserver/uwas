@@ -43,7 +43,7 @@ func TestMatchLocationRegex(t *testing.T) {
 		pattern string
 		want    bool
 	}{
-		{"/file.PHP", "~(?i)\\.php$", true},                 // case-insensitive regex
+		{"/file.PHP", "~(?i)\\.php$", true}, // case-insensitive regex
 		{"/index.php", "~\\.php$", true},
 		{"/index.html", "~\\.php$", false},
 		{"/path/to/file.php", "~\\.php$", true},
@@ -541,6 +541,40 @@ func TestHandleRequestLocationDefaultRedirectCode(t *testing.T) {
 // handleRequest — health check endpoints
 // =============================================================================
 
+func TestHandleRequestLocationProxyPassBlocksSSRF(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "error",
+			LogFormat: "text",
+		},
+		Domains: []config.Domain{
+			{
+				Host: "proxy-loc.example.com",
+				Type: "static",
+				Root: dir,
+				Locations: []config.LocationConfig{
+					{
+						Match:     "/metadata/",
+						ProxyPass: "http://169.254.169.254",
+					},
+				},
+			},
+		},
+	}
+	s := newMinimalServer(cfg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metadata/latest/meta-data/", nil)
+	req.Host = "proxy-loc.example.com"
+
+	s.handleRequest(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for metadata proxy_pass, got %d", rec.Code)
+	}
+}
+
 func TestHandleRequestHealthz(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
@@ -704,10 +738,10 @@ func TestHandleRequestConnLimiterFull(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
-			LogLevel:    "error",
-			LogFormat:   "text",
+			LogLevel:       "error",
+			LogFormat:      "text",
 			MaxConnections: 1,
-			WorkerCount: "1",
+			WorkerCount:    "1",
 		},
 		Domains: []config.Domain{
 			{Host: "limited.example.com", Type: "static", Root: dir},
@@ -790,9 +824,9 @@ func TestHandleRequestHeaderTransforms2(t *testing.T) {
 				Type: "static",
 				Root: dir,
 				Headers: config.HeadersConfig{
-					Add:          map[string]string{"X-Server": "UWAS"},
-					ResponseAdd:  map[string]string{"X-Response": "yes"},
-					Remove:       []string{"Server"},
+					Add:            map[string]string{"X-Server": "UWAS"},
+					ResponseAdd:    map[string]string{"X-Response": "yes"},
+					Remove:         []string{"Server"},
 					ResponseRemove: []string{},
 				},
 			},
@@ -907,4 +941,3 @@ func TestHandleRequestLocationFirstMatchWins(t *testing.T) {
 		t.Error("expected first location to match")
 	}
 }
-

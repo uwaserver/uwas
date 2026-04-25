@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -24,15 +25,15 @@ var (
 
 // DeployRequest describes a deployment action.
 type DeployRequest struct {
-	Domain      string            `json:"domain"`
-	GitURL      string            `json:"git_url,omitempty"`      // e.g. https://github.com/user/repo.git
-	GitBranch   string            `json:"git_branch,omitempty"`   // default: main
-	BuildCmd    string            `json:"build_cmd,omitempty"`    // e.g. "npm install && npm run build"
-	SSHKeyPath  string            `json:"ssh_key_path,omitempty"` // path to SSH private key for private repos
-	GitToken    string            `json:"git_token,omitempty"`    // GitHub/GitLab personal access token
-	DockerFile  string            `json:"dockerfile,omitempty"`   // path to Dockerfile (enables Docker mode)
-	DockerPort  int               `json:"docker_port,omitempty"`  // container internal port (e.g. 3000)
-	Env         map[string]string `json:"env,omitempty"`          // environment variables for build/run
+	Domain     string            `json:"domain"`
+	GitURL     string            `json:"git_url,omitempty"`      // e.g. https://github.com/user/repo.git
+	GitBranch  string            `json:"git_branch,omitempty"`   // default: main
+	BuildCmd   string            `json:"build_cmd,omitempty"`    // e.g. "npm install && npm run build"
+	SSHKeyPath string            `json:"ssh_key_path,omitempty"` // path to SSH private key for private repos
+	GitToken   string            `json:"git_token,omitempty"`    // GitHub/GitLab personal access token
+	DockerFile string            `json:"dockerfile,omitempty"`   // path to Dockerfile (enables Docker mode)
+	DockerPort int               `json:"docker_port,omitempty"`  // container internal port (e.g. 3000)
+	Env        map[string]string `json:"env,omitempty"`          // environment variables for build/run
 }
 
 // DeployStatus tracks a deployment.
@@ -237,7 +238,7 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	} else if gitURL != "" {
 		// Fresh clone
 		log.WriteString("$ git clone -b " + branch + " <repo>\n")
-		if out, err := runCmd(filepath.Dir(appRoot), gitEnv, "git", "clone", "-b", branch, "--", gitURL, "--", appRoot); err != nil {
+		if out, err := runCmd(filepath.Dir(appRoot), gitEnv, "git", "clone", "-b", branch, "--", gitURL, appRoot); err != nil {
 			return fmt.Errorf("git clone: %w\n%s", err, redactURL(out))
 		}
 	} else {
@@ -402,7 +403,12 @@ func runShellImpl(dir string, env map[string]string, command string) (string, er
 	if strings.ContainsAny(command, "\x00") {
 		return "", fmt.Errorf("command contains null byte")
 	}
-	cmd := exec.Command("sh", "-c", command)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/C", command)
+	} else {
+		cmd = exec.Command("sh", "-c", command)
+	}
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	for k, v := range env {

@@ -1548,13 +1548,24 @@ func TestRemoveByDomain(t *testing.T) {
 	var written string
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
 		if name == "crontab" && len(args) == 1 && args[0] == "-l" {
+			if runtime.GOOS == "windows" {
+				tmp := filepath.Join(os.TempDir(), "uwas-crontab-test.txt")
+				_ = os.WriteFile(tmp, []byte(crontab), 0600)
+				return exec.Command("cmd", "/C", "type", tmp)
+			}
 			return exec.Command("echo", crontab)
 		}
 		if name == "crontab" && len(args) == 1 {
 			// Read the temp file to capture what was written
 			data, _ := os.ReadFile(args[0])
 			written = string(data)
+			if runtime.GOOS == "windows" {
+				return exec.Command("cmd", "/C", "exit 0")
+			}
 			return exec.Command("true")
+		}
+		if runtime.GOOS == "windows" {
+			return exec.Command("cmd", "/C", "exit 0")
 		}
 		return exec.Command("true")
 	}

@@ -36,6 +36,7 @@ export function onPinRequired(cb: typeof pinPromptCallback) { pinPromptCallback 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -179,9 +180,29 @@ export const fetchHealth = () => api<HealthData>('/api/v1/health');
 export const fetchSystem = () => api<SystemInfo>('/api/v1/system');
 export const fetchStats = () => api<StatsData>('/api/v1/stats');
 export const fetchDomains = () => api<DomainData[]>('/api/v1/domains');
-export const fetchMetrics = () => fetch(`${BASE}/api/v1/metrics`, {
-  headers: token ? { Authorization: `Bearer ${token}` } : {},
-}).then(r => r.text());
+export const fetchMetrics = async () => {
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (totpCode) headers['X-TOTP-Code'] = totpCode;
+  if (pinCode) headers['X-Pin-Code'] = pinCode;
+  const res = await fetch(`${BASE}/api/v1/metrics`, { headers });
+  if (res.status === 401) {
+    clearToken();
+    if (!window.location.pathname.includes('/login')) window.location.href = '/_uwas/dashboard/login';
+    throw new Error('Unauthorized');
+  }
+  if (res.status === 403) {
+    const err = await res.json().catch(() => ({ error: 'Forbidden' }));
+    if (err.error === '2fa_required') {
+      sessionStorage.removeItem('uwas_totp_verified');
+      totpCode = '';
+      window.location.href = '/_uwas/dashboard/login?2fa=required';
+    }
+    throw new Error(err.error || 'Forbidden');
+  }
+  if (!res.ok) throw new Error(res.statusText);
+  return res.text();
+};
 
 export const triggerReload = () => api<{ status: string }>('/api/v1/reload', { method: 'POST' });
 export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/cache/purge', {
@@ -455,7 +476,7 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
   const form = new FormData();
   form.append('path', path);
   form.append('file', file);
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (totpCode) headers['X-TOTP-Code'] = totpCode;
   if (pinCode) headers['X-Pin-Code'] = pinCode;
@@ -542,7 +563,7 @@ export const changeDBPassword = (user: string, host: string, password: string) =
   api<{ status: string }>('/api/v1/database/users/password', { method: 'POST', body: JSON.stringify({ user, host, password }) });
 export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
 export const importDatabase = async (name: string, file: File) => {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}/api/v1/database/${encodeURIComponent(name)}/import`, { method: 'POST', headers, body: await file.text() });
   if (!res.ok) { const b = await res.json().catch(() => ({ error: res.statusText })); throw new Error(b.error || res.statusText); }
@@ -650,7 +671,7 @@ export async function sseStatsURL(): Promise<string> {
 
 /** Download the current server config as a YAML file. */
 export async function fetchConfigExport(): Promise<void> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -862,7 +883,7 @@ export async function migrateCPanel(file: File, importDB: boolean): Promise<CPan
   const form = new FormData();
   form.append('backup', file);
   if (importDB) form.append('import_db', 'true');
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
   const t = getToken();
   if (t) headers['Authorization'] = `Bearer ${t}`;
   const resp = await fetch('/api/v1/migrate/cpanel', { method: 'POST', headers, body: form });

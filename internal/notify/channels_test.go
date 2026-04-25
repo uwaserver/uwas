@@ -7,11 +7,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/smtp"
+	"os"
 	"strings"
 	"testing"
 )
 
 // --- Existing tests ---
+
+func TestMain(m *testing.M) {
+	notifyURLSafetyCheck = func(string) error { return nil }
+	os.Exit(m.Run())
+}
 
 func TestSendDisabledChannel(t *testing.T) {
 	ch := Channel{
