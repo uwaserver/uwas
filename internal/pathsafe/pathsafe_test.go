@@ -1,6 +1,7 @@
 package pathsafe
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -212,5 +213,55 @@ func TestRelativeToBaseWithDotSegments(t *testing.T) {
 	expected := filepath.Join("subdir", "file.txt")
 	if rel != expected {
 		t.Fatalf("expected %q, got %q", expected, rel)
+	}
+}
+
+func TestAbsErrorPaths(t *testing.T) {
+	origAbs := absFunc
+	defer func() { absFunc = origAbs }()
+
+	absFunc = func(path string) (string, error) {
+		return "", errors.New("abs failed")
+	}
+
+	if IsWithinBase("base", "target") {
+		t.Fatal("IsWithinBase should fail when Abs fails")
+	}
+	if IsWithinBaseResolved("base", "target") {
+		t.Fatal("IsWithinBaseResolved should fail when Abs fails")
+	}
+	if rel, ok := RelativeToBase("base", "target"); ok || rel != "" {
+		t.Fatalf("RelativeToBase = %q, %v; want empty false", rel, ok)
+	}
+}
+
+func TestRelativeToBaseTargetAbsError(t *testing.T) {
+	origAbs := absFunc
+	defer func() { absFunc = origAbs }()
+
+	calls := 0
+	absFunc = func(path string) (string, error) {
+		calls++
+		if calls == 2 {
+			return "", errors.New("target abs failed")
+		}
+		return filepath.Abs(path)
+	}
+
+	if rel, ok := RelativeToBase("base", "target"); ok || rel != "" {
+		t.Fatalf("RelativeToBase = %q, %v; want empty false", rel, ok)
+	}
+}
+
+func TestResolvePathNonNotExistError(t *testing.T) {
+	origEval := evalSymlinks
+	defer func() { evalSymlinks = origEval }()
+
+	evalSymlinks = func(path string) (string, error) {
+		return "", errors.New("permission denied")
+	}
+
+	if _, err := resolvePath(t.TempDir()); err == nil {
+		t.Fatal("expected resolvePath error")
 	}
 }

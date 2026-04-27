@@ -402,6 +402,15 @@ func TestStartService_UnknownService(t *testing.T) {
 	}
 }
 
+func TestIsKnownServiceAlias(t *testing.T) {
+	if !IsKnownService("sshd") {
+		t.Fatal("expected sshd alias to be known")
+	}
+	if IsKnownService("evil-service") {
+		t.Fatal("expected unknown service to be rejected")
+	}
+}
+
 func TestStartService_Failure(t *testing.T) {
 	withMock(t, fakeExecCommandFail)
 
@@ -431,6 +440,13 @@ func TestStopService_Failure(t *testing.T) {
 	}
 }
 
+func TestStopService_UnknownService(t *testing.T) {
+	withMock(t, fakeExecCommand)
+	if err := StopService("evil-service"); err == nil {
+		t.Error("expected error for unknown service")
+	}
+}
+
 // ── RestartService ───────────────────────────────────────────────────────
 
 func TestRestartService(t *testing.T) {
@@ -448,6 +464,13 @@ func TestRestartService_Failure(t *testing.T) {
 	err := RestartService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing restart command")
+	}
+}
+
+func TestRestartService_UnknownService(t *testing.T) {
+	withMock(t, fakeExecCommand)
+	if err := RestartService("evil-service"); err == nil {
+		t.Error("expected error for unknown service")
 	}
 }
 
@@ -471,6 +494,13 @@ func TestEnableService_Failure(t *testing.T) {
 	}
 }
 
+func TestEnableService_UnknownService(t *testing.T) {
+	withMock(t, fakeExecCommand)
+	if err := EnableService("evil-service"); err == nil {
+		t.Error("expected error for unknown service")
+	}
+}
+
 // ── DisableService ───────────────────────────────────────────────────────
 
 func TestDisableService(t *testing.T) {
@@ -488,6 +518,13 @@ func TestDisableService_Failure(t *testing.T) {
 	err := DisableService("mariadb")
 	if err == nil {
 		t.Error("expected error from failing disable command")
+	}
+}
+
+func TestDisableService_UnknownService(t *testing.T) {
+	withMock(t, fakeExecCommand)
+	if err := DisableService("evil-service"); err == nil {
+		t.Error("expected error for unknown service")
 	}
 }
 

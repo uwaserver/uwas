@@ -1,12 +1,42 @@
 package filemanager
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestQuotaTracker(t *testing.T) {
+	q := NewQuotaTracker(10)
+
+	if got := q.Usage("site"); got != 0 {
+		t.Fatalf("initial usage = %d, want 0", got)
+	}
+	if err := q.Check("site", 8); err != nil {
+		t.Fatalf("unexpected quota error: %v", err)
+	}
+	q.Add("site", 8)
+	if got := q.Usage("site"); got != 8 {
+		t.Fatalf("usage = %d, want 8", got)
+	}
+	if err := q.Check("site", 3); err == nil {
+		t.Fatal("expected quota exceeded error")
+	}
+	q.Reset("site")
+	if got := q.Usage("site"); got != 0 {
+		t.Fatalf("usage after reset = %d, want 0", got)
+	}
+}
+
+func TestQuotaTrackerUnlimited(t *testing.T) {
+	q := NewQuotaTracker(0)
+	if err := q.Check("site", 1<<40); err != nil {
+		t.Fatalf("unlimited quota should allow upload: %v", err)
+	}
+}
 
 func TestListDir(t *testing.T) {
 	dir := t.TempDir()
@@ -459,5 +489,37 @@ func TestListEntryInfoError(t *testing.T) {
 	}
 	if len(entries) > 0 && entries[0].Name != "good.txt" {
 		t.Errorf("expected good.txt, got %q", entries[0].Name)
+	}
+}
+
+func TestPathHelpersAbsError(t *testing.T) {
+	origAbs := absFunc
+	defer func() { absFunc = origAbs }()
+
+	absFunc = func(path string) (string, error) {
+		return "", errors.New("abs failed")
+	}
+
+	if isWithinBase("base", "target") {
+		t.Fatal("isWithinBase should fail when base abs fails")
+	}
+	if isWithinBaseResolved("base", "target") {
+		t.Fatal("isWithinBaseResolved should fail when resolvePath fails")
+	}
+	if got := safePath("base", "target"); got != "" {
+		t.Fatalf("safePath = %q, want empty", got)
+	}
+}
+
+func TestResolvePathNonNotExistError(t *testing.T) {
+	origEval := evalSymlinks
+	defer func() { evalSymlinks = origEval }()
+
+	evalSymlinks = func(path string) (string, error) {
+		return "", errors.New("permission denied")
+	}
+
+	if _, err := resolvePath(t.TempDir()); err == nil {
+		t.Fatal("expected resolvePath error")
 	}
 }

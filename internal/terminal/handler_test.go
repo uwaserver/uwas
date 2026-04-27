@@ -1,15 +1,59 @@
 package terminal
 
 import (
+	"bufio"
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
+
+type fakeAddr string
+
+func (a fakeAddr) Network() string { return "test" }
+func (a fakeAddr) String() string  { return string(a) }
+
+type fakeRWConn struct {
+	bytes.Buffer
+	closed bool
+}
+
+func (c *fakeRWConn) Close() error                     { c.closed = true; return nil }
+func (c *fakeRWConn) LocalAddr() net.Addr              { return fakeAddr("local") }
+func (c *fakeRWConn) RemoteAddr() net.Addr             { return fakeAddr("remote") }
+func (c *fakeRWConn) SetDeadline(time.Time) error      { return nil }
+func (c *fakeRWConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *fakeRWConn) SetWriteDeadline(time.Time) error { return nil }
+
+type fakeHijackResponseWriter struct {
+	conn *fakeRWConn
+	rw   *bufio.ReadWriter
+	err  error
+}
+
+func newFakeHijackResponseWriter() *fakeHijackResponseWriter {
+	conn := &fakeRWConn{}
+	return &fakeHijackResponseWriter{
+		conn: conn,
+		rw:   bufio.NewReadWriter(bufio.NewReader(bytes.NewReader(nil)), bufio.NewWriter(conn)),
+	}
+}
+
+func (w *fakeHijackResponseWriter) Header() http.Header         { return http.Header{} }
+func (w *fakeHijackResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *fakeHijackResponseWriter) WriteHeader(statusCode int)  {}
+func (w *fakeHijackResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if w.err != nil {
+		return nil, nil, w.err
+	}
+	return w.conn, w.rw, nil
+}
 
 func TestComputeAcceptKey(t *testing.T) {
 	// RFC 6455 example: key "dGhlIHNhbXBsZSBub25jZQ==" → "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
@@ -25,6 +69,41 @@ func TestNew(t *testing.T) {
 	h := New(nil)
 	if h == nil {
 		t.Fatal("New returned nil")
+	}
+}
+
+func TestCheckOrigin(t *testing.T) {
+	tests := []struct {
+		name          string
+		allowedOrigin string
+		origin        string
+		host          string
+		want          bool
+	}{
+		{name: "no_origin", host: "panel.example.com", want: true},
+		{name: "allowed_exact", allowedOrigin: "https://panel.example.com", origin: "https://panel.example.com", host: "other.example.com", want: true},
+		{name: "allowed_bad_config", allowedOrigin: "://bad", origin: "https://panel.example.com", host: "panel.example.com", want: false},
+		{name: "allowed_bad_origin", allowedOrigin: "https://panel.example.com", origin: "://bad", host: "panel.example.com", want: false},
+		{name: "allowed_scheme_mismatch", allowedOrigin: "https://panel.example.com", origin: "http://panel.example.com", host: "panel.example.com", want: false},
+		{name: "allowed_host_mismatch", allowedOrigin: "https://panel.example.com", origin: "https://evil.example.com", host: "panel.example.com", want: false},
+		{name: "same_origin_https", origin: "https://panel.example.com", host: "panel.example.com", want: true},
+		{name: "same_origin_bad_origin", origin: "://bad", host: "panel.example.com", want: false},
+		{name: "same_origin_requires_https", origin: "http://panel.example.com", host: "panel.example.com", want: false},
+		{name: "same_origin_host_mismatch", origin: "https://evil.example.com", host: "panel.example.com", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &Handler{AllowedOrigin: tt.allowedOrigin}
+			req := httptest.NewRequest("GET", "/terminal", nil)
+			req.Host = tt.host
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if got := h.CheckOrigin(req); got != tt.want {
+				t.Fatalf("CheckOrigin() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -57,6 +136,68 @@ func TestUpgradeWebSocketNoHijack(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("hijacking")) {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestUpgradeWebSocketHijackError(t *testing.T) {
+	req := httptest.NewRequest("GET", "/terminal", nil)
+	req.Header.Set("Upgrade", "websocket")
+	w := newFakeHijackResponseWriter()
+	w.err = io.ErrClosedPipe
+
+	h := &Handler{Logger: &logger.Logger{}}
+	_, err := h.UpgradeWebSocket(w, req)
+	if err != io.ErrClosedPipe {
+		t.Fatalf("error = %v, want %v", err, io.ErrClosedPipe)
+	}
+}
+
+func TestUpgradeWebSocketRejectsOriginBeforeHijack(t *testing.T) {
+	req := httptest.NewRequest("GET", "/terminal", nil)
+	req.Host = "panel.example.com"
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Origin", "https://evil.example.com")
+	w := httptest.NewRecorder()
+
+	h := &Handler{Logger: &logger.Logger{}}
+	_, err := h.UpgradeWebSocket(w, req)
+	if err == nil {
+		t.Fatal("expected origin rejection")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("not allowed")) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestUpgradeWebSocketSuccess(t *testing.T) {
+	req := httptest.NewRequest("GET", "/terminal", nil)
+	req.Host = "panel.example.com"
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Origin", "https://panel.example.com")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	w := newFakeHijackResponseWriter()
+
+	h := &Handler{Logger: &logger.Logger{}}
+	conn, err := h.UpgradeWebSocket(w, req)
+	if err != nil {
+		t.Fatalf("UpgradeWebSocket failed: %v", err)
+	}
+	if conn == nil {
+		t.Fatal("expected websocket connection")
+	}
+
+	resp := w.conn.String()
+	if !bytes.Contains([]byte(resp), []byte("HTTP/1.1 101 Switching Protocols")) {
+		t.Fatalf("upgrade response missing 101 status: %q", resp)
+	}
+	if !bytes.Contains([]byte(resp), []byte("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")) {
+		t.Fatalf("upgrade response missing accept key: %q", resp)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if !w.conn.closed {
+		t.Fatal("underlying connection was not closed")
 	}
 }
 
@@ -173,7 +314,7 @@ func TestWSConnReadMessageTooLarge(t *testing.T) {
 	// Build a frame claiming to be larger than maxWSPayload (64KB)
 	// The error could be "frame too large" or EOF/unexpected EOF since
 	// we can't provide that much data in a test
-	largePayload := make([]byte, 100) // Some payload data
+	largePayload := make([]byte, 100)                                           // Some payload data
 	frame := []byte{0x81, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00} // Claims 64KB+1
 	frame = append(frame, largePayload...)
 	conn := &WSConn{reader: bytes.NewReader(frame)}
@@ -208,6 +349,25 @@ func TestWSConnReadMessageExtendedLength(t *testing.T) {
 	}
 	if len(msg) != 200 {
 		t.Errorf("expected 200 bytes, got %d", len(msg))
+	}
+}
+
+func TestWSConnReadMessageExtendedLengthReadErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		frame []byte
+	}{
+		{"sixteen_bit_length", []byte{0x81, 126, 0x00}},
+		{"sixty_four_bit_length", []byte{0x81, 127, 0x00, 0x00}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &WSConn{reader: bytes.NewReader(tt.frame)}
+			if _, err := conn.ReadMessage(); err == nil {
+				t.Fatal("expected read error")
+			}
+		})
 	}
 }
 

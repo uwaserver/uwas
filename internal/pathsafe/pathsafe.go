@@ -6,13 +6,18 @@ import (
 	"strings"
 )
 
+var (
+	absFunc      = filepath.Abs
+	evalSymlinks = filepath.EvalSymlinks
+)
+
 // IsWithinBase reports whether target is inside base using absolute path checks.
 func IsWithinBase(base, target string) bool {
-	absBase, err := filepath.Abs(base)
+	absBase, err := absFunc(base)
 	if err != nil {
 		return false
 	}
-	absTarget, err := filepath.Abs(target)
+	absTarget, err := absFunc(target)
 	if err != nil {
 		return false
 	}
@@ -36,11 +41,11 @@ func IsWithinBaseResolved(base, target string) bool {
 
 // RelativeToBase returns target relative to base only if target is within base.
 func RelativeToBase(base, target string) (string, bool) {
-	absBase, err := filepath.Abs(base)
+	absBase, err := absFunc(base)
 	if err != nil {
 		return "", false
 	}
-	absTarget, err := filepath.Abs(target)
+	absTarget, err := absFunc(target)
 	if err != nil {
 		return "", false
 	}
@@ -73,7 +78,7 @@ func isWithin(base, target string) bool {
 }
 
 func resolvePath(path string) (string, error) {
-	absPath, err := filepath.Abs(path)
+	absPath, err := absFunc(path)
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +87,7 @@ func resolvePath(path string) (string, error) {
 	cur := absPath
 	var missing []string
 	for {
-		real, err := filepath.EvalSymlinks(cur)
+		real, err := evalSymlinks(cur)
 		if err == nil {
 			for i := len(missing) - 1; i >= 0; i-- {
 				real = filepath.Join(real, missing[i])

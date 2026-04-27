@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -454,6 +455,49 @@ func TestDiskCachePurgeAll(t *testing.T) {
 	_, err := dc.Get("purge-key-1234567890abcdef")
 	if err == nil {
 		t.Error("expected error after PurgeAll")
+	}
+}
+
+func TestDiskCachePurgeByTag(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+
+	tagged := &CachedResponse{StatusCode: 200, Body: []byte("tagged"), Tags: []string{"blog"}}
+	other := &CachedResponse{StatusCode: 200, Body: []byte("other"), Tags: []string{"news"}}
+	if err := dc.Set("tagged", tagged); err != nil {
+		t.Fatal(err)
+	}
+	if err := dc.Set("other", other); err != nil {
+		t.Fatal(err)
+	}
+
+	if count := dc.PurgeByTag("blog"); count != 1 {
+		t.Fatalf("PurgeByTag count = %d, want 1", count)
+	}
+	if got, _ := dc.Get("tagged"); got != nil {
+		t.Fatal("tagged entry should be purged")
+	}
+	if got, _ := dc.Get("other"); got == nil {
+		t.Fatal("non-matching entry should remain")
+	}
+}
+
+func TestDiskCachePurgeByTagRemovesCorruptEntry(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+	path := dc.path("corrupt")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a cache entry"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if count := dc.PurgeByTag("blog"); count != 0 {
+		t.Fatalf("PurgeByTag count = %d, want 0 for corrupt removal", count)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("corrupt cache entry should be removed, stat err=%v", err)
 	}
 }
 

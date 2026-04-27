@@ -111,6 +111,11 @@ func TestUpdateUsers_Concurrent(t *testing.T) {
 	// Just ensure no race/panic; final state is non-deterministic.
 }
 
+func TestShutdownWithoutListener(t *testing.T) {
+	s := New(Config{}, testLogger())
+	s.Shutdown()
+}
+
 // =============================================================================
 // Unit Tests: safePath
 // =============================================================================
@@ -132,6 +137,7 @@ func TestSafePath(t *testing.T) {
 	}{
 		{"empty returns root", "", true, ""},
 		{"dot returns root", ".", true, ""},
+		{"slash returns root", "/", true, ""},
 		{"simple relative", "foo.txt", true, "foo.txt"},
 		{"nested path", "a/b/c", true, filepath.Join("a", "b", "c")},
 		{"absolute within root", "/foo/bar", true, filepath.Join("foo", "bar")},
@@ -162,6 +168,23 @@ func TestSafePath(t *testing.T) {
 				t.Errorf("got %q, want %q", result, expected)
 			}
 		})
+	}
+}
+
+func TestSafePathRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "outside")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	sess := &sftpSession{
+		root:    root,
+		handles: make(map[string]*openHandle),
+	}
+	if got := sess.safePath("outside/file.txt"); got != "" {
+		t.Fatalf("expected symlink escape to be rejected, got %q", got)
 	}
 }
 
