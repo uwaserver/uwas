@@ -802,6 +802,70 @@ func TestCreateDomainBackupRejectsUnsafeDBName(t *testing.T) {
 	}
 }
 
+func TestCronHelpers(t *testing.T) {
+	if !matchCronField(10, "*") {
+		t.Fatal("wildcard should match")
+	}
+	if !matchCronField(10, "*/5") {
+		t.Fatal("step should match")
+	}
+	if matchCronField(11, "*/5") {
+		t.Fatal("step should not match")
+	}
+	if !matchCronField(3, "1-5") {
+		t.Fatal("range should match")
+	}
+	if matchCronField(6, "1-5") {
+		t.Fatal("range should not match")
+	}
+	if !matchCronField(3, "1,3,5") {
+		t.Fatal("list should match")
+	}
+	if matchCronField(4, "1,3,5") {
+		t.Fatal("list should not match")
+	}
+	if !matchCronField(7, "7") {
+		t.Fatal("single value should match")
+	}
+	if got := parseInt("a12b3"); got != 123 {
+		t.Fatalf("parseInt = %d, want 123", got)
+	}
+	if got := nextCronRun("not cron"); !got.IsZero() {
+		t.Fatalf("invalid cron should return zero, got %v", got)
+	}
+	if got := nextCronRun("* * * * *"); got.IsZero() {
+		t.Fatal("valid cron should return next run")
+	}
+}
+
+func TestScheduleControls(t *testing.T) {
+	m, _ := testManager(t)
+	m.ScheduleBackupCron("")
+	if interval, active := m.ScheduleStatus(); active || interval != 0 {
+		t.Fatalf("ScheduleStatus = %v, %v; want inactive zero interval", interval, active)
+	}
+
+	m.SetKeepCount(7)
+	m.SetKeepCount(0)
+	m.mu.Lock()
+	if m.keepCount != 7 {
+		t.Fatalf("keepCount = %d, want 7", m.keepCount)
+	}
+	m.running = true
+	m.schedule = 24 * time.Hour
+	m.lastBackup = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	m.mu.Unlock()
+
+	detail := m.ScheduleDetail()
+	if !detail.Enabled || detail.Interval != "1d" || detail.Keep != 7 || detail.Provider != "mem" {
+		t.Fatalf("unexpected detail: %#v", detail)
+	}
+	if detail.LastBackup == "" || detail.NextBackup == "" {
+		t.Fatalf("expected last/next backup timestamps: %#v", detail)
+	}
+	m.Stop()
+}
+
 // --- RestoreBackup with mocked database import ---
 
 func TestRestoreBackupWithDBImport(t *testing.T) {

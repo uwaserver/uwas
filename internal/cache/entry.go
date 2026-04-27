@@ -118,6 +118,16 @@ func (r *CachedResponse) Serialize() []byte {
 		buf = append(buf, 0)
 	}
 
+	if len(r.Tags) > 0 {
+		binary.BigEndian.PutUint32(b4, uint32(len(r.Tags)))
+		buf = append(buf, b4...)
+		for _, tag := range r.Tags {
+			binary.BigEndian.PutUint32(b4, uint32(len(tag)))
+			buf = append(buf, b4...)
+			buf = append(buf, tag...)
+		}
+	}
+
 	return buf
 }
 
@@ -178,6 +188,28 @@ func Deserialize(data []byte) (*CachedResponse, error) {
 	// ESI flag (backward compatible: missing = false)
 	if pos < len(data) {
 		r.ESITemplate = data[pos] == 1
+		pos++
+	}
+
+	if pos < len(data) {
+		if pos+4 > len(data) {
+			return nil, errCorrupt
+		}
+		tagCount := int(binary.BigEndian.Uint32(data[pos:]))
+		pos += 4
+		r.Tags = make([]string, 0, tagCount)
+		for i := 0; i < tagCount; i++ {
+			if pos+4 > len(data) {
+				return nil, errCorrupt
+			}
+			tagLen := int(binary.BigEndian.Uint32(data[pos:]))
+			pos += 4
+			if pos+tagLen > len(data) {
+				return nil, errCorrupt
+			}
+			r.Tags = append(r.Tags, string(data[pos:pos+tagLen]))
+			pos += tagLen
+		}
 	}
 
 	return r, nil
