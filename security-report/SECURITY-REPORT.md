@@ -106,7 +106,7 @@ UWAS has a **solid security foundation** — bcrypt passwords, crypto/rand token
 **File:** `internal/wordpress/installer.go`
 **CWE:** CWE-494 (Download of Code Without Integrity Check)
 
-**Fix:** Added SHA256 checksum verification to both `downloadAndExtract()` and `UpdateCore()`. Downloads `latest.tar.gz.sha512`, computes hash, verifies before extraction. Best-effort — if checksum file unavailable, proceeds.
+**Fix:** Added SHA256 checksum verification to both `downloadAndExtract()` and `UpdateCore()`. Downloads `latest.tar.gz.sha256`, computes hash, verifies before extraction. Best-effort — if checksum file unavailable, proceeds.
 
 ---
 

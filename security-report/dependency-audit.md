@@ -42,7 +42,7 @@
 ## Supply Chain Recommendations
 
 1. **Pin WP-CLI version** and verify SHA256 checksum after download
-2. **Verify WordPress checksum** against `latest.tar.gz.sha512`
+2. **Verify WordPress checksum** against `latest.tar.gz.sha256`
 3. **Add binary signing** for self-update releases (ed25519 or minisign)
 4. **Run `go mod verify`** in CI to detect dependency tampering
 5. **Consider `govulncheck`** in CI pipeline for Go vulnerability scanning

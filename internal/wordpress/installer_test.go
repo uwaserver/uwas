@@ -17,7 +17,7 @@ import (
 )
 
 // fakeTarHandlerFunc returns a function suitable for assigning to httpGetFn.
-// It serves tarContent for normal URLs and its SHA256 hash for .sha512 URLs.
+// It serves tarContent for normal URLs and its SHA256 hash for .sha256 URLs.
 // It creates two internal test servers so URL-based routing works correctly
 // even though httpGetFn discards the original URL.
 func fakeTarHandlerFunc(tarContent string) (func(string) (*http.Response, error), func()) {
@@ -33,7 +33,7 @@ func fakeTarHandlerFunc(tarContent string) (func(string) (*http.Response, error)
 	}))
 
 	fn := func(url string) (*http.Response, error) {
-		if strings.HasSuffix(url, ".sha512") {
+		if strings.HasSuffix(url, ".sha256") {
 			return http.Get(hashSrv.URL)
 		}
 		return http.Get(tarSrv.URL)
