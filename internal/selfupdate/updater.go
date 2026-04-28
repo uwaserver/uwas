@@ -2,6 +2,8 @@
 package selfupdate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -155,6 +157,31 @@ func Update(downloadURL string) error {
 		return fmt.Errorf("write: %w", err)
 	}
 	tmp.Close()
+
+	// Verify SHA256 checksum if available (backward compatible — missing checksum file is not an error)
+	if checksumURL := downloadURL + ".sha256"; isTrustedDownloadURL(checksumURL) {
+		shaResp, err := httpClientFn(30 * time.Second).Get(checksumURL)
+		if err == nil {
+			defer shaResp.Body.Close()
+			if shaResp.StatusCode == 200 {
+				expectedBytes, _ := io.ReadAll(io.LimitReader(shaResp.Body, 128))
+				expected := strings.TrimSpace(string(expectedBytes))
+
+				// Compute actual checksum of downloaded binary
+				f, err := os.Open(tmp.Name())
+				if err == nil {
+					h := sha256.New()
+					io.Copy(h, f)
+					f.Close()
+					actual := hex.EncodeToString(h.Sum(nil))
+
+					if !strings.EqualFold(expected, actual) {
+						return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+					}
+				}
+			}
+		}
+	}
 
 	// Make executable
 	if err := osChmodFn(tmp.Name(), 0755); err != nil {

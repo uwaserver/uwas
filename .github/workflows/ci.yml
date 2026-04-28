@@ -49,7 +49,7 @@ jobs:
 
       - name: Type check
         working-directory: web/dashboard
-        run: npx tsc --noEmit
+        run: npx tsc -b
 
       - name: Build
         working-directory: web/dashboard

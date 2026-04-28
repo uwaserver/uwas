@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -14,7 +15,7 @@ import (
 
 // Note: encoding/base64 is used by {SHA} hash validation
 
-// BasicAuth returns middleware that requires HTTP Basic Authentication.
+// BasicAuth returns middleware that requires HTTP Basic [REDACTED]
 // Users is a map of username → password (plaintext for simplicity).
 func BasicAuth(users map[string]string, realm string) Middleware {
 	if len(users) == 0 {
@@ -114,7 +115,8 @@ func ValidateHtpasswdHash(hash, password string) bool {
 		// MD5 format (crypt)
 		return validateMD5(hash, password)
 	default:
-		// Plaintext or unknown format - compare directly
+		// Plaintext or unknown format - compare directly (constant-time)
+		log.Printf("WARNING: htpasswd entry uses plaintext password (user should use bcrypt or SHA hash)")
 		return subtle.ConstantTimeCompare([]byte(hash), []byte(password)) == 1
 	}
 }

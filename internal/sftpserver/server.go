@@ -6,6 +6,7 @@ package sftpserver
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/pathsafe"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -31,7 +33,7 @@ type Config struct {
 
 // User represents an SFTP user with chroot jail.
 type User struct {
-	Password string // bcrypt or plaintext
+	Password string // bcrypt hash (preferred) or legacy plaintext
 	Root     string // chroot directory (e.g. /var/www/example.com/public_html)
 	ReadOnly bool
 }
@@ -80,7 +82,7 @@ func (s *Server) Start() error {
 			if !ok {
 				return nil, fmt.Errorf("unknown user")
 			}
-			if user.Password != string(pass) {
+			if err := comparePassword(user.Password, pass); err != nil {
 				return nil, fmt.Errorf("invalid password")
 			}
 			return &ssh.Permissions{
@@ -784,4 +786,17 @@ func (s *Server) loadOrGenerateHostKey() (ssh.Signer, error) {
 	s.logger.Info("generated SFTP host key (ephemeral)")
 
 	return signer, nil
+}
+
+// comparePassword checks a password against a bcrypt hash or plaintext.
+// bcrypt hashes are detected by the "$2a$", "$2b$", or "$2y$" prefix.
+func comparePassword(stored string, pass []byte) error {
+	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
+		return bcrypt.CompareHashAndPassword([]byte(stored), pass)
+	}
+	// Legacy plaintext comparison (constant-time to avoid timing attacks)
+	if subtle.ConstantTimeCompare([]byte(stored), pass) != 1 {
+		return fmt.Errorf("password mismatch")
+	}
+	return nil
 }

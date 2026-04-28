@@ -5,11 +5,14 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,8 +40,10 @@ type User struct {
 	Password   string    `json:"password_hash,omitempty"` // bcrypt hash
 	Role       Role      `json:"role"`
 	Domains    []string  `json:"domains,omitempty"` // For resellers: managed domains
-	APIKey     string    `json:"api_key,omitempty"` // Per-user API key
-	Enabled    bool      `json:"enabled"`
+	APIKey      string    `json:"api_key,omitempty"`      // Display prefix only (first 8 chars)
+	APIKeyHash  string    `json:"api_key_hash,omitempty"` // SHA256 hash of full API key
+	FullAPIKey  string    `json:"-"`                      // Full key, set only at generation time (not persisted)
+	Enabled     bool      `json:"enabled"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	LastLogin  time.Time `json:"last_login,omitempty"`
@@ -156,18 +161,24 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 
 	// Generate API key
 	apiKey := generateAPIKey()
+	apiKeyPrefix := apiKey
+	if len(apiKeyPrefix) > 8 {
+		apiKeyPrefix = apiKeyPrefix[:8]
+	}
 
 	user := &User{
-		ID:        generateID(),
-		Username:  username,
-		Email:     email,
-		Password:  string(hash),
-		Role:      role,
-		Domains:   domains,
-		APIKey:    apiKey,
-		Enabled:   true,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:         generateID(),
+		Username:   username,
+		Email:      email,
+		Password:   string(hash),
+		Role:       role,
+		Domains:    domains,
+		APIKey:     apiKeyPrefix,
+		APIKeyHash: hashAPIKey(apiKey),
+		FullAPIKey: apiKey,
+		Enabled:    true,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 
 	m.users[username] = user
@@ -236,13 +247,33 @@ func (m *Manager) AuthenticateAPIKey(key string) (*User, error) {
 		}, nil
 	}
 
+	// Hash the incoming key for comparison
+	keyHash := hashAPIKey(key)
+
 	// Check per-user API keys
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	for _, user := range m.users {
-		if user.Enabled && subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
-			return cloneUser(user), nil
+		if !user.Enabled {
+			continue
+		}
+
+		// Prefer hash-based comparison (current scheme)
+		if user.APIKeyHash != "" {
+			if subtle.ConstantTimeCompare([]byte(keyHash), []byte(user.APIKeyHash)) == 1 {
+				return cloneUser(user), nil
+			}
+			continue
+		}
+
+		// Backward compatibility: legacy plaintext key (no hash stored yet)
+		if user.APIKey != "" {
+			if subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
+				slog.Warn("API key authenticated via legacy plaintext comparison; user should regenerate their key",
+					"user", user.Username)
+				return cloneUser(user), nil
+			}
 		}
 	}
 
@@ -401,6 +432,7 @@ func (m *Manager) DeleteUser(username string) error {
 }
 
 // RegenerateAPIKey generates a new API key for a user.
+// Returns the full key (shown once to the caller).
 func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -410,11 +442,18 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 		return "", errors.New("user not found")
 	}
 
-	user.APIKey = generateAPIKey()
+	apiKey := generateAPIKey()
+	apiKeyPrefix := apiKey
+	if len(apiKeyPrefix) > 8 {
+		apiKeyPrefix = apiKeyPrefix[:8]
+	}
+
+	user.APIKey = apiKeyPrefix
+	user.APIKeyHash = hashAPIKey(apiKey)
 	user.UpdatedAt = time.Now()
 	m.saveUsers()
 
-	return user.APIKey, nil
+	return apiKey, nil
 }
 
 // ChangePassword changes a user's password (requires current password).
@@ -532,6 +571,12 @@ func generateAPIKey() string {
 		panic("crypto/rand failed: " + err.Error())
 	}
 	return "uk_" + base64.URLEncoding.EncodeToString(b)
+}
+
+// hashAPIKey returns the hex-encoded SHA256 hash of an API key.
+func hashAPIKey(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
 }
 
 func isValidRole(role Role) bool {

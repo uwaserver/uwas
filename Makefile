@@ -51,7 +51,7 @@ lint:
 
 check: lint
 	@echo "=== Go vet ===" && go vet ./...
-	@echo "=== TypeScript ===" && cd web/dashboard && npx tsc --noEmit
+	@echo "=== TypeScript ===" && cd web/dashboard && npx tsc -b
 	@echo "=== Tests ===" && go test -count=1 -timeout 600s ./...
 	@echo "All checks passed."
 

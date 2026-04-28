@@ -133,7 +133,9 @@ type Server struct {
 	// Rate limiting for auth failures
 	rlMu      sync.Mutex
 	rateLimit map[string]*rateLimitEntry
-	rlDone    chan struct{}
+	// Per-username rate limiting (tracks failed logins by username).
+	userRateLimits map[string]*rateLimitEntry
+	rlDone         chan struct{}
 
 	// Short-lived auth tickets for SSE/WebSocket (avoids token in URL query params).
 	ticketMu sync.Mutex
@@ -586,7 +588,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Login endpoint: public but rate-limited
 		if r.URL.Path == "/api/v1/auth/login" {
 			ip := requestIP(r)
-			if s.checkRateLimit(ip) {
+			if s.checkRateLimit(ip, "") {
 				w.Header().Set("Retry-After", "300")
 				jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 				return
@@ -597,7 +599,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		// Rate limiting: check if IP is blocked before auth check.
 		ip := requestIP(r)
-		if s.checkRateLimit(ip) {
+		if s.checkRateLimit(ip, "") {
 			w.Header().Set("Retry-After", "300")
 			jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return
@@ -709,7 +711,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if !authenticated {
-			s.recordAuthFailure(ip)
+			s.recordAuthFailure(ip, "")
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -735,16 +737,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			!multiUserEnabled {
 			totpCode := r.Header.Get("X-TOTP-Code")
 			if totpCode == "" {
-				totpCode = r.URL.Query().Get("totp")
-			}
-			if totpCode == "" {
 				w.Header().Set("X-2FA-Required", "true")
 				jsonError(w, "2fa_required", http.StatusForbidden)
 				return
 			}
 			valid, _ := ValidateTOTP(totpSecret, totpCode)
 			if !valid {
-				s.recordAuthFailure(ip)
+				s.recordAuthFailure(ip, "")
 				jsonError(w, "invalid 2FA code", http.StatusForbidden)
 				return
 			}
@@ -2064,7 +2063,9 @@ type adminUserResponse struct {
 
 func adminUserDTO(user *auth.User, revealAPIKey bool) adminUserResponse {
 	apiKey := maskSecret(user.APIKey)
-	if revealAPIKey {
+	if revealAPIKey && user.FullAPIKey != "" {
+		apiKey = user.FullAPIKey
+	} else if revealAPIKey {
 		apiKey = user.APIKey
 	}
 	return adminUserResponse{
@@ -3052,10 +3053,13 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "sftp.delete") {
+		return
+	}
 	if !s.requirePin(w, r) {
 		return
 	}
-	domain := r.PathValue("domain")
 	if err := siteuser.DeleteUser(domain); err != nil {
 		jsonError(w, "delete user: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -4292,7 +4296,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	session, err := s.authMgr.Authenticate(req.Username, req.Password)
 	if err != nil {
 		ip := requestIP(r)
-		s.recordAuthFailure(ip)
+		s.recordAuthFailure(ip, req.Username)
 		if s.webhookMgr != nil {
 			s.webhookMgr.Fire(webhook.EventLoginFailed, map[string]any{
 				"username": req.Username,
@@ -5037,13 +5041,17 @@ func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Req
 
 func generateCloudflareID() string {
 	b := make([]byte, 16)
-	crand.Read(b)
+	if _, err := crand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
 func generateCloudflareToken() string {
 	b := make([]byte, 32)
-	crand.Read(b)
+	if _, err := crand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 

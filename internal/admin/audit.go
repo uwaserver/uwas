@@ -17,7 +17,7 @@ type AuditEntry struct {
 
 const maxAuditEntries = 500
 
-// rateLimitEntry tracks failed auth attempts for a single IP.
+// rateLimitEntry tracks failed auth attempts for a single IP or username.
 type rateLimitEntry struct {
 	count     int
 	firstFail time.Time
@@ -37,6 +37,7 @@ const (
 func (s *Server) initAudit() {
 	s.auditEntries = make([]AuditEntry, maxAuditEntries)
 	s.rateLimit = make(map[string]*rateLimitEntry)
+	s.userRateLimits = make(map[string]*rateLimitEntry)
 
 	// Start background cleanup goroutine for stale rate-limit entries.
 	s.rlDone = make(chan struct{})
@@ -100,12 +101,31 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 
 // --- Rate limiting ---
 
-// checkRateLimit returns true if the IP is currently blocked.
-func (s *Server) checkRateLimit(ip string) bool {
+// checkRateLimit returns true if the IP or username is currently blocked.
+// Pass an empty username to check only the IP.
+func (s *Server) checkRateLimit(ip, username string) bool {
 	s.rlMu.Lock()
 	defer s.rlMu.Unlock()
 
-	entry, ok := s.rateLimit[ip]
+	// Check IP-based rate limit.
+	if blocked := s.isBlocked(s.rateLimit, ip); blocked {
+		return true
+	}
+
+	// Check username-based rate limit.
+	if username != "" {
+		if blocked := s.isBlocked(s.userRateLimits, username); blocked {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isBlocked checks if a key in the given map is currently blocked.
+// Caller must hold s.rlMu.
+func (s *Server) isBlocked(m map[string]*rateLimitEntry, key string) bool {
+	entry, ok := m[key]
 	if !ok {
 		return false
 	}
@@ -113,7 +133,7 @@ func (s *Server) checkRateLimit(ip string) bool {
 	if entry.blocked {
 		if time.Since(entry.blockedAt) >= rateLimitBlockTime {
 			// Block expired, reset.
-			delete(s.rateLimit, ip)
+			delete(m, key)
 			return false
 		}
 		return true
@@ -122,16 +142,32 @@ func (s *Server) checkRateLimit(ip string) bool {
 	return false
 }
 
-// recordAuthFailure records a failed auth attempt for the given IP.
-// Returns true if the IP is now blocked.
-func (s *Server) recordAuthFailure(ip string) bool {
+// recordAuthFailure records a failed auth attempt for the given IP and
+// optionally for a username. Returns true if either the IP or username is
+// now blocked.
+// Pass an empty username to record only the IP failure.
+func (s *Server) recordAuthFailure(ip, username string) bool {
 	s.rlMu.Lock()
 	defer s.rlMu.Unlock()
 
 	now := time.Now()
-	entry, ok := s.rateLimit[ip]
+	ipBlocked := s.recordFailure(s.rateLimit, ip, now)
+
+	userBlocked := false
+	if username != "" {
+		userBlocked = s.recordFailure(s.userRateLimits, username, now)
+	}
+
+	return ipBlocked || userBlocked
+}
+
+// recordFailure increments the failure count for a key in the given map.
+// Returns true if the key is now blocked.
+// Caller must hold s.rlMu.
+func (s *Server) recordFailure(m map[string]*rateLimitEntry, key string, now time.Time) bool {
+	entry, ok := m[key]
 	if !ok {
-		s.rateLimit[ip] = &rateLimitEntry{
+		m[key] = &rateLimitEntry{
 			count:     1,
 			firstFail: now,
 		}
@@ -171,20 +207,27 @@ func (s *Server) rateLimitCleaner() {
 	}
 }
 
-// cleanupRateLimits removes expired rate-limit entries.
+// cleanupRateLimits removes expired rate-limit entries for both IP and username maps.
 func (s *Server) cleanupRateLimits() {
 	s.rlMu.Lock()
 	defer s.rlMu.Unlock()
 
 	now := time.Now()
-	for ip, entry := range s.rateLimit {
+	s.cleanupMap(s.rateLimit, now)
+	s.cleanupMap(s.userRateLimits, now)
+}
+
+// cleanupMap removes expired entries from a rate-limit map.
+// Caller must hold s.rlMu.
+func (s *Server) cleanupMap(m map[string]*rateLimitEntry, now time.Time) {
+	for key, entry := range m {
 		if entry.blocked {
 			if now.Sub(entry.blockedAt) >= rateLimitBlockTime {
-				delete(s.rateLimit, ip)
+				delete(m, key)
 			}
 		} else {
 			if now.Sub(entry.firstFail) > rateLimitWindow {
-				delete(s.rateLimit, ip)
+				delete(m, key)
 			}
 		}
 	}
@@ -199,11 +242,18 @@ func requestIP(r *http.Request) string {
 	return host
 }
 
-// RateLimitMap returns the rate-limit map for testing purposes.
+// RateLimitMap returns the IP rate-limit map for testing purposes.
 func (s *Server) RateLimitMap() map[string]*rateLimitEntry {
 	s.rlMu.Lock()
 	defer s.rlMu.Unlock()
 	return s.rateLimit
+}
+
+// UserRateLimitMap returns the username rate-limit map for testing purposes.
+func (s *Server) UserRateLimitMap() map[string]*rateLimitEntry {
+	s.rlMu.Lock()
+	defer s.rlMu.Unlock()
+	return s.userRateLimits
 }
 
 // AuditMu is exported for testing to allow direct field access is not needed;

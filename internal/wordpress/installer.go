@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -249,6 +250,27 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	written, _ := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
 	f.Close()
 	log.WriteString(fmt.Sprintf("Downloaded %.1f MB\n", float64(written)/1024/1024))
+
+	// Verify SHA256 checksum
+	shaResp, err := httpGetFn(wpDownloadURL + ".sha512")
+	if err == nil {
+		shaBody, _ := io.ReadAll(io.LimitReader(shaResp.Body, 1024))
+		shaResp.Body.Close()
+		expected := strings.TrimSpace(strings.Fields(string(shaBody))[0])
+
+		cf, err := os.Open(tarPath)
+		if err == nil {
+			h := sha256.New()
+			io.Copy(h, cf)
+			cf.Close()
+			actual := hex.EncodeToString(h.Sum(nil))
+			if !strings.EqualFold(expected, actual) {
+				return fmt.Errorf("WordPress checksum mismatch: expected %s, got %s", expected, actual)
+			}
+			log.WriteString("  Checksum verified OK\n")
+		}
+	}
+	// If checksum file unavailable, continue (best-effort)
 
 	// Extract — tar xzf to parent, then move wordpress/* to webRoot
 	parentDir := filepath.Dir(webRoot)
@@ -905,6 +927,27 @@ func UpdateCore(webRoot string) (string, error) {
 	io.Copy(f, resp.Body)
 	f.Close()
 	log.WriteString("Downloaded latest WordPress\n")
+
+	// Verify SHA256 checksum
+	shaResp, err := httpGetFn(tarURL + ".sha512")
+	if err == nil {
+		shaBody, _ := io.ReadAll(io.LimitReader(shaResp.Body, 1024))
+		shaResp.Body.Close()
+		expected := strings.TrimSpace(strings.Fields(string(shaBody))[0])
+
+		cf, err := os.Open(tarPath)
+		if err == nil {
+			h := sha256.New()
+			io.Copy(h, cf)
+			cf.Close()
+			actual := hex.EncodeToString(h.Sum(nil))
+			if !strings.EqualFold(expected, actual) {
+				return log.String(), fmt.Errorf("WordPress checksum mismatch: expected %s, got %s", expected, actual)
+			}
+			log.WriteString("  Checksum verified OK\n")
+		}
+	}
+	// If checksum file unavailable, continue (best-effort)
 
 	// Extract to temp dir
 	tmpDir, _ := os.MkdirTemp("", "wp-update-*")

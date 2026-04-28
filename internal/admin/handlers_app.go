@@ -2,6 +2,7 @@ package admin
 
 import (
 	"crypto/hmac"
+	"crypto/subtle"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -298,7 +299,7 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if tok := r.Header.Get("X-Gitlab-Token"); tok != "" {
 			// GitLab: X-Gitlab-Token = plain secret
-			if tok != secret {
+			if subtle.ConstantTimeCompare([]byte(tok), []byte(secret)) != 1 {
 				jsonError(w, "invalid webhook token", http.StatusForbidden)
 				return
 			}
