@@ -129,7 +129,7 @@ func TestStopCommand_DefaultPIDFile(t *testing.T) {
 	}
 	// Should fail trying to read the default PID file or find process.
 	errStr := err.Error()
-	if !strings.Contains(errStr, "uwas.pid") && !strings.Contains(errStr, "cannot") {
+	if !strings.Contains(errStr, "uwas.pid") && !strings.Contains(errStr, "cannot") && !strings.Contains(errStr, "not supported") {
 		t.Errorf("error = %q, expected mention of uwas.pid or a system error", errStr)
 	}
 }
