@@ -1,8 +1,11 @@
 package selfupdate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,20 @@ import (
 	"testing"
 	"time"
 )
+
+// binaryHandler returns an http.HandlerFunc that serves binaryContent for normal
+// requests and the SHA256 hex digest for .sha256 requests.
+func binaryHandler(binaryContent []byte) http.HandlerFunc {
+	hash := sha256.Sum256(binaryContent)
+	hashHex := hex.EncodeToString(hash[:])
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			io.WriteString(w, hashHex)
+			return
+		}
+		w.Write(binaryContent)
+	}
+}
 
 // saveHooks saves all package-level hooks and returns a restore function.
 func saveHooks(t *testing.T) {
@@ -367,9 +384,7 @@ func TestUpdate_Success(t *testing.T) {
 
 	// Serve a fake binary download
 	binaryContent := []byte("new-binary-content")
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(binaryContent)
-	})
+	srv := newGitHubServer(t, binaryHandler(binaryContent))
 
 	err := Update(srv.URL + "/download")
 	if err != nil {
@@ -420,9 +435,7 @@ func TestUpdate_DownloadError(t *testing.T) {
 func TestUpdate_CreateTempFailure(t *testing.T) {
 	saveHooks(t)
 
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("binary"))
-	})
+	srv := newGitHubServer(t, binaryHandler([]byte("binary")))
 
 	osCreateTempFn = func(dir, pattern string) (*os.File, error) {
 		return nil, fmt.Errorf("injected createtemp error")
@@ -472,9 +485,7 @@ func TestUpdate_WriteFailure(t *testing.T) {
 func TestUpdate_ChmodFailure(t *testing.T) {
 	saveHooks(t)
 
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("binary"))
-	})
+	srv := newGitHubServer(t, binaryHandler([]byte("binary")))
 
 	osChmodFn = func(name string, mode os.FileMode) error {
 		return fmt.Errorf("injected chmod error")
@@ -493,9 +504,7 @@ func TestUpdate_ExecutableError(t *testing.T) {
 	saveHooks(t)
 	tmpDir := t.TempDir()
 
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("binary"))
-	})
+	srv := newGitHubServer(t, binaryHandler([]byte("binary")))
 
 	// Let CreateTemp work in our temp dir
 	osCreateTempFn = func(dir, pattern string) (*os.File, error) {
@@ -526,9 +535,7 @@ func TestUpdate_RenameFailure_BackupPhase(t *testing.T) {
 	osExecutableFn = func() (string, error) { return exePath, nil }
 	evalSymlinksFn = func(p string) (string, error) { return p, nil }
 
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("new-binary"))
-	})
+	srv := newGitHubServer(t, binaryHandler([]byte("new-binary")))
 
 	// Fail on the first rename (backup current binary)
 	osRenameFn = func(oldpath, newpath string) error {
@@ -562,9 +569,7 @@ func TestUpdate_RenameFailure_ReplacePhase_BackupRestored(t *testing.T) {
 	osExecutableFn = func() (string, error) { return exePath, nil }
 	evalSymlinksFn = func(p string) (string, error) { return p, nil }
 
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("new-binary"))
-	})
+	srv := newGitHubServer(t, binaryHandler([]byte("new-binary")))
 
 	// Track rename calls: allow first (backup), fail second (replace)
 	renameCallCount := 0
@@ -774,9 +779,7 @@ func TestUpdateAndRestart_Success(t *testing.T) {
 
 	// Serve a fake binary download
 	binaryContent := []byte("new-binary-content")
-	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(binaryContent)
-	})
+	srv := newGitHubServer(t, binaryHandler(binaryContent))
 
 	// UpdateAndRestart calls Update then RestartSelf
 	// RestartSelf will fail in test, but Update should succeed
