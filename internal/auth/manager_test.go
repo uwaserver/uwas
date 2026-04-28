@@ -314,7 +314,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	user, _ := m.CreateUser("alice", "", "secret", RoleAdmin, nil)
 
 	// Per-user API key
-	authenticated, err := m.AuthenticateAPIKey(user.APIKey)
+	authenticated, err := m.AuthenticateAPIKey(user.FullAPIKey)
 	if err != nil {
 		t.Fatalf("AuthenticateAPIKey: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestAuthenticateAPIKeyDisabledUser(t *testing.T) {
 	m.users["alice"].Enabled = false
 	m.mu.Unlock()
 
-	_, err := m.AuthenticateAPIKey(user.APIKey)
+	_, err := m.AuthenticateAPIKey(user.FullAPIKey)
 	if err == nil {
 		t.Error("expected error for disabled user API key")
 	}
@@ -366,7 +366,7 @@ func TestAuthenticateAPIKeyEmptyGlobalKey(t *testing.T) {
 	user, _ := m.CreateUser("alice", "", "secret", RoleAdmin, nil)
 
 	// Per-user key should still work
-	authenticated, err := m.AuthenticateAPIKey(user.APIKey)
+	authenticated, err := m.AuthenticateAPIKey(user.FullAPIKey)
 	if err != nil {
 		t.Fatalf("AuthenticateAPIKey: %v", err)
 	}
@@ -378,6 +378,93 @@ func TestAuthenticateAPIKeyEmptyGlobalKey(t *testing.T) {
 	_, err = m.AuthenticateAPIKey("")
 	if err == nil {
 		t.Error("expected error for empty API key against empty global key")
+	}
+}
+
+func TestAuthenticateAPIKeyLegacyPlaintext(t *testing.T) {
+	// Simulate a legacy user with plaintext API key (no hash stored)
+	m := newTestManager(t)
+
+	// Create a user and manually set up legacy plaintext state
+	user, _ := m.CreateUser("alice", "", "secret", RoleAdmin, nil)
+	plaintextKey := user.FullAPIKey
+
+	// Simulate legacy state: APIKey has the full plaintext key, APIKeyHash is empty
+	m.mu.Lock()
+	m.users["alice"].APIKey = plaintextKey
+	m.users["alice"].APIKeyHash = ""
+	m.mu.Unlock()
+
+	// Should still authenticate via backward compatibility fallback
+	authenticated, err := m.AuthenticateAPIKey(plaintextKey)
+	if err != nil {
+		t.Fatalf("legacy plaintext key should authenticate: %v", err)
+	}
+	if authenticated.Username != "alice" {
+		t.Errorf("expected alice, got %s", authenticated.Username)
+	}
+}
+
+func TestCreateUserAPIKeyHashing(t *testing.T) {
+	m := newTestManager(t)
+	user, _ := m.CreateUser("alice", "alice@example.com", "secret", RoleAdmin, nil)
+
+	// APIKey should be the display prefix (first 8 chars)
+	if user.APIKey == "" {
+		t.Error("expected APIKey prefix to be set")
+	}
+	if len(user.APIKey) > 8 {
+		t.Errorf("expected APIKey prefix to be at most 8 chars, got %d: %q", len(user.APIKey), user.APIKey)
+	}
+	if !strings.HasPrefix(user.APIKey, "uk_") {
+		t.Errorf("expected APIKey prefix to start with uk_, got %s", user.APIKey)
+	}
+
+	// APIKeyHash should be set
+	if user.APIKeyHash == "" {
+		t.Error("expected APIKeyHash to be set")
+	}
+	if user.APIKeyHash == user.APIKey {
+		t.Error("APIKeyHash should differ from APIKey prefix")
+	}
+
+	// FullAPIKey should contain the full key
+	if user.FullAPIKey == "" {
+		t.Error("expected FullAPIKey to be set")
+	}
+	if !strings.HasPrefix(user.FullAPIKey, "uk_") {
+		t.Errorf("expected FullAPIKey to start with uk_, got %s", user.FullAPIKey)
+	}
+
+	// Full key should authenticate
+	authenticated, err := m.AuthenticateAPIKey(user.FullAPIKey)
+	if err != nil {
+		t.Fatalf("full key should authenticate: %v", err)
+	}
+	if authenticated.Username != "alice" {
+		t.Errorf("expected alice, got %s", authenticated.Username)
+	}
+}
+
+func TestHashAPIKey(t *testing.T) {
+	key := "uk_test123"
+	hash1 := hashAPIKey(key)
+	hash2 := hashAPIKey(key)
+
+	if hash1 == "" {
+		t.Error("expected non-empty hash")
+	}
+	if hash1 != hash2 {
+		t.Error("expected deterministic hash")
+	}
+	if hash1 == key {
+		t.Error("hash should differ from input")
+	}
+
+	// Different keys should produce different hashes
+	hash3 := hashAPIKey("uk_other456")
+	if hash1 == hash3 {
+		t.Error("different keys should produce different hashes")
 	}
 }
 
@@ -731,7 +818,7 @@ func TestUpdateUserEmptyFieldsNoChange(t *testing.T) {
 func TestRegenerateAPIKey(t *testing.T) {
 	m := newTestManager(t)
 	user, _ := m.CreateUser("alice", "", "secret", RoleAdmin, nil)
-	oldKey := user.APIKey
+	oldKey := user.FullAPIKey
 
 	newKey, err := m.RegenerateAPIKey("alice")
 	if err != nil {
@@ -1291,7 +1378,7 @@ func TestMiddlewareAPIKeyAuth(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("GET", "/api/v1/domains", nil)
-	req.Header.Set("Authorization", "Bearer "+user.APIKey)
+	req.Header.Set("Authorization", "Bearer "+user.FullAPIKey)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -1439,7 +1526,7 @@ func TestMiddlewareAPIKeyPrecedence(t *testing.T) {
 
 	// Both API key (alice) and session token (bob) present - API key should win
 	req := httptest.NewRequest("GET", "/api/v1/domains", nil)
-	req.Header.Set("Authorization", "Bearer "+user.APIKey)
+	req.Header.Set("Authorization", "Bearer "+user.FullAPIKey)
 	req.Header.Set("X-Session-Token", sessionBob.Token)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1738,7 +1825,7 @@ func TestAuthenticateAPIKeyWithMultipleUsers(t *testing.T) {
 	m.CreateUser("carol", "", "secret", RoleReseller, nil)
 
 	// Authenticate bob's key specifically
-	authenticated, err := m.AuthenticateAPIKey(bob.APIKey)
+	authenticated, err := m.AuthenticateAPIKey(bob.FullAPIKey)
 	if err != nil {
 		t.Fatalf("AuthenticateAPIKey: %v", err)
 	}
@@ -1756,8 +1843,28 @@ func TestPersistenceAfterRegenerateAPIKey(t *testing.T) {
 
 	m2 := NewManager(dir, "key")
 	user, _ := m2.GetUser("alice")
-	if user.APIKey != newKey {
-		t.Errorf("expected regenerated key to persist, got %s", user.APIKey)
+
+	// APIKey should store the display prefix (first 8 chars)
+	expectedPrefix := newKey
+	if len(expectedPrefix) > 8 {
+		expectedPrefix = expectedPrefix[:8]
+	}
+	if user.APIKey != expectedPrefix {
+		t.Errorf("expected persisted prefix %q, got %q", expectedPrefix, user.APIKey)
+	}
+
+	// APIKeyHash should be persisted
+	if user.APIKeyHash == "" {
+		t.Error("expected APIKeyHash to be persisted")
+	}
+
+	// Full key should authenticate after reload
+	authenticated, err := m2.AuthenticateAPIKey(newKey)
+	if err != nil {
+		t.Fatalf("full key should authenticate after reload: %v", err)
+	}
+	if authenticated.Username != "alice" {
+		t.Errorf("expected alice, got %s", authenticated.Username)
 	}
 }
 

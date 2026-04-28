@@ -764,12 +764,37 @@ func TestRateLimitMap(t *testing.T) {
 	s := testAuditServer()
 	defer s.stopAudit()
 
-	s.recordAuthFailure("10.0.0.1")
-	s.recordAuthFailure("10.0.0.2")
+	s.recordAuthFailure("10.0.0.1", "")
+	s.recordAuthFailure("10.0.0.2", "")
 
 	rl := s.RateLimitMap()
 	if len(rl) != 2 {
 		t.Errorf("rate limit map size = %d, want 2", len(rl))
+	}
+
+	// User rate limit map should be empty when no usernames passed.
+	ul := s.UserRateLimitMap()
+	if len(ul) != 0 {
+		t.Errorf("user rate limit map size = %d, want 0", len(ul))
+	}
+}
+
+func TestUserRateLimitMap(t *testing.T) {
+	s := testAuditServer()
+	defer s.stopAudit()
+
+	s.recordAuthFailure("10.0.0.1", "admin")
+	s.recordAuthFailure("10.0.0.2", "admin")
+	s.recordAuthFailure("10.0.0.3", "user1")
+
+	rl := s.RateLimitMap()
+	if len(rl) != 3 {
+		t.Errorf("IP rate limit map size = %d, want 3", len(rl))
+	}
+
+	ul := s.UserRateLimitMap()
+	if len(ul) != 2 {
+		t.Errorf("user rate limit map size = %d, want 2", len(ul))
 	}
 }
 

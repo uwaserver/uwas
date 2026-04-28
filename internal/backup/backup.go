@@ -442,7 +442,10 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+		// Sanitize file permissions from untrusted archive: strip SUID/SGID, cap at 0755
+		mode := os.FileMode(hdr.Mode) & 0o755
+		mode &^= os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 		if err != nil {
 			return fmt.Errorf("create %s: %w", outPath, err)
 		}

@@ -162,7 +162,8 @@ func syncFilesReal(req MigrateRequest, log *strings.Builder) string {
 			log.WriteString("WARNING: sshpass not installed, password auth may fail\n")
 			log.WriteString("Install with: apt install sshpass\n")
 		}
-		cmd = execCommandFn("sshpass", append([]string{"-p", req.SSHPass, "rsync"}, args...)...)
+		cmd = execCommandFn("sshpass", append([]string{"-e", "rsync"}, args...)...)
+		cmd.Env = append(os.Environ(), "SSHPASS="+req.SSHPass)
 	} else {
 		cmd = execCommandFn("rsync", args...)
 	}
@@ -198,7 +199,8 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 	// Dump via SSH
 	var cmd *exec.Cmd
 	if req.SSHPass != "" && req.SSHKey == "" {
-		cmd = execCommandFn("sshpass", append([]string{"-p", req.SSHPass, "ssh"}, sshArgs...)...)
+		cmd = execCommandFn("sshpass", append([]string{"-e", "ssh"}, sshArgs...)...)
+		cmd.Env = append(os.Environ(), "SSHPASS="+req.SSHPass)
 	} else {
 		cmd = execCommandFn("ssh", sshArgs...)
 	}

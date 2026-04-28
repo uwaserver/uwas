@@ -777,6 +777,9 @@ func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSSHKeyList(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "ssh.keys.list") {
+		return
+	}
 	webRoot := "/var/www"
 	s.configMu.RLock()
 	if s.config.Global.WebRoot != "" {
@@ -793,6 +796,9 @@ func (s *Server) handleSSHKeyList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "ssh.keys.add") {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		PublicKey string `json:"public_key"`
@@ -822,10 +828,13 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "ssh.keys.delete") {
+		return
+	}
 	if !s.requirePin(w, r) {
 		return
 	}
-	domain := r.PathValue("domain")
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Fingerprint string `json:"fingerprint"`
@@ -2428,6 +2437,23 @@ func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		req.SQL = req.SQL + fmt.Sprintf(" LIMIT %d", limit)
 	}
+
+	// Block dangerous SELECT variants that could read/write files or lock rows.
+	if strings.HasPrefix(upper, "SELECT") {
+		if strings.Contains(upper, "INTO OUTFILE") || strings.Contains(upper, "INTO DUMPFILE") {
+			jsonError(w, "INTO OUTFILE/DUMPFILE is not allowed", http.StatusForbidden)
+			return
+		}
+		if strings.Contains(upper, "FOR UPDATE") || strings.Contains(upper, "LOCK IN SHARE MODE") {
+			jsonError(w, "row locking clauses are not allowed", http.StatusForbidden)
+			return
+		}
+		if strings.Contains(upper, "LOAD_FILE") {
+			jsonError(w, "LOAD_FILE() is not allowed", http.StatusForbidden)
+			return
+		}
+	}
+
 	// Use specific database
 	fullSQL := fmt.Sprintf("USE %s;\n%s", database.BacktickID(db), req.SQL)
 	out, err := database.RunSQL(fullSQL)
@@ -2474,7 +2500,7 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.ContainsAny(host, `/\.`) || strings.Contains(host, "..") {
+	if strings.ContainsAny(host, `/\`) || strings.Contains(host, "..") {
 		jsonError(w, "invalid hostname", http.StatusBadRequest)
 		return
 	}

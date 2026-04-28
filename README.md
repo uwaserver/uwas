@@ -20,13 +20,13 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 38-page React dashboard with 205+ API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 40-page React dashboard with 205+ API endpoints.
 
 One binary. Zero hassle.
 
 ## Current Snapshot (v0.0.53)
 
-- **Dashboard pages:** 38 (`web/dashboard/src/pages`)
+- **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 205+ (route registrations under `/api/v1` in `internal/admin/api.go`)
 - **Go packages:** 52 (from `go list ./...`)
 - **CLI commands:** 19
@@ -48,7 +48,7 @@ One binary. Zero hassle.
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **38-page Dashboard** — React 19 admin panel with dark/light theme
+- **40-page Dashboard** — React 19 admin panel with dark/light theme
 - **App Manager** — Deploy and manage Node.js, Python, Ruby, Go applications
 - **Web Terminal** — Browser-based shell via WebSocket-to-PTY bridge
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
@@ -327,20 +327,20 @@ internal/
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
   htaccess/              → .htaccess parser and converter
-web/dashboard/           → React 19 SPA (38 pages, Vite + TypeScript + Tailwind)
+web/dashboard/           → React 19 SPA (40 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Dashboard
 
-UWAS includes a 38-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
+UWAS includes a 40-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
 
-**Sites:** Dashboard, Domains, Domain Detail, Topology, Certificates, DNS Zone Editor, WordPress, Clone/Staging, Migration, File Manager
+**Sites:** Dashboard, Domains, Domain Detail, Topology, Certificates, DNS Zone Editor, Cloudflare, WordPress, Clone/Staging, Migration, File Manager
 
-**Server:** PHP, PHP Config, Applications, Database, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
+**Server:** PHP, PHP Config, Applications, Database, DB Explorer, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 
 **Performance:** Cache, Metrics, Analytics, Logs
 
-**Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users
+**Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users, Users
 
 **System:** Config Editor, Webhooks, Backups, Terminal, Updates, Doctor, Settings
 

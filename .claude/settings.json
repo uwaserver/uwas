@@ -1,19 +1,50 @@
 {
-  // Autonomous agent session — no user confirmation requested
-  "auto_tool_call": true,
-  "tool_search_limit": 20,
-  "initial_read_profile": "deep",
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "dfmt recall --save --format md",
+            "statusMessage": "Saving session snapshot for next session...",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "if (Test-Path .dfmt/last-recall.md) { Write-Host '--- Previous session summary ---'; Get-Content .dfmt/last-recall.md; Write-Host '--- End of previous session ---' }",
+            "statusMessage": "Loading previous session summary...",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
   "permissions": {
     "allow": [
-      "mcp__dfmt__dfmt.read",
-      "mcp__dfmt__dfmt.exec",
-      "mcp__dfmt__dfmt.fetch",
-      "mcp__dfmt__dfmt.remember",
-      "mcp__dfmt__dfmt.search",
-      "mcp__dfmt__dfmt.recall",
-      "mcp__dfmt__dfmt.stats",
-      "Bash(cat *)",
-      "Bash(head *)"
+      "mcp__dfmt__dfmt_exec",
+      "mcp__dfmt__dfmt_read",
+      "mcp__dfmt__dfmt_fetch",
+      "mcp__dfmt__dfmt_remember",
+      "mcp__dfmt__dfmt_search",
+      "mcp__dfmt__dfmt_recall",
+      "mcp__dfmt__dfmt_stats",
+      "mcp__dfmt__dfmt_glob",
+      "mcp__dfmt__dfmt_grep",
+      "mcp__dfmt__dfmt_edit",
+      "mcp__dfmt__dfmt_write"
+    ],
+    "deny": [
+      "Bash",
+      "WebFetch",
+      "WebSearch"
     ]
   }
 }

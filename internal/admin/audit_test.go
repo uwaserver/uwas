@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -201,11 +202,11 @@ func TestRateLimitExpiry(t *testing.T) {
 
 	// Simulate failed attempts that trigger a block.
 	for i := 0; i < rateLimitMaxFails; i++ {
-		s.recordAuthFailure("10.0.0.5")
+		s.recordAuthFailure("10.0.0.5", "")
 	}
 
 	// Confirm blocked.
-	if !s.checkRateLimit("10.0.0.5") {
+	if !s.checkRateLimit("10.0.0.5", "") {
 		t.Fatal("expected IP to be blocked")
 	}
 
@@ -216,7 +217,7 @@ func TestRateLimitExpiry(t *testing.T) {
 	s.rlMu.Unlock()
 
 	// Should no longer be blocked.
-	if s.checkRateLimit("10.0.0.5") {
+	if s.checkRateLimit("10.0.0.5", "") {
 		t.Fatal("expected IP to be unblocked after expiry")
 	}
 }
@@ -237,7 +238,7 @@ func TestRateLimitWindowReset(t *testing.T) {
 
 	// Record some failures.
 	for i := 0; i < rateLimitMaxFails-1; i++ {
-		s.recordAuthFailure("10.0.0.6")
+		s.recordAuthFailure("10.0.0.6", "")
 	}
 
 	// Push the firstFail time back so the window has expired.
@@ -247,7 +248,7 @@ func TestRateLimitWindowReset(t *testing.T) {
 	s.rlMu.Unlock()
 
 	// Next failure should reset the counter (not trigger a block).
-	blocked := s.recordAuthFailure("10.0.0.6")
+	blocked := s.recordAuthFailure("10.0.0.6", "")
 	if blocked {
 		t.Fatal("expected window reset, not a block")
 	}
@@ -293,6 +294,21 @@ func TestCleanupRateLimits(t *testing.T) {
 		count:     2,
 		firstFail: time.Now(),
 	}
+	// Add stale user entries too.
+	s.userRateLimits["stale-user"] = &rateLimitEntry{
+		count:     5,
+		firstFail: time.Now().Add(-rateLimitWindow - time.Minute),
+	}
+	s.userRateLimits["blocked-stale-user"] = &rateLimitEntry{
+		count:     10,
+		firstFail: time.Now().Add(-10 * time.Minute),
+		blocked:   true,
+		blockedAt: time.Now().Add(-rateLimitBlockTime - time.Minute),
+	}
+	s.userRateLimits["fresh-user"] = &rateLimitEntry{
+		count:     2,
+		firstFail: time.Now(),
+	}
 	s.rlMu.Unlock()
 
 	s.cleanupRateLimits()
@@ -308,6 +324,100 @@ func TestCleanupRateLimits(t *testing.T) {
 	}
 	if _, ok := s.rateLimit["fresh-ip"]; !ok {
 		t.Error("fresh-ip should have survived cleanup")
+	}
+
+	if _, ok := s.userRateLimits["stale-user"]; ok {
+		t.Error("stale-user should have been cleaned up")
+	}
+	if _, ok := s.userRateLimits["blocked-stale-user"]; ok {
+		t.Error("blocked-stale-user should have been cleaned up")
+	}
+	if _, ok := s.userRateLimits["fresh-user"]; !ok {
+		t.Error("fresh-user should have survived cleanup")
+	}
+}
+
+func TestUserRateLimitBlocksAfterFailures(t *testing.T) {
+	s := testAuditServer()
+	defer s.stopAudit()
+
+	// Record failures from different IPs but the same username.
+	for i := 0; i < rateLimitMaxFails; i++ {
+		ip := fmt.Sprintf("10.0.0.%d", i+1)
+		blocked := s.recordAuthFailure(ip, "victim")
+		if i == rateLimitMaxFails-1 && !blocked {
+			t.Fatal("expected username to be blocked after max fails")
+		}
+	}
+
+	// Username should be blocked.
+	if !s.checkRateLimit("", "victim") {
+		t.Fatal("expected username 'victim' to be blocked")
+	}
+
+	// A different username should NOT be blocked.
+	if s.checkRateLimit("", "other") {
+		t.Fatal("expected username 'other' to NOT be blocked")
+	}
+
+	// The IPs individually should NOT be blocked (only 1 fail each).
+	for i := 0; i < rateLimitMaxFails; i++ {
+		ip := fmt.Sprintf("10.0.0.%d", i+1)
+		if s.checkRateLimit(ip, "") {
+			t.Fatalf("expected IP %s to NOT be blocked (only 1 fail)", ip)
+		}
+	}
+}
+
+func TestUserRateLimitExpiry(t *testing.T) {
+	s := testAuditServer()
+	defer s.stopAudit()
+
+	// Trigger username block.
+	for i := 0; i < rateLimitMaxFails; i++ {
+		s.recordAuthFailure("10.0.0.1", "testuser")
+	}
+
+	if !s.checkRateLimit("", "testuser") {
+		t.Fatal("expected username to be blocked")
+	}
+
+	// Expire the block.
+	s.rlMu.Lock()
+	entry := s.userRateLimits["testuser"]
+	entry.blockedAt = time.Now().Add(-rateLimitBlockTime - time.Second)
+	s.rlMu.Unlock()
+
+	if s.checkRateLimit("", "testuser") {
+		t.Fatal("expected username to be unblocked after expiry")
+	}
+}
+
+func TestRateLimitBlockedByEitherIP(t *testing.T) {
+	s := testAuditServer()
+	defer s.stopAudit()
+
+	// Block only by IP.
+	for i := 0; i < rateLimitMaxFails; i++ {
+		s.recordAuthFailure("10.0.0.1", "")
+	}
+
+	// checkRateLimit with both should return true (IP blocked).
+	if !s.checkRateLimit("10.0.0.1", "someuser") {
+		t.Fatal("expected blocked because IP is blocked")
+	}
+
+	// Block only by username.
+	s2 := testAuditServer()
+	defer s2.stopAudit()
+
+	for i := 0; i < rateLimitMaxFails; i++ {
+		s2.recordAuthFailure(fmt.Sprintf("192.168.1.%d", i+1), "victim")
+	}
+
+	// checkRateLimit with both should return true (username blocked).
+	if !s2.checkRateLimit("192.168.1.1", "victim") {
+		t.Fatal("expected blocked because username is blocked")
 	}
 }
 

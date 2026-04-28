@@ -8,16 +8,16 @@
 
 | Metric | Count |
 |--------|------:|
-| Go source files | 258 |
-| Test files | 116 |
-| Lines of Go code | ~134,000 |
-| Internal packages | 45 |
+| Go source files | 284 |
+| Test files | 136 |
+| Lines of Go code | ~136,000 |
+| Internal packages | 50 |
 | Public packages (pkg/) | 2 |
-| CLI commands | 18 |
-| API endpoints | 191 |
-| Dashboard pages | 38 |
-| Direct Go dependencies | 4 |
-| Binary size (linux/amd64) | ~14 MB |
+| CLI commands | 19 |
+| API endpoints | 205+ |
+| Dashboard pages | 40 |
+| Direct Go dependencies | 5 |
+| Binary size (linux/amd64) | ~15 MB |
 
 ---
 
@@ -35,7 +35,7 @@
 │                            │                    │                  │        │
 │                    ┌───────▼─────────┐    ┌─────▼─────────┐ ┌──────▼──────┐ │
 │                    │  Request Router │    │  Admin API    │ │ SFTP Server │ │
-│                    │  (VHost + SNI)  │    │  191 routes   │ │ chroot jail │ │
+│                    │  (VHost + SNI)  │    │  205+ routes  │ │ chroot jail │ │
 │                    └────────┬────────┘    │  + Dashboard  │ └─────────────┘ │
 │                             │             │ + WebSocket   │                 │
 │              ┌──────────────┼────┐        │ + MCP         │                 │
@@ -140,9 +140,9 @@ cmd/uwas/
 └── main.go                     CLI entry point
 
 internal/
-├── admin/                      API server (191 routes) + dashboard embed + auth
+├── admin/                      API server (205+ routes) + dashboard embed + auth
 │   ├── api.go                  Route registration + middleware
-│   ├── handlers_*.go           Handler implementations (13 files)
+│   ├── handlers_*.go           Handler implementations (hosting, app)
 │   ├── audit.go                Audit trail ring buffer
 │   └── dashboard/dist/         Embedded React SPA (go:embed)
 │
@@ -163,7 +163,7 @@ internal/
 │   ├── disk.go                 Gzip-compressed disk cache
 │   └── esi.go                  Edge Side Include processor
 │
-├── cli/                        18 CLI commands
+├── cli/                        19 CLI commands
 │   ├── root.go                 Command dispatcher
 │   ├── serve.go                Start server
 │   ├── domain.go               Domain CRUD
@@ -171,7 +171,7 @@ internal/
 │   ├── install.go              One-time setup + systemd unit
 │   ├── migrate.go              Apache/Nginx config import
 │   ├── doctor.go               System diagnostics
-│   └── ...                     (18 command files)
+│   └── ...                     (19 command files)
 │
 ├── config/                     YAML config structs + validation + defaults
 │   ├── config.go               All config types (Domain, SSL, PHP, Proxy...)
@@ -182,7 +182,7 @@ internal/
 ├── database/                   MySQL/MariaDB: detect, install, CRUD, Docker
 ├── deploy/                     Git clone → build → restart / Docker pipeline
 ├── dnschecker/                 DNS record verification (A/MX/NS/TXT)
-├── dnsmanager/                 Cloudflare DNS record CRUD + sync
+├── dnsmanager/                 Cloudflare, Route53, Hetzner, DigitalOcean DNS CRUD
 ├── doctor/                     System diagnostics + auto-fix
 ├── filemanager/                Web file manager (browse/edit/upload/delete)
 ├── firewall/                   UFW wrapper (allow/deny/list)
@@ -199,7 +199,7 @@ internal/
 │   │   ├── canary.go           Percentage-based canary routing
 │   │   └── mirror.go           Async request mirroring
 │   ├── static/                 Static file serving + try_files + ETag
-│   └── redirect/               HTTP redirects (301/302/307)
+│   └── redirect/               HTTP redirects (301/302/307/308)
 │
 ├── install/                    Background task manager (install queue)
 ├── logger/                     log/slog wrapper (structured logging)
@@ -229,7 +229,7 @@ internal/
 ├── monitor/                    Domain health checks (HTTP probe)
 ├── notify/                     Slack, Telegram, Email (SMTP) channels
 ├── phpmanager/                 PHP detect → install → start → assign → monitor
-│   ├── manager.go              Full lifecycle (3,000+ LOC)
+│   ├── manager.go              Full lifecycle (1,360 LOC)
 │   └── install.go              Platform-aware install (apt/dnf/brew)
 │
 ├── rewrite/                    Apache mod_rewrite engine
@@ -241,7 +241,7 @@ internal/
 ├── selfupdate/                 Binary self-update from GitHub releases
 │
 ├── server/                     Main server orchestration
-│   ├── server.go               Initialization + request dispatch (5,100 LOC)
+│   ├── server.go               Initialization + request dispatch (2,265 LOC)
 │   ├── capture.go              Response capture for caching
 │   └── error.go                Domain error pages
 │
@@ -256,7 +256,7 @@ internal/
 │   ├── storage.go              Cert file storage (/var/lib/uwas/certs/)
 │   └── acme/                   ACME client (Let's Encrypt)
 │       ├── client.go           Challenge solving (HTTP-01, DNS-01)
-│       └── dns.go              DNS provider integration (Cloudflare)
+│       └── dns.go              DNS provider integration (4 providers)
 │
 ├── webhook/                    Event dispatch (HMAC signed, retry)
 └── wordpress/                  One-click WP install (DB + config + mu-plugin)
@@ -272,8 +272,8 @@ pkg/
                                 IfModule, php_value, php_flag
 
 web/dashboard/                  React SPA (Vite + TypeScript + Tailwind)
-├── src/pages/                  38 page components
-├── src/lib/api.ts              API client (191 endpoints)
+├── src/pages/                  40 page components
+├── src/lib/api.ts              API client (205+ endpoints)
 ├── src/components/             Sidebar, PinModal, Card
 └── dist/ → go:embed            Compiled into binary
 ```
@@ -311,7 +311,7 @@ domain.Type determines the handler:
 │          │ → auto-restart on crash                                     │
 │          │ → cgroup resource limits (Linux)                            │
 ├──────────┼──────────────────────────────────────────────────────────────┤
-│ redirect │ 301/302/307 → target URL                                   │
+│ redirect │ 301/302/307/308 → target URL                               │
 │          │ → preserve_path option                                      │
 └──────────┴──────────────────────────────────────────────────────────────┘
 ```
@@ -423,7 +423,8 @@ Server Start
 │  Challenge types:                   │
 │  • HTTP-01: /.well-known/acme-...   │
 │  • DNS-01: _acme-challenge TXT      │
-│    (via Cloudflare API)              │
+│    (via Cloudflare, DigitalOcean,    │
+│     Hetzner, Route53)                │
 │                                     │
 │  Rate limit: 10 certs/minute        │
 │  Retry: 3 attempts with backoff     │
@@ -715,7 +716,7 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
 
 ---
 
-## Dashboard Pages (38)
+## Dashboard Pages (40)
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -729,6 +730,7 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
 │  │                   Flow visual)                    │
 │  ├─ Certificates     SSL/TLS + ACME status           │
 │  ├─ DNS              Cloudflare DNS sync             │
+│  ├─ Cloudflare       Cloudflare settings             │
 │  ├─ WordPress        One-click WP install            │
 │  ├─ Clone/Staging    Site cloning                    │
 │  ├─ Migration        Apache/Nginx import wizard      │
@@ -741,6 +743,7 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
 │  │                   (wizard, ENV editor, routing    │
 │  │                   diagram, resource gauges)        │
 │  ├─ Database         MySQL/MariaDB + Docker mgmt     │
+│  ├─ DB Explorer      phpMyAdmin-like DB browser      │
 │  ├─ SFTP Users       Chroot users + SSH keys         │
 │  ├─ Cron Jobs        Per-domain cron management      │
 │  ├─ Services         systemd service control         │
@@ -759,7 +762,8 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
 │  ├─ Firewall         UFW rule management             │
 │  ├─ Unknown Domains  Block unconfigured hosts        │
 │  ├─ Audit Log        Admin action history            │
-│  └─ Admin Users      Multi-user management           │
+│  ├─ Admin Users      Multi-user management           │
+│  └─ Users            End-user management             │
 ├─────────────────────────────────────────────────────┤
 │  System                                              │
 │  ├─ Config Editor    Raw YAML editor + validation    │
@@ -934,12 +938,13 @@ POST /api/v1/backups/create
 ## Dependencies
 
 ```
-Direct (4 only — stdlib-first philosophy):
+Direct (5 only — stdlib-first philosophy):
 
   gopkg.in/yaml.v3          YAML config parsing
   github.com/andybalholm/brotli   Brotli compression
   github.com/quic-go/quic-go     HTTP/3 (QUIC)
   golang.org/x/crypto             bcrypt, acme
+  golang.org/x/sync               errgroup, semaphore
 
 No web frameworks. No ORMs. No logging frameworks.
 net/http + log/slog + crypto/subtle + encoding/json.
@@ -952,7 +957,7 @@ net/http + log/slog + crypto/subtle + encoding/json.
 ```bash
 # Production build (stripped, versioned)
 make build
-# → bin/uwas (~14MB, linux/amd64)
+# → bin/uwas (~15MB, linux/amd64)
 
 # Development build
 make dev
@@ -965,7 +970,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 cd web/dashboard && npm run build
 
 # Test
-go test -p 1 ./...              # all 48 packages, serial
+go test -p 1 ./...              # all 52 packages, serial
 
 # Install (one-time)
 uwas install                    # creates dirs, systemd unit, config
@@ -985,7 +990,7 @@ uwas update                     # downloads latest from GitHub releases
 ## Testing
 
 ```
-48 packages with tests, 116 test files
+52 packages with tests, 136 test files
 
 Test approach:
   • Unit tests alongside source: foo.go → foo_test.go
