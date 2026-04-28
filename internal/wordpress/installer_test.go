@@ -1,6 +1,8 @@
 package wordpress
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +15,35 @@ import (
 	"testing"
 	"time"
 )
+
+// fakeTarHandlerFunc returns a function suitable for assigning to httpGetFn.
+// It serves tarContent for normal URLs and its SHA256 hash for .sha512 URLs.
+// It creates two internal test servers so URL-based routing works correctly
+// even though httpGetFn discards the original URL.
+func fakeTarHandlerFunc(tarContent string) (func(string) (*http.Response, error), func()) {
+	hash := sha256.Sum256([]byte(tarContent))
+	hashHex := hex.EncodeToString(hash[:])
+
+	tarSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		io.WriteString(w, tarContent)
+	}))
+	hashSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  latest.tar.gz\n", hashHex)
+	}))
+
+	fn := func(url string) (*http.Response, error) {
+		if strings.HasSuffix(url, ".sha512") {
+			return http.Get(hashSrv.URL)
+		}
+		return http.Get(tarSrv.URL)
+	}
+	cleanup := func() {
+		tarSrv.Close()
+		hashSrv.Close()
+	}
+	return fn, cleanup
+}
 
 // ---------------------------------------------------------------------------
 // helpers: save and restore hook variables between tests
@@ -234,14 +265,9 @@ func TestInstall_Success(t *testing.T) {
 	execCommandFn = fakeCmd("OK\n")
 
 	// Mock HTTP: serve a tiny response (we don't really extract, tar will "succeed" via fakeCmd)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake-tar-content"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake-tar-content")
+	defer httpCleanup()
 
 	// Use real filesystem hooks for file ops
 	osStatFn = os.Stat
@@ -295,14 +321,9 @@ func TestInstall_DBFailure(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmd("")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake-tar"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake-tar")
+	defer httpCleanup()
 
 	osStatFn = os.Stat
 	osReadFileFn = os.ReadFile
@@ -379,14 +400,9 @@ func TestInstall_PlaceholderRemoval(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmd("")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake-tar"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake-tar")
+	defer httpCleanup()
 
 	osStatFn = os.Stat
 	osReadFileFn = os.ReadFile
@@ -423,14 +439,9 @@ func TestInstall_WindowsSkipsPermissions(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmd("")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	osStatFn = os.Stat
 	osReadFileFn = os.ReadFile
@@ -996,14 +1007,9 @@ func TestUpdateCore_WithoutWPCLI(t *testing.T) {
 	osMkdirAllFn = os.MkdirAll
 	osRemoveAllFn = os.RemoveAll
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake-tar"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake-tar")
+	defer httpCleanup()
 
 	webRoot := t.TempDir()
 
@@ -1948,14 +1954,9 @@ func TestDownloadAndExtract_Success(t *testing.T) {
 	snap := saveHooks()
 	defer restoreHooks(snap)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake-tar-data"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake-tar-data")
+	defer httpCleanup()
 
 	execCommandFn = fakeCmd("")
 	osMkdirAllFn = os.MkdirAll
@@ -1997,14 +1998,9 @@ func TestDownloadAndExtract_ExtractFails(t *testing.T) {
 	snap := saveHooks()
 	defer restoreHooks(snap)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("bad"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("bad")
+	defer httpCleanup()
 
 	execCommandFn = fakeCmdFail("tar: Error")
 	osMkdirAllFn = os.MkdirAll
@@ -2023,14 +2019,9 @@ func TestDownloadAndExtract_MovesFiles(t *testing.T) {
 	snap := saveHooks()
 	defer restoreHooks(snap)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	parentDir := t.TempDir()
 	webRoot := filepath.Join(parentDir, "site")
@@ -2181,14 +2172,9 @@ func TestInstall_GenerateConfigFails(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmd("")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	osStatFn = os.Stat
 	osReadFileFn = os.ReadFile
@@ -2364,14 +2350,9 @@ func TestUpdateCore_ExtractFails(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmdFail("tar error")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("data"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("data")
+	defer httpCleanup()
 	osRemoveAllFn = os.RemoveAll
 
 	_, err := UpdateCore(t.TempDir())
@@ -2397,14 +2378,9 @@ func TestUpdateCore_WalkCopiesCoreFiles(t *testing.T) {
 	webRoot := t.TempDir()
 
 	// Create a fake tarball server
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	// The tar command "succeeds" and we manually create the wordpress dir it would produce
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
@@ -2469,14 +2445,9 @@ func TestInstall_FullDefaults(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmd("")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		io.WriteString(w, "data")
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("data")
+	defer httpCleanup()
 
 	osStatFn = os.Stat
 	osReadFileFn = os.ReadFile
@@ -2569,14 +2540,9 @@ func TestInstall_HtaccessWriteFails(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	execCommandFn = fakeCmd("")
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	osStatFn = os.Stat
 	osReadFileFn = os.ReadFile
@@ -2625,14 +2591,9 @@ func TestDownloadAndExtract_CreateFails(t *testing.T) {
 	snap := saveHooks()
 	defer restoreHooks(snap)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("data"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("data")
+	defer httpCleanup()
 
 	// Make MkdirAll work for webRoot but os.Create will fail for the tarPath
 	// by creating a directory with the same name as the tar file
@@ -2665,14 +2626,9 @@ func TestUpdateCore_WalkError(t *testing.T) {
 	osMkdirAllFn = os.MkdirAll
 	osRemoveAllFn = os.RemoveAll
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	webRoot := t.TempDir()
 
@@ -2716,14 +2672,9 @@ func TestUpdateCore_WalkReadFileFails(t *testing.T) {
 	osMkdirAllFn = os.MkdirAll
 	osRemoveAllFn = os.RemoveAll
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	webRoot := t.TempDir()
 
@@ -2774,14 +2725,9 @@ func TestUpdateCore_WpContentFileSkipped(t *testing.T) {
 	osMkdirAllFn = os.MkdirAll
 	osRemoveAllFn = os.RemoveAll
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	webRoot := t.TempDir()
 
@@ -2827,14 +2773,9 @@ func TestUpdateCore_CreateFileFails(t *testing.T) {
 	execLookPathFn = fakeLookPathFail
 	osRemoveAllFn = os.RemoveAll
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("fake"))
-	}))
-	defer ts.Close()
-	httpGetFn = func(url string) (*http.Response, error) {
-		return http.Get(ts.URL)
-	}
+	var httpCleanup func()
+	httpGetFn, httpCleanup = fakeTarHandlerFunc("fake")
+	defer httpCleanup()
 
 	// Pre-create a directory at the tarPath location to make os.Create fail
 	tarPath := filepath.Join(os.TempDir(), "wordpress-update.tar.gz")
