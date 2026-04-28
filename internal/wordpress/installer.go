@@ -252,7 +252,7 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	log.WriteString(fmt.Sprintf("Downloaded %.1f MB\n", float64(written)/1024/1024))
 
 	// Verify SHA256 checksum
-	shaResp, err := httpGetFn(wpDownloadURL + ".sha512")
+	shaResp, err := httpGetFn(wpDownloadURL + ".sha256")
 	if err == nil {
 		shaBody, _ := io.ReadAll(io.LimitReader(shaResp.Body, 1024))
 		shaResp.Body.Close()
@@ -929,7 +929,7 @@ func UpdateCore(webRoot string) (string, error) {
 	log.WriteString("Downloaded latest WordPress\n")
 
 	// Verify SHA256 checksum
-	shaResp, err := httpGetFn(tarURL + ".sha512")
+	shaResp, err := httpGetFn(tarURL + ".sha256")
 	if err == nil {
 		shaBody, _ := io.ReadAll(io.LimitReader(shaResp.Body, 1024))
 		shaResp.Body.Close()
