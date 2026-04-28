@@ -5,6 +5,24 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.54] - 2026-04-28
+
+### Security Fixes
+
+- **WordPress checksum verification** — installer was downloading `.sha512` checksum file but computing SHA256 hash. Since SHA512 and SHA256 produce different digests, checksum verification always silently failed. Fixed to download `.sha256` file matching the SHA256 computation.
+
+### Fixes
+
+- **WordPress installer tests** — fixed 16 tests that failed due to mock HTTP handlers returning identical content for both tarball and checksum URLs. Introduced `fakeTarHandlerFunc` with two test servers for proper URL-based routing.
+- **Selfupdate updater tests** — fixed 5 tests with the same checksum mock issue. Added `binaryHandler` helper.
+- **CLI stop command test** — accept "not supported" error on Windows where SIGTERM is unavailable.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -count=1 -short ./...` passes (52 packages).
+- `tsc -b` passes in `web/dashboard`.
+
 ## [0.0.51] - 2026-04-05
 
 ### Fixes

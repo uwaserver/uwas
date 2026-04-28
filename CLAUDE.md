@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 40-page React dashboard.
 
-**Current Stats (v0.0.53):**
+**Current Stats (v0.0.54):**
 - 52 Go packages, all with tests
 - 40 dashboard pages, 205+ API endpoints
 - 19 CLI commands

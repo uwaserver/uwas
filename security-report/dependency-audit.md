@@ -1,4 +1,4 @@
-# Dependency Audit — UWAS v0.0.53
+# Dependency Audit — UWAS v0.0.54
 
 ## Direct Dependencies (5)
 
