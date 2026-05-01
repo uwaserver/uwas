@@ -83,6 +83,50 @@ func BenchmarkMiddlewareChain(b *testing.B) {
 	})
 }
 
+// nopResponseWriter is a no-allocation http.ResponseWriter for hoisted
+// benchmarks. Each goroutine uses its own to avoid contention. Header map
+// is allocated once on first Header() call and reused.
+type nopResponseWriter struct {
+	hdr http.Header
+}
+
+func (w *nopResponseWriter) Header() http.Header {
+	if w.hdr == nil {
+		w.hdr = make(http.Header, 8)
+	}
+	return w.hdr
+}
+func (w *nopResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *nopResponseWriter) WriteHeader(code int)        {}
+
+// BenchmarkMiddlewareChainHoisted isolates the per-call middleware cost from
+// httptest.NewRequest/NewRecorder allocations. Reuses a single request and a
+// per-goroutine response writer across iterations.
+func BenchmarkMiddlewareChainHoisted(b *testing.B) {
+	log := logger.New("error", "text")
+	chain := middleware.Chain(
+		middleware.Recovery(log),
+		middleware.RequestID(),
+		middleware.SecurityHeaders(),
+	)
+	handler := chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	req := httptest.NewRequest("GET", "/", nil)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		w := &nopResponseWriter{}
+		for pb.Next() {
+			handler.ServeHTTP(w, req)
+			// Clear headers between iterations so each iter sees a fresh map.
+			for k := range w.hdr {
+				delete(w.hdr, k)
+			}
+		}
+	})
+}
+
 // BenchmarkCacheGet measures cache lookup speed.
 func BenchmarkCacheGet(b *testing.B) {
 	mc := cache.NewMemoryCache(256 << 20) // 256MB
