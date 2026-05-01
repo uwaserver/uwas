@@ -636,7 +636,7 @@ func TestHandleCerts(t *testing.T) {
 	s := New(cfg, log, metrics.New())
 
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/certs", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/certs", nil)))
 
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)

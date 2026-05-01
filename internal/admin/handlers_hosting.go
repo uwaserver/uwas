@@ -650,6 +650,9 @@ func formatBytes(b int64) string {
 // ============ Cron Jobs ============
 
 func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	jobs, err := cronjob.List()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -669,6 +672,9 @@ func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var job cronjob.Job
 	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
@@ -688,7 +694,7 @@ func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -1386,6 +1392,9 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 // ============ System Services ============
 
 func (s *Server) handleServicesList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	svcs := services.ListServices()
 	if svcs == nil {
 		svcs = []services.Service{}

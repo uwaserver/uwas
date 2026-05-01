@@ -1109,7 +1109,7 @@ func TestBandwidthResetSuccess(t *testing.T) {
 func TestCronMonitorListNil(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleCronMonitorList(rec, httptest.NewRequest("GET", "/api/v1/cron/monitor", nil))
+	s.handleCronMonitorList(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/cron/monitor", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -1120,7 +1120,7 @@ func TestCronMonitorDomainNil(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/cron/monitor/example.com", nil)
 	req.SetPathValue("host", "example.com")
-	s.handleCronMonitorDomain(rec, req)
+	s.handleCronMonitorDomain(rec, withAdminContext(req))
 	if rec.Code != 503 {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
@@ -1133,7 +1133,7 @@ func TestCronMonitorDomainWithMonitor(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/cron/monitor/example.com", nil)
 	req.SetPathValue("host", "example.com")
-	s.handleCronMonitorDomain(rec, req)
+	s.handleCronMonitorDomain(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1142,7 +1142,7 @@ func TestCronMonitorDomainWithMonitor(t *testing.T) {
 func TestCronExecuteBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleCronExecute(rec, httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader("not json")))
+	s.handleCronExecute(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1151,7 +1151,7 @@ func TestCronExecuteBadJSON(t *testing.T) {
 func TestCronExecuteMissingFields(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleCronExecute(rec, httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader(`{"domain":"test.com"}`)))
+	s.handleCronExecute(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader(`{"domain":"test.com"}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1160,7 +1160,7 @@ func TestCronExecuteMissingFields(t *testing.T) {
 func TestCronExecuteNoMonitor(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleCronExecute(rec, httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader(`{"domain":"test.com","command":"echo hi"}`)))
+	s.handleCronExecute(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader(`{"domain":"test.com","command":"echo hi"}`))))
 	if rec.Code != 503 {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
@@ -1173,7 +1173,7 @@ func TestCronExecuteSuccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/cron/execute", strings.NewReader(`{"domain":"test.com","schedule":"* * * * *","command":"echo hi"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleCronExecute(rec, req)
+	s.handleCronExecute(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1916,7 +1916,7 @@ func TestDiskUsageSuccess(t *testing.T) {
 func TestCronDeleteBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleCronDelete(rec, httptest.NewRequest("DELETE", "/api/v1/cron", strings.NewReader("not json")))
+	s.handleCronDelete(rec, withAdminContext(httptest.NewRequest("DELETE", "/api/v1/cron", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2175,7 +2175,7 @@ func TestDNSSyncNoProvider(t *testing.T) {
 func TestServicesListEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleServicesList(rec, httptest.NewRequest("GET", "/api/v1/services", nil))
+	s.handleServicesList(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/services", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -2223,7 +2223,7 @@ func TestCertRenewNoTLSMgr(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/certs/example.com/renew", nil)
 	req.SetPathValue("host", "example.com")
-	s.handleCertRenew(rec, req)
+	s.handleCertRenew(rec, withAdminContext(req))
 	if rec.Code != 503 {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
@@ -2459,7 +2459,7 @@ func TestUpdateDomainResellerCannotRenameToUnauthorizedDomain(t *testing.T) {
 func TestUserCreateMissingDomain(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleUserCreate(rec, httptest.NewRequest("POST", "/api/v1/users", strings.NewReader(`{}`)))
+	s.handleUserCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/users", strings.NewReader(`{}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2468,7 +2468,7 @@ func TestUserCreateMissingDomain(t *testing.T) {
 func TestUserCreateBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleUserCreate(rec, httptest.NewRequest("POST", "/api/v1/users", strings.NewReader("not json")))
+	s.handleUserCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/users", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2802,7 +2802,7 @@ func TestPHPDisableNoManager(t *testing.T) {
 func TestBackupDomainNoManager(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleBackupDomain(rec, httptest.NewRequest("POST", "/api/v1/backups/domain", strings.NewReader(`{"domain":"test.com"}`)))
+	s.handleBackupDomain(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/backups/domain", strings.NewReader(`{"domain":"test.com"}`))))
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
 	}
@@ -2812,7 +2812,7 @@ func TestBackupDomainBadJSON(t *testing.T) {
 	s := testServer()
 	s.SetBackupManager(testBackupManager(t))
 	rec := httptest.NewRecorder()
-	s.handleBackupDomain(rec, httptest.NewRequest("POST", "/api/v1/backups/domain", strings.NewReader("not json")))
+	s.handleBackupDomain(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/backups/domain", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2822,7 +2822,7 @@ func TestBackupDomainMissing(t *testing.T) {
 	s := testServer()
 	s.SetBackupManager(testBackupManager(t))
 	rec := httptest.NewRecorder()
-	s.handleBackupDomain(rec, httptest.NewRequest("POST", "/api/v1/backups/domain", strings.NewReader(`{}`)))
+	s.handleBackupDomain(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/backups/domain", strings.NewReader(`{}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -3372,7 +3372,7 @@ func TestCronAddSuccess(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"schedule":"* * * * *","command":"echo hello","user":"root"}`)
-	s.handleCronAdd(rec, httptest.NewRequest("POST", "/api/v1/cron", body))
+	s.handleCronAdd(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cron", body)))
 	// On non-Linux, crontab is not available so this might fail, but we exercise the code
 	if rec.Code != 200 && rec.Code != 500 {
 		t.Errorf("status = %d, want 200 or 500", rec.Code)
@@ -3383,7 +3383,7 @@ func TestCronDeleteSuccess(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"schedule":"* * * * *","command":"echo hello"}`)
-	s.handleCronDelete(rec, httptest.NewRequest("DELETE", "/api/v1/cron", body))
+	s.handleCronDelete(rec, withAdminContext(httptest.NewRequest("DELETE", "/api/v1/cron", body)))
 	// On non-Linux, crontab is not available so this might fail
 	if rec.Code != 200 && rec.Code != 500 {
 		t.Errorf("status = %d, want 200 or 500", rec.Code)
@@ -3497,7 +3497,7 @@ func TestCronMonitorListWithMonitor(t *testing.T) {
 	cm := cronjob.NewMonitor("")
 	s.SetCronMonitor(cm)
 	rec := httptest.NewRecorder()
-	s.handleCronMonitorList(rec, httptest.NewRequest("GET", "/api/v1/cron/monitor", nil))
+	s.handleCronMonitorList(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/cron/monitor", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
