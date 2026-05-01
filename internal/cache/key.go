@@ -8,6 +8,11 @@ import (
 	"sync"
 )
 
+// stackParamsCap bounds the stack-allocated params array used by
+// writeSortedQuery. 16 covers 99%+ of real-world query strings; longer
+// queries fall back to a heap slice.
+const stackParamsCap = 16
+
 // pool for strings.Builder to reduce allocations.
 var builderPool = sync.Pool{
 	New: func() interface{} {
@@ -50,17 +55,9 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 	b.WriteString(r.URL.Path)
 	b.WriteByte('|')
 
-	// Sorted query params for consistency
+	// Sorted query params for consistency (key=a&b and key=b&a → same key).
 	if r.URL.RawQuery != "" {
-		// Split and sort for cache key consistency (key=a&b vs key=b&a)
-		params := strings.Split(r.URL.RawQuery, "&")
-		sort.Strings(params)
-		for i, p := range params {
-			if i > 0 {
-				b.WriteByte('&')
-			}
-			b.WriteString(p)
-		}
+		writeSortedQuery(b, r.URL.RawQuery)
 	}
 
 	// Vary headers
@@ -72,6 +69,72 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 	}
 
 	return b.String()
+}
+
+// writeSortedQuery splits raw on '&', sorts the parts lexicographically, and
+// writes them to b separated by '&'. Avoids strings.Split's slice + per-part
+// allocation for the common case of ≤16 params by using a stack array.
+func writeSortedQuery(b *strings.Builder, raw string) {
+	// Fast path: no '&' means a single param — write as-is.
+	if !strings.Contains(raw, "&") {
+		b.WriteString(raw)
+		return
+	}
+
+	var stack [stackParamsCap]string
+	parts := stack[:0]
+	overflow := false
+
+	start := 0
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '&' {
+			continue
+		}
+		if len(parts) == stackParamsCap {
+			overflow = true
+			break
+		}
+		parts = append(parts, raw[start:i])
+		start = i + 1
+	}
+	if !overflow {
+		if len(parts) == stackParamsCap {
+			overflow = true
+		} else {
+			parts = append(parts, raw[start:])
+		}
+	}
+
+	if overflow {
+		// Rare: >16 params. Fall back to strings.Split + sort.Strings.
+		full := strings.Split(raw, "&")
+		sort.Strings(full)
+		for i, p := range full {
+			if i > 0 {
+				b.WriteByte('&')
+			}
+			b.WriteString(p)
+		}
+		return
+	}
+
+	// Insertion sort — O(n²) but n≤16, no allocation, branch-predictable.
+	for i := 1; i < len(parts); i++ {
+		v := parts[i]
+		j := i - 1
+		for j >= 0 && parts[j] > v {
+			parts[j+1] = parts[j]
+			j--
+		}
+		parts[j+1] = v
+	}
+
+	for i, p := range parts {
+		if i > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(p)
+	}
 }
 
 // HashKey returns a hex-encoded FNV-1a hash of the key, used for disk
