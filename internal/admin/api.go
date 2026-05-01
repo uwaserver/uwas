@@ -2450,6 +2450,13 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	s.configMu.Unlock()
 
+	// Invalidate cached docroot BEFORE updating config; prevents stale handle on Windows.
+	// Without this, domain deletion + re-creation with the same root would silently fail
+	// because the deleted domain's os.Root handle is still held.
+	if found && domainRoot != "" {
+		pathsafe.InvalidateBase(domainRoot)
+	}
+
 	if !found {
 		s.RecordAudit("domain.delete", "domain: "+host+" (not found)", ip, false)
 		jsonError(w, "domain not found", http.StatusNotFound)

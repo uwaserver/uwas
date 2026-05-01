@@ -75,7 +75,7 @@ func TestAcquireAndReleaseContext(t *testing.T) {
 	if ctx == nil {
 		t.Fatal("AcquireContext returned nil")
 	}
-	if ctx.ID == "" {
+	if ctx.ID() == "" {
 		t.Error("AcquireContext should set a non-empty ID")
 	}
 	if ctx.Request != req {
