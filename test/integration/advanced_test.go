@@ -412,6 +412,7 @@ func TestConfigReloadE2E(t *testing.T) {
 	req, _ := http.NewRequest("POST", fmt.Sprintf("http://%s/api/v1/reload", adminAddr), nil)
 	req.Header.Set("Authorization", "Bearer test-api-key-for-reload")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Content-Type", "application/json")
 	resp2, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("reload request: %v", err)
