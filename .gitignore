@@ -54,4 +54,10 @@ demo/
 # ── Playwright screenshots ──
 .playwright-mcp/
 
+# ── Profiling ──
+*.prof
+
+# ── Commit message temp ──
+.commitmsg.tmp
+
 .dfmt/

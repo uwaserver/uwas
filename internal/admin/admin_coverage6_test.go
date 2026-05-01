@@ -128,7 +128,7 @@ func TestHandleDBExploreTables(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/db/explore//tables", nil)
 	req.Header.Set("X-API-Key", "test-key")
 	w := httptest.NewRecorder()
-	srv.handleDBExploreTables(w, req)
+	srv.handleDBExploreTables(w, withAdminContext(req))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("handleDBExploreTables without db: expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
@@ -137,7 +137,7 @@ func TestHandleDBExploreTables(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", "/api/v1/db/explore/invalid-db!/tables", nil)
 	req.Header.Set("X-API-Key", "test-key")
-	srv.handleDBExploreTables(w, req)
+	srv.handleDBExploreTables(w, withAdminContext(req))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("handleDBExploreTables with invalid db: expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
@@ -150,7 +150,7 @@ func TestHandleDBExploreColumns(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/db/explore//tables//columns", nil)
 	req.Header.Set("X-API-Key", "test-key")
 	w := httptest.NewRecorder()
-	srv.handleDBExploreColumns(w, req)
+	srv.handleDBExploreColumns(w, withAdminContext(req))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("handleDBExploreColumns without db/table: expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
@@ -159,7 +159,7 @@ func TestHandleDBExploreColumns(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", "/api/v1/db/explore/invalid-db!/tables/users/columns", nil)
 	req.Header.Set("X-API-Key", "test-key")
-	srv.handleDBExploreColumns(w, req)
+	srv.handleDBExploreColumns(w, withAdminContext(req))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("handleDBExploreColumns with invalid db: expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
@@ -485,7 +485,7 @@ func TestHandleDockerDBExport(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/db/docker//export", nil)
 	req.Header.Set("X-API-Key", "test-key")
 	w := httptest.NewRecorder()
-	srv.handleDockerDBExport(w, req)
+	srv.handleDockerDBExport(w, withAdminContext(req))
 	// Returns 400 or 500 depending on docker availability
 	if w.Code != http.StatusBadRequest && w.Code != http.StatusInternalServerError {
 		t.Errorf("handleDockerDBExport without db: expected 400 or 500, got %d", w.Code)
@@ -499,7 +499,7 @@ func TestHandleDockerDBImport(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/db/docker//import", nil)
 	req.Header.Set("X-API-Key", "test-key")
 	w := httptest.NewRecorder()
-	srv.handleDockerDBImport(w, req)
+	srv.handleDockerDBImport(w, withAdminContext(req))
 	// Returns 400 or 500 depending on docker availability
 	if w.Code != http.StatusBadRequest && w.Code != http.StatusInternalServerError {
 		t.Errorf("handleDockerDBImport without db: expected 400 or 500, got %d", w.Code)

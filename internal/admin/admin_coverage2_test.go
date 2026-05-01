@@ -2008,7 +2008,7 @@ func TestSSHKeyAddBadJSON(t *testing.T) {
 func TestDBStatusEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBStatus(rec, httptest.NewRequest("GET", "/api/v1/database/status", nil))
+	s.handleDBStatus(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/database/status", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -2017,7 +2017,7 @@ func TestDBStatusEndpoint(t *testing.T) {
 func TestDBListEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBList(rec, httptest.NewRequest("GET", "/api/v1/database/list", nil))
+	s.handleDBList(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/database/list", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -2044,7 +2044,7 @@ func TestDBCreateMissingName(t *testing.T) {
 func TestDBChangePasswordBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBChangePassword(rec, httptest.NewRequest("POST", "/api/v1/database/users/password", strings.NewReader("not json")))
+	s.handleDBChangePassword(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/database/users/password", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2053,7 +2053,7 @@ func TestDBChangePasswordBadJSON(t *testing.T) {
 func TestDBChangePasswordMissingFields(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBChangePassword(rec, httptest.NewRequest("POST", "/api/v1/database/users/password", strings.NewReader(`{"user":"root"}`)))
+	s.handleDBChangePassword(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/database/users/password", strings.NewReader(`{"user":"root"}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2062,7 +2062,7 @@ func TestDBChangePasswordMissingFields(t *testing.T) {
 func TestDBDiagnose(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBDiagnose(rec, httptest.NewRequest("GET", "/api/v1/database/diagnose", nil))
+	s.handleDBDiagnose(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/database/diagnose", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -2074,7 +2074,7 @@ func TestDBImportBadBody(t *testing.T) {
 	// DBImport reads body and passes to database.ImportDatabase which will fail
 	req := httptest.NewRequest("POST", "/api/v1/database/testdb/import", strings.NewReader("SQL DATA"))
 	req.SetPathValue("name", "testdb")
-	s.handleDBImport(rec, req)
+	s.handleDBImport(rec, withAdminContext(req))
 	// Will fail because MySQL is not running, but should not panic
 	if rec.Code != 500 {
 		t.Errorf("status = %d, want 500", rec.Code)
@@ -2188,7 +2188,7 @@ func TestServicesListEndpoint(t *testing.T) {
 func TestDockerDBListEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDockerDBList(rec, httptest.NewRequest("GET", "/api/v1/database/docker", nil))
+	s.handleDockerDBList(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/database/docker", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -2197,7 +2197,7 @@ func TestDockerDBListEndpoint(t *testing.T) {
 func TestDockerDBCreateBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDockerDBCreate(rec, httptest.NewRequest("POST", "/api/v1/database/docker", strings.NewReader("not json")))
+	s.handleDockerDBCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/database/docker", strings.NewReader("not json"))))
 	// Docker may not be available -> 503, or bad JSON -> 400
 	if rec.Code != 400 && rec.Code != 503 {
 		t.Errorf("status = %d, want 400 or 503", rec.Code)
@@ -2207,7 +2207,7 @@ func TestDockerDBCreateBadJSON(t *testing.T) {
 func TestDockerDBCreateMissingFields(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDockerDBCreate(rec, httptest.NewRequest("POST", "/api/v1/database/docker", strings.NewReader(`{"name":"test"}`)))
+	s.handleDockerDBCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/database/docker", strings.NewReader(`{"name":"test"}`))))
 	// 400 or 503 depending on Docker availability
 	if rec.Code != 400 && rec.Code != 503 {
 		t.Errorf("status = %d, want 400 or 503", rec.Code)
@@ -3792,7 +3792,7 @@ func TestHandleDockerDBStart(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/database/docker/start", strings.NewReader(`{"type":"mariadb"}`))
-	s.handleDockerDBStart(rec, req)
+	s.handleDockerDBStart(rec, withAdminContext(req))
 	// Should start task, may fail but exercises code
 	if rec.Code != 200 {
 		t.Logf("status = %d (docker may not be available)", rec.Code)
