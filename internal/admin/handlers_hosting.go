@@ -950,23 +950,25 @@ func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
+	limit, offset := parsePagination(r)
 	// Check if MySQL is available before querying
 	st := database.GetStatus()
 	if !st.Installed || !st.Running {
-		jsonResponse(w, []database.DBInfo{})
+		jsonResponse(w, map[string]any{"items": []database.DBInfo{}, "total": 0, "limit": limit, "offset": offset})
 		return
 	}
 	dbs, err := database.ListDatabases()
 	if err != nil {
 		// Don't error — just return empty list with a log
 		s.logger.Debug("database list failed", "error", err)
-		jsonResponse(w, []database.DBInfo{})
+		jsonResponse(w, map[string]any{"items": []database.DBInfo{}, "total": 0, "limit": limit, "offset": offset})
 		return
 	}
 	if dbs == nil {
 		dbs = []database.DBInfo{}
 	}
-	jsonResponse(w, dbs)
+	dbs, total := paginateSlice(dbs, limit, offset)
+	jsonResponse(w, map[string]any{"items": dbs, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
@@ -990,7 +992,8 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := database.CreateDatabase(req.Name, req.User, req.Password, req.Host)
 	if err != nil {
-		jsonError(w, "create database: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("database create failed", "name", req.Name, "error", err)
+		jsonError(w, "database creation failed", http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("database created", "name", result.Name, "user", result.User)
@@ -1003,7 +1006,8 @@ func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := database.DropDatabase(name, name, "localhost"); err != nil {
-		jsonError(w, "drop database: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("database drop failed", "name", name, "error", err)
+		jsonError(w, "database drop failed", http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("database dropped", "name", name)
@@ -1088,7 +1092,8 @@ func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	data, err := database.ExportDatabase(name)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		s.logger.Error("database export failed", "name", name, "error", err)
+		jsonError(w, "database export failed", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/sql")
@@ -1114,7 +1119,8 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := database.ImportDatabase(name, data); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		s.logger.Error("database import failed", "name", name, "error", err)
+		jsonError(w, "database import failed", http.StatusInternalServerError)
 		return
 	}
 	s.RecordAudit("database.import", "db: "+name, requestIP(r), true)
@@ -1129,7 +1135,8 @@ func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
 	out, err := database.UninstallService()
 	if err != nil {
 		s.RecordAudit("database.uninstall", "error: "+err.Error(), ip, false)
-		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
+		s.logger.Error("database uninstall failed", "error", err)
+		jsonError(w, "database uninstall failed", http.StatusInternalServerError)
 		return
 	}
 	s.RecordAudit("database.uninstall", "success", ip, true)
@@ -1399,7 +1406,9 @@ func (s *Server) handleServicesList(w http.ResponseWriter, r *http.Request) {
 	if svcs == nil {
 		svcs = []services.Service{}
 	}
-	jsonResponse(w, svcs)
+	limit, offset := parsePagination(r)
+	svcs, total := paginateSlice(svcs, limit, offset)
+	jsonResponse(w, map[string]any{"items": svcs, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
@@ -2055,7 +2064,9 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 		}
 		pkgs = append(pkgs, pi)
 	}
-	jsonResponse(w, pkgs)
+	limit, offset := parsePagination(r)
+	pkgs, total := paginateSlice(pkgs, limit, offset)
+	jsonResponse(w, map[string]any{"items": pkgs, "total": total, "limit": limit, "offset": offset})
 }
 
 // Package installation is managed by the global task manager (install.Manager).
@@ -2590,7 +2601,8 @@ func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
 	fullSQL := fmt.Sprintf("USE %s;\n%s", database.BacktickID(db), req.SQL)
 	out, err := database.RunSQL(fullSQL)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		s.logger.Error("db explorer query failed", "db", db, "error", err)
+		jsonError(w, "query execution failed", http.StatusBadRequest)
 		return
 	}
 	// Parse tab-separated into rows
