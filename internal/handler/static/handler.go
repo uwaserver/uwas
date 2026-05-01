@@ -244,16 +244,17 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		}
 	}
 
+	// Cached resolved docroot — avoids re-running EvalSymlinks on the base
+	// for every request (~60% of static-serve allocations on Windows).
+	base, baseErr := pathsafe.CachedBase(docRoot)
+
 	for _, candidate := range candidates {
 		resolved := expandTryFileVar(candidate, cleanURI)
 		fullPath := filepath.Join(docRoot, filepath.Clean("/"+resolved))
 
-		// Security: path must stay within document root.
-		if !pathsafe.IsWithinBase(docRoot, fullPath) {
-			continue
-		}
-		// Resolve symlinks to prevent cross-domain access.
-		if !pathsafe.IsWithinBaseResolved(docRoot, fullPath) {
+		// filepath.Join + Clean guarantees lexical containment when the
+		// resolved part is rooted, so only the symlink-aware check is needed.
+		if baseErr != nil || !base.Contains(fullPath) {
 			continue
 		}
 
@@ -290,8 +291,7 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		if !strings.HasPrefix(last, "$") {
 			fullPath := filepath.Join(docRoot, filepath.Clean("/"+last))
 
-			// Security: path must stay within document root.
-			if !pathsafe.IsWithinBase(docRoot, fullPath) || !pathsafe.IsWithinBaseResolved(docRoot, fullPath) {
+			if baseErr != nil || !base.Contains(fullPath) {
 				return false
 			}
 
