@@ -502,7 +502,7 @@ func TestAuditRecordedOnDomainCRUD(t *testing.T) {
 
 	// Delete domain
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("DELETE", "/api/v1/domains/test.com", nil)
+	req = httptest.NewRequest("DELETE", "/api/v1/domains/test.com?confirm=true", nil)
 	req.RemoteAddr = "10.0.0.3:1234"
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

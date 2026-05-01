@@ -483,7 +483,7 @@ func TestAdminDomainCRUD(t *testing.T) {
 
 	// DELETE: remove the domain
 	t.Run("delete", func(t *testing.T) {
-		resp, err := client.Do(adminReq("DELETE", adminBase+"/api/v1/domains/new-domain.local", nil))
+		resp, err := client.Do(adminReq("DELETE", adminBase+"/api/v1/domains/new-domain.local?confirm=true", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -617,7 +617,7 @@ func TestAuditLogRecording(t *testing.T) {
 	resp1.Body.Close()
 
 	// Delete it to generate another audit entry
-	resp2, err := client.Do(adminReq("DELETE", adminBase+"/api/v1/domains/audit-test.local", nil))
+	resp2, err := client.Do(adminReq("DELETE", adminBase+"/api/v1/domains/audit-test.local?confirm=true", nil))
 	if err != nil {
 		t.Fatal(err)
 	}

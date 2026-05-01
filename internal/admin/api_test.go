@@ -535,7 +535,7 @@ func TestDeleteDomain(t *testing.T) {
 	initialCount := len(s.config.Domains)
 
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/example.com", nil))
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/example.com?confirm=true", nil))
 
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -554,7 +554,7 @@ func TestDeleteDomainNotFound(t *testing.T) {
 	s := testServer()
 
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/nonexistent.com", nil))
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/nonexistent.com?confirm=true", nil))
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
@@ -567,7 +567,7 @@ func TestDeleteDomainCallsOnDomainChange(t *testing.T) {
 	s.SetOnDomainChange(func() { called = true })
 
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/example.com", nil))
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/domains/example.com?confirm=true", nil))
 
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)

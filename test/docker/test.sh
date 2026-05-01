@@ -226,7 +226,7 @@ fi
 
 # Delete the domain we just created
 DELETE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-    -H "$AUTH_HEADER" "${ADMIN_URL}/api/v1/domains/new.test" 2>/dev/null) || true
+    -H "$AUTH_HEADER" "${ADMIN_URL}/api/v1/domains/new.test?confirm=true" 2>/dev/null) || true
 if [ "$DELETE_STATUS" = "200" ] || [ "$DELETE_STATUS" = "204" ]; then
     pass "DELETE /api/v1/domains/new.test (HTTP $DELETE_STATUS)"
 else

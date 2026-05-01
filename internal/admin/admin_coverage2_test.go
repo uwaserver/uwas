@@ -3559,7 +3559,7 @@ func TestFileReadSuccess(t *testing.T) {
 func TestDeleteDomainWithCleanup(t *testing.T) {
 	s, _ := testServerWithRoot(t)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("DELETE", "/api/v1/domains/example.com?cleanup=true", nil)
+	req := httptest.NewRequest("DELETE", "/api/v1/domains/example.com?cleanup=true&confirm=true", nil)
 	req.SetPathValue("host", "example.com")
 	req.RemoteAddr = "10.0.0.1:1234"
 	s.handleDeleteDomain(rec, req)
