@@ -531,7 +531,7 @@ func (s *Server) Start() error {
 	}
 
 	s.httpSrv = &http.Server{
-		Handler:      s.authMiddleware(s.mux),
+		Handler:      s.authMiddleware(requireJSONMiddleware(s.mux)),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Minute, // SSE, DB export, backup can take minutes
 	}
@@ -2058,6 +2058,26 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// requireJSONMiddleware enforces Content-Type: application/json for mutation
+// endpoints (POST/PUT/PATCH). File uploads and raw SQL imports are exempt.
+func requireJSONMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
+			path := r.URL.Path
+			if strings.Contains(path, "/upload") || strings.Contains(path, "/import") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ct := r.Header.Get("Content-Type")
+			if !strings.HasPrefix(ct, "application/json") {
+				jsonError(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) requireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {

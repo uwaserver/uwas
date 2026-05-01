@@ -86,6 +86,9 @@ func adminReq(method, url string, body io.Reader) *http.Request {
 	req.Header.Set("Authorization", "Bearer test-api-key")
 	// CSRF protection: state-changing requests must include this header
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	if method == "POST" || method == "PUT" || method == "PATCH" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	return req
 }
 
@@ -718,6 +721,7 @@ func TestConfigReload(t *testing.T) {
 	reloadReq, _ := http.NewRequest("POST", adminBase+"/api/v1/reload", nil)
 	reloadReq.Header.Set("Authorization", "Bearer test-api-key-for-reload")
 	reloadReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	reloadReq.Header.Set("Content-Type", "application/json")
 	resp2, err := client.Do(reloadReq)
 	if err != nil {
 		t.Fatal(err)
