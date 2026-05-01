@@ -28,7 +28,8 @@ func TestRegenerateAPIKeyUnauthorized(t *testing.T) {
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/apikey", nil)
-	s.mux.ServeHTTP(rec, r)
+	r.SetPathValue("username", "admin")
+	s.handleUserRegenerateAPIKeyAuth(rec, r)
 	if rec.Code != 401 {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
@@ -102,7 +103,9 @@ func TestUserChangePasswordUnauthorized(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{}`)))
+	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{}`))
+	r.SetPathValue("username", "admin")
+	s.handleUserChangePasswordAuth(rec, r)
 	if rec.Code != 401 {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
@@ -195,7 +198,7 @@ func TestCloudflareStatusConnected(t *testing.T) {
 func TestCloudflareConnectBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", strings.NewReader(`not json`)))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cloudflare/connect", strings.NewReader(`not json`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -204,7 +207,7 @@ func TestCloudflareConnectBadJSON(t *testing.T) {
 func TestCloudflareConnectMissingFields(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", strings.NewReader(`{"token":""}`)))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cloudflare/connect", strings.NewReader(`{"token":""}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}

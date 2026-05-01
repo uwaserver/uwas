@@ -22,7 +22,9 @@ func testAuditServer() *Server {
 	}
 	log := logger.New("error", "text")
 	m := metrics.New()
-	return New(cfg, log, m)
+	s := New(cfg, log, m)
+	s.mux = &testMux{mux: s.mux.(*http.ServeMux)}
+	return s
 }
 
 func TestRecordAudit(t *testing.T) {

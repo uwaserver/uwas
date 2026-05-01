@@ -6,17 +6,40 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
 )
+
+// testMux wraps http.ServeMux to inject a virtual admin user for tests.
+type testMux struct {
+	mux *http.ServeMux
+}
+
+func (m *testMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	m.mux.HandleFunc(pattern, handler)
+}
+
+func (m *testMux) Handle(pattern string, handler http.Handler) {
+	m.mux.Handle(pattern, handler)
+}
+
+func (m *testMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := auth.UserFromContext(r.Context()); !ok {
+		user := &auth.User{ID: "local", Username: "admin", Role: auth.RoleAdmin, Enabled: true}
+		r = r.WithContext(auth.WithUser(r.Context(), user))
+	}
+	m.mux.ServeHTTP(w, r)
+}
 
 func testServer() *Server {
 	cfg := &config.Config{
@@ -30,7 +53,9 @@ func testServer() *Server {
 	}
 	log := logger.New("error", "text")
 	m := metrics.New()
-	return New(cfg, log, m)
+	s := New(cfg, log, m)
+	s.mux = &testMux{mux: s.mux.(*http.ServeMux)}
+	return s
 }
 
 func TestHealthEndpoint(t *testing.T) {

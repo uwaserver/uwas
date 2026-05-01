@@ -693,6 +693,9 @@ func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Port  string `json:"port"`
@@ -715,6 +718,9 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Port  string `json:"port"`
@@ -737,7 +743,7 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	numStr := r.PathValue("number")
@@ -755,6 +761,9 @@ func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if err := firewall.Enable(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -763,7 +772,7 @@ func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	if err := firewall.Disable(); err != nil {
@@ -870,7 +879,7 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	info, err := selfupdate.CheckUpdate(build.Version)
@@ -928,6 +937,9 @@ func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Name     string `json:"name"`
@@ -953,7 +965,7 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	name := r.PathValue("name")
@@ -1310,6 +1322,9 @@ func (s *Server) handleServicesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := services.StartService(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1320,6 +1335,9 @@ func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServiceStop(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := services.StopService(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1330,6 +1348,9 @@ func (s *Server) handleServiceStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := services.RestartService(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1342,6 +1363,9 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 // ============ Database Service Control ============
 
 func (s *Server) handleDBStart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if err := database.StartService(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1351,6 +1375,9 @@ func (s *Server) handleDBStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBStop(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if err := database.StopService(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1360,6 +1387,9 @@ func (s *Server) handleDBStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if err := database.RestartService(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1959,6 +1989,9 @@ func findPkg(id string) *knownPkg {
 }
 
 func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
@@ -2049,6 +2082,9 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 // ============ Site Migration + Clone ============
 
 func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req migrate.MigrateRequest
@@ -2183,6 +2219,9 @@ func (s *Server) autoCreateDomainForClone(req *migrate.CloneRequest, result *mig
 }
 
 func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
@@ -2259,6 +2298,9 @@ func (s *Server) createDomainsFromMigration(result *migrate.CPanelResult, webRoo
 // handleMigrateCPanel imports a cPanel backup archive (cpmove-*.tar.gz).
 // Expects multipart upload with "backup" file field.
 func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<30) // 10GB max backup
@@ -2484,6 +2526,9 @@ func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
 // ── SSL Certificate Upload ─────────────────────────────────────────
 
 func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	host := r.PathValue("host")
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
