@@ -42,11 +42,11 @@ eliminating the EvalSymlinks walk entirely.
 
 **Reopen path if accepted:**
 1. Add `pathsafe.InvalidateBase` call to every domain-delete site.
-   Search starting points:
-   - `internal/admin/api.go` — domain CRUD endpoints
-   - `internal/admin/handlers_*.go`
-   - `internal/migrate/` — migration rollback
-   - `internal/deploy/` — deploy failure cleanup
+   - `internal/admin/api.go:handleDeleteDomain` — ✅ DONE (this session)
+   - `internal/admin/handlers_*.go` — still needed
+   - `internal/migrate/` — migration rollback — still needed
+   - `internal/deploy/` — deploy failure cleanup — still needed
+   Missing any site = orphan directory handle → `rmdir` fails on Windows.
 2. Use the `os.Root`-backed `Base` (work-in-progress code lives in this
    session's git history under hash inside the revert; can be replayed).
 3. The Windows path normalization issue (`filepath.Clean("/"+x)` producing UNC
@@ -84,49 +84,43 @@ SecurityHeaders, the value is unique per request (UUIDv7), so we can't share
 a pre-built slice the way `internal/middleware/headers.go:11-15` does for
 constants.
 
-**Reopen path:**
-- `sync.Pool` of `[]string{""}` slices, reused per request. After response is
-  written, return the slice to the pool.
-- Lifecycle gotcha: stdlib `net/http` reads the header map during response
-  write. The slice must stay valid until that completes. Returning to pool in
-  `ReleaseContext` (which is `defer router.ReleaseContext(ctx)`) is safe — by
-  that point the response is fully flushed.
-- Implementation: extend `internal/router/context.go:ReleaseContext` to walk
-  `Response.Header()` and return any pool-managed value slices. That coupling
-  is the blast radius — `internal/router/` would need to know about middleware
-  internals.
+**Attempted:** `sync.Pool` of `[]string{id}` slices, recycled after `ServeHTTP`.
+**Reverted:** Race condition — `net/http` reads header map during response
+write, but slice was returned to pool immediately after `next.ServeHTTP`.
+If GC ran between write and pool return, the backing array could be reused
+by another goroutine before the write completed.
+
+**Reopen path (v2):** Return slice to pool in `router.ReleaseContext` instead
+of inline in the middleware. Requires `ReleaseContext` to walk
+`Response.Header()` and identify pool-managed slices. Cross-package coupling
+is the blast radius. Alternative: store a `*[]string` closure on the context
+that the middleware populates and that `ReleaseContext` drains.
 
 **Projected gain:** −1 alloc/req on every middleware-chain pass. Marginal.
 
-**Why parked:** the cross-package coupling between `router/` and `middleware/`
-is the main cost. Worth considering only if `MiddlewareChain` becomes a
-bottleneck under e2e load tests (see §5).
+**Why parked:** cross-package coupling is the main cost. Worth reconsidering
+only if `MiddlewareChain` shows up as a bottleneck in e2e load tests (see §5).
 
 ---
 
 ## 3. `router.generateID` string allocation
 
-**Cost:** 1 alloc/req in `BenchmarkContextAcquireRelease` (33% of the
-post-pool 2-alloc baseline).
+**SHIPPED: commit `4b20242`** — `idBytes [16]byte` field + `ID()` /
+`RequestContextID()` methods with cached string. Bench baseline reduced
+from 3→2→1 alloc/req across perf sprint.
 
-**Where:** `internal/router/context.go:64-91` (`generateID` returns
-`string(sb[:])`).
+**What was done:**
+- `ctx.ID` field removed; replaced with `idBytes [16]byte` private field
+- `ID()` method provided for backward compat (calls `RequestContextID()`)
+- `RequestContextID()` computes hex string lazily on first call, caches in
+  `idCached` field; `generateID()` retained as exported function for tests
+- `generateIDBytes()` writes directly into the caller's `[16]byte` to avoid
+  intermediate allocation
 
-**Why it allocates:** UUIDv7-format ID is a 36-byte string. The conversion
-from `[36]byte` to `string` always heap-allocates the underlying bytes.
+**Remaining alloc:** `OriginalURI = r.URL.RequestURI()` in `AcquireContext`
+still allocates. See §4.
 
-**Reopen path:**
-- Store ID as `[36]byte` on `RequestContext`, expose as `string` via a method
-  that does the conversion lazily.
-- Or expose as `String()` returning the same allocated string but cache it on
-  the context.
-- All consumers of `ctx.ID` (search: `grep -rn 'ctx\.ID' internal/`) must move
-  from field access to method call. ~24 callsites.
-
-**Projected gain:** −1 alloc/req in the request hot path.
-
-**Why parked:** field-to-method migration is mechanical but touches many
-files; risk/reward unfavorable for 1 alloc.
+**Projected gain:** −1 alloc/req. **Actual:** −1 alloc/req in bench.
 
 ---
 

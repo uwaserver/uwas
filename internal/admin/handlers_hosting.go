@@ -934,10 +934,16 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // ============ Database ============
 
 func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	jsonResponse(w, database.GetStatus())
 }
 
 func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	// Check if MySQL is available before querying
 	st := database.GetStatus()
 	if !st.Installed || !st.Running {
@@ -999,6 +1005,9 @@ func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	st := database.GetStatus()
 	if st.Installed {
 		jsonResponse(w, map[string]string{"status": "already_installed", "version": st.Version})
@@ -1026,6 +1035,9 @@ func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	users, err := database.ListUsers()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1038,6 +1050,9 @@ func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		User     string `json:"user"`
@@ -1061,6 +1076,9 @@ func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	data, err := database.ExportDatabase(name)
 	if err != nil {
@@ -1079,6 +1097,9 @@ func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	r.Body = http.MaxBytesReader(w, r.Body, 256<<20) // 256MB max
 	data, err := io.ReadAll(r.Body)
@@ -1095,7 +1116,7 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	ip := requestIP(r)
@@ -1111,6 +1132,9 @@ func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	out, err := database.RepairService()
 	if err != nil {
@@ -1124,7 +1148,7 @@ func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	ip := requestIP(r)
@@ -1140,12 +1164,18 @@ func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDBDiagnose(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	jsonResponse(w, database.DiagnoseService())
 }
 
 // ============ Docker Database Containers ============
 
 func (s *Server) handleDockerDBList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if !database.DockerAvailable() {
 		jsonResponse(w, map[string]any{"docker": false, "containers": []any{}})
 		return
@@ -1166,6 +1196,9 @@ func (s *Server) handleDockerDBList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if !database.DockerAvailable() {
 		jsonError(w, "Docker is not installed or not running", http.StatusServiceUnavailable)
 		return
@@ -1200,6 +1233,9 @@ func (s *Server) handleDockerDBCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBStart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := database.StartDockerDB(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1209,6 +1245,9 @@ func (s *Server) handleDockerDBStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBStop(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if err := database.StopDockerDB(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1218,7 +1257,7 @@ func (s *Server) handleDockerDBStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	name := r.PathValue("name")
@@ -1231,6 +1270,9 @@ func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBListDatabases(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	dbs, err := database.DockerDBListDatabases(name)
 	if err != nil {
@@ -1244,6 +1286,9 @@ func (s *Server) handleDockerDBListDatabases(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleDockerDBCreateDatabase(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
@@ -1271,7 +1316,7 @@ func (s *Server) handleDockerDBCreateDatabase(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	name := r.PathValue("name")
@@ -1285,6 +1330,9 @@ func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleDockerDBExport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	db := r.PathValue("db")
 	dump, err := database.DockerDBExport(name, db)
@@ -1304,6 +1352,9 @@ func (s *Server) handleDockerDBExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDockerDBImport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	db := r.PathValue("db")
 	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB max
@@ -2374,6 +2425,9 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 // ── Database Explorer ──────────────────────────────────────────────
 
 func (s *Server) handleDBExploreTables(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	db := r.PathValue("db")
 	if db == "" {
 		jsonError(w, "database name required", http.StatusBadRequest)
@@ -2411,6 +2465,9 @@ func (s *Server) handleDBExploreTables(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDBExploreColumns(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	db := r.PathValue("db")
 	table := r.PathValue("table")
 	if !database.ValidDBIdentifier(db) || !database.ValidDBIdentifier(table) {
@@ -2444,6 +2501,9 @@ func (s *Server) handleDBExploreColumns(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	db := r.PathValue("db")
 	if !database.ValidDBIdentifier(db) {
 		jsonError(w, "invalid database name", http.StatusBadRequest)
