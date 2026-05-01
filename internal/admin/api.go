@@ -1038,7 +1038,15 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.configMu.RUnlock()
-	jsonResponse(w, domains)
+	limit, offset := parsePagination(r)
+	domains, total := paginateSlice(domains, limit, offset)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"items":  domains,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -1119,7 +1127,15 @@ func (s *Server) handlePHPList(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
 	}
-	jsonResponse(w, s.phpMgr.Status())
+	statuses := s.phpMgr.Status()
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(statuses, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handlePHPInstallInfo(w http.ResponseWriter, r *http.Request) {
@@ -1247,7 +1263,15 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 	if tasks == nil {
 		tasks = []install.Task{}
 	}
-	jsonResponse(w, tasks)
+	limit, offset := parsePagination(r)
+	tasks, total := paginateSlice(tasks, limit, offset)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"items":  tasks,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleTaskGet(w http.ResponseWriter, r *http.Request) {
@@ -2231,6 +2255,22 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
 		return
 	}
+	// Mass-assignment protection: non-admin users cannot set sensitive fields.
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			d.SSL = config.SSLConfig{}
+			d.Security = config.SecurityConfig{}
+			d.Cache = config.DomainCache{}
+			d.Compression = config.CompressionConfig{}
+			d.BasicAuth = config.BasicAuthConfig{}
+			d.Resources = config.ResourceLimits{}
+			d.Aliases = nil
+			d.Htaccess = config.HtaccessConfig{}
+			d.Locations = nil
+			d.PHP.FPMAddress = ""
+		}
+	}
+
 	if d.Type == "" {
 		d.Type = "static"
 	}
@@ -2594,7 +2634,56 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	_, hasBasicAuth := raw["basic_auth"]
 	_, hasSecurity := raw["security"]
 	_, hasCache := raw["cache"]
+	_, hasSSL := raw["ssl"]
+	_, hasCompression := raw["compression"]
+	_, hasResources := raw["resources"]
+	_, hasHtaccess := raw["htaccess"]
 	replaceMode := r.URL.Query().Get("replace") == "true"
+
+	// Mass-assignment protection: non-admin users cannot modify sensitive fields.
+	if currentUser != nil && currentUser.Role != auth.RoleAdmin {
+		sensitive := []string{}
+		if hasSSL {
+			sensitive = append(sensitive, "ssl")
+		}
+		if hasSecurity {
+			sensitive = append(sensitive, "security")
+		}
+		if hasCache {
+			sensitive = append(sensitive, "cache")
+		}
+		if hasCompression {
+			sensitive = append(sensitive, "compression")
+		}
+		if hasBasicAuth {
+			sensitive = append(sensitive, "basic_auth")
+		}
+		if hasResources {
+			sensitive = append(sensitive, "resources")
+		}
+		if hasAliases {
+			sensitive = append(sensitive, "aliases")
+		}
+		if hasHtaccess {
+			sensitive = append(sensitive, "htaccess")
+		}
+		if hasLocations {
+			sensitive = append(sensitive, "locations")
+		}
+		if rawPHP, ok := raw["php"]; ok {
+			var phpRaw map[string]json.RawMessage
+			if err := json.Unmarshal(rawPHP, &phpRaw); err == nil {
+				if _, ok := phpRaw["fpm_address"]; ok {
+					sensitive = append(sensitive, "php.fpm_address")
+				}
+			}
+		}
+		if len(sensitive) > 0 {
+			s.RecordAudit("domain.update", "domain: "+host+" (forbidden fields: "+strings.Join(sensitive, ", ")+")", ip, false)
+			jsonError(w, "forbidden: non-admin users cannot modify "+strings.Join(sensitive, ", "), http.StatusForbidden)
+			return
+		}
+	}
 
 	s.configMu.Lock()
 	found := false
@@ -3023,7 +3112,15 @@ func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
 	if users == nil {
 		users = []siteuser.User{}
 	}
-	jsonResponse(w, users)
+	limit, offset := parsePagination(r)
+	users, total := paginateSlice(users, limit, offset)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"items":  users,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
@@ -3913,7 +4010,15 @@ func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 	if backups == nil {
 		backups = make([]backup.BackupInfo, 0)
 	}
-	jsonResponse(w, backups)
+	limit, offset := parsePagination(r)
+	backups, total := paginateSlice(backups, limit, offset)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"items":  backups,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
@@ -4861,6 +4966,40 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, roles ...au
 	}
 	jsonError(w, "insufficient privileges", http.StatusForbidden)
 	return false
+}
+
+// parsePagination reads limit/offset from query parameters.
+// Defaults: limit=50, offset=0. Max limit=500.
+func parsePagination(r *http.Request) (limit, offset int) {
+	limit = 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset = 0
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	return
+}
+
+// paginateSlice returns a paginated slice and the total count.
+func paginateSlice[T any](items []T, limit, offset int) ([]T, int) {
+	total := len(items)
+	if offset >= total {
+		return []T{}, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return items[offset:end], total
 }
 
 // --- Cloudflare Integration ---

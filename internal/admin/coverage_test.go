@@ -412,8 +412,11 @@ func TestBackupCreateListDeleteFlow(t *testing.T) {
 		t.Fatalf("list: status = %d, want 200", rec.Code)
 	}
 
-	var backups []backup.BackupInfo
-	json.Unmarshal(rec.Body.Bytes(), &backups)
+	var resp struct {
+		Items []backup.BackupInfo `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	backups := resp.Items
 	if len(backups) < 1 {
 		t.Fatalf("backups count = %d, want >= 1", len(backups))
 	}
@@ -746,8 +749,11 @@ func TestBackupCreateRecordsAudit(t *testing.T) {
 	auditRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(auditRec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(auditRec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(auditRec.Body.Bytes(), &resp)
+	entries := resp.Items
 	found := false
 	for _, e := range entries {
 		if e.Action == "backup.create" && e.Success {
@@ -843,8 +849,11 @@ func TestCachePurgeRecordsAudit(t *testing.T) {
 	auditRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(auditRec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(auditRec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(auditRec.Body.Bytes(), &resp)
+	entries := resp.Items
 	found := false
 	for _, e := range entries {
 		if e.Action == "cache.purge" && !e.Success {
@@ -873,8 +882,11 @@ func TestReloadRecordsAuditOnFailure(t *testing.T) {
 	auditRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(auditRec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(auditRec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(auditRec.Body.Bytes(), &resp)
+	entries := resp.Items
 	found := false
 	for _, e := range entries {
 		if e.Action == "config.reload" && !e.Success {
@@ -900,8 +912,11 @@ func TestBackupDeleteRecordsAudit(t *testing.T) {
 	auditRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(auditRec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(auditRec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(auditRec.Body.Bytes(), &resp)
+	entries := resp.Items
 	found := false
 	for _, e := range entries {
 		if e.Action == "backup.delete" && !e.Success {
@@ -928,8 +943,11 @@ func TestBackupRestoreRecordsAudit(t *testing.T) {
 	auditRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(auditRec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(auditRec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(auditRec.Body.Bytes(), &resp)
+	entries := resp.Items
 	found := false
 	for _, e := range entries {
 		if e.Action == "backup.restore" && !e.Success {
@@ -956,8 +974,11 @@ func TestBackupSchedulePutRecordsAudit(t *testing.T) {
 	auditRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(auditRec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(auditRec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(auditRec.Body.Bytes(), &resp)
+	entries := resp.Items
 	found := false
 	for _, e := range entries {
 		if e.Action == "backup.schedule" && !e.Success {

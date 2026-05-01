@@ -28,7 +28,14 @@ func (s *Server) handleAppList(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, inst)
 		}
 	}
-	jsonResponse(w, filtered)
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(filtered, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleAppGet(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +259,14 @@ func (s *Server) handleDeployList(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, status)
 		}
 	}
-	jsonResponse(w, filtered)
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(filtered, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 // handleDeployWebhook handles GitHub/GitLab push webhooks for auto-deploy.

@@ -85,12 +85,14 @@ func TestTaskList(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 
-	var tasks []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal tasks: %v", err)
 	}
 	// Should return empty array initially
-	if tasks == nil {
+	if resp.Items == nil {
 		t.Error("expected empty array, got nil")
 	}
 }
@@ -191,10 +193,12 @@ func TestDomainsEndpoint(t *testing.T) {
 		t.Errorf("status = %d", rec.Code)
 	}
 
-	var domains []map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &domains)
-	if len(domains) != 2 {
-		t.Errorf("domains = %d, want 2", len(domains))
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Items) != 2 {
+		t.Errorf("domains = %d, want 2", len(resp.Items))
 	}
 }
 

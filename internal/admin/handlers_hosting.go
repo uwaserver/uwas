@@ -127,7 +127,14 @@ func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request) {
 	if sites == nil {
 		sites = []wordpress.SiteInfo{}
 	}
-	jsonResponse(w, sites)
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(sites, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 // handleWPSiteDetail returns enriched info (plugins, themes via wp-cli) for a single site.
@@ -447,7 +454,14 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []filemanager.Entry{}
 	}
-	jsonResponse(w, entries)
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(entries, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
@@ -644,7 +658,14 @@ func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request) {
 	if jobs == nil {
 		jobs = []cronjob.Job{}
 	}
-	jsonResponse(w, jobs)
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(jobs, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request) {

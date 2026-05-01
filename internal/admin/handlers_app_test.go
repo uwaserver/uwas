@@ -32,10 +32,13 @@ func TestHandleAppList(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 
-	var apps []appmanager.AppInstance
-	if err := json.Unmarshal(rec.Body.Bytes(), &apps); err != nil {
+	var resp struct {
+		Items []appmanager.AppInstance `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
+	apps := resp.Items
 	if len(apps) != 1 {
 		t.Errorf("expected 1 app, got %d", len(apps))
 	}

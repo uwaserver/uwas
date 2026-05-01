@@ -80,12 +80,6 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	} else {
 		count = s.auditPos
 	}
-	if count == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[]\n"))
-		return
-	}
-
 	var start int
 	if s.auditFull {
 		start = s.auditPos // oldest entry
@@ -96,7 +90,15 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		idx := (start + i) % maxAuditEntries
 		result = append(result, s.auditEntries[idx])
 	}
-	jsonResponse(w, result)
+
+	limit, offset := parsePagination(r)
+	result, total := paginateSlice(result, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  result,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 // --- Rate limiting ---
