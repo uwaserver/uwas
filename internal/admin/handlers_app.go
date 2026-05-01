@@ -130,6 +130,29 @@ func (s *Server) handleAppStats(w http.ResponseWriter, r *http.Request) {
 
 // --- App config + logs handlers ---
 
+// blockedEnvVars are system-critical environment variables that apps must not override.
+var blockedEnvVars = map[string]bool{
+	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "LD_AUDIT": true,
+	"LD_PROFILE": true, "SHELL": true, "IFS": true, "ENV": true, "BASH_ENV": true,
+	"PS4": true, "PROMPT_COMMAND": true, "HOME": true, "USER": true, "LOGNAME": true,
+}
+
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, c := range name {
+		if i == 0 {
+			if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
+				return false
+			}
+		} else if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {
 	if s.appMgr == nil {
 		jsonError(w, "app manager not enabled", http.StatusNotImplemented)
@@ -148,6 +171,16 @@ func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	for k := range req.Env {
+		if !validEnvName(k) {
+			jsonError(w, "invalid environment variable name: "+k, http.StatusBadRequest)
+			return
+		}
+		if blockedEnvVars[k] {
+			jsonError(w, "environment variable "+k+" cannot be modified", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Update domain config

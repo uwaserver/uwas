@@ -284,9 +284,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/deploys", s.handleDeployList)
 	s.mux.HandleFunc("POST /api/v1/apps/{domain}/webhook", s.handleDeployWebhook)
 
-	// Web terminal (WebSocket → PTY) — requires pin for security
+	// Web terminal (WebSocket → PTY) — requires admin + pin for security
 	s.mux.HandleFunc("GET /api/v1/terminal", func(w http.ResponseWriter, r *http.Request) {
-		if !s.requirePin(w, r) {
+		if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 			return
 		}
 		s.terminalHandler().ServeHTTP(w, r)
@@ -2047,11 +2047,15 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 	json.NewEncoder(w).Encode(data)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
@@ -3281,7 +3285,8 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	dir := filepath.Dir(s.configPath)
 	tmp, err := os.CreateTemp(dir, ".uwas-config-*.yaml")
 	if err != nil {
-		jsonError(w, "failed to create temp file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("config raw put: create temp failed", "error", err)
+		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
 	tmpName := tmp.Name()
@@ -3289,18 +3294,21 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		jsonError(w, "failed to write temp file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("config raw put: write temp failed", "error", err)
+		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		jsonError(w, "failed to close temp file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("config raw put: close temp failed", "error", err)
+		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
 
 	if err := os.Rename(tmpName, s.configPath); err != nil {
 		os.Remove(tmpName)
-		jsonError(w, "failed to rename config: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("config raw put: rename failed", "error", err)
+		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
 
@@ -3893,14 +3901,16 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 	// Ensure the domains.d directory exists.
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		jsonError(w, "failed to create domains directory: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("domain raw put: mkdir failed", "error", err)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
 		return
 	}
 
 	// Atomic write: temp file then rename.
 	tmp, err := os.CreateTemp(dir, ".uwas-domain-*.yaml")
 	if err != nil {
-		jsonError(w, "failed to create temp file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("domain raw put: create temp failed", "error", err)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
 		return
 	}
 	tmpName := tmp.Name()
@@ -3908,18 +3918,21 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		jsonError(w, "failed to write temp file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("domain raw put: write temp failed", "error", err)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		jsonError(w, "failed to close temp file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("domain raw put: close temp failed", "error", err)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
 		return
 	}
 
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
-		jsonError(w, "failed to rename domain file: "+err.Error(), http.StatusInternalServerError)
+		s.logger.Error("domain raw put: rename failed", "error", err)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
 		return
 	}
 

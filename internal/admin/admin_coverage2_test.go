@@ -1468,9 +1468,12 @@ func TestPackageList(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var pkgs []PackageInfo
-	json.Unmarshal(rec.Body.Bytes(), &pkgs)
-	if len(pkgs) == 0 {
+	var result struct {
+		Items []PackageInfo `json:"items"`
+		Total int           `json:"total"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &result)
+	if len(result.Items) == 0 {
 		t.Error("packages should not be empty")
 	}
 }
