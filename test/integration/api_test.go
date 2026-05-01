@@ -217,10 +217,13 @@ func TestAdminDomainsEndpoint(t *testing.T) {
 		t.Fatalf("domains status = %d, want 200", resp.StatusCode)
 	}
 
-	var domains []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&domains); err != nil {
+	var domainResp struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&domainResp); err != nil {
 		t.Fatal(err)
 	}
+	domains := domainResp.Items
 	if len(domains) != 1 {
 		t.Fatalf("expected 1 domain, got %d", len(domains))
 	}
@@ -435,8 +438,11 @@ func TestAdminDomainCRUD(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		var domains []map[string]any
-		json.NewDecoder(resp.Body).Decode(&domains)
+		var domainResp struct {
+			Items []map[string]any `json:"items"`
+		}
+		json.NewDecoder(resp.Body).Decode(&domainResp)
+		domains := domainResp.Items
 
 		found := false
 		for _, d := range domains {
@@ -492,8 +498,11 @@ func TestAdminDomainCRUD(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		var domains []map[string]any
-		json.NewDecoder(resp.Body).Decode(&domains)
+		var domainResp struct {
+			Items []map[string]any `json:"items"`
+		}
+		json.NewDecoder(resp.Body).Decode(&domainResp)
+		domains := domainResp.Items
 
 		for _, d := range domains {
 			if d["host"] == "new-domain.local" {
@@ -622,8 +631,11 @@ func TestAuditLogRecording(t *testing.T) {
 		t.Fatalf("audit status = %d, want 200", resp3.StatusCode)
 	}
 
-	var entries []map[string]any
-	json.NewDecoder(resp3.Body).Decode(&entries)
+	var auditResp struct {
+		Items []map[string]any `json:"items"`
+	}
+	json.NewDecoder(resp3.Body).Decode(&auditResp)
+	entries := auditResp.Items
 
 	if len(entries) < 2 {
 		t.Fatalf("expected at least 2 audit entries, got %d", len(entries))

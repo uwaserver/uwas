@@ -56,10 +56,13 @@ func TestTaskListEmpty2(t *testing.T) {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 
-	var tasks []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &tasks); err != nil {
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal: %v", err)
 	}
+	tasks := resp.Items
 	if tasks == nil {
 		t.Error("expected empty array, got nil")
 	}

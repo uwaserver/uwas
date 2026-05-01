@@ -43,10 +43,13 @@ func TestRecordAudit(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	var entries []AuditEntry
-	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	entries := resp.Items
 	if len(entries) != 3 {
 		t.Fatalf("entries = %d, want 3", len(entries))
 	}
@@ -93,14 +96,21 @@ func TestAuditRingBufferOverflow(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+		Total int          `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	entries := resp.Items
 
-	// Should have exactly maxAuditEntries entries.
-	if len(entries) != maxAuditEntries {
-		t.Fatalf("entries = %d, want %d", len(entries), maxAuditEntries)
+	// Total should be maxAuditEntries, but items are paginated (default limit 50).
+	if resp.Total != maxAuditEntries {
+		t.Fatalf("total = %d, want %d", resp.Total, maxAuditEntries)
+	}
+	if len(entries) > 500 {
+		t.Fatalf("items = %d, want <= 500", len(entries))
 	}
 
 	// The first 50 "old.action" entries should have been overwritten.
@@ -123,9 +133,14 @@ func TestAuditEmptyReturnsEmptyArray(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	body := strings.TrimSpace(rec.Body.String())
-	if body != "[]" {
-		t.Errorf("body = %q, want []", body)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 0 {
+		t.Errorf("items = %d, want 0", len(resp.Items))
 	}
 }
 
@@ -442,8 +457,11 @@ func TestAuditRecordedOnReload(t *testing.T) {
 	rec = httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(rec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	entries := resp.Items
 	if len(entries) != 1 {
 		t.Fatalf("audit entries = %d, want 1", len(entries))
 	}
@@ -495,8 +513,11 @@ func TestAuditRecordedOnDomainCRUD(t *testing.T) {
 	rec = httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/audit", nil))
 
-	var entries []AuditEntry
-	json.Unmarshal(rec.Body.Bytes(), &entries)
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	entries := resp.Items
 	if len(entries) != 3 {
 		t.Fatalf("audit entries = %d, want 3", len(entries))
 	}

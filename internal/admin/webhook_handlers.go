@@ -32,7 +32,14 @@ func (s *Server) handleWebhookList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jsonResponse(w, result)
+	limit, offset := parsePagination(r)
+	items, total := paginateSlice(result, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
