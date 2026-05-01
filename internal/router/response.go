@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -17,12 +18,31 @@ type ResponseWriter struct {
 	ttfb          time.Duration
 }
 
+var responseWriterPool = sync.Pool{
+	New: func() any { return &ResponseWriter{} },
+}
+
+// NewResponseWriter returns a pooled *ResponseWriter wrapping w. The wrapper
+// is returned to the pool by ReleaseContext (or ReleaseResponseWriter for
+// callers obtaining one outside the request lifecycle).
 func NewResponseWriter(w http.ResponseWriter) *ResponseWriter {
-	return &ResponseWriter{
+	rw := responseWriterPool.Get().(*ResponseWriter)
+	*rw = ResponseWriter{
 		ResponseWriter: w,
 		statusCode:     http.StatusOK,
 		startTime:      time.Now(),
 	}
+	return rw
+}
+
+// ReleaseResponseWriter returns rw to the pool. After this call rw must not
+// be used.
+func ReleaseResponseWriter(rw *ResponseWriter) {
+	if rw == nil {
+		return
+	}
+	rw.ResponseWriter = nil
+	responseWriterPool.Put(rw)
 }
 
 func (w *ResponseWriter) WriteHeader(code int) {

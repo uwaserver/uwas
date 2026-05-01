@@ -61,6 +61,7 @@ func AcquireContext(w http.ResponseWriter, r *http.Request) *RequestContext {
 }
 
 func ReleaseContext(ctx *RequestContext) {
+	ReleaseResponseWriter(ctx.Response)
 	ctx.Request = nil
 	ctx.Response = nil
 	contextPool.Put(ctx)
