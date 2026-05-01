@@ -2953,6 +2953,9 @@ func isAllowedOrigin(origin string, r *http.Request) bool {
 func (s *Server) SetTLSManager(m *uwastls.Manager) { s.tlsMgr = m }
 
 func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	defer s.configMu.RUnlock()
 
@@ -3013,6 +3016,9 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	host := r.PathValue("host")
 	if s.tlsMgr == nil {
 		jsonError(w, "TLS manager not available", http.StatusServiceUnavailable)
@@ -3108,6 +3114,9 @@ func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Requ
 // --- SFTP Users ---
 
 func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	users := siteuser.ListUsers()
 	if users == nil {
 		users = []siteuser.User{}
@@ -3124,6 +3133,9 @@ func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Domain string `json:"domain"`
@@ -4002,6 +4014,9 @@ func (s *Server) SetBackupManager(m *backup.BackupManager) { s.backupMgr = m }
 func (s *Server) SetBandwidthManager(m *bandwidth.Manager) { s.bwMgr = m }
 
 func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.backupMgr == nil {
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
@@ -4022,6 +4037,9 @@ func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	if s.backupMgr == nil {
 		s.RecordAudit("backup.create", "backup not enabled", ip, false)
@@ -4067,6 +4085,9 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	if s.backupMgr == nil {
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
@@ -4192,6 +4213,9 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.backupMgr == nil {
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
@@ -4200,6 +4224,9 @@ func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	if s.backupMgr == nil {
 		s.RecordAudit("backup.schedule", "backup not enabled", ip, false)
