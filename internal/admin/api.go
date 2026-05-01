@@ -2488,6 +2488,11 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	ip := requestIP(r)
 	host := r.PathValue("host")
 	cleanup := r.URL.Query().Get("cleanup") == "true"
+	confirm := r.URL.Query().Get("confirm") == "true"
+	if !confirm {
+		jsonError(w, "missing confirmation: add ?confirm=true", http.StatusBadRequest)
+		return
+	}
 
 	// Protect default/system domains from deletion
 	if host == "localhost" || host == "localhost:80" || host == "localhost:443" || host == "127.0.0.1" {
