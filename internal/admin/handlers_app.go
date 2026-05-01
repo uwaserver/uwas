@@ -315,9 +315,7 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a push event (GitHub sends X-GitHub-Event header)
 	event := r.Header.Get("X-GitHub-Event")
 	if event != "" && event != "push" && event != "ping" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ignored", "event": event})
+		jsonResponse(w, map[string]string{"status": "ignored", "event": event})
 		return
 	}
 	// Respond to ping
@@ -349,7 +347,5 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "deploying", "branch": branch})
+	jsonResponse(w, map[string]string{"status": "deploying", "branch": branch})
 }
