@@ -2575,7 +2575,7 @@ func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
 	// Add LIMIT if SELECT and no LIMIT present
 	if strings.HasPrefix(upper, "SELECT") && !strings.Contains(upper, "LIMIT") {
 		limit := req.Limit
-		if limit <= 0 || limit > 1000 {
+		if limit <= 0 || limit > 500 {
 			limit = 100
 		}
 		req.SQL = req.SQL + fmt.Sprintf(" LIMIT %d", limit)
@@ -2613,9 +2613,13 @@ func (s *Server) handleDBExploreQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	headers := strings.Split(lines[0], "\t")
 	var rows [][]string
+	maxRows := 500
 	for _, line := range lines[1:] {
 		if line != "" {
 			rows = append(rows, strings.Split(line, "\t"))
+			if len(rows) >= maxRows {
+				break
+			}
 		}
 	}
 	jsonResponse(w, map[string]any{

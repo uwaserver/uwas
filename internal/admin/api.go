@@ -531,7 +531,7 @@ func (s *Server) Start() error {
 	}
 
 	s.httpSrv = &http.Server{
-		Handler:      s.authMiddleware(requireJSONMiddleware(s.mux)),
+		Handler:      middleware.RequestID()(s.authMiddleware(requireJSONMiddleware(s.mux))),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Minute, // SSE, DB export, backup can take minutes
 	}
@@ -2049,6 +2049,7 @@ func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
 	json.NewEncoder(w).Encode(data)
 }
 
@@ -2056,7 +2057,13 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
 	w.WriteHeader(code)
+	reqID := w.Header().Get("X-Request-ID")
+	if reqID != "" {
+		json.NewEncoder(w).Encode(map[string]string{"error": msg, "request_id": reqID})
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 

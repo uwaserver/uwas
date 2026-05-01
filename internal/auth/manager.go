@@ -451,7 +451,22 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 
 	user.UpdatedAt = time.Now()
 	m.saveUsers()
+
+	// MEDIUM-9: invalidate sessions on password change or disable
+	if updates.Password != "" || (updates.EnabledSet && !updates.Enabled) {
+		m.invalidateUserSessionsLocked(user.ID)
+	}
 	return nil
+}
+
+// invalidateUserSessionsLocked removes all sessions for a user.
+// Must be called with m.mu held.
+func (m *Manager) invalidateUserSessionsLocked(userID string) {
+	for token, session := range m.sessions {
+		if session.UserID == userID {
+			delete(m.sessions, token)
+		}
+	}
 }
 
 func cloneUser(user *User) *User {
@@ -479,6 +494,7 @@ func (m *Manager) DeleteUser(username string) error {
 	delete(m.users, username)
 	delete(m.usersByID, user.ID)
 	m.saveUsers()
+	m.invalidateUserSessionsLocked(user.ID)
 	return nil
 }
 
@@ -529,6 +545,7 @@ func (m *Manager) ChangePassword(username, currentPassword, newPassword string) 
 	user.Password = string(hash)
 	user.UpdatedAt = time.Now()
 	m.saveUsers()
+	m.invalidateUserSessionsLocked(user.ID)
 	return nil
 }
 
