@@ -71,7 +71,8 @@ func TestSettingsPutInvalidJSON2(t *testing.T) {
 
 	body := strings.NewReader(`{not valid`)
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings", body))
+	req := httptest.NewRequest("PUT", "/api/v1/settings", body)
+	s.mux.ServeHTTP(rec, withAdminContext(req))
 
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)

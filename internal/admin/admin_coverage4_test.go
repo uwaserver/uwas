@@ -101,7 +101,7 @@ func TestDeployListEndpoint(t *testing.T) {
 func TestServiceStopEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/services/test-service/stop", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/services/test-service/stop", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -110,7 +110,7 @@ func TestServiceStopEndpoint(t *testing.T) {
 func TestServiceRestartEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/services/test-service/restart", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/services/test-service/restart", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -119,7 +119,7 @@ func TestServiceRestartEndpoint(t *testing.T) {
 func TestDBStopEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/databases/test-db/stop", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/databases/test-db/stop", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -128,7 +128,7 @@ func TestDBStopEndpoint(t *testing.T) {
 func TestDBRestartEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/databases/test-db/restart", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/databases/test-db/restart", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -137,7 +137,7 @@ func TestDBRestartEndpoint(t *testing.T) {
 func TestFirewallEnableEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/firewall/enable", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/firewall/enable", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -146,7 +146,7 @@ func TestFirewallEnableEndpoint(t *testing.T) {
 func TestFirewallDisableEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/firewall/disable", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/firewall/disable", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -155,7 +155,7 @@ func TestFirewallDisableEndpoint(t *testing.T) {
 func TestUpdateEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/system/update", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/system/update", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -165,7 +165,7 @@ func TestCertUploadEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"cert":"test","key":"test"}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/ssl/upload", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/ssl/upload", body)))
 	if rec.Code != 200 && rec.Code != 400 && rec.Code != 404 && rec.Code != 500 {
 		t.Errorf("status = %d, want 200, 400, 404, or 500", rec.Code)
 	}
@@ -175,7 +175,7 @@ func TestCertUploadInvalidJSON2(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{not valid`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/ssl/upload", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/ssl/upload", body)))
 	// May return 400 or 404
 	if rec.Code != 400 && rec.Code != 404 {
 		t.Errorf("status = %d, want 400 or 404", rec.Code)
@@ -185,7 +185,7 @@ func TestCertUploadInvalidJSON2(t *testing.T) {
 func TestDNSSyncEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/dns/sync", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/dns/sync", nil)))
 	if rec.Code != 200 && rec.Code != 400 && rec.Code != 404 && rec.Code != 405 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 400, 404, 405, or 501", rec.Code)
 	}
@@ -195,7 +195,7 @@ func TestMigrateCPanelEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"source":"test.com"}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/migrate/cpanel", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/migrate/cpanel", body)))
 	if rec.Code != 200 && rec.Code != 400 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 400, 500, or 501", rec.Code)
 	}
@@ -223,7 +223,7 @@ func TestUseRecoveryCodeEndpoint(t *testing.T) {
 func TestDBExploreTablesEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/db-explorer/test-db/tables", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/db-explorer/test-db/tables", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -232,7 +232,7 @@ func TestDBExploreTablesEndpoint(t *testing.T) {
 func TestDBExploreColumnsEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/db-explorer/test-db/tables/users/columns", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/db-explorer/test-db/tables/users/columns", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -242,7 +242,7 @@ func TestDBExploreQueryEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"query":"SELECT 1"}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/db-explorer/test-db/query", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/db-explorer/test-db/query", body)))
 	if rec.Code != 200 && rec.Code != 400 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 400, 404, 500, or 501", rec.Code)
 	}
@@ -260,7 +260,7 @@ func TestWPSiteDetailEndpoint(t *testing.T) {
 func TestDBDropEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/databases/test-db", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("DELETE", "/api/v1/databases/test-db", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -270,7 +270,7 @@ func TestDBInstallEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"type":"mysql"}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/databases/install", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/databases/install", body)))
 	// May return 404 if DB manager not available
 	if rec.Code != 200 && rec.Code != 400 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 400, 404, 500, or 501", rec.Code)
@@ -280,7 +280,7 @@ func TestDBInstallEndpoint(t *testing.T) {
 func TestDBUsersEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/databases/test-db/users", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/databases/test-db/users", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -289,7 +289,7 @@ func TestDBUsersEndpoint(t *testing.T) {
 func TestDBExportEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/databases/test-db/export", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/databases/test-db/export", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -298,7 +298,7 @@ func TestDBExportEndpoint(t *testing.T) {
 func TestDBUninstallEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/databases/test-db/uninstall", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/databases/test-db/uninstall", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -307,7 +307,7 @@ func TestDBUninstallEndpoint(t *testing.T) {
 func TestDBRepairEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/databases/test-db/repair", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/databases/test-db/repair", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -316,7 +316,7 @@ func TestDBRepairEndpoint(t *testing.T) {
 func TestDockerDBListEndpoint2(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/docker/databases", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/docker/databases", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -325,7 +325,7 @@ func TestDockerDBListEndpoint2(t *testing.T) {
 func TestDockerDBStopEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/docker/databases/test-db/stop", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/docker/databases/test-db/stop", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -334,7 +334,7 @@ func TestDockerDBStopEndpoint(t *testing.T) {
 func TestDockerDBRemoveEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/docker/databases/test-db", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("DELETE", "/api/v1/docker/databases/test-db", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -344,7 +344,7 @@ func TestDockerDBCreateDatabaseEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"name":"testdb"}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/docker/databases/test-container/databases", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/docker/databases/test-container/databases", body)))
 	if rec.Code != 200 && rec.Code != 400 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 400, 404, 500, or 501", rec.Code)
 	}
@@ -353,7 +353,7 @@ func TestDockerDBCreateDatabaseEndpoint(t *testing.T) {
 func TestDockerDBDropDatabaseEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/docker/databases/test-container/databases/testdb", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("DELETE", "/api/v1/docker/databases/test-container/databases/testdb", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -430,7 +430,7 @@ func TestSettingsPutEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"webroot":"/var/www"}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("PUT", "/api/v1/settings", body)))
 	if rec.Code != 200 && rec.Code != 400 {
 		t.Errorf("status = %d, want 200 or 400", rec.Code)
 	}
@@ -440,7 +440,7 @@ func TestSettingsPutInvalidJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{not valid`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/settings", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("PUT", "/api/v1/settings", body)))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -692,7 +692,7 @@ func TestHandleSSHKeyDelete_NoSFTP(t *testing.T) {
 func TestHandleUpdate_NoUpdate(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/system/update", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/system/update", nil)))
 	if rec.Code != 200 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 404, 500, or 501", rec.Code)
 	}
@@ -733,7 +733,7 @@ func TestHandlePackageInstall_NoPackage(t *testing.T) {
 	s := testServer()
 	body := strings.NewReader(`{"id":"test-package"}`)
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/packages/install", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/packages/install", body)))
 	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
 		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
 	}

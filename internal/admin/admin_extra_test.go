@@ -410,7 +410,7 @@ func TestConfigRawPutWithNoReloadFunc(t *testing.T) {
 	jsonBody, _ := json.Marshal(map[string]string{"content": newContent})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("PUT", "/api/v1/config/raw", body)))
 
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -787,7 +787,7 @@ func TestConfigRawPutBodyTooLarge(t *testing.T) {
 	// Create a body larger than 1MB
 	bigBody := strings.NewReader(strings.Repeat("a", 2*1024*1024))
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", bigBody))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("PUT", "/api/v1/config/raw", bigBody)))
 
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400 for oversized body", rec.Code)

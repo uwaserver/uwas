@@ -258,7 +258,7 @@ func TestSettingsPut(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/v1/settings", body)
 	req.RemoteAddr = "10.0.0.1:1234"
 	rec := httptest.NewRecorder()
-	s.handleSettingsPut(rec, req)
+	s.handleSettingsPut(rec, withAdminContext(req))
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -274,7 +274,7 @@ func TestSettingsPut(t *testing.T) {
 func TestSettingsPutBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleSettingsPut(rec, httptest.NewRequest("PUT", "/api/v1/settings", strings.NewReader("not json")))
+	s.handleSettingsPut(rec, withAdminContext(httptest.NewRequest("PUT", "/api/v1/settings", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1478,7 +1478,7 @@ func TestPackageList(t *testing.T) {
 func TestPackageInstallBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handlePackageInstall(rec, httptest.NewRequest("POST", "/api/v1/packages/install", strings.NewReader("not json")))
+	s.handlePackageInstall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/packages/install", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1489,7 +1489,7 @@ func TestPackageInstallUnknown(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/packages/install", strings.NewReader(`{"id":"nonexistent"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handlePackageInstall(rec, req)
+	s.handlePackageInstall(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1513,7 +1513,7 @@ func TestPackageInstallCannotRemoveRequired(t *testing.T) {
 func TestMigrateBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleMigrate(rec, httptest.NewRequest("POST", "/api/v1/migrate", strings.NewReader("not json")))
+	s.handleMigrate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/migrate", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1524,7 +1524,7 @@ func TestMigrateMissingFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/migrate", strings.NewReader(`{"source_host":"old.com"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleMigrate(rec, req)
+	s.handleMigrate(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1535,7 +1535,7 @@ func TestMigrateDomainNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/migrate", strings.NewReader(`{"source_host":"old.com","domain":"nonexistent.com"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleMigrate(rec, req)
+	s.handleMigrate(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1544,7 +1544,7 @@ func TestMigrateDomainNotFound(t *testing.T) {
 func TestCloneBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleClone(rec, httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader("not json")))
+	s.handleClone(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1555,7 +1555,7 @@ func TestCloneMissingFields(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader(`{"source_domain":"old.com"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleClone(rec, req)
+	s.handleClone(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1566,7 +1566,7 @@ func TestCloneSourceNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader(`{"source_domain":"nonexistent.com","target_domain":"clone.com"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleClone(rec, req)
+	s.handleClone(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1929,7 +1929,7 @@ func TestCronDeleteBadJSON(t *testing.T) {
 func TestFirewallDenyMissingPort(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleFirewallDeny(rec, httptest.NewRequest("POST", "/api/v1/firewall/deny", strings.NewReader(`{}`)))
+	s.handleFirewallDeny(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/firewall/deny", strings.NewReader(`{}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1938,7 +1938,7 @@ func TestFirewallDenyMissingPort(t *testing.T) {
 func TestFirewallDenyBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleFirewallDeny(rec, httptest.NewRequest("POST", "/api/v1/firewall/deny", strings.NewReader("not json")))
+	s.handleFirewallDeny(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/firewall/deny", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1949,7 +1949,7 @@ func TestFirewallDeleteInvalidNumber(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/firewall/abc", nil)
 	req.SetPathValue("number", "abc")
-	s.handleFirewallDelete(rec, req)
+	s.handleFirewallDelete(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1960,7 +1960,7 @@ func TestFirewallDeleteZero(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/firewall/0", nil)
 	req.SetPathValue("number", "0")
-	s.handleFirewallDelete(rec, req)
+	s.handleFirewallDelete(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1969,7 +1969,7 @@ func TestFirewallDeleteZero(t *testing.T) {
 func TestFirewallAllowBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleFirewallAllow(rec, httptest.NewRequest("POST", "/api/v1/firewall/allow", strings.NewReader("not json")))
+	s.handleFirewallAllow(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/firewall/allow", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2026,7 +2026,7 @@ func TestDBListEndpoint(t *testing.T) {
 func TestDBCreateBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBCreate(rec, httptest.NewRequest("POST", "/api/v1/database/create", strings.NewReader("not json")))
+	s.handleDBCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/database/create", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2035,7 +2035,7 @@ func TestDBCreateBadJSON(t *testing.T) {
 func TestDBCreateMissingName(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDBCreate(rec, httptest.NewRequest("POST", "/api/v1/database/create", strings.NewReader(`{"user":"test"}`)))
+	s.handleDBCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/database/create", strings.NewReader(`{"user":"test"}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -3340,7 +3340,7 @@ func TestSettingsPutAllKeys(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/v1/settings", strings.NewReader(body))
 	req.RemoteAddr = "10.0.0.1:1234"
 	rec := httptest.NewRecorder()
-	s.handleSettingsPut(rec, req)
+	s.handleSettingsPut(rec, withAdminContext(req))
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
@@ -3661,7 +3661,7 @@ func TestCloneWithSourceRoot(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader(fmt.Sprintf(`{"source_domain":"example.com","target_domain":"clone.com","source_root":"%s","target_root":"/tmp/clone"}`, strings.ReplaceAll(root, `\`, `\\`))))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleClone(rec, req)
+	s.handleClone(rec, withAdminContext(req))
 	// Clone will run, may fail but exercises the code path
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
@@ -3677,7 +3677,7 @@ func TestMigrateWithLocalRoot(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/migrate", strings.NewReader(`{"source_host":"old.example.com","domain":"example.com","local_root":"/tmp/migrate"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleMigrate(rec, req)
+	s.handleMigrate(rec, withAdminContext(req))
 	// Will fail but exercises the code path
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
@@ -3777,7 +3777,7 @@ func TestHandleDBStartNoManager(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/database/start", nil)
-	s.handleDBStart(rec, req)
+	s.handleDBStart(rec, withAdminContext(req))
 	// May return 500 or 501 depending on implementation
 	if rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 500 or 501", rec.Code)
@@ -3808,7 +3808,7 @@ func TestHandleServiceStart(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/services/nginx/start", nil)
 	req.SetPathValue("name", "nginx")
-	s.handleServiceStart(rec, req)
+	s.handleServiceStart(rec, withAdminContext(req))
 	// May fail on Windows but exercises the code path
 	if rec.Code != 200 && rec.Code != 500 {
 		t.Errorf("status = %d", rec.Code)
@@ -4081,7 +4081,7 @@ func TestHandleFileUpload_NoManager(t *testing.T) {
 func TestHandleUpdate_NoUpdateAvailable(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/system/update", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/system/update", nil)))
 
 	if rec.Code != 200 && rec.Code != 500 && rec.Code != 501 {
 		t.Errorf("status = %d, want 200, 500, or 501", rec.Code)

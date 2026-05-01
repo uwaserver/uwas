@@ -80,6 +80,12 @@ type phpInstallState struct {
 	Distro  string `json:"distro"`
 }
 
+type muxer interface {
+	HandleFunc(string, func(http.ResponseWriter, *http.Request))
+	Handle(string, http.Handler)
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}
+
 // Server is the admin REST API server.
 type Server struct {
 	config         *config.Config
@@ -91,7 +97,7 @@ type Server struct {
 	cache          *cache.Engine
 	reloadFn       ReloadFunc
 	onDomainChange func()
-	mux            *http.ServeMux
+	mux            muxer
 	httpSrv        *http.Server
 
 	monitor       *monitor.Monitor
@@ -558,9 +564,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		multiUserEnabled := s.config.Global.Users.Enabled
 		s.configMu.RUnlock()
 
-		// If no auth configured at all, allow all
+		// If no auth configured at all, allow all (inject virtual admin for compat)
 		if apiKey == "" && !multiUserEnabled {
-			next.ServeHTTP(w, r)
+			user := &auth.User{ID: "local", Username: "admin", Role: auth.RoleAdmin, Enabled: true}
+			next.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), user)))
 			return
 		}
 		// CORS: only allow the dashboard's own origin (or localhost for dev).
@@ -3137,6 +3144,9 @@ func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
 // handleConfigRawPut validates and writes raw YAML content to the main config
 // file, then triggers a reload.
 func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
+		return
+	}
 	if s.configPath == "" {
 		jsonError(w, "config path not set", http.StatusNotImplemented)
 		return
@@ -3265,6 +3275,9 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 
 // handleSettingsPut accepts flat key-value pairs and updates the global config.
 func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var updates map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
@@ -4009,6 +4022,9 @@ func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
+		return
+	}
 	ip := requestIP(r)
 	if s.backupMgr == nil {
 		s.RecordAudit("backup.restore", "backup not enabled", ip, false)
@@ -4043,7 +4059,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	ip := requestIP(r)
@@ -4822,6 +4838,32 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// requireAdmin checks if the authenticated user has the admin role.
+func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok || user.Role != auth.RoleAdmin {
+		jsonError(w, "admin required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// requireRole checks if the authenticated user has one of the allowed roles.
+func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, roles ...auth.Role) bool {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	for _, role := range roles {
+		if user.Role == role {
+			return true
+		}
+	}
+	jsonError(w, "insufficient privileges", http.StatusForbidden)
+	return false
+}
+
 // --- Cloudflare Integration ---
 
 type cloudflareTunnel struct {
@@ -4868,6 +4910,9 @@ func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Token     string `json:"token"`

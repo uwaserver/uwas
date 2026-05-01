@@ -903,7 +903,7 @@ func TestHandleCloudflareConnect_InvalidJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{invalid json}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body)))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -913,7 +913,7 @@ func TestHandleCloudflareConnect_MissingFields(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"token":""}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cloudflare/connect", body)))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}

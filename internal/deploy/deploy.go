@@ -403,6 +403,9 @@ func runShellImpl(dir string, env map[string]string, command string) (string, er
 	if strings.ContainsAny(command, "\x00") {
 		return "", fmt.Errorf("command contains null byte")
 	}
+	if err := validateShellCommand(command); err != nil {
+		return "", err
+	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/C", command)
@@ -419,6 +422,18 @@ func runShellImpl(dir string, env map[string]string, command string) (string, er
 	cmd.Stderr = &buf
 	err := cmd.Run()
 	return buf.String(), err
+}
+
+// validateShellCommand rejects commands with dangerous shell metacharacters
+// that could lead to command injection (pipes, redirections, command substitution).
+func validateShellCommand(command string) error {
+	forbidden := []string{"$(", "`", "|", ">", "<"}
+	for _, f := range forbidden {
+		if strings.Contains(command, f) {
+			return fmt.Errorf("command contains forbidden shell metacharacter: %q", f)
+		}
+	}
+	return nil
 }
 
 // injectTokenInURL rewrites https://github.com/user/repo.git
