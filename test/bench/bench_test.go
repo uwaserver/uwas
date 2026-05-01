@@ -140,6 +140,36 @@ func BenchmarkCacheKeyGenerate(b *testing.B) {
 	})
 }
 
+// BenchmarkCacheKeyGenerateHoisted isolates GenerateKey from httptest.NewRequest
+// allocations by reusing a single request across iterations. This reflects the
+// true per-call cost in the server hot path where the request is provided.
+func BenchmarkCacheKeyGenerateHoisted(b *testing.B) {
+	req := httptest.NewRequest("GET", "/page?b=2&a=1&c=3", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	vary := []string{"Accept-Encoding"}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			cache.GenerateKey(req, vary)
+		}
+	})
+}
+
+// BenchmarkCacheKeyGenerateNoQuery isolates the no-query fast path.
+func BenchmarkCacheKeyGenerateNoQuery(b *testing.B) {
+	req := httptest.NewRequest("GET", "/page", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	vary := []string{"Accept-Encoding"}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			cache.GenerateKey(req, vary)
+		}
+	})
+}
+
 // BenchmarkContextAcquireRelease measures context pool acquisition speed.
 func BenchmarkContextAcquireRelease(b *testing.B) {
 	rec := httptest.NewRecorder()
