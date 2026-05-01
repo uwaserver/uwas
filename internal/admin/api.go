@@ -740,8 +740,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		totpSecret := s.config.Global.Admin.TOTPSecret
 		s.configMu.RUnlock()
 		if totpSecret != "" && user.Role == auth.RoleAdmin &&
-			!strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") &&
-			!multiUserEnabled {
+			!strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") {
 			totpCode := r.Header.Get("X-TOTP-Code")
 			if totpCode == "" {
 				w.Header().Set("X-2FA-Required", "true")

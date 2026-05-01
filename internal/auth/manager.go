@@ -106,9 +106,13 @@ type Manager struct {
 	users     map[string]*User    // key: username
 	usersByID map[string]*User    // key: user ID
 	sessions  map[string]*Session // key: token
-	dataDir   string
-	apiKey    string // Global admin API key (backward compat)
-	jwtSecret []byte
+	dataDir       string
+	apiKey        string // Global admin API key (backward compat)
+	jwtSecret     []byte
+
+	// Brute-force protection: tracks failed login attempts per username.
+	loginAttemptsMu sync.Mutex
+	loginAttempts   map[string][]time.Time // username -> timestamps of failed attempts
 }
 
 // NewManager creates a new auth manager.
@@ -120,15 +124,53 @@ func NewManager(dataDir, globalAPIKey string) *Manager {
 	}
 
 	m := &Manager{
-		users:     make(map[string]*User),
-		usersByID: make(map[string]*User),
-		sessions:  make(map[string]*Session),
-		dataDir:   dataDir,
-		apiKey:    globalAPIKey,
-		jwtSecret: jwtSecret,
+		users:           make(map[string]*User),
+		usersByID:       make(map[string]*User),
+		sessions:        make(map[string]*Session),
+		loginAttempts:   make(map[string][]time.Time),
+		dataDir:         dataDir,
+		apiKey:          globalAPIKey,
+		jwtSecret:       jwtSecret,
 	}
 	m.loadUsers()
 	return m
+}
+
+const (
+	maxLoginAttempts   = 5
+	loginLockoutWindow = 15 * time.Minute
+)
+
+// isLockedOut returns true if the username has exceeded maxLoginAttempts
+// failed attempts within loginLockoutWindow.
+func (m *Manager) isLockedOut(username string) bool {
+	m.loginAttemptsMu.Lock()
+	defer m.loginAttemptsMu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-loginLockoutWindow)
+	attempts := m.loginAttempts[username]
+	var recent []time.Time
+	for _, t := range attempts {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	m.loginAttempts[username] = recent
+	return len(recent) >= maxLoginAttempts
+}
+
+// recordFailedAttempt records a failed login attempt for the username.
+func (m *Manager) recordFailedAttempt(username string) {
+	m.loginAttemptsMu.Lock()
+	defer m.loginAttemptsMu.Unlock()
+	m.loginAttempts[username] = append(m.loginAttempts[username], time.Now())
+}
+
+// clearFailedAttempts clears failed login attempts for the username.
+func (m *Manager) clearFailedAttempts(username string) {
+	m.loginAttemptsMu.Lock()
+	defer m.loginAttemptsMu.Unlock()
+	delete(m.loginAttempts, username)
 }
 
 // CreateUser creates a new user.
@@ -190,10 +232,15 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 
 // Authenticate validates credentials and returns a session.
 func (m *Manager) Authenticate(username, password string) (*Session, error) {
+	if m.isLockedOut(username) {
+		return nil, errors.New("too many failed attempts; try again later")
+	}
+
 	m.mu.RLock()
 	user, exists := m.users[username]
 	if !exists {
 		m.mu.RUnlock()
+		m.recordFailedAttempt(username)
 		return nil, errors.New("invalid credentials")
 	}
 	// Snapshot fields under the lock to avoid racing with UpdateUser.
@@ -206,12 +253,16 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 	m.mu.RUnlock()
 
 	if !enabled {
+		m.recordFailedAttempt(username)
 		return nil, errors.New("user disabled")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+		m.recordFailedAttempt(username)
 		return nil, errors.New("invalid credentials")
 	}
+
+	m.clearFailedAttempts(username)
 
 	// Update last login
 	m.mu.Lock()
