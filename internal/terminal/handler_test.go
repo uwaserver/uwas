@@ -80,7 +80,7 @@ func TestCheckOrigin(t *testing.T) {
 		host          string
 		want          bool
 	}{
-		{name: "no_origin", host: "panel.example.com", want: true},
+		{name: "no_origin", host: "panel.example.com", want: false}, // Empty origin rejected unless AllowedOrigin is set
 		{name: "allowed_exact", allowedOrigin: "https://panel.example.com", origin: "https://panel.example.com", host: "other.example.com", want: true},
 		{name: "allowed_bad_config", allowedOrigin: "://bad", origin: "https://panel.example.com", host: "panel.example.com", want: false},
 		{name: "allowed_bad_origin", allowedOrigin: "https://panel.example.com", origin: "://bad", host: "panel.example.com", want: false},
@@ -126,8 +126,10 @@ func TestUpgradeWebSocketNotWebsocket(t *testing.T) {
 
 func TestUpgradeWebSocketNoHijack(t *testing.T) {
 	req := httptest.NewRequest("GET", "/terminal", nil)
+	req.Host = "panel.example.com"
 	req.Header.Set("Upgrade", "websocket")
-	w := httptest.NewRecorder() // httptest.ResponseRecorder doesn't support hijacking
+	req.Header.Set("Origin", "https://panel.example.com") // valid origin for same-origin fallback
+	w := httptest.NewRecorder()                           // httptest.ResponseRecorder doesn't support hijacking
 
 	h := &Handler{Logger: &logger.Logger{}}
 	_, err := h.UpgradeWebSocket(w, req)
@@ -141,7 +143,9 @@ func TestUpgradeWebSocketNoHijack(t *testing.T) {
 
 func TestUpgradeWebSocketHijackError(t *testing.T) {
 	req := httptest.NewRequest("GET", "/terminal", nil)
+	req.Host = "panel.example.com"
 	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Origin", "https://panel.example.com") // valid origin for same-origin fallback
 	w := newFakeHijackResponseWriter()
 	w.err = io.ErrClosedPipe
 
