@@ -3785,17 +3785,28 @@ func validateBasicAuthConfig(scope string, ba config.BasicAuthConfig) error {
 	return nil
 }
 
-// isValidHostname checks if s is a valid domain name (no path traversal, no injection).
+// isValidHostname checks if s is a valid domain name per RFC 1035.
+// Rejects: empty, >253 chars, labels >63 chars, leading/trailing hyphens or dots,
+// path traversal sequences (..), and characters outside [a-zA-Z0-9-.*].
 func isValidHostname(s string) bool {
 	if len(s) == 0 || len(s) > 253 {
 		return false
+	}
+	labels := strings.Split(s, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
 	}
 	for _, c := range s {
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '*') {
 			return false
 		}
 	}
-	return !strings.Contains(s, "..") && s[0] != '-' && s[0] != '.'
+	return !strings.Contains(s, "..")
 }
 
 // maskSecret returns "****" + last 4 chars for non-empty secrets, "" for empty.
