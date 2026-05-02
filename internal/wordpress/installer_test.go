@@ -1765,14 +1765,14 @@ func TestCreateMySQLDB_UsesSafeSQLIdentifier(t *testing.T) {
 	}
 
 	var log strings.Builder
-	err := createMySQLDB("wp-test", "wp_user", "testpass", "localhost", &log)
+	err := createMySQLDB("wp_test", "wp_user", "testpass", "localhost", &log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(gotSQL, "CREATE DATABASE IF NOT EXISTS `wp-test`") {
+	if !strings.Contains(gotSQL, "CREATE DATABASE IF NOT EXISTS `wp_test`") {
 		t.Fatalf("CREATE DATABASE did not use backtick identifier: %s", gotSQL)
 	}
-	if !strings.Contains(gotSQL, "GRANT ALL PRIVILEGES ON `wp-test`.*") {
+	if !strings.Contains(gotSQL, "GRANT ALL PRIVILEGES ON `wp_test`.*") {
 		t.Fatalf("GRANT did not use backtick identifier: %s", gotSQL)
 	}
 }
