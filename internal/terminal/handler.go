@@ -31,7 +31,13 @@ func New(log *logger.Logger) *Handler {
 func (h *Handler) CheckOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		// No Origin header — allow (some clients don't send it)
+		// WebSocket connections SHOULD have an Origin header per RFC 6454.
+		// Reject connections without origin to prevent cross-site hijacking.
+		// Some clients (non-browser) may not send Origin — only allow if
+		// AllowedOrigin is explicitly configured to accept such connections.
+		if h.AllowedOrigin == "" {
+			return false
+		}
 		return true
 	}
 
