@@ -11,7 +11,8 @@ import (
 	"strings"
 )
 
-func validate(cfg *Config) error {
+// Validate performs structural and semantic validation on a Config.
+func Validate(cfg *Config) error {
 	var errs []string
 
 	// Global validation

@@ -2175,6 +2175,7 @@ func (s *Server) persistConfig() {
 	if mainCfg.DomainsDir == "" {
 		mainCfg.DomainsDir = "domains.d"
 	}
+
 	mainData, err := yaml.Marshal(&mainCfg)
 	if err != nil {
 		s.logger.Error("failed to marshal config", "error", err)
@@ -3313,6 +3314,12 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate config semantics before persisting.
+	if err := config.Validate(&probe); err != nil {
+		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Atomic write: write to temp file, then rename.
 	dir := filepath.Dir(s.configPath)
 	tmp, err := os.CreateTemp(dir, ".uwas-config-*.yaml")
@@ -3927,6 +3934,21 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 	var probe config.Domain
 	if err := yaml.Unmarshal(data, &probe); err != nil {
 		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate domain semantics before persisting.
+	tmpCfg := config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "info",
+			LogFormat: "json",
+			Admin:     config.AdminConfig{Listen: "127.0.0.1:9443"},
+			WebRoot:   "/var/www",
+		},
+		Domains: []config.Domain{probe},
+	}
+	if err := config.Validate(&tmpCfg); err != nil {
+		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 

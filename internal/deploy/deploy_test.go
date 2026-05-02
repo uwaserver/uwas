@@ -361,7 +361,7 @@ func TestRunCmdInvalidCommand(t *testing.T) {
 }
 
 func TestRunShellSuccess(t *testing.T) {
-	out, err := runShell("", nil, "echo hello && echo world")
+	out, err := runShell("", nil, "echo hello world")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -89,7 +89,7 @@ func TestConfigRawPutSuccess(t *testing.T) {
 	s := testServer()
 	s.SetConfigPath(cfgPath)
 
-	newContent := "global:\n  log_level: debug\n"
+	newContent := "global:\n  log_level: debug\n  log_format: json\n  admin:\n    listen: 127.0.0.1:9443\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": newContent})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
@@ -156,7 +156,7 @@ func TestConfigRawPutTriggersReload(t *testing.T) {
 		return nil
 	})
 
-	jsonBody, _ := json.Marshal(map[string]string{"content": "global:\n  log_level: debug\n"})
+	jsonBody, _ := json.Marshal(map[string]string{"content": "global:\n  log_level: debug\n  log_format: json\n  admin:\n    listen: 127.0.0.1:9443\n"})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
@@ -178,7 +178,7 @@ func TestConfigRawPutReloadError(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 	s.SetReloadFunc(func() error { return errors.New("reload boom") })
 
-	jsonBody, _ := json.Marshal(map[string]string{"content": "global:\n  log_level: debug\n"})
+	jsonBody, _ := json.Marshal(map[string]string{"content": "global:\n  log_level: debug\n  log_format: json\n  admin:\n    listen: 127.0.0.1:9443\n"})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/config/raw", body))
@@ -285,7 +285,7 @@ func TestDomainRawPutSuccess(t *testing.T) {
 	s := testServer()
 	s.SetConfigPath(cfgPath)
 
-	domainYAML := "host: newsite.com\nroot: /var/www/new\ntype: static\n"
+	domainYAML := "host: newsite.com\nroot: /var/www/new\ntype: static\nssl:\n  mode: off\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
@@ -350,7 +350,7 @@ func TestDomainRawPutTriggersReload(t *testing.T) {
 		return nil
 	})
 
-	domainYAML := "host: example.com\ntype: static\n"
+	domainYAML := "host: example.com\ntype: static\nroot: /var/www/example\nssl:\n  mode: off\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
@@ -385,7 +385,7 @@ func TestDomainRawPutWithDomainsDir(t *testing.T) {
 	s := New(cfg, log, m)
 	s.SetConfigPath(cfgPath)
 
-	domainYAML := "host: example.com\ntype: static\n"
+	domainYAML := "host: example.com\ntype: static\nroot: /var/www/example\nssl:\n  mode: off\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()

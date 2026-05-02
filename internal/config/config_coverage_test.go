@@ -822,7 +822,7 @@ func TestValidateEmptyWebRootMissingRoot(t *testing.T) {
 			{Host: "noroot.com", Type: "static", SSL: SSLConfig{Mode: "off", MinVersion: "1.2"}},
 		},
 	}
-	err := validate(cfg)
+	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected error for missing root with empty web_root")
 	}

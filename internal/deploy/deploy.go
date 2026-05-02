@@ -425,9 +425,12 @@ func runShellImpl(dir string, env map[string]string, command string) (string, er
 }
 
 // validateShellCommand rejects commands with dangerous shell metacharacters
-// that could lead to command injection (pipes, redirections, command substitution).
+// that could lead to command injection (chaining, pipes, redirections, command substitution).
 func validateShellCommand(command string) error {
-	forbidden := []string{"$(", "`", "|", ">", "<"}
+	if strings.ContainsAny(command, "\x00\n\r") {
+		return fmt.Errorf("command contains forbidden control characters")
+	}
+	forbidden := []string{"$(", "`", "|", ">", "<", ";", "&&", "||"}
 	for _, f := range forbidden {
 		if strings.Contains(command, f) {
 			return fmt.Errorf("command contains forbidden shell metacharacter: %q", f)
