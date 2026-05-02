@@ -733,7 +733,10 @@ func validDBIdentifier(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+		// Excluded '-' because it is a SQL operator that could be used
+		// for comment injection (e.g., "db-; DROP--") in string-formatted queries.
+		// Database names should use underscore '_' as separator instead.
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
 			return false
 		}
 	}
