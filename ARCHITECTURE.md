@@ -11,7 +11,7 @@
 | Go source files | 284 |
 | Test files | 136 |
 | Lines of Go code | ~136,000 |
-| Internal packages | 50 |
+| Internal packages | 52 |
 | Public packages (pkg/) | 2 |
 | CLI commands | 19 |
 | API endpoints | 205+ |
