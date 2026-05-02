@@ -616,16 +616,13 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 		middleware.Gzip(1024), // compress responses > 1KB
 	}
 
-	// Global rate limiting (use first domain's rate limit as global default)
-	for _, d := range s.config.Domains {
-		if d.Security.RateLimit.Requests > 0 {
-			mws = append(mws, middleware.RateLimit(
-				s.ctx,
-				d.Security.RateLimit.Requests,
-				d.Security.RateLimit.Window.Duration,
-			))
-			break
-		}
+	// Global rate limiting (fallback for unknown domains and admin API)
+	if s.config.Global.RateLimit.Requests > 0 {
+		mws = append(mws, middleware.RateLimit(
+			s.ctx,
+			s.config.Global.RateLimit.Requests,
+			s.config.Global.RateLimit.Window.Duration,
+		))
 	}
 
 	// Security guard (blocked paths only) + bot guard

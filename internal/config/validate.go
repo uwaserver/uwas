@@ -42,6 +42,16 @@ func Validate(cfg *Config) error {
 		validateListenAddr(cfg.Global.MCP.Listen, "global.mcp.listen", &errs)
 	}
 
+	// Rate limit validation (global fallback)
+	if cfg.Global.RateLimit.Requests != 0 || cfg.Global.RateLimit.Window.Duration != 0 {
+		if cfg.Global.RateLimit.Requests <= 0 {
+			errs = append(errs, "global.rate_limit.requests must be > 0 when rate limiting is configured")
+		}
+		if cfg.Global.RateLimit.Window.Duration <= 0 {
+			errs = append(errs, "global.rate_limit.window must be > 0 when rate limiting is configured")
+		}
+	}
+
 	// Trusted proxies validation (CIDR notation)
 	for i, cidr := range cfg.Global.TrustedProxies {
 		_, _, err := net.ParseCIDR(cidr)

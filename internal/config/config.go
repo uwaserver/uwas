@@ -27,6 +27,7 @@ type GlobalConfig struct {
 	LogFormat      string           `yaml:"log_format"`
 	TrustedProxies []string         `yaml:"trusted_proxies"`
 	Timeouts       TimeoutConfig    `yaml:"timeouts"`
+	RateLimit      RateLimitConfig `yaml:"rate_limit,omitempty"`
 	Admin          AdminConfig      `yaml:"admin"`
 	Audit          AuditConfig      `yaml:"audit"`
 	MCP            MCPConfig        `yaml:"mcp"`
