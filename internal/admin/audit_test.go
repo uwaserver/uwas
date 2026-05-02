@@ -18,6 +18,7 @@ func testAuditServer() *Server {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
 			Admin: config.AdminConfig{Listen: "127.0.0.1:0"},
+			Audit:  config.AuditConfig{RecordIP: true},
 		},
 	}
 	log := logger.New("error", "text")

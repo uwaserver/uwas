@@ -28,6 +28,7 @@ type GlobalConfig struct {
 	TrustedProxies []string         `yaml:"trusted_proxies"`
 	Timeouts       TimeoutConfig    `yaml:"timeouts"`
 	Admin          AdminConfig      `yaml:"admin"`
+	Audit          AuditConfig      `yaml:"audit"`
 	MCP            MCPConfig        `yaml:"mcp"`
 	ACME           ACMEConfig       `yaml:"acme"`
 	Cache          CacheConfig      `yaml:"cache"`
@@ -113,6 +114,12 @@ type BrandingConfig struct {
 	FooterText  string `yaml:"footer_text,omitempty" json:"footer_text,omitempty"`
 }
 
+// AuditConfig controls audit log behavior.
+type AuditConfig struct {
+	RecordIP   bool `yaml:"record_ip"`    // whether to record client IP addresses ( GDPR compliance)
+}
+
+// MCPConfig controls the built-in MCP server for AI agent access.
 type MCPConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Listen  string `yaml:"listen"`
