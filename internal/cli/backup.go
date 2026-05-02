@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/backup"
 )
 
 // BackupCommand creates a backup archive of UWAS config and certs.
@@ -215,13 +217,16 @@ func restoreBackup(input, configDir, certsDir string) error {
 
 		// Determine destination based on archive path prefix
 		var destPath string
+		var baseDir string
 		switch {
 		case strings.HasPrefix(header.Name, "config/"):
 			relPath := strings.TrimPrefix(header.Name, "config/")
 			destPath = filepath.Join(configDir, relPath)
+			baseDir = configDir
 		case strings.HasPrefix(header.Name, "certs/"):
 			relPath := strings.TrimPrefix(header.Name, "certs/")
 			destPath = filepath.Join(certsDir, relPath)
+			baseDir = certsDir
 		default:
 			// Skip unknown entries
 			continue
@@ -229,8 +234,8 @@ func restoreBackup(input, configDir, certsDir string) error {
 
 		// Validate path to prevent traversal
 		destPath = filepath.Clean(destPath)
-		if strings.Contains(destPath, "..") {
-			fmt.Fprintf(os.Stderr, "warning: skipping suspicious path: %s\n", header.Name)
+		if !backup.IsInsideDir(destPath, baseDir) {
+			fmt.Fprintf(os.Stderr, "warning: skipping traversal path: %s\n", header.Name)
 			continue
 		}
 

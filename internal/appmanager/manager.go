@@ -186,6 +186,10 @@ func (m *Manager) startProcess(app *appProcess) error {
 	// Expand ${PORT} in command
 	cmdStr := strings.ReplaceAll(app.command, "${PORT}", fmt.Sprintf("%d", app.port))
 
+	if err := validateShellCommand(cmdStr); err != nil {
+		return fmt.Errorf("invalid app command: %w", err)
+	}
+
 	// Build exec.Cmd — use shell for complex commands
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
@@ -466,4 +470,18 @@ func (m *Manager) ListenAddr(domain string) string {
 		return ""
 	}
 	return fmt.Sprintf("127.0.0.1:%d", app.port)
+}
+
+// validateShellCommand rejects commands with dangerous shell metacharacters.
+func validateShellCommand(command string) error {
+	if strings.ContainsAny(command, "\x00\n\r") {
+		return fmt.Errorf("command contains forbidden control characters")
+	}
+	forbidden := []string{"$(", "`", "|", ">", "<", ";", "&&", "||"}
+	for _, f := range forbidden {
+		if strings.Contains(command, f) {
+			return fmt.Errorf("command contains forbidden shell metacharacter: %q", f)
+		}
+	}
+	return nil
 }

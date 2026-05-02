@@ -6,7 +6,6 @@ package sftpserver
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -788,15 +787,11 @@ func (s *Server) loadOrGenerateHostKey() (ssh.Signer, error) {
 	return signer, nil
 }
 
-// comparePassword checks a password against a bcrypt hash or plaintext.
-// bcrypt hashes are detected by the "$2a$", "$2b$", or "$2y$" prefix.
+// comparePassword checks a password against a bcrypt hash.
+// Rejects legacy plaintext passwords.
 func comparePassword(stored string, pass []byte) error {
 	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
 		return bcrypt.CompareHashAndPassword([]byte(stored), pass)
 	}
-	// Legacy plaintext comparison (constant-time to avoid timing attacks)
-	if subtle.ConstantTimeCompare([]byte(stored), pass) != 1 {
-		return fmt.Errorf("password mismatch")
-	}
-	return nil
+	return fmt.Errorf("legacy plaintext password rejected")
 }

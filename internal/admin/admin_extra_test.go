@@ -406,7 +406,7 @@ func TestConfigRawPutWithNoReloadFunc(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 	// reloadFn is nil
 
-	newContent := "global:\n  log_level: debug\n"
+	newContent := "global:\n  log_level: debug\n  log_format: json\n  admin:\n    listen: 127.0.0.1:9443\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": newContent})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
@@ -454,7 +454,7 @@ func TestDomainRawPutReloadError(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 	s.SetReloadFunc(func() error { return errors.New("domain reload boom") })
 
-	domainYAML := "host: example.com\ntype: static\n"
+	domainYAML := "host: example.com\ntype: static\nroot: /var/www/example\nssl:\n  mode: off\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()
@@ -479,7 +479,7 @@ func TestDomainRawPutWithNoReloadFunc(t *testing.T) {
 	s.SetConfigPath(cfgPath)
 	// reloadFn is nil
 
-	domainYAML := "host: newsite.com\ntype: static\n"
+	domainYAML := "host: newsite.com\ntype: static\nroot: /var/www/newsite\nssl:\n  mode: off\n"
 	jsonBody, _ := json.Marshal(map[string]string{"content": domainYAML})
 	body := strings.NewReader(string(jsonBody))
 	rec := httptest.NewRecorder()

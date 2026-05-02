@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/alerting"
@@ -739,8 +740,13 @@ func (s *Server) Start() error {
 				// derived from API key + domain (so compromising one doesn't
 				// expose all domains).
 				domainPass := deriveSFTPPassword(apiKey, d.Host)
+				passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), bcrypt.DefaultCost)
+				if err != nil {
+					s.logger.Warn("failed to hash SFTP password", "domain", d.Host, "error", err)
+					continue
+				}
 				users[d.Host] = sftpserver.User{
-					Password: domainPass,
+					Password: string(passHash),
 					Root:     d.Root,
 				}
 			}

@@ -41,7 +41,7 @@ func proxyDomain(upstreams []Upstream) Domain {
 
 func expectValidationError(t *testing.T, cfg *Config, substr string) {
 	t.Helper()
-	err := validate(cfg)
+	err := Validate(cfg)
 	if err == nil {
 		t.Fatalf("expected validation error containing %q, got nil", substr)
 	}
@@ -52,7 +52,7 @@ func expectValidationError(t *testing.T, cfg *Config, substr string) {
 
 func expectNoValidationError(t *testing.T, cfg *Config) {
 	t.Helper()
-	err := validate(cfg)
+	err := Validate(cfg)
 	if err != nil {
 		t.Fatalf("expected no validation error, got: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestValidateMultipleErrors(t *testing.T) {
 		},
 		Domains: []Domain{},
 	}
-	err := validate(cfg)
+	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected validation errors")
 	}

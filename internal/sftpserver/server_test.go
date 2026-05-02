@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -406,10 +407,22 @@ func TestHostKey_Load(t *testing.T) {
 
 func startTestServer(t *testing.T, users map[string]User) (*Server, string) {
 	t.Helper()
+	// Hash any plaintext passwords for test consistency with production
+	hashed := make(map[string]User, len(users))
+	for k, u := range users {
+		if !strings.HasPrefix(u.Password, "$2a$") && !strings.HasPrefix(u.Password, "$2b$") && !strings.HasPrefix(u.Password, "$2y$") {
+			hash, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.MinCost)
+			if err != nil {
+				t.Fatalf("bcrypt hash failed: %v", err)
+			}
+			u.Password = string(hash)
+		}
+		hashed[k] = u
+	}
 	cfg := Config{
 		Listen:  "127.0.0.1:0",
 		HostKey: filepath.Join(t.TempDir(), "host_key"),
-		Users:   users,
+		Users:   hashed,
 	}
 	s := New(cfg, testLogger())
 	if err := s.Start(); err != nil {

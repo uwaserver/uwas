@@ -2761,9 +2761,9 @@ func TestIsInsideDir(t *testing.T) {
 		{"/var/www/other", "/var/www/site", false},
 	}
 	for _, tt := range tests {
-		got := isInsideDir(tt.path, tt.base)
+		got := IsInsideDir(tt.path, tt.base)
 		if got != tt.want {
-			t.Errorf("isInsideDir(%q, %q) = %v, want %v", tt.path, tt.base, got, tt.want)
+			t.Errorf("IsInsideDir(%q, %q) = %v, want %v", tt.path, tt.base, got, tt.want)
 		}
 	}
 }

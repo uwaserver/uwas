@@ -124,6 +124,15 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 	}
 
 	// Execute the command
+	if err := validateShellCommand(command); err != nil {
+		record.EndedAt = time.Now()
+		record.Duration = record.EndedAt.Sub(record.StartedAt)
+		record.Success = false
+		record.Error = fmt.Sprintf("invalid command: %v", err)
+		m.RecordExecution(record)
+		return record
+	}
+
 	var cmd *exec.Cmd
 	if monitorRuntimeGOOS == "windows" {
 		cmd = monitorExecCommandFn("cmd", "/c", command)
@@ -236,6 +245,20 @@ func (m *Monitor) GetAllStatus() []JobStatus {
 		}
 	}
 	return statuses
+}
+
+// validateShellCommand rejects commands with dangerous shell metacharacters.
+func validateShellCommand(command string) error {
+	if strings.ContainsAny(command, "\x00\n\r") {
+		return fmt.Errorf("command contains forbidden control characters")
+	}
+	forbidden := []string{"$(", "`", "|", ">", "<", ";", "&&", "||"}
+	for _, f := range forbidden {
+		if strings.Contains(command, f) {
+			return fmt.Errorf("command contains forbidden shell metacharacter: %q", f)
+		}
+	}
+	return nil
 }
 
 // GetDomainStatus returns all job statuses for a domain.

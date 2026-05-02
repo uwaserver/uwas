@@ -985,8 +985,8 @@ func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
 	})
 }
 
-// isInsideDir checks that resolved path is inside the base directory (zip-slip guard).
-func isInsideDir(path, base string) bool {
+// IsInsideDir checks that resolved path is inside the base directory (zip-slip guard).
+func IsInsideDir(path, base string) bool {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return false
@@ -1010,7 +1010,7 @@ func safeRestorePath(base, rel string) (string, bool) {
 	}
 
 	target := filepath.Join(base, rel)
-	if !isInsideDir(target, base) {
+	if !IsInsideDir(target, base) {
 		return "", false
 	}
 
@@ -1044,11 +1044,11 @@ func safeRestorePath(base, rel string) (string, bool) {
 		return "", false
 	}
 
-	if isInsideDir(existing, baseAbs) {
-		if !isInsideDir(existingReal, baseReal) {
+	if IsInsideDir(existing, baseAbs) {
+		if !IsInsideDir(existingReal, baseReal) {
 			return "", false
 		}
-	} else if !isInsideDir(baseAbs, existingReal) {
+	} else if !IsInsideDir(baseAbs, existingReal) {
 		return "", false
 	}
 
