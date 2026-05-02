@@ -1,5 +1,0 @@
-security: add 100MB size bound to SFTP backup uploads
-
-io.LimitReader prevents unbounded memory allocation when reading
-backup data for SFTP upload. A size check returns a clear error
-if the limit is exceeded.

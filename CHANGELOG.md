@@ -5,6 +5,30 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.55] - 2026-05-02
+
+### Security Fixes
+
+- **SFTP backup 100MB size bound** — `io.LimitReader` prevents unbounded memory allocation when reading backup data for SFTP upload. A size check returns a clear error if the limit is exceeded.
+- **WebSocket Origin header validation** — reject WebSocket connections without Origin header to prevent cross-site WebSocket hijacking.
+- **io.LimitReader bounds** — added `io.LimitReader` bounds to all `io.ReadAll` calls to prevent unbounded memory allocation (4KB-256MB limits depending on context).
+- **CSRF PATCH method** — added PATCH method to CSRF protection (was missing from the allowed methods list).
+- **Global rate limit config** — fixed MEDIUM-1/2 where global rate limit was not being properly initialized from config.
+- **RFC 1035 domain name validation** — fixed MEDIUM-3 by implementing RFC 1035-compliant domain name validation (no leading/trailing hyphens, no consecutive dots).
+- **GDPR consent for IP logging** — fixed MEDIUM-7 by adding RecordIP consent check in audit logging.
+- **Per-domain webhook HMAC secret** — fixed MEDIUM-5/6 by ensuring per-domain webhook configs use their own secret, not the global secret.
+- **Config validation, path traversal, shell injection** — fixed CRITICAL-2/4/6/7 including config validation, path traversal, and shell injection vulnerabilities in SFTP passwords.
+- **CSRF token infrastructure removal** — removed partial CSRF token infrastructure (MEDIUM-8) as it was causing confusion and incompatibility.
+- **Session invalidation, DB query limits, HSTS, request IDs** — fixed MEDIUM-9, MEDIUM-11, LOW-1, LOW-4 including session invalidation on logout, database query limits, HSTS header, and request ID tracking.
+- **Domain deletion confirmation** — require explicit confirmation for domain deletion (MEDIUM-14).
+- **Database identifier validation** — disallow dash in database identifiers to prevent SQL injection via database names.
+
+### Verification
+
+- `go vet ./...` passes.
+- `go test -count=1 -short ./...` passes (52 packages).
+- `tsc -b` passes in `web/dashboard`.
+
 ## [0.0.54] - 2026-04-28
 
 ### Security Fixes
