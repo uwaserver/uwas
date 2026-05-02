@@ -85,10 +85,14 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	}
 
 	// Read all data into memory so we know the size. For backups this is
-	// typically small (config + certs).
-	content, err := io.ReadAll(data)
+	// typically small (config + certs). Bound to prevent unbounded allocation.
+	const maxBackupSize = 100 << 20 // 100MB
+	content, err := io.ReadAll(io.LimitReader(data, maxBackupSize))
 	if err != nil {
 		return fmt.Errorf("read data: %w", err)
+	}
+	if len(content) >= maxBackupSize {
+		return fmt.Errorf("backup exceeds maximum size of %d bytes", maxBackupSize)
 	}
 
 	errCh := make(chan error, 1)
