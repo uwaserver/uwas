@@ -2640,8 +2640,12 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB limit
 	if err != nil {
+		if err == io.ErrUnexpectedEOF {
+			jsonError(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}

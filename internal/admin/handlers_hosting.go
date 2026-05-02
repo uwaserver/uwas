@@ -1113,7 +1113,7 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	r.Body = http.MaxBytesReader(w, r.Body, 256<<20) // 256MB max
-	data, err := io.ReadAll(r.Body)
+	data, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
 	if err != nil {
 		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
@@ -1371,7 +1371,7 @@ func (s *Server) handleDockerDBImport(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	db := r.PathValue("db")
 	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB max
-	data, err := io.ReadAll(r.Body)
+	data, err := io.ReadAll(io.LimitReader(r.Body, 100<<20))
 	if err != nil {
 		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
