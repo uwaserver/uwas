@@ -217,6 +217,7 @@ type Domain struct {
 	Locations         []LocationConfig        `yaml:"locations,omitempty" json:"locations,omitempty"`
 	SecurityHeaders   SecurityHeadersConfig   `yaml:"security_headers,omitempty" json:"security_headers,omitempty"`
 	InternalAliases   []string                `yaml:"internal_aliases,omitempty" json:"internal_aliases,omitempty"` // allowed path prefixes for X-Accel-Redirect/X-Sendfile
+	WebhookSecret     string                  `yaml:"webhook_secret,omitempty" json:"webhook_secret,omitempty"`     // per-domain webhook secret (falls back to global API key)
 }
 
 // MaintenanceConfig enables a 503 maintenance page for the domain.

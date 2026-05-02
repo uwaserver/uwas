@@ -325,37 +325,41 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify webhook secret (from domain's pin_code or global admin API key)
+	// Verify webhook secret (prefer domain's webhook_secret over global API key)
 	s.configMu.RLock()
-	secret := s.config.Global.Admin.APIKey // use API key as webhook secret
+	secret := s.config.Global.Admin.APIKey
+	for _, d := range s.config.Domains {
+		if d.Host == domain && d.WebhookSecret != "" {
+			secret = d.WebhookSecret
+			break
+		}
+	}
 	s.configMu.RUnlock()
 	if secret == "" {
 		jsonError(w, "webhook secret is not configured", http.StatusForbidden)
 		return
 	}
 
-	if secret != "" {
-		// GitHub: X-Hub-Signature-256 = sha256=HMAC
-		if sig := r.Header.Get("X-Hub-Signature-256"); sig != "" {
-			mac := hmac.New(sha256.New, []byte(secret))
-			mac.Write(body)
-			expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-			if !hmac.Equal([]byte(sig), []byte(expected)) {
-				jsonError(w, "invalid webhook signature", http.StatusForbidden)
-				return
-			}
-		} else if tok := r.Header.Get("X-Gitlab-Token"); tok != "" {
-			// GitLab: X-Gitlab-Token = plain secret
-			if subtle.ConstantTimeCompare([]byte(tok), []byte(secret)) != 1 {
-				jsonError(w, "invalid webhook token", http.StatusForbidden)
-				return
-			}
-		} else {
-			// No signature — check query param ?secret=
-			if qs := r.URL.Query().Get("secret"); qs == "" || qs != secret {
-				jsonError(w, "webhook secret required", http.StatusForbidden)
-				return
-			}
+	// GitHub: X-Hub-Signature-256 = sha256=HMAC
+	if sig := r.Header.Get("X-Hub-Signature-256"); sig != "" {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if !hmac.Equal([]byte(sig), []byte(expected)) {
+			jsonError(w, "invalid webhook signature", http.StatusForbidden)
+			return
+		}
+	} else if tok := r.Header.Get("X-Gitlab-Token"); tok != "" {
+		// GitLab: X-Gitlab-Token = plain secret
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(secret)) != 1 {
+			jsonError(w, "invalid webhook token", http.StatusForbidden)
+			return
+		}
+	} else {
+		// No signature — check query param ?secret=
+		if qs := r.URL.Query().Get("secret"); qs == "" || qs != secret {
+			jsonError(w, "webhook secret required", http.StatusForbidden)
+			return
 		}
 	}
 
