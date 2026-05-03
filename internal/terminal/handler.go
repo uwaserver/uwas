@@ -65,12 +65,12 @@ func (h *Handler) CheckOrigin(r *http.Request) bool {
 
 	// No AllowedOrigin configured: fall back to checking Origin host matches request host.
 	// This prevents cross-site WebSocket hijacking while allowing the browser's same-origin requests.
+	// Scheme is intentionally NOT enforced here: UWAS may be deployed on plain HTTP
+	// (internal panels, IP-only access), and a browser opening the dashboard over HTTP
+	// will send Origin: http://... -- forcing https would break those deployments.
+	// For HTTPS-only enforcement, set AllowedOrigin explicitly in config.
 	reqOrigin, err := url.Parse(origin)
 	if err != nil {
-		return false
-	}
-	// Reject if origin scheme is not https (WebSocket should only be used over HTTPS).
-	if reqOrigin.Scheme != "https" {
 		return false
 	}
 	// Allow only if origin host matches request host (same-origin).

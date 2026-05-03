@@ -88,7 +88,7 @@ func TestCheckOrigin(t *testing.T) {
 		{name: "allowed_host_mismatch", allowedOrigin: "https://panel.example.com", origin: "https://evil.example.com", host: "panel.example.com", want: false},
 		{name: "same_origin_https", origin: "https://panel.example.com", host: "panel.example.com", want: true},
 		{name: "same_origin_bad_origin", origin: "://bad", host: "panel.example.com", want: false},
-		{name: "same_origin_requires_https", origin: "http://panel.example.com", host: "panel.example.com", want: false},
+		{name: "same_origin_http_allowed", origin: "http://panel.example.com", host: "panel.example.com", want: true},
 		{name: "same_origin_host_mismatch", origin: "https://evil.example.com", host: "panel.example.com", want: false},
 	}
 
