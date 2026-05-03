@@ -28,15 +28,16 @@ var (
 // DeployRequest describes a deployment action.
 type DeployRequest struct {
 	Domain        string            `json:"domain"`
-	GitURL        string            `json:"git_url,omitempty"`        // e.g. https://github.com/user/repo.git
-	GitBranch     string            `json:"git_branch,omitempty"`    // default: main
-	BuildCmd      string            `json:"build_cmd,omitempty"`      // e.g. "npm install && npm run build"; "skip"/"none" to disable
-	SSHKeyPath    string            `json:"ssh_key_path,omitempty"`   // path to SSH private key for private repos
+	GitURL        string            `json:"git_url,omitempty"`         // e.g. https://github.com/user/repo.git
+	GitBranch     string            `json:"git_branch,omitempty"`     // default: main
+	BuildCmd      string            `json:"build_cmd,omitempty"`       // e.g. "npm install && npm run build"; "skip"/"none" to disable
+	SSHKeyPath    string            `json:"ssh_key_path,omitempty"`    // path to SSH private key for private repos
 	GitToken      string            `json:"git_token,omitempty"`      // GitHub/GitLab personal access token
-	DockerFile    string            `json:"dockerfile,omitempty"`     // path to Dockerfile (enables Docker mode)
-	DockerPort    int               `json:"docker_port,omitempty"`    // container internal port (e.g. 3000)
+	DockerFile    string            `json:"dockerfile,omitempty"`      // path to Dockerfile (enables Docker mode)
+	DockerPort    int               `json:"docker_port,omitempty"`   // container internal port (e.g. 3000)
 	DockerNetwork string            `json:"docker_network,omitempty"` // docker network mode: "bridge", "host", or custom network name
-	Env           map[string]string `json:"env,omitempty"`             // environment variables for build/run
+	AppPort       int               `json:"app_port,omitempty"`       // app listen port for health check (auto-detected if 0)
+	Env           map[string]string `json:"env,omitempty"`            // environment variables for build/run
 }
 
 // DeployStatus tracks a deployment.
@@ -48,6 +49,7 @@ type DeployStatus struct {
 	CommitSHA string    `json:"commit_sha,omitempty"`
 	Mode      string    `json:"mode"` // "git", "docker"
 	Log       string    `json:"log"`
+	AppPort   int       `json:"app_port,omitempty"` // port the app listens on (for health check)
 	StartedAt time.Time `json:"started_at"`
 	Duration  string    `json:"duration,omitempty"`
 	Error     string    `json:"error,omitempty"`
@@ -302,6 +304,15 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 		log.WriteString("Build complete\n")
 	}
 
+	// Health check: wait for app to respond on its port (if port is known)
+	if status.AppPort > 0 {
+		log.WriteString("Checking app health...\n")
+		if err := m.waitForApp(fmt.Sprintf("127.0.0.1:%d", status.AppPort), 10*time.Second); err != nil {
+			return fmt.Errorf("app health check failed: %w", err)
+		}
+		log.WriteString("App is healthy\n")
+	}
+
 	return nil
 }
 
@@ -339,6 +350,10 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 	if port == 0 {
 		port = 3000
 	}
+	// Propagate resolved port to status for health check
+	m.mu.Lock()
+	status.AppPort = port
+	m.mu.Unlock()
 
 	// Stop existing container
 	log.WriteString("$ docker stop " + containerName + "\n")
