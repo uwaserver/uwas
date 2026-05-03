@@ -86,7 +86,10 @@ export default function DNS() {
     try {
       const data = await fetchDomains();
       setDomains(data ?? []);
-      if (data && data.length > 0) {
+      const urlDomain = new URLSearchParams(window.location.search).get('domain');
+      if (urlDomain) {
+        setSelectedDomain(urlDomain);
+      } else if (data && data.length > 0) {
         setSelectedDomain(prev => prev || data[0].host);
       }
     } catch (e) {
@@ -99,6 +102,17 @@ export default function DNS() {
   useEffect(() => {
     loadDomains();
   }, [loadDomains]);
+
+  // Auto-load records when domain comes from ?domain= URL param.
+  const [autoLoadDone, setAutoLoadDone] = useState(false);
+  useEffect(() => {
+    if (autoLoadDone || !selectedDomain) return;
+    const urlDomain = new URLSearchParams(window.location.search).get('domain');
+    if (urlDomain && urlDomain === selectedDomain) {
+      setAutoLoadDone(true);
+      handleLoadRecords();
+    }
+  }, [selectedDomain, autoLoadDone]);
 
   const handleCheck = async () => {
     if (!selectedDomain) return;

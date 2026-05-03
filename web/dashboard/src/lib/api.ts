@@ -1106,6 +1106,15 @@ export interface CloudflareStatus {
   connected: boolean;
   email?: string;
   account_id?: string;
+  token_mask?: string;
+  updated_at?: string;
+  tunnel_count?: number;
+}
+
+export interface CloudflareZoneImportResult {
+  added: string[];
+  skipped: string[];
+  total: number;
 }
 
 export interface CloudflareTunnel {
@@ -1154,3 +1163,16 @@ export const fetchCloudflareZones = () => api<CloudflareZone[]>('/api/v1/cloudfl
 
 export const syncCloudflareDNS = (zoneId: string) =>
   api<{ status: string; records_synced: number }>(`/api/v1/cloudflare/zones/${encodeURIComponent(zoneId)}/sync`, { method: 'POST' });
+
+export const importCloudflareZone = (
+  zoneId: string,
+  defaultType: 'static' | 'php' | 'proxy' | 'redirect',
+  defaultRoot: string,
+) =>
+  api<CloudflareZoneImportResult>(
+    `/api/v1/cloudflare/zones/${encodeURIComponent(zoneId)}/import`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ default_type: defaultType, default_root: defaultRoot }),
+    },
+  );
