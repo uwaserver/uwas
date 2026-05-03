@@ -37,6 +37,13 @@ func (s *Server) loadCloudflareState() error {
 	if st.Tunnels == nil {
 		st.Tunnels = []cloudflareTunnel{}
 	}
+	// Migrate legacy stub-era tunnels (v0.1.6 used Domain; v0.2.0+ uses Hostname).
+	for i := range st.Tunnels {
+		if st.Tunnels[i].Hostname == "" && st.Tunnels[i].Domain != "" {
+			st.Tunnels[i].Hostname = st.Tunnels[i].Domain
+		}
+		st.Tunnels[i].Domain = ""
+	}
 	cloudflareMu.Lock()
 	cloudflareConfig = &st
 	cloudflareMu.Unlock()

@@ -960,8 +960,9 @@ func TestHandleCloudflareTunnelStart_NotConnected(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/test-id/start", nil))
-	if rec.Code != 400 {
-		t.Errorf("status = %d, want 400", rec.Code)
+	// In v0.2.0 Start checks the local registry first → unknown tunnel is 404.
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
@@ -969,8 +970,9 @@ func TestHandleCloudflareTunnelStop_NotConnected(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/test-id/stop", nil))
-	if rec.Code != 400 {
-		t.Errorf("status = %d, want 400", rec.Code)
+	// In v0.2.0 Stop checks the local registry first → unknown tunnel is 404.
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 

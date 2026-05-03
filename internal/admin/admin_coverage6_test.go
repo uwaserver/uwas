@@ -21,37 +21,8 @@ import (
 // Cloudflare Tests
 // =============================================================================
 
-func TestGenerateCloudflareID(t *testing.T) {
-	id := generateCloudflareID()
-	if id == "" {
-		t.Error("generateCloudflareID returned empty string")
-	}
-	if len(id) != 32 {
-		t.Errorf("generateCloudflareID returned %d characters, expected 32", len(id))
-	}
-	// Should be hexadecimal
-	for _, c := range id {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			t.Errorf("generateCloudflareID returned non-hex character: %c", c)
-		}
-	}
-}
-
-func TestGenerateCloudflareToken(t *testing.T) {
-	token := generateCloudflareToken()
-	if token == "" {
-		t.Error("generateCloudflareToken returned empty string")
-	}
-	if len(token) != 64 {
-		t.Errorf("generateCloudflareToken returned %d characters, expected 64", len(token))
-	}
-	// Should be hexadecimal
-	for _, c := range token {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			t.Errorf("generateCloudflareToken returned non-hex character: %c", c)
-		}
-	}
-}
+// generateCloudflareID and generateCloudflareToken were removed in v0.2.0 —
+// real tunnels use Cloudflare-issued UUIDs and connector tokens from the API.
 
 func TestFetchCloudflareZones(t *testing.T) {
 	srv := testServer()

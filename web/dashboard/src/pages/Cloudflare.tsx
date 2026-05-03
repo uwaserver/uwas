@@ -13,6 +13,12 @@ import {
   Download,
   Settings as SettingsIcon,
   Info,
+  Plus,
+  Play,
+  Square,
+  Trash2,
+  Terminal as TerminalIcon,
+  PackageCheck,
 } from 'lucide-react';
 import {
   fetchCloudflareStatus,
@@ -21,8 +27,16 @@ import {
   purgeCloudflareCache,
   fetchCloudflareZones,
   importCloudflareZone,
+  fetchCloudflareTunnels,
+  createCloudflareTunnel,
+  deleteCloudflareTunnel,
+  startCloudflareTunnel,
+  stopCloudflareTunnel,
+  fetchCloudflareTunnelLogs,
+  installCloudflared,
   type CloudflareStatus,
   type CloudflareZone,
+  type CloudflareTunnel,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -48,8 +62,28 @@ export default function Cloudflare() {
   const [importRoot, setImportRoot] = useState('/var/www/{host}/public_html');
   const [importLoading, setImportLoading] = useState(false);
 
+  // Tunnel state
+  const [tunnels, setTunnels] = useState<CloudflareTunnel[]>([]);
+  const [showTunnelForm, setShowTunnelForm] = useState(false);
+  const [newTunnel, setNewTunnel] = useState({ name: '', hostname: '', local_target: 'http://localhost:8080' });
+  const [tunnelBusy, setTunnelBusy] = useState<string>(''); // tunnel id currently busy
+  const [installBusy, setInstallBusy] = useState(false);
+  const [tunnelLogs, setTunnelLogs] = useState<{ id: string; text: string } | null>(null);
+
   useEffect(() => {
     loadData();
+    // Refresh tunnel status every 5s when connected — cheap, only updates running flag.
+    const id = window.setInterval(async () => {
+      try {
+        const s = await fetchCloudflareStatus();
+        setStatus(s);
+        if (s?.connected) {
+          const t = await fetchCloudflareTunnels();
+          setTunnels(t);
+        }
+      } catch { /* swallow background errors */ }
+    }, 5000);
+    return () => window.clearInterval(id);
   }, []);
 
   const loadData = async () => {
@@ -58,16 +92,113 @@ export default function Cloudflare() {
       const s = await fetchCloudflareStatus();
       setStatus(s);
       if (s?.connected) {
-        const z = await fetchCloudflareZones();
+        const [z, t] = await Promise.all([fetchCloudflareZones(), fetchCloudflareTunnels()]);
         setZones(z);
+        setTunnels(t);
       } else {
         setZones([]);
+        setTunnels([]);
       }
       setError('');
     } catch (err: any) {
       setError(err.message || 'Failed to load Cloudflare data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleInstallCloudflared = async () => {
+    setInstallBusy(true);
+    setError('');
+    setSuccess('');
+    try {
+      const info = await installCloudflared();
+      if (info.installed) {
+        setSuccess(`cloudflared installed${info.version ? ` (${info.version})` : ''}`);
+      } else {
+        setError('install completed but binary not detected');
+      }
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'install failed');
+    } finally {
+      setInstallBusy(false);
+    }
+  };
+
+  const handleCreateTunnel = async () => {
+    if (!newTunnel.name || !newTunnel.hostname || !newTunnel.local_target) {
+      setError('name, hostname and local target are required');
+      return;
+    }
+    setTunnelBusy('__create__');
+    setError('');
+    setSuccess('');
+    try {
+      await createCloudflareTunnel(newTunnel.name, newTunnel.hostname, newTunnel.local_target);
+      setSuccess(`Tunnel "${newTunnel.name}" created. Click Start to bring it up.`);
+      setShowTunnelForm(false);
+      setNewTunnel({ name: '', hostname: '', local_target: 'http://localhost:8080' });
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'create failed');
+    } finally {
+      setTunnelBusy('');
+    }
+  };
+
+  const handleStartTunnel = async (id: string) => {
+    setTunnelBusy(id);
+    setError('');
+    setSuccess('');
+    try {
+      await startCloudflareTunnel(id);
+      setSuccess('Tunnel starting…');
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'start failed');
+    } finally {
+      setTunnelBusy('');
+    }
+  };
+
+  const handleStopTunnel = async (id: string) => {
+    setTunnelBusy(id);
+    setError('');
+    setSuccess('');
+    try {
+      await stopCloudflareTunnel(id);
+      setSuccess('Tunnel stopped');
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'stop failed');
+    } finally {
+      setTunnelBusy('');
+    }
+  };
+
+  const handleDeleteTunnel = async (id: string, name: string) => {
+    if (!confirm(`Delete tunnel "${name}"? This removes it from Cloudflare and deletes the DNS record.`)) return;
+    setTunnelBusy(id);
+    setError('');
+    setSuccess('');
+    try {
+      await deleteCloudflareTunnel(id);
+      setSuccess(`Tunnel "${name}" deleted`);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'delete failed');
+    } finally {
+      setTunnelBusy('');
+    }
+  };
+
+  const handleViewLogs = async (id: string) => {
+    try {
+      const r = await fetchCloudflareTunnelLogs(id);
+      setTunnelLogs({ id, text: r.logs || '(no log output yet)' });
+    } catch (err: any) {
+      setError(err.message || 'log fetch failed');
     }
   };
 
@@ -172,7 +303,7 @@ export default function Cloudflare() {
           <p><strong>Connection</strong> — stores your Cloudflare API token and Account ID on the server (mode 0600). The token is masked everywhere in the UI; only the last 4 chars are shown.</p>
           <p><strong>CDN Cache Purge</strong> — clears Cloudflare's edge cache for a specific URL or the entire account. Useful after deploys.</p>
           <p><strong>Zones</strong> — domains in your Cloudflare account. Use <em>Import to UWAS</em> to add a zone's hostnames as UWAS sites in one click, or <em>Manage DNS</em> to jump to the DNS editor.</p>
-          <p><strong>Tunnels</strong> — coming in v0.2.0. Will install <code>cloudflared</code>, create real tunnels via the Cloudflare API, and keep them running with auto-restart.</p>
+          <p><strong>Tunnels</strong> — exposes a local service (e.g. <code>http://localhost:8080</code>) to the public internet via Cloudflare's edge, without opening any inbound port on this server. UWAS creates the tunnel via the Cloudflare API, sets up the proxied DNS CNAME, fetches the connector token, and runs <code>cloudflared</code> with auto-restart on crash.</p>
         </div>
       )}
 
@@ -270,33 +401,206 @@ export default function Cloudflare() {
             </button>
           </div>
 
-          {/* Tunnels Section — Coming Soon */}
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30">
-            <div className="flex items-start gap-3">
-              <Server className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-amber-900 dark:text-amber-200">
-                  Cloudflare Tunnel — coming in v0.2.0
-                </h3>
-                <p className="text-sm text-amber-800 dark:text-amber-300/90 mt-1">
-                  Real <code className="px-1 rounded bg-amber-100 dark:bg-amber-900/40">cloudflared</code> integration is in development.
-                  The server will install the binary, create real tunnels via the Cloudflare API, manage DNS automatically,
-                  and run the connector with auto-restart on crash.
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
-                  Until then, use the official cloudflared CLI on the server, or set up a tunnel directly at
-                  {' '}
-                  <a
-                    href="https://one.dash.cloudflare.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline"
+          {/* Tunnels Section */}
+          <div className="rounded-lg border border-border bg-card">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Server className="h-5 w-5" />
+                Tunnels
+                {status?.cloudflared_installed && status?.cloudflared_version && (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    cloudflared {status.cloudflared_version}
+                  </span>
+                )}
+              </h2>
+              <div className="flex items-center gap-2">
+                {!status?.cloudflared_installed && (
+                  <button
+                    onClick={handleInstallCloudflared}
+                    disabled={installBusy}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
                   >
-                    one.dash.cloudflare.com
-                    <ExternalLink className="h-3 w-3 inline ml-0.5" />
-                  </a>.
-                </p>
+                    <PackageCheck className={`h-4 w-4 ${installBusy ? 'animate-pulse' : ''}`} />
+                    {installBusy ? 'Installing…' : 'Install cloudflared'}
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowTunnelForm(!showTunnelForm)}
+                  disabled={!status?.cloudflared_installed}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={!status?.cloudflared_installed ? 'Install cloudflared first' : ''}
+                >
+                  <Plus className="h-4 w-4" />
+                  New Tunnel
+                </button>
               </div>
+            </div>
+
+            {!status?.cloudflared_installed && (
+              <div className="border-b border-border bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                The <code>cloudflared</code> binary is not installed on this server. Install it via the button above (Linux only — apt-based distros).
+                Manual install instructions:{' '}
+                <a
+                  href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline"
+                >
+                  cloudflare.com docs
+                  <ExternalLink className="h-3 w-3 inline ml-0.5" />
+                </a>.
+              </div>
+            )}
+
+            {showTunnelForm && (
+              <div className="p-4 border-b border-border bg-muted/40 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">Tunnel name</label>
+                    <input
+                      type="text"
+                      value={newTunnel.name}
+                      onChange={(e) => setNewTunnel({ ...newTunnel, name: e.target.value })}
+                      placeholder="my-app-tunnel"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">Public hostname</label>
+                    <input
+                      type="text"
+                      value={newTunnel.hostname}
+                      onChange={(e) => setNewTunnel({ ...newTunnel, hostname: e.target.value.toLowerCase() })}
+                      placeholder="app.example.com"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">Must be in a connected Cloudflare zone.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">Local target</label>
+                    <input
+                      type="text"
+                      value={newTunnel.local_target}
+                      onChange={(e) => setNewTunnel({ ...newTunnel, local_target: e.target.value })}
+                      placeholder="http://localhost:8080"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">e.g. http://localhost:8080, tcp://localhost:22, ssh://localhost:22</p>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setShowTunnelForm(false)}
+                    className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateTunnel}
+                    disabled={tunnelBusy === '__create__'}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {tunnelBusy === '__create__' ? 'Creating…' : 'Create Tunnel'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="divide-y divide-border">
+              {tunnels.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  No tunnels configured. Create one to expose a local service via Cloudflare's edge.
+                </div>
+              ) : (
+                tunnels.map((t) => (
+                  <div key={t.id} className="p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`w-2 h-2 rounded-full shrink-0 ${t.running ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}
+                          title={t.running ? 'Running' : 'Stopped'}
+                        />
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground truncate">
+                            {t.name}
+                            {' '}
+                            <span className="text-xs font-normal text-muted-foreground">{t.hostname}</span>
+                          </p>
+                          <p className="text-xs text-muted-foreground font-mono truncate">
+                            → {t.local_target}
+                            {t.running && t.uptime && (
+                              <span className="ml-2 text-green-600">up {t.uptime} (pid {t.pid})</span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {t.running ? (
+                          <button
+                            onClick={() => handleStopTunnel(t.id)}
+                            disabled={tunnelBusy === t.id}
+                            className="p-2 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition disabled:opacity-50"
+                            title="Stop"
+                          >
+                            <Square className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleStartTunnel(t.id)}
+                            disabled={tunnelBusy === t.id || !status?.cloudflared_installed}
+                            className="p-2 rounded-md bg-green-50 text-green-600 hover:bg-green-100 transition disabled:opacity-50"
+                            title={!status?.cloudflared_installed ? 'Install cloudflared first' : 'Start'}
+                          >
+                            <Play className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleViewLogs(t.id)}
+                          className="p-2 rounded-md hover:bg-accent transition"
+                          title="View recent logs"
+                        >
+                          <TerminalIcon className="h-4 w-4" />
+                        </button>
+                        <a
+                          href={`https://${t.hostname}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2 rounded-md hover:bg-accent transition"
+                          title="Open public URL"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                        <button
+                          onClick={() => handleDeleteTunnel(t.id, t.name)}
+                          disabled={tunnelBusy === t.id}
+                          className="p-2 rounded-md text-red-600 hover:bg-red-50 transition disabled:opacity-50"
+                          title="Delete tunnel"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {tunnelLogs?.id === t.id && (
+                      <div className="mt-3 rounded-md border border-border bg-black/90 p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs text-gray-400">cloudflared logs (last 64 lines)</span>
+                          <button
+                            onClick={() => setTunnelLogs(null)}
+                            className="text-xs text-gray-400 hover:text-white"
+                          >
+                            close
+                          </button>
+                        </div>
+                        <pre className="text-[11px] font-mono text-gray-200 whitespace-pre-wrap max-h-64 overflow-auto">
+                          {tunnelLogs.text}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

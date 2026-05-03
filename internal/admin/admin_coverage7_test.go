@@ -266,7 +266,7 @@ func TestCloudflareTunnelsList(t *testing.T) {
 	cloudflareConfig = &cloudflareState{
 		Token: "test-token", AccountID: "acc-123", Connected: true,
 		Tunnels: []cloudflareTunnel{
-			{ID: "t1", Name: "test-tunnel", Domain: "example.com", Running: true},
+			{ID: "t1", Name: "test-tunnel", Hostname: "example.com"},
 		},
 	}
 	cloudflareMu.Unlock()
@@ -339,30 +339,6 @@ func TestCloudflareTunnelCreateMissingFields(t *testing.T) {
 	}
 }
 
-func TestCloudflareTunnelCreateSuccess(t *testing.T) {
-	cloudflareMu.Lock()
-	cloudflareConfig = &cloudflareState{Token: "t", AccountID: "a", Connected: true, Tunnels: []cloudflareTunnel{}}
-	cloudflareMu.Unlock()
-	defer func() {
-		cloudflareMu.Lock()
-		cloudflareConfig = nil
-		cloudflareMu.Unlock()
-	}()
-
-	s := testServer()
-	rec := httptest.NewRecorder()
-	body := `{"name":"test-tunnel","domain":"example.com"}`
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels", strings.NewReader(body)))
-	if rec.Code != 200 {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var result map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &result)
-	if result["id"] == "" || result["token"] == "" {
-		t.Errorf("expected tunnel with id and token, got %v", result)
-	}
-}
-
 func TestCloudflareTunnelDeleteNotConnected(t *testing.T) {
 	cloudflareMu.Lock()
 	cloudflareConfig = nil
@@ -394,26 +370,9 @@ func TestCloudflareTunnelDeleteNotFound(t *testing.T) {
 	}
 }
 
-func TestCloudflareTunnelDeleteSuccess(t *testing.T) {
-	cloudflareMu.Lock()
-	cloudflareConfig = &cloudflareState{
-		Token: "t", AccountID: "a", Connected: true,
-		Tunnels: []cloudflareTunnel{{ID: "t1", Name: "test", Domain: "example.com"}},
-	}
-	cloudflareMu.Unlock()
-	defer func() {
-		cloudflareMu.Lock()
-		cloudflareConfig = nil
-		cloudflareMu.Unlock()
-	}()
-
-	s := testServer()
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/cloudflare/tunnels/t1", nil))
-	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-}
+// TestCloudflareTunnelDeleteSuccess removed in v0.2.0 — Delete now calls real
+// Cloudflare API; success path is covered by mock-CF tests in
+// internal/cloudflare/*_test.go.
 
 func TestCloudflareTunnelStartNotConnected(t *testing.T) {
 	cloudflareMu.Lock()
@@ -423,8 +382,9 @@ func TestCloudflareTunnelStartNotConnected(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/t1/start", nil))
-	if rec.Code != 400 {
-		t.Errorf("status = %d, want 400", rec.Code)
+	// In v0.2.0 Start returns 404 for unknown tunnel ID.
+	if rec.Code != 404 {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
@@ -446,47 +406,9 @@ func TestCloudflareTunnelStartNotFound(t *testing.T) {
 	}
 }
 
-func TestCloudflareTunnelStartSuccess(t *testing.T) {
-	cloudflareMu.Lock()
-	cloudflareConfig = &cloudflareState{
-		Token: "t", AccountID: "a", Connected: true,
-		Tunnels: []cloudflareTunnel{{ID: "t1", Name: "test", Domain: "example.com"}},
-	}
-	cloudflareMu.Unlock()
-	defer func() {
-		cloudflareMu.Lock()
-		cloudflareConfig = nil
-		cloudflareMu.Unlock()
-	}()
-
-	s := testServer()
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/t1/start", nil))
-	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-}
-
-func TestCloudflareTunnelStopSuccess(t *testing.T) {
-	cloudflareMu.Lock()
-	cloudflareConfig = &cloudflareState{
-		Token: "t", AccountID: "a", Connected: true,
-		Tunnels: []cloudflareTunnel{{ID: "t1", Name: "test", Domain: "example.com", Running: true, Connections: 1}},
-	}
-	cloudflareMu.Unlock()
-	defer func() {
-		cloudflareMu.Lock()
-		cloudflareConfig = nil
-		cloudflareMu.Unlock()
-	}()
-
-	s := testServer()
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/t1/stop", nil))
-	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-}
+// TestCloudflareTunnelStart/StopSuccess removed in v0.2.0 — Start now spawns
+// real cloudflared, Stop talks to the runner; success paths covered by
+// internal/cloudflare/*_test.go with execCommandFn stubs.
 
 func TestCloudflareTunnelStopNotFound(t *testing.T) {
 	cloudflareMu.Lock()
