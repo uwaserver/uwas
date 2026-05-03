@@ -930,10 +930,15 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		"message": "Restarting UWAS...",
 	})
 
-	// Auto-restart after response is sent
+	// Auto-restart after response is sent. RestartSelf tries systemctl first,
+	// then syscall.Exec; if both fail, the new binary is on disk but the running
+	// process is still the old one, so we log loudly to surface the situation.
 	go func() {
 		time.Sleep(500 * time.Millisecond) // let response flush
-		selfupdate.RestartSelf()           // tries systemctl restart uwas, falls back to re-exec
+		if err := selfupdate.RestartSelf(); err != nil {
+			s.logger.Error("UWAS auto-restart failed after self-update", "err", err.Error(),
+				"hint", "new binary is installed; restart manually: 'sudo systemctl restart uwas' or 'sudo uwas restart'")
+		}
 	}()
 }
 
