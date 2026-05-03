@@ -191,7 +191,18 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	}
 	s.initAudit()
 	s.registerRoutes()
+	if err := s.loadCloudflareState(); err != nil {
+		log.Error("cloudflare state load failed", "err", err.Error())
+	}
 	return s
+}
+
+// maskCloudflareToken returns the last 4 chars of the token prefixed with stars.
+func maskCloudflareToken(token string) string {
+	if len(token) <= 4 {
+		return "****"
+	}
+	return "****" + token[len(token)-4:]
 }
 
 func (s *Server) registerRoutes() {
@@ -493,6 +504,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/cloudflare/cache/purge", s.handleCloudflareCachePurge)
 	s.mux.HandleFunc("GET /api/v1/cloudflare/zones", s.handleCloudflareZones)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/sync", s.handleCloudflareZoneSync)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/import", s.handleCloudflareZoneImport)
 
 	// Dashboard UI (embedded SPA)
 	distFS, err := fs.Sub(dashboard.Assets, "dist")
@@ -3263,7 +3275,12 @@ func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
 
 // SetConfigPath stores the main config file path so the raw YAML endpoints
 // can read/write the file.
-func (s *Server) SetConfigPath(path string) { s.configPath = path }
+func (s *Server) SetConfigPath(path string) {
+	s.configPath = path
+	if err := s.loadCloudflareState(); err != nil {
+		s.logger.Error("cloudflare state load failed", "err", err.Error(), "path", path)
+	}
+}
 
 // --- Raw YAML config editor ---
 
@@ -5150,9 +5167,12 @@ func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	jsonResponse(w, map[string]any{
-		"connected":  cfg.Connected,
-		"email":      cfg.Email,
-		"account_id": cfg.AccountID,
+		"connected":   cfg.Connected,
+		"email":       cfg.Email,
+		"account_id":  cfg.AccountID,
+		"token_mask":  maskCloudflareToken(cfg.Token),
+		"updated_at":  cfg.UpdatedAt,
+		"tunnel_count": len(cfg.Tunnels),
 	})
 }
 
@@ -5190,7 +5210,11 @@ func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)
 		Connected: true,
 		UpdatedAt: time.Now(),
 	}
+	saveErr := s.saveCloudflareStateLocked()
 	cloudflareMu.Unlock()
+	if saveErr != nil {
+		s.logger.Error("cloudflare state save failed", "err", saveErr.Error())
+	}
 
 	s.RecordAudit("cloudflare.connect", "account: "+req.AccountID, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "connected"})
@@ -5272,7 +5296,11 @@ func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Reque
 	cloudflareMu.Lock()
 	oldCfg := cloudflareConfig
 	cloudflareConfig = nil
+	saveErr := s.saveCloudflareStateLocked()
 	cloudflareMu.Unlock()
+	if saveErr != nil {
+		s.logger.Error("cloudflare state save failed", "err", saveErr.Error())
+	}
 
 	if oldCfg != nil {
 		s.RecordAudit("cloudflare.disconnect", "account: "+oldCfg.AccountID, requestIP(r), true)
@@ -5333,6 +5361,9 @@ func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Req
 
 	cloudflareConfig.Tunnels = append(cloudflareConfig.Tunnels, tunnel)
 	cloudflareConfig.UpdatedAt = time.Now()
+	if err := s.saveCloudflareStateLocked(); err != nil {
+		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	}
 
 	s.RecordAudit("cloudflare.tunnel.create", req.Name+" ("+req.Domain+")", requestIP(r), true)
 	jsonResponse(w, tunnel)
@@ -5387,6 +5418,9 @@ func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Req
 
 	cloudflareConfig.Tunnels = newTunnels
 	cloudflareConfig.UpdatedAt = time.Now()
+	if err := s.saveCloudflareStateLocked(); err != nil {
+		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	}
 
 	s.RecordAudit("cloudflare.tunnel.delete", "id: "+id, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "deleted"})
@@ -5424,6 +5458,9 @@ func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Requ
 	}
 
 	cloudflareConfig.UpdatedAt = time.Now()
+	if err := s.saveCloudflareStateLocked(); err != nil {
+		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	}
 
 	s.RecordAudit("cloudflare.tunnel.start", "id: "+id, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "started"})
@@ -5461,6 +5498,9 @@ func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Reque
 	}
 
 	cloudflareConfig.UpdatedAt = time.Now()
+	if err := s.saveCloudflareStateLocked(); err != nil {
+		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	}
 
 	s.RecordAudit("cloudflare.tunnel.stop", "id: "+id, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "stopped"})
@@ -5699,4 +5739,138 @@ type cloudflareDNSRecord struct {
 	TTL      int    `json:"ttl"`
 	Proxied  bool   `json:"proxied"`
 	Priority int    `json:"priority"`
+}
+
+// handleCloudflareZoneImport pulls A/AAAA/CNAME hostnames from a Cloudflare
+// zone and creates UWAS domain entries for any hostname not already configured.
+// Body: { "default_type": "static"|"php"|"proxy", "default_root": "/var/www/{host}/public_html" }
+func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	zoneID := r.PathValue("id")
+	if zoneID == "" {
+		jsonError(w, "zone id required", http.StatusBadRequest)
+		return
+	}
+
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+	if cfg == nil || !cfg.Connected {
+		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		DefaultType string `json:"default_type"`
+		DefaultRoot string `json:"default_root"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.DefaultType == "" {
+		req.DefaultType = "static"
+	}
+	switch req.DefaultType {
+	case "static", "php", "proxy", "redirect":
+	default:
+		jsonError(w, "default_type must be one of: static, php, proxy, redirect", http.StatusBadRequest)
+		return
+	}
+
+	records, err := s.fetchCloudflareDNSRecords(cfg.Token, zoneID)
+	if err != nil {
+		jsonError(w, "fetch records failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Collect unique hostnames from A/AAAA/CNAME records.
+	seen := map[string]bool{}
+	hostnames := make([]string, 0, len(records))
+	for _, rec := range records {
+		switch rec.Type {
+		case "A", "AAAA", "CNAME":
+		default:
+			continue
+		}
+		host := strings.TrimSuffix(strings.ToLower(rec.Name), ".")
+		if host == "" || !isValidHostname(host) {
+			continue
+		}
+		// Skip Cloudflare tunnel infrastructure hostnames.
+		if strings.HasSuffix(host, ".cfargotunnel.com") {
+			continue
+		}
+		if !seen[host] {
+			seen[host] = true
+			hostnames = append(hostnames, host)
+		}
+	}
+
+	added := []string{}
+	skipped := []string{}
+
+	s.configMu.Lock()
+	existing := map[string]bool{}
+	for _, d := range s.config.Domains {
+		existing[strings.ToLower(d.Host)] = true
+	}
+
+	webRoot := s.config.Global.WebRoot
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
+
+	for _, host := range hostnames {
+		if existing[host] {
+			skipped = append(skipped, host)
+			continue
+		}
+		root := req.DefaultRoot
+		if root == "" {
+			root = filepath.Join(webRoot, host, "public_html")
+		} else {
+			root = strings.ReplaceAll(root, "{host}", host)
+		}
+		d := config.Domain{
+			Host: host,
+			Type: req.DefaultType,
+			Root: root,
+			SSL:  config.SSLConfig{Mode: "auto"},
+		}
+		if d.Type == "php" {
+			d.PHP.IndexFiles = []string{"index.php", "index.html"}
+			d.Htaccess = config.HtaccessConfig{Mode: "import"}
+			d.Security.WAF.Enabled = true
+			d.Security.BlockedPaths = []string{".git", ".env", "wp-config.php"}
+		}
+		if d.Type != "redirect" {
+			d.Cache.Enabled = true
+			d.Cache.TTL = 3600
+		}
+		// Best-effort web root creation.
+		if root != "" {
+			if err := os.MkdirAll(root, 0755); err != nil {
+				s.logger.Warn("import: web root create failed", "domain", host, "error", err)
+			}
+		}
+		s.config.Domains = append(s.config.Domains, d)
+		existing[host] = true
+		added = append(added, host)
+	}
+	s.configMu.Unlock()
+
+	if len(added) > 0 {
+		s.notifyDomainChange()
+	}
+
+	s.RecordAudit("cloudflare.zones.import",
+		fmt.Sprintf("zone: %s, added: %d, skipped: %d", zoneID, len(added), len(skipped)),
+		requestIP(r), true)
+
+	jsonResponse(w, map[string]any{
+		"added":   added,
+		"skipped": skipped,
+		"total":   len(hostnames),
+	})
 }

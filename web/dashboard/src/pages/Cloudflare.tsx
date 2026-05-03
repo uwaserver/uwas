@@ -3,57 +3,50 @@ import {
   Cloud,
   Link,
   RefreshCw,
-  Trash2,
-  Plus,
   CheckCircle,
   XCircle,
   Globe,
   Server,
   Key,
-  Play,
-  Square,
-  Copy,
   ExternalLink,
   AlertTriangle,
+  Download,
+  Settings as SettingsIcon,
+  Info,
 } from 'lucide-react';
 import {
   fetchCloudflareStatus,
   connectCloudflare,
   disconnectCloudflare,
-  fetchCloudflareTunnels,
-  createCloudflareTunnel,
-  deleteCloudflareTunnel,
-  startCloudflareTunnel,
-  stopCloudflareTunnel,
   purgeCloudflareCache,
   fetchCloudflareZones,
-  syncCloudflareDNS,
+  importCloudflareZone,
   type CloudflareStatus,
-  type CloudflareTunnel,
   type CloudflareZone,
 } from '@/lib/api';
 import Card from '@/components/Card';
 
 export default function Cloudflare() {
   const [status, setStatus] = useState<CloudflareStatus | null>(null);
-  const [tunnels, setTunnels] = useState<CloudflareTunnel[]>([]);
   const [zones, setZones] = useState<CloudflareZone[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
 
   // Connect form
   const [apiToken, setApiToken] = useState('');
   const [accountId, setAccountId] = useState('');
 
-  // Tunnel form
-  const [newTunnelName, setNewTunnelName] = useState('');
-  const [newTunnelDomain, setNewTunnelDomain] = useState('');
-  const [showTunnelForm, setShowTunnelForm] = useState(false);
-
   // Purge form
   const [purgeUrl, setPurgeUrl] = useState('');
   const [purgeEverything, setPurgeEverything] = useState(false);
+
+  // Per-zone import form
+  const [importZoneId, setImportZoneId] = useState<string | null>(null);
+  const [importType, setImportType] = useState<'static' | 'php' | 'proxy' | 'redirect'>('static');
+  const [importRoot, setImportRoot] = useState('/var/www/{host}/public_html');
+  const [importLoading, setImportLoading] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -62,19 +55,37 @@ export default function Cloudflare() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [s, t, z] = await Promise.all([
-        fetchCloudflareStatus(),
-        fetchCloudflareTunnels(),
-        fetchCloudflareZones(),
-      ]);
+      const s = await fetchCloudflareStatus();
       setStatus(s);
-      setTunnels(t);
-      setZones(z);
+      if (s?.connected) {
+        const z = await fetchCloudflareZones();
+        setZones(z);
+      } else {
+        setZones([]);
+      }
       setError('');
     } catch (err: any) {
       setError(err.message || 'Failed to load Cloudflare data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleImportZone = async (zoneId: string) => {
+    setImportLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await importCloudflareZone(zoneId, importType, importRoot);
+      const parts = [`Added ${result.added.length}`];
+      if (result.skipped.length) parts.push(`skipped ${result.skipped.length} (already exists)`);
+      parts.push(`out of ${result.total} hostname${result.total === 1 ? '' : 's'}`);
+      setSuccess(parts.join(', '));
+      setImportZoneId(null);
+    } catch (err: any) {
+      setError(err.message || 'Import failed');
+    } finally {
+      setImportLoading(false);
     }
   };
 
@@ -110,57 +121,6 @@ export default function Cloudflare() {
     }
   };
 
-  const handleCreateTunnel = async () => {
-    if (!newTunnelName || !newTunnelDomain) {
-      setError('Tunnel name and domain are required');
-      return;
-    }
-    try {
-      setLoading(true);
-      await createCloudflareTunnel(newTunnelName, newTunnelDomain);
-      setSuccess('Tunnel created successfully');
-      setShowTunnelForm(false);
-      setNewTunnelName('');
-      setNewTunnelDomain('');
-      await loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to create tunnel');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteTunnel = async (tunnelId: string) => {
-    if (!confirm('Are you sure you want to delete this tunnel?')) return;
-    try {
-      setLoading(true);
-      await deleteCloudflareTunnel(tunnelId);
-      setSuccess('Tunnel deleted successfully');
-      await loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete tunnel');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleToggleTunnel = async (tunnelId: string, running: boolean) => {
-    try {
-      setLoading(true);
-      if (running) {
-        await stopCloudflareTunnel(tunnelId);
-      } else {
-        await startCloudflareTunnel(tunnelId);
-      }
-      setSuccess(`Tunnel ${running ? 'stopped' : 'started'} successfully`);
-      await loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to toggle tunnel');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handlePurgeCache = async () => {
     try {
       setLoading(true);
@@ -175,24 +135,6 @@ export default function Cloudflare() {
     }
   };
 
-  const handleSyncDNS = async (zoneId: string) => {
-    try {
-      setLoading(true);
-      await syncCloudflareDNS(zoneId);
-      setSuccess('DNS records synced successfully');
-      await loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to sync DNS');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setSuccess('Copied to clipboard');
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -203,18 +145,36 @@ export default function Cloudflare() {
             Cloudflare
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage Cloudflare tunnels, CDN cache, and DNS
+            Connect Cloudflare to import zones, purge CDN cache, and (soon) run real tunnels.
           </p>
         </div>
-        <button
-          onClick={loadData}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowHelp((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent"
+          >
+            <Info className="h-4 w-4" />
+            {showHelp ? 'Hide help' : 'What is this?'}
+          </button>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {showHelp && (
+        <div className="rounded-lg border border-border bg-card p-4 text-sm text-card-foreground space-y-2">
+          <p><strong>Connection</strong> — stores your Cloudflare API token and Account ID on the server (mode 0600). The token is masked everywhere in the UI; only the last 4 chars are shown.</p>
+          <p><strong>CDN Cache Purge</strong> — clears Cloudflare's edge cache for a specific URL or the entire account. Useful after deploys.</p>
+          <p><strong>Zones</strong> — domains in your Cloudflare account. Use <em>Import to UWAS</em> to add a zone's hostnames as UWAS sites in one click, or <em>Manage DNS</em> to jump to the DNS editor.</p>
+          <p><strong>Tunnels</strong> — coming in v0.2.0. Will install <code>cloudflared</code>, create real tunnels via the Cloudflare API, and keep them running with auto-restart.</p>
+        </div>
+      )}
 
       {/* Alerts */}
       {error && (
@@ -310,111 +270,33 @@ export default function Cloudflare() {
             </button>
           </div>
 
-          {/* Tunnels Section */}
-          <div className="rounded-lg border border-border bg-card">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <Server className="h-5 w-5" />
-                Tunnels
-              </h2>
-              <button
-                onClick={() => setShowTunnelForm(!showTunnelForm)}
-                className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
-              >
-                <Plus className="h-4 w-4" />
-                New Tunnel
-              </button>
-            </div>
-
-            {showTunnelForm && (
-              <div className="p-4 border-b border-border bg-muted/50">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1">
-                      Tunnel Name
-                    </label>
-                    <input
-                      type="text"
-                      value={newTunnelName}
-                      onChange={(e) => setNewTunnelName(e.target.value)}
-                      placeholder="my-tunnel"
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1">
-                      Domain
-                    </label>
-                    <input
-                      type="text"
-                      value={newTunnelDomain}
-                      onChange={(e) => setNewTunnelDomain(e.target.value)}
-                      placeholder="example.com"
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end mt-4">
-                  <button
-                    onClick={handleCreateTunnel}
-                    disabled={loading || !newTunnelName || !newTunnelDomain}
-                    className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+          {/* Tunnels Section — Coming Soon */}
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30">
+            <div className="flex items-start gap-3">
+              <Server className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-amber-900 dark:text-amber-200">
+                  Cloudflare Tunnel — coming in v0.2.0
+                </h3>
+                <p className="text-sm text-amber-800 dark:text-amber-300/90 mt-1">
+                  Real <code className="px-1 rounded bg-amber-100 dark:bg-amber-900/40">cloudflared</code> integration is in development.
+                  The server will install the binary, create real tunnels via the Cloudflare API, manage DNS automatically,
+                  and run the connector with auto-restart on crash.
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+                  Until then, use the official cloudflared CLI on the server, or set up a tunnel directly at
+                  {' '}
+                  <a
+                    href="https://one.dash.cloudflare.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
                   >
-                    <Plus className="h-4 w-4" />
-                    Create Tunnel
-                  </button>
-                </div>
+                    one.dash.cloudflare.com
+                    <ExternalLink className="h-3 w-3 inline ml-0.5" />
+                  </a>.
+                </p>
               </div>
-            )}
-
-            <div className="divide-y divide-border">
-              {tunnels.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">
-                  No tunnels configured
-                </div>
-              ) : (
-                tunnels.map((tunnel) => (
-                  <div key={tunnel.id} className="p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${tunnel.running ? 'bg-green-500' : 'bg-gray-400'}`} />
-                      <div>
-                        <p className="font-medium text-foreground">{tunnel.name}</p>
-                        <p className="text-xs text-muted-foreground">{tunnel.domain}</p>
-                        {tunnel.running && tunnel.connections && (
-                          <p className="text-xs text-green-600">{tunnel.connections} connections</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggleTunnel(tunnel.id, tunnel.running)}
-                        disabled={loading}
-                        className={`p-2 rounded-md transition ${
-                          tunnel.running
-                            ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                            : 'bg-green-50 text-green-600 hover:bg-green-100'
-                        }`}
-                      >
-                        {tunnel.running ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                      </button>
-                      <button
-                        onClick={() => copyToClipboard(tunnel.token)}
-                        className="p-2 rounded-md hover:bg-accent transition"
-                        title="Copy tunnel token"
-                      >
-                        <Copy className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteTunnel(tunnel.id)}
-                        disabled={loading}
-                        className="p-2 rounded-md text-red-600 hover:bg-red-50 transition"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
             </div>
           </div>
 
@@ -466,29 +348,108 @@ export default function Cloudflare() {
             <div className="p-4 border-b border-border">
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <Globe className="h-5 w-5" />
-                Zones & DNS
+                Zones
               </h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Domains in your Cloudflare account. Use <strong>Import to UWAS</strong> to add hostnames
+                from a zone's DNS records as UWAS sites, or <strong>Manage DNS</strong> to edit records via the DNS page.
+              </p>
             </div>
             <div className="divide-y divide-border">
               {zones.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground">
-                  No zones found
+                  No zones found in this account
                 </div>
               ) : (
                 zones.map((zone) => (
-                  <div key={zone.id} className="p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-foreground">{zone.name}</p>
-                      <p className="text-xs text-muted-foreground capitalize">{zone.status}</p>
+                  <div key={zone.id} className="p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-foreground truncate">{zone.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          <span className="capitalize">{zone.status}</span>
+                          {zone.plan ? ` · ${zone.plan}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a
+                          href={`/dns?domain=${encodeURIComponent(zone.name)}`}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
+                        >
+                          <SettingsIcon className="h-4 w-4" />
+                          Manage DNS
+                        </a>
+                        <button
+                          onClick={() => {
+                            setImportZoneId(importZoneId === zone.id ? null : zone.id);
+                            setError('');
+                            setSuccess('');
+                          }}
+                          disabled={loading}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          <Download className="h-4 w-4" />
+                          Import to UWAS
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleSyncDNS(zone.id)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                      Sync DNS
-                    </button>
+
+                    {importZoneId === zone.id && (
+                      <div className="mt-3 rounded-md border border-border bg-muted/40 p-3">
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Pulls A / AAAA / CNAME records from <strong>{zone.name}</strong> and creates
+                          a UWAS domain for every hostname not already configured.
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-medium text-foreground mb-1">
+                              Default site type
+                            </label>
+                            <select
+                              value={importType}
+                              onChange={(e) => setImportType(e.target.value as 'static' | 'php' | 'proxy' | 'redirect')}
+                              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="static">Static</option>
+                              <option value="php">PHP</option>
+                              <option value="proxy">Proxy</option>
+                              <option value="redirect">Redirect</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-foreground mb-1">
+                              Default web root
+                            </label>
+                            <input
+                              type="text"
+                              value={importRoot}
+                              onChange={(e) => setImportRoot(e.target.value)}
+                              placeholder="/var/www/{host}/public_html"
+                              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              <code>{'{host}'}</code> is replaced per imported hostname.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-3">
+                          <button
+                            onClick={() => setImportZoneId(null)}
+                            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handleImportZone(zone.id)}
+                            disabled={importLoading}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+                          >
+                            <Download className={`h-4 w-4 ${importLoading ? 'animate-pulse' : ''}`} />
+                            {importLoading ? 'Importing…' : 'Import zone'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
