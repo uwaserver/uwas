@@ -229,7 +229,7 @@ export interface CacheStatsData {
 }
 export const fetchCacheStats = () => api<CacheStatsData>('/api/v1/cache/stats');
 
-export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs');
+export const fetchLogs = () => api<LogEntry[]>('/api/v1/logs').then(r => r ?? []);
 export const addDomain = (domain: Record<string, unknown>) => api<DomainData>('/api/v1/domains', { method: 'POST', body: JSON.stringify(domain) });
 export const updateDomain = (host: string, domain: Record<string, unknown>) => api<DomainData>(`/api/v1/domains/${encodeURIComponent(host)}`, { method: 'PUT', body: JSON.stringify(domain) });
 export const deleteDomain = (host: string, cleanup = false) => {
@@ -316,8 +316,8 @@ export const fetchAuditLog = () =>
     .then(r => r.items ?? []);
 
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
-export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');
-export const fetchAnalytics = () => api<DomainAnalytics[]>('/api/v1/analytics');
+export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs').then(r => r ?? []);
+export const fetchAnalytics = () => api<DomainAnalytics[]>('/api/v1/analytics').then(r => r ?? []);
 export const fetchDomainAnalytics = (host: string) => api<DomainAnalytics>(`/api/v1/analytics/${encodeURIComponent(host)}`);
 export const fetchConfigRaw = () => api<{ content: string }>('/api/v1/config/raw');
 export const saveConfigRaw = (content: string) => api<{ status: string }>('/api/v1/config/raw', { method: 'PUT', body: JSON.stringify({ content }) });
@@ -384,7 +384,7 @@ export interface DomainPHP {
   config_overrides: Record<string, string>;
 }
 
-export const fetchDomainPHPInstances = () => api<DomainPHP[]>('/api/v1/php/domains');
+export const fetchDomainPHPInstances = () => api<DomainPHP[]>('/api/v1/php/domains').then(r => r ?? []);
 export const assignDomainPHP = (domain: string, version: string) =>
   api<DomainPHP>('/api/v1/php/domains', { method: 'POST', body: JSON.stringify({domain, version}) });
 export const unassignDomainPHP = (domain: string) =>
@@ -435,7 +435,7 @@ export interface UnknownDomainEntry {
   blocked: boolean;
 }
 
-export const fetchUnknownDomains = () => api<UnknownDomainEntry[]>('/api/v1/unknown-domains');
+export const fetchUnknownDomains = () => api<UnknownDomainEntry[]>('/api/v1/unknown-domains').then(r => r ?? []);
 export const blockUnknownDomain = (host: string) =>
   api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/block`, { method: 'POST' });
 export const unblockUnknownDomain = (host: string) =>
@@ -549,7 +549,7 @@ export const firewallEnable = () => api<{ status: string }>('/api/v1/firewall/en
 export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });
 
 // SSH Keys
-export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`);
+export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`).then(r => r ?? []);
 export const addSSHKey = (domain: string, publicKey: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'POST', body: JSON.stringify({ public_key: publicKey }) });
 export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'DELETE', body: JSON.stringify({ fingerprint }) });
 
@@ -581,7 +581,7 @@ export const installDatabase = () => api<{ status: string; task_id?: string }>('
 export const uninstallDatabase = () => api<{ status: string; output: string }>('/api/v1/database/uninstall', { method: 'POST' });
 export const diagnoseDatabase = () => api<Record<string, unknown>>('/api/v1/database/diagnose');
 export interface DBUser { user: string; host: string; }
-export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users');
+export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users').then(r => r ?? []);
 export const changeDBPassword = (user: string, host: string, password: string) =>
   api<{ status: string }>('/api/v1/database/users/password', { method: 'POST', body: JSON.stringify({ user, host, password }) });
 export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
@@ -625,7 +625,7 @@ export const testWebhook = (url: string) => api<{ success: boolean; message: str
 // Admin Users (multi-user auth)
 export interface AdminUser { username: string; role: string; email: string; domains: string[]; created_at: string; api_key?: string; }
 export interface AdminUserCreated extends AdminUser { password: string; api_key: string; }
-export const fetchAdminUsers = () => api<AdminUser[]>('/api/v1/auth/users');
+export const fetchAdminUsers = () => api<AdminUser[]>('/api/v1/auth/users').then(r => r ?? []);
 export const createAdminUser = (user: { username: string; password: string; role: string; email?: string; domains?: string[] }) =>
   api<AdminUserCreated>('/api/v1/auth/users', { method: 'POST', body: JSON.stringify(user) });
 export const deleteAdminUser = (username: string) => api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
@@ -636,13 +636,13 @@ export const regenAdminApiKey = (username: string) =>
 
 // Bandwidth
 export interface BandwidthStatus { host: string; monthly_bytes: number; daily_bytes: number; monthly_limit: number; daily_limit: number; monthly_pct: number; daily_pct: number; blocked: boolean; throttled: boolean; }
-export const fetchBandwidth = () => api<BandwidthStatus[]>('/api/v1/bandwidth');
+export const fetchBandwidth = () => api<BandwidthStatus[]>('/api/v1/bandwidth').then(r => r ?? []);
 export const resetBandwidth = (host: string) => api<{ status: string }>(`/api/v1/bandwidth/${encodeURIComponent(host)}/reset`, { method: 'POST' });
 
 // Cron Monitoring
 export interface CronExecution { id: string; domain: string; command: string; schedule: string; started_at: string; ended_at: string; duration: number; exit_code: number; success: boolean; output: string; error?: string; }
 export interface CronJobStatus { domain: string; command: string; schedule: string; last_run?: CronExecution; last_success?: CronExecution; last_failure?: CronExecution; success_count: number; failure_count: number; consecutive_fail: number; history: CronExecution[]; }
-export const fetchCronMonitor = () => api<CronJobStatus[]>('/api/v1/cron/monitor');
+export const fetchCronMonitor = () => api<CronJobStatus[]>('/api/v1/cron/monitor').then(r => r ?? []);
 export const executeCron = (domain: string, schedule: string, command: string) =>
   api<CronExecution>('/api/v1/cron/execute', { method: 'POST', body: JSON.stringify({ domain, schedule, command }) });
 
@@ -662,7 +662,7 @@ export const syncDNS = (domain: string) => api<{ status: string; ip: string }>(`
 export interface SecurityStats { waf_blocked: number; bot_blocked: number; rate_blocked: number; hotlink_blocked: number; total_blocked: number; }
 export interface BlockedRequest { time: string; ip: string; path: string; reason: string; ua: string; }
 export const fetchSecurityStats = () => api<SecurityStats>('/api/v1/security/stats');
-export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked');
+export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked').then(r => r ?? []);
 
 // Domain health
 export interface DomainHealth { host: string; status: string; code: number; ms: number; error?: string; }
@@ -765,7 +765,7 @@ export const wpErrorLog = (domain: string) =>
 // WordPress Users
 export interface WPUserInfo { id: string; login: string; email: string; role: string; registered?: string; }
 export const wpListUsers = (domain: string) =>
-  api<WPUserInfo[]>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/users`);
+  api<WPUserInfo[]>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/users`).then(r => r ?? []);
 export const wpChangePassword = (domain: string, username: string, password: string) =>
   api<{ status: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/change-password`, { method: 'POST', body: JSON.stringify({ username, password }) });
 
@@ -1021,9 +1021,9 @@ export const fetchDeploys = () =>
 // ── Database Explorer ──
 
 export const fetchDBTables = (db: string) =>
-  api<{ name: string; rows: string; data_size: string; engine: string }[]>(`/api/v1/database/explore/${encodeURIComponent(db)}/tables`);
+  api<{ name: string; rows: string; data_size: string; engine: string }[]>(`/api/v1/database/explore/${encodeURIComponent(db)}/tables`).then(r => r ?? []);
 export const fetchDBColumns = (db: string, table: string) =>
-  api<{ name: string; type: string; nullable: string; key: string; default: string; extra: string }[]>(`/api/v1/database/explore/${encodeURIComponent(db)}/tables/${encodeURIComponent(table)}`);
+  api<{ name: string; type: string; nullable: string; key: string; default: string; extra: string }[]>(`/api/v1/database/explore/${encodeURIComponent(db)}/tables/${encodeURIComponent(table)}`).then(r => r ?? []);
 export const runDBQuery = (db: string, sql: string, limit?: number) =>
   api<{ columns: string[]; rows: string[][]; count: number }>(`/api/v1/database/explore/${encodeURIComponent(db)}/query`, { method: 'POST', body: JSON.stringify({ sql, limit }) });
 
@@ -1133,7 +1133,7 @@ export const connectCloudflare = (token: string, accountId: string) =>
 export const disconnectCloudflare = () =>
   api<{ status: string }>('/api/v1/cloudflare/disconnect', { method: 'POST' });
 
-export const fetchCloudflareTunnels = () => api<CloudflareTunnel[]>('/api/v1/cloudflare/tunnels');
+export const fetchCloudflareTunnels = () => api<CloudflareTunnel[]>('/api/v1/cloudflare/tunnels').then(r => r ?? []);
 
 export const createCloudflareTunnel = (name: string, domain: string) =>
   api<CloudflareTunnel>('/api/v1/cloudflare/tunnels', { method: 'POST', body: JSON.stringify({ name, domain }) });
@@ -1150,7 +1150,7 @@ export const stopCloudflareTunnel = (id: string) =>
 export const purgeCloudflareCache = (url?: string, everything = false) =>
   api<{ status: string }>('/api/v1/cloudflare/cache/purge', { method: 'POST', body: JSON.stringify({ url, everything }) });
 
-export const fetchCloudflareZones = () => api<CloudflareZone[]>('/api/v1/cloudflare/zones');
+export const fetchCloudflareZones = () => api<CloudflareZone[]>('/api/v1/cloudflare/zones').then(r => r ?? []);
 
 export const syncCloudflareDNS = (zoneId: string) =>
   api<{ status: string; records_synced: number }>(`/api/v1/cloudflare/zones/${encodeURIComponent(zoneId)}/sync`, { method: 'POST' });
