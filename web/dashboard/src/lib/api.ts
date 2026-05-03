@@ -179,7 +179,9 @@ export interface SystemInfo {
 export const fetchHealth = () => api<HealthData>('/api/v1/health');
 export const fetchSystem = () => api<SystemInfo>('/api/v1/system');
 export const fetchStats = () => api<StatsData>('/api/v1/stats');
-export const fetchDomains = () => api<DomainData[]>('/api/v1/domains');
+export const fetchDomains = () =>
+  api<{ items: DomainData[]; total: number; limit: number; offset: number }>('/api/v1/domains')
+    .then(r => r.items);
 export const fetchMetrics = async () => {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -408,7 +410,9 @@ export interface BackupSchedule {
   next_backup: string;
 }
 
-export const fetchBackups = () => api<BackupInfo[]>('/api/v1/backups');
+export const fetchBackups = () =>
+  api<{ items: BackupInfo[]; total: number; limit: number; offset: number }>('/api/v1/backups')
+    .then(r => r.items);
 export const createBackup = (provider?: string) =>
   api<BackupInfo>('/api/v1/backups', { method: 'POST', body: JSON.stringify({ provider: provider || 'local' }) });
 export const restoreBackup = (name: string, provider: string) =>
@@ -448,7 +452,9 @@ export interface SiteUserCreated extends SiteUser {
   port: string;
 }
 
-export const fetchUsers = () => api<SiteUser[]>('/api/v1/users');
+export const fetchUsers = () =>
+  api<{ items: SiteUser[]; total: number; limit: number; offset: number }>('/api/v1/users')
+    .then(r => r.items);
 export const createUser = (domain: string) =>
   api<SiteUserCreated>('/api/v1/users', { method: 'POST', body: JSON.stringify({ domain }) });
 export const deleteUser = (domain: string) =>
@@ -520,7 +526,9 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
 
 // Cron
 export interface CronJob { schedule: string; command: string; domain: string; comment: string; }
-export const fetchCronJobs = () => api<CronJob[]>('/api/v1/cron');
+export const fetchCronJobs = () =>
+  api<{ items: CronJob[]; total: number; limit: number; offset: number }>('/api/v1/cron')
+    .then(r => r.items);
 export const addCronJob = (job: { schedule: string; command: string; domain?: string; comment?: string }) => api<{ status: string }>('/api/v1/cron', { method: 'POST', body: JSON.stringify(job) });
 export const deleteCronJob = (schedule: string, command: string) => api<{ status: string }>('/api/v1/cron', { method: 'DELETE', body: JSON.stringify({ schedule, command }) });
 
@@ -553,7 +561,9 @@ export const stopDB = () => api<{ status: string }>('/api/v1/database/stop', { m
 export const restartDB = () => api<{ status: string }>('/api/v1/database/restart', { method: 'POST' });
 export interface DBInfo { name: string; user: string; password?: string; host: string; size?: string; tables?: number; }
 export const fetchDBStatus = () => api<DBStatus>('/api/v1/database/status');
-export const fetchDatabases = () => api<DBInfo[]>('/api/v1/database/list');
+export const fetchDatabases = () =>
+  api<{ items: DBInfo[]; total: number; limit: number; offset: number }>('/api/v1/database/list')
+    .then(r => r.items);
 export interface DBCreateResult { name: string; user: string; password: string; host: string; }
 export const createDatabase = (name: string, user?: string, password?: string) =>
   api<DBCreateResult>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password }) });
@@ -646,7 +656,9 @@ export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/securit
 
 // Domain health
 export interface DomainHealth { host: string; status: string; code: number; ms: number; error?: string; }
-export const fetchDomainHealth = () => api<DomainHealth[]>('/api/v1/domains/health');
+export const fetchDomainHealth = () =>
+  api<{ items: DomainHealth[]; total: number; limit: number; offset: number }>('/api/v1/domains/health')
+    .then(r => r.items);
 
 // Server IPs
 export interface ServerIPInfo { ip: string; version: number; interface: string; primary: boolean; }
@@ -723,7 +735,9 @@ export interface WPSite {
   updated_at: string;
 }
 
-export const fetchWPSites = () => api<WPSite[]>('/api/v1/wordpress/sites');
+export const fetchWPSites = () =>
+  api<{ items: WPSite[]; total: number; limit: number; offset: number }>('/api/v1/wordpress/sites')
+    .then(r => r.items);
 export const fetchWPSiteDetail = (domain: string) => api<WPSite>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/detail`);
 export const wpUpdateCore = (domain: string) =>
   api<{ status: string; output: string }>(`/api/v1/wordpress/sites/${encodeURIComponent(domain)}/update-core`, { method: 'POST' });
