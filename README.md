@@ -75,7 +75,7 @@ One binary. Zero hassle.
 - **Resource Limits** — Per-domain CPU/memory/PID limits via Linux cgroups v2
 
 ### DevOps
-- **Git Deploy** — Git clone/pull + Docker-based application deployment
+- **Git Deploy** — Git clone/pull + build + health check + restart with concurrent protection, env persistence, and cancellation support
 - **AI-Native** — MCP server for LLM-driven management
 - **Nginx/Apache Migration** — CLI config converter
 - **Hot-Reload** — All per-domain chains rebuild on SIGHUP (zero downtime)
