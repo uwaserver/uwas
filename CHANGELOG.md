@@ -5,6 +5,21 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.56] - 2026-05-03
+
+### Features
+
+- **Deploy health check** — git-mode deploy now verifies the app is responding after restart via HTTP health check, and propagates AppPort from the deployed app back to domain config.
+- **Deploy concurrent protection** — only one active deploy per domain; concurrent deploys are rejected with clear error.
+- **Deploy env persistence** — environment variables (APP_PORT, APP_RUNTIME, APP_COMMAND) are persisted to `.uwasenv` after successful git-mode deploy.
+- **Deploy cancellation** — `CancelDeploy` aborts an in-progress deploy by killing the build process and cleaning up.
+
+### Verification
+
+- `go build ./...` passes.
+- `go test -short -count=1 ./internal/deploy/...` passes.
+- `go test -short -count=1 ./internal/appmanager/...` passes.
+
 ## [0.0.55] - 2026-05-02
 
 ### Security Fixes
