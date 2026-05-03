@@ -253,10 +253,34 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	s.RecordAudit("deploy.start", domain+" git:"+req.GitURL, requestIP(r), true)
 
-	// Deploy in background, restart app on completion
+	// Deploy in background, restart app on completion, auto-save env/build_cmd
 	s.deployMgr.Deploy(req, root, func(err error) {
 		if err == nil && s.appMgr != nil {
 			_ = s.appMgr.Restart(domain)
+			// Auto-save BuildCmd and Env to domain config if provided
+			if req.BuildCmd != "" || len(req.Env) > 0 {
+				s.configMu.Lock()
+				for i := range s.config.Domains {
+					if s.config.Domains[i].Host == domain {
+						if req.BuildCmd != "" {
+							s.config.Domains[i].App.Command = req.BuildCmd
+						}
+						if len(req.Env) > 0 {
+							merged := make(map[string]string)
+							for k, v := range s.config.Domains[i].App.Env {
+								merged[k] = v
+							}
+							for k, v := range req.Env {
+								merged[k] = v
+							}
+							s.config.Domains[i].App.Env = merged
+						}
+						break
+					}
+				}
+				s.configMu.Unlock()
+				s.persistConfig()
+			}
 		}
 	})
 
@@ -386,9 +410,10 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	req := deploy.DeployRequest{Domain: domain}
-	if branch != "" {
-		req.GitBranch = branch
+	req := deploy.DeployRequest{
+		Domain:    domain,
+		GitToken:  r.URL.Query().Get("token"),
+		GitBranch: branch,
 	}
 	s.RecordAudit("deploy.webhook", domain+" branch:"+branch, requestIP(r), true)
 

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,21 +20,23 @@ import (
 
 // Testable hooks — can be overridden in tests to mock command execution.
 var (
-	runCmdFn   = runCmdImpl
-	runShellFn = runShellImpl
+	runCmdFn    = runCmdImpl
+	runShellFn  = runShellImpl
+	waitForAppFn = waitForAppImpl
 )
 
 // DeployRequest describes a deployment action.
 type DeployRequest struct {
-	Domain     string            `json:"domain"`
-	GitURL     string            `json:"git_url,omitempty"`      // e.g. https://github.com/user/repo.git
-	GitBranch  string            `json:"git_branch,omitempty"`   // default: main
-	BuildCmd   string            `json:"build_cmd,omitempty"`    // e.g. "npm install && npm run build"
-	SSHKeyPath string            `json:"ssh_key_path,omitempty"` // path to SSH private key for private repos
-	GitToken   string            `json:"git_token,omitempty"`    // GitHub/GitLab personal access token
-	DockerFile string            `json:"dockerfile,omitempty"`   // path to Dockerfile (enables Docker mode)
-	DockerPort int               `json:"docker_port,omitempty"`  // container internal port (e.g. 3000)
-	Env        map[string]string `json:"env,omitempty"`          // environment variables for build/run
+	Domain        string            `json:"domain"`
+	GitURL        string            `json:"git_url,omitempty"`        // e.g. https://github.com/user/repo.git
+	GitBranch     string            `json:"git_branch,omitempty"`    // default: main
+	BuildCmd      string            `json:"build_cmd,omitempty"`      // e.g. "npm install && npm run build"; "skip"/"none" to disable
+	SSHKeyPath    string            `json:"ssh_key_path,omitempty"`   // path to SSH private key for private repos
+	GitToken      string            `json:"git_token,omitempty"`      // GitHub/GitLab personal access token
+	DockerFile    string            `json:"dockerfile,omitempty"`     // path to Dockerfile (enables Docker mode)
+	DockerPort    int               `json:"docker_port,omitempty"`    // container internal port (e.g. 3000)
+	DockerNetwork string            `json:"docker_network,omitempty"` // docker network mode: "bridge", "host", or custom network name
+	Env           map[string]string `json:"env,omitempty"`             // environment variables for build/run
 }
 
 // DeployStatus tracks a deployment.
@@ -52,16 +55,18 @@ type DeployStatus struct {
 
 // Manager handles deployments.
 type Manager struct {
-	mu      sync.RWMutex
-	deploys map[string]*DeployStatus // domain → status
-	logger  *logger.Logger
+	mu       sync.RWMutex
+	deploys  map[string]*DeployStatus // domain → status
+	cancelCh map[string]chan struct{} // domain → cancellation channel
+	logger   *logger.Logger
 }
 
 // New creates a deploy manager.
 func New(log *logger.Logger) *Manager {
 	return &Manager{
-		deploys: make(map[string]*DeployStatus),
-		logger:  log,
+		deploys:  make(map[string]*DeployStatus),
+		cancelCh: make(map[string]chan struct{}),
+		logger:   log,
 	}
 }
 
@@ -137,8 +142,20 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 		StartedAt: time.Now(),
 	}
 
+	// Concurrent deploy guard: reject if domain already deploying/building
 	m.mu.Lock()
+	if existing, ok := m.deploys[req.Domain]; ok {
+		if existing.Status == "deploying" || existing.Status == "building" {
+			m.mu.Unlock()
+			if onComplete != nil {
+				onComplete(fmt.Errorf("deployment already in progress for domain %s", req.Domain))
+			}
+			return
+		}
+	}
 	m.deploys[req.Domain] = status
+	// Create cancellation channel for this deploy
+	m.cancelCh[req.Domain] = make(chan struct{})
 	m.mu.Unlock()
 
 	go func() {
@@ -147,6 +164,7 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 
 		defer func() {
 			m.mu.Lock()
+			delete(m.cancelCh, req.Domain)
 			status.Duration = time.Since(status.StartedAt).Truncate(time.Millisecond).String()
 			status.Log = log.String()
 			if err != nil {
@@ -182,6 +200,11 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	status.Status = "deploying"
 	m.mu.Unlock()
 	gitDir := filepath.Join(appRoot, ".git")
+
+	// Clean common build artifacts before fresh deploy
+	for _, dir := range []string{"node_modules", "dist", "build", "__pycache__", ".next", ".nuxt"} {
+		os.RemoveAll(filepath.Join(appRoot, dir)) // best-effort
+	}
 
 	// Build git environment for private repo access
 	gitEnv := make(map[string]string)
@@ -254,9 +277,19 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	}
 
 	// Step 2: Build
+	// Check if cancelled before build
+	select {
+	case <-m.cancelCh[req.Domain]:
+		return fmt.Errorf("deployment cancelled")
+	default:
+	}
 	buildCmd := req.BuildCmd
 	if buildCmd == "" {
 		buildCmd = detectBuildCmd(appRoot)
+	}
+	// Allow explicit skip via "skip" or "none"
+	if buildCmd == "skip" || buildCmd == "none" {
+		buildCmd = ""
 	}
 	if buildCmd != "" {
 		m.mu.Lock()
@@ -270,6 +303,25 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	}
 
 	return nil
+}
+
+// waitForAppImpl is the real health-check implementation.
+func waitForAppImpl(addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("app not responding at %s after %s", addr, timeout)
+}
+
+// waitForApp delegates to the testable hook.
+func (m *Manager) waitForApp(addr string, timeout time.Duration) error {
+	return waitForAppFn(addr, timeout)
 }
 
 func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *DeployStatus, log *strings.Builder) error {
@@ -305,7 +357,11 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 
 	// Run container
 	args := []string{"run", "-d", "--name", containerName, "--restart=unless-stopped",
-		"-p", fmt.Sprintf("127.0.0.1:0:%d", port)} // random host port → container port
+		"-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port)} // host port → container port
+	// Apply network mode if specified
+	if req.DockerNetwork != "" {
+		args = append(args, "--network", req.DockerNetwork)
+	}
 	for k, v := range req.Env {
 		args = append(args, "-e", k+"="+v)
 	}
@@ -327,6 +383,13 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 		log.WriteString("Listening: " + strings.TrimSpace(portOut) + "\n")
 	}
 
+	// Health check: wait for app to respond on the mapped port
+	log.WriteString("Checking app health...\n")
+	if err := m.waitForApp(fmt.Sprintf("127.0.0.1:%d", port), 10*time.Second); err != nil {
+		return fmt.Errorf("app health check failed: %w", err)
+	}
+	log.WriteString("App is healthy\n")
+
 	return nil
 }
 
@@ -346,6 +409,24 @@ func (m *Manager) AllStatuses() []DeployStatus {
 		result = append(result, *s)
 	}
 	return result
+}
+
+// CancelDeploy cancels an in-progress deployment for a domain.
+func (m *Manager) CancelDeploy(domain string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ch, ok := m.cancelCh[domain]
+	if !ok {
+		return false
+	}
+	select {
+	case <-ch:
+		return false // already cancelled
+	default:
+		close(ch)
+		delete(m.cancelCh, domain)
+		return true
+	}
 }
 
 // detectBuildCmd infers build commands from project files.
