@@ -23,7 +23,7 @@ export default function SystemStatsBar() {
     : null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-4 border-b border-border bg-background/95 backdrop-blur px-4 py-1.5 text-xs lg:left-60">
+    <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-4 border-b border-border bg-background/95 backdrop-blur px-4 py-1.5 text-xs lg:left-60 lg:pl-4">
       {/* CPU */}
       <div className="flex items-center gap-1.5 text-muted-foreground" title={`Load: ${sys.load_1m || '?'} (1m), ${sys.load_5m || '?'} (5m)`}>
         <Cpu size={12} />

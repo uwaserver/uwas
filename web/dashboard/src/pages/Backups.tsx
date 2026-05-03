@@ -39,7 +39,7 @@ const INTERVAL_OPTIONS = [
   { value: '6h', label: 'Every 6 hours' },
   { value: '12h', label: 'Every 12 hours' },
   { value: '24h', label: 'Every 24 hours' },
-  { value: '7d', label: 'Every 7 days' },
+  { value: '168h', label: 'Every 7 days' },
 ];
 
 // CRON_PRESETS - TODO: add advanced cron schedule UI
