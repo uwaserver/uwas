@@ -44,10 +44,10 @@ export default function Doctor() {
     finally { setFixing(false); }
   }, []);
 
-  const counts = report?.checks.reduce((acc, c) => {
+  const counts = (report?.checks ?? []).reduce((acc, c) => {
     acc[c.status] = (acc[c.status] || 0) + 1;
     return acc;
-  }, {} as Record<string, number>) ?? {};
+  }, {} as Record<string, number>);
 
   return (
     <div className="space-y-6">
@@ -97,7 +97,7 @@ export default function Doctor() {
 
           {/* Checks */}
           <div className="space-y-2">
-            {report.checks.map((c, i) => (
+            {(report.checks ?? []).map((c, i) => (
               <div key={i} className={`rounded-lg border p-4 ${statusBg(c.status)}`}>
                 <div className="flex items-center gap-3">
                   {statusIcon(c.status)}

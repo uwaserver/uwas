@@ -311,7 +311,9 @@ export interface AuditEntry {
   success: boolean;
 }
 
-export const fetchAuditLog = () => api<AuditEntry[]>('/api/v1/audit');
+export const fetchAuditLog = () =>
+  api<{ items: AuditEntry[]; total: number; limit: number; offset: number }>('/api/v1/audit')
+    .then(r => r.items ?? []);
 
 export const fetchDomainDetail = (host: string) => api<DomainDetail>(`/api/v1/domains/${encodeURIComponent(host)}`);
 export const fetchCerts = () => api<CertInfo[]>('/api/v1/certs');
@@ -337,7 +339,9 @@ export interface PHPInstall {
   domains?: string[];
 }
 
-export const fetchPHP = () => api<PHPInstall[]>('/api/v1/php');
+export const fetchPHP = () =>
+  api<{ items: PHPInstall[]; total: number; limit: number; offset: number }>('/api/v1/php')
+    .then(r => r.items);
 export const enablePHP = (version: string) => api<{ status: string }>(`/api/v1/php/${version}/enable`, { method: 'POST' });
 export const fetchPHPConfigRaw = (version: string) => api<{ content: string }>(`/api/v1/php/${version}/config/raw`);
 export const savePHPConfigRaw = (version: string, content: string) => api<{ status: string }>(`/api/v1/php/${version}/config/raw`, { method: 'PUT', body: JSON.stringify({ content }) });
@@ -477,7 +481,9 @@ export const fetchWPInstallStatus = () => api<WPInstallStatus>('/api/v1/wordpres
 
 // File manager
 export interface FileEntry { name: string; path: string; is_dir: boolean; size: number; mod_time: string; mode: string; }
-export const fetchFiles = (domain: string, path?: string) => api<FileEntry[]>(`/api/v1/files/${encodeURIComponent(domain)}/list?path=${encodeURIComponent(path || '.')}`);
+export const fetchFiles = (domain: string, path?: string) =>
+  api<{ items: FileEntry[]; total: number; limit: number; offset: number }>(`/api/v1/files/${encodeURIComponent(domain)}/list?path=${encodeURIComponent(path || '.')}`)
+    .then(r => r.items ?? []);
 export const readFile = (domain: string, path: string) => api<{ content: string }>(`/api/v1/files/${encodeURIComponent(domain)}/read?path=${encodeURIComponent(path)}`);
 export const writeFile = (domain: string, path: string, content: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/write`, { method: 'PUT', body: JSON.stringify({ path, content }) });
 export const deleteFile = (domain: string, path: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
@@ -549,7 +555,9 @@ export const deleteSSHKey = (domain: string, fingerprint: string) => api<{ statu
 
 // System Services
 export interface SystemService { name: string; display: string; running: boolean; enabled: boolean; active: string; }
-export const fetchServices = () => api<SystemService[]>('/api/v1/services');
+export const fetchServices = () =>
+  api<{ items: SystemService[]; total: number; limit: number; offset: number }>('/api/v1/services')
+    .then(r => r.items ?? []);
 export const startService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/start`, { method: 'POST' });
 export const stopService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/stop`, { method: 'POST' });
 export const restartService = (name: string) => api<{ status: string }>(`/api/v1/services/${encodeURIComponent(name)}/restart`, { method: 'POST' });
@@ -607,7 +615,9 @@ export const loginUser = (username: string, password: string) =>
 
 // Webhooks
 export interface WebhookEntry { url: string; events: string[]; headers: Record<string, string>; secret: string; retry: number; timeout: number; enabled: boolean; }
-export const fetchWebhooks = () => api<WebhookEntry[]>('/api/v1/webhooks');
+export const fetchWebhooks = () =>
+  api<{ items: WebhookEntry[]; total: number; limit: number; offset: number }>('/api/v1/webhooks')
+    .then(r => r.items ?? []);
 export const createWebhook = (wh: Partial<WebhookEntry>) => api<{ success: boolean }>('/api/v1/webhooks', { method: 'POST', body: JSON.stringify(wh) });
 export const deleteWebhook = (id: number) => api<{ success: boolean }>(`/api/v1/webhooks/${id}`, { method: 'DELETE' });
 export const testWebhook = (url: string) => api<{ success: boolean; message: string }>('/api/v1/webhooks/test', { method: 'POST', body: JSON.stringify({ url }) });
@@ -823,7 +833,9 @@ export interface PackageInfo {
   can_remove: boolean;
 }
 
-export const fetchPackages = () => api<PackageInfo[]>('/api/v1/packages');
+export const fetchPackages = () =>
+  api<{ items: PackageInfo[]; total: number; limit: number; offset: number }>('/api/v1/packages')
+    .then(r => r.items ?? []);
 export const installPackage = (id: string) =>
   api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id }) });
 export const removePackage = (id: string) =>
@@ -928,7 +940,9 @@ export interface InstallTask {
   created_at: string;
 }
 
-export const fetchTasks = () => api<InstallTask[]>('/api/v1/tasks');
+export const fetchTasks = () =>
+  api<{ items: InstallTask[]; total: number; limit: number; offset: number }>('/api/v1/tasks')
+    .then(r => r.items ?? []);
 export const fetchTask = (id: string) => api<InstallTask>(`/api/v1/tasks/${encodeURIComponent(id)}`);
 
 // ── App Process Manager (Node.js, Python, Ruby, Go) ──
@@ -945,7 +959,9 @@ export interface AppInstance {
   env?: Record<string, string>;
 }
 
-export const fetchApps = () => api<AppInstance[]>('/api/v1/apps');
+export const fetchApps = () =>
+  api<{ items: AppInstance[]; total: number; limit: number; offset: number }>('/api/v1/apps')
+    .then(r => r.items ?? []);
 export const fetchApp = (domain: string) => api<AppInstance>(`/api/v1/apps/${encodeURIComponent(domain)}`);
 export const startApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/start`, { method: 'POST' });
 export const stopApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/stop`, { method: 'POST' });
@@ -998,7 +1014,9 @@ export const deployApp = (domain: string, req: DeployRequest) =>
   api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`, { method: 'POST', body: JSON.stringify(req) });
 export const fetchDeployStatus = (domain: string) =>
   api<DeployStatus>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`);
-export const fetchDeploys = () => api<DeployStatus[]>('/api/v1/deploys');
+export const fetchDeploys = () =>
+  api<{ items: DeployStatus[]; total: number; limit: number; offset: number }>('/api/v1/deploys')
+    .then(r => r.items ?? []);
 
 // ── Database Explorer ──
 

@@ -163,7 +163,7 @@ export default function Cache() {
               <thead><tr className="border-b border-border text-xs text-muted-foreground">
                 <th className="pb-2 pr-4">Domain</th><th className="pb-2 pr-4">Status</th><th className="pb-2 pr-4">TTL</th><th className="pb-2 pr-4">Tags</th><th className="pb-2 pr-4">Rules</th><th className="pb-2">Actions</th>
               </tr></thead>
-              <tbody>{cacheStats.domains.map(d => (
+              <tbody>{(cacheStats.domains ?? []).map(d => (
                 <tr key={d.host} className="border-b border-border/50 hover:bg-background/30">
                   <td className="py-2.5 pr-4 font-medium text-foreground">{d.host}</td>
                   <td className="py-2.5 pr-4">

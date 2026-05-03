@@ -92,7 +92,7 @@ export default function DBExplorer() {
   const loadDatabases = async () => {
     try {
       setLoading(true);
-      const dbs = await fetchDatabases();
+      const dbs = (await fetchDatabases()) ?? [];
       setDatabases(dbs);
       if (dbs.length > 0 && !selectedDB) {
         setSelectedDB(dbs[0].name);
@@ -107,7 +107,7 @@ export default function DBExplorer() {
   const loadTables = async (db: string) => {
     try {
       setLoading(true);
-      const tbls = await fetchDBTables(db);
+      const tbls = (await fetchDBTables(db)) ?? [];
       setTables(tbls);
     } catch (err: any) {
       setError(err.message || 'Failed to load tables');
@@ -118,7 +118,7 @@ export default function DBExplorer() {
 
   const loadColumns = async (db: string, table: string) => {
     try {
-      const cols = await fetchDBColumns(db, table);
+      const cols = (await fetchDBColumns(db, table)) ?? [];
       setColumns(cols);
     } catch (err: any) {
       setError(err.message || 'Failed to load columns');
