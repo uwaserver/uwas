@@ -335,8 +335,8 @@ export default function DNS() {
               <h3 className="text-sm font-semibold text-card-foreground">Server IP Addresses</h3>
             </div>
             <div className="flex flex-wrap gap-2">
-              {result.server_ips.length > 0 ? (
-                result.server_ips.map((ip) => (
+              {(result.server_ips ?? []).length > 0 ? (
+                (result.server_ips ?? []).map((ip) => (
                   <span
                     key={ip}
                     className="rounded-md bg-background px-3 py-1.5 font-mono text-sm text-card-foreground"
@@ -407,7 +407,7 @@ export default function DNS() {
                   <li>
                     Create or update an <strong className="text-card-foreground">A record</strong>{' '}
                     pointing to{' '}
-                    {result.server_ips.length > 0 ? (
+                    {(result.server_ips ?? []).length > 0 ? (
                       <span className="font-mono text-foreground">
                         {result.server_ips[0]}
                       </span>
@@ -416,7 +416,7 @@ export default function DNS() {
                     )}
                     .
                   </li>
-                  {result.server_ips.some((ip) => ip.includes(':')) && (
+                  {(result.server_ips ?? []).some((ip) => ip.includes(':')) && (
                     <li>
                       Optionally add an <strong className="text-card-foreground">AAAA record</strong>{' '}
                       for IPv6 support.
