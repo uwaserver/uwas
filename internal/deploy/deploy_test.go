@@ -409,9 +409,11 @@ func TestRunShellNullByte(t *testing.T) {
 func saveAndRestoreHooks() func() {
 	origRunCmdFn := runCmdFn
 	origRunShellFn := runShellFn
+	origWaitForAppFn := waitForAppFn
 	return func() {
 		runCmdFn = origRunCmdFn
 		runShellFn = origRunShellFn
+		waitForAppFn = origWaitForAppFn
 	}
 }
 
@@ -823,6 +825,11 @@ func TestDeployDocker_Success(t *testing.T) {
 		return "", nil
 	}
 
+	// Mock health check to succeed immediately
+	waitForAppFn = func(addr string, timeout time.Duration) error {
+		return nil
+	}
+
 	m := New(nil)
 	status := &DeployStatus{
 		Domain:    "test.com",
@@ -1012,6 +1019,11 @@ func TestDeployDocker_DefaultPort(t *testing.T) {
 		return "", nil
 	}
 
+	// Mock health check to succeed immediately
+	waitForAppFn = func(addr string, timeout time.Duration) error {
+		return nil
+	}
+
 	m := New(nil)
 	status := &DeployStatus{
 		Domain:    "test.com",
@@ -1032,9 +1044,9 @@ func TestDeployDocker_DefaultPort(t *testing.T) {
 		t.Errorf("deployDocker() error = %v, want nil", err)
 	}
 
-	// Verify port mapping uses 3000
-	if capturedPort != "127.0.0.1:0:3000" {
-		t.Errorf("port mapping = %q, want 127.0.0.1:0:3000", capturedPort)
+	// Verify port mapping uses fixed port binding (not random 0)
+	if capturedPort != "127.0.0.1:3000:3000" {
+		t.Errorf("port mapping = %q, want 127.0.0.1:3000:3000", capturedPort)
 	}
 }
 
@@ -1055,6 +1067,11 @@ func TestDeployDocker_WithEnvVars(t *testing.T) {
 			return "container12345678\n", nil
 		}
 		return "", nil
+	}
+
+	// Mock health check to succeed immediately
+	waitForAppFn = func(addr string, timeout time.Duration) error {
+		return nil
 	}
 
 	m := New(nil)
