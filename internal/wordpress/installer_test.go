@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"crypto/sha256"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -17,11 +17,11 @@ import (
 )
 
 // fakeTarHandlerFunc returns a function suitable for assigning to httpGetFn.
-// It serves tarContent for normal URLs and its SHA256 hash for .sha256 URLs.
+// It serves tarContent for normal URLs and its SHA1 hash for .sha1 URLs.
 // It creates two internal test servers so URL-based routing works correctly
 // even though httpGetFn discards the original URL.
 func fakeTarHandlerFunc(tarContent string) (func(string) (*http.Response, error), func()) {
-	hash := sha256.Sum256([]byte(tarContent))
+	hash := sha1.Sum([]byte(tarContent))
 	hashHex := hex.EncodeToString(hash[:])
 
 	tarSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +33,7 @@ func fakeTarHandlerFunc(tarContent string) (func(string) (*http.Response, error)
 	}))
 
 	fn := func(url string) (*http.Response, error) {
-		if strings.HasSuffix(url, ".sha256") {
+		if strings.HasSuffix(url, ".sha1") {
 			return http.Get(hashSrv.URL)
 		}
 		return http.Get(tarSrv.URL)
