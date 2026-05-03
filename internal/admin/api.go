@@ -32,6 +32,7 @@ import (
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
+	cfintegration "github.com/uwaserver/uwas/internal/cloudflare"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/deploy"
@@ -113,6 +114,7 @@ type Server struct {
 	tlsMgr        *uwastls.Manager
 	unknownHT     *router.UnknownHostTracker
 	securityStats *middleware.SecurityStats
+	cfRunner      *cfintegration.Runner
 
 	// Global installation task manager (serializes apt/dpkg operations)
 	taskMgr *install.Manager
@@ -189,6 +191,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 		mux:     http.NewServeMux(),
 		taskMgr: install.New(),
 	}
+	s.cfRunner = cfintegration.NewRunner(log)
 	s.initAudit()
 	s.registerRoutes()
 	if err := s.loadCloudflareState(); err != nil {
@@ -501,6 +504,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/cloudflare/tunnels/{id}", s.handleCloudflareTunnelDelete)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/tunnels/{id}/start", s.handleCloudflareTunnelStart)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/tunnels/{id}/stop", s.handleCloudflareTunnelStop)
+	s.mux.HandleFunc("GET /api/v1/cloudflare/tunnels/{id}/logs", s.handleCloudflareTunnelLogs)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/cloudflared/install", s.handleCloudflaredInstall)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/cache/purge", s.handleCloudflareCachePurge)
 	s.mux.HandleFunc("GET /api/v1/cloudflare/zones", s.handleCloudflareZones)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/sync", s.handleCloudflareZoneSync)
@@ -5131,13 +5136,18 @@ func paginateSlice[T any](items []T, limit, offset int) ([]T, int) {
 // --- Cloudflare Integration ---
 
 type cloudflareTunnel struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Domain      string    `json:"domain"`
-	Token       string    `json:"token"`
-	Running     bool      `json:"running"`
-	Connections int       `json:"connections,omitempty"`
-	CreatedAt   time.Time `json:"created_at,omitempty"`
+	ID             string    `json:"id"`              // real Cloudflare tunnel UUID
+	Name           string    `json:"name"`
+	Hostname       string    `json:"hostname"`        // public, e.g. app.example.com
+	LocalTarget    string    `json:"local_target"`    // http://localhost:8080 or tcp://localhost:22
+	ConnectorToken string    `json:"connector_token"` // from Cloudflare API; never returned to client
+	ZoneID         string    `json:"zone_id"`
+	DNSRecordID    string    `json:"dns_record_id"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
+
+	// Legacy stub fields kept for unmarshal back-compat with v0.1.6 state files;
+	// migrated to Hostname on load if non-empty.
+	Domain string `json:"domain,omitempty"`
 }
 
 type cloudflareState struct {
@@ -5159,20 +5169,26 @@ func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) 
 	cfg := cloudflareConfig
 	cloudflareMu.RUnlock()
 
+	cfd := cfintegration.DetectCloudflared()
+
 	if cfg == nil {
 		jsonResponse(w, map[string]any{
-			"connected": false,
+			"connected":             false,
+			"cloudflared_installed": cfd.Installed,
+			"cloudflared_version":   cfd.Version,
 		})
 		return
 	}
 
 	jsonResponse(w, map[string]any{
-		"connected":   cfg.Connected,
-		"email":       cfg.Email,
-		"account_id":  cfg.AccountID,
-		"token_mask":  maskCloudflareToken(cfg.Token),
-		"updated_at":  cfg.UpdatedAt,
-		"tunnel_count": len(cfg.Tunnels),
+		"connected":             cfg.Connected,
+		"email":                 cfg.Email,
+		"account_id":            cfg.AccountID,
+		"token_mask":            maskCloudflareToken(cfg.Token),
+		"updated_at":            cfg.UpdatedAt,
+		"tunnel_count":          len(cfg.Tunnels),
+		"cloudflared_installed": cfd.Installed,
+		"cloudflared_version":   cfd.Version,
 	})
 }
 
@@ -5309,117 +5325,263 @@ func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, map[string]string{"status": "disconnected"})
 }
 
+// tunnelView is the JSON shape returned to the dashboard. Connector token is
+// never exposed to the client.
+type tunnelView struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Hostname    string    `json:"hostname"`
+	LocalTarget string    `json:"local_target"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+	Running     bool      `json:"running"`
+	PID         int       `json:"pid,omitempty"`
+	Uptime      string    `json:"uptime,omitempty"`
+}
+
+func (s *Server) tunnelToView(t cloudflareTunnel) tunnelView {
+	view := tunnelView{
+		ID:          t.ID,
+		Name:        t.Name,
+		Hostname:    t.Hostname,
+		LocalTarget: t.LocalTarget,
+		CreatedAt:   t.CreatedAt,
+	}
+	if s.cfRunner != nil {
+		st := s.cfRunner.StatusOf(t.ID)
+		view.Running = st.Running
+		view.PID = st.PID
+		view.Uptime = st.Uptime
+	}
+	return view
+}
+
 func (s *Server) handleCloudflareTunnels(w http.ResponseWriter, r *http.Request) {
 	cloudflareMu.RLock()
 	cfg := cloudflareConfig
 	cloudflareMu.RUnlock()
 
 	if cfg == nil || !cfg.Connected {
-		jsonResponse(w, []cloudflareTunnel{})
+		jsonResponse(w, []tunnelView{})
 		return
 	}
+	views := make([]tunnelView, 0, len(cfg.Tunnels))
+	for _, t := range cfg.Tunnels {
+		views = append(views, s.tunnelToView(t))
+	}
+	jsonResponse(w, views)
+}
 
-	// Return stored tunnels (in-memory for now, could be persisted)
-	jsonResponse(w, cfg.Tunnels)
+// validateLocalTarget enforces a small whitelist of cloudflared service URLs.
+// We accept http(s)://host:port, tcp://host:port, ssh://host:port, and the
+// literal "http_status:NNN" placeholder.
+func validateLocalTarget(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return fmt.Errorf("local_target is required (e.g. http://localhost:8080)")
+	}
+	if strings.HasPrefix(target, "http_status:") {
+		return nil
+	}
+	for _, scheme := range []string{"http://", "https://", "tcp://", "ssh://", "rdp://", "unix:"} {
+		if strings.HasPrefix(target, scheme) {
+			return nil
+		}
+	}
+	return fmt.Errorf("local_target must start with http://, https://, tcp://, ssh://, rdp://, unix:, or http_status:")
 }
 
 func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Request) {
-	cloudflareMu.Lock()
-	defer cloudflareMu.Unlock()
-
-	if cloudflareConfig == nil || !cloudflareConfig.Connected {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+	if cfg == nil || !cfg.Connected {
 		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		Name   string `json:"name"`
-		Domain string `json:"domain"`
+		Name        string `json:"name"`
+		Hostname    string `json:"hostname"`
+		LocalTarget string `json:"local_target"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Name == "" || req.Domain == "" {
-		jsonError(w, "name and domain are required", http.StatusBadRequest)
+	req.Name = strings.TrimSpace(req.Name)
+	req.Hostname = strings.TrimSpace(strings.ToLower(req.Hostname))
+	req.LocalTarget = strings.TrimSpace(req.LocalTarget)
+
+	if req.Name == "" || req.Hostname == "" {
+		jsonError(w, "name and hostname are required", http.StatusBadRequest)
+		return
+	}
+	if !isValidHostname(req.Hostname) {
+		jsonError(w, "invalid hostname", http.StatusBadRequest)
+		return
+	}
+	if err := validateLocalTarget(req.LocalTarget); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Reject duplicate tunnel names locally — Cloudflare also enforces uniqueness.
+	for _, t := range cfg.Tunnels {
+		if strings.EqualFold(t.Name, req.Name) {
+			jsonError(w, "a tunnel named "+req.Name+" already exists", http.StatusConflict)
+			return
+		}
+		if strings.EqualFold(t.Hostname, req.Hostname) {
+			jsonError(w, "hostname "+req.Hostname+" is already attached to a tunnel", http.StatusConflict)
+			return
+		}
+	}
+
+	cli := cfintegration.New(cfg.Token, cfg.AccountID)
+
+	// 1. Resolve the zone that owns the hostname.
+	zone, err := cli.FindZoneByHostname(req.Hostname)
+	if err != nil {
+		jsonError(w, "zone lookup: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Generate a unique ID and token for the tunnel
-	tunnelID := generateCloudflareID()
-	token := generateCloudflareToken()
-
-	tunnel := cloudflareTunnel{
-		ID:        tunnelID,
-		Name:      req.Name,
-		Domain:    req.Domain,
-		Token:     token,
-		Running:   false,
-		CreatedAt: time.Now(),
+	// 2. Create the tunnel.
+	cft, err := cli.CreateTunnel(req.Name)
+	if err != nil {
+		jsonError(w, "create tunnel: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 
+	// 3. Attach ingress rules (hostname → local target, fallback 404).
+	rules := []cfintegration.IngressRule{
+		{Hostname: req.Hostname, Service: req.LocalTarget},
+		{Service: "http_status:404"},
+	}
+	if err := cli.PutTunnelConfig(cft.ID, rules); err != nil {
+		_ = cli.DeleteTunnel(cft.ID)
+		jsonError(w, "put tunnel config: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// 4. Create the proxied CNAME at hostname → <tunnel>.cfargotunnel.com.
+	recordID, err := cli.CreateTunnelCNAME(zone.ID, req.Hostname, cft.ID)
+	if err != nil {
+		_ = cli.DeleteTunnel(cft.ID)
+		jsonError(w, "create DNS CNAME: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// 5. Fetch the connector token (needed to run cloudflared).
+	token, err := cli.GetTunnelToken(cft.ID)
+	if err != nil {
+		_ = cli.DeleteDNSRecord(zone.ID, recordID)
+		_ = cli.DeleteTunnel(cft.ID)
+		jsonError(w, "get connector token: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// 6. Persist.
+	tunnel := cloudflareTunnel{
+		ID:             cft.ID,
+		Name:           req.Name,
+		Hostname:       req.Hostname,
+		LocalTarget:    req.LocalTarget,
+		ConnectorToken: token,
+		ZoneID:         zone.ID,
+		DNSRecordID:    recordID,
+		CreatedAt:      time.Now(),
+	}
+	cloudflareMu.Lock()
 	cloudflareConfig.Tunnels = append(cloudflareConfig.Tunnels, tunnel)
 	cloudflareConfig.UpdatedAt = time.Now()
 	if err := s.saveCloudflareStateLocked(); err != nil {
 		s.logger.Error("cloudflare state save failed", "err", err.Error())
 	}
+	cloudflareMu.Unlock()
 
-	s.RecordAudit("cloudflare.tunnel.create", req.Name+" ("+req.Domain+")", requestIP(r), true)
-	jsonResponse(w, tunnel)
+	s.RecordAudit("cloudflare.tunnel.create", req.Name+" → "+req.Hostname, requestIP(r), true)
+	jsonResponse(w, s.tunnelToView(tunnel))
 }
 
-func generateCloudflareID() string {
-	b := make([]byte, 16)
-	if _, err := crand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+func (s *Server) findTunnel(id string) (cloudflareTunnel, bool) {
+	cloudflareMu.RLock()
+	defer cloudflareMu.RUnlock()
+	if cloudflareConfig == nil {
+		return cloudflareTunnel{}, false
 	}
-	return hex.EncodeToString(b)
-}
-
-func generateCloudflareToken() string {
-	b := make([]byte, 32)
-	if _, err := crand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+	for _, t := range cloudflareConfig.Tunnels {
+		if t.ID == id {
+			return t, true
+		}
 	}
-	return hex.EncodeToString(b)
+	return cloudflareTunnel{}, false
 }
 
 func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		jsonError(w, "tunnel id required", http.StatusBadRequest)
 		return
 	}
-
-	cloudflareMu.Lock()
-	defer cloudflareMu.Unlock()
-
-	if cloudflareConfig == nil {
+	cloudflareMu.RLock()
+	cfg := cloudflareConfig
+	cloudflareMu.RUnlock()
+	if cfg == nil {
 		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
 		return
 	}
-
-	// Find and remove tunnel
-	found := false
-	newTunnels := make([]cloudflareTunnel, 0, len(cloudflareConfig.Tunnels))
-	for _, t := range cloudflareConfig.Tunnels {
-		if t.ID == id {
-			found = true
-			continue
-		}
-		newTunnels = append(newTunnels, t)
-	}
-
-	if !found {
+	t, ok := s.findTunnel(id)
+	if !ok {
 		jsonError(w, "tunnel not found", http.StatusNotFound)
 		return
 	}
 
+	// 1. Stop the local cloudflared process so CF can delete the tunnel.
+	if s.cfRunner != nil {
+		if err := s.cfRunner.Stop(id); err != nil {
+			s.logger.Warn("cloudflared stop on delete failed", "tunnel_id", id, "err", err.Error())
+		}
+	}
+
+	cli := cfintegration.New(cfg.Token, cfg.AccountID)
+
+	// 2. Delete the DNS record (best-effort).
+	if t.ZoneID != "" && t.DNSRecordID != "" {
+		if err := cli.DeleteDNSRecord(t.ZoneID, t.DNSRecordID); err != nil {
+			s.logger.Warn("DNS record delete failed", "zone", t.ZoneID, "record", t.DNSRecordID, "err", err.Error())
+		}
+	}
+
+	// 3. Delete the tunnel itself.
+	if err := cli.DeleteTunnel(id); err != nil {
+		jsonError(w, "delete tunnel: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// 4. Remove from state.
+	cloudflareMu.Lock()
+	newTunnels := make([]cloudflareTunnel, 0, len(cloudflareConfig.Tunnels))
+	for _, x := range cloudflareConfig.Tunnels {
+		if x.ID != id {
+			newTunnels = append(newTunnels, x)
+		}
+	}
 	cloudflareConfig.Tunnels = newTunnels
 	cloudflareConfig.UpdatedAt = time.Now()
 	if err := s.saveCloudflareStateLocked(); err != nil {
 		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	}
+	cloudflareMu.Unlock()
+
+	if s.cfRunner != nil {
+		s.cfRunner.Forget(id)
 	}
 
 	s.RecordAudit("cloudflare.tunnel.delete", "id: "+id, requestIP(r), true)
@@ -5427,39 +5589,55 @@ func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		jsonError(w, "tunnel id required", http.StatusBadRequest)
 		return
 	}
-
-	cloudflareMu.Lock()
-	defer cloudflareMu.Unlock()
-
-	if cloudflareConfig == nil {
-		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
-		return
-	}
-
-	// Find tunnel and mark as running
-	found := false
-	for i := range cloudflareConfig.Tunnels {
-		if cloudflareConfig.Tunnels[i].ID == id {
-			cloudflareConfig.Tunnels[i].Running = true
-			cloudflareConfig.Tunnels[i].Connections = 1
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	t, ok := s.findTunnel(id)
+	if !ok {
 		jsonError(w, "tunnel not found", http.StatusNotFound)
 		return
 	}
 
-	cloudflareConfig.UpdatedAt = time.Now()
-	if err := s.saveCloudflareStateLocked(); err != nil {
-		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	// Re-fetch token if missing (e.g. legacy state).
+	token := t.ConnectorToken
+	if token == "" {
+		cloudflareMu.RLock()
+		cfg := cloudflareConfig
+		cloudflareMu.RUnlock()
+		if cfg == nil {
+			jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
+			return
+		}
+		cli := cfintegration.New(cfg.Token, cfg.AccountID)
+		fresh, err := cli.GetTunnelToken(id)
+		if err != nil {
+			jsonError(w, "fetch connector token: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		token = fresh
+		cloudflareMu.Lock()
+		for i := range cloudflareConfig.Tunnels {
+			if cloudflareConfig.Tunnels[i].ID == id {
+				cloudflareConfig.Tunnels[i].ConnectorToken = token
+				break
+			}
+		}
+		_ = s.saveCloudflareStateLocked()
+		cloudflareMu.Unlock()
+	}
+
+	if s.cfRunner == nil {
+		jsonError(w, "tunnel runner not initialized", http.StatusInternalServerError)
+		return
+	}
+	if err := s.cfRunner.Start(id, token); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	s.RecordAudit("cloudflare.tunnel.start", "id: "+id, requestIP(r), true)
@@ -5467,43 +5645,59 @@ func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		jsonError(w, "tunnel id required", http.StatusBadRequest)
 		return
 	}
-
-	cloudflareMu.Lock()
-	defer cloudflareMu.Unlock()
-
-	if cloudflareConfig == nil {
-		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
-		return
-	}
-
-	// Find tunnel and mark as stopped
-	found := false
-	for i := range cloudflareConfig.Tunnels {
-		if cloudflareConfig.Tunnels[i].ID == id {
-			cloudflareConfig.Tunnels[i].Running = false
-			cloudflareConfig.Tunnels[i].Connections = 0
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	if _, ok := s.findTunnel(id); !ok {
 		jsonError(w, "tunnel not found", http.StatusNotFound)
 		return
 	}
-
-	cloudflareConfig.UpdatedAt = time.Now()
-	if err := s.saveCloudflareStateLocked(); err != nil {
-		s.logger.Error("cloudflare state save failed", "err", err.Error())
+	if s.cfRunner == nil {
+		jsonError(w, "tunnel runner not initialized", http.StatusInternalServerError)
+		return
 	}
-
+	if err := s.cfRunner.Stop(id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.RecordAudit("cloudflare.tunnel.stop", "id: "+id, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "stopped"})
+}
+
+// handleCloudflareTunnelLogs returns the last ~64 lines from the tunnel's
+// cloudflared process. Useful for debugging connection issues from the UI.
+func (s *Server) handleCloudflareTunnelLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.findTunnel(id); !ok {
+		jsonError(w, "tunnel not found", http.StatusNotFound)
+		return
+	}
+	if s.cfRunner == nil {
+		jsonResponse(w, map[string]string{"logs": ""})
+		return
+	}
+	jsonResponse(w, map[string]string{"logs": s.cfRunner.Tail(id)})
+}
+
+// handleCloudflaredInstall installs the cloudflared binary via the system
+// package manager. Linux only.
+func (s *Server) handleCloudflaredInstall(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	info, err := cfintegration.InstallCloudflared()
+	if err != nil {
+		s.RecordAudit("cloudflare.cloudflared.install", "failed: "+err.Error(), requestIP(r), false)
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.RecordAudit("cloudflare.cloudflared.install", "version: "+info.Version, requestIP(r), true)
+	jsonResponse(w, info)
 }
 
 func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request) {

@@ -1109,6 +1109,8 @@ export interface CloudflareStatus {
   token_mask?: string;
   updated_at?: string;
   tunnel_count?: number;
+  cloudflared_installed?: boolean;
+  cloudflared_version?: string;
 }
 
 export interface CloudflareZoneImportResult {
@@ -1120,11 +1122,18 @@ export interface CloudflareZoneImportResult {
 export interface CloudflareTunnel {
   id: string;
   name: string;
-  domain: string;
-  token: string;
-  running: boolean;
-  connections?: number;
+  hostname: string;
+  local_target: string;
   created_at?: string;
+  running: boolean;
+  pid?: number;
+  uptime?: string;
+}
+
+export interface CloudflaredInfo {
+  installed: boolean;
+  path?: string;
+  version?: string;
 }
 
 export interface CloudflareZone {
@@ -1144,8 +1153,11 @@ export const disconnectCloudflare = () =>
 
 export const fetchCloudflareTunnels = () => api<CloudflareTunnel[]>('/api/v1/cloudflare/tunnels').then(r => r ?? []);
 
-export const createCloudflareTunnel = (name: string, domain: string) =>
-  api<CloudflareTunnel>('/api/v1/cloudflare/tunnels', { method: 'POST', body: JSON.stringify({ name, domain }) });
+export const createCloudflareTunnel = (name: string, hostname: string, localTarget: string) =>
+  api<CloudflareTunnel>('/api/v1/cloudflare/tunnels', {
+    method: 'POST',
+    body: JSON.stringify({ name, hostname, local_target: localTarget }),
+  });
 
 export const deleteCloudflareTunnel = (id: string) =>
   api<{ status: string }>(`/api/v1/cloudflare/tunnels/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -1155,6 +1167,12 @@ export const startCloudflareTunnel = (id: string) =>
 
 export const stopCloudflareTunnel = (id: string) =>
   api<{ status: string }>(`/api/v1/cloudflare/tunnels/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+
+export const fetchCloudflareTunnelLogs = (id: string) =>
+  api<{ logs: string }>(`/api/v1/cloudflare/tunnels/${encodeURIComponent(id)}/logs`);
+
+export const installCloudflared = () =>
+  api<CloudflaredInfo>('/api/v1/cloudflare/cloudflared/install', { method: 'POST' });
 
 export const purgeCloudflareCache = (url?: string, everything = false) =>
   api<{ status: string }>('/api/v1/cloudflare/cache/purge', { method: 'POST', body: JSON.stringify({ url, everything }) });
