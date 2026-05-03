@@ -251,6 +251,23 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-detect app port for health check from domain config or app manager
+	if req.AppPort == 0 {
+		s.configMu.RLock()
+		for i := range s.config.Domains {
+			if s.config.Domains[i].Host == domain {
+				req.AppPort = s.config.Domains[i].App.Port
+				break
+			}
+		}
+		s.configMu.RUnlock()
+		if req.AppPort == 0 && s.appMgr != nil {
+			if inst := s.appMgr.Get(domain); inst != nil {
+				req.AppPort = inst.Port
+			}
+		}
+	}
+
 	s.RecordAudit("deploy.start", domain+" git:"+req.GitURL, requestIP(r), true)
 
 	// Deploy in background, restart app on completion, auto-save env/build_cmd
