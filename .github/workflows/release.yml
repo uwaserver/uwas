@@ -105,7 +105,7 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" --title "$TAG" --prerelease --notes ""
+            gh release create "$TAG" --title "$TAG" --latest --notes ""
           fi
           gh release upload "$TAG" dist/* --clobber
-          gh release edit "$TAG" --prerelease
+          gh release edit "$TAG" --latest --prerelease=false
