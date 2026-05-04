@@ -37,6 +37,14 @@ export default function Doctor() {
   }, []);
 
   const runFix = useCallback(async () => {
+    // Auto-Fix mutates system state (creates files, fixes permissions,
+    // can install packages). One stray click on a remote server is too
+    // easy — confirm first.
+    if (!window.confirm(
+      'Run Auto-Fix?\n\n' +
+      'This will modify system state to repair detected issues — ' +
+      'creating directories, fixing permissions, and possibly installing packages.',
+    )) return;
     setFixing(true);
     setError('');
     try { setReport(await fetchDoctorFix()); }
@@ -57,12 +65,12 @@ export default function Doctor() {
           <p className="text-sm text-muted-foreground">Diagnose issues and auto-fix problems</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={runDiagnose} disabled={loading}
+          <button onClick={runDiagnose} disabled={loading || fixing}
             className="flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50">
             <Stethoscope size={14} className={loading ? 'animate-pulse' : ''} />
             {loading ? 'Scanning...' : 'Diagnose'}
           </button>
-          <button onClick={runFix} disabled={fixing}
+          <button onClick={runFix} disabled={fixing || loading}
             className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
             <Wrench size={14} className={fixing ? 'animate-spin' : ''} />
             {fixing ? 'Fixing...' : 'Auto-Fix'}
