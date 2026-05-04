@@ -60,23 +60,34 @@ export default function AdminUsers() {
     finally { setDeleting(false); }
   };
 
+  // Auto-dismiss status — page has no polling so without this the toast would
+  // sit until the next action overwrote it. Functional setState avoids
+  // clobbering a newer message scheduled in between.
+  const showStatus = useCallback((msg: string) => {
+    setStatus(msg);
+    setTimeout(() => setStatus(s => (s === msg ? '' : s)), 5000);
+  }, []);
+
   const handleChangePw = async (username: string) => {
     if (!newPw) return;
     setActionLoading('pw-' + username);
     try {
       await changeAdminPassword(username, newPw);
       setPwUser(null); setNewPw('');
-      setStatus(`Password changed for ${username}`);
+      showStatus(`Password changed for ${username}`);
     } catch (e) { setError((e as Error).message); }
     finally { setActionLoading(''); }
   };
 
   const handleRegenKey = async (username: string) => {
+    // Regenerating invalidates any external script/integration using the old
+    // key. No undo, no way to recover the previous key.
+    if (!window.confirm(`Regenerate API key for ${username}?\n\nThe old key stops working immediately. Any scripts or integrations using it will break until updated.`)) return;
     setActionLoading('key-' + username);
     try {
       const res = await regenAdminApiKey(username);
       setRegenResult({ username, api_key: res.api_key });
-      setStatus(`API key regenerated for ${username}. Copy it now — it won't be shown again.`);
+      showStatus(`API key regenerated for ${username}. Copy it now — it won't be shown again.`);
       await load();
     } catch (e) { setError((e as Error).message); }
     finally { setActionLoading(''); }
@@ -234,7 +245,7 @@ export default function AdminUsers() {
                       ) : (
                         <>
                           <button onClick={() => setPwUser(u.username)} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground" title="Change password"><Lock size={12} /></button>
-                          <button disabled={!!actionLoading} onClick={() => handleRegenKey(u.username)} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground" title="Regenerate API key"><Key size={12} /></button>
+                          <button disabled={actionLoading === 'key-' + u.username} onClick={() => handleRegenKey(u.username)} className="rounded bg-accent/50 p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-50" title="Regenerate API key"><Key size={12} /></button>
                           {confirmDelete === u.username ? (
                             <span className="flex items-center gap-1">
                               <button onClick={() => handleDelete(u.username)} disabled={deleting} className="rounded bg-red-600 px-2 py-1 text-xs text-white disabled:opacity-50">{deleting ? '...' : 'Yes'}</button>
