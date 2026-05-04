@@ -12,6 +12,7 @@ import {
   fetchPHP, fetchServerIPs, fetchDomainHealth,
   type DomainData, type DomainDetail, type CertInfo, type PHPInstall, type ServerIPInfo, type DomainHealth,
 } from '@/lib/api';
+import { usePolling } from '@/hooks/usePolling';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -355,10 +356,9 @@ export default function Domains() {
     loadCerts();
     loadPHP();
     loadIPs();
-    loadHealth();
-    const hInterval = setInterval(loadHealth, 30000); // refresh health every 30s
-    return () => clearInterval(hInterval);
-  }, [loadDomains, loadCerts, loadPHP, loadIPs, loadHealth]);
+  }, [loadDomains, loadCerts, loadPHP, loadIPs]);
+  // Health re-checked every 30s; pauses when the tab is hidden.
+  usePolling(loadHealth, 30_000);
 
   /* -------- expand row -------- */
 
@@ -773,7 +773,7 @@ export default function Domains() {
                         <div>
                           <p className="text-sm font-semibold">{tpl.label}</p>
                           {phpMissing ? (
-                            <p className="text-xs text-red-400">PHP not installed — <a href="/_uwas/dashboard/php" className="underline hover:text-red-300" onClick={e => e.stopPropagation()}>Install PHP first</a></p>
+                            <p className="text-xs text-red-400">PHP not installed — <RouterLink to="/php" className="underline hover:text-red-300" onClick={e => e.stopPropagation()}>Install PHP first</RouterLink></p>
                           ) : (
                             <p className="text-xs opacity-70">{tpl.description}</p>
                           )}
@@ -827,7 +827,7 @@ export default function Domains() {
                     </select>
                     {form.type === 'php' && phpInstalls.filter(p => p.sapi !== 'cli').length === 0 && (
                       <p className="mt-1 text-[10px] text-red-400">
-                        No PHP-FPM/CGI installed. <a href="/_uwas/dashboard/php" className="underline">Install PHP</a> first.
+                        No PHP-FPM/CGI installed. <RouterLink to="/php" className="underline">Install PHP</RouterLink> first.
                       </p>
                     )}
                   </FormField>
