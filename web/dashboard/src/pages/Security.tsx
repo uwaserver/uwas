@@ -6,6 +6,7 @@ import {
   type SecurityStats, type BlockedRequest, type DomainData, type DomainDetail, type FeatureStatus,
 } from '@/lib/api';
 import FeatureBanner from '@/components/FeatureBanner';
+import { usePolling } from '@/hooks/usePolling';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -57,12 +58,10 @@ export default function Security() {
   }, []);
 
   useEffect(() => {
-    load();
     fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
     fetchFeatures().then(f => setFeatureStatus(f.security_stats ?? null)).catch(() => {});
-    const iv = setInterval(load, 5000);
-    return () => clearInterval(iv);
-  }, [load]);
+  }, []);
+  usePolling(load, 5000);
 
   const openDomain = async (host: string) => {
     if (expanded === host) { setExpanded(''); expandedRef.current = ''; return; }
