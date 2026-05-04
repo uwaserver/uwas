@@ -165,24 +165,35 @@ export default function PHP() {
 
   useEffect(() => {
     void loadAll();
-    // Resume install monitoring if an install is running
+    // Resume install monitoring if an install is running. The cleanup
+    // returned from inside .then() is silently discarded by React — track
+    // the interval handle in a ref-style local so the effect's cleanup
+    // can clear it on unmount.
+    let pollHandle: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
     fetchPHPInstallStatus().then(st => {
+      if (cancelled) return;
       if (st && (st.status === 'running' || st.status === 'queued')) {
         setInstallJob(st);
         setShowInstall(true);
-        const poll = setInterval(async () => {
+        pollHandle = setInterval(async () => {
           try {
             const s = await fetchPHPInstallStatus();
             setInstallJob(s);
             if (s.status !== 'running' && s.status !== 'queued') {
-              clearInterval(poll);
+              if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
               if (s.status === 'done') loadAll();
             }
-          } catch { clearInterval(poll); }
+          } catch {
+            if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+          }
         }, 2000);
-        return () => clearInterval(poll);
       }
     }).catch(() => {});
+    return () => {
+      cancelled = true;
+      if (pollHandle) clearInterval(pollHandle);
+    };
   }, [loadAll]);
 
   /* -------- actions -------- */
@@ -216,6 +227,11 @@ export default function PHP() {
   };
 
   const handleRemoveDomain = async (domain: string) => {
+    if (!window.confirm(
+      `Unassign PHP from ${domain}?\n\nThe site will stop serving PHP immediately. Static files keep working, but any .php request will return an error until you re-assign a PHP version.`,
+    )) {
+      return;
+    }
     patchRow(domain, { removing: true });
     setStatus(null);
     try {
@@ -418,7 +434,7 @@ export default function PHP() {
           </p>
         </div>
         <button
-          onClick={() => { setLoading(true); void loadAll(); }}
+          onClick={() => void loadAll()}
           className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
