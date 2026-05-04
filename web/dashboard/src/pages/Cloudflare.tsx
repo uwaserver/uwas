@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
+import { usePolling } from '@/hooks/usePolling';
 import {
   Cloud,
   Link,
@@ -82,21 +83,19 @@ export default function Cloudflare() {
   const [installBusy, setInstallBusy] = useState(false);
   const [tunnelLogs, setTunnelLogs] = useState<{ id: string; text: string } | null>(null);
 
-  useEffect(() => {
-    loadData();
-    // Refresh tunnel status every 5s when connected — cheap, only updates running flag.
-    const id = window.setInterval(async () => {
-      try {
-        const s = await fetchCloudflareStatus();
-        setStatus(s);
-        if (s?.connected) {
-          const t = await fetchCloudflareTunnels();
-          setTunnels(t);
-        }
-      } catch { /* swallow background errors */ }
-    }, 5000);
-    return () => window.clearInterval(id);
-  }, []);
+  useEffect(() => { loadData(); }, []);
+
+  // Refresh tunnel status while page is visible — cheap, only updates running flag.
+  usePolling(async () => {
+    try {
+      const s = await fetchCloudflareStatus();
+      setStatus(s);
+      if (s?.connected) {
+        const t = await fetchCloudflareTunnels();
+        setTunnels(t);
+      }
+    } catch { /* swallow background errors */ }
+  }, 5000);
 
   const loadData = async () => {
     try {
