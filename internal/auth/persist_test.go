@@ -122,6 +122,33 @@ func TestSessionCleanupLoop_PrunesExpiredFromDisk(t *testing.T) {
 	}
 }
 
+func TestCleanupLoginAttempts_RemovesStaleUsernames(t *testing.T) {
+	m := NewManager(t.TempDir(), "")
+	defer m.Stop()
+
+	// Pretend an attacker hammered three different usernames a long time ago.
+	old := time.Now().Add(-2 * loginLockoutWindow)
+	m.loginAttemptsMu.Lock()
+	m.loginAttempts["attacker-a"] = []time.Time{old, old}
+	m.loginAttempts["attacker-b"] = []time.Time{old}
+	m.loginAttempts["recent-user"] = []time.Time{time.Now()}
+	m.loginAttemptsMu.Unlock()
+
+	m.cleanupLoginAttempts()
+
+	m.loginAttemptsMu.Lock()
+	defer m.loginAttemptsMu.Unlock()
+	if _, ok := m.loginAttempts["attacker-a"]; ok {
+		t.Errorf("attacker-a entry not pruned")
+	}
+	if _, ok := m.loginAttempts["attacker-b"]; ok {
+		t.Errorf("attacker-b entry not pruned")
+	}
+	if _, ok := m.loginAttempts["recent-user"]; !ok {
+		t.Errorf("recent-user entry pruned but should have been kept")
+	}
+}
+
 func TestStop_IsIdempotent(t *testing.T) {
 	m := NewManager(t.TempDir(), "")
 	m.Stop()
