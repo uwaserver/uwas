@@ -73,12 +73,17 @@ export default function DBExplorer() {
     loadDatabases();
   }, []);
 
-  // Load tables when database is selected
+  // Load tables when database is selected. Also clear stale per-DB
+  // state so the user does not see results / column structure / status
+  // toasts from a previously selected database.
   useEffect(() => {
     if (selectedDB) {
       loadTables(selectedDB);
       setSelectedTable('');
       setColumns([]);
+      setQueryResult(null);
+      setSuccess('');
+      setError('');
     }
   }, [selectedDB]);
 
@@ -135,6 +140,9 @@ export default function DBExplorer() {
       const result = await runDBQuery(selectedDB, query);
       setQueryResult(result);
       setSuccess(`Query executed successfully. ${result.count} rows returned.`);
+      // Auto-dismiss the green toast — without this it stayed forever and
+      // could end up displayed alongside an error from a later failed query.
+      window.setTimeout(() => setSuccess(s => s.startsWith('Query executed') ? '' : s), 4000);
     } catch (err: any) {
       setError(err.message || 'Query execution failed');
       setQueryResult(null);
@@ -254,11 +262,18 @@ export default function DBExplorer() {
             <textarea
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  executeQuery();
+                }
+              }}
               placeholder="Enter SQL query..."
               className="w-full h-24 p-3 font-mono text-sm border border-border rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-ring bg-background text-foreground"
               spellCheck={false}
             />
-            <div className="flex justify-end mt-3">
+            <div className="flex justify-between items-center mt-3">
+              <span className="text-xs text-muted-foreground">Ctrl+Enter to run</span>
               <button
                 onClick={executeQuery}
                 disabled={!selectedDB || !query.trim() || loading}
@@ -275,7 +290,14 @@ export default function DBExplorer() {
           </SimpleCard>
 
           {/* Results Table */}
-          {queryResult && (
+          {queryResult && queryResult.count === 0 && (
+            <SimpleCard title="Results (0 rows)" icon={<Table2 className="h-4 w-4" />}>
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Query executed successfully but returned no rows.
+              </p>
+            </SimpleCard>
+          )}
+          {queryResult && queryResult.count > 0 && (
             <SimpleCard title={`Results (${queryResult.count} rows)`} icon={<Table2 className="h-4 w-4" />}>
               <div className="overflow-auto max-h-96">
                 <table className="w-full text-sm">
