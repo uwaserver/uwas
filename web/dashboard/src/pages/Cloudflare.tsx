@@ -304,6 +304,9 @@ export default function Cloudflare() {
   };
 
   const handleDisconnect = async () => {
+    if (!confirm('Disconnect from Cloudflare?\n\nThis wipes the stored API token. Existing tunnels keep running, but you will need to paste the token again to manage zones, run new tunnels, or purge cache.')) {
+      return;
+    }
     try {
       setLoading(true);
       await disconnectCloudflare();
@@ -646,12 +649,22 @@ export default function Cloudflare() {
                       <div className="mt-3 rounded-md border border-border bg-black/90 p-3">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs text-gray-400">cloudflared logs (last 64 lines)</span>
-                          <button
-                            onClick={() => setTunnelLogs(null)}
-                            className="text-xs text-gray-400 hover:text-white"
-                          >
-                            close
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleViewLogs(t.id)}
+                              className="text-xs text-gray-400 hover:text-white inline-flex items-center gap-1"
+                              title="Refresh logs"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                              refresh
+                            </button>
+                            <button
+                              onClick={() => setTunnelLogs(null)}
+                              className="text-xs text-gray-400 hover:text-white"
+                            >
+                              close
+                            </button>
+                          </div>
                         </div>
                         <pre className="text-[11px] font-mono text-gray-200 whitespace-pre-wrap max-h-64 overflow-auto">
                           {tunnelLogs.text}
