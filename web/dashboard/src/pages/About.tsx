@@ -109,7 +109,7 @@ export default function About() {
             ['Apache / Nginx', 'HTTP/HTTPS/HTTP3 server'],
             ['Varnish', 'L1 memory + L2 disk cache'],
             ['Caddy', 'Auto HTTPS via ACME'],
-            ['cPanel / Plesk', '35-page dashboard'],
+            ['cPanel / Plesk', '40-page dashboard'],
             ['ModSecurity', 'Built-in WAF'],
             ['Fail2ban', 'Bot guard + rate limiting'],
             ['phpMyAdmin', 'Database management'],
