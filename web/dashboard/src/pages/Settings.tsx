@@ -938,8 +938,10 @@ export default function Settings() {
             </div>
           )}
 
-          {/* Alerting: Test Notification button */}
-          {section.id === 'alerting' && formValues['global.alerting.enabled'] && (
+          {/* Alerting: Test Notification button — formValues holds string
+              values, so the literal 'false' is truthy. Compare explicitly
+              or the button shows up even when alerting is disabled. */}
+          {section.id === 'alerting' && formValues['global.alerting.enabled'] === 'true' && (
             <div className="mt-4 border-t border-border pt-4">
               <button onClick={async () => {
                 try {
