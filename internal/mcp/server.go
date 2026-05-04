@@ -120,7 +120,7 @@ func (s *Server) registerTools() {
 
 	s.tools["domain_get"] = Tool{
 		Name:        "domain_get",
-		Description: "Get detailed configuration for a specific domain",
+		Description: "Get detailed configuration for a specific domain (secrets redacted)",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"host":{"type":"string","description":"Domain hostname"}},"required":["host"]}`),
 		Handler: func(input json.RawMessage) (any, error) {
 			var params struct {
@@ -131,7 +131,7 @@ func (s *Server) registerTools() {
 			}
 			for _, d := range s.config.Domains {
 				if d.Host == params.Host {
-					return d, nil
+					return sanitizeDomainForMCP(d), nil
 				}
 			}
 			return nil, fmt.Errorf("domain not found: %s", params.Host)
@@ -294,4 +294,18 @@ func (s *Server) CallTool(name string, input json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
 	return tool.Handler(input)
+}
+
+// sanitizeDomainForMCP returns a copy of d with secret-bearing fields
+// cleared. Used by domain_get because MCP responses go to AI agents that
+// may not be on the same trust boundary as the dashboard. The dashboard
+// path (handleDomainDetail) intentionally does NOT sanitize — operators
+// need to view and edit these fields there.
+func sanitizeDomainForMCP(d config.Domain) config.Domain {
+	d.PHP.Env = nil           // env vars frequently hold DB creds, API keys
+	d.App.Env = nil           // same for non-PHP apps
+	d.BasicAuth.Users = nil   // username → password map (often hashed, but still)
+	d.WebhookSecret = ""      // per-domain webhook HMAC
+	d.SSL.Key = ""            // path or inline private key — neither belongs in agent output
+	return d
 }
