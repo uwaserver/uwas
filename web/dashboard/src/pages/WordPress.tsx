@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import { Zap, RefreshCw, Check, Copy, ExternalLink, Shield, Download, Plug, Palette, ChevronDown, ChevronUp, Bug, FileText, Users, Key, Lock, Database, Trash2 } from 'lucide-react';
 import {
   fetchDomains, installWordPress, fetchWPInstallStatus, fetchDBStatus, fetchDockerDBs,
@@ -563,7 +564,7 @@ export default function WordPress() {
                 <span className={phpDomains.length > 0 ? 'text-emerald-400' : 'text-red-400'}>
                   {phpDomains.length > 0
                     ? `PHP domains (${phpDomains.length})`
-                    : <>No PHP domains — <a href="/_uwas/dashboard/domains" className="underline">add a PHP domain</a> first</>}
+                    : <>No PHP domains — <RouterLink to="/domains" className="underline">add a PHP domain</RouterLink> first</>}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-sm">
