@@ -18,10 +18,13 @@ import {
   fetchDomains,
   fetchCronMonitor,
   executeCron,
+  fetchFeatures,
   type CronJob,
   type CronJobStatus,
   type DomainData,
+  type FeatureStatus,
 } from '@/lib/api';
+import FeatureBanner from '@/components/FeatureBanner';
 
 const SCHEDULE_PRESETS = [
   { label: 'Every 5 minutes', value: '*/5 * * * *' },
@@ -56,6 +59,7 @@ export default function CronJobs() {
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState<CronJob | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [monitorFeature, setMonitorFeature] = useState<FeatureStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -73,6 +77,7 @@ export default function CronJobs() {
 
   useEffect(() => {
     load();
+    fetchFeatures().then(f => setMonitorFeature(f.cron_monitor ?? null)).catch(() => {});
   }, [load]);
 
   const schedule = preset === '' ? customSchedule : preset;
@@ -124,6 +129,7 @@ export default function CronJobs() {
 
   return (
     <div className="space-y-6">
+      <FeatureBanner feature="cron_monitor" status={monitorFeature} label="Cron execution monitor" />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

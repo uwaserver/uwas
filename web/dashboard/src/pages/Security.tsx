@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, ShieldAlert, Bot, Link2Off, Gauge, RefreshCw, ChevronDown, ChevronUp, Save, Plus, Trash2, Globe } from 'lucide-react';
 import {
   fetchSecurityStats, fetchSecurityBlocked, fetchDomains, fetchDomainDetail, updateDomain,
-  type SecurityStats, type BlockedRequest, type DomainData, type DomainDetail,
+  fetchFeatures,
+  type SecurityStats, type BlockedRequest, type DomainData, type DomainDetail, type FeatureStatus,
 } from '@/lib/api';
+import FeatureBanner from '@/components/FeatureBanner';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -45,6 +47,7 @@ export default function Security() {
   const [hotlinkEnabled, setHotlinkEnabled] = useState(false);
   const [wafBypassPaths, setWafBypassPaths] = useState<string[]>([]);
   const [newBypassPath, setNewBypassPath] = useState('');
+  const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
 
   const load = useCallback(() => {
     Promise.all([fetchSecurityStats(), fetchSecurityBlocked()])
@@ -56,6 +59,7 @@ export default function Security() {
   useEffect(() => {
     load();
     fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
+    fetchFeatures().then(f => setFeatureStatus(f.security_stats ?? null)).catch(() => {});
     const iv = setInterval(load, 5000);
     return () => clearInterval(iv);
   }, [load]);
@@ -118,6 +122,7 @@ export default function Security() {
 
   return (
     <div className="space-y-6">
+      <FeatureBanner feature="security_stats" status={featureStatus} label="Security stats collector" />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Security</h1>

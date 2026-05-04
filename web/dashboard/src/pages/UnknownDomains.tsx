@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, ShieldOff, ShieldCheck, Trash2, RefreshCw } from 'lucide-react';
 import {
   fetchUnknownDomains, blockUnknownDomain, unblockUnknownDomain, dismissUnknownDomain,
-  type UnknownDomainEntry,
+  fetchFeatures,
+  type UnknownDomainEntry, type FeatureStatus,
 } from '@/lib/api';
+import FeatureBanner from '@/components/FeatureBanner';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -19,6 +21,7 @@ export default function UnknownDomains() {
   const [entries, setEntries] = useState<UnknownDomainEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
 
   const load = useCallback(() => {
     fetchUnknownDomains()
@@ -29,6 +32,7 @@ export default function UnknownDomains() {
 
   useEffect(() => {
     load();
+    fetchFeatures().then(f => setFeatureStatus(f.unknown_domains ?? null)).catch(() => {});
     const iv = setInterval(load, 10000);
     return () => clearInterval(iv);
   }, [load]);
@@ -50,6 +54,8 @@ export default function UnknownDomains() {
 
   return (
     <div className="space-y-6">
+      <FeatureBanner feature="unknown_domains" status={featureStatus} label="Unknown-host tracker" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

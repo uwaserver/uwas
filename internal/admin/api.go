@@ -211,6 +211,7 @@ func maskCloudflareToken(token string) string {
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/system", s.handleSystem)
+	s.mux.HandleFunc("GET /api/v1/features", s.handleFeatures)
 	s.mux.HandleFunc("GET /api/v1/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/v1/stats/domains", s.handleStatsDomains)
 	s.mux.HandleFunc("GET /api/v1/domains", s.handleDomains)
@@ -839,6 +840,85 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, resp)
+}
+
+// featureStatus describes whether an optional subsystem is wired up at runtime.
+type featureStatus struct {
+	Enabled bool   `json:"enabled"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// handleFeatures reports which optional subsystems are initialized. Used by
+// dashboard pages to show a "feature not enabled" banner instead of a
+// misleading empty list. Read-only; does not require admin.
+func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
+	disabled := func(reason string) featureStatus { return featureStatus{Enabled: false, Reason: reason} }
+	enabled := featureStatus{Enabled: true}
+
+	out := map[string]featureStatus{}
+
+	if s.appMgr == nil {
+		out["apps"] = disabled("App manager not initialized — pass --enable-apps or set apps.enabled in uwas.yaml")
+	} else {
+		out["apps"] = enabled
+	}
+	if s.bwMgr == nil {
+		out["bandwidth"] = disabled("Bandwidth manager not initialized — set bandwidth.enabled in uwas.yaml")
+	} else {
+		out["bandwidth"] = enabled
+	}
+	if s.cronMonitor == nil {
+		out["cron_monitor"] = disabled("Cron monitor not initialized — set cron.enabled in uwas.yaml")
+	} else {
+		out["cron_monitor"] = enabled
+	}
+	if s.unknownHT == nil {
+		out["unknown_domains"] = disabled("Unknown-host tracker disabled in config")
+	} else {
+		out["unknown_domains"] = enabled
+	}
+	if s.securityStats == nil {
+		out["security_stats"] = disabled("Security stats collector not initialized")
+	} else {
+		out["security_stats"] = enabled
+	}
+	if s.deployMgr == nil {
+		out["deploys"] = disabled("Deploy manager not initialized")
+	} else {
+		out["deploys"] = enabled
+	}
+	if s.backupMgr == nil {
+		out["backups"] = disabled("Backup manager not initialized")
+	} else {
+		out["backups"] = enabled
+	}
+	if s.webhookMgr == nil {
+		out["webhooks"] = disabled("Webhook manager not initialized")
+	} else {
+		out["webhooks"] = enabled
+	}
+	if s.tlsMgr == nil {
+		out["tls"] = disabled("TLS manager not initialized")
+	} else {
+		out["tls"] = enabled
+	}
+	if s.alerter == nil {
+		out["alerting"] = disabled("Alerter not initialized")
+	} else {
+		out["alerting"] = enabled
+	}
+	if s.monitor == nil {
+		out["uptime_monitor"] = disabled("Uptime monitor not initialized")
+	} else {
+		out["uptime_monitor"] = enabled
+	}
+	if s.phpMgr == nil {
+		out["php"] = disabled("PHP manager not initialized")
+	} else {
+		out["php"] = enabled
+	}
+
+	jsonResponse(w, out)
 }
 
 func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {

@@ -2462,6 +2462,15 @@ func (s *Server) handleDBExploreTables(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid database name", http.StatusBadRequest)
 		return
 	}
+	exists, err := database.DatabaseExists(db)
+	if err != nil {
+		jsonError(w, "database lookup failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		jsonError(w, "database "+db+" does not exist", http.StatusNotFound)
+		return
+	}
 	sql := fmt.Sprintf("SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, ENGINE, TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = '%s' ORDER BY TABLE_NAME", database.EscapeSQL(db))
 	out, err := database.RunSQL(sql)
 	if err != nil {

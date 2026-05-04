@@ -6,8 +6,9 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis,
 } from 'recharts';
-import { fetchAnalytics, fetchBandwidth, resetBandwidth, type DomainAnalytics, type BandwidthStatus } from '@/lib/api';
+import { fetchAnalytics, fetchBandwidth, resetBandwidth, fetchFeatures, type DomainAnalytics, type BandwidthStatus, type FeatureStatus } from '@/lib/api';
 import Card from '@/components/Card';
+import FeatureBanner from '@/components/FeatureBanner';
 
 function formatBytes(b: number): string {
   if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
@@ -135,6 +136,7 @@ export default function Analytics() {
   const [bwData, setBwData] = useState<BandwidthStatus[]>([]);
   const [error, setError] = useState('');
   const [resetting, setResetting] = useState('');
+  const [bwFeature, setBwFeature] = useState<FeatureStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -145,7 +147,12 @@ export default function Analytics() {
     } catch (e) { setError((e as Error).message); }
   }, []);
 
-  useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, [load]);
+  useEffect(() => {
+    load();
+    fetchFeatures().then(f => setBwFeature(f.bandwidth ?? null)).catch(() => {});
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [load]);
 
   const totalViews = domains.reduce((s, d) => s + (d.page_views ?? 0), 0);
   const totalUniqueIPs = domains.reduce((s, d) => s + (d.unique_ips ?? 0), 0);
@@ -154,6 +161,7 @@ export default function Analytics() {
 
   return (
     <div className="space-y-6">
+      <FeatureBanner feature="bandwidth" status={bwFeature} label="Bandwidth manager" />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Analytics</h1>
