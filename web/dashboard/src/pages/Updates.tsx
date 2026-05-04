@@ -53,6 +53,15 @@ export default function Updates() {
   }, []);
 
   const handleUpdate = async () => {
+    // Self-update restarts the server. Every active session drops, in-
+    // flight requests die, terminal/SFTP/log streams break. Surprise the
+    // operator at your peril — confirm first.
+    if (!info?.update_available) return;
+    if (!window.confirm(
+      `Install ${info.latest_version}?\n\n` +
+      `The server will replace its binary and restart. All active sessions ` +
+      `(dashboard, terminal, SFTP) will drop and you'll need to log in again.`,
+    )) return;
     setUpdating(true);
     setError('');
     try {
@@ -63,7 +72,7 @@ export default function Updates() {
         const newInfo = await checkUpdate();
         setInfo(newInfo);
       } catch {
-        // May fail if the server is restarting
+        // Expected — the server is restarting.
       }
     } catch (e) {
       setError((e as Error).message);
@@ -205,13 +214,17 @@ export default function Updates() {
                   </button>
                 )}
               </div>
-              {updating && (
-                <div className="mt-3 flex items-center gap-2 rounded-md bg-blue-500/10 px-4 py-3 text-sm text-blue-400">
-                  <RefreshCw size={14} className="animate-spin" />
-                  Downloading and replacing binary. Server will restart automatically. This may take a minute.
-                </div>
-              )}
             </div>
+            {/* Was nested inside the flex row above with mt-3 — but flex
+                children don't get vertical margin in a horizontal layout,
+                so the "downloading" message rendered next to the button
+                instead of below the row. Pulled out as a sibling. */}
+            {updating && (
+              <div className="mt-3 flex items-center gap-2 rounded-md bg-blue-500/10 px-4 py-3 text-sm text-blue-400">
+                <RefreshCw size={14} className="animate-spin" />
+                Downloading and replacing binary. Server will restart automatically. This may take a minute.
+              </div>
+            )}
           </div>
 
           {/* Release notes */}
