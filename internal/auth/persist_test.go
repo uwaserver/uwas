@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestJWTSecret_PersistsAcrossManagerReload(t *testing.T) {
@@ -83,6 +84,49 @@ func TestSessions_ExpiredAreNotReloaded(t *testing.T) {
 	if _, err := m2.ValidateSession(sess.Token); err == nil {
 		t.Errorf("expired session should not be reloaded")
 	}
+}
+
+func TestSessionCleanupLoop_PrunesExpiredFromDisk(t *testing.T) {
+	dir := t.TempDir()
+
+	m := NewManager(dir, "")
+	defer m.Stop()
+
+	if _, err := m.CreateUser("carol", "c@example.com", "secret123", RoleAdmin, nil); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	sess, err := m.Authenticate("carol", "secret123")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	// Force-expire the session and trigger cleanup directly (don't wait an hour).
+	m.mu.Lock()
+	m.sessions[sess.Token].ExpiresAt = time.Now().Add(-1 * time.Minute)
+	m.mu.Unlock()
+	m.CleanupSessions()
+
+	// In memory: gone.
+	m.mu.RLock()
+	_, stillThere := m.sessions[sess.Token]
+	m.mu.RUnlock()
+	if stillThere {
+		t.Errorf("expired session not removed from memory")
+	}
+
+	// On disk: gone too — reload a fresh manager and confirm.
+	m2 := NewManager(dir, "")
+	defer m2.Stop()
+	if _, err := m2.ValidateSession(sess.Token); err == nil {
+		t.Errorf("expired session resurrected via sessions.json reload — cleanup did not persist")
+	}
+}
+
+func TestStop_IsIdempotent(t *testing.T) {
+	m := NewManager(t.TempDir(), "")
+	m.Stop()
+	m.Stop() // must not panic
+	m.Stop()
 }
 
 func TestJWTSecret_NoDataDirGeneratesEphemeral(t *testing.T) {

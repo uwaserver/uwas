@@ -113,7 +113,16 @@ type Manager struct {
 	// Brute-force protection: tracks failed login attempts per username.
 	loginAttemptsMu sync.Mutex
 	loginAttempts   map[string][]time.Time // username -> timestamps of failed attempts
+
+	// Background session pruner. Closed by Stop(). Nil when sessionCleanupInterval
+	// is 0 (e.g. tests that want full control).
+	cleanupDone chan struct{}
 }
+
+// sessionCleanupInterval is how often the background goroutine sweeps the
+// session map for expired entries. One hour is well below the 24h session
+// lifetime, so the worst-case leak is ~1h of expired sessions in memory.
+const sessionCleanupInterval = 1 * time.Hour
 
 // NewManager creates a new auth manager.
 func NewManager(dataDir, globalAPIKey string) *Manager {
@@ -124,13 +133,47 @@ func NewManager(dataDir, globalAPIKey string) *Manager {
 		loginAttempts: make(map[string][]time.Time),
 		dataDir:       dataDir,
 		apiKey:        globalAPIKey,
+		cleanupDone:   make(chan struct{}),
 	}
 	if err := m.loadOrCreateJWTSecret(); err != nil {
 		panic("auth: jwt secret init failed: " + err.Error())
 	}
 	m.loadUsers()
 	m.loadSessions()
+	go m.sessionCleanupLoop()
 	return m
+}
+
+// Stop signals the background session-cleanup goroutine to exit. Safe to
+// call multiple times. If never called, the goroutine simply lives until
+// the process exits.
+func (m *Manager) Stop() {
+	if m.cleanupDone == nil {
+		return
+	}
+	select {
+	case <-m.cleanupDone:
+		// already closed
+	default:
+		close(m.cleanupDone)
+	}
+}
+
+// sessionCleanupLoop wakes every sessionCleanupInterval and removes
+// expired sessions from memory and disk. Without this, sessions.json
+// grows unbounded over time as expired entries are filtered on read but
+// never pruned on write.
+func (m *Manager) sessionCleanupLoop() {
+	t := time.NewTicker(sessionCleanupInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-m.cleanupDone:
+			return
+		case <-t.C:
+			m.CleanupSessions()
+		}
+	}
 }
 
 const (
