@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Activity, Zap, HardDrive, Clock, CheckCircle, AlertTriangle,
   Gauge, AlertCircle, Shield, Globe, Lock, Cpu, ShieldAlert,
@@ -26,8 +27,13 @@ export default function Dashboard() {
   const [php, setPhp] = useState<PHPInstall[]>([]);
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
   const [domainHealth, setDomainHealth] = useState<DomainHealth[]>([]);
+  // Tracks whether the initial fetchDomains() has resolved. Without this, the
+  // first-run wizard flashes on mount because `domains.length === 0` is true
+  // before the API responds — and worse, the wizard would also appear if the
+  // API fails entirely, hiding the real error from the user.
+  const [domainsLoaded, setDomainsLoaded] = useState(false);
   useEffect(() => {
-    fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
+    fetchDomains().then(d => setDomains(d ?? [])).catch(() => {}).finally(() => setDomainsLoaded(true));
     fetchCerts().then(c => setCerts(c ?? [])).catch(() => {});
     fetchSecurityStats().then(setSecurity).catch(() => {});
     fetchPHP().then(p => setPhp(p ?? [])).catch(() => {});
@@ -76,8 +82,10 @@ export default function Dashboard() {
         <Card icon={<Clock size={18} />} label="Uptime" value={stats?.uptime ?? '--'} />
       </div>
 
-      {/* First-run setup wizard — shown when no domains configured */}
-      {domains.length === 0 && (
+      {/* First-run setup wizard — shown only after we confirm the server has
+          no domains. domainsLoaded gates this so the wizard does NOT flash
+          during initial load and does NOT appear if the API call fails. */}
+      {domainsLoaded && domains.length === 0 && (
         <div className="rounded-xl border-2 border-dashed border-blue-500/30 bg-blue-500/5 p-8">
           <div className="text-center mb-6">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/15">
@@ -87,32 +95,32 @@ export default function Dashboard() {
             <p className="mt-1 text-sm text-muted-foreground">Let's get your first site online in under 5 minutes.</p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 max-w-2xl mx-auto">
-            <a href="/_uwas/dashboard/domains" className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-5 hover:border-blue-500/50 transition-colors group">
+            <RouterLink to="/domains" className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-5 hover:border-blue-500/50 transition-colors group">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/15 group-hover:bg-emerald-500/25 transition-colors">
                 <Globe size={18} className="text-emerald-400" />
               </div>
               <span className="text-sm font-medium text-foreground">1. Add Domain</span>
               <span className="text-[10px] text-muted-foreground text-center">Point your domain's DNS A record to this server, then add it here</span>
-            </a>
-            <a href="/_uwas/dashboard/certificates" className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-5 hover:border-blue-500/50 transition-colors group">
+            </RouterLink>
+            <RouterLink to="/certificates" className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-5 hover:border-blue-500/50 transition-colors group">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-500/15 group-hover:bg-purple-500/25 transition-colors">
                 <Lock size={18} className="text-purple-400" />
               </div>
               <span className="text-sm font-medium text-foreground">2. SSL Certificate</span>
               <span className="text-[10px] text-muted-foreground text-center">Auto-issued via Let's Encrypt when domain is added with ssl: auto</span>
-            </a>
-            <a href="/_uwas/dashboard/php" className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-5 hover:border-blue-500/50 transition-colors group">
+            </RouterLink>
+            <RouterLink to="/php" className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card p-5 hover:border-blue-500/50 transition-colors group">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/15 group-hover:bg-cyan-500/25 transition-colors">
                 <Server size={18} className="text-cyan-400" />
               </div>
               <span className="text-sm font-medium text-foreground">3. Install PHP</span>
               <span className="text-[10px] text-muted-foreground text-center">One-click PHP install for WordPress, Laravel, and other apps</span>
-            </a>
+            </RouterLink>
           </div>
           <div className="mt-6 text-center">
-            <a href="/_uwas/dashboard/migration" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+            <RouterLink to="/migrate" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
               Migrating from cPanel? Use the cPanel Import tool →
-            </a>
+            </RouterLink>
           </div>
         </div>
       )}
