@@ -87,7 +87,7 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
 	}
 
-	s.RecordAudit("webhook.create", req.URL, requestIP(r), true)
+	s.recordAuditR(r, "webhook.create", req.URL, true)
 	jsonResponse(w, map[string]any{"success": true})
 }
 
@@ -123,7 +123,7 @@ func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(s.config.Global.Webhooks))
 	}
 
-	s.RecordAudit("webhook.delete", url, requestIP(r), true)
+	s.recordAuditR(r, "webhook.delete", url, true)
 	jsonResponse(w, map[string]any{"success": true})
 }
 
@@ -159,7 +159,7 @@ func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request) {
 		"time":    time.Now().UTC(),
 	})
 
-	s.RecordAudit("webhook.test", req.URL, requestIP(r), true)
+	s.recordAuditR(r, "webhook.test", req.URL, true)
 	jsonResponse(w, map[string]any{"success": true, "message": "Test event fired to " + req.URL})
 }
 

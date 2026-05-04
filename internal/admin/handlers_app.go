@@ -69,7 +69,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setAppDisabled(domain, false)
-	s.RecordAudit("app.start", domain, requestIP(r), true)
+	s.recordAuditR(r, "app.start", domain, true)
 	jsonResponse(w, map[string]string{"status": "started", "domain": domain})
 }
 
@@ -87,7 +87,7 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setAppDisabled(domain, true)
-	s.RecordAudit("app.stop", domain, requestIP(r), true)
+	s.recordAuditR(r, "app.stop", domain, true)
 	jsonResponse(w, map[string]string{"status": "stopped", "domain": domain})
 }
 
@@ -123,7 +123,7 @@ func (s *Server) handleAppRestart(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
-	s.RecordAudit("app.restart", domain, requestIP(r), true)
+	s.recordAuditR(r, "app.restart", domain, true)
 	jsonResponse(w, map[string]string{"status": "restarted", "domain": domain})
 }
 
@@ -223,7 +223,7 @@ func (s *Server) handleAppEnvUpdate(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 	s.persistConfig()
 
-	s.RecordAudit("app.env.update", domain, requestIP(r), true)
+	s.recordAuditR(r, "app.env.update", domain, true)
 	jsonResponse(w, map[string]string{"status": "updated", "domain": domain})
 }
 
@@ -289,7 +289,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.RecordAudit("deploy.start", domain+" git:"+req.GitURL, requestIP(r), true)
+	s.recordAuditR(r, "deploy.start", domain+" git:"+req.GitURL, true)
 
 	// Deploy in background, restart app on completion, auto-save env/build_cmd
 	s.deployMgr.Deploy(req, root, func(err error) {
@@ -453,7 +453,7 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 		GitToken:  r.URL.Query().Get("token"),
 		GitBranch: branch,
 	}
-	s.RecordAudit("deploy.webhook", domain+" branch:"+branch, requestIP(r), true)
+	s.recordAuditR(r, "deploy.webhook", domain+" branch:"+branch, true)
 
 	s.deployMgr.Deploy(req, root, func(err error) {
 		if err == nil && s.appMgr != nil {
