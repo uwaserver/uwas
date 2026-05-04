@@ -5,6 +5,7 @@ import {
   Calendar, Eye, ChevronDown, Upload,
 } from 'lucide-react';
 import { fetchCerts, renewCert, uploadCert, type CertInfo } from '@/lib/api';
+import { usePolling } from '@/hooks/usePolling';
 
 function sslModeBadge(mode: string) {
   switch (mode) {
@@ -217,13 +218,11 @@ export default function Certificates() {
     load();
   }, [load]);
 
-  // Auto-refresh when any cert is pending (ACME issuance in progress)
+  // Auto-refresh while any cert is pending (ACME issuance in progress).
+  // Visibility-aware so the page doesn't keep poking the cert manager when
+  // the tab is in the background.
   const hasPending = certs.some(c => c.status === 'pending');
-  useEffect(() => {
-    if (!hasPending) return;
-    const iv = setInterval(load, 5000);
-    return () => clearInterval(iv);
-  }, [hasPending, load]);
+  usePolling(load, hasPending ? 5000 : null);
 
   const detailCert = detailHost ? certs.find((c) => c.host === detailHost) : null;
 
