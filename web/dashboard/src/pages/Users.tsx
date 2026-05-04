@@ -43,6 +43,11 @@ function SSHKeyPanel({ domain }: { domain: string }) {
   };
 
   const handleDelete = async (key: string) => {
+    if (!window.confirm(
+      `Remove this SSH key from ${domain}?\n\nIf this is the only key configured AND the user has no password set, they will be locked out of SFTP. There is no undo.`,
+    )) {
+      return;
+    }
     try {
       // Use the key content as fingerprint identifier
       await deleteSSHKey(domain, key);
@@ -236,17 +241,21 @@ export default function Users() {
           <div className="mt-3 rounded bg-background p-3">
             <p className="text-xs text-muted-foreground mb-2">Quick connect:</p>
             <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-xs font-mono text-card-foreground select-all">
-                  sftp {created.username}@{created.server_ip || 'your-server-ip'}
-                </code>
-                <button onClick={() => copyToClipboard(`sftp ${created.username}@${created.server_ip}`, 'sftp-cmd')}
-                  className="rounded p-1 text-muted-foreground hover:text-card-foreground">
-                  {copied === 'sftp-cmd' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                </button>
-              </div>
+              {(() => {
+                const host = created.server_ip || 'your-server-ip';
+                const cmd = `sftp ${created.username}@${host}`;
+                return (
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs font-mono text-card-foreground select-all">{cmd}</code>
+                    <button onClick={() => copyToClipboard(cmd, 'sftp-cmd')}
+                      className="rounded p-1 text-muted-foreground hover:text-card-foreground">
+                      {copied === 'sftp-cmd' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                );
+              })()}
               <p className="text-[10px] text-muted-foreground">
-                Or use FileZilla / WinSCP / Cyberduck — Protocol: SFTP, Host: {created.server_ip}, Port: 22
+                Or use FileZilla / WinSCP / Cyberduck — Protocol: SFTP, Host: {created.server_ip || 'your-server-ip'}, Port: 22
               </p>
             </div>
           </div>
