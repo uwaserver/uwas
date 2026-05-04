@@ -136,17 +136,35 @@ export default function Analytics() {
   const [domains, setDomains] = useState<DomainAnalytics[]>([]);
   const [bwData, setBwData] = useState<BandwidthStatus[]>([]);
   const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
   const [resetting, setResetting] = useState('');
   const [bwFeature, setBwFeature] = useState<FeatureStatus | null>(null);
 
+  // Analytics + bandwidth are independent endpoints; if analytics fails
+  // we still want bandwidth to load (and vice versa). Previously
+  // fetchBandwidth lived inside fetchAnalytics().then() so an analytics
+  // error blanked the bandwidth section as collateral damage.
   const load = useCallback(async () => {
-    try {
-      const result = await fetchAnalytics();
-      setDomains(result || []);
+    const [aRes, bRes] = await Promise.allSettled([fetchAnalytics(), fetchBandwidth()]);
+    if (aRes.status === 'fulfilled') {
+      setDomains(aRes.value || []);
       setError('');
-      fetchBandwidth().then(b => setBwData(b ?? [])).catch(() => {});
-    } catch (e) { setError((e as Error).message); }
+    } else {
+      setError((aRes.reason as Error).message);
+    }
+    if (bRes.status === 'fulfilled') {
+      setBwData(bRes.value ?? []);
+    }
+    // Bandwidth failure is silent — it's an optional feature and the
+    // FeatureBanner already explains when it's disabled.
   }, []);
+
+  // Auto-dismiss success status after 3s.
+  useEffect(() => {
+    if (!status) return;
+    const id = window.setTimeout(() => setStatus(s => s === status ? '' : s), 3000);
+    return () => window.clearTimeout(id);
+  }, [status]);
 
   useEffect(() => {
     fetchFeatures().then(f => setBwFeature(f.bandwidth ?? null)).catch(() => {});
@@ -172,6 +190,7 @@ export default function Analytics() {
       </div>
 
       {error && <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
+      {status && <div className="rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{status}</div>}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card icon={<Eye size={20} />} label="Total Page Views" value={totalViews.toLocaleString()} />
@@ -253,9 +272,14 @@ export default function Analytics() {
                     </td>
                     <td className="px-5 py-3 text-right">
                       <button disabled={!!resetting} onClick={async () => {
+                        if (!window.confirm(`Reset bandwidth counters for ${bw.host}?\n\nThis clears the daily and monthly usage totals — useful for testing limits or after a billing period reset.`)) {
+                          return;
+                        }
                         setResetting(bw.host);
+                        setError('');
                         try {
                           await resetBandwidth(bw.host);
+                          setStatus(`Bandwidth counters reset for ${bw.host}`);
                           load();
                         } catch (e) {
                           setError((e as Error).message);
