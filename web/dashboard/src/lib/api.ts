@@ -104,6 +104,16 @@ export interface HealthData {
   uptime: string;
 }
 
+// Feature flags returned by GET /api/v1/features. Keys map to optional
+// subsystems; if `enabled` is false, `reason` explains why so the dashboard
+// can show a banner instead of a deceptive empty list.
+export interface FeatureStatus {
+  enabled: boolean;
+  reason?: string;
+}
+export type FeaturesMap = Record<string, FeatureStatus>;
+export const fetchFeatures = () => api<FeaturesMap>('/api/v1/features');
+
 export interface StatsData {
   requests_total: number;
   cache_hits: number;

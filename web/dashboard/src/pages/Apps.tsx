@@ -7,9 +7,10 @@ import {
 } from 'lucide-react';
 import {
   fetchApps, startApp, stopApp, restartApp, deployApp, fetchDeployStatus,
-  updateAppEnv, fetchAppLogs, fetchAppStats,
-  type AppInstance, type DeployStatus, type AppStats,
+  updateAppEnv, fetchAppLogs, fetchAppStats, fetchFeatures,
+  type AppInstance, type DeployStatus, type AppStats, type FeatureStatus,
 } from '@/lib/api';
+import FeatureBanner from '@/components/FeatureBanner';
 
 /* ═══════════════════════════════════════════════════════════════════ */
 /*  Constants                                                         */
@@ -782,6 +783,7 @@ export default function Apps() {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
 
   // Deploy wizard state
   const [wizardDomain, setWizardDomain] = useState('');
@@ -795,7 +797,10 @@ export default function Apps() {
     } catch { /* ignore */ } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    fetchFeatures().then(f => setFeatureStatus(f.apps ?? null)).catch(() => {});
+  }, [load]);
 
   const showStatus = (ok: boolean, msg: string) => {
     setStatus({ ok, msg });
@@ -857,6 +862,8 @@ export default function Apps() {
 
   return (
     <div className="space-y-6">
+      <FeatureBanner feature="apps" status={featureStatus} label="Application manager" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

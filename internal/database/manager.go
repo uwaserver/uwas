@@ -725,6 +725,31 @@ func BacktickID(s string) string { return backtick(s) }
 // RunSQL executes a SQL statement and returns the output.
 func RunSQL(sql string) (string, error) { return runMySQLFn(sql) }
 
+// DatabaseExists reports whether the given schema name exists. Returns
+// (false, nil) for a clean negative result, (false, err) only if the underlying
+// MySQL command itself failed (mysql client missing, auth error, etc.).
+func DatabaseExists(name string) (bool, error) {
+	if !validDBIdentifier(name) {
+		return false, nil
+	}
+	sql := fmt.Sprintf("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'", EscapeSQL(name))
+	out, err := runMySQLFn(sql)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.EqualFold(line, "SCHEMA_NAME") {
+			continue
+		}
+		// MySQL CLI prints the value on its own line.
+		if strings.EqualFold(line, name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func validDBIdentifier(s string) bool {
 	if s == "" || len(s) > 64 {
 		return false
