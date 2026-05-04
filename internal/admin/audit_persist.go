@@ -50,9 +50,7 @@ func (s *Server) loadAuditLog() error {
 
 	s.auditMu.Lock()
 	defer s.auditMu.Unlock()
-	for i, e := range tail {
-		s.auditEntries[i] = e
-	}
+	copy(s.auditEntries, tail)
 	if len(tail) == maxAuditEntries {
 		s.auditFull = true
 		s.auditPos = 0

@@ -17,12 +17,6 @@ var sensitiveQueryParams = []string{
 	"access_token", "auth", "credential", "private", "signature",
 }
 
-// sensitiveHeaders are header names that contain credentials.
-var sensitiveHeaders = []string{
-	"Authorization", "Cookie", "X-TOTP-Code", "X-API-Key",
-	"X-Session-Token", "Proxy-Authorization",
-}
-
 // sanitizeURI returns the request URI with sensitive query parameters redacted.
 func sanitizeURI(r *http.Request) string {
 	if r.URL.RawQuery == "" {
@@ -64,17 +58,6 @@ func isSensitiveQueryParam(name string) bool {
 		}
 	}
 	return false
-}
-
-// sanitizeHeader returns "[REDACTED]" if the header is sensitive, otherwise the value.
-func sanitizeHeader(name, value string) string {
-	name = strings.ToLower(name)
-	for _, sensitive := range sensitiveHeaders {
-		if strings.ToLower(sensitive) == name {
-			return "[REDACTED]"
-		}
-	}
-	return value
 }
 
 // AccessLog logs each completed request in structured format.

@@ -1939,8 +1939,7 @@ func TestSolveDNS01ProviderCleanupError(t *testing.T) {
 	c.accountKey = key
 
 	nonceCount := 0
-	var mockServer *httptest.Server
-	mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nonceCount++
 		w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", nonceCount))
 		if r.URL.Path == "/chall/1" {

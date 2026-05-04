@@ -5161,22 +5161,6 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// requireRole checks if the authenticated user has one of the allowed roles.
-func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, roles ...auth.Role) bool {
-	user, ok := auth.UserFromContext(r.Context())
-	if !ok {
-		jsonError(w, "unauthorized", http.StatusUnauthorized)
-		return false
-	}
-	for _, role := range roles {
-		if user.Role == role {
-			return true
-		}
-	}
-	jsonError(w, "insufficient privileges", http.StatusForbidden)
-	return false
-}
-
 // parsePagination reads limit/offset from query parameters.
 // Defaults: limit=50, offset=0. Max limit=500.
 func parsePagination(r *http.Request) (limit, offset int) {
@@ -5465,7 +5449,7 @@ func validateLocalTarget(target string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("local_target must start with http://, https://, tcp://, ssh://, rdp://, unix:, or http_status:")
+	return fmt.Errorf("local_target must start with one of: http://, https://, tcp://, ssh://, rdp://, unix:, http_status")
 }
 
 func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Request) {
