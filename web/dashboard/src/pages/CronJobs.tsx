@@ -61,6 +61,13 @@ export default function CronJobs() {
   const [deleting, setDeleting] = useState(false);
   const [monitorFeature, setMonitorFeature] = useState<FeatureStatus | null>(null);
 
+  // Status toasts auto-dismiss after 4s. Without this they stayed forever
+  // and stacked up alongside later errors / messages from unrelated actions.
+  const showStatus = (msg: string) => {
+    setStatus(msg);
+    window.setTimeout(() => setStatus(s => s === msg ? '' : s), 4000);
+  };
+
   const load = useCallback(async () => {
     try {
       const [j, d] = await Promise.all([fetchCronJobs(), fetchDomains()]);
@@ -96,7 +103,7 @@ export default function CronJobs() {
       });
       setCommand('');
       setComment('');
-      setStatus('Cron job added successfully.');
+      showStatus('Cron job added successfully.');
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -112,7 +119,7 @@ export default function CronJobs() {
     try {
       await deleteCronJob(job.schedule, job.command);
       setConfirmDelete(null);
-      setStatus('Cron job deleted.');
+      showStatus('Cron job deleted.');
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -262,7 +269,7 @@ export default function CronJobs() {
             <tbody>
               {jobs.map((job, i) => (
                 <tr
-                  key={i}
+                  key={`${job.schedule}|${job.command}|${job.domain ?? ''}|${i}`}
                   className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-3">
@@ -361,7 +368,7 @@ export default function CronJobs() {
                           setExecuting(job.command);
                           try {
                             await executeCron(job.domain, job.schedule, job.command);
-                            setStatus('Executed: ' + job.command);
+                            showStatus('Executed: ' + job.command);
                             fetchCronMonitor().then(m => setMonitorData(m ?? [])).catch(() => {});
                           } catch (e) { setError((e as Error).message); }
                           finally { setExecuting(''); }
