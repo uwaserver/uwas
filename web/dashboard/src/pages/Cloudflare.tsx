@@ -340,7 +340,7 @@ export default function Cloudflare() {
             Cloudflare
           </h1>
           <p className="text-muted-foreground mt-1">
-            Connect Cloudflare to import zones, purge CDN cache, and (soon) run real tunnels.
+            Connect Cloudflare to import zones, purge CDN cache, and run tunnels via cloudflared.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -373,19 +373,15 @@ export default function Cloudflare() {
 
       {/* Alerts */}
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-red-800">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            <span>{error}</span>
-          </div>
+        <div className="flex items-center gap-2 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <AlertTriangle className="h-4 w-4" />
+          <span>{error}</span>
         </div>
       )}
       {success && (
-        <div className="rounded-md border border-green-200 bg-green-50 p-4 text-green-800">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4" />
-            <span>{success}</span>
-          </div>
+        <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
+          <CheckCircle className="h-4 w-4" />
+          <span>{success}</span>
         </div>
       )}
 
@@ -458,7 +454,7 @@ export default function Cloudflare() {
             <button
               onClick={handleDisconnect}
               disabled={loading}
-              className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 transition hover:bg-red-500/20 disabled:opacity-50"
             >
               <XCircle className="h-4 w-4" />
               Disconnect
@@ -501,7 +497,7 @@ export default function Cloudflare() {
             </div>
 
             {!status?.cloudflared_installed && (
-              <div className="border-b border-border bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="border-b border-border bg-amber-500/10 p-4 text-sm text-amber-400">
                 The <code>cloudflared</code> binary is not installed on this server. Install it via the button above (Linux only — apt-based distros).
                 Manual install instructions:{' '}
                 <a
@@ -582,7 +578,7 @@ export default function Cloudflare() {
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div
-                          className={`w-2 h-2 rounded-full shrink-0 ${t.running ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}
+                          className={`w-2 h-2 rounded-full shrink-0 ${t.running ? 'bg-emerald-400 animate-pulse' : 'bg-muted-foreground'}`}
                           title={t.running ? 'Running' : 'Stopped'}
                         />
                         <div className="min-w-0">
@@ -594,7 +590,7 @@ export default function Cloudflare() {
                           <p className="text-xs text-muted-foreground font-mono truncate">
                             → {t.local_target}
                             {t.running && t.uptime && (
-                              <span className="ml-2 text-green-600">up {t.uptime} (pid {t.pid})</span>
+                              <span className="ml-2 text-emerald-400">up {t.uptime} (pid {t.pid})</span>
                             )}
                           </p>
                         </div>
@@ -604,7 +600,7 @@ export default function Cloudflare() {
                           <button
                             onClick={() => handleStopTunnel(t.id)}
                             disabled={tunnelBusy === t.id}
-                            className="p-2 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition disabled:opacity-50"
+                            className="p-2 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
                             title="Stop"
                           >
                             <Square className="h-4 w-4" />
@@ -613,7 +609,7 @@ export default function Cloudflare() {
                           <button
                             onClick={() => handleStartTunnel(t.id)}
                             disabled={tunnelBusy === t.id || !status?.cloudflared_installed}
-                            className="p-2 rounded-md bg-green-50 text-green-600 hover:bg-green-100 transition disabled:opacity-50"
+                            className="p-2 rounded-md bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition disabled:opacity-50"
                             title={!status?.cloudflared_installed ? 'Install cloudflared first' : 'Start'}
                           >
                             <Play className="h-4 w-4" />
@@ -638,7 +634,7 @@ export default function Cloudflare() {
                         <button
                           onClick={() => handleDeleteTunnel(t.id, t.name)}
                           disabled={tunnelBusy === t.id}
-                          className="p-2 rounded-md text-red-600 hover:bg-red-50 transition disabled:opacity-50"
+                          className="p-2 rounded-md text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                           title="Delete tunnel"
                         >
                           <Trash2 className="h-4 w-4" />
