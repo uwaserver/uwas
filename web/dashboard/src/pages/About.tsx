@@ -57,7 +57,9 @@ export default function About() {
           ['OS / Arch', system ? `${system.os}/${system.arch}` : '—'],
           ['Uptime', health?.uptime || '—'],
           ['CPUs', system?.cpus?.toString() || '—'],
-          ['Status', health?.status === 'ok' ? 'Running' : '—'],
+          // Don't collapse "degraded" / "warn" / etc. to "—" — that hides
+          // what's actually wrong on the server.
+          ['Status', health?.status === 'ok' ? 'Running' : (health?.status || '—')],
         ].map(([label, value]) => (
           <div key={label as string} className="rounded-lg border border-border bg-card px-4 py-3">
             <p className="text-[10px] text-muted-foreground">{label}</p>
@@ -131,9 +133,9 @@ export default function About() {
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {[
-            ['Backend', 'Go 1.26+ (stdlib-first, 4 deps)'],
+            ['Backend', 'Go 1.26+ (stdlib-first, 5 deps)'],
             ['Frontend', 'React 19 + TypeScript + Tailwind'],
-            ['Build', 'Single binary (~14MB, CGO_ENABLED=0)'],
+            ['Build', 'Single binary (~15MB, CGO_ENABLED=0)'],
             ['Protocol', 'HTTP/1.1, HTTP/2, HTTP/3 (QUIC)'],
             ['PHP', 'FastCGI + .htaccess (mod_rewrite)'],
             ['TLS', 'ACME (Let\'s Encrypt) + SNI routing'],
