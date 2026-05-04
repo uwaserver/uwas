@@ -3378,9 +3378,23 @@ func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mask secrets in raw YAML before sending to dashboard
+	// Mask secrets in raw YAML before sending to dashboard. The Settings
+	// page parses dynamic credential fields directly out of this payload
+	// (DNS provider tokens, OAuth client secrets, alerting tokens, etc.),
+	// so anything matched here arrives masked at the browser.
+	//
+	// Masking is exact-key prefix match — keep this list aligned with the
+	// fields rendered as `type: 'secret'` in web/dashboard/src/pages/Settings.tsx.
 	content := string(data)
-	for _, key := range []string{"api_key", "pin_code", "totp_secret", "secret_key", "password"} {
+	for _, key := range []string{
+		"api_key", "pin_code", "totp_secret", "secret_key", "password",
+		"secret_access_key", // Route53 DNS credentials
+		"api_token",         // Cloudflare / DigitalOcean DNS, generic
+		"client_secret",     // OAuth google/github
+		"telegram_token",    // alerting bot token
+		"slack_url",         // Slack incoming-webhook URL has the auth token in the path
+		"purge_key",         // cache purge key
+	} {
 		content = maskYAMLValue(content, key)
 	}
 
