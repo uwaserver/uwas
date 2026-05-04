@@ -284,7 +284,7 @@ func (s *Server) handleWPToggleDebug(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.RecordAudit("wordpress.debug", fmt.Sprintf("domain: %s, enable: %v", domain, req.Enable), requestIP(r), true)
+	s.recordAuditR(r, "wordpress.debug", fmt.Sprintf("domain: %s, enable: %v", domain, req.Enable), true)
 	jsonResponse(w, map[string]any{"status": "ok", "debug": req.Enable})
 }
 
@@ -356,7 +356,7 @@ func (s *Server) handleWPChangePassword(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "password change failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("wordpress.change_password", domain+":"+req.Username, requestIP(r), true)
+	s.recordAuditR(r, "wordpress.change_password", domain+":"+req.Username, true)
 	jsonResponse(w, map[string]string{"status": "ok"})
 }
 
@@ -387,7 +387,7 @@ func (s *Server) handleWPHarden(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("wordpress.harden", domain, requestIP(r), true)
+	s.recordAuditR(r, "wordpress.harden", domain, true)
 	jsonResponse(w, map[string]string{"status": "ok", "output": output})
 }
 
@@ -402,7 +402,7 @@ func (s *Server) handleWPOptimizeDB(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("wordpress.optimize_db", domain, requestIP(r), true)
+	s.recordAuditR(r, "wordpress.optimize_db", domain, true)
 	jsonResponse(w, result)
 }
 
@@ -1086,7 +1086,7 @@ func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("database.password_change", "user: "+req.User, requestIP(r), true)
+	s.recordAuditR(r, "database.password_change", "user: "+req.User, true)
 	jsonResponse(w, map[string]string{"status": "changed"})
 }
 
@@ -1128,7 +1128,7 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "database import failed", http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("database.import", "db: "+name, requestIP(r), true)
+	s.recordAuditR(r, "database.import", "db: "+name, true)
 	jsonResponse(w, map[string]string{"status": "imported", "database": name})
 }
 
@@ -1136,15 +1136,14 @@ func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	out, err := database.UninstallService()
 	if err != nil {
-		s.RecordAudit("database.uninstall", "error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "database.uninstall", "error: "+err.Error(), false)
 		s.logger.Error("database uninstall failed", "error", err)
 		jsonError(w, "database uninstall failed", http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("database.uninstall", "success", ip, true)
+	s.recordAuditR(r, "database.uninstall", "success", true)
 	s.logger.Info("MySQL/MariaDB uninstalled")
 	jsonResponse(w, map[string]string{"status": "uninstalled", "output": out})
 }
@@ -1153,14 +1152,13 @@ func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	out, err := database.RepairService()
 	if err != nil {
-		s.RecordAudit("database.repair", "error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "database.repair", "error: "+err.Error(), false)
 		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("database.repair", "success", ip, true)
+	s.recordAuditR(r, "database.repair", "success", true)
 	s.logger.Info("MySQL/MariaDB repaired")
 	jsonResponse(w, map[string]string{"status": "repaired", "output": out})
 }
@@ -1169,14 +1167,13 @@ func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) 
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	out, err := database.ForceUninstall()
 	if err != nil {
-		s.RecordAudit("database.force_uninstall", "error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "database.force_uninstall", "error: "+err.Error(), false)
 		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("database.force_uninstall", "success", ip, true)
+	s.recordAuditR(r, "database.force_uninstall", "success", true)
 	s.logger.Info("MySQL/MariaDB force uninstalled")
 	jsonResponse(w, map[string]string{"status": "force_uninstalled", "output": out})
 }
@@ -1244,7 +1241,7 @@ func (s *Server) handleDockerDBCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("docker_db.create", fmt.Sprintf("engine: %s, name: %s, port: %d", req.Engine, req.Name, req.Port), requestIP(r), true)
+	s.recordAuditR(r, "docker_db.create", fmt.Sprintf("engine: %s, name: %s, port: %d", req.Engine, req.Name, req.Port), true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(container)
@@ -1283,7 +1280,7 @@ func (s *Server) handleDockerDBRemove(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("docker_db.remove", "name: "+name, requestIP(r), true)
+	s.recordAuditR(r, "docker_db.remove", "name: "+name, true)
 	jsonResponse(w, map[string]string{"status": "removed"})
 }
 
@@ -1327,7 +1324,7 @@ func (s *Server) handleDockerDBCreateDatabase(w http.ResponseWriter, r *http.Req
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("docker_db.create_database", name+"/"+req.DBName, requestIP(r), true)
+	s.recordAuditR(r, "docker_db.create_database", name+"/"+req.DBName, true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(result)
@@ -1343,7 +1340,7 @@ func (s *Server) handleDockerDBDropDatabase(w http.ResponseWriter, r *http.Reque
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("docker_db.drop_database", name+"/"+db, requestIP(r), true)
+	s.recordAuditR(r, "docker_db.drop_database", name+"/"+db, true)
 	jsonResponse(w, map[string]string{"status": "dropped"})
 }
 
@@ -1385,7 +1382,7 @@ func (s *Server) handleDockerDBImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("docker_db.import", name+"/"+db, requestIP(r), true)
+	s.recordAuditR(r, "docker_db.import", name+"/"+db, true)
 	jsonResponse(w, map[string]string{"status": "imported"})
 }
 
@@ -1952,14 +1949,13 @@ func (s *Server) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
 		AutoFix:    true,
 	})
 
-	ip := requestIP(r)
 	fixed := 0
 	for _, c := range report.Checks {
 		if c.Status == "fixed" {
 			fixed++
 		}
 	}
-	s.RecordAudit("doctor.fix", fmt.Sprintf("%d issues fixed", fixed), ip, true)
+	s.recordAuditR(r, "doctor.fix", fmt.Sprintf("%d issues fixed", fixed), true)
 	jsonResponse(w, report)
 }
 
@@ -2089,7 +2085,6 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		ID     string `json:"id"`
@@ -2128,7 +2123,7 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := req.Action
-	s.RecordAudit("package."+action, pkg.name, ip, true)
+	s.recordAuditR(r, "package."+action, pkg.name, true)
 
 	pkgName := pkg.name
 	pkgID := pkg.id
@@ -2182,7 +2177,6 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req migrate.MigrateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2200,7 +2194,7 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain not found or no web root", http.StatusBadRequest)
 		return
 	}
-	s.RecordAudit("migrate.start", req.SourceHost+" → "+req.Domain, ip, true)
+	s.recordAuditR(r, "migrate.start", req.SourceHost+" → "+req.Domain, true)
 	result := migrate.Migrate(req)
 	jsonResponse(w, result)
 }
@@ -2319,7 +2313,6 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	req, err := s.validateCloneRequest(r)
@@ -2335,7 +2328,7 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 
 	detectWordPressDB(&req)
 
-	s.RecordAudit("clone.start", req.SourceDomain+" → "+req.TargetDomain, ip, true)
+	s.recordAuditR(r, "clone.start", req.SourceDomain+" → "+req.TargetDomain, true)
 	result := migrate.Clone(req)
 
 	s.autoCreateDomainForClone(&req, result)
@@ -2398,8 +2391,6 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
-
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<30) // 10GB max backup
 	if err := r.ParseMultipartForm(256 << 20); err != nil {
 		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
@@ -2420,7 +2411,7 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	importDB := r.FormValue("import_db") == "true"
-	s.RecordAudit("migrate.cpanel", header.Filename, ip, true)
+	s.recordAuditR(r, "migrate.cpanel", header.Filename, true)
 
 	result, err := migrate.ImportCPanelBackup(tmpPath, webRoot, importDB)
 	if err != nil {
@@ -2432,7 +2423,7 @@ func (s *Server) handleMigrateCPanel(w http.ResponseWriter, r *http.Request) {
 	if len(added) > 0 {
 		s.persistConfig()
 		s.notifyDomainChange()
-		s.RecordAudit("migrate.cpanel.domains", strings.Join(added, ", "), ip, true)
+		s.recordAuditR(r, "migrate.cpanel.domains", strings.Join(added, ", "), true)
 	}
 
 	jsonResponse(w, map[string]any{
@@ -2697,14 +2688,13 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 	s.persistConfig()
 	s.notifyDomainChange()
 
-	s.RecordAudit("cert.upload", host, requestIP(r), true)
+	s.recordAuditR(r, "cert.upload", host, true)
 	jsonResponse(w, map[string]string{"status": "uploaded", "host": host})
 }
 
 // ── Bulk Domain Import ─────────────────────────────────────────────
 
 func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Domains []struct {
@@ -2759,7 +2749,7 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 	if len(added) > 0 {
 		s.persistConfig()
 		s.notifyDomainChange()
-		s.RecordAudit("domain.bulk_import", fmt.Sprintf("%d added", len(added)), ip, true)
+		s.recordAuditR(r, "domain.bulk_import", fmt.Sprintf("%d added", len(added)), true)
 	}
 	jsonResponse(w, map[string]any{"added": added, "skipped": skipped})
 }
@@ -2781,7 +2771,7 @@ func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) 
 	s.config.Global.Admin.RecoveryCodes = codes
 	s.configMu.Unlock()
 	s.persistConfig()
-	s.RecordAudit("2fa.recovery_codes.generated", "", requestIP(r), true)
+	s.recordAuditR(r, "2fa.recovery_codes.generated", "", true)
 	jsonResponse(w, map[string]any{"codes": codes, "count": len(codes)})
 }
 
@@ -2813,7 +2803,7 @@ func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.persistConfig()
-	s.RecordAudit("2fa.recovery_code.used", "", requestIP(r), true)
+	s.recordAuditR(r, "2fa.recovery_code.used", "", true)
 	jsonResponse(w, map[string]string{"status": "ok"})
 }
 
@@ -2844,7 +2834,7 @@ func (s *Server) handleNotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 	s.config.Global.Webhooks = req.Webhooks
 	s.configMu.Unlock()
 	s.persistConfig()
-	s.RecordAudit("settings.notifications", "updated", requestIP(r), true)
+	s.recordAuditR(r, "settings.notifications", "updated", true)
 	jsonResponse(w, map[string]string{"status": "saved"})
 }
 
@@ -2868,6 +2858,6 @@ func (s *Server) handleBrandingPut(w http.ResponseWriter, r *http.Request) {
 	s.config.Global.Admin.Branding = branding
 	s.configMu.Unlock()
 	s.persistConfig()
-	s.RecordAudit("settings.branding", "updated", requestIP(r), true)
+	s.recordAuditR(r, "settings.branding", "updated", true)
 	jsonResponse(w, map[string]string{"status": "saved"})
 }

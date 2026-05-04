@@ -1630,8 +1630,7 @@ func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("PHP start after assign failed", "domain", req.Domain, "error", err)
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("php.assign", req.Domain+": PHP "+req.Version+" → "+dp.ListenAddr, ip, true)
+	s.recordAuditR(r, "php.assign", req.Domain+": PHP "+req.Version+" → "+dp.ListenAddr, true)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1659,7 +1658,7 @@ func (s *Server) handlePHPDomainStart(w http.ResponseWriter, r *http.Request) {
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, domain) {
-				s.RecordAudit("php.domain_start", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "php.domain_start", "domain: "+domain+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -1684,7 +1683,7 @@ func (s *Server) handlePHPDomainStop(w http.ResponseWriter, r *http.Request) {
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, domain) {
-				s.RecordAudit("php.domain_stop", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "php.domain_stop", "domain: "+domain+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -1709,7 +1708,7 @@ func (s *Server) handlePHPDomainConfigGet(w http.ResponseWriter, r *http.Request
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, domain) {
-				s.RecordAudit("php.domain_config_get", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "php.domain_config_get", "domain: "+domain+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -1736,7 +1735,7 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, domain) {
-				s.RecordAudit("php.domain_config_put", "domain: "+domain+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "php.domain_config_put", "domain: "+domain+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -1902,26 +1901,24 @@ func (s *Server) redeemTicket(ticket string) string {
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
 
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
 	if s.reloadFn == nil {
-		s.RecordAudit("config.reload", "reload not supported", ip, false)
+		s.recordAuditR(r, "config.reload", "reload not supported", false)
 		jsonError(w, "reload not supported", http.StatusNotImplemented)
 		return
 	}
 	if err := s.reloadFn(); err != nil {
-		s.RecordAudit("config.reload", "error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "config.reload", "error: "+err.Error(), false)
 		jsonError(w, "reload failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("config.reload", "", ip, true)
+	s.recordAuditR(r, "config.reload", "", true)
 	jsonResponse(w, map[string]string{"status": "reloaded"})
 }
 
 func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if s.cache == nil {
-		s.RecordAudit("cache.purge", "cache not enabled", ip, false)
+		s.recordAuditR(r, "cache.purge", "cache not enabled", false)
 		jsonError(w, "cache not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1936,11 +1933,11 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 
 	if req.Tag != "" {
 		count := s.cache.PurgeByTag(req.Tag)
-		s.RecordAudit("cache.purge", "tag: "+req.Tag, ip, true)
+		s.recordAuditR(r, "cache.purge", "tag: "+req.Tag, true)
 		jsonResponse(w, map[string]any{"status": "purged", "tag": req.Tag, "count": count})
 	} else {
 		s.cache.PurgeAll()
-		s.RecordAudit("cache.purge", "all", ip, true)
+		s.recordAuditR(r, "cache.purge", "all", true)
 		jsonResponse(w, map[string]string{"status": "all purged"})
 	}
 }
@@ -2191,7 +2188,7 @@ func (s *Server) requireDomainAccess(w http.ResponseWriter, r *http.Request, dom
 		return true
 	}
 	if action != "" {
-		s.RecordAudit(action, "domain: "+domain+" (forbidden)", requestIP(r), false)
+		s.recordAuditR(r, action, "domain: "+domain+" (forbidden)", false)
 	}
 	jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 	return false
@@ -2341,8 +2338,6 @@ func (s *Server) persistConfig() {
 }
 
 func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
-
 	// Check domain permissions for non-admin users
 	if s.authMgr != nil {
 		user, ok := auth.UserFromContext(r.Context())
@@ -2350,7 +2345,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			// Query param host is optional; actual JSON body host is validated below.
 			if qHost := r.URL.Query().Get("host"); qHost != "" {
 				if !s.authMgr.CanManageDomain(user, qHost) {
-					s.RecordAudit("domain.create", "domain: "+qHost+" (forbidden)", ip, false)
+					s.recordAuditR(r, "domain.create", "domain: "+qHost+" (forbidden)", false)
 					jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 					return
 				}
@@ -2375,7 +2370,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		user, ok := auth.UserFromContext(r.Context())
 		if ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, d.Host) {
-				s.RecordAudit("domain.create", "domain: "+d.Host+" (forbidden)", ip, false)
+				s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -2421,7 +2416,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	for _, existing := range s.config.Domains {
 		if strings.EqualFold(existing.Host, d.Host) {
 			s.configMu.Unlock()
-			s.RecordAudit("domain.create", "domain: "+d.Host+" (duplicate)", ip, false)
+			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate)", false)
 			jsonError(w, "domain already exists", http.StatusConflict)
 			return
 		}
@@ -2571,7 +2566,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	s.config.Domains = append(s.config.Domains, d)
 	s.configMu.Unlock()
 
-	s.RecordAudit("domain.create", "domain: "+d.Host, ip, true)
+	s.recordAuditR(r, "domain.create", "domain: "+d.Host, true)
 	s.notifyDomainChange()
 
 	// Fire webhook event
@@ -2592,7 +2587,6 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	host := r.PathValue("host")
 	cleanup := r.URL.Query().Get("cleanup") == "true"
 	confirm := r.URL.Query().Get("confirm") == "true"
@@ -2612,7 +2606,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		user, ok := auth.UserFromContext(r.Context())
 		if ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, host) {
-				s.RecordAudit("domain.delete", "domain: "+host+" (forbidden)", ip, false)
+				s.recordAuditR(r, "domain.delete", "domain: "+host+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -2640,7 +2634,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		s.RecordAudit("domain.delete", "domain: "+host+" (not found)", ip, false)
+		s.recordAuditR(r, "domain.delete", "domain: "+host+" (not found)", false)
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
@@ -2704,7 +2698,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.RecordAudit("domain.delete", "domain: "+host, ip, true)
+	s.recordAuditR(r, "domain.delete", "domain: "+host, true)
 	s.notifyDomainChange()
 
 	// Fire webhook event
@@ -2719,7 +2713,6 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
-	ip := requestIP(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	host := r.PathValue("host")
 	var currentUser *auth.User
@@ -2732,7 +2725,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		if ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, host) {
-				s.RecordAudit("domain.update", "domain: "+host+" (forbidden)", ip, false)
+				s.recordAuditR(r, "domain.update", "domain: "+host+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 				return
 			}
@@ -2755,13 +2748,13 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.Host != "" && !isValidHostname(d.Host) {
-		s.RecordAudit("domain.update", "domain: "+host+" (invalid hostname)", ip, false)
+		s.recordAuditR(r, "domain.update", "domain: "+host+" (invalid hostname)", false)
 		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
 		return
 	}
 	if currentUser != nil && currentUser.Role != auth.RoleAdmin && d.Host != "" && d.Host != host {
 		if !s.authMgr.CanManageDomain(currentUser, d.Host) {
-			s.RecordAudit("domain.update", "domain: "+host+" (forbidden rename)", ip, false)
+			s.recordAuditR(r, "domain.update", "domain: "+host+" (forbidden rename)", false)
 			jsonError(w, "forbidden: cannot rename to this domain", http.StatusForbidden)
 			return
 		}
@@ -2819,7 +2812,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(sensitive) > 0 {
-			s.RecordAudit("domain.update", "domain: "+host+" (forbidden fields: "+strings.Join(sensitive, ", ")+")", ip, false)
+			s.recordAuditR(r, "domain.update", "domain: "+host+" (forbidden fields: "+strings.Join(sensitive, ", ")+")", false)
 			jsonError(w, "forbidden: non-admin users cannot modify "+strings.Join(sensitive, ", "), http.StatusForbidden)
 			return
 		}
@@ -2920,7 +2913,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 
 			if !isValidHostname(merged.Host) {
 				s.configMu.Unlock()
-				s.RecordAudit("domain.update", "domain: "+host+" (invalid hostname)", ip, false)
+				s.recordAuditR(r, "domain.update", "domain: "+host+" (invalid hostname)", false)
 				jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
 				return
 			}
@@ -2928,7 +2921,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 				for j := range s.config.Domains {
 					if j != i && strings.EqualFold(s.config.Domains[j].Host, merged.Host) {
 						s.configMu.Unlock()
-						s.RecordAudit("domain.update", "domain: "+host+" (duplicate rename)", ip, false)
+						s.recordAuditR(r, "domain.update", "domain: "+host+" (duplicate rename)", false)
 						jsonError(w, "domain already exists", http.StatusConflict)
 						return
 					}
@@ -2936,7 +2929,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := validateDomainUpdateConfig(&merged); err != nil {
 				s.configMu.Unlock()
-				s.RecordAudit("domain.update", "domain: "+host+" (validation failed)", ip, false)
+				s.recordAuditR(r, "domain.update", "domain: "+host+" (validation failed)", false)
 				jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -2950,11 +2943,11 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 
 	if !found {
-		s.RecordAudit("domain.update", "domain: "+host+" (not found)", ip, false)
+		s.recordAuditR(r, "domain.update", "domain: "+host+" (not found)", false)
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
-	s.RecordAudit("domain.update", "domain: "+host, ip, true)
+	s.recordAuditR(r, "domain.update", "domain: "+host, true)
 	if s.webhookMgr != nil {
 		s.webhookMgr.Fire(webhook.EventDomainUpdate, map[string]any{
 			"host": host,
@@ -3195,7 +3188,7 @@ func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Reques
 	// Only admins can block unknown domains (global security setting)
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			s.RecordAudit("unknown_domain.block", "host: "+host+" (forbidden)", requestIP(r), false)
+			s.recordAuditR(r, "unknown_domain.block", "host: "+host+" (forbidden)", false)
 			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
 			return
 		}
@@ -3216,7 +3209,7 @@ func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Requ
 	// Only admins can unblock unknown domains (global security setting)
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			s.RecordAudit("unknown_domain.unblock", "host: "+host+" (forbidden)", requestIP(r), false)
+			s.recordAuditR(r, "unknown_domain.unblock", "host: "+host+" (forbidden)", false)
 			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
 			return
 		}
@@ -3237,7 +3230,7 @@ func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Requ
 	// Only admins can dismiss unknown domains (global security setting)
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			s.RecordAudit("unknown_domain.dismiss", "host: "+host+" (forbidden)", requestIP(r), false)
+			s.recordAuditR(r, "unknown_domain.dismiss", "host: "+host+" (forbidden)", false)
 			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
 			return
 		}
@@ -3339,7 +3332,7 @@ func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, host) {
-				s.RecordAudit("domain.read", "domain: "+host+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "domain.read", "domain: "+host+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot view this domain", http.StatusForbidden)
 				return
 			}
@@ -3690,8 +3683,7 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 
 	s.persistConfig()
-	ip := requestIP(r)
-	s.RecordAudit("settings.update", fmt.Sprintf("%d fields", len(updates)), ip, true)
+	s.recordAuditR(r, "settings.update", fmt.Sprintf("%d fields", len(updates)), true)
 	jsonResponse(w, map[string]any{"status": "saved", "updated": len(updates)})
 }
 
@@ -3974,7 +3966,7 @@ func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, host) {
-				s.RecordAudit("domain.read_raw", "domain: "+host+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "domain.read_raw", "domain: "+host+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot view this domain", http.StatusForbidden)
 				return
 			}
@@ -4026,7 +4018,7 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 	if s.authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			if !s.authMgr.CanManageDomain(user, host) {
-				s.RecordAudit("domain.update_raw", "domain: "+host+" (forbidden)", requestIP(r), false)
+				s.recordAuditR(r, "domain.update_raw", "domain: "+host+" (forbidden)", false)
 				jsonError(w, "forbidden: cannot modify this domain", http.StatusForbidden)
 				return
 			}
@@ -4226,9 +4218,8 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	if s.backupMgr == nil {
-		s.RecordAudit("backup.create", "backup not enabled", ip, false)
+		s.recordAuditR(r, "backup.create", "backup not enabled", false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -4247,7 +4238,7 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 
 	info, err := s.backupMgr.CreateBackup(req.Provider)
 	if err != nil {
-		s.RecordAudit("backup.create", "provider: "+req.Provider+", error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "backup.create", "provider: "+req.Provider+", error: "+err.Error(), false)
 		if s.webhookMgr != nil {
 			s.webhookMgr.Fire(webhook.EventBackupFailed, map[string]any{
 				"provider": req.Provider,
@@ -4257,7 +4248,7 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("backup.create", "provider: "+req.Provider, ip, true)
+	s.recordAuditR(r, "backup.create", "provider: "+req.Provider, true)
 	if s.webhookMgr != nil {
 		s.webhookMgr.Fire(webhook.EventBackupCompleted, map[string]any{
 			"provider": req.Provider,
@@ -4274,7 +4265,6 @@ func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	if s.backupMgr == nil {
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
@@ -4322,11 +4312,11 @@ func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
 
 	info, err := s.backupMgr.CreateDomainBackup(req.Domain, webRoot, dbName, req.Provider)
 	if err != nil {
-		s.RecordAudit("backup.domain", req.Domain+": "+err.Error(), ip, false)
+		s.recordAuditR(r, "backup.domain", req.Domain+": "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("backup.domain", req.Domain, ip, true)
+	s.recordAuditR(r, "backup.domain", req.Domain, true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(info)
@@ -4336,9 +4326,8 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	if s.backupMgr == nil {
-		s.RecordAudit("backup.restore", "backup not enabled", ip, false)
+		s.recordAuditR(r, "backup.restore", "backup not enabled", false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -4361,11 +4350,11 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.backupMgr.RestoreBackup(req.Name, req.Provider); err != nil {
-		s.RecordAudit("backup.restore", "name: "+req.Name+", error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "backup.restore", "name: "+req.Name+", error: "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("backup.restore", "name: "+req.Name, ip, true)
+	s.recordAuditR(r, "backup.restore", "name: "+req.Name, true)
 	jsonResponse(w, map[string]string{"status": "restored", "name": req.Name})
 }
 
@@ -4373,9 +4362,8 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	if s.backupMgr == nil {
-		s.RecordAudit("backup.delete", "backup not enabled", ip, false)
+		s.recordAuditR(r, "backup.delete", "backup not enabled", false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -4390,11 +4378,11 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.backupMgr.DeleteBackup(name, provider); err != nil {
-		s.RecordAudit("backup.delete", "name: "+name+", error: "+err.Error(), ip, false)
+		s.recordAuditR(r, "backup.delete", "name: "+name+", error: "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("backup.delete", "name: "+name, ip, true)
+	s.recordAuditR(r, "backup.delete", "name: "+name, true)
 	jsonResponse(w, map[string]string{"status": "deleted", "name": name})
 }
 
@@ -4413,9 +4401,8 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	ip := requestIP(r)
 	if s.backupMgr == nil {
-		s.RecordAudit("backup.schedule", "backup not enabled", ip, false)
+		s.recordAuditR(r, "backup.schedule", "backup not enabled", false)
 		jsonError(w, "backup not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -4438,7 +4425,7 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 
 	if req.Enabled != nil && !*req.Enabled {
 		s.backupMgr.ScheduleBackup(0)
-		s.RecordAudit("backup.schedule", "disabled", ip, true)
+		s.recordAuditR(r, "backup.schedule", "disabled", true)
 		jsonResponse(w, s.backupMgr.ScheduleDetail())
 		return
 	}
@@ -4464,7 +4451,7 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.backupMgr.ScheduleBackup(d)
-	s.RecordAudit("backup.schedule", "interval: "+d.String(), ip, true)
+	s.recordAuditR(r, "backup.schedule", "interval: "+d.String(), true)
 	jsonResponse(w, s.backupMgr.ScheduleDetail())
 }
 
@@ -4568,8 +4555,7 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.persistConfig()
-	ip := requestIP(r)
-	s.RecordAudit("2fa.enabled", "TOTP activated", ip, true)
+	s.recordAuditR(r, "2fa.enabled", "TOTP activated", true)
 
 	jsonResponse(w, map[string]any{"status": "2fa_enabled"})
 }
@@ -4604,8 +4590,7 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 
 	s.persistConfig()
-	ip := requestIP(r)
-	s.RecordAudit("2fa.disabled", "TOTP deactivated", ip, true)
+	s.recordAuditR(r, "2fa.disabled", "TOTP deactivated", true)
 
 	jsonResponse(w, map[string]any{"status": "2fa_disabled"})
 }
@@ -5033,8 +5018,7 @@ func (s *Server) handleBandwidthReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bwMgr.Reset(host)
-	ip := requestIP(r)
-	s.RecordAudit("bandwidth.reset", host, ip, true)
+	s.recordAuditR(r, "bandwidth.reset", host, true)
 	jsonResponse(w, map[string]string{"status": "reset", "host": host})
 }
 
@@ -5110,8 +5094,7 @@ func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
 	// Execute the job asynchronously and return the record
 	record := s.cronMonitor.Execute(req.Domain, req.Schedule, req.Command)
 
-	ip := requestIP(r)
-	s.RecordAudit("cron.execute", req.Domain+": "+req.Command, ip, record.Success)
+	s.recordAuditR(r, "cron.execute", req.Domain+": "+req.Command, record.Success)
 
 	w.Header().Set("Content-Type", "application/json")
 	if record.Success {
@@ -5144,7 +5127,7 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if subtle.ConstantTimeCompare([]byte(provided), []byte(pin)) != 1 {
-		s.RecordAudit("pin.failed", r.URL.Path, requestIP(r), false)
+		s.recordAuditR(r, "pin.failed", r.URL.Path, false)
 		jsonError(w, "invalid_pin", http.StatusForbidden)
 		return false
 	}
@@ -5294,7 +5277,7 @@ func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)
 		s.logger.Error("cloudflare state save failed", "err", saveErr.Error())
 	}
 
-	s.RecordAudit("cloudflare.connect", "account: "+req.AccountID, requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.connect", "account: "+req.AccountID, true)
 	jsonResponse(w, map[string]string{"status": "connected"})
 }
 
@@ -5381,7 +5364,7 @@ func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Reque
 	}
 
 	if oldCfg != nil {
-		s.RecordAudit("cloudflare.disconnect", "account: "+oldCfg.AccountID, requestIP(r), true)
+		s.recordAuditR(r, "cloudflare.disconnect", "account: "+oldCfg.AccountID, true)
 	}
 
 	jsonResponse(w, map[string]string{"status": "disconnected"})
@@ -5565,7 +5548,7 @@ func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Req
 	}
 	cloudflareMu.Unlock()
 
-	s.RecordAudit("cloudflare.tunnel.create", req.Name+" → "+req.Hostname, requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.tunnel.create", req.Name+" → "+req.Hostname, true)
 	jsonResponse(w, s.tunnelToView(tunnel))
 }
 
@@ -5646,7 +5629,7 @@ func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Req
 		s.cfRunner.Forget(id)
 	}
 
-	s.RecordAudit("cloudflare.tunnel.delete", "id: "+id, requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.tunnel.delete", "id: "+id, true)
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
 
@@ -5702,7 +5685,7 @@ func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.RecordAudit("cloudflare.tunnel.start", "id: "+id, requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.tunnel.start", "id: "+id, true)
 	jsonResponse(w, map[string]string{"status": "started"})
 }
 
@@ -5727,7 +5710,7 @@ func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Reque
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("cloudflare.tunnel.stop", "id: "+id, requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.tunnel.stop", "id: "+id, true)
 	jsonResponse(w, map[string]string{"status": "stopped"})
 }
 
@@ -5754,11 +5737,11 @@ func (s *Server) handleCloudflaredInstall(w http.ResponseWriter, r *http.Request
 	}
 	info, err := cfintegration.InstallCloudflared()
 	if err != nil {
-		s.RecordAudit("cloudflare.cloudflared.install", "failed: "+err.Error(), requestIP(r), false)
+		s.recordAuditR(r, "cloudflare.cloudflared.install", "failed: "+err.Error(), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RecordAudit("cloudflare.cloudflared.install", "version: "+info.Version, requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.cloudflared.install", "version: "+info.Version, true)
 	jsonResponse(w, info)
 }
 
@@ -5789,7 +5772,7 @@ func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.RecordAudit("cloudflare.cache.purge", "url: "+req.URL+", everything: "+fmt.Sprintf("%v", req.Everything), requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.cache.purge", "url: "+req.URL+", everything: "+fmt.Sprintf("%v", req.Everything), true)
 	jsonResponse(w, map[string]string{"status": "purged"})
 }
 
@@ -6151,9 +6134,7 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 		s.notifyDomainChange()
 	}
 
-	s.RecordAudit("cloudflare.zones.import",
-		fmt.Sprintf("zone: %s, added: %d, skipped: %d", zoneID, len(added), len(skipped)),
-		requestIP(r), true)
+	s.recordAuditR(r, "cloudflare.zones.import", fmt.Sprintf("zone: %s, added: %d, skipped: %d", zoneID, len(added), len(skipped)), true)
 
 	jsonResponse(w, map[string]any{
 		"added":   added,
