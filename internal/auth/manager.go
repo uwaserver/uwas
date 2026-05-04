@@ -117,22 +117,19 @@ type Manager struct {
 
 // NewManager creates a new auth manager.
 func NewManager(dataDir, globalAPIKey string) *Manager {
-	// Generate JWT secret if not exists
-	jwtSecret := make([]byte, 32)
-	if _, err := rand.Read(jwtSecret); err != nil {
-		panic("crypto/rand failed: " + err.Error())
-	}
-
 	m := &Manager{
-		users:           make(map[string]*User),
-		usersByID:       make(map[string]*User),
-		sessions:        make(map[string]*Session),
-		loginAttempts:   make(map[string][]time.Time),
-		dataDir:         dataDir,
-		apiKey:          globalAPIKey,
-		jwtSecret:       jwtSecret,
+		users:         make(map[string]*User),
+		usersByID:     make(map[string]*User),
+		sessions:      make(map[string]*Session),
+		loginAttempts: make(map[string][]time.Time),
+		dataDir:       dataDir,
+		apiKey:        globalAPIKey,
+	}
+	if err := m.loadOrCreateJWTSecret(); err != nil {
+		panic("auth: jwt secret init failed: " + err.Error())
 	}
 	m.loadUsers()
+	m.loadSessions()
 	return m
 }
 
@@ -282,6 +279,7 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 	m.mu.Lock()
 	m.sessions[session.Token] = session
 	m.mu.Unlock()
+	m.saveSessions()
 
 	return session, nil
 }
@@ -351,8 +349,9 @@ func (m *Manager) ValidateSession(token string) (*Session, error) {
 // Logout invalidates a session.
 func (m *Manager) Logout(token string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	delete(m.sessions, token)
+	m.mu.Unlock()
+	m.saveSessions()
 }
 
 // HasPermission checks if a user has a specific permission.
@@ -460,12 +459,17 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 }
 
 // invalidateUserSessionsLocked removes all sessions for a user.
-// Must be called with m.mu held.
+// Must be called with m.mu held. Persists to disk before returning.
 func (m *Manager) invalidateUserSessionsLocked(userID string) {
+	changed := false
 	for token, session := range m.sessions {
 		if session.UserID == userID {
 			delete(m.sessions, token)
+			changed = true
 		}
+	}
+	if changed {
+		m.saveSessionsLocked()
 	}
 }
 
@@ -552,13 +556,17 @@ func (m *Manager) ChangePassword(username, currentPassword, newPassword string) 
 // CleanupSessions removes expired sessions.
 func (m *Manager) CleanupSessions() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	changed := false
 	now := time.Now()
 	for token, session := range m.sessions {
 		if now.After(session.ExpiresAt) {
 			delete(m.sessions, token)
+			changed = true
 		}
+	}
+	m.mu.Unlock()
+	if changed {
+		m.saveSessions()
 	}
 }
 
