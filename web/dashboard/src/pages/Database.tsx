@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   HardDrive,
@@ -33,6 +33,7 @@ import {
   changeDBPassword,
   exportDatabase,
   importDatabase,
+  getToken,
   startDB,
   stopDB,
   restartDB,
@@ -233,6 +234,49 @@ export default function Database() {
   // Import
   const [importing, setImporting] = useState(false);
 
+  // Install task poll handle — kept in a ref so the unmount cleanup can
+  // clear it. Without this, navigating away mid-install leaks an interval
+  // that fires every 3s forever and calls setState on an unmounted page.
+  const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => {
+    if (installPollRef.current) {
+      clearInterval(installPollRef.current);
+      installPollRef.current = null;
+    }
+  }, []);
+
+  // Authenticated download for the Database "Export" button. The /export
+  // endpoint requires a Bearer token, so a plain <a href> navigation would
+  // land on 401 — fetch with auth, build a blob, and trigger a download.
+  const [exportingDB, setExportingDB] = useState<string | null>(null);
+  const downloadExport = async (dbName: string) => {
+    setExportingDB(dbName);
+    setStatus(null);
+    try {
+      const tok = getToken();
+      const res = await fetch(exportDatabase(dbName), {
+        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(body.error || res.statusText);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${dbName}.sql`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      setStatus({ ok: false, message: 'Export failed: ' + (e as Error).message });
+    } finally {
+      setExportingDB(null);
+    }
+  };
+
   const load = useCallback(async () => {
     try {
       const [s, dbs] = await Promise.all([fetchDBStatus(), fetchDatabases()]);
@@ -263,26 +307,33 @@ export default function Database() {
   const handleInstall = async () => {
     setInstalling(true);
     setStatus(null);
+    // Clear any prior poll before starting a new install.
+    if (installPollRef.current) {
+      clearInterval(installPollRef.current);
+      installPollRef.current = null;
+    }
     try {
       const res = await installDatabase();
       setStatus({ ok: true, message: 'MariaDB installation started. This may take a few minutes...' });
       if (res.task_id) {
-        // Poll task status
-        const poll = setInterval(async () => {
+        installPollRef.current = setInterval(async () => {
           try {
             const { fetchTask } = await import('../lib/api');
             const task = await fetchTask(res.task_id!);
             if (task.status === 'done') {
-              clearInterval(poll);
+              if (installPollRef.current) { clearInterval(installPollRef.current); installPollRef.current = null; }
               setStatus({ ok: true, message: 'MariaDB installed successfully.' });
               setInstalling(false);
               await load();
             } else if (task.status === 'error') {
-              clearInterval(poll);
+              if (installPollRef.current) { clearInterval(installPollRef.current); installPollRef.current = null; }
               setStatus({ ok: false, message: 'Installation failed: ' + (task.error || 'unknown error') });
               setInstalling(false);
             }
-          } catch { clearInterval(poll); setInstalling(false); }
+          } catch {
+            if (installPollRef.current) { clearInterval(installPollRef.current); installPollRef.current = null; }
+            setInstalling(false);
+          }
         }, 3000);
       } else {
         await load();
@@ -610,13 +661,19 @@ export default function Database() {
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-2">
-                      <a
-                        href={exportDatabase(db.name)}
-                        className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent"
+                      <button
+                        onClick={() => downloadExport(db.name)}
+                        disabled={exportingDB === db.name}
+                        className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
                         title="Export SQL dump"
                       >
-                        <Download size={12} /> Export
-                      </a>
+                        {exportingDB === db.name ? (
+                          <RefreshCw size={12} className="animate-spin" />
+                        ) : (
+                          <Download size={12} />
+                        )}
+                        Export
+                      </button>
                       <label
                         className={`flex cursor-pointer items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs font-medium text-card-foreground transition hover:bg-accent ${importing ? 'opacity-50 pointer-events-none' : ''}`}
                         title="Import SQL file"
