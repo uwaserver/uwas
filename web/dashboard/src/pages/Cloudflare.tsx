@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Cloud,
   Link,
@@ -676,13 +677,13 @@ export default function Cloudflare() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <a
-                          href={`/dns?domain=${encodeURIComponent(zone.name)}`}
+                        <RouterLink
+                          to={`/dns?domain=${encodeURIComponent(zone.name)}`}
                           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
                         >
                           <SettingsIcon className="h-4 w-4" />
                           Manage DNS
-                        </a>
+                        </RouterLink>
                         <button
                           onClick={() => {
                             setImportZoneId(importZoneId === zone.id ? null : zone.id);
