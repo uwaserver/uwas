@@ -13,12 +13,13 @@ import { useEffect, useRef } from 'react';
  * callback can close over up-to-date state without re-subscribing the
  * interval (which would cause skips and duplicate fetches).
  */
-export function usePolling(fn: () => void | Promise<void>, intervalMs: number, deps: ReadonlyArray<unknown> = []) {
+export function usePolling(fn: () => void | Promise<void>, intervalMs: number | null, deps: ReadonlyArray<unknown> = []) {
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    if (intervalMs == null) return;
     let id: ReturnType<typeof setInterval> | null = null;
 
     const tick = () => {
