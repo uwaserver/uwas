@@ -20,6 +20,7 @@ export default function DomainDetail() {
   const { host } = useParams<{ host: string }>();
   const [detail, setDetail] = useState<DDType | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState<Tab>('overview');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -62,6 +63,7 @@ export default function DomainDetail() {
   const load = useCallback(async () => {
     if (!host) return;
     setLoading(true);
+    setLoadError('');
     try {
       const [d, statsMap, an] = await Promise.all([
         fetchDomainDetail(host),
@@ -115,7 +117,9 @@ export default function DomainDetail() {
           setWpUsersError('');
         }
       }).catch(() => {});
-    } catch { /* ignore */ }
+    } catch (e) {
+      setLoadError((e as Error).message || 'Failed to load domain');
+    }
     finally { setLoading(false); }
   }, [host]);
 
@@ -197,7 +201,22 @@ export default function DomainDetail() {
   );
 
   if (loading) return <div className="text-center py-20 text-muted-foreground">Loading domain...</div>;
-  if (!detail || !host) return <div className="text-center py-20 text-muted-foreground">Domain not found</div>;
+  if (!host) return <div className="text-center py-20 text-muted-foreground">No domain specified.</div>;
+  if (loadError) return (
+    <div className="space-y-4 py-12">
+      <div className="mx-auto max-w-md rounded-lg border border-red-500/30 bg-red-500/5 p-6 text-center">
+        <p className="text-sm font-medium text-red-400">Failed to load {host}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{loadError}</p>
+        <button onClick={load} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700">Retry</button>
+      </div>
+    </div>
+  );
+  if (!detail) return (
+    <div className="space-y-4 py-12 text-center text-muted-foreground">
+      <p className="text-sm">Domain "{host}" not found.</p>
+      <Link to="/domains" className="inline-block rounded-md bg-accent px-4 py-2 text-xs text-card-foreground hover:bg-[#475569]">Back to Domains</Link>
+    </div>
+  );
 
   const siteUrl = `https://${host}`;
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
