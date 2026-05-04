@@ -5,7 +5,6 @@ import {
   RefreshCw,
   Trash2,
   RotateCcw,
-  Download,
   CheckCircle,
   XCircle,
   Clock,
@@ -244,15 +243,22 @@ export default function Backups() {
 
   /* ── Actions ──────────────────────────────────────────────────────── */
 
+  // Auto-dismiss success toasts after 5s; failures stick until cleared by
+  // the next action so the user actually sees the error.
+  const showStatus = useCallback((s: { ok: boolean; message: string }) => {
+    setStatus(s);
+    if (s.ok) setTimeout(() => setStatus(prev => (prev === s ? null : prev)), 5000);
+  }, []);
+
   const handleCreate = async () => {
     setCreating(true);
     setStatus(null);
     try {
       const backup = await createBackup(createProvider);
-      setStatus({ ok: true, message: `Backup created: ${backup.name} (${formatSize(backup.size)})` });
+      showStatus({ ok: true, message: `Backup created: ${backup.name} (${formatSize(backup.size)})` });
       await load();
     } catch (e) {
-      setStatus({ ok: false, message: (e as Error).message });
+      showStatus({ ok: false, message: (e as Error).message });
     } finally {
       setCreating(false);
     }
@@ -265,10 +271,10 @@ export default function Backups() {
     try {
       await restoreBackup(restoreTarget.name, restoreTarget.provider);
       setRestoreTarget(null);
-      setStatus({ ok: true, message: `Backup restored: ${restoreTarget.name}. A reload may be required for changes to take effect.` });
+      showStatus({ ok: true, message: `Backup restored: ${restoreTarget.name}. A reload may be required for changes to take effect.` });
       await load();
     } catch (e) {
-      setStatus({ ok: false, message: (e as Error).message });
+      showStatus({ ok: false, message: (e as Error).message });
     } finally {
       setRestoring(false);
     }
@@ -281,10 +287,10 @@ export default function Backups() {
     try {
       await deleteBackup(deleteTarget.name, deleteTarget.provider);
       setDeleteTarget(null);
-      setStatus({ ok: true, message: `Backup deleted: ${deleteTarget.name}` });
+      showStatus({ ok: true, message: `Backup deleted: ${deleteTarget.name}` });
       await load();
     } catch (e) {
-      setStatus({ ok: false, message: (e as Error).message });
+      showStatus({ ok: false, message: (e as Error).message });
     } finally {
       setDeleting(false);
     }
@@ -295,10 +301,10 @@ export default function Backups() {
     setStatus(null);
     try {
       await updateBackupSchedule(scheduleForm);
-      setStatus({ ok: true, message: 'Backup schedule updated' });
+      showStatus({ ok: true, message: 'Backup schedule updated' });
       await load();
     } catch (e) {
-      setStatus({ ok: false, message: (e as Error).message });
+      showStatus({ ok: false, message: (e as Error).message });
     } finally {
       setSavingSchedule(false);
     }
@@ -456,14 +462,12 @@ export default function Backups() {
                       >
                         <RotateCcw size={12} /> Restore
                       </button>
-                      {b.provider === 'local' && (
-                        <button
-                          className="flex items-center gap-1 rounded-md bg-blue-600/15 px-2.5 py-1.5 text-xs font-medium text-blue-400 transition hover:bg-blue-600/25"
-                          title="Download this backup"
-                        >
-                          <Download size={12} /> Download
-                        </button>
-                      )}
+                      {/* Download button removed: there is no
+                          /api/v1/backups/{name}/download endpoint on the
+                          server. The button had no onClick handler so
+                          clicking it did nothing. Restore + delete are
+                          enough for v0.1.x; download can come back when
+                          the backend supports it. */}
                       <button
                         onClick={() => setDeleteTarget(b)}
                         className="flex items-center gap-1 rounded-md bg-red-600/15 px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-600/25"
