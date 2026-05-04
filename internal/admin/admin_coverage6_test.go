@@ -66,25 +66,24 @@ func TestPurgeCloudflareCache(t *testing.T) {
 	}
 }
 
-func TestHandleCloudflareZoneSync(t *testing.T) {
+func TestHandleCloudflareZoneImport_PreflightErrors(t *testing.T) {
 	srv := testServer()
 
-	// Test without zone ID
-	req := httptest.NewRequest("POST", "/api/v1/cloudflare/zones//sync", nil)
-	req.Header.Set("X-API-Key", "test-key")
+	// Without zone ID
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/cloudflare/zones//import", nil))
 	w := httptest.NewRecorder()
-	srv.handleCloudflareZoneSync(w, req)
+	srv.handleCloudflareZoneImport(w, req)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("handleCloudflareZoneSync without zone ID: expected %d, got %d", http.StatusBadRequest, w.Code)
+		t.Errorf("handleCloudflareZoneImport without zone ID: expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
 
-	// Test without cloudflare connection
+	// Without cloudflare connection (zone ID present)
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest("POST", "/api/v1/cloudflare/zones/zone123/sync", nil)
-	req.Header.Set("X-API-Key", "test-key")
-	srv.handleCloudflareZoneSync(w, req)
+	req = withAdminContext(httptest.NewRequest("POST", "/api/v1/cloudflare/zones/zone123/import", nil))
+	req.SetPathValue("id", "zone123")
+	srv.handleCloudflareZoneImport(w, req)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("handleCloudflareZoneSync without connection: expected %d, got %d", http.StatusBadRequest, w.Code)
+		t.Errorf("handleCloudflareZoneImport without connection: expected %d, got %d", http.StatusBadRequest, w.Code)
 	}
 }
 

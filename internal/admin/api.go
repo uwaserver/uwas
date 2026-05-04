@@ -512,7 +512,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/cloudflare/cloudflared/install", s.handleCloudflaredInstall)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/cache/purge", s.handleCloudflareCachePurge)
 	s.mux.HandleFunc("GET /api/v1/cloudflare/zones", s.handleCloudflareZones)
-	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/sync", s.handleCloudflareZoneSync)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/import", s.handleCloudflareZoneImport)
 
 	// Dashboard UI (embedded SPA)
@@ -5945,36 +5944,6 @@ type cloudflareZone struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Plan   string `json:"plan,omitempty"`
-}
-
-func (s *Server) handleCloudflareZoneSync(w http.ResponseWriter, r *http.Request) {
-	zoneID := r.PathValue("id")
-	if zoneID == "" {
-		jsonError(w, "zone id required", http.StatusBadRequest)
-		return
-	}
-
-	cloudflareMu.RLock()
-	cfg := cloudflareConfig
-	cloudflareMu.RUnlock()
-
-	if cfg == nil || !cfg.Connected {
-		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
-		return
-	}
-
-	// Fetch DNS records from Cloudflare and sync with local DNS
-	records, err := s.fetchCloudflareDNSRecords(cfg.Token, zoneID)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	s.RecordAudit("cloudflare.dns.sync", "zone: "+zoneID, requestIP(r), true)
-	jsonResponse(w, map[string]any{
-		"status":         "synced",
-		"records_synced": len(records),
-	})
 }
 
 func (s *Server) fetchCloudflareDNSRecords(token, zoneID string) ([]cloudflareDNSRecord, error) {

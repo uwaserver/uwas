@@ -995,10 +995,10 @@ func TestHandleCloudflareZones_NotConnected(t *testing.T) {
 	}
 }
 
-func TestHandleCloudflareZoneSync_NotConnected(t *testing.T) {
+func TestHandleCloudflareZoneImport_NotConnected(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/zones/test-id/sync", nil))
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/cloudflare/zones/test-id/import", nil))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
