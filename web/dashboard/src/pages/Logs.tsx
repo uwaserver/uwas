@@ -50,6 +50,13 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
+// RFC 4180 CSV cell: wrap in quotes when needed, double any internal quotes.
+function csvCell(v: string | number): string {
+  const s = String(v ?? '');
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
 export default function Logs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,6 +66,7 @@ export default function Logs() {
   const [search, setSearch] = useState('');
   const [domainFilter, setDomainFilter] = useState('');
   const [methodFilter, setMethodFilter] = useState<MethodFilter>('all');
+  const [showExport, setShowExport] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -119,40 +127,50 @@ export default function Logs() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
-          <div className="relative group">
+          <div className="relative">
             <button
+              onClick={() => setShowExport(v => !v)}
               className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground transition hover:bg-accent"
             >
               <Download size={14} />
               Export
             </button>
-            <div className="absolute right-0 top-full mt-1 hidden group-hover:block rounded-md border border-border bg-card shadow-lg z-10">
-              <button
-                onClick={() => {
-                  const csv = ['Time,Host,Method,Path,Status,Duration_ms,Remote'].concat(
-                    filtered.map(e => `${e.time},${e.host},${e.method},"${e.path}",${e.status},${e.duration_ms},${e.remote}`)
-                  ).join('\n');
-                  const blob = new Blob([csv], { type: 'text/csv' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.csv';
-                  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                }}
-                className="block w-full px-4 py-2 text-left text-sm text-card-foreground hover:bg-accent"
-              >
-                CSV
-              </button>
-              <button
-                onClick={() => {
-                  const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.json';
-                  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-                }}
-                className="block w-full px-4 py-2 text-left text-sm text-card-foreground hover:bg-accent"
-              >
-                JSON
-              </button>
-            </div>
+            {showExport && (
+              <>
+                {/* Click-outside backdrop — group-hover broke on touch
+                    devices because :hover doesn't fire there. */}
+                <div className="fixed inset-0 z-10" onClick={() => setShowExport(false)} />
+                <div className="absolute right-0 top-full mt-1 rounded-md border border-border bg-card shadow-lg z-20 min-w-[8rem]">
+                  <button
+                    onClick={() => {
+                      const header = ['Time', 'Host', 'Method', 'Path', 'Status', 'Duration_ms', 'Remote'].map(csvCell).join(',');
+                      const body = filtered.map(e => [e.time, e.host, e.method, e.path, e.status, e.duration_ms, e.remote].map(csvCell).join(','));
+                      const csv = [header, ...body].join('\r\n');
+                      const blob = new Blob([csv], { type: 'text/csv' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.csv';
+                      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                      setShowExport(false);
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-card-foreground hover:bg-accent"
+                  >
+                    CSV
+                  </button>
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url; a.download = 'uwas-logs.json';
+                      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                      setShowExport(false);
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-card-foreground hover:bg-accent"
+                  >
+                    JSON
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
