@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
   Activity, Zap, HardDrive, Clock, CheckCircle, AlertTriangle,
   Gauge, AlertCircle, Shield, Globe, Lock, Cpu, ShieldAlert,
@@ -20,6 +20,7 @@ import Card from '@/components/Card';
 import { usePolling } from '@/hooks/usePolling';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { stats, health, history } = useStats(3000);
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [certs, setCerts] = useState<CertInfo[]>([]);
@@ -37,12 +38,16 @@ export default function Dashboard() {
     fetchCerts().then(c => setCerts(c ?? [])).catch(() => {});
     fetchSecurityStats().then(setSecurity).catch(() => {});
     fetchPHP().then(p => setPhp(p ?? [])).catch(() => {});
-    fetchDomainHealth().then(h => setDomainHealth(h ?? [])).catch(() => {});
   }, []);
 
   usePolling(() => {
     fetchSystem().then(setSysInfo).catch(() => {});
   }, 10_000);
+
+  // Domain health polled every 30s; refreshes the status dot in the table.
+  usePolling(() => {
+    fetchDomainHealth().then(h => setDomainHealth(h ?? [])).catch(() => {});
+  }, 30_000);
 
   const hitRate =
     stats && stats.cache_hits + stats.cache_misses > 0
@@ -127,7 +132,18 @@ export default function Dashboard() {
 
       {/* System Resources */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card icon={<Cpu size={18} />} label={sysInfo?.os_name ? 'Server' : 'CPU Cores'} value={sysInfo?.os_name || (sysInfo ? String(sysInfo.cpus) + ' cores' : '--')} sub={sysInfo?.load_1m ? `Load: ${sysInfo.load_1m} / ${sysInfo.load_5m} / ${sysInfo.load_15m}` : undefined} />
+        <Card
+          icon={<Cpu size={18} />}
+          label="Server"
+          value={sysInfo?.os_name || (sysInfo ? `${sysInfo.cpus} cores` : '--')}
+          sub={
+            sysInfo?.load_1m
+              ? `${sysInfo.cpus} cores · load ${sysInfo.load_1m} / ${sysInfo.load_5m} / ${sysInfo.load_15m} (1m / 5m / 15m)`
+              : sysInfo?.os_name && sysInfo.cpus
+                ? `${sysInfo.cpus} cores`
+                : undefined
+          }
+        />
         <Card icon={<MemoryStick size={18} />} label="RAM" value={sysInfo?.ram_total_human || '--'} sub={sysInfo?.ram_available_human ? `${sysInfo.ram_available_human} available` : undefined} />
         <Card icon={<HardDrive size={18} />} label="Disk" value={sysInfo?.disk_total_human || '--'} sub={sysInfo?.disk_free_human ? `${sysInfo.disk_free_human} free` : undefined} />
         <Card icon={<Server size={18} />} label="UWAS" value={sysInfo?.version || '--'} sub={sysInfo ? `${sysInfo.uptime} uptime` : undefined} />
@@ -236,23 +252,25 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Resource gauges */}
+      {/* Resource gauges. Color classes are written out literally so the
+          Tailwind v4 JIT keeps them in the production bundle. Don't switch
+          to template-string interpolation — the JIT can't see those. */}
       {sysInfo && (
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: 'CPU Load', value: sysInfo.load_1m ? parseFloat(sysInfo.load_1m) : 0, max: sysInfo.cpus || 1, unit: '', color: 'blue' },
-            { label: 'RAM Used', value: (sysInfo.ram_total_bytes && sysInfo.ram_available_bytes) ? (sysInfo.ram_total_bytes - sysInfo.ram_available_bytes) / (1024 ** 3) : 0, max: sysInfo.ram_total_bytes ? sysInfo.ram_total_bytes / (1024 ** 3) : 1, unit: 'GB', color: 'purple' },
-            { label: 'Disk Used', value: (sysInfo.disk_total_bytes && sysInfo.disk_free_bytes) ? (sysInfo.disk_total_bytes - sysInfo.disk_free_bytes) / (1024 ** 3) : 0, max: sysInfo.disk_total_bytes ? sysInfo.disk_total_bytes / (1024 ** 3) : 1, unit: 'GB', color: 'emerald' },
+            { label: 'CPU Load', value: sysInfo.load_1m ? parseFloat(sysInfo.load_1m) : 0, max: sysInfo.cpus || 1, unit: '', text: 'text-blue-400', track: 'bg-blue-500/10', bar: 'bg-blue-500' },
+            { label: 'RAM Used', value: (sysInfo.ram_total_bytes && sysInfo.ram_available_bytes) ? (sysInfo.ram_total_bytes - sysInfo.ram_available_bytes) / (1024 ** 3) : 0, max: sysInfo.ram_total_bytes ? sysInfo.ram_total_bytes / (1024 ** 3) : 1, unit: 'GB', text: 'text-purple-400', track: 'bg-purple-500/10', bar: 'bg-purple-500' },
+            { label: 'Disk Used', value: (sysInfo.disk_total_bytes && sysInfo.disk_free_bytes) ? (sysInfo.disk_total_bytes - sysInfo.disk_free_bytes) / (1024 ** 3) : 0, max: sysInfo.disk_total_bytes ? sysInfo.disk_total_bytes / (1024 ** 3) : 1, unit: 'GB', text: 'text-emerald-400', track: 'bg-emerald-500/10', bar: 'bg-emerald-500' },
           ].map(g => {
             const pct = g.max > 0 ? Math.min((g.value / g.max) * 100, 100) : 0;
             return (
               <div key={g.label} className="rounded-lg border border-border bg-card p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-muted-foreground">{g.label}</span>
-                  <span className={`text-xs font-semibold text-${g.color}-400`}>{g.value.toFixed(1)}{g.unit} / {g.max.toFixed?.(1) ?? g.max}{g.unit}</span>
+                  <span className={`text-xs font-semibold ${g.text}`}>{g.value.toFixed(1)}{g.unit} / {g.max.toFixed?.(1) ?? g.max}{g.unit}</span>
                 </div>
-                <div className={`h-2 rounded-full bg-${g.color}-500/10 overflow-hidden`}>
-                  <div className={`h-full rounded-full bg-${g.color}-500 transition-all duration-500`} style={{ width: `${pct}%` }} />
+                <div className={`h-2 rounded-full ${g.track} overflow-hidden`}>
+                  <div className={`h-full rounded-full ${g.bar} transition-all duration-500`} style={{ width: `${pct}%` }} />
                 </div>
                 <div className="flex justify-end mt-1"><span className="text-[9px] text-muted-foreground">{pct.toFixed(0)}%</span></div>
               </div>
@@ -279,8 +297,13 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {domains.map(d => (
-                <tr key={d.host} className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30">
-                  <td className="px-5 py-3 font-mono text-xs">{d.host}</td>
+                <tr
+                  key={d.host}
+                  onClick={() => navigate(`/domains/${encodeURIComponent(d.host)}`)}
+                  className="cursor-pointer border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
+                  title={`Open ${d.host}`}
+                >
+                  <td className="px-5 py-3 font-mono text-xs text-blue-400 hover:underline">{d.host}</td>
                   <td className="px-5 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                       d.type === 'php' ? 'bg-purple-500/15 text-purple-400' :
