@@ -123,6 +123,86 @@ func TestAuditPersist_RecordAuditUserStoresUsername(t *testing.T) {
 	}
 }
 
+func TestAuditPersist_RotationKeepsThreeGenerationsAndReloadsAll(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit.log")
+
+	// Pre-seed audit.log.3 .. .1 .. .log with one entry each so we can tell
+	// the order in the replayed ring buffer.
+	mustWriteEntry := func(path, detail string) {
+		t.Helper()
+		e := AuditEntry{Action: "seed", Detail: detail, Success: true}
+		b, err := json.Marshal(e)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if err := os.WriteFile(path, append(b, '\n'), 0600); err != nil {
+			t.Fatalf("seed %s: %v", path, err)
+		}
+	}
+	mustWriteEntry(logPath+".3", "oldest")
+	mustWriteEntry(logPath+".2", "older")
+	mustWriteEntry(logPath+".1", "old")
+	mustWriteEntry(logPath, "newest")
+
+	s := newAuditTestServer(t, dir)
+	if err := s.loadAuditLog(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	s.auditMu.Lock()
+	defer s.auditMu.Unlock()
+	if s.auditPos != 4 {
+		t.Fatalf("expected 4 entries replayed, got pos=%d full=%v", s.auditPos, s.auditFull)
+	}
+	want := []string{"oldest", "older", "old", "newest"}
+	for i, w := range want {
+		if got := s.auditEntries[i].Detail; got != w {
+			t.Errorf("entry %d: got %q, want %q", i, got, w)
+		}
+	}
+}
+
+func TestAuditPersist_RotationDropsOldest(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit.log")
+	// Pre-fill log with > 10MB so the next append triggers rotation.
+	big := strings.Repeat("x", auditMaxFileSize+10)
+	if err := os.WriteFile(logPath, []byte(big), 0600); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+	// Pre-fill .3 with sentinel so we can verify it's the one that gets dropped.
+	if err := os.WriteFile(logPath+".3", []byte("dropme"), 0600); err != nil {
+		t.Fatalf("seed .3: %v", err)
+	}
+	if err := os.WriteFile(logPath+".2", []byte("becomes-3"), 0600); err != nil {
+		t.Fatalf("seed .2: %v", err)
+	}
+	if err := os.WriteFile(logPath+".1", []byte("becomes-2"), 0600); err != nil {
+		t.Fatalf("seed .1: %v", err)
+	}
+
+	s := newAuditTestServer(t, dir)
+	s.RecordAudit("rotate.me", "now", "1.2.3.4", true)
+
+	check := func(path, want string) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s: %v", path, err)
+			return
+		}
+		if !strings.Contains(string(got), want) {
+			t.Errorf("%s: expected to contain %q, got %q", path, want, string(got)[:min(40, len(got))])
+		}
+	}
+	check(logPath+".3", "becomes-3")
+	check(logPath+".2", "becomes-2")
+	// .1 should now be the previous .log content (the 10MB blob).
+	if info, err := os.Stat(logPath + ".1"); err != nil || info.Size() < auditMaxFileSize {
+		t.Errorf("expected .1 to hold the rotated 10MB log, got err=%v size=%v", err, info)
+	}
+}
+
 func TestAuditPersist_TailsToMaxAuditEntries(t *testing.T) {
 	dir := t.TempDir()
 	s1 := newAuditTestServer(t, dir)
