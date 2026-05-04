@@ -23,6 +23,7 @@ import {
   createDir,
   uploadFile,
   fetchDiskUsage,
+  getToken,
   type DomainData,
   type FileEntry,
 } from '@/lib/api';
@@ -89,33 +90,43 @@ export default function FileManager() {
     if (!selectedDomain) return;
     setLoading(true);
     setError('');
-    try {
-      const [f, du] = await Promise.all([
-        fetchFiles(selectedDomain, currentPath),
-        fetchDiskUsage(selectedDomain),
-      ]);
-      // Sort: dirs first, then files alphabetically
-      const sorted = (f ?? []).sort((a, b) => {
+    // Disk usage is a sidebar metric — when its endpoint fails (e.g.
+    // permission denied for the underlying du command) we still want to
+    // render the file list. Use allSettled so one failure doesn't blank
+    // the whole page.
+    const [filesRes, duRes] = await Promise.allSettled([
+      fetchFiles(selectedDomain, currentPath),
+      fetchDiskUsage(selectedDomain),
+    ]);
+    if (filesRes.status === 'fulfilled') {
+      const sorted = (filesRes.value ?? []).sort((a, b) => {
         if (a.is_dir && !b.is_dir) return -1;
         if (!a.is_dir && b.is_dir) return 1;
         return a.name.localeCompare(b.name);
       });
       setFiles(sorted);
-      setDiskUsage(du);
-    } catch (e) {
-      setError((e as Error).message);
+    } else {
+      setError((filesRes.reason as Error).message);
       setFiles([]);
-    } finally {
-      setLoading(false);
     }
+    setDiskUsage(duRes.status === 'fulfilled' ? duRes.value : null);
+    setLoading(false);
   }, [selectedDomain, currentPath]);
+
+  // Helper: confirm before discarding unsaved edits.
+  const confirmDiscardEdits = (): boolean => {
+    if (!editDirty) return true;
+    return window.confirm('You have unsaved changes. Discard them?');
+  };
 
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
 
   const navigateTo = (path: string) => {
+    if (!confirmDiscardEdits()) return;
     setEditingFile(null);
+    setEditDirty(false);
     setCurrentPath(path);
   };
 
@@ -142,13 +153,35 @@ export default function FileManager() {
         lowerName.endsWith('.jpeg') || lowerName.endsWith('.gif') ||
         lowerName.endsWith('.webp') || lowerName.endsWith('.svg') ||
         lowerName.endsWith('.ico')) {
-      // Open image in a new tab
-      const imageUrl = `/api/v1/files/${selectedDomain}/read?path=${encodeURIComponent(entry.path)}`;
-      window.open(imageUrl, '_blank');
+      // The /read endpoint is auth-gated by Bearer token, so a plain
+      // window.open() lands on a 401. Fetch with auth, turn the response
+      // into a blob URL, then open that in a new tab.
+      setError('');
+      try {
+        const tok = getToken();
+        const res = await fetch(
+          `/api/v1/files/${encodeURIComponent(selectedDomain)}/read?path=${encodeURIComponent(entry.path)}`,
+          { headers: tok ? { Authorization: `Bearer ${tok}` } : {} },
+        );
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({ error: res.statusText }));
+          throw new Error(body.error || res.statusText);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        // Revoke after the new tab has had a moment to load — Firefox keeps
+        // the URL alive for the new document's lifetime, Chrome wants ~1s.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        if (!win) setError('Browser blocked the image preview pop-up. Allow pop-ups for this site.');
+      } catch (e) {
+        setError((e as Error).message);
+      }
       return;
     }
 
-    // Open text editor
+    // Open text editor — confirm if user has unsaved changes in another file.
+    if (!confirmDiscardEdits()) return;
     setError('');
     try {
       const result = await readFile(selectedDomain, entry.path);
@@ -258,9 +291,16 @@ export default function FileManager() {
           <select
             value={selectedDomain}
             onChange={e => {
+              if (!confirmDiscardEdits()) {
+                // Snap the select element back to the previously selected
+                // domain so the UI matches state after the user cancels.
+                e.target.value = selectedDomain;
+                return;
+              }
               setSelectedDomain(e.target.value);
               setCurrentPath('.');
               setEditingFile(null);
+              setEditDirty(false);
             }}
             className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
           >
@@ -370,7 +410,11 @@ export default function FileManager() {
                 Save
               </button>
               <button
-                onClick={() => setEditingFile(null)}
+                onClick={() => {
+                  if (!confirmDiscardEdits()) return;
+                  setEditingFile(null);
+                  setEditDirty(false);
+                }}
                 className="text-muted-foreground hover:text-foreground"
               >
                 <X size={16} />
