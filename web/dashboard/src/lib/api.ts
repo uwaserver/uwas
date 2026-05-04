@@ -318,6 +318,7 @@ export interface AuditEntry {
   action: string;
   detail: string;
   ip: string;
+  user?: string;
   success: boolean;
 }
 
