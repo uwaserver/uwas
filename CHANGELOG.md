@@ -13,9 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backups & Webhooks pages** show `FeatureBanner` when the underlying manager is not initialized, so an empty list never silently masks a disabled subsystem.
 - **CHANGELOG** brought up to date through v0.3.1.
 
+### Fixes
+
+- **Dashboard router consistency** — replaced plain `<a href="/_uwas/dashboard/...">` anchors with React Router `<Link>` on Dashboard (first-run wizard), Domains, DNS, WordPress, and EmailGuide. Plain anchors were doing full-page reloads and bypassing the `BrowserRouter` basename.
+- **First-run wizard flash** — the "Add your first domain" wizard on Dashboard no longer briefly flashes before the domain list has loaded. Wizard is gated on `domainsLoaded && domains.length === 0`.
+- **Topology** — added a refresh button, an empty state when no domains exist, and the missing "App" entry in the legend (green nodes were rendered without a legend match).
+- **Certificates empty state** — replaced the bare "No certificates found" with an actionable card that links to the Domains page.
+- **DomainDetail load errors** — surface the actual error with a Retry button instead of silently falling through to a generic "Domain not found".
+- **EmailGuide empty state** — when no domains exist the records table previously rendered with an empty `baseDomain`, producing meaningless DNS hints. Now shows a clear empty state.
+- **Cloudflare + DBExplorer dark theme** — alert callouts that still used light-only utilities (`bg-red-50/text-red-700`, `bg-amber-50`, etc.) inherited from the early Phase B work now use the project-wide `bg-{color}-500/10 text-{color}-400` convention. Also dropped the stale "(soon) run real tunnels" subtitle.
+- **About page** — "35-page dashboard" → "40-page dashboard" to match the actual page count.
+- **DNS page** — title is now "DNS" (was "DNS Checker", which understated the scope), description rewritten to mention CRUD.
+
+### Performance
+
+- **Visibility-aware polling** — Domains health, Cloudflare status, and Logs live tail now pause while the browser tab is hidden. Standardised on the existing `usePolling` hook; extended to accept `intervalMs=null` so the Logs `Pause` toggle can disable polling without a separate interval/clear effect.
+
+### Refactor
+
+- **Cloudflare zone-sync retired** — `/api/v1/cloudflare/zones/{id}/sync` was a no-op holdover (fetched DNS records and discarded them). The real implementation is `/api/v1/cloudflare/zones/{id}/import`. Handler, route registration, frontend `syncCloudflareDNS` export, and three tests were removed; tests now exercise the import endpoint.
+- **Dead code prune** (staticcheck-driven) — removed ~150 lines that no caller reaches: `internal/cache/l1_shard.go` (orphan shard-stats type), `requireRole`/`persistCloudflareState` in admin, `BackupManager.startedAt`, `htaccessCacheEntry.errorPagesOnce`, `sensitiveHeaders`+`sanitizeHeader` in accesslog (header redaction was never wired into the log line), `blockedIPBlocks`/`concatIPBlocks`/`isIPBlocked` in config (superseded by `ipBlockedReason`+policy), and three test mock helpers. Plus four lint cleanups (loop → `copy()`, error-string punctuation, `t.Fatal` instead of nil-deref, redundant `var`-then-assign).
+
 ### Verification
 
-- `go test -count=1 -short ./internal/auth/ ./internal/admin/` passes.
+- `go build ./...`, `go vet ./...`, `staticcheck ./...` all clean.
+- `go test -count=1 -short ./...` passes everywhere except the pre-existing Windows-only `TestInstall_WindowsSkipsPermissions` httptest port-reuse flake.
+- `cd web/dashboard && npx tsc -b` clean.
 
 ## [0.3.1] - 2026-05-04
 
