@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { BarChart3, RefreshCw } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { BarChart3, RefreshCw, Search, X } from 'lucide-react';
 import { fetchMetrics } from '@/lib/api';
 import Card from '@/components/Card';
 import { usePolling } from '@/hooks/usePolling';
@@ -49,6 +49,7 @@ export default function Metrics() {
   const [metrics, setMetrics] = useState<ParsedMetric[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +75,24 @@ export default function Metrics() {
         m.name.includes('connections') ||
         m.name.includes('uptime')),
   );
+
+  // Case-insensitive filter on metric name and help text. Memoized so the
+  // 5s polling doesn't re-filter the entire table on every keystroke.
+  const visibleMetrics = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return metrics;
+    return metrics.filter(m =>
+      m.name.toLowerCase().includes(q) || m.help.toLowerCase().includes(q),
+    );
+  }, [metrics, filter]);
+
+  // Render counter values nicely. Number("+Inf") -> Infinity which prints
+  // as "Infinity" via toLocaleString — show the raw +Inf / -Inf / NaN.
+  const renderValue = (v: string): string => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return v;
+    return n.toLocaleString();
+  };
 
   return (
     <div className="space-y-6">
@@ -108,7 +127,7 @@ export default function Metrics() {
               key={m.name}
               icon={<BarChart3 size={20} />}
               label={m.name.replace(/_/g, ' ')}
-              value={Number(m.value).toLocaleString()}
+              value={renderValue(m.value)}
             />
           ))}
         </div>
@@ -116,10 +135,29 @@ export default function Metrics() {
 
       {/* All metrics table */}
       <div className="rounded-lg border border-border bg-card shadow-md">
-        <div className="border-b border-border px-5 py-4">
+        <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
           <h2 className="text-sm font-semibold text-card-foreground">
-            All Metrics ({metrics.length})
+            All Metrics ({filter ? `${visibleMetrics.length} of ${metrics.length}` : metrics.length})
           </h2>
+          <div className="relative w-72 max-w-full">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              placeholder="Filter by name or description…"
+              className="w-full rounded-md border border-border bg-background py-1.5 pl-7 pr-7 text-xs text-foreground outline-none focus:border-blue-500"
+            />
+            {filter && (
+              <button
+                onClick={() => setFilter('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                title="Clear filter"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -133,7 +171,7 @@ export default function Metrics() {
               </tr>
             </thead>
             <tbody>
-              {metrics.map((m, i) => (
+              {visibleMetrics.map((m, i) => (
                 <tr
                   key={`${m.name}-${i}`}
                   className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
@@ -147,13 +185,13 @@ export default function Metrics() {
                   </td>
                 </tr>
               ))}
-              {metrics.length === 0 && !loading && (
+              {visibleMetrics.length === 0 && !loading && (
                 <tr>
                   <td
                     colSpan={3}
                     className="px-5 py-8 text-center text-muted-foreground"
                   >
-                    No metrics available
+                    {filter ? `No metrics match "${filter}"` : 'No metrics available'}
                   </td>
                 </tr>
               )}
