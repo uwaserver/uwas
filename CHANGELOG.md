@@ -5,6 +5,117 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Features
+
+- **Auth persistence** — JWT signing key now persists to `~/.uwas/auth.json` (mode 0600) instead of being regenerated on every restart. Active sessions persist to `~/.uwas/sessions.json`. Restarting the server no longer kicks every logged-in user.
+- **Backups & Webhooks pages** show `FeatureBanner` when the underlying manager is not initialized, so an empty list never silently masks a disabled subsystem.
+- **CHANGELOG** brought up to date through v0.3.1.
+
+### Verification
+
+- `go test -count=1 -short ./internal/auth/ ./internal/admin/` passes.
+
+## [0.3.1] - 2026-05-04
+
+### Features
+
+- **Audit log persistence** — `~/.uwas/audit.log` JSONL append-only, 10 MB rotation; the last 500 entries replay into the in-memory ring buffer at startup. The audit trail no longer disappears on restart.
+- **FeatureBanner on Backups + Webhooks** — both pages report the disabled-reason instead of an empty list.
+
+## [0.3.0] - 2026-05-04
+
+### Features
+
+- **Real Redis client** — replaced the in-memory mock with a from-scratch RESP wire-protocol client (no new dependencies; one mutex-serialized TCP conn, auto-reconnect on I/O error, TLS opt-in via `redis.tls`).
+- **App stop persistence** — `AppConfig.Disabled` now survives restart; an app the user explicitly stopped no longer auto-restarts on next boot.
+- **Sidebar feature awareness** — disabled features (apps, cron monitor, security stats, unknown domains, webhooks, backups) are dimmed with an "off" badge and hover-tooltip explaining why.
+
+### Security
+
+- **Go 1.26.2** — closes 5 stdlib CVEs flagged by govulncheck (crypto/x509, crypto/tls, archive/tar). CI was already pinned to the 1.26 major track, so released binaries were always patched; this only matters for `go build` from a checkout.
+
+## [0.2.2] - 2026-05-04
+
+### Features
+
+- **`GET /api/v1/features`** — reports which optional subsystems are wired up (apps, bandwidth, cron monitor, unknown domains, security stats, deploys, backups, webhooks, tls, alerting, uptime monitor, php). Used by dashboard pages to show a "feature not enabled" banner instead of a misleading empty list.
+- **`FeatureBanner` component** wired into Apps, CronJobs, Security, UnknownDomains, Analytics.
+- **DB Explorer existence check** — `/api/v1/db/explore/{db}/tables` now returns 404 with a clear message when the database does not exist, instead of a confusing 500.
+
+## [0.2.1] - 2026-05-04
+
+### Features
+
+- **Cloudflare zones**: real pagination (backend iterates all `result_info.total_pages`) + client-side search filter with "X of Y" count display.
+- **Cloudflare zone import**: dry-run preview with hostname checkboxes; user picks defaults (PHP/Static/Proxy/Redirect, web root template) and confirms before adding to UWAS domains.
+
+### Fixes
+
+- `Manage DNS` link in the Cloudflare page now uses React Router's `<Link>` so it respects the `/_uwas/dashboard` basename instead of doing a full-page navigate to `/dns`.
+
+## [0.2.0] - 2026-05-04
+
+### Features
+
+- **Real Cloudflare Tunnels** (Phase B) — `internal/cloudflare/` package wraps the Cloudflare API and the `cloudflared` binary. Create / start / stop / delete tunnels; auto-restart on crash; `cloudflared` binary install via UI; tunnel state persisted in `cloudflare.json`. Replaces the v0.1.6 stub that generated a random hex token in RAM and never spawned a real tunnel.
+
+## [0.1.6] - 2026-05-04
+
+### Features (Cloudflare — Phase A)
+
+- **Cloudflare state persistence** — token, account ID, and connection state stored in `~/.uwas/cloudflare.json` (mode 0600). Token masked in `GET /api/v1/cloudflare/status` responses.
+- **Zone import** — `POST /api/v1/cloudflare/zones/{id}/import` adds A/AAAA/CNAME hostnames from a Cloudflare zone as UWAS domains, with a user-chosen default type and webroot. Replaces the v0.1.x "Sync DNS" no-op.
+- **DNS page accepts `?domain=` query param** — `Manage DNS` from the Cloudflare page deep-links into the DNS editor for that zone.
+- **UI honesty** — tunnel section explicitly labelled "coming next minor release" instead of pretending to work.
+
+## [0.1.5] - 2026-05-04
+
+### Fixes
+
+- **Terminal WebSocket** — allow http same-origin (was https-only, broke http deployments).
+- **Self-update** — log auto-restart failures instead of swallowing them. The v0.1.4 binary still has the silent-failure bug; restarting the service manually after upgrading from v0.1.4 is required once.
+- **WordPress installer** — use the SHA1 checksum endpoint (the SHA256 endpoint we were calling does not exist).
+
+## [0.1.4] - 2026-05-04
+
+### Fixes
+
+- **Dashboard rebuild** — embedded bundle includes all the `api.ts` safety fixes from v0.1.1–v0.1.3.
+
+## [0.1.3] - 2026-05-03
+
+### CI
+
+- Auto-generate release notes from commit messages.
+- Publish releases as `latest`, not prerelease.
+
+## [0.1.2] - 2026-05-03
+
+### Fixes
+
+- **Dashboard** — default array endpoints to `[]` when the backend returns `null`, so no page crashes on a missing handler.
+
+## [0.1.1] - 2026-05-03
+
+### Fixes
+
+- **Dashboard** — guard null and paginated API responses to prevent UI crashes when an endpoint returns `{items, total, ...}` instead of a bare array.
+
+## [0.1.0] - 2026-05-03
+
+Same commit as v0.0.56 (semver bump for clarity). See v0.0.56 entry below.
+
+## [0.0.57] - 2026-05-03
+
+### Fixes
+
+- **Dashboard pagination** — extract `.items` from paginated API responses (continuation of v0.1.1/v0.1.2 fixes for endpoints we missed).
+- **Vite 8.0.5** — patches 3 high-severity vulnerabilities in the build toolchain.
+- **Backup interval `7d` → `168h`** — config parser only understands hour units; `7d` was rejected.
+- **Mobile menu z-index** — toggle button rendered behind the sidebar on small screens.
+
 ## [0.0.56] - 2026-05-03
 
 ### Features

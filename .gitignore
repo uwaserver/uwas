@@ -59,5 +59,14 @@ demo/
 
 # ── Commit message temp ──
 .commitmsg.tmp
+.git_msg.tmp
+.git_commit_msg.tmp
+
+# ── Dev / scratch (DFMT workarounds, ad-hoc scripts) ──
+.tmp_*.js
+.tmp_*.json
+run-tests.js
+commit.bat
+.npm/
 
 .dfmt/
