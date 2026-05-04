@@ -63,12 +63,24 @@ export default function Security() {
   }, []);
   usePolling(load, 5000);
 
+  // Auto-dismiss success status after 4s. Errors stay until next action.
+  useEffect(() => {
+    if (status?.ok) {
+      const id = window.setTimeout(() => setStatus(s => s === status ? null : s), 4000);
+      return () => window.clearTimeout(id);
+    }
+  }, [status]);
+
   const openDomain = async (host: string) => {
     if (expanded === host) { setExpanded(''); expandedRef.current = ''; return; }
     setExpanded(host);
     expandedRef.current = host;
     setStatus(null);
-    // Reset edit state immediately to prevent cross-domain data bleed
+    // Reset every editable field — previously wafBypassPaths and
+    // newBypassPath/newBlockedPath/newWhitelistIP/newBlacklistIP were not
+    // cleared, so paths/IPs from the previous domain stayed on screen
+    // until the new detail fetch resolved (and would be persisted to the
+    // wrong domain if the user clicked Save in that window).
     setDetail(null);
     setWafEnabled(false);
     setRateLimitReqs(0);
@@ -77,6 +89,11 @@ export default function Security() {
     setIpWhitelist([]);
     setIpBlacklist([]);
     setHotlinkEnabled(false);
+    setWafBypassPaths([]);
+    setNewBypassPath('');
+    setNewBlockedPath('');
+    setNewWhitelistIP('');
+    setNewBlacklistIP('');
     try {
       const d = await fetchDomainDetail(host);
       // Guard: only apply if this domain is still the expanded one
@@ -94,6 +111,14 @@ export default function Security() {
   };
 
   const saveSecurity = async (host: string) => {
+    // Don't save until detail has actually loaded — without this guard,
+    // an impatient click during the detail fetch would persist the
+    // initial empty defaults (WAF off, no rate limit, no IP lists)
+    // and silently wipe the domain's existing security config.
+    if (!detail || expanded !== host) {
+      setStatus({ ok: false, msg: 'Settings still loading — try again in a moment.' });
+      return;
+    }
     setSaving(true);
     setStatus(null);
     try {
