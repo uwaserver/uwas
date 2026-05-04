@@ -29,7 +29,7 @@ export default function Packages() {
         setActing(active.name);
         setSuccess(`${active.action === 'remove' ? 'Removing' : 'Installing'} ${active.name}...`);
         pollRef.current = setInterval(async () => {
-          const ts = await fetchTasks().catch(() => []);
+          const ts = await fetchTasks().catch(() => [] as Awaited<ReturnType<typeof fetchTasks>>);
           const t = ts?.find(x => x.id === active.id);
           if (!t || (t.status !== 'running' && t.status !== 'queued')) {
             clearInterval(pollRef.current);
@@ -44,6 +44,27 @@ export default function Packages() {
     return () => { clearInterval(pollRef.current); clearTimeout(timeoutRef.current); };
   }, [load]);
 
+  // Auto-dismiss success toasts after 5s. Long-finished install/remove
+  // banners otherwise lingered through several user actions and were
+  // confusing when the user later did something unrelated.
+  useEffect(() => {
+    if (!success) return;
+    const id = window.setTimeout(() => setSuccess(s => s === success ? '' : s), 5000);
+    return () => window.clearTimeout(id);
+  }, [success]);
+
+  // Escape closes the remove-confirm modal. The previous onKeyDown was
+  // attached to a non-focused <div>, so it never fired — the user had to
+  // click Cancel or the backdrop.
+  useEffect(() => {
+    if (!confirmRemove) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmRemove(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmRemove]);
+
   const handleInstall = async (pkg: PackageInfo) => {
     setActing(pkg.id);
     setError(''); setSuccess('');
@@ -54,11 +75,17 @@ export default function Packages() {
       clearTimeout(timeoutRef.current);
       pollRef.current = setInterval(async () => {
         try {
-          const updated = (await fetchPackages()).find(p => p.id === pkg.id);
+          const all = await fetchPackages();
+          const updated = (all ?? []).find(p => p.id === pkg.id);
           if (updated?.installed) { clearInterval(pollRef.current); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
         } catch { clearInterval(pollRef.current); setActing(''); }
       }, 3000);
-      timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); setActing(''); }, 120000);
+      // After 120s give up — but tell the user instead of going silent.
+      timeoutRef.current = setTimeout(() => {
+        clearInterval(pollRef.current);
+        setActing('');
+        setError(`Install of ${pkg.name} did not complete within 2 minutes. It may still be running on the server — refresh in a moment to see the latest state.`);
+      }, 120000);
     } catch (e) { setError((e as Error).message); setActing(''); }
   };
 
@@ -73,11 +100,16 @@ export default function Packages() {
       clearTimeout(timeoutRef.current);
       pollRef.current = setInterval(async () => {
         try {
-          const updated = (await fetchPackages()).find(p => p.id === pkg.id);
+          const all = await fetchPackages();
+          const updated = (all ?? []).find(p => p.id === pkg.id);
           if (!updated?.installed) { clearInterval(pollRef.current); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
         } catch { clearInterval(pollRef.current); setActing(''); }
       }, 3000);
-      timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); setActing(''); }, 120000);
+      timeoutRef.current = setTimeout(() => {
+        clearInterval(pollRef.current);
+        setActing('');
+        setError(`Remove of ${pkg.name} did not complete within 2 minutes. It may still be running on the server — refresh in a moment to see the latest state.`);
+      }, 120000);
     } catch (e) { setError((e as Error).message); setActing(''); }
   };
 
@@ -111,7 +143,7 @@ export default function Packages() {
 
       {/* Remove confirmation modal */}
       {confirmRemove && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmRemove(null)} onKeyDown={e => e.key === 'Escape' && setConfirmRemove(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmRemove(null)}>
           <div className="w-full max-w-md rounded-lg border border-red-500/50 bg-card p-6 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 text-red-400 font-medium mb-3">
               <AlertTriangle size={18} /> Remove {confirmRemove.name}?
