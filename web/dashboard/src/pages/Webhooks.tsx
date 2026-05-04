@@ -40,13 +40,20 @@ export default function Webhooks() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-dismiss success toast — page is static (no polling) so without this
+  // the message lingers until the next action overwrites it.
+  const showStatus = useCallback((msg: string) => {
+    setStatus(msg);
+    setTimeout(() => setStatus(s => (s === msg ? '' : s)), 5000);
+  }, []);
+
   const handleCreate = async () => {
     if (!url) return;
     setAdding(true);
     try {
       await createWebhook({ url, secret: secret || undefined, events: events.length > 0 ? events : undefined, enabled: true });
       setUrl(''); setSecret(''); setEvents([]); setShowForm(false);
-      setStatus('Webhook created');
+      showStatus('Webhook created');
       await load();
     } catch (e) { setError((e as Error).message); }
     finally { setAdding(false); }
@@ -56,7 +63,7 @@ export default function Webhooks() {
     try {
       await deleteWebhook(idx);
       setConfirmDelete(null);
-      setStatus('Webhook deleted');
+      showStatus('Webhook deleted');
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -65,7 +72,7 @@ export default function Webhooks() {
     setTesting(idx);
     try {
       const res = await testWebhook(whUrl);
-      setStatus(res.message || 'Test event fired');
+      showStatus(res.message || 'Test event fired');
     } catch (e) { setError((e as Error).message); }
     finally { setTesting(null); }
   };
@@ -158,7 +165,10 @@ export default function Webhooks() {
                     )}
                   </div>
                   <p className="mt-1 text-[10px] text-muted-foreground">
-                    Secret: {wh.secret || 'none'} | Retry: {wh.retry || 3} | {wh.enabled ? 'Enabled' : 'Disabled'}
+                    {/* Never render the raw HMAC secret — defeats the
+                        whole point of having a signing secret if anyone
+                        with screen access can read it. */}
+                    Secret: {wh.secret ? 'set' : 'none'} | Retry: {wh.retry || 3} | {wh.enabled ? 'Enabled' : 'Disabled'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 ml-3">
