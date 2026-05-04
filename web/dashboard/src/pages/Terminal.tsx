@@ -44,8 +44,11 @@ export default function TerminalPage() {
       });
     };
 
-    ws.onerror = async () => {
-      setError(`WebSocket failed. URL: ${url.slice(0, 100)}...`);
+    ws.onerror = () => {
+      // Don't echo the URL — it carries the short-lived auth ticket as a
+      // query parameter (WebSockets can't send headers) and would sit on
+      // screen for anyone shoulder-surfing.
+      setError('WebSocket failed to connect. Check the server logs.');
     };
     ws.onclose = (e) => {
       setConnected(false);
@@ -79,8 +82,14 @@ export default function TerminalPage() {
       wsRef.current?.send(val + '\n');
       (e.target as HTMLTextAreaElement).value = '';
     } else if (e.ctrlKey && e.key === 'c') {
+      // preventDefault so this doesn't double as a copy. Without it the
+      // browser also runs its native Ctrl+C which is rarely what the user
+      // wants when their goal is to interrupt a running shell process.
+      e.preventDefault();
       wsRef.current?.send('\x03'); // Ctrl+C
     } else if (e.ctrlKey && e.key === 'd') {
+      // Firefox binds Ctrl+D to "Bookmark this page". Stop it.
+      e.preventDefault();
       wsRef.current?.send('\x04'); // Ctrl+D
     } else if (e.ctrlKey && e.key === 'l') {
       e.preventDefault();
