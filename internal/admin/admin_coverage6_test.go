@@ -236,7 +236,7 @@ func TestSaveUploadedFile(t *testing.T) {
 		t.Error("saveUploadedFile returned empty path")
 	}
 	if header == nil {
-		t.Error("saveUploadedFile returned nil header")
+		t.Fatal("saveUploadedFile returned nil header")
 	}
 	if header.Filename != "test.tar.gz" {
 		t.Errorf("saveUploadedFile filename: expected test.tar.gz, got %s", header.Filename)

@@ -73,14 +73,3 @@ func (s *Server) saveCloudflareStateLocked() error {
 	}
 	return os.Rename(tmp, path)
 }
-
-// persistCloudflareState saves under its own short-lived lock. Use when
-// the caller has already released cloudflareMu.
-func (s *Server) persistCloudflareState() {
-	cloudflareMu.RLock()
-	err := s.saveCloudflareStateLocked()
-	cloudflareMu.RUnlock()
-	if err != nil && s.logger != nil {
-		s.logger.Error("cloudflare state persist failed", "err", err.Error())
-	}
-}

@@ -367,44 +367,12 @@ var documentationIPBlocks = []*net.IPNet{
 	mustParseCIDR("203.0.2.0/24"),
 }
 
-// blockedIPBlocks contains CIDR ranges that must never be reached by external
-// callbacks such as webhooks (SSRF prevention). Order matters: more specific
-// ranges first.
-var blockedIPBlocks = concatIPBlocks(
-	cloudMetadataIPBlocks,
-	loopbackIPBlocks,
-	privateIPBlocks,
-	linkLocalIPBlocks,
-	documentationIPBlocks,
-)
-
-func concatIPBlocks(groups ...[]*net.IPNet) []*net.IPNet {
-	var total int
-	for _, group := range groups {
-		total += len(group)
-	}
-	blocks := make([]*net.IPNet, 0, total)
-	for _, group := range groups {
-		blocks = append(blocks, group...)
-	}
-	return blocks
-}
-
 func mustParseCIDR(s string) *net.IPNet {
 	_, n, err := net.ParseCIDR(s)
 	if err != nil {
 		panic("config: invalid CIDR " + s + ": " + err.Error())
 	}
 	return n
-}
-
-func isIPBlocked(ip net.IP) bool {
-	for _, block := range blockedIPBlocks {
-		if block.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 type urlSafetyPolicy struct {

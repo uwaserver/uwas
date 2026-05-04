@@ -682,14 +682,6 @@ func saveAndRestoreHooks() func() {
 	}
 }
 
-// fakeExecCommand creates a mock exec.Cmd that simulates a process.
-func fakeExecCommand(pid int, startErr error) func(name string, arg ...string) *exec.Cmd {
-	return func(name string, arg ...string) *exec.Cmd {
-		// Return a command that will succeed/fail based on parameters
-		return &exec.Cmd{}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Additional tests with mocks
 // ---------------------------------------------------------------------------

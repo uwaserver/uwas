@@ -1869,8 +1869,7 @@ type htaccessCacheEntry struct {
 	raw            *htaccess.RuleSet
 	compiledRules  []*rewrite.Rule
 	modTime        time.Time      // file modification time for auto-invalidation
-	errorPages     map[int]string // precomputed ErrorDocument map (immutable after parseHtaccessFull)
-	errorPagesOnce sync.Once      // ensures domain.ErrorPages is set at most once
+	errorPages    map[int]string // precomputed ErrorDocument map (immutable after parseHtaccessFull)
 }
 
 func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {

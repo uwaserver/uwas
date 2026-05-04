@@ -52,7 +52,6 @@ type BackupManager struct {
 	keepCount int
 
 	lastBackup time.Time // time of last successful backup
-	startedAt  time.Time // when the scheduler was started
 
 	configPath  string
 	certsDir    string

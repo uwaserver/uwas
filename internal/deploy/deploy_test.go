@@ -417,39 +417,6 @@ func saveAndRestoreHooks() func() {
 	}
 }
 
-// fakeCommandRunner creates a mock that returns predefined outputs based on command patterns.
-func fakeCommandRunner(outputs map[string]struct {
-	out string
-	err error
-}) func(string, map[string]string, string, ...string) (string, error) {
-	return func(dir string, env map[string]string, name string, args ...string) (string, error) {
-		cmd := name + " " + strings.Join(args, " ")
-		for pattern, result := range outputs {
-			if strings.Contains(cmd, pattern) {
-				return result.out, result.err
-			}
-		}
-		// Default: success with empty output
-		return "", nil
-	}
-}
-
-// fakeShellRunner creates a mock for shell commands.
-func fakeShellRunner(outputs map[string]struct {
-	out string
-	err error
-}) func(string, map[string]string, string) (string, error) {
-	return func(dir string, env map[string]string, command string) (string, error) {
-		for pattern, result := range outputs {
-			if strings.Contains(command, pattern) {
-				return result.out, result.err
-			}
-		}
-		// Default: success with empty output
-		return "", nil
-	}
-}
-
 // ---------------------------------------------------------------------------
 // deployGit tests
 // ---------------------------------------------------------------------------
