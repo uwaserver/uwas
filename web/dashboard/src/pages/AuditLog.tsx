@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Shield, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 import { fetchAuditLog, type AuditEntry } from '@/lib/api';
+import { usePolling } from '@/hooks/usePolling';
 
 const ACTION_COLORS: Record<string, string> = {
   'config.reload': 'bg-blue-500/20 text-blue-400',
@@ -34,7 +35,9 @@ export default function AuditLog() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id); }, [load]);
+  // 30s instead of 10s — audit entries arrive in bursts after admin actions,
+  // not steadily. Hook also pauses when the tab is in the background.
+  usePolling(load, 30_000);
 
   const filtered = filter
     ? entries.filter(e => e.action.includes(filter) || e.detail.includes(filter) || e.ip.includes(filter) || (e.user || '').includes(filter))

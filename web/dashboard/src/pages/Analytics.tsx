@@ -9,6 +9,7 @@ import {
 import { fetchAnalytics, fetchBandwidth, resetBandwidth, fetchFeatures, type DomainAnalytics, type BandwidthStatus, type FeatureStatus } from '@/lib/api';
 import Card from '@/components/Card';
 import FeatureBanner from '@/components/FeatureBanner';
+import { usePolling } from '@/hooks/usePolling';
 
 function formatBytes(b: number): string {
   if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
@@ -148,11 +149,9 @@ export default function Analytics() {
   }, []);
 
   useEffect(() => {
-    load();
     fetchFeatures().then(f => setBwFeature(f.bandwidth ?? null)).catch(() => {});
-    const id = setInterval(load, 5000);
-    return () => clearInterval(id);
-  }, [load]);
+  }, []);
+  usePolling(load, 5000);
 
   const totalViews = domains.reduce((s, d) => s + (d.page_views ?? 0), 0);
   const totalUniqueIPs = domains.reduce((s, d) => s + (d.unique_ips ?? 0), 0);
