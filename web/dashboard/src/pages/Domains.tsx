@@ -1020,36 +1020,39 @@ export default function Domains() {
                       <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-400 font-mono">127.0.0.1:{form.appPort || '3000'}</span>
                     </div>
 
-                    {/* Runtime selector — visual cards */}
+                    {/* Runtime selector — visual cards. Color classes embedded
+                        literally (NOT template-string-interpolated) so the
+                        Tailwind v4 JIT keeps them in the production bundle. */}
                     <div>
                       <label className="text-xs font-medium text-muted-foreground mb-2 block">Runtime</label>
                       <div className="grid grid-cols-5 gap-2">
                         {[
-                          { value: 'node', label: 'Node.js', icon: 'N', color: 'green', cmd: 'npm start', port: '3000' },
-                          { value: 'python', label: 'Python', icon: 'Py', color: 'yellow', cmd: 'gunicorn app:app -b 0.0.0.0:${PORT}', port: '8000' },
-                          { value: 'ruby', label: 'Ruby', icon: 'Rb', color: 'red', cmd: 'bundle exec puma -p ${PORT}', port: '3000' },
-                          { value: 'go', label: 'Go', icon: 'Go', color: 'cyan', cmd: './main', port: '8080' },
-                          { value: 'custom', label: 'Custom', icon: '?', color: 'slate', cmd: '', port: '3000' },
-                        ].map(rt => (
-                          <button key={rt.value} type="button"
-                            onClick={() => {
-                              patchField('appRuntime', rt.value);
-                              if (!form.appCommand || form.appCommand === 'npm start' || form.appCommand === 'gunicorn app:app -b 0.0.0.0:${PORT}' || form.appCommand === 'bundle exec puma -p ${PORT}' || form.appCommand === './main') {
-                                patchField('appCommand', rt.cmd);
-                              }
-                              if (form.appPort === '3000' || form.appPort === '8000' || form.appPort === '8080') {
-                                patchField('appPort', rt.port);
-                              }
-                            }}
-                            className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
-                              form.appRuntime === rt.value
-                                ? `border-${rt.color}-500/50 bg-${rt.color}-500/10 ring-1 ring-${rt.color}-500/30`
-                                : 'border-border hover:border-foreground/20'
-                            }`}>
-                            <span className={`text-xs font-bold ${form.appRuntime === rt.value ? `text-${rt.color}-400` : 'text-muted-foreground'}`}>{rt.icon}</span>
-                            <span className="text-[10px] text-muted-foreground">{rt.label}</span>
-                          </button>
-                        ))}
+                          { value: 'node', label: 'Node.js', icon: 'N', cmd: 'npm start', port: '3000', selected: 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30', text: 'text-green-400' },
+                          { value: 'python', label: 'Python', icon: 'Py', cmd: 'gunicorn app:app -b 0.0.0.0:${PORT}', port: '8000', selected: 'border-yellow-500/50 bg-yellow-500/10 ring-1 ring-yellow-500/30', text: 'text-yellow-400' },
+                          { value: 'ruby', label: 'Ruby', icon: 'Rb', cmd: 'bundle exec puma -p ${PORT}', port: '3000', selected: 'border-red-500/50 bg-red-500/10 ring-1 ring-red-500/30', text: 'text-red-400' },
+                          { value: 'go', label: 'Go', icon: 'Go', cmd: './main', port: '8080', selected: 'border-cyan-500/50 bg-cyan-500/10 ring-1 ring-cyan-500/30', text: 'text-cyan-400' },
+                          { value: 'custom', label: 'Custom', icon: '?', cmd: '', port: '3000', selected: 'border-slate-500/50 bg-slate-500/10 ring-1 ring-slate-500/30', text: 'text-slate-400' },
+                        ].map(rt => {
+                          const isSelected = form.appRuntime === rt.value;
+                          return (
+                            <button key={rt.value} type="button"
+                              onClick={() => {
+                                patchField('appRuntime', rt.value);
+                                if (!form.appCommand || form.appCommand === 'npm start' || form.appCommand === 'gunicorn app:app -b 0.0.0.0:${PORT}' || form.appCommand === 'bundle exec puma -p ${PORT}' || form.appCommand === './main') {
+                                  patchField('appCommand', rt.cmd);
+                                }
+                                if (form.appPort === '3000' || form.appPort === '8000' || form.appPort === '8080') {
+                                  patchField('appPort', rt.port);
+                                }
+                              }}
+                              className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
+                                isSelected ? rt.selected : 'border-border hover:border-foreground/20'
+                              }`}>
+                              <span className={`text-xs font-bold ${isSelected ? rt.text : 'text-muted-foreground'}`}>{rt.icon}</span>
+                              <span className="text-[10px] text-muted-foreground">{rt.label}</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
