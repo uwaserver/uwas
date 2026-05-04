@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Lock, Shield, RefreshCw, CheckCircle, XCircle, Clock, AlertTriangle,
   Calendar, Eye, ChevronDown, Upload,
@@ -325,8 +326,14 @@ export default function Certificates() {
               />
             ))}
             {certs.length === 0 && (
-              <div className="col-span-full rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-                No certificates found
+              <div className="col-span-full rounded-lg border border-dashed border-border bg-card p-10 text-center">
+                <Lock size={32} className="mx-auto mb-3 text-muted-foreground opacity-40" />
+                <p className="text-sm font-medium text-card-foreground">No certificates configured</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add a domain with <code className="rounded bg-accent px-1.5 py-0.5 font-mono text-[11px] text-foreground">ssl: auto</code> on the{' '}
+                  <RouterLink to="/domains" className="text-blue-400 underline hover:text-blue-300">Domains page</RouterLink>{' '}
+                  to issue a free Let's Encrypt certificate, or click <strong>Upload Certificate</strong> above to install one manually.
+                </p>
               </div>
             )}
           </div>

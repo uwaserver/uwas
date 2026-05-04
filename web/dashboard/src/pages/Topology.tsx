@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { RefreshCw, Network } from 'lucide-react';
 import {
   ReactFlow,
   Background,
@@ -253,33 +254,47 @@ export default function Topology() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold sm:text-2xl text-foreground">Topology</h1>
-        <p className="text-sm text-muted-foreground">
-          Drag nodes to rearrange. Connections follow automatically.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Topology</h1>
+          <p className="text-sm text-muted-foreground">
+            Drag nodes to rearrange. Connections follow automatically.
+          </p>
+        </div>
+        <button onClick={loadAll} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
+          <RefreshCw size={12} /> Refresh
+        </button>
       </div>
 
-      <div className="h-[calc(100vh-12rem)] rounded-lg border border-border bg-card shadow-md">
-        <ReactFlow
-          defaultNodes={initial.nodes}
-          edges={initial.edges}
-          fitView
-          proOptions={{ hideAttribution: true }}
-          style={{ background: '#1e293b' }}
-        >
-          <Background color="#334155" gap={20} />
-          <Controls
-            style={{ background: '#1e293b', border: '1px solid #334155' }}
-          />
-        </ReactFlow>
-      </div>
+      {domains.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center text-muted-foreground">
+          <Network size={36} className="mx-auto mb-3 opacity-40" />
+          <p className="text-sm font-medium text-card-foreground">No domains yet</p>
+          <p className="mt-1 text-xs">Add a domain on the Domains page to see how requests flow through UWAS.</p>
+        </div>
+      ) : (
+        <div className="h-[calc(100vh-12rem)] rounded-lg border border-border bg-card shadow-md">
+          <ReactFlow
+            defaultNodes={initial.nodes}
+            edges={initial.edges}
+            fitView
+            proOptions={{ hideAttribution: true }}
+            style={{ background: '#1e293b' }}
+          >
+            <Background color="#334155" gap={20} />
+            <Controls
+              style={{ background: '#1e293b', border: '1px solid #334155' }}
+            />
+          </ReactFlow>
+        </div>
+      )}
 
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" /> Static</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#a855f7]" /> PHP</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#f97316]" /> Proxy</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#22c55e]" /> App</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#64748b]" /> Redirect</span>
         <span>|</span>
         <span>🔒 SSL Active</span>
