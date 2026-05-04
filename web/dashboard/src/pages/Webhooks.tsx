@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Webhook, Plus, Trash2, RefreshCw, Send, Check } from 'lucide-react';
-import { fetchWebhooks, createWebhook, deleteWebhook, testWebhook, type WebhookEntry } from '@/lib/api';
+import { fetchWebhooks, createWebhook, deleteWebhook, testWebhook, fetchFeatures, type WebhookEntry, type FeatureStatus } from '@/lib/api';
+import FeatureBanner from '@/components/FeatureBanner';
 
 const EVENT_TYPES = [
   'domain.add', 'domain.delete', 'domain.update',
@@ -22,6 +23,11 @@ export default function Webhooks() {
   const [adding, setAdding] = useState(false);
   const [testing, setTesting] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
+
+  useEffect(() => {
+    fetchFeatures().then(f => setFeatureStatus(f.webhooks ?? null)).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +85,8 @@ export default function Webhooks() {
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
+
+      <FeatureBanner feature="webhooks" status={featureStatus} label="Webhook delivery" />
 
       {error && <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
       {status && <div className="rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400 flex items-center gap-2"><Check size={14} />{status}</div>}

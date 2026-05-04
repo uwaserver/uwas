@@ -54,25 +54,29 @@ func (s *Server) stopAudit() {
 // RecordAudit appends an audit entry to the ring buffer. Safe for concurrent use.
 // IP address is only recorded if audit.RecordIP is enabled in config (GDPR compliance).
 func (s *Server) RecordAudit(action, detail, ip string, success bool) {
-	s.auditMu.Lock()
-	defer s.auditMu.Unlock()
-
 	entryIP := ip
 	if !s.config.Global.Audit.RecordIP {
 		entryIP = "" // redact IP when consent is disabled
 	}
 
-	s.auditEntries[s.auditPos] = AuditEntry{
+	entry := AuditEntry{
 		Time:    time.Now(),
 		Action:  action,
 		Detail:  detail,
 		IP:      entryIP,
 		Success: success,
 	}
+
+	s.auditMu.Lock()
+	s.auditEntries[s.auditPos] = entry
 	s.auditPos = (s.auditPos + 1) % maxAuditEntries
 	if s.auditPos == 0 {
 		s.auditFull = true
 	}
+	s.auditMu.Unlock()
+
+	// Persist outside the lock — best-effort, errors only logged.
+	s.appendAuditLine(entry)
 }
 
 // handleAudit returns the audit log entries in chronological order (oldest first).
