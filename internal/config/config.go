@@ -152,11 +152,12 @@ type CacheConfig struct {
 }
 
 type RedisConfig struct {
-	Enabled  bool     `yaml:"enabled"`
-	Addr     string   `yaml:"addr"`      // "localhost:6379"
-	Password string   `yaml:"password"`
-	DB       int      `yaml:"db"`
-	Prefix   string   `yaml:"prefix"`    // key prefix
+	Enabled  bool   `yaml:"enabled"`
+	Addr     string `yaml:"addr"`     // "localhost:6379"
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	Prefix   string `yaml:"prefix"`   // key prefix
+	TLS      bool   `yaml:"tls"`      // use TLS connection (Redis 6+, e.g. ElastiCache)
 }
 
 type AlertingConfig struct {
@@ -429,12 +430,13 @@ type PHPConfig struct {
 
 // AppConfig holds configuration for non-PHP application processes (Node.js, Python, etc.).
 type AppConfig struct {
-	Command    string            `yaml:"command,omitempty" json:"command,omitempty"`       // e.g. "npm start", "gunicorn app:app"
-	Port       int               `yaml:"port,omitempty" json:"port,omitempty"`             // app listens on this port (auto-assigned if 0)
-	Env        map[string]string `yaml:"env,omitempty" json:"env,omitempty"`               // environment variables
-	WorkDir    string            `yaml:"work_dir,omitempty" json:"work_dir,omitempty"`     // working directory (defaults to domain root)
-	Runtime    string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`       // "node", "python", "ruby", "go", "custom"
-	AutoRestart bool            `yaml:"auto_restart,omitempty" json:"auto_restart,omitempty"` // restart on crash (default true)
+	Command     string            `yaml:"command,omitempty" json:"command,omitempty"`             // e.g. "npm start", "gunicorn app:app"
+	Port        int               `yaml:"port,omitempty" json:"port,omitempty"`                   // app listens on this port (auto-assigned if 0)
+	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`                     // environment variables
+	WorkDir     string            `yaml:"work_dir,omitempty" json:"work_dir,omitempty"`           // working directory (defaults to domain root)
+	Runtime     string            `yaml:"runtime,omitempty" json:"runtime,omitempty"`             // "node", "python", "ruby", "go", "custom"
+	AutoRestart bool              `yaml:"auto_restart,omitempty" json:"auto_restart,omitempty"`   // restart on crash (default true)
+	Disabled    bool              `yaml:"disabled,omitempty" json:"disabled,omitempty"`           // user explicitly stopped this app — don't auto-start on boot
 }
 
 // ResourceLimits defines per-domain CPU/memory/PID limits (Linux cgroups v2).

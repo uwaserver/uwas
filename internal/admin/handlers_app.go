@@ -68,6 +68,7 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
+	s.setAppDisabled(domain, false)
 	s.RecordAudit("app.start", domain, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "started", "domain": domain})
 }
@@ -85,8 +86,28 @@ func (s *Server) handleAppStop(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
+	s.setAppDisabled(domain, true)
 	s.RecordAudit("app.stop", domain, requestIP(r), true)
 	jsonResponse(w, map[string]string{"status": "stopped", "domain": domain})
+}
+
+// setAppDisabled flips the persisted App.Disabled flag for a domain so a
+// stop/start performed via the dashboard survives a server restart. No-op if
+// the domain isn't found in config.
+func (s *Server) setAppDisabled(domain string, disabled bool) {
+	s.configMu.Lock()
+	changed := false
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == domain && s.config.Domains[i].App.Disabled != disabled {
+			s.config.Domains[i].App.Disabled = disabled
+			changed = true
+			break
+		}
+	}
+	s.configMu.Unlock()
+	if changed {
+		s.notifyDomainChange()
+	}
 }
 
 func (s *Server) handleAppRestart(w http.ResponseWriter, r *http.Request) {
