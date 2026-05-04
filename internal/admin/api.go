@@ -2112,17 +2112,57 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 
 // handleConfigExport returns the current configuration as a YAML file download.
 func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
-	// Build a sanitized copy: strip secrets.
+	// Build a sanitized copy: strip every secret-bearing field. The export
+	// gets shared, committed to git, attached to support tickets, etc., so
+	// it must not contain anything that grants access to the system or to
+	// third-party services.
+	//
+	// Note on aliasing: `*s.config` shallow-copies, so slices/maps still
+	// point at the live config. Direct field assignments on copied structs
+	// are safe; mutations through slice or map elements are not — those
+	// must go through a deep copy (see Webhooks and Domains below).
 	s.configMu.RLock()
 	export := *s.config
 	s.configMu.RUnlock()
+
+	// Admin
 	export.Global.Admin.APIKey = ""
 	export.Global.Admin.PinCode = ""
 	export.Global.Admin.TOTPSecret = ""
-	export.Global.ACME.DNSCredentials = nil
-	export.Global.Cache.PurgeKey = ""
+	export.Global.Admin.TLSKey = ""
+	export.Global.Admin.RecoveryCodes = nil
+	export.Global.Admin.OAuth.GoogleSecret = ""
+	export.Global.Admin.OAuth.GitHubSecret = ""
 
-	// Strip per-domain secrets.
+	// ACME
+	export.Global.ACME.DNSCredentials = nil
+
+	// Cache
+	export.Global.Cache.PurgeKey = ""
+	export.Global.Cache.Redis.Password = ""
+
+	// Alerting (Slack URL embeds the auth token in its path)
+	export.Global.Alerting.SlackURL = ""
+	export.Global.Alerting.TelegramToken = ""
+
+	// Backup providers
+	export.Global.Backup.S3.AccessKey = ""
+	export.Global.Backup.S3.SecretKey = ""
+	export.Global.Backup.SFTP.Password = ""
+
+	// Webhooks slice — deep copy before zeroing Secret so we don't mutate
+	// the live config. The shallow `export := *s.config` shares the
+	// underlying array.
+	if len(export.Global.Webhooks) > 0 {
+		webhooks := make([]config.WebhookConfig, len(export.Global.Webhooks))
+		copy(webhooks, export.Global.Webhooks)
+		for i := range webhooks {
+			webhooks[i].Secret = ""
+		}
+		export.Global.Webhooks = webhooks
+	}
+
+	// Per-domain secrets (PHP env vars frequently hold DB passwords / API keys)
 	sanitized := make([]config.Domain, len(export.Domains))
 	copy(sanitized, export.Domains)
 	for i := range sanitized {
