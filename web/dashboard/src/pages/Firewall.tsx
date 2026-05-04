@@ -54,8 +54,39 @@ export default function Firewall() {
     load();
   }, [load]);
 
+  // Auto-dismiss success status after 4s. Errors stick.
+  useEffect(() => {
+    if (!status) return;
+    const id = window.setTimeout(() => setStatus(s => s === status ? '' : s), 4000);
+    return () => window.clearTimeout(id);
+  }, [status]);
+
   const handleToggle = async () => {
     if (!fw) return;
+
+    if (fw.active) {
+      if (!window.confirm(
+        'Disable the firewall?\n\nEvery listening service on this server will be reachable from the internet — including SSH, databases, and any internal admin ports. This is rarely what you want on a production server.\n\nAre you sure?',
+      )) {
+        return;
+      }
+    } else {
+      // Enabling UFW without an explicit allow rule for SSH is the
+      // classic way to lock yourself out of a remote server.
+      const rules = fw.rules ?? [];
+      const hasSSH = rules.some(r =>
+        r.action.toLowerCase() === 'allow' &&
+        (r.port === '22' || r.port === '22/tcp' || /\b22\b/.test(r.port || '')),
+      );
+      if (!hasSSH) {
+        if (!window.confirm(
+          'Enable the firewall WITHOUT an SSH allow rule (port 22)?\n\nIf you are managing this server over SSH, enabling the firewall now will drop your session and lock you out. UWAS recommends adding "allow 22/tcp" first.\n\nProceed anyway?',
+        )) {
+          return;
+        }
+      }
+    }
+
     setToggling(true);
     setError('');
     setStatus('');
