@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/auth"
 )
 
 // AuditEntry represents a single admin API audit log entry.
@@ -12,6 +14,7 @@ type AuditEntry struct {
 	Action  string    `json:"action"` // e.g., "config.reload", "domain.create"
 	Detail  string    `json:"detail"` // e.g., "domain: example.com"
 	IP      string    `json:"ip"`     // requester IP
+	User    string    `json:"user,omitempty"` // username if authenticated; empty for unauthenticated calls
 	Success bool      `json:"success"`
 }
 
@@ -53,7 +56,16 @@ func (s *Server) stopAudit() {
 
 // RecordAudit appends an audit entry to the ring buffer. Safe for concurrent use.
 // IP address is only recorded if audit.RecordIP is enabled in config (GDPR compliance).
+//
+// Use recordAuditR (defined alongside) when you have an *http.Request — it
+// pulls the authenticated user's username off the context automatically.
 func (s *Server) RecordAudit(action, detail, ip string, success bool) {
+	s.RecordAuditUser(action, detail, ip, "", success)
+}
+
+// RecordAuditUser is RecordAudit with explicit user attribution. Pass an
+// empty user when the call is unauthenticated (e.g. failed login attempts).
+func (s *Server) RecordAuditUser(action, detail, ip, user string, success bool) {
 	entryIP := ip
 	if !s.config.Global.Audit.RecordIP {
 		entryIP = "" // redact IP when consent is disabled
@@ -64,6 +76,7 @@ func (s *Server) RecordAudit(action, detail, ip string, success bool) {
 		Action:  action,
 		Detail:  detail,
 		IP:      entryIP,
+		User:    user,
 		Success: success,
 	}
 
@@ -77,6 +90,19 @@ func (s *Server) RecordAudit(action, detail, ip string, success bool) {
 
 	// Persist outside the lock — best-effort, errors only logged.
 	s.appendAuditLine(entry)
+}
+
+// recordAuditR is the request-aware convenience wrapper: it extracts the
+// requester IP from r.RemoteAddr and the authenticated username from the
+// request context (set by the auth middleware). Prefer this over RecordAudit
+// inside HTTP handlers so that audit entries gain user attribution
+// automatically when the user is logged in.
+func (s *Server) recordAuditR(r *http.Request, action, detail string, success bool) {
+	user := ""
+	if u, ok := auth.UserFromContext(r.Context()); ok && u != nil {
+		user = u.Username
+	}
+	s.RecordAuditUser(action, detail, requestIP(r), user, success)
 }
 
 // handleAudit returns the audit log entries in chronological order (oldest first).

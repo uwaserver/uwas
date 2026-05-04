@@ -4649,7 +4649,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := requestIP(r)
-	s.RecordAudit("auth.login", req.Username, ip, true)
+	// Login is unauthenticated when invoked, but we know who succeeded — pass
+	// the username explicitly rather than relying on context (no middleware ran).
+	s.RecordAuditUser("auth.login", req.Username, ip, req.Username, true)
 	if s.webhookMgr != nil {
 		s.webhookMgr.Fire(webhook.EventLoginSuccess, map[string]any{
 			"username": req.Username,
@@ -4690,8 +4692,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.authMgr.Logout(token)
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("auth.logout", "", ip, true)
+	s.recordAuditR(r, "auth.logout", "", true)
 
 	jsonResponse(w, map[string]string{"status": "logged_out"})
 }
@@ -4814,8 +4815,7 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("auth.user.create", req.Username+" ("+req.Role+")", ip, true)
+	s.recordAuditR(r, "auth.user.create", req.Username+" ("+req.Role+")", true)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -4879,8 +4879,7 @@ func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("auth.user.update", username, ip, true)
+	s.recordAuditR(r, "auth.user.update", username, true)
 
 	jsonResponse(w, map[string]string{"status": "updated"})
 }
@@ -4917,8 +4916,7 @@ func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("auth.user.delete", username, ip, true)
+	s.recordAuditR(r, "auth.user.delete", username, true)
 
 	jsonResponse(w, map[string]string{"status": "deleted"})
 }
@@ -4949,8 +4947,7 @@ func (s *Server) handleUserRegenerateAPIKeyAuth(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("auth.user.apikey", username, ip, true)
+	s.recordAuditR(r, "auth.user.apikey", username, true)
 
 	jsonResponse(w, map[string]string{"api_key": newKey})
 }
@@ -5000,8 +4997,7 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	ip := requestIP(r)
-	s.RecordAudit("auth.user.password", username, ip, true)
+	s.recordAuditR(r, "auth.user.password", username, true)
 
 	jsonResponse(w, map[string]string{"status": "password_changed"})
 }

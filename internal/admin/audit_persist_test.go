@@ -99,6 +99,30 @@ func TestAuditPersist_RotationAt10MB(t *testing.T) {
 	}
 }
 
+func TestAuditPersist_RecordAuditUserStoresUsername(t *testing.T) {
+	dir := t.TempDir()
+	s := newAuditTestServer(t, dir)
+	s.RecordAuditUser("auth.user.password", "alice", "1.1.1.1", "alice", true)
+
+	s.auditMu.Lock()
+	got := s.auditEntries[0]
+	s.auditMu.Unlock()
+
+	if got.User != "alice" {
+		t.Errorf("expected User=alice, got %q", got.User)
+	}
+	// Reload and verify the user attribution survives a restart.
+	s2 := newAuditTestServer(t, dir)
+	if err := s2.loadAuditLog(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	s2.auditMu.Lock()
+	defer s2.auditMu.Unlock()
+	if s2.auditEntries[0].User != "alice" {
+		t.Errorf("user attribution lost across reload: %+v", s2.auditEntries[0])
+	}
+}
+
 func TestAuditPersist_TailsToMaxAuditEntries(t *testing.T) {
 	dir := t.TempDir()
 	s1 := newAuditTestServer(t, dir)

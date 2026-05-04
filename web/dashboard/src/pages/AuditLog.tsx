@@ -37,8 +37,10 @@ export default function AuditLog() {
   useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id); }, [load]);
 
   const filtered = filter
-    ? entries.filter(e => e.action.includes(filter) || e.detail.includes(filter) || e.ip.includes(filter))
+    ? entries.filter(e => e.action.includes(filter) || e.detail.includes(filter) || e.ip.includes(filter) || (e.user || '').includes(filter))
     : entries;
+
+  const showUserColumn = entries.some(e => !!e.user);
 
   const actionTypes = [...new Set(entries.map(e => e.action))].sort();
 
@@ -93,6 +95,7 @@ export default function AuditLog() {
                 <th className="px-5 py-3">Time</th>
                 <th className="px-5 py-3">Action</th>
                 <th className="px-5 py-3">Detail</th>
+                {showUserColumn && <th className="px-5 py-3">User</th>}
                 <th className="px-5 py-3">IP</th>
               </tr>
             </thead>
@@ -117,6 +120,11 @@ export default function AuditLog() {
                   <td className="px-5 py-2.5 font-mono text-xs text-muted-foreground max-w-xs truncate">
                     {entry.detail || '-'}
                   </td>
+                  {showUserColumn && (
+                    <td className="px-5 py-2.5 font-mono text-xs text-foreground">
+                      {entry.user || '-'}
+                    </td>
+                  )}
                   <td className="px-5 py-2.5 font-mono text-xs text-muted-foreground">
                     {entry.ip}
                   </td>
@@ -124,7 +132,7 @@ export default function AuditLog() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">
+                  <td colSpan={showUserColumn ? 6 : 5} className="px-5 py-8 text-center text-muted-foreground">
                     <Shield size={24} className="mx-auto mb-2 opacity-50" />
                     No audit entries yet
                   </td>
