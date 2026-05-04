@@ -312,6 +312,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 					s.appMgr.SetCgroupPath(d.Host, cgPath)
 				}
 			}
+			// Respect a user-set Disabled flag — don't auto-start apps the user
+			// explicitly stopped via the dashboard.
+			if d.App.Disabled {
+				log.Info("app boot start skipped (disabled by user)", "domain", d.Host)
+				continue
+			}
 			if err := s.appMgr.Start(d.Host); err != nil {
 				log.Warn("app start failed", "domain", d.Host, "error", err)
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,48 @@ func (errRedisClient) Keys(context.Context, string) ([]string, error) {
 }
 func (errRedisClient) Close() error { return errors.New("close failed") }
 
+// stubRedisClient is an in-memory RedisClient used only by tests so we can
+// exercise RedisCache logic without a live Redis. Returns ErrRedisNotFound
+// on missing keys to mirror the real client.
+type stubRedisClient struct {
+	data map[string]string
+}
+
+func (s *stubRedisClient) Get(_ context.Context, key string) (string, error) {
+	if s.data == nil {
+		return "", ErrRedisNotFound
+	}
+	v, ok := s.data[key]
+	if !ok {
+		return "", ErrRedisNotFound
+	}
+	return v, nil
+}
+func (s *stubRedisClient) Set(_ context.Context, key, value string, _ time.Duration) error {
+	if s.data == nil {
+		s.data = map[string]string{}
+	}
+	s.data[key] = value
+	return nil
+}
+func (s *stubRedisClient) Del(_ context.Context, keys ...string) error {
+	for _, k := range keys {
+		delete(s.data, k)
+	}
+	return nil
+}
+func (s *stubRedisClient) Keys(_ context.Context, pattern string) ([]string, error) {
+	// minimal glob: match * as suffix wildcard
+	out := []string{}
+	for k := range s.data {
+		if pattern == "*" || strings.HasPrefix(k, strings.TrimSuffix(pattern, "*")) {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+func (s *stubRedisClient) Close() error { return nil }
+
 func TestNewRedisCacheDisabled(t *testing.T) {
 	rc, err := NewRedisCache(config.RedisConfig{Enabled: false}, nil)
 	if err != nil {
@@ -35,10 +78,8 @@ func TestNewRedisCacheDisabled(t *testing.T) {
 }
 
 func TestRedisCacheOperations(t *testing.T) {
-	rc, err := NewRedisCache(config.RedisConfig{Enabled: true, Prefix: "uwas"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Use the in-process stub client so this test doesn't need a live Redis.
+	rc := &RedisCache{client: &stubRedisClient{}, prefix: "uwas"}
 	if rc.prefixKey("page") != "uwas:page" {
 		t.Fatalf("prefixed key mismatch: %q", rc.prefixKey("page"))
 	}
@@ -63,8 +104,9 @@ func TestRedisCacheOperations(t *testing.T) {
 	if err := rc.Delete("page"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rc.Get("page"); err == nil {
-		t.Fatal("expected missing key error after delete")
+	// Cache miss after delete -> Get returns (nil, nil) per the new contract.
+	if v, err := rc.Get("page"); err != nil || v != nil {
+		t.Fatalf("expected (nil, nil) after delete, got (%v, %v)", v, err)
 	}
 	if err := rc.PurgeByTag("news"); err != nil {
 		t.Fatal(err)

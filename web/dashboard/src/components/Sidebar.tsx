@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { fetchSystem, fetchBranding, type BrandingConfig } from '@/lib/api';
+import { fetchSystem, fetchBranding, fetchFeatures, type BrandingConfig, type FeaturesMap } from '@/lib/api';
 import {
   LayoutDashboard,
   Globe,
@@ -52,6 +52,13 @@ interface NavItem {
   to: string;
   label: string;
   icon: React.ComponentType<{ size?: number }>;
+  /**
+   * Optional feature key from /api/v1/features. When the feature is reported
+   * as disabled, the menu item is dimmed and shows a tooltip with the reason —
+   * but stays clickable so the user can still see the page (which renders a
+   * FeatureBanner explaining the same thing).
+   */
+  featureKey?: string;
 }
 
 interface NavGroup {
@@ -86,11 +93,11 @@ const groups: NavGroup[] = [
     items: [
       { to: '/php', label: 'PHP', icon: Cpu },
       { to: '/php-config', label: 'PHP Config', icon: Settings },
-      { to: '/apps', label: 'Applications', icon: Box },
+      { to: '/apps', label: 'Applications', icon: Box, featureKey: 'apps' },
       { to: '/database', label: 'Database', icon: HardDrive },
       { to: '/db-explorer', label: 'DB Explorer', icon: Database },
       { to: '/users', label: 'SFTP Users', icon: Users },
-      { to: '/cron', label: 'Cron Jobs', icon: Clock },
+      { to: '/cron', label: 'Cron Jobs', icon: Clock, featureKey: 'cron_monitor' },
       { to: '/services', label: 'Services', icon: Activity },
       { to: '/packages', label: 'Packages', icon: Package },
       { to: '/ip-management', label: 'IP Management', icon: Server },
@@ -111,9 +118,9 @@ const groups: NavGroup[] = [
     label: 'Security',
     icon: Shield,
     items: [
-      { to: '/security', label: 'Security', icon: Shield },
+      { to: '/security', label: 'Security', icon: Shield, featureKey: 'security_stats' },
       { to: '/firewall', label: 'Firewall', icon: ShieldCheck },
-      { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert },
+      { to: '/unknown-domains', label: 'Unknown Domains', icon: ShieldAlert, featureKey: 'unknown_domains' },
       { to: '/audit', label: 'Audit Log', icon: Shield },
       { to: '/admin-users', label: 'Admin Users', icon: UserCog },
     ],
@@ -123,8 +130,8 @@ const groups: NavGroup[] = [
     icon: Settings,
     items: [
       { to: '/config-editor', label: 'Config Editor', icon: Code },
-      { to: '/webhooks', label: 'Webhooks', icon: Webhook },
-      { to: '/backups', label: 'Backups', icon: Archive },
+      { to: '/webhooks', label: 'Webhooks', icon: Webhook, featureKey: 'webhooks' },
+      { to: '/backups', label: 'Backups', icon: Archive, featureKey: 'backups' },
       { to: '/terminal', label: 'Terminal', icon: Terminal },
       { to: '/updates', label: 'Updates', icon: Download },
       { to: '/doctor', label: 'Doctor', icon: Stethoscope },
@@ -134,27 +141,37 @@ const groups: NavGroup[] = [
   },
 ];
 
-function NavLinkItem({ to, label, icon: Icon, onClick }: NavItem & { onClick?: () => void }) {
+function NavLinkItem({
+  to, label, icon: Icon, featureKey, onClick, features,
+}: NavItem & { onClick?: () => void; features?: FeaturesMap }) {
+  const status = featureKey ? features?.[featureKey] : undefined;
+  const dimmed = status && status.enabled === false;
   return (
     <NavLink
       to={to}
       end={to === '/'}
       onClick={onClick}
+      title={dimmed ? `${label} — feature not enabled${status?.reason ? `: ${status.reason}` : ''}` : undefined}
       className={({ isActive }) =>
         `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
           isActive
             ? 'bg-blue-600/20 text-blue-400'
             : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-        }`
+        } ${dimmed ? 'opacity-50' : ''}`
       }
     >
       <Icon size={16} />
-      {label}
+      <span className="flex-1">{label}</span>
+      {dimmed && (
+        <span className="text-[9px] uppercase tracking-wider text-amber-500/70" title={status?.reason}>
+          off
+        </span>
+      )}
     </NavLink>
   );
 }
 
-function CollapsibleGroup({ group, onNavClick }: { group: NavGroup; onNavClick?: () => void }) {
+function CollapsibleGroup({ group, onNavClick, features }: { group: NavGroup; onNavClick?: () => void; features?: FeaturesMap }) {
   const location = useLocation();
   const isActiveGroup = group.items.some(item =>
     item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)
@@ -179,7 +196,7 @@ function CollapsibleGroup({ group, onNavClick }: { group: NavGroup; onNavClick?:
       {open && (
         <div className="ml-3 flex flex-col gap-0.5 border-l border-border pl-2">
           {group.items.map(item => (
-            <NavLinkItem key={item.to} {...item} onClick={onNavClick} />
+            <NavLinkItem key={item.to} {...item} onClick={onNavClick} features={features} />
           ))}
         </div>
       )}
@@ -191,12 +208,14 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [version, setVersion] = useState('');
   const [branding, setBranding] = useState<BrandingConfig>({});
+  const [features, setFeatures] = useState<FeaturesMap>({});
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
     fetchSystem().then(s => setVersion(s?.version || '')).catch(() => {});
     fetchBranding().then(setBranding).catch(() => {});
+    fetchFeatures().then(setFeatures).catch(() => {});
   }, []);
 
   const handleLogout = () => {
@@ -209,13 +228,13 @@ export default function Sidebar() {
   const nav = (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4">
       {topLinks.map(item => (
-        <NavLinkItem key={item.to} {...item} onClick={closeMobile} />
+        <NavLinkItem key={item.to} {...item} onClick={closeMobile} features={features} />
       ))}
 
       <div className="my-2 border-t border-border/50" />
 
       {groups.map(group => (
-        <CollapsibleGroup key={group.label} group={group} onNavClick={closeMobile} />
+        <CollapsibleGroup key={group.label} group={group} onNavClick={closeMobile} features={features} />
       ))}
     </nav>
   );

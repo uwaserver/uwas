@@ -2,8 +2,8 @@ package cache
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,60 +45,12 @@ func NewRedisCache(cfg config.RedisConfig, log *logger.Logger) (*RedisCache, err
 	}, nil
 }
 
-// realRedisClient wraps a real Redis client.
-type realRedisClient struct {
-	addr     string
-	password string
-	db       int
-	tls      bool
-}
-
+// newRedisClient is the production factory. Connects via TCP/RESP to the
+// configured Redis instance and returns the live client. Returns an error
+// (rather than a fake client) if the connection fails — the caller decides
+// whether to disable L3 caching or fail startup.
 func newRedisClient(cfg config.RedisConfig) (RedisClient, error) {
-	// For now, return a mock client that logs operations
-	// In production, this would connect to actual Redis
-	return &mockRedisClient{}, nil
-}
-
-// mockRedisClient is a mock implementation for when Redis is not available.
-type mockRedisClient struct {
-	data map[string]string
-}
-
-func (m *mockRedisClient) Get(ctx context.Context, key string) (string, error) {
-	if m.data == nil {
-		return "", fmt.Errorf("key not found")
-	}
-	val, ok := m.data[key]
-	if !ok {
-		return "", fmt.Errorf("key not found")
-	}
-	return val, nil
-}
-
-func (m *mockRedisClient) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
-	if m.data == nil {
-		m.data = make(map[string]string)
-	}
-	m.data[key] = value
-	return nil
-}
-
-func (m *mockRedisClient) Del(ctx context.Context, keys ...string) error {
-	if m.data == nil {
-		return nil
-	}
-	for _, k := range keys {
-		delete(m.data, k)
-	}
-	return nil
-}
-
-func (m *mockRedisClient) Keys(ctx context.Context, pattern string) ([]string, error) {
-	return nil, nil
-}
-
-func (m *mockRedisClient) Close() error {
-	return nil
+	return newRespClient(cfg)
 }
 
 // prefixKey adds the configured prefix to a cache key.
@@ -120,6 +72,10 @@ func (r *RedisCache) Get(key string) (*CachedResponse, error) {
 
 	data, err := r.client.Get(ctx, r.prefixKey(key))
 	if err != nil {
+		// Cache miss is not an error to propagate.
+		if errors.Is(err, ErrRedisNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -189,11 +145,3 @@ func (r *RedisCache) Close() error {
 	return r.client.Close()
 }
 
-// redisCacheClient implements RedisClient using the actual Redis protocol.
-// This is a placeholder for the real implementation.
-type redisCacheClient struct {
-	addr     string
-	password string
-	db       int
-	tlsConfig *tls.Config
-}
