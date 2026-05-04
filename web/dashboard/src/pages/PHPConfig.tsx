@@ -87,6 +87,25 @@ export default function PHPConfig() {
   const dirtyKeys = popularSettings.filter(s => (formValues[s.key] ?? '') !== (savedValues[s.key] ?? '')).map(s => s.key);
   const hasDirty = dirtyKeys.length > 0;
 
+  // Confirm before discarding unsaved changes in either tab.
+  const confirmDiscard = (): boolean => {
+    if (hasDirty) return window.confirm('You have unsaved settings changes. Discard them?');
+    if (rawDirty) return window.confirm('You have unsaved php.ini changes. Discard them?');
+    return true;
+  };
+
+  // Convert a php.ini size literal (e.g. "64M", "512K", "1g") to bytes.
+  const parseIniSize = (v: string): number | null => {
+    const m = /^(\d+)([kmgKMG]?)$/.exec(v.trim());
+    if (!m) return null;
+    const n = Number(m[1]);
+    const u = m[2].toLowerCase();
+    if (u === 'k') return n * 1024;
+    if (u === 'm') return n * 1024 * 1024;
+    if (u === 'g') return n * 1024 * 1024 * 1024;
+    return n;
+  };
+
   const handleSaveAll = async () => {
     // Validate all dirty keys first
     for (const key of dirtyKeys) {
@@ -96,6 +115,13 @@ export default function PHPConfig() {
         showStatus(false, `Invalid value for ${key}: "${value}"`);
         return;
       }
+    }
+    // Cross-field: PHP rejects post_max_size < upload_max_filesize at startup.
+    const postBytes = parseIniSize(formValues.post_max_size ?? '');
+    const uploadBytes = parseIniSize(formValues.upload_max_filesize ?? '');
+    if (postBytes !== null && uploadBytes !== null && postBytes < uploadBytes) {
+      showStatus(false, `post_max_size (${formValues.post_max_size}) must be >= upload_max_filesize (${formValues.upload_max_filesize})`);
+      return;
     }
     setSavingAll(true);
     try {
@@ -163,16 +189,24 @@ export default function PHPConfig() {
 
       {/* Version + tab selector */}
       <div className="flex items-center gap-4">
-        <select value={selectedVer} onChange={e => setSelectedVer(e.target.value)}
+        <select
+          value={selectedVer}
+          onChange={e => {
+            if (!confirmDiscard()) {
+              e.target.value = selectedVer;
+              return;
+            }
+            setSelectedVer(e.target.value);
+          }}
           className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
           {versions.map(v => <option key={v} value={v}>PHP {v}</option>)}
         </select>
         <div className="flex rounded-md border border-border overflow-hidden">
-          <button onClick={() => setTab('form')}
+          <button onClick={() => { if (tab !== 'form' && confirmDiscard()) setTab('form'); }}
             className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'form' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
             <Sliders size={13} /> Settings
           </button>
-          <button onClick={() => setTab('raw')}
+          <button onClick={() => { if (tab !== 'raw' && confirmDiscard()) setTab('raw'); }}
             className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'raw' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
             <Code size={13} /> Raw php.ini
           </button>
