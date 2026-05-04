@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Database, Trash2, Tag, CheckCircle, XCircle, RefreshCw,
   HardDrive, Zap, Clock, Globe, Shield,
@@ -39,6 +40,14 @@ export default function Cache() {
   }, []);
 
   usePolling(fetchCacheStats, 5000);
+
+  // Auto-dismiss success toast after 4s. Errors stick until next action.
+  useEffect(() => {
+    if (status?.ok) {
+      const id = window.setTimeout(() => setStatus(s => s === status ? null : s), 4000);
+      return () => window.clearTimeout(id);
+    }
+  }, [status]);
 
   const total = (cacheStats?.hits ?? 0) + (cacheStats?.misses ?? 0);
   const hitRate = total > 0 ? ((cacheStats!.hits / total) * 100).toFixed(1) : '0.0';
@@ -174,7 +183,26 @@ export default function Cache() {
                     <span title={d.rules.map(r => `${r.match} ${r.bypass ? '(bypass)' : `TTL:${r.ttl}s`}`).join('\n')}>{d.rules.length} rules</span>
                   ) : '—'}</td>
                   <td className="py-2.5">{d.enabled && d.tags && d.tags.length > 0 && (
-                    <button onClick={() => { setTag(d.tags![0]); }} className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20">Purge</button>
+                    <button
+                      onClick={async () => {
+                        if (purging) return;
+                        const t = d.tags![0];
+                        setPurging(true); setStatus(null);
+                        try {
+                          await triggerPurge(t);
+                          setStatus({ ok: true, message: `Purged tag "${t}" for ${d.host}` });
+                          addPurgeLog(`Purge tag: ${t} (${d.host})`, true);
+                          fetchCacheStats();
+                        } catch (e) {
+                          setStatus({ ok: false, message: (e as Error).message });
+                          addPurgeLog(`Purge tag: ${t} (${d.host}) — FAILED`, false);
+                        } finally { setPurging(false); }
+                      }}
+                      disabled={purging}
+                      className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+                    >
+                      Purge
+                    </button>
                   )}</td>
                 </tr>
               ))}</tbody>
@@ -244,79 +272,33 @@ export default function Cache() {
         </div>
       )}
 
-      {/* Redis L3 Cache */}
+      {/* Redis L3 Cache — backend support exists but is config-file-only.
+          The previous form here was a stub: defaultValue inputs with no
+          state, no onChange, no API calls, and "Test Connection" / "Save"
+          buttons that did nothing. That was worse than no UI at all
+          because users assumed they had configured Redis when nothing
+          had happened. Show the truth instead. */}
       <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-card-foreground">
+        <h3 className="mb-2 flex items-center gap-2 text-base font-semibold text-card-foreground">
           <Database className="h-5 w-5 text-purple-500" />
           Redis L3 Cache
         </h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          Configure Redis as an L3 cache layer for distributed caching across multiple UWAS instances.
+        <p className="text-sm text-muted-foreground mb-3">
+          Optional third tier (after L1 memory and L2 disk) that lets multiple UWAS instances share a cache.
+          This is currently configured via the YAML config file under <code className="rounded bg-background px-1.5 py-0.5 text-xs font-mono">cache.redis</code> — there is no dashboard form yet.
         </p>
-        <div className="space-y-4">
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="rounded border-border"
-                defaultChecked={false}
-              />
-              <span className="text-sm text-foreground">Enable Redis Cache</span>
-            </label>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Redis Address</label>
-              <input
-                type="text"
-                defaultValue="localhost:6379"
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="localhost:6379"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Database (DB)</label>
-              <input
-                type="number"
-                defaultValue={0}
-                min={0}
-                max={15}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">Password (optional)</label>
-            <input
-              type="password"
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="Redis password"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">Key Prefix</label>
-            <input
-              type="text"
-              defaultValue="uwas"
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="uwas"
-            />
-            <p className="text-xs text-muted-foreground mt-1">Prefix for all cache keys in Redis</p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Test Connection
-            </button>
-            <button
-              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
-            >
-              Save Configuration
-            </button>
-          </div>
-        </div>
+        <pre className="rounded bg-background p-3 text-xs font-mono text-muted-foreground overflow-auto">{`cache:
+  redis:
+    enabled: true
+    addr: localhost:6379
+    password: ""        # optional
+    db: 0
+    prefix: uwas`}</pre>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Edit the config file directly via the{' '}
+          <RouterLink to="/config-editor" className="text-blue-400 hover:underline">Config Editor</RouterLink>
+          {' '}page, then restart UWAS to apply.
+        </p>
       </div>
     </div>
   );
