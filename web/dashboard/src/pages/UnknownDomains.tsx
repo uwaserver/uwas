@@ -9,7 +9,11 @@ import FeatureBanner from '@/components/FeatureBanner';
 import { usePolling } from '@/hooks/usePolling';
 
 function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const t = new Date(iso).getTime();
+  // Date constructed from "" / "invalid" / undefined yields NaN, which
+  // would otherwise cascade into "NaNm ago" in the table.
+  if (!Number.isFinite(t)) return '—';
+  const diff = Date.now() - t;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
@@ -22,6 +26,7 @@ export default function UnknownDomains() {
   const [entries, setEntries] = useState<UnknownDomainEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [error, setError] = useState('');
   const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
 
   const load = useCallback(() => {
@@ -38,11 +43,16 @@ export default function UnknownDomains() {
 
   const act = async (host: string, fn: (h: string) => Promise<unknown>) => {
     setActing(host);
+    setError('');
     try {
       await fn(host);
       load();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // Previously this catch was empty — every Block/Unblock/Dismiss
+      // failure (server error, permission revoked, network) silently
+      // disappeared and the button just stopped spinning, leaving the
+      // user thinking the action worked when it didn't.
+      setError(`${host}: ${(e as Error).message}`);
     } finally {
       setActing(null);
     }
@@ -72,6 +82,12 @@ export default function UnknownDomains() {
           Refresh
         </button>
       </div>
+
+      {error && (
+        <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
       {loading && (
         <div className="text-center text-muted-foreground py-12">Loading...</div>
