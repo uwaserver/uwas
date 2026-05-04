@@ -206,6 +206,82 @@ func TestCallToolDomainGet(t *testing.T) {
 	}
 }
 
+// TestCallToolDomainGetRedactsSecrets verifies sanitizeDomainForMCP zeroes
+// every per-domain secret-bearing field. Add an entry here whenever a new
+// credential field is added to config.Domain.
+func TestCallToolDomainGetRedactsSecrets(t *testing.T) {
+	cfg := &config.Config{
+		Domains: []config.Domain{
+			{
+				Host: "secret.example.com",
+				Type: "php",
+				PHP: config.PHPConfig{
+					Env: map[string]string{"DB_PASSWORD": "canary-php-env"},
+				},
+				App: config.AppConfig{
+					Env: map[string]string{"API_KEY": "canary-app-env"},
+				},
+				BasicAuth: config.BasicAuthConfig{
+					Enabled: true,
+					Users:   map[string]string{"alice": "canary-htpasswd-hash"},
+				},
+				SSL: config.SSLConfig{
+					Mode: "manual",
+					Cert: "/etc/ssl/certs/secret.crt",
+					Key:  "canary-ssl-private-key",
+				},
+				WebhookSecret: "canary-webhook-secret",
+			},
+		},
+	}
+	s := New(cfg, logger.New("error", "text"), metrics.New())
+
+	result, err := s.CallTool("domain_get", json.RawMessage(`{"host":"secret.example.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.(config.Domain)
+
+	if got.PHP.Env != nil {
+		t.Errorf("PHP.Env leaked: %v", got.PHP.Env)
+	}
+	if got.App.Env != nil {
+		t.Errorf("App.Env leaked: %v", got.App.Env)
+	}
+	if got.BasicAuth.Users != nil {
+		t.Errorf("BasicAuth.Users leaked: %v", got.BasicAuth.Users)
+	}
+	if got.WebhookSecret != "" {
+		t.Errorf("WebhookSecret leaked: %q", got.WebhookSecret)
+	}
+	if got.SSL.Key != "" {
+		t.Errorf("SSL.Key leaked: %q", got.SSL.Key)
+	}
+
+	// Non-secret fields must still be present so the tool stays useful.
+	if got.Host != "secret.example.com" {
+		t.Errorf("Host should remain: got %q", got.Host)
+	}
+	if got.Type != "php" {
+		t.Errorf("Type should remain: got %q", got.Type)
+	}
+	if got.SSL.Mode != "manual" || got.SSL.Cert == "" {
+		t.Errorf("SSL non-secret fields should remain: %+v", got.SSL)
+	}
+	if !got.BasicAuth.Enabled {
+		t.Error("BasicAuth.Enabled should remain")
+	}
+
+	// Sanity: live config must not be mutated by the sanitization.
+	live := cfg.Domains[0]
+	if live.PHP.Env["DB_PASSWORD"] != "canary-php-env" {
+		t.Error("live config PHP.Env was mutated by sanitization")
+	}
+	if live.WebhookSecret == "" {
+		t.Error("live config WebhookSecret was mutated by sanitization")
+	}
+}
+
 func TestCallToolDomainGetNotFound(t *testing.T) {
 	s := testMCPServer()
 
