@@ -1186,11 +1186,17 @@ export const importCloudflareZone = (
   zoneId: string,
   defaultType: 'static' | 'php' | 'proxy' | 'redirect',
   defaultRoot: string,
+  opts?: { dryRun?: boolean; hostnames?: string[] },
 ) =>
-  api<CloudflareZoneImportResult>(
+  api<CloudflareZoneImportResult & { dry_run?: boolean }>(
     `/api/v1/cloudflare/zones/${encodeURIComponent(zoneId)}/import`,
     {
       method: 'POST',
-      body: JSON.stringify({ default_type: defaultType, default_root: defaultRoot }),
+      body: JSON.stringify({
+        default_type: defaultType,
+        default_root: defaultRoot,
+        dry_run: opts?.dryRun ?? false,
+        hostnames: opts?.hostnames,
+      }),
     },
   );

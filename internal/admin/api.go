@@ -5784,54 +5784,81 @@ func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, zones)
 }
 
+// fetchCloudflareZones iterates all pages of /zones (50 per page) so accounts
+// with hundreds of zones get the full list. Hard-capped at 50 pages (2500
+// zones) to bound memory and avoid runaway loops on a misbehaving API.
 func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
-	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	const perPage = 50
+	const maxPages = 50
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Success bool `json:"success"`
-		Result  []struct {
-			ID     string `json:"id"`
-			Name   string `json:"name"`
-			Status string `json:"status"`
-			Plan   struct {
-				Name string `json:"name"`
-			} `json:"plan"`
-		} `json:"result"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	if !result.Success {
-		if len(result.Errors) > 0 {
-			return nil, fmt.Errorf("%s", result.Errors[0].Message)
+	all := make([]cloudflareZone, 0, perPage)
+	for page := 1; page <= maxPages; page++ {
+		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones?per_page=%d&page=%d", perPage, page)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("failed to fetch zones")
-	}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 
-	zones := make([]cloudflareZone, len(result.Result))
-	for i, z := range result.Result {
-		zones[i] = cloudflareZone{
-			ID:     z.ID,
-			Name:   z.Name,
-			Status: z.Status,
-			Plan:   z.Plan.Name,
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		var result struct {
+			Success bool `json:"success"`
+			Result  []struct {
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Status string `json:"status"`
+				Plan   struct {
+					Name string `json:"name"`
+				} `json:"plan"`
+			} `json:"result"`
+			ResultInfo struct {
+				Page       int `json:"page"`
+				PerPage    int `json:"per_page"`
+				Count      int `json:"count"`
+				TotalCount int `json:"total_count"`
+				TotalPages int `json:"total_pages"`
+			} `json:"result_info"`
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+		resp.Body.Close()
+
+		if !result.Success {
+			if len(result.Errors) > 0 {
+				return nil, fmt.Errorf("%s", result.Errors[0].Message)
+			}
+			return nil, fmt.Errorf("failed to fetch zones (page %d)", page)
+		}
+
+		for _, z := range result.Result {
+			all = append(all, cloudflareZone{
+				ID:     z.ID,
+				Name:   z.Name,
+				Status: z.Status,
+				Plan:   z.Plan.Name,
+			})
+		}
+
+		// Stop if we've fetched everything.
+		if result.ResultInfo.TotalPages == 0 || page >= result.ResultInfo.TotalPages {
+			break
+		}
+		// Defensive: also stop if this page returned fewer than per_page items.
+		if len(result.Result) < perPage {
+			break
 		}
 	}
-	return zones, nil
+	return all, nil
 }
 
 type cloudflareZone struct {
@@ -5960,6 +5987,8 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		DefaultType string `json:"default_type"`
 		DefaultRoot string `json:"default_root"`
+		DryRun      bool   `json:"dry_run"`     // preview only — don't persist
+		Hostnames   []string `json:"hostnames"` // optional whitelist; if set, only these are imported
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if req.DefaultType == "" {
@@ -5970,6 +5999,15 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 	default:
 		jsonError(w, "default_type must be one of: static, php, proxy, redirect", http.StatusBadRequest)
 		return
+	}
+
+	// Build a hostname whitelist (lowercased) if the caller supplied one.
+	var whitelist map[string]bool
+	if len(req.Hostnames) > 0 {
+		whitelist = make(map[string]bool, len(req.Hostnames))
+		for _, h := range req.Hostnames {
+			whitelist[strings.ToLower(strings.TrimSuffix(h, "."))] = true
+		}
 	}
 
 	records, err := s.fetchCloudflareDNSRecords(cfg.Token, zoneID)
@@ -5995,6 +6033,10 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 		if strings.HasSuffix(host, ".cfargotunnel.com") {
 			continue
 		}
+		// If caller supplied a whitelist, only consider those hostnames.
+		if whitelist != nil && !whitelist[host] {
+			continue
+		}
 		if !seen[host] {
 			seen[host] = true
 			hostnames = append(hostnames, host)
@@ -6013,6 +6055,25 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 	webRoot := s.config.Global.WebRoot
 	if webRoot == "" {
 		webRoot = "/var/www"
+	}
+
+	// Dry-run: just figure out what would happen without touching state.
+	if req.DryRun {
+		for _, host := range hostnames {
+			if existing[host] {
+				skipped = append(skipped, host)
+			} else {
+				added = append(added, host)
+			}
+		}
+		s.configMu.Unlock()
+		jsonResponse(w, map[string]any{
+			"added":   added,
+			"skipped": skipped,
+			"total":   len(hostnames),
+			"dry_run": true,
+		})
+		return
 	}
 
 	for _, host := range hostnames {

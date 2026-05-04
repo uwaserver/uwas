@@ -57,11 +57,22 @@ export default function Cloudflare() {
   const [purgeUrl, setPurgeUrl] = useState('');
   const [purgeEverything, setPurgeEverything] = useState(false);
 
+  // Zones search (client-side filter)
+  const [zoneSearch, setZoneSearch] = useState('');
+
   // Per-zone import form
   const [importZoneId, setImportZoneId] = useState<string | null>(null);
   const [importType, setImportType] = useState<'static' | 'php' | 'proxy' | 'redirect'>('static');
   const [importRoot, setImportRoot] = useState('/var/www/{host}/public_html');
   const [importLoading, setImportLoading] = useState(false);
+  // Preview state: list of hostnames discovered in the zone, with which already exist
+  // and which the user wants to skip. Loaded by dry-run before the actual import.
+  const [importPreview, setImportPreview] = useState<{
+    zoneId: string;
+    addable: string[];   // not yet in UWAS
+    existing: string[];  // already in UWAS (auto-skipped)
+    selected: Set<string>; // user's chosen subset of addable
+  } | null>(null);
 
   // Tunnel state
   const [tunnels, setTunnels] = useState<CloudflareTunnel[]>([]);
@@ -203,22 +214,75 @@ export default function Cloudflare() {
     }
   };
 
-  const handleImportZone = async (zoneId: string) => {
+  // Step 1: open the import drawer for a zone and load the dry-run preview.
+  const handleOpenImport = async (zoneId: string) => {
+    setImportZoneId(zoneId);
+    setImportPreview(null);
+    setError('');
+    setSuccess('');
+    setImportLoading(true);
+    try {
+      // dry_run=true → server returns added/skipped lists without persisting
+      const preview = await importCloudflareZone(zoneId, importType, importRoot, { dryRun: true });
+      const addable = preview.added ?? [];
+      setImportPreview({
+        zoneId,
+        addable,
+        existing: preview.skipped ?? [],
+        selected: new Set(addable), // pre-select everything addable
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to preview zone hostnames');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  // Step 2: commit the import with the user's chosen subset of hostnames.
+  const handleCommitImport = async () => {
+    if (!importPreview) return;
+    const chosen = Array.from(importPreview.selected);
+    if (chosen.length === 0) {
+      setError('Select at least one hostname to import');
+      return;
+    }
     setImportLoading(true);
     setError('');
     setSuccess('');
     try {
-      const result = await importCloudflareZone(zoneId, importType, importRoot);
-      const parts = [`Added ${result.added.length}`];
-      if (result.skipped.length) parts.push(`skipped ${result.skipped.length} (already exists)`);
-      parts.push(`out of ${result.total} hostname${result.total === 1 ? '' : 's'}`);
-      setSuccess(parts.join(', '));
+      const result = await importCloudflareZone(
+        importPreview.zoneId,
+        importType,
+        importRoot,
+        { hostnames: chosen },
+      );
+      const parts: string[] = [];
+      if (result.added.length) parts.push(`${result.added.length} domain${result.added.length === 1 ? '' : 's'} added`);
+      if (result.skipped.length) parts.push(`${result.skipped.length} already existed`);
+      setSuccess(parts.join(', ') || 'Nothing to import');
       setImportZoneId(null);
+      setImportPreview(null);
     } catch (err: any) {
       setError(err.message || 'Import failed');
     } finally {
       setImportLoading(false);
     }
+  };
+
+  const togglePreviewHost = (host: string) => {
+    if (!importPreview) return;
+    const next = new Set(importPreview.selected);
+    if (next.has(host)) next.delete(host);
+    else next.add(host);
+    setImportPreview({ ...importPreview, selected: next });
+  };
+
+  const togglePreviewAll = () => {
+    if (!importPreview) return;
+    const next = importPreview.selected.size === importPreview.addable.length
+      ? new Set<string>()
+      : new Set(importPreview.addable);
+    setImportPreview({ ...importPreview, selected: next });
   };
 
   const handleConnect = async () => {
@@ -651,22 +715,50 @@ export default function Cloudflare() {
           {/* Zones Section */}
           <div className="rounded-lg border border-border bg-card">
             <div className="p-4 border-b border-border">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <Globe className="h-5 w-5" />
-                Zones
-              </h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Domains in your Cloudflare account. Use <strong>Import to UWAS</strong> to add hostnames
-                from a zone's DNS records as UWAS sites, or <strong>Manage DNS</strong> to edit records via the DNS page.
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <Globe className="h-5 w-5" />
+                  Zones
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {zoneSearch
+                      ? `${zones.filter(z => z.name.toLowerCase().includes(zoneSearch.toLowerCase())).length} of ${zones.length}`
+                      : `${zones.length} total`}
+                  </span>
+                </h2>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={zoneSearch}
+                    onChange={(e) => setZoneSearch(e.target.value)}
+                    placeholder="Filter zones…"
+                    className="w-56 rounded-md border border-border bg-background pl-3 pr-8 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  {zoneSearch && (
+                    <button
+                      onClick={() => setZoneSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      title="Clear filter"
+                    >
+                      <XCircle className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                <strong>Manage DNS</strong> = bu zone'un DNS kayıtlarını UWAS DNS sayfasında düzenle.
+                <strong className="ml-3">Import to UWAS</strong> = bu zone'daki A / AAAA / CNAME kayıtlarını
+                tarayıp her bir hostname için UWAS'ta otomatik bir site oluştur (önizleme gösterilir, sen seçersin).
               </p>
             </div>
-            <div className="divide-y divide-border">
+            <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
               {zones.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground">
                   No zones found in this account
                 </div>
               ) : (
-                zones.map((zone) => (
+                zones
+                  .filter((z) => !zoneSearch || z.name.toLowerCase().includes(zoneSearch.toLowerCase()))
+                  .map((zone) => (
                   <div key={zone.id} className="p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
@@ -686,9 +778,12 @@ export default function Cloudflare() {
                         </RouterLink>
                         <button
                           onClick={() => {
-                            setImportZoneId(importZoneId === zone.id ? null : zone.id);
-                            setError('');
-                            setSuccess('');
+                            if (importZoneId === zone.id) {
+                              setImportZoneId(null);
+                              setImportPreview(null);
+                            } else {
+                              handleOpenImport(zone.id);
+                            }
                           }}
                           disabled={loading}
                           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
@@ -700,59 +795,131 @@ export default function Cloudflare() {
                     </div>
 
                     {importZoneId === zone.id && (
-                      <div className="mt-3 rounded-md border border-border bg-muted/40 p-3">
-                        <p className="text-xs text-muted-foreground mb-3">
-                          Pulls A / AAAA / CNAME records from <strong>{zone.name}</strong> and creates
-                          a UWAS domain for every hostname not already configured.
-                        </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs font-medium text-foreground mb-1">
-                              Default site type
-                            </label>
-                            <select
-                              value={importType}
-                              onChange={(e) => setImportType(e.target.value as 'static' | 'php' | 'proxy' | 'redirect')}
-                              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                            >
-                              <option value="static">Static</option>
-                              <option value="php">PHP</option>
-                              <option value="proxy">Proxy</option>
-                              <option value="redirect">Redirect</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium text-foreground mb-1">
-                              Default web root
-                            </label>
-                            <input
-                              type="text"
-                              value={importRoot}
-                              onChange={(e) => setImportRoot(e.target.value)}
-                              placeholder="/var/www/{host}/public_html"
-                              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                            />
-                            <p className="text-[10px] text-muted-foreground mt-1">
-                              <code>{'{host}'}</code> is replaced per imported hostname.
-                            </p>
-                          </div>
+                      <div className="mt-3 rounded-md border border-border bg-muted/40 p-3 space-y-3">
+                        <div className="text-xs text-muted-foreground">
+                          <strong>Ne yapılır?</strong> <em>{zone.name}</em> zone'undaki tüm A / AAAA / CNAME
+                          kayıtlarındaki hostname'ler okunur. Aşağıda işaretlediğin her hostname için UWAS'ta
+                          yeni bir site (domain) oluşturulur — web root klasörü yaratılır, otomatik HTTPS
+                          (ACME) etkinleştirilir, seçtiğin tipe göre (Static/PHP/Proxy/Redirect) varsayılan
+                          ayarlar uygulanır. Cloudflare zone'una hiç dokunulmaz, hiçbir DNS değişikliği
+                          yapılmaz — sadece UWAS tarafında site kayıtları eklenir.
                         </div>
-                        <div className="flex justify-end gap-2 mt-3">
-                          <button
-                            onClick={() => setImportZoneId(null)}
-                            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={() => handleImportZone(zone.id)}
-                            disabled={importLoading}
-                            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
-                          >
-                            <Download className={`h-4 w-4 ${importLoading ? 'animate-pulse' : ''}`} />
-                            {importLoading ? 'Importing…' : 'Import zone'}
-                          </button>
-                        </div>
+
+                        {importLoading && !importPreview && (
+                          <div className="text-sm text-muted-foreground py-4 text-center">
+                            <RefreshCw className="h-4 w-4 inline animate-spin mr-2" />
+                            Cloudflare'den DNS kayıtları okunuyor…
+                          </div>
+                        )}
+
+                        {importPreview && importPreview.zoneId === zone.id && (
+                          <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-foreground mb-1">
+                                  Default site type
+                                </label>
+                                <select
+                                  value={importType}
+                                  onChange={(e) => setImportType(e.target.value as 'static' | 'php' | 'proxy' | 'redirect')}
+                                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                                >
+                                  <option value="static">Static — Düz HTML/JS/CSS dosyaları (varsayılan)</option>
+                                  <option value="php">PHP — WordPress, Laravel vb. PHP siteleri</option>
+                                  <option value="proxy">Proxy — Başka bir backend'e yönlendir</option>
+                                  <option value="redirect">Redirect — Başka bir URL'e 301 yönlendirme</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-foreground mb-1">
+                                  Web root klasörü
+                                </label>
+                                <input
+                                  type="text"
+                                  value={importRoot}
+                                  onChange={(e) => setImportRoot(e.target.value)}
+                                  placeholder="/var/www/{host}/public_html"
+                                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                                />
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  <code>{'{host}'}</code> her hostname için yerine konur. Boş bırakırsan
+                                  varsayılan: <code>/var/www/&lt;hostname&gt;/public_html</code>
+                                </p>
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium text-foreground">
+                                  Eklenecek hostname'ler
+                                  <span className="ml-1 text-muted-foreground font-normal">
+                                    ({importPreview.selected.size} / {importPreview.addable.length} seçili)
+                                  </span>
+                                </span>
+                                {importPreview.addable.length > 1 && (
+                                  <button
+                                    onClick={togglePreviewAll}
+                                    className="text-xs text-primary hover:underline"
+                                  >
+                                    {importPreview.selected.size === importPreview.addable.length ? 'Hiçbirini seçme' : 'Hepsini seç'}
+                                  </button>
+                                )}
+                              </div>
+                              {importPreview.addable.length === 0 ? (
+                                <div className="text-xs text-muted-foreground italic py-2">
+                                  Bu zone'daki tüm hostname'ler zaten UWAS'ta tanımlı.
+                                </div>
+                              ) : (
+                                <div className="max-h-48 overflow-y-auto rounded border border-border bg-background">
+                                  {importPreview.addable.map((host) => (
+                                    <label
+                                      key={host}
+                                      className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={importPreview.selected.has(host)}
+                                        onChange={() => togglePreviewHost(host)}
+                                        className="rounded border-border"
+                                      />
+                                      <span className="font-mono text-foreground">{host}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {importPreview.existing.length > 0 && (
+                              <details className="text-xs">
+                                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                                  {importPreview.existing.length} hostname zaten UWAS'ta tanımlı (atlanacak)
+                                </summary>
+                                <div className="mt-1 space-y-0.5 pl-3 font-mono text-muted-foreground">
+                                  {importPreview.existing.map((h) => <div key={h}>· {h}</div>)}
+                                </div>
+                              </details>
+                            )}
+
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => { setImportZoneId(null); setImportPreview(null); }}
+                                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
+                              >
+                                İptal
+                              </button>
+                              <button
+                                onClick={handleCommitImport}
+                                disabled={importLoading || importPreview.selected.size === 0}
+                                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <Download className={`h-4 w-4 ${importLoading ? 'animate-pulse' : ''}`} />
+                                {importLoading
+                                  ? 'Ekleniyor…'
+                                  : `${importPreview.selected.size} site ekle`}
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
