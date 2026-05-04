@@ -480,9 +480,10 @@ interface AppCardProps {
   onAction: (action: 'start' | 'stop' | 'restart') => void;
   onDeploy: () => void;
   onSaveConfig: (env: Record<string, string>, command?: string, port?: number) => Promise<void>;
+  onError: (msg: string) => void;
 }
 
-function AppCard({ app, acting, onAction, onDeploy, onSaveConfig }: AppCardProps) {
+function AppCard({ app, acting, onAction, onDeploy, onSaveConfig, onError }: AppCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'env' | 'logs'>('overview');
   const [envRows, setEnvRows] = useState<EnvRow[]>([]);
@@ -530,7 +531,14 @@ function AppCard({ app, acting, onAction, onDeploy, onSaveConfig }: AppCardProps
       const env: Record<string, string> = {};
       envRows.forEach(r => { if (r.key.trim()) env[r.key.trim()] = r.value; });
       await onSaveConfig(env, editCmd || undefined, parseInt(editPort) || undefined);
-    } finally { setSaving(false); }
+    } catch (e) {
+      // Without this catch, a failed updateAppEnv call became an uncaught
+      // promise rejection and the user saw no error — they assumed the
+      // save worked and would later be confused when ENV vars were stale.
+      onError((e as Error).message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -789,6 +797,16 @@ export default function Apps() {
   const [wizardDomain, setWizardDomain] = useState('');
   const [deploying, setDeploying] = useState(false);
   const [deployStatusData, setDeployStatusData] = useState<DeployStatus | null>(null);
+  const deployPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Cancel any in-flight deploy poll on unmount so the interval doesn't
+  // leak after the user navigates away from the Apps page mid-deploy.
+  useEffect(() => () => {
+    if (deployPollRef.current) {
+      clearInterval(deployPollRef.current);
+      deployPollRef.current = null;
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -828,6 +846,11 @@ export default function Apps() {
     if (!wizardDomain) return;
     setDeploying(true);
     setDeployStatusData(null);
+    // Clear any previous deploy poll before starting a new one.
+    if (deployPollRef.current) {
+      clearInterval(deployPollRef.current);
+      deployPollRef.current = null;
+    }
     try {
       await deployApp(wizardDomain, {
         git_url: form.gitUrl || undefined,
@@ -837,19 +860,28 @@ export default function Apps() {
         ssh_key_path: form.sshKey || undefined,
         git_token: form.gitToken || undefined,
       });
-      // Poll for status
-      const poll = setInterval(async () => {
+      // Poll for status — handle stored in ref so unmount/cancel can clear it.
+      deployPollRef.current = setInterval(async () => {
         try {
           const st = await fetchDeployStatus(wizardDomain);
           setDeployStatusData(st);
           if (st.status === 'running' || st.status === 'failed') {
-            clearInterval(poll);
+            if (deployPollRef.current) {
+              clearInterval(deployPollRef.current);
+              deployPollRef.current = null;
+            }
             setDeploying(false);
             await load();
             if (st.status === 'running') showStatus(true, `Deploy complete: ${wizardDomain}`);
             else showStatus(false, `Deploy failed: ${st.error}`);
           }
-        } catch { clearInterval(poll); setDeploying(false); }
+        } catch {
+          if (deployPollRef.current) {
+            clearInterval(deployPollRef.current);
+            deployPollRef.current = null;
+          }
+          setDeploying(false);
+        }
       }, 2000);
     } catch (e) {
       showStatus(false, (e as Error).message);
@@ -967,6 +999,7 @@ export default function Apps() {
             onAction={action => handleAction(app.domain, action)}
             onDeploy={() => { setWizardDomain(app.domain); setDeployStatusData(null); }}
             onSaveConfig={(env, cmd, port) => handleSaveConfig(app.domain, env, cmd, port)}
+            onError={msg => showStatus(false, msg)}
           />
         ))}
       </div>
