@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FileText, Search, Pause, Play, RefreshCw, Filter, Download } from 'lucide-react';
+import { usePolling } from '@/hooks/usePolling';
 import { fetchLogs, type LogEntry } from '@/lib/api';
 
 const statusColor = (status: number): string => {
@@ -58,7 +59,6 @@ export default function Logs() {
   const [search, setSearch] = useState('');
   const [domainFilter, setDomainFilter] = useState('');
   const [methodFilter, setMethodFilter] = useState<MethodFilter>('all');
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -72,26 +72,9 @@ export default function Logs() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (paused) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      return;
-    }
-    intervalRef.current = setInterval(load, 2000);
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [paused, load]);
+  usePolling(load, paused ? null : 2000);
 
   const filtered = logs.filter((entry) => {
     if (!matchesFilter(entry.status, filter)) return false;
