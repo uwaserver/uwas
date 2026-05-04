@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Network } from 'lucide-react';
 import {
   ReactFlow,
@@ -120,7 +121,7 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
 
     nodes.push({
       id: domainId,
-      data: { label },
+      data: { label, host: d.host },
       position: { x: 500, y: yPos },
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
@@ -128,7 +129,7 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
         background: '#0f172a', color: '#e2e8f0', border: `2px solid ${color}`,
         borderRadius: '8px', padding: '8px 14px', fontSize: '11px',
         whiteSpace: 'pre-line' as const, textAlign: 'center' as const,
-        lineHeight: '1.4',
+        lineHeight: '1.4', cursor: 'pointer',
       },
     });
 
@@ -217,6 +218,7 @@ function buildGraph({ domains, certs, phpMap }: TopologyData) {
 /* ------------------------------------------------------------------ */
 
 export default function Topology() {
+  const navigate = useNavigate();
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [certs, setCerts] = useState<Record<string, CertInfo>>({});
   const [phpMap, setPhpMap] = useState<Record<string, DomainPHP>>({});
@@ -258,7 +260,7 @@ export default function Topology() {
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Topology</h1>
           <p className="text-sm text-muted-foreground">
-            Drag nodes to rearrange. Connections follow automatically.
+            Click a domain node to open it. Drag nodes to rearrange.
           </p>
         </div>
         <button onClick={loadAll} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]">
@@ -277,6 +279,10 @@ export default function Topology() {
           <ReactFlow
             defaultNodes={initial.nodes}
             edges={initial.edges}
+            onNodeClick={(_, node) => {
+              const host = (node.data as { host?: string }).host;
+              if (host) navigate(`/domains/${encodeURIComponent(host)}`);
+            }}
             fitView
             proOptions={{ hideAttribution: true }}
             style={{ background: '#1e293b' }}
