@@ -71,6 +71,7 @@ export default function DNS() {
   /* -- DNS Record Management State ---------------------------------------- */
   const [cfRecords, setCfRecords] = useState<DNSRecord[]>([]);
   const [cfLoading, setCfLoading] = useState(false);
+  const [cfLoadedFor, setCfLoadedFor] = useState<string | null>(null);
   const [cfError, setCfError] = useState('');
   const [cfNotConfigured, setCfNotConfigured] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
@@ -104,16 +105,19 @@ export default function DNS() {
     loadDomains();
   }, [loadDomains]);
 
-  // Auto-load records when domain comes from ?domain= URL param.
-  const [autoLoadDone, setAutoLoadDone] = useState(false);
+  // Reset per-domain state whenever the user picks a different domain so stale
+  // records / messages from the previous selection don't bleed through.
   useEffect(() => {
-    if (autoLoadDone || !selectedDomain) return;
-    const urlDomain = new URLSearchParams(window.location.search).get('domain');
-    if (urlDomain && urlDomain === selectedDomain) {
-      setAutoLoadDone(true);
-      handleLoadRecords();
-    }
-  }, [selectedDomain, autoLoadDone]);
+    setResult(null);
+    setError('');
+    setCfRecords([]);
+    setCfError('');
+    setCfNotConfigured(false);
+    setCfLoadedFor(null);
+    setSyncMsg('');
+    setShowAddForm(false);
+    setEditId(null);
+  }, [selectedDomain]);
 
   const handleCheck = async () => {
     if (!selectedDomain) return;
@@ -132,7 +136,7 @@ export default function DNS() {
 
   /* -- DNS Record Management Handlers ------------------------------------- */
 
-  const handleLoadRecords = async () => {
+  const handleLoadRecords = useCallback(async () => {
     if (!selectedDomain) return;
     setCfLoading(true);
     setCfError('');
@@ -142,6 +146,7 @@ export default function DNS() {
     try {
       const data = await fetchDNSRecords(selectedDomain);
       setCfRecords(data.records ?? []);
+      setCfLoadedFor(selectedDomain);
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes('501') || msg.toLowerCase().includes('not configured') || msg.toLowerCase().includes('no dns provider')) {
@@ -152,7 +157,16 @@ export default function DNS() {
     } finally {
       setCfLoading(false);
     }
-  };
+  }, [selectedDomain]);
+
+  // Auto-load zone records when ?domain= URL param matches the selected domain.
+  useEffect(() => {
+    if (!selectedDomain || cfLoadedFor === selectedDomain || cfLoading) return;
+    const urlDomain = new URLSearchParams(window.location.search).get('domain');
+    if (urlDomain && urlDomain === selectedDomain) {
+      handleLoadRecords();
+    }
+  }, [selectedDomain, cfLoadedFor, cfLoading, handleLoadRecords]);
 
   const handleSyncDNS = async () => {
     if (!selectedDomain) return;
@@ -625,11 +639,17 @@ export default function DNS() {
             </div>
           )}
 
-          {/* Empty state after loading */}
+          {/* Pre-load prompt vs zero-record empty state */}
           {!cfLoading && !cfNotConfigured && !cfError && cfRecords.length === 0 && (
-            <div className="py-6 text-center text-sm text-muted-foreground">
-              Click &ldquo;Load Records&rdquo; to fetch DNS records from your DNS provider
-            </div>
+            cfLoadedFor === selectedDomain ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                Zone has no DNS records yet. Use &ldquo;Add Record&rdquo; below to create one.
+              </div>
+            ) : (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                Click &ldquo;Load Records&rdquo; to fetch DNS records from your DNS provider
+              </div>
+            )
           )}
 
           {/* Add record form */}
