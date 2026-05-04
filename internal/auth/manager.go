@@ -160,9 +160,11 @@ func (m *Manager) Stop() {
 }
 
 // sessionCleanupLoop wakes every sessionCleanupInterval and removes
-// expired sessions from memory and disk. Without this, sessions.json
-// grows unbounded over time as expired entries are filtered on read but
-// never pruned on write.
+// expired sessions from memory and disk plus stale brute-force login
+// attempt entries. Without this, both maps would grow unbounded over
+// time (sessions: expired entries never pruned on write; loginAttempts:
+// every distinct attacker-supplied username keeps an empty slice
+// forever).
 func (m *Manager) sessionCleanupLoop() {
 	t := time.NewTicker(sessionCleanupInterval)
 	defer t.Stop()
@@ -172,6 +174,28 @@ func (m *Manager) sessionCleanupLoop() {
 			return
 		case <-t.C:
 			m.CleanupSessions()
+			m.cleanupLoginAttempts()
+		}
+	}
+}
+
+// cleanupLoginAttempts deletes loginAttempts entries whose timestamps
+// have all aged out of the lockout window. Counterpart to isLockedOut,
+// which trims a single user's slice but never removes the map key.
+func (m *Manager) cleanupLoginAttempts() {
+	m.loginAttemptsMu.Lock()
+	defer m.loginAttemptsMu.Unlock()
+	cutoff := time.Now().Add(-loginLockoutWindow)
+	for username, attempts := range m.loginAttempts {
+		stillRecent := false
+		for _, t := range attempts {
+			if t.After(cutoff) {
+				stillRecent = true
+				break
+			}
+		}
+		if !stillRecent {
+			delete(m.loginAttempts, username)
 		}
 	}
 }
