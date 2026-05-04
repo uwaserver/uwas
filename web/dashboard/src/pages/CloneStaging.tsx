@@ -72,6 +72,13 @@ export default function CloneStaging() {
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
       )}
 
+      {/* Loading state — show above the form so the empty selector is not confusing */}
+      {loading && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          Loading domains...
+        </div>
+      )}
+
       {/* Clone form */}
       <div className="rounded-lg border border-border bg-card p-6">
         <h2 className="text-sm font-semibold text-foreground mb-4">Create Clone</h2>
@@ -123,10 +130,16 @@ export default function CloneStaging() {
           </ul>
         </div>
 
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mt-4 flex items-center gap-3 flex-wrap">
           <button
             onClick={handleClone}
-            disabled={cloning || !sourceDomain || !targetDomain || sourceDomain === targetDomain}
+            disabled={
+              cloning ||
+              !sourceDomain ||
+              !targetDomain ||
+              sourceDomain === targetDomain ||
+              domains.some(d => d.host === targetDomain)
+            }
             className="flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {cloning ? (
@@ -143,6 +156,11 @@ export default function CloneStaging() {
           </button>
           {sourceDomain === targetDomain && sourceDomain && (
             <span className="text-xs text-red-400">Source and target cannot be the same</span>
+          )}
+          {targetDomain && sourceDomain !== targetDomain && domains.some(d => d.host === targetDomain) && (
+            <span className="text-xs text-red-400">
+              {targetDomain} already exists in UWAS — pick a different target hostname
+            </span>
           )}
         </div>
       </div>
@@ -191,10 +209,6 @@ export default function CloneStaging() {
         </div>
       )}
 
-      {/* Loading state */}
-      {loading && (
-        <div className="text-center text-sm text-muted-foreground py-12">Loading domains...</div>
-      )}
     </div>
   );
 }
