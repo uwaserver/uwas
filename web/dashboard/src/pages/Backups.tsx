@@ -22,10 +22,13 @@ import {
   deleteBackup,
   fetchBackupSchedule,
   updateBackupSchedule,
+  fetchFeatures,
   type BackupInfo,
   type BackupSchedule,
+  type FeatureStatus,
 } from '@/lib/api';
 import Card from '@/components/Card';
+import FeatureBanner from '@/components/FeatureBanner';
 
 type Provider = 'local' | 's3' | 'sftp';
 
@@ -208,6 +211,11 @@ export default function Backups() {
     keep: number;
   }>({ enabled: false, interval: '24h', keep: 7 });
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
+
+  useEffect(() => {
+    fetchFeatures().then(f => setFeatureStatus(f.backups ?? null)).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -321,6 +329,8 @@ export default function Backups() {
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
+
+      <FeatureBanner feature="backups" status={featureStatus} label="Backup manager" />
 
       {/* Status message */}
       {status && (

@@ -193,6 +193,9 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	}
 	s.cfRunner = cfintegration.NewRunner(log)
 	s.initAudit()
+	if err := s.loadAuditLog(); err != nil {
+		log.Warn("audit log restore failed", "err", err.Error())
+	}
 	s.registerRoutes()
 	if err := s.loadCloudflareState(); err != nil {
 		log.Error("cloudflare state load failed", "err", err.Error())
