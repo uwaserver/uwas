@@ -183,19 +183,15 @@ export default function DBExplorer() {
 
       {/* Alerts */}
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-red-800">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4" />
-            <span>{error}</span>
-          </div>
+        <div className="flex items-center gap-2 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          <AlertCircle className="h-4 w-4" />
+          <span>{error}</span>
         </div>
       )}
       {success && (
-        <div className="rounded-md border border-green-200 bg-green-50 p-4 text-green-800">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4" />
-            <span>{success}</span>
-          </div>
+        <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
+          <CheckCircle2 className="h-4 w-4" />
+          <span>{success}</span>
         </div>
       )}
 
