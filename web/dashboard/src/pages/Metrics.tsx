@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import { fetchMetrics } from '@/lib/api';
 import Card from '@/components/Card';
+import { usePolling } from '@/hooks/usePolling';
 
 interface ParsedMetric {
   name: string;
@@ -62,11 +63,7 @@ export default function Metrics() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const id = setInterval(load, 5000);
-    return () => clearInterval(id);
-  }, [load]);
+  usePolling(load, 5000);
 
   // Pick a few key metrics for cards
   const keyMetrics = metrics.filter(

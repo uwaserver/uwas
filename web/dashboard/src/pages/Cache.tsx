@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Database, Trash2, Tag, CheckCircle, XCircle, RefreshCw,
   HardDrive, Zap, Clock, Globe, Shield,
@@ -8,6 +8,7 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts';
 import { useStats } from '@/hooks/useStats';
+import { usePolling } from '@/hooks/usePolling';
 import { triggerPurge, fetchCacheStats as fetchCacheStatsAPI, type CacheStatsData } from '@/lib/api';
 import Card from '@/components/Card';
 
@@ -37,11 +38,7 @@ export default function Cache() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    fetchCacheStats();
-    const id = setInterval(fetchCacheStats, 5000);
-    return () => clearInterval(id);
-  }, [fetchCacheStats]);
+  usePolling(fetchCacheStats, 5000);
 
   const total = (cacheStats?.hits ?? 0) + (cacheStats?.misses ?? 0);
   const hitRate = total > 0 ? ((cacheStats!.hits / total) * 100).toFixed(1) : '0.0';
