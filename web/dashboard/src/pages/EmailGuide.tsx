@@ -20,8 +20,14 @@ export default function EmailGuide() {
     setTimeout(() => setCopied(''), 2000);
   };
 
+  // The previous heuristic — split('.').slice(-2).join('.') — got country-
+  // code TLDs spectacularly wrong: example.co.uk → "co.uk", example.com.tr
+  // → "com.tr". The user would copy those into DNS and end up configuring
+  // records on a TLD they don't own. Without bundling the Public Suffix
+  // List, the safe move is to use whatever domain the user picked from
+  // the selector — they can choose the apex themselves.
   const domain = selectedDomain;
-  const baseDomain = domain.split('.').slice(-2).join('.');
+  const baseDomain = domain;
 
   const records = [
     {
@@ -87,15 +93,20 @@ export default function EmailGuide() {
           </p>
         </div>
       ) : (
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-muted-foreground">Domain:</label>
-          <select
-            value={selectedDomain}
-            onChange={e => setSelectedDomain(e.target.value)}
-            className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
-          >
-            {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
-          </select>
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-muted-foreground">Domain:</label>
+            <select
+              value={selectedDomain}
+              onChange={e => setSelectedDomain(e.target.value)}
+              className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+            >
+              {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
+            </select>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Pick the apex (e.g. <code className="font-mono">example.com</code>, not <code className="font-mono">www.example.com</code>) — MX / SPF / DMARC records live at the apex.
+          </p>
         </div>
       )}
 
