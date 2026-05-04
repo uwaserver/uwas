@@ -90,6 +90,13 @@ export default function Migration() {
         <p className="mt-1 text-sm text-muted-foreground">Import sites from another server or cPanel backup.</p>
       </div>
 
+      {/* Loading state — show above tabs so empty selectors are not confusing */}
+      {loading && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          Loading domains...
+        </div>
+      )}
+
       {/* Tab selector */}
       <div className="flex border-b border-border">
         <button onClick={() => setTab('ssh')}
@@ -134,6 +141,12 @@ export default function Migration() {
               try {
                 const res = await migrateCPanel(cpFile, cpImportDB);
                 setCpResult(res);
+                // Clear the file selection so a stray double-click doesn't
+                // re-upload the same archive (each cPanel backup is heavy
+                // and the import is destructive — domains, DBs, certs are
+                // overwritten on re-import).
+                setCpFile(null);
+                if (cpFileRef.current) cpFileRef.current.value = '';
               } catch (e) { setError((e as Error).message); }
               finally { setCpImporting(false); }
             }} className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
@@ -426,9 +439,6 @@ export default function Migration() {
         </div>
       )}
 
-      {loading && (
-        <div className="text-center text-sm text-muted-foreground py-12">Loading...</div>
-      )}
       </>}
     </div>
   );
