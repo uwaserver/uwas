@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { Shield, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { Shield, RefreshCw, CheckCircle, XCircle, Search, X } from 'lucide-react';
 import { fetchAuditLog, type AuditEntry } from '@/lib/api';
 import { usePolling } from '@/hooks/usePolling';
 
@@ -24,7 +24,13 @@ export default function AuditLog() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState('');
+  // Action chip = exact-match filter on entry.action.
+  // Search = substring across action/detail/ip/user.
+  // Previously a single `filter` field served both purposes via .includes(),
+  // which meant clicking the "user.login" chip also matched
+  // "user.login.fail" — chips looked like exact filters but weren't.
+  const [actionFilter, setActionFilter] = useState('');
+  const [search, setSearch] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -39,13 +45,26 @@ export default function AuditLog() {
   // not steadily. Hook also pauses when the tab is in the background.
   usePolling(load, 30_000);
 
-  const filtered = filter
-    ? entries.filter(e => e.action.includes(filter) || e.detail.includes(filter) || e.ip.includes(filter) || (e.user || '').includes(filter))
-    : entries;
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return entries.filter(e => {
+      if (actionFilter && e.action !== actionFilter) return false;
+      if (!q) return true;
+      return (
+        e.action.toLowerCase().includes(q) ||
+        e.detail.toLowerCase().includes(q) ||
+        e.ip.toLowerCase().includes(q) ||
+        (e.user || '').toLowerCase().includes(q)
+      );
+    });
+  }, [entries, actionFilter, search]);
 
   const showUserColumn = entries.some(e => !!e.user);
 
-  const actionTypes = [...new Set(entries.map(e => e.action))].sort();
+  const actionTypes = useMemo(
+    () => [...new Set(entries.map(e => e.action))].sort(),
+    [entries],
+  );
 
   return (
     <div className="space-y-6">
@@ -65,12 +84,33 @@ export default function AuditLog() {
         <div className="text-center py-12 text-sm text-muted-foreground">Loading audit log...</div>
       )}
 
-      {/* Filter */}
+      {/* Search */}
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search action, detail, IP, or user…"
+          className="w-full rounded-md border border-border bg-background py-2 pl-9 pr-9 text-sm text-foreground outline-none focus:border-blue-500"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            title="Clear search"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* Action filter chips — exact match, not substring */}
       <div className="flex flex-wrap gap-2">
         <button
-          onClick={() => setFilter('')}
+          onClick={() => setActionFilter('')}
           className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-            !filter ? 'bg-blue-600 text-white' : 'bg-accent text-muted-foreground hover:text-foreground'
+            !actionFilter ? 'bg-blue-600 text-white' : 'bg-accent text-muted-foreground hover:text-foreground'
           }`}
         >
           All
@@ -78,9 +118,9 @@ export default function AuditLog() {
         {actionTypes.map(action => (
           <button
             key={action}
-            onClick={() => setFilter(filter === action ? '' : action)}
+            onClick={() => setActionFilter(actionFilter === action ? '' : action)}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              filter === action ? 'bg-blue-600 text-white' : 'bg-accent text-muted-foreground hover:text-foreground'
+              actionFilter === action ? 'bg-blue-600 text-white' : 'bg-accent text-muted-foreground hover:text-foreground'
             }`}
           >
             {action}
