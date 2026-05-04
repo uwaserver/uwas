@@ -6,6 +6,7 @@ import {
   type UnknownDomainEntry, type FeatureStatus,
 } from '@/lib/api';
 import FeatureBanner from '@/components/FeatureBanner';
+import { usePolling } from '@/hooks/usePolling';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -31,11 +32,9 @@ export default function UnknownDomains() {
   }, []);
 
   useEffect(() => {
-    load();
     fetchFeatures().then(f => setFeatureStatus(f.unknown_domains ?? null)).catch(() => {});
-    const iv = setInterval(load, 10000);
-    return () => clearInterval(iv);
-  }, [load]);
+  }, []);
+  usePolling(load, 10_000);
 
   const act = async (host: string, fn: (h: string) => Promise<unknown>) => {
     setActing(host);

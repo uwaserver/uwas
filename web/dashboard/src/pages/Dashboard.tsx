@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Activity, Zap, HardDrive, Clock, CheckCircle, AlertTriangle,
   Gauge, AlertCircle, Shield, Globe, Lock, Cpu, ShieldAlert,
@@ -16,6 +16,7 @@ import {
   type DomainHealth, type SystemInfo,
 } from '@/lib/api';
 import Card from '@/components/Card';
+import { usePolling } from '@/hooks/usePolling';
 
 export default function Dashboard() {
   const { stats, health, history } = useStats(3000);
@@ -25,8 +26,6 @@ export default function Dashboard() {
   const [php, setPhp] = useState<PHPInstall[]>([]);
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
   const [domainHealth, setDomainHealth] = useState<DomainHealth[]>([]);
-  const sysInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-
   useEffect(() => {
     fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
     fetchCerts().then(c => setCerts(c ?? [])).catch(() => {});
@@ -35,13 +34,9 @@ export default function Dashboard() {
     fetchDomainHealth().then(h => setDomainHealth(h ?? [])).catch(() => {});
   }, []);
 
-  useEffect(() => {
+  usePolling(() => {
     fetchSystem().then(setSysInfo).catch(() => {});
-    sysInterval.current = setInterval(() => {
-      fetchSystem().then(setSysInfo).catch(() => {});
-    }, 10000);
-    return () => { if (sysInterval.current) clearInterval(sysInterval.current); };
-  }, []);
+  }, 10_000);
 
   const hitRate =
     stats && stats.cache_hits + stats.cache_misses > 0

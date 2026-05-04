@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { RefreshCw, Play, Square, RotateCw, CheckCircle, XCircle, AlertTriangle, X } from 'lucide-react';
+import { usePolling } from '@/hooks/usePolling';
 import {
   fetchServices,
   startService,
@@ -28,17 +29,7 @@ export default function Services() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Auto-refresh every 10 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      load();
-    }, 10_000);
-    return () => clearInterval(interval);
-  }, [load]);
+  usePolling(load, 10_000);
 
   const handleAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
     setActionLoading((prev) => ({ ...prev, [name]: action }));
