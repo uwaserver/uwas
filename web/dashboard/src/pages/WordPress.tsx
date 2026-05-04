@@ -81,7 +81,13 @@ export default function WordPress() {
     try {
       await installWordPress(selectedDomain, dbHost);
       clearInterval(installPollRef.current);
+      // Guard against overlapping fetches when the backend is slow — the
+      // 2s tick can otherwise fire a second request before the first
+      // returns, producing out-of-order setStatus updates.
+      let inFlight = false;
       installPollRef.current = setInterval(async () => {
+        if (inFlight) return;
+        inFlight = true;
         try {
           const st = await fetchWPInstallStatus();
           setStatus(st);
@@ -91,6 +97,7 @@ export default function WordPress() {
             if (st.status === 'done') loadSites();
           }
         } catch { clearInterval(installPollRef.current); setInstalling(false); }
+        finally { inFlight = false; }
       }, 2000);
     } catch (e) {
       setError((e as Error).message);
@@ -100,6 +107,7 @@ export default function WordPress() {
 
   const doAction = async (label: string, fn: () => Promise<unknown>) => {
     setActionLoading(label);
+    setError('');
     try { await fn(); await loadSites(); }
     catch (e) { setError((e as Error).message); }
     finally { setActionLoading(''); }
@@ -166,6 +174,11 @@ export default function WordPress() {
                   setSiteUsers([]);
                   setSiteUsersError('');
                   setSecurity(null);
+                  // Stale debug-log / DB-optimize output from the previously
+                  // expanded site would otherwise stay rendered under the new
+                  // site's tabs.
+                  setActionResult('');
+                  setError('');
                   if (next) {
                     // Lazy load: enrich with wp-cli detail (plugins/themes with update info)
                     fetchWPSiteDetail(next).then(enriched => {
