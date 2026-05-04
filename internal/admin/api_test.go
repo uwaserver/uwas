@@ -969,6 +969,83 @@ func TestConfigExportStripsDNSCredentials(t *testing.T) {
 	}
 }
 
+// TestConfigExportStripsAllSecrets covers every secret-bearing field that
+// flows through the export endpoint. Each canary string must be absent
+// from the downloaded YAML. Add new entries here when new credential
+// fields are added to the config — the export gets shared (git, support
+// tickets, etc.), so a leak here grants third-party access.
+func TestConfigExportStripsAllSecrets(t *testing.T) {
+	s := testServer()
+
+	// Admin
+	s.config.Global.Admin.APIKey = "canary-admin-apikey"
+	s.config.Global.Admin.PinCode = "canary-admin-pin"
+	s.config.Global.Admin.TOTPSecret = "canary-totp-secret"
+	s.config.Global.Admin.TLSKey = "canary-tls-private-key"
+	s.config.Global.Admin.RecoveryCodes = []string{"canary-recovery-1", "canary-recovery-2"}
+	s.config.Global.Admin.OAuth.GoogleSecret = "canary-google-client-secret"
+	s.config.Global.Admin.OAuth.GitHubSecret = "canary-github-client-secret"
+
+	// ACME
+	s.config.Global.ACME.DNSCredentials = map[string]string{"api_token": "canary-dns-token"}
+
+	// Cache
+	s.config.Global.Cache.PurgeKey = "canary-purge-key"
+	s.config.Global.Cache.Redis.Password = "canary-redis-password"
+
+	// Alerting
+	s.config.Global.Alerting.SlackURL = "https://hooks.slack.com/services/T0/B0/canary-slack-token"
+	s.config.Global.Alerting.TelegramToken = "canary-telegram-bot-token"
+
+	// Backup
+	s.config.Global.Backup.S3.AccessKey = "canary-s3-access-key"
+	s.config.Global.Backup.S3.SecretKey = "canary-s3-secret-key"
+	s.config.Global.Backup.SFTP.Password = "canary-sftp-password"
+
+	// Webhooks (slice — ensures deep copy actually zeroes the secret)
+	s.config.Global.Webhooks = []config.WebhookConfig{
+		{URL: "https://example.com/hook", Secret: "canary-webhook-secret-1"},
+		{URL: "https://example.com/hook2", Secret: "canary-webhook-secret-2"},
+	}
+
+	// Per-domain PHP env (often holds DB passwords / API keys)
+	s.config.Domains = []config.Domain{
+		{Host: "envtest.com", Type: "php", PHP: config.PHPConfig{Env: map[string]string{"DB_PASS": "canary-php-env-secret"}}},
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/export", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	canaries := []string{
+		"canary-admin-apikey", "canary-admin-pin", "canary-totp-secret",
+		"canary-tls-private-key", "canary-recovery-1", "canary-recovery-2",
+		"canary-google-client-secret", "canary-github-client-secret",
+		"canary-dns-token",
+		"canary-purge-key", "canary-redis-password",
+		"canary-slack-token", "canary-telegram-bot-token",
+		"canary-s3-access-key", "canary-s3-secret-key", "canary-sftp-password",
+		"canary-webhook-secret-1", "canary-webhook-secret-2",
+		"canary-php-env-secret",
+	}
+	for _, c := range canaries {
+		if strings.Contains(body, c) {
+			t.Errorf("export leaked secret canary %q", c)
+		}
+	}
+
+	// Sanity: verify the deep copy of Webhooks didn't mutate the live
+	// config. The in-memory secrets must still be intact for runtime use.
+	for i, wh := range s.config.Global.Webhooks {
+		if wh.Secret == "" {
+			t.Errorf("export mutated live config Webhooks[%d].Secret", i)
+		}
+	}
+}
+
 // --- CORS via authMiddleware ---
 
 func TestIsAllowedOriginTLS(t *testing.T) {
