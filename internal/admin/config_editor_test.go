@@ -55,6 +55,64 @@ func TestConfigRawGetSuccess(t *testing.T) {
 	}
 }
 
+// TestConfigRawGetMasksSecrets locks in the set of YAML keys whose values
+// must never reach the dashboard in plaintext. The Settings page parses
+// these straight out of /api/v1/config/raw, so any key the page renders
+// as `type: 'secret'` MUST be masked here.
+func TestConfigRawGetMasksSecrets(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "uwas.yaml")
+	// Each entry: yaml key + the literal secret value the test will look
+	// for. Keep this list aligned with the mask list in handleConfigRawGet.
+	cases := []struct{ key, secret string }{
+		{"api_key", "AAAA-api-key-secret"},
+		{"pin_code", "BBBB-pin-code-secret"},
+		{"totp_secret", "CCCC-totp-secret"},
+		{"secret_key", "DDDD-s3-secret-key"},
+		{"password", "EEEE-sftp-password"},
+		{"secret_access_key", "FFFF-route53-secret"},
+		{"api_token", "GGGG-cloudflare-token"},
+		{"client_secret", "HHHH-oauth-client-secret"},
+		{"telegram_token", "IIII-telegram-bot-token"},
+		{"slack_url", "https://hooks.slack.com/services/T0/B0/JJJJ-slack-token"},
+		{"purge_key", "KKKK-cache-purge-key"},
+	}
+	var sb strings.Builder
+	sb.WriteString("global:\n")
+	for _, c := range cases {
+		sb.WriteString("  ")
+		sb.WriteString(c.key)
+		sb.WriteString(": \"")
+		sb.WriteString(c.secret)
+		sb.WriteString("\"\n")
+	}
+	if err := os.WriteFile(cfgPath, []byte(sb.String()), 0644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	s := testServer()
+	s.SetConfigPath(cfgPath)
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/config/raw", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := resp["content"]
+	for _, c := range cases {
+		if strings.Contains(got, c.secret) {
+			t.Errorf("raw config leaked secret for key %q (value %q still present)", c.key, c.secret)
+		}
+		if !strings.Contains(got, c.key+`: "********"`) {
+			t.Errorf("key %q was not masked to ********; payload: %s", c.key, got)
+		}
+	}
+}
+
 func TestConfigRawGetMissingFile(t *testing.T) {
 	s := testServer()
 	s.SetConfigPath("/nonexistent/uwas.yaml")
