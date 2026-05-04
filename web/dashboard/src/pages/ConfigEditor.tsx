@@ -24,15 +24,25 @@ export default function ConfigEditor() {
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
   const [validationError, setValidationError] = useState('');
 
-  // Warn before navigating away with unsaved changes
+  const isDirty = content !== originalContent;
+
+  // Warn before navigating away with unsaved changes. Setting returnValue is
+  // legacy but still needed — preventDefault alone is a no-op on Safari and
+  // pre-2023 Firefox.
   useEffect(() => {
-    const dirty = content !== originalContent;
     const handler = (e: BeforeUnloadEvent) => {
-      if (dirty) { e.preventDefault(); }
+      if (isDirty) { e.preventDefault(); e.returnValue = ''; }
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [content, originalContent]);
+  }, [isDirty]);
+
+  // In-app navigation (sidebar click, Reload button) bypasses beforeunload
+  // entirely — those branches must check this themselves.
+  const confirmDiscard = useCallback(
+    () => !isDirty || window.confirm('You have unsaved changes. Discard them?'),
+    [isDirty],
+  );
 
   // Load domain list for sidebar
   useEffect(() => {
@@ -120,10 +130,16 @@ export default function ConfigEditor() {
   };
 
   const handleReload = () => {
+    if (!confirmDiscard()) return;
     loadContent();
   };
 
-  const isDirty = content !== originalContent;
+  const handleSelectFile = (id: string) => {
+    if (id === activeFile) return;
+    if (!confirmDiscard()) return;
+    setActiveFile(id);
+  };
+
   const activeLabel = files.find((f) => f.id === activeFile)?.label ?? '';
 
   return (
@@ -146,7 +162,7 @@ export default function ConfigEditor() {
             {files.map((f) => (
               <button
                 key={f.id}
-                onClick={() => setActiveFile(f.id)}
+                onClick={() => handleSelectFile(f.id)}
                 className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${
                   activeFile === f.id
                     ? 'bg-blue-600/20 text-blue-400'
