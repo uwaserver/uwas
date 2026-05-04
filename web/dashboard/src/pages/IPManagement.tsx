@@ -42,12 +42,35 @@ export default function IPManagement() {
     void loadAll();
   }, [loadAll]);
 
-  const handleIPChange = async (host: string, newIP: string) => {
+  // Auto-dismiss success toast after 4s. Errors stay until next action so
+  // they are not missed.
+  useEffect(() => {
+    if (status?.ok) {
+      const id = window.setTimeout(() => setStatus(s => s === status ? null : s), 4000);
+      return () => window.clearTimeout(id);
+    }
+  }, [status]);
+
+  const handleIPChange = async (host: string, newIP: string, currentIP: string) => {
+    // Changing a domain's bound IP cuts live traffic until the new IP is
+    // active and DNS resolves. A misclick on a select dropdown (touch
+    // devices especially) shouldn't be able to break a production site
+    // without a clear "yes I meant that" step.
+    const fromLabel = currentIP || 'Default';
+    const toLabel = newIP || 'Default';
+    if (!window.confirm(
+      `Change ${host} from ${fromLabel} to ${toLabel}?\n\nLive traffic to ${host} may be disrupted until DNS picks up the change.`,
+    )) {
+      // Force a re-render so the select snaps back to the previous value.
+      // (loadAll() pulls fresh state which the select binds to.)
+      void loadAll();
+      return;
+    }
     setSaving(prev => ({ ...prev, [host]: true }));
     setStatus(null);
     try {
       await updateDomain(host, { ip: newIP });
-      setStatus({ ok: true, message: `IP updated for ${host} to ${newIP}` });
+      setStatus({ ok: true, message: `IP updated for ${host} to ${toLabel}` });
       await loadAll();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
@@ -79,7 +102,7 @@ export default function IPManagement() {
           </p>
         </div>
         <button
-          onClick={() => { setLoading(true); void loadAll(); }}
+          onClick={() => void loadAll()}
           className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <RefreshCw size={12} /> Refresh
@@ -232,7 +255,7 @@ export default function IPManagement() {
                       <div className="flex items-center gap-2">
                         <select
                           value={d.ip || ''}
-                          onChange={e => void handleIPChange(d.host, e.target.value)}
+                          onChange={e => void handleIPChange(d.host, e.target.value, d.ip || '')}
                           disabled={saving[d.host] || ips.length === 0}
                           className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                         >
