@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { RefreshCw, Play, Square, RotateCw, CheckCircle, XCircle, AlertTriangle, X } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
 import {
@@ -30,6 +30,27 @@ export default function Services() {
   }, []);
 
   usePolling(load, 10_000);
+
+  // Auto-dismiss success toast after 4s. Without this, the green banner
+  // for a long-finished action sat on top of the page across many 10s
+  // poll refreshes. Errors stay until the next user action so they are
+  // not missed.
+  useEffect(() => {
+    if (status?.ok) {
+      const id = window.setTimeout(() => setStatus(s => s === status ? null : s), 4000);
+      return () => window.clearTimeout(id);
+    }
+  }, [status]);
+
+  // Escape key closes the confirm modal — standard keyboard expectation.
+  useEffect(() => {
+    if (!confirmAction) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmAction(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmAction]);
 
   const handleAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
     setActionLoading((prev) => ({ ...prev, [name]: action }));
