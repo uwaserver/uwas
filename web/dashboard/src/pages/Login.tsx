@@ -88,7 +88,12 @@ export default function Login() {
       navigate('/');
     } catch {
       setError('Invalid 2FA code');
+      // Reset both the API-helper-stored code and the visible digits.
+      // Without resetting `totp`, the form keeps the rejected 6 digits
+      // and the next submit posts the same value — TOTP windows are
+      // 30s, so retrying an already-failed code is always wrong.
       setTOTPCode('');
+      setTotp('');
     } finally {
       setLoading(false);
     }
