@@ -533,6 +533,47 @@ func TestAuditRecordedOnDomainCRUD(t *testing.T) {
 	}
 }
 
+// TestAuditUserAttributionViaMux verifies that requests dispatched through the
+// mux (which auto-injects an admin user into the request context in tests)
+// land in the audit log with the User field populated. This is the contract
+// that recordAuditR provides — without it, the Audit Log page would show the
+// IP for every action but no idea of WHICH admin made the change.
+func TestAuditUserAttributionViaMux(t *testing.T) {
+	s := testAuditServer()
+	defer s.stopAudit()
+
+	// handleReload with no reloadFn set: takes the failure branch, which
+	// records an audit entry through recordAuditR — exactly the path we
+	// migrated. We don't care about the HTTP status, only about the entry.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/reload", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.mux.ServeHTTP(rec, req)
+
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/audit", nil))
+
+	var resp struct {
+		Items []AuditEntry `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) == 0 {
+		t.Fatal("no audit entries recorded; recordAuditR migration is broken")
+	}
+	got := resp.Items[0]
+	if got.Action != "config.reload" {
+		t.Errorf("action = %q, want config.reload", got.Action)
+	}
+	if got.User != "admin" {
+		t.Errorf("user = %q, want admin (testMux injects admin into r.Context)", got.User)
+	}
+	if got.IP != "10.0.0.1" {
+		t.Errorf("ip = %q, want 10.0.0.1", got.IP)
+	}
+}
+
 func TestRequestIP(t *testing.T) {
 	tests := []struct {
 		remoteAddr string
