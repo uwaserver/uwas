@@ -1190,9 +1190,6 @@ export const purgeCloudflareCache = (url?: string, everything = false) =>
 
 export const fetchCloudflareZones = () => api<CloudflareZone[]>('/api/v1/cloudflare/zones').then(r => r ?? []);
 
-export const syncCloudflareDNS = (zoneId: string) =>
-  api<{ status: string; records_synced: number }>(`/api/v1/cloudflare/zones/${encodeURIComponent(zoneId)}/sync`, { method: 'POST' });
-
 export const importCloudflareZone = (
   zoneId: string,
   defaultType: 'static' | 'php' | 'proxy' | 'redirect',
