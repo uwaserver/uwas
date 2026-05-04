@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import { Mail, Copy, Check, ExternalLink } from 'lucide-react';
 import { fetchDomains, fetchServerIPs, type DomainData } from '@/lib/api';
 
@@ -77,17 +78,28 @@ export default function EmailGuide() {
       </div>
 
       {/* Domain selector */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-muted-foreground">Domain:</label>
-        <select
-          value={selectedDomain}
-          onChange={e => setSelectedDomain(e.target.value)}
-          className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
-        >
-          {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
-        </select>
-      </div>
+      {domains.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-card px-6 py-12 text-center">
+          <Mail size={32} className="mx-auto mb-3 text-muted-foreground/60" />
+          <p className="text-sm font-medium text-card-foreground">No domains yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Add a domain on the <RouterLink to="/domains" className="text-blue-400 hover:underline">Domains page</RouterLink> to generate the DNS records you need for email.
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-muted-foreground">Domain:</label>
+          <select
+            value={selectedDomain}
+            onChange={e => setSelectedDomain(e.target.value)}
+            className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+          >
+            {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
+          </select>
+        </div>
+      )}
 
+      {domains.length > 0 && <>
       {/* Info banner */}
       <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm">
         <div className="flex items-center gap-2 text-blue-400 font-medium mb-1">
@@ -167,6 +179,7 @@ export default function EmailGuide() {
           Mail-tester <ExternalLink size={10} />
         </a>
       </div>
+      </>}
     </div>
   );
 }
