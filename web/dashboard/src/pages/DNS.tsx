@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Waypoints,
   RefreshCw,
@@ -242,9 +243,9 @@ export default function DNS() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-bold sm:text-2xl text-foreground">DNS Checker</h1>
+        <h1 className="text-xl font-bold sm:text-2xl text-foreground">DNS</h1>
         <p className="text-sm text-muted-foreground">
-          Verify DNS records and check if domains point to this server
+          Check whether a domain points to this server, and edit zone records when a DNS provider is configured.
         </p>
       </div>
 
@@ -505,12 +506,12 @@ export default function DNS() {
                 <p className="font-medium">DNS provider not configured</p>
                 <p className="mt-1 text-muted-foreground">
                   Configure your DNS provider (Cloudflare, Hetzner, DigitalOcean, or Route53) in{' '}
-                  <a
-                    href="/_uwas/dashboard/settings"
+                  <RouterLink
+                    to="/settings"
                     className="font-medium text-blue-400 underline hover:text-blue-300"
                   >
                     Settings &rarr; ACME
-                  </a>{' '}
+                  </RouterLink>{' '}
                   to manage DNS records from here.
                 </p>
               </div>
