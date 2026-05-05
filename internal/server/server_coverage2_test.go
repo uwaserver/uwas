@@ -2441,7 +2441,7 @@ func TestHandleHTTPDomainLookupNil(t *testing.T) {
 }
 
 // =============================================================================
-// handleHTTP — unknown host hitting fallback domain should be served, not rejected
+// handleHTTP — unknown host is tracked and rejected with 421
 // =============================================================================
 
 func TestHandleHTTPFallbackDomainServesUnknownHost(t *testing.T) {
@@ -2458,16 +2458,16 @@ func TestHandleHTTPFallbackDomainServesUnknownHost(t *testing.T) {
 	log := logger.New("error", "text")
 	s := New(cfg, log)
 
-	// Request for unknown host should be served by fallback domain (not rejected as unknown).
+	// Request for unknown host should be tracked and rejected with 421.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/index.html", nil)
 	req.Host = "any-other-host.com"
 	req.Header.Set("User-Agent", "test-agent")
 	s.handleHTTP(rec, req)
 
-	// Should be served (200), not rejected with 421.
-	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200 (fallback domain should serve unknown hosts)", rec.Code)
+	// Should be rejected with 421 (unknown host tracked), not served by fallback.
+	if rec.Code != 421 {
+		t.Errorf("status = %d, want 421 (unknown host should be tracked and rejected)", rec.Code)
 	}
 }
 

@@ -1767,7 +1767,7 @@ func TestHandleHTTPManualSSLRedirect(t *testing.T) {
 	}
 }
 
-// --- handleHTTP: unknown host hits fallback domain, served as 404 (no content) ---
+// --- handleHTTP: unknown host is tracked and rejected with 421 ---
 
 func TestHandleHTTPUnknownHost(t *testing.T) {
 	dir := t.TempDir()
@@ -1788,9 +1788,9 @@ func TestHandleHTTPUnknownHost(t *testing.T) {
 	req.Header.Set("User-Agent", "test-agent")
 	s.handleHTTP(rec, req)
 
-	// Unknown host is served by fallback domain (known.com).
-	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200 (fallback domain should serve unknown hosts)", rec.Code)
+	// Unknown host is tracked and rejected with 421 (not served by fallback domain).
+	if rec.Code != 421 {
+		t.Errorf("status = %d, want 421 (unknown host should be tracked and rejected)", rec.Code)
 	}
 }
 
