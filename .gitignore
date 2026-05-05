@@ -70,3 +70,4 @@ commit.bat
 .npm/
 
 .dfmt/
+.dfmt/*
