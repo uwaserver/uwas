@@ -55,7 +55,6 @@
       "mcp__dfmt__dfmt_write"
     ],
     "deny": [
-      "Bash",
       "WebFetch",
       "WebSearch"
     ]
