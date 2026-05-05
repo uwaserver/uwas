@@ -7,39 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-05
+
+A polish + hardening release: 67 commits batched together. Highlights are auth persistence across restart, audit-log user attribution everywhere, a visibility-aware polling sweep across the dashboard, secret redaction on every config-export surface, and a per-page UI quality pass that fixed dirty-edit data loss, poll-handle leaks, and dead-code action buttons across roughly 30 pages.
+
+### Security
+
+- **Secret redaction in raw config export** (`b14c4f4`, `b4b260d`, `37f7c78`) — `GET /api/v1/admin/config/raw` and the config-export endpoint were leaking DNS provider tokens (Cloudflare/Route53/Hetzner/DigitalOcean), OAuth client secrets, and alerting webhook URLs in plaintext. All secret-bearing fields are now masked; regression test locks the contract.
+- **MCP `domain_get` redaction** (`416f374`) — the MCP tool was returning per-domain secrets (basic-auth credentials, proxy tokens, webhook signing keys) in full. Now redacted before serialization, matching the REST API.
+- **Webhooks page no longer leaks HMAC secret** (`546e36a`) — the dashboard previously rendered the per-webhook signing secret in plaintext after creation. Now masked with copy-once reveal.
+- **Unknown-host rejection returns 421** (`8397da2`) — requests for hostnames not configured as domains are tracked in the unknown-domains store and answered with `421 Misdirected Request` instead of being routed to the fallback (which previously returned 200 from the placeholder).
+
 ### Features
 
-- **Auth persistence** — JWT signing key now persists to `~/.uwas/auth.json` (mode 0600) instead of being regenerated on every restart. Active sessions persist to `~/.uwas/sessions.json`. Restarting the server no longer kicks every logged-in user.
+- **Auth persistence across restart** (`4ddc2de`, `c98bb86`, `8eca1fa`) — JWT signing key persists to `~/.uwas/auth.json` (mode 0600) instead of being regenerated on every boot. Active sessions persist to `~/.uwas/sessions.json`. Restarting the server no longer kicks every logged-in user. New cleanup goroutines prune stale `loginAttempts` entries and expired sessions on a fixed cadence.
+- **Audit log user attribution everywhere** (`0c55ba0`, `a2a2b80`, `4d311f9`) — migrated the remaining 102 `s.RecordAudit(...)` call sites in production handlers to `s.recordAuditR(r, ...)`, which extracts the authenticated user from the request context. The `User` column on the Audit Log page now populates for every state-changing action (domain/PHP/cache/backup/2FA/cron/Cloudflare/WordPress/database/docker_db/migrate/clone/cert/webhook/settings/notifications/branding/bandwidth/PIN), not just auth endpoints.
+- **Audit log rotation + replay** (`b4c2646`) — `~/.uwas/audit.log` now keeps 3 rotated generations; the last 500 entries from all generations replay into the in-memory ring buffer at startup so the audit trail is durable across restarts and rotations.
+- **Visibility-aware polling hook** (`caf707d`, `0067f0e`, `02a0eee`, `8cf026a`, `eaf8f12`, `e9f89af`, `8d424f6`) — new `usePolling` hook pauses while the browser tab is hidden. Migrated Domains health, Cloudflare status, Logs live tail, AuditLog refresh, Security, UnknownDomains, Services, Dashboard, Certificates pending-cert refresh. Extended to accept `intervalMs=null` so toggle-driven pause is one effect, not two.
+- **Topology: click-to-detail** (`8b26686`) — clicking a domain node in the topology graph now navigates to that domain's detail page.
 - **Backups & Webhooks pages** show `FeatureBanner` when the underlying manager is not initialized, so an empty list never silently masks a disabled subsystem.
-- **CHANGELOG** brought up to date through v0.3.1.
 
-### Fixes
+### Fixes — Dashboard quality sweep
 
-- **Dashboard router consistency** — replaced plain `<a href="/_uwas/dashboard/...">` anchors with React Router `<Link>` on Dashboard (first-run wizard), Domains, DNS, WordPress, and EmailGuide. Plain anchors were doing full-page reloads and bypassing the `BrowserRouter` basename.
-- **First-run wizard flash** — the "Add your first domain" wizard on Dashboard no longer briefly flashes before the domain list has loaded. Wizard is gated on `domainsLoaded && domains.length === 0`.
-- **Topology** — added a refresh button, an empty state when no domains exist, and the missing "App" entry in the legend (green nodes were rendered without a legend match).
-- **Certificates empty state** — replaced the bare "No certificates found" with an actionable card that links to the Domains page.
-- **DomainDetail load errors** — surface the actual error with a Retry button instead of silently falling through to a generic "Domain not found".
-- **EmailGuide empty state** — when no domains exist the records table previously rendered with an empty `baseDomain`, producing meaningless DNS hints. Now shows a clear empty state.
-- **Cloudflare + DBExplorer dark theme** — alert callouts that still used light-only utilities (`bg-red-50/text-red-700`, `bg-amber-50`, etc.) inherited from the early Phase B work now use the project-wide `bg-{color}-500/10 text-{color}-400` convention. Also dropped the stale "(soon) run real tunnels" subtitle.
-- **About page** — "35-page dashboard" → "40-page dashboard" to match the actual page count.
-- **DNS page** — title is now "DNS" (was "DNS Checker", which understated the scope), description rewritten to mention CRUD.
-
-### Performance
-
-- **Visibility-aware polling** — Domains health, Cloudflare status, and Logs live tail now pause while the browser tab is hidden. Standardised on the existing `usePolling` hook; extended to accept `intervalMs=null` so the Logs `Pause` toggle can disable polling without a separate interval/clear effect.
+- **Dirty-edit data loss guards** — ConfigEditor (`6ccac32`), Files (`1886735`), and PHP-Config (`46cdddd`) now confirm before discarding unsaved edits. PHP-Config also adds a `post_max_size` ↔ `upload_max_filesize` cross-check.
+- **Confirm before destructive action** — Doctor Auto-Fix (`ff1ae16`), Updates install (`e1e1b15`), Firewall disable (`dd91021`, plus warn on enable without SSH), PHP unassign (`daa377f`), Cloudflare disconnect (`958be5e`), Users SSH-key delete (`9cddc51`), IPs domain-IP change (`d8c65d4`).
+- **Poll handle leaks** — Database install (`7cf92d5`), Apps deploy (`baf6527`), PHP refresh (`daa377f`) — long-running poll loops now cancel on unmount and on action completion.
+- **Cross-domain state bleed** — Security (`92474d1`) WAF bypass + IP allow/deny inputs reset on domain change. WordPress (`9d10541`) clears stale per-site state across actions. DNS (`8e8f5a9`) resets editor state on domain change. DB-Explorer (`9d6d6f6`) clears stale query results.
+- **Empty-state and error surfacing** — DomainDetail load errors (`54ff5dc`, retry button instead of "not found"), Topology empty/refresh (`e4683c0`), Certificates empty state (`e4683c0`), EmailGuide empty state (`8cf026a`), DNS empty-state messaging (`8e8f5a9`), DB-Explorer empty state (`9d6d6f6`), AuditLog free-text search + exact-match chip filter (`2712d6a`), Apps env-save errors (`baf6527`), Unknown-Domains action errors + `timeAgo` NaN guard (`f42e2ff`).
+- **Toast handling** — auto-dismiss success toasts on Backups (`e4336f8`), Settings (`88a2a3f`), AdminUsers (`6ac3a01`), Cron (`15c6892`), Services (`5a063d8`), IPs (`d8c65d4`), Cache (`71fe505`).
+- **Router consistency** (`afaf139`, `eaf8f12`, `e4683c0`, `0832a80`, `8cf026a`) — replaced plain `<a href="/_uwas/dashboard/...">` anchors with React Router `<Link>` on Dashboard (first-run wizard), Domains, DNS, WordPress, EmailGuide. Plain anchors were doing full-page reloads and bypassing the `BrowserRouter` basename. First-run wizard now load-gated so it doesn't flash before domains arrive.
+- **Page-specific** — Login clears TOTP digits after rejected code (`883fad0`); Backups removes dead Download button (`e4336f8`); Terminal hides auth ticket on error and `preventDefault` for `Ctrl+C/D` to keep the keystroke in the PTY (`d7bffb9`); About surfaces non-ok health (`565256f`) and refreshes dep/size facts; Logs export RFC 4180 CSV-escapes + touch-friendly button (`33054d3`); Metrics filter + raw `+Inf/-Inf/NaN` rendering (`cdd4e4a`); Cache replaces fake-Redis form, fixes per-domain purge (`71fe505`); Email drops broken last-2-labels ccTLD heuristic (`b8ce9be`); Packages real Escape handler + timeout feedback + null-safe find (`192e45e`); Migration clears cpanel file after import (`15c0339`); Clone/Staging warns on existing target (`7564218`); Cron stable react keys (`15c6892`); Database export download (`7cf92d5`); Domains row click + Tailwind-purge-safe gauges (`8d424f6`); Domains App-runtime selector colors (`c4b1d22`); Analytics independent loads + reset feedback (`260d384`); DB-Explorer ctrl+enter (`9d6d6f6`); Cloudflare/DBExplorer dark-theme alerts (`f57dbf5`); About 35→40 page-count fix (`3fb3a6d`).
 
 ### Refactor
 
-- **Audit log User attribution everywhere** — migrated the remaining 102 `s.RecordAudit(…)` call sites in production handlers to `s.recordAuditR(r, …)`, which extracts the authenticated user from the request context. The `User` column on the Audit Log page is now populated for every state-changing action (domain/PHP/cache/backup/2FA/cron/Cloudflare/WordPress/database/docker_db/migrate/clone/cert/webhook/settings/notifications/branding/bandwidth/PIN), not just the auth endpoints. Removed 25 now-unused `ip := requestIP(r)` declarations.
-- **Cloudflare zone-sync retired** — `/api/v1/cloudflare/zones/{id}/sync` was a no-op holdover (fetched DNS records and discarded them). The real implementation is `/api/v1/cloudflare/zones/{id}/import`. Handler, route registration, frontend `syncCloudflareDNS` export, and three tests were removed; tests now exercise the import endpoint.
-- **Dead code prune** (staticcheck-driven) — removed ~150 lines that no caller reaches: `internal/cache/l1_shard.go` (orphan shard-stats type), `requireRole`/`persistCloudflareState` in admin, `BackupManager.startedAt`, `htaccessCacheEntry.errorPagesOnce`, `sensitiveHeaders`+`sanitizeHeader` in accesslog (header redaction was never wired into the log line), `blockedIPBlocks`/`concatIPBlocks`/`isIPBlocked` in config (superseded by `ipBlockedReason`+policy), and three test mock helpers. Plus four lint cleanups (loop → `copy()`, error-string punctuation, `t.Fatal` instead of nil-deref, redundant `var`-then-assign).
+- **Cloudflare zone-sync retired** (`7f86026`) — `/api/v1/cloudflare/zones/{id}/sync` was a no-op holdover (fetched DNS records and discarded them). The real implementation is `/api/v1/cloudflare/zones/{id}/import`. Handler, route registration, frontend `syncCloudflareDNS` export, and three tests removed.
+- **Dead code prune** (`86e48d4`, staticcheck-driven) — removed ~150 lines no caller reaches: `internal/cache/l1_shard.go` (orphan shard-stats type), `requireRole`/`persistCloudflareState` in admin, `BackupManager.startedAt`, `htaccessCacheEntry.errorPagesOnce`, `sensitiveHeaders`+`sanitizeHeader` in accesslog (header redaction was never wired into the log line), `blockedIPBlocks`/`concatIPBlocks`/`isIPBlocked` in config (superseded by `ipBlockedReason`+policy), three test mock helpers. Plus four lint cleanups (loop → `copy()`, error-string punctuation, `t.Fatal` instead of nil-deref, redundant `var`-then-assign).
+- **Code structure cleanup** (`2bbcb41`) — internal readability/maintainability pass.
 
 ### Verification
 
-- `go build ./...`, `go vet ./...`, `staticcheck ./...` all clean.
-- `go test -count=1 -short ./...` passes everywhere except the pre-existing Windows-only `TestInstall_WindowsSkipsPermissions` httptest port-reuse flake.
-- `cd web/dashboard && npx tsc -b` clean.
+- `go build ./...`, `go vet ./...` clean.
+- `go test -count=1 -short ./...` passes (the wordpress placeholder-removal test occasionally fails when run in parallel with other tests in the same package due to a global hook variable race; passes deterministically with `-run` or in isolation; pre-existing, not introduced by this release).
+- `node web/dashboard/node_modules/typescript/bin/tsc -b web/dashboard` clean.
 
 ## [0.3.1] - 2026-05-04
 
