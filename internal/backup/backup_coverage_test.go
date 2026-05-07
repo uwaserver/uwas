@@ -913,7 +913,7 @@ func TestRestoreBackupWithDBImport(t *testing.T) {
 // --- SFTP dial with no auth methods ---
 
 func TestSFTPDialNoAuth(t *testing.T) {
-	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups")
+	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups", true)
 	ctx := context.Background()
 	err := p.Upload(ctx, "test.tar.gz", bytes.NewReader([]byte("data")))
 	if err == nil {
@@ -928,7 +928,7 @@ func TestSFTPDialNoAuth(t *testing.T) {
 // --- SFTP Download error paths ---
 
 func TestSFTPDownloadNoAuth(t *testing.T) {
-	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups")
+	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups", true)
 	ctx := context.Background()
 	_, err := p.Download(ctx, "test.tar.gz")
 	if err == nil {
@@ -937,7 +937,7 @@ func TestSFTPDownloadNoAuth(t *testing.T) {
 }
 
 func TestSFTPListNoAuth(t *testing.T) {
-	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups")
+	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups", true)
 	ctx := context.Background()
 	_, err := p.List(ctx)
 	if err == nil {
@@ -946,7 +946,7 @@ func TestSFTPListNoAuth(t *testing.T) {
 }
 
 func TestSFTPDeleteNoAuth(t *testing.T) {
-	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups")
+	p := NewSFTPProvider("127.0.0.1", 22, "user", "", "", "/backups", true)
 	ctx := context.Background()
 	err := p.Delete(ctx, "test.tar.gz")
 	if err == nil {
@@ -961,7 +961,7 @@ func TestSFTPDialBadKeyFile(t *testing.T) {
 	keyFile := filepath.Join(tmpDir, "bad_key")
 	os.WriteFile(keyFile, []byte("not a valid key"), 0644)
 
-	p := NewSFTPProvider("127.0.0.1", 0, "user", keyFile, "pass", "/backups")
+	p := NewSFTPProvider("127.0.0.1", 0, "user", keyFile, "pass", "/backups", true)
 	// Should fall back to password auth since key is invalid
 	if p.port != 22 {
 		t.Errorf("port = %d, want 22", p.port)
@@ -1348,7 +1348,7 @@ func TestSFTPProviderUploadSessionError(t *testing.T) {
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/data")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/data", true)
 
 	ctx := context.Background()
 	err := p.Upload(ctx, "test.tar.gz", bytes.NewReader([]byte("archive content")))
@@ -1373,7 +1373,7 @@ func TestSFTPProviderDownloadNotFound(t *testing.T) {
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 
 	ctx := context.Background()
 	rc, err := p.Download(ctx, "nonexistent.tar.gz")
@@ -1398,7 +1398,7 @@ func TestSFTPProviderListEmptyDir(t *testing.T) {
 	// Create the backups directory but leave it empty
 	os.MkdirAll(filepath.Join(storageDir, "backups"), 0755)
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 
 	ctx := context.Background()
 	infos, err := p.List(ctx)
@@ -1422,7 +1422,7 @@ func TestSFTPDialInvalidKeyFile(t *testing.T) {
 	os.WriteFile(keyFile, []byte("not a valid SSH key"), 0600)
 
 	// Password auth should still work even with bad key file
-	p := NewSFTPProvider(host, port, "testuser", keyFile, "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", keyFile, "testpass", "/backups", true)
 	os.MkdirAll(filepath.Join(storageDir, "backups"), 0755)
 
 	ctx := context.Background()
@@ -1440,7 +1440,7 @@ func TestSFTPDialMissingKeyFile(t *testing.T) {
 	defer cleanup()
 
 	// Key file doesn't exist, but password auth should work
-	p := NewSFTPProvider(host, port, "testuser", "/nonexistent/key", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "/nonexistent/key", "testpass", "/backups", true)
 	os.MkdirAll(filepath.Join(storageDir, "backups"), 0755)
 
 	ctx := context.Background()

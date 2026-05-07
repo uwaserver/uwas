@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -266,14 +267,22 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 	}
 
 	// Generate API key
-	apiKey := generateAPIKey()
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate API key: %w", err)
+	}
 	apiKeyPrefix := apiKey
 	if len(apiKeyPrefix) > 8 {
 		apiKeyPrefix = apiKeyPrefix[:8]
 	}
 
+	userID, err := generateID()
+	if err != nil {
+		return nil, fmt.Errorf("generate user ID: %w", err)
+	}
+
 	user := &User{
-		ID:         generateID(),
+		ID:         userID,
 		Username:   username,
 		Email:      email,
 		Password:   string(hash),
@@ -333,8 +342,13 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 	user.LastLogin = time.Now()
 	m.mu.Unlock()
 
+	token, err := generateToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate session token: %w", err)
+	}
+
 	session := &Session{
-		Token:     generateToken(),
+		Token:     token,
 		UserID:    userID,
 		Username:  username,
 		Role:      role,
@@ -580,7 +594,10 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 		return "", errors.New("user not found")
 	}
 
-	apiKey := generateAPIKey()
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("generate API key: %w", err)
+	}
 	apiKeyPrefix := apiKey
 	if len(apiKeyPrefix) > 8 {
 		apiKeyPrefix = apiKeyPrefix[:8]
@@ -692,28 +709,50 @@ func (m *Manager) usersFile() string {
 	return filepath.Join(m.dataDir, "users.json")
 }
 
-func generateID() string {
+func generateID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		// Fallback to urandom — only happens on severe OS entropy failure
+		f, fErr := os.Open("/dev/urandom")
+		if fErr != nil {
+			return "", fmt.Errorf("generate ID: %w", fErr)
+		}
+		defer f.Close()
+		if _, fErr := io.ReadFull(f, b); fErr != nil {
+			return "", fmt.Errorf("generate ID fallback: %w", fErr)
+		}
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func generateToken() string {
+func generateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		f, fErr := os.Open("/dev/urandom")
+		if fErr != nil {
+			return "", fmt.Errorf("generate token: %w", fErr)
+		}
+		defer f.Close()
+		if _, fErr := io.ReadFull(f, b); fErr != nil {
+			return "", fmt.Errorf("generate token fallback: %w", fErr)
+		}
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func generateAPIKey() string {
+func generateAPIKey() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		f, fErr := os.Open("/dev/urandom")
+		if fErr != nil {
+			return "", fmt.Errorf("generate API key: %w", fErr)
+		}
+		defer f.Close()
+		if _, fErr := io.ReadFull(f, b); fErr != nil {
+			return "", fmt.Errorf("generate API key fallback: %w", fErr)
+		}
 	}
-	return "uk_" + base64.URLEncoding.EncodeToString(b)
+	return "uk_" + base64.URLEncoding.EncodeToString(b), nil
 }
 
 // hashAPIKey returns the hex-encoded SHA256 hash of an API key.

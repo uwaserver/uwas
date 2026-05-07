@@ -1694,7 +1694,10 @@ func itoa(n int) string {
 func TestGenerateIDUniqueness(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		id := generateID()
+		id, err := generateID()
+		if err != nil {
+			t.Fatalf("generateID failed: %v", err)
+		}
 		if id == "" {
 			t.Fatal("generateID returned empty string")
 		}
@@ -1708,7 +1711,10 @@ func TestGenerateIDUniqueness(t *testing.T) {
 func TestGenerateTokenUniqueness(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		token := generateToken()
+		token, err := generateToken()
+		if err != nil {
+			t.Fatalf("generateToken failed: %v", err)
+		}
 		if token == "" {
 			t.Fatal("generateToken returned empty string")
 		}
@@ -1721,7 +1727,10 @@ func TestGenerateTokenUniqueness(t *testing.T) {
 
 func TestGenerateAPIKeyFormat(t *testing.T) {
 	for i := 0; i < 10; i++ {
-		key := generateAPIKey()
+		key, err := generateAPIKey()
+		if err != nil {
+			t.Fatalf("generateAPIKey failed: %v", err)
+		}
 		if !strings.HasPrefix(key, "uk_") {
 			t.Errorf("expected API key to start with uk_, got %s", key)
 		}

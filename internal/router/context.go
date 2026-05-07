@@ -2,7 +2,9 @@ package router
 
 import (
 	"crypto/rand"
+	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -104,7 +106,15 @@ func generateIDBytes(buf *[16]byte) {
 	buf[3] = byte(ms >> 16)
 	buf[4] = byte(ms >> 8)
 	buf[5] = byte(ms)
-	rand.Read(buf[6:])
+	if _, err := rand.Read(buf[6:]); err != nil {
+		// Fallback to /dev/urandom on entropy failure
+		f, fErr := os.Open("/dev/urandom")
+		if fErr != nil {
+			return // Leave buffer partially uninitialized — request will still be processed
+		}
+		defer f.Close()
+		io.ReadFull(f, buf[6:])
+	}
 	// Set version (7) and variant (RFC 9562)
 	buf[6] = (buf[6] & 0x0F) | 0x70
 	buf[8] = (buf[8] & 0x3F) | 0x80

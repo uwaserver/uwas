@@ -2,7 +2,9 @@ package bandwidth
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -275,7 +277,13 @@ func (m *Manager) Reset(host string) {
 func (m *Manager) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Strip port from host to match domain limits correctly
 			host := r.Host
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			// Additionally, normalize to lowercase for case-insensitive matching
+			host = strings.ToLower(host)
 
 			m.mu.RLock()
 			_, hasLimit := m.limits[host]
