@@ -1252,7 +1252,7 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 		Version string `json:"version"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Version == "" {
@@ -1410,7 +1410,7 @@ func (s *Server) handlePHPConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Key == "" {
@@ -1522,7 +1522,7 @@ func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if err := s.phpMgr.SetConfigRaw(version, req.Content); err != nil {
@@ -1585,7 +1585,7 @@ func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
 		Version string `json:"version"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Domain == "" {
@@ -1747,7 +1747,7 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Key == "" {
@@ -2396,7 +2396,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var d config.Domain
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -2778,13 +2778,13 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "request body too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		jsonError(w, "read body: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
 
 	var d config.Domain
 	if err := json.Unmarshal(body, &d); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if d.Host != "" && !isValidHostname(d.Host) {
@@ -3314,7 +3314,7 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		Domain string `json:"domain"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Domain == "" {
@@ -3457,7 +3457,7 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	data := []byte(req.Content)
@@ -3591,7 +3591,7 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var updates map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -4090,7 +4090,7 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	data := []byte(req.Content)
@@ -4226,7 +4226,7 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 		Input json.RawMessage `json:"input"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	result, err := s.mcpSrv.CallTool(req.Name, req.Input)
@@ -4283,7 +4283,7 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Provider == "" {
@@ -4329,7 +4329,7 @@ func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Domain == "" {
@@ -4392,7 +4392,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Name == "" {
@@ -4468,7 +4468,7 @@ func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)
 		Keep     int    `json:"keep"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -5133,7 +5133,7 @@ func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
 		Command  string `json:"command"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Domain == "" || req.Command == "" {
@@ -5301,7 +5301,7 @@ func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)
 		AccountID string `json:"account_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Token == "" || req.AccountID == "" {
@@ -5508,7 +5508,7 @@ func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Req
 		LocalTarget string `json:"local_target"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -5815,7 +5815,7 @@ func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Reque
 		Everything bool   `json:"everything"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -5858,7 +5858,10 @@ func (s *Server) purgeCloudflareCache(token, url string, everything bool) error 
 		if err != nil {
 			return err
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
+
+		// Read and discard response body to ensure connection reuse
+		io.Copy(io.Discard, resp.Body)
 	}
 
 	return nil

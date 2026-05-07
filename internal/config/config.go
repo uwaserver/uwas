@@ -66,12 +66,13 @@ type BackupS3Config struct {
 }
 
 type BackupSFTPConfig struct {
-	Host       string `yaml:"host"`
-	Port       int    `yaml:"port"`
-	User       string `yaml:"user"`
-	KeyFile    string `yaml:"key_file"`
-	Password   string `yaml:"password"`
-	RemotePath string `yaml:"remote_path"`
+	Host               string `yaml:"host"`
+	Port               int    `yaml:"port"`
+	User               string `yaml:"user"`
+	KeyFile            string `yaml:"key_file"`
+	Password           string `yaml:"password"`
+	RemotePath         string `yaml:"remote_path"`
+	InsecureKnownHosts bool   `yaml:"insecure_known_hosts"` // Allow unknown hosts (auto-accept TOFU — not recommended for production)
 }
 
 type TimeoutConfig struct {

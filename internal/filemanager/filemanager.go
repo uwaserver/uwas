@@ -96,6 +96,8 @@ func List(baseDir, relPath string) ([]Entry, error) {
 	for _, e := range entries {
 		info, err := entryInfo(e)
 		if err != nil {
+			// Silently skip entries that can't be read (permission denied, broken symlink, etc.)
+			// This is intentional - users shouldn't see files they can't access.
 			continue
 		}
 		rel, _ := filepath.Rel(baseDir, filepath.Join(fullPath, e.Name()))

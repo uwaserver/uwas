@@ -57,7 +57,10 @@ func (p *S3Provider) Upload(ctx context.Context, filename string, data io.Reader
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return fmt.Errorf("s3 upload %s: %s (error reading body: %w)", filename, resp.Status, err)
+		}
 		return fmt.Errorf("s3 upload %s: %s %s", filename, resp.Status, string(body))
 	}
 	return nil
@@ -108,7 +111,10 @@ func (p *S3Provider) List(ctx context.Context) ([]BackupInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return nil, fmt.Errorf("s3 list: %s (error reading body: %w)", resp.Status, err)
+		}
 		return nil, fmt.Errorf("s3 list: %s %s", resp.Status, string(body))
 	}
 
@@ -150,7 +156,10 @@ func (p *S3Provider) Delete(ctx context.Context, filename string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode != 404 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return fmt.Errorf("s3 delete %s: %s (error reading body: %w)", filename, resp.Status, err)
+		}
 		return fmt.Errorf("s3 delete %s: %s %s", filename, resp.Status, string(body))
 	}
 	return nil

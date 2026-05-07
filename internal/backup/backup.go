@@ -108,6 +108,7 @@ func New(cfg config.BackupConfig, log *logger.Logger) *BackupManager {
 			cfg.SFTP.KeyFile,
 			cfg.SFTP.Password,
 			cfg.SFTP.RemotePath,
+			cfg.SFTP.InsecureKnownHosts,
 		)
 	}
 

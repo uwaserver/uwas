@@ -2058,7 +2058,7 @@ func TestSFTPProviderUploadAndDownload(t *testing.T) {
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 
 	ctx := context.Background()
 
@@ -2096,7 +2096,7 @@ func TestSFTPProviderList(t *testing.T) {
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 
 	// Create some files in the storage dir.
 	backupsDir := filepath.Join(storageDir, "backups")
@@ -2129,7 +2129,7 @@ func TestSFTPProviderDelete(t *testing.T) {
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 
 	// Create a file to delete.
 	backupsDir := filepath.Join(storageDir, "backups")
@@ -2276,7 +2276,7 @@ func TestSFTPProviderListFallbackLsFormat(t *testing.T) {
 	host, port, cleanup := startTestSSHServerLsFallback(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 
 	backupsDir := filepath.Join(storageDir, "backups")
 	os.MkdirAll(backupsDir, 0755)
@@ -2345,7 +2345,7 @@ func TestSFTPProviderListEmpty(t *testing.T) {
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/empty-dir")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/empty-dir", true)
 
 	ctx := context.Background()
 	infos, err := p.List(ctx)
@@ -2690,7 +2690,7 @@ func TestSFTPProviderUploadSessionFails(t *testing.T) {
 	host, port, cleanup := startTestSSHServerRejectExec(t)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -2707,7 +2707,7 @@ func TestSFTPProviderDownloadStartFails(t *testing.T) {
 	host, port, cleanup := startTestSSHServerRejectExec(t)
 	defer cleanup()
 
-	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups")
+	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

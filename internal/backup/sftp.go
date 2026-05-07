@@ -25,29 +25,35 @@ import (
 // dependencies. File operations are performed through the SSH subsystem
 // "sftp" protocol, which is supported by all standard OpenSSH servers.
 type SFTPProvider struct {
-	host       string
-	port       int
-	user       string
-	keyFile    string
-	password   string
-	remotePath string
+	host                 string
+	port                 int
+	user                 string
+	keyFile              string
+	password             string
+	remotePath           string
+	insecureKnownHosts   bool // Allow unknown hosts (auto-accept TOFU — not recommended)
 }
 
 // NewSFTPProvider creates an SFTPProvider.
-func NewSFTPProvider(host string, port int, user, keyFile, password, remotePath string) *SFTPProvider {
+func NewSFTPProvider(host string, port int, user, keyFile, password, remotePath string, insecureKnownHosts ...bool) *SFTPProvider {
 	if port <= 0 {
 		port = 22
 	}
 	if remotePath == "" {
 		remotePath = "/backups/uwas"
 	}
+	insecure := false
+	if len(insecureKnownHosts) > 0 {
+		insecure = insecureKnownHosts[0]
+	}
 	return &SFTPProvider{
-		host:       host,
-		port:       port,
-		user:       user,
-		keyFile:    keyFile,
-		password:   password,
-		remotePath: remotePath,
+		host:               host,
+		port:               port,
+		user:               user,
+		keyFile:            keyFile,
+		password:           password,
+		remotePath:         remotePath,
+		insecureKnownHosts: insecure,
 	}
 }
 
@@ -272,7 +278,8 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 			return nil, fmt.Errorf("init knownhosts: %w", err)
 		}
 	}
-	// Wrap knownhosts.New to auto-accept new hosts (TOFU) — append new keys to known_hosts
+	// Wrap knownhosts.New to validate hosts — reject unknown hosts (secure default)
+	// Known hosts with changed keys are rejected (MITM protection).
 	trustedHostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := hostKeyCallback(hostname, remote, key)
 		if err != nil {
@@ -280,14 +287,20 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 			if keyErr, ok := err.(*knownhosts.KeyError); ok && len(keyErr.Want) > 0 {
 				return err // Reject MITM attempts
 			}
-			// Unknown host — accept and append to known_hosts (TOFU)
-			hostEntry := fmt.Sprintf("%s %s %s", hostname, key.Type(), base64.StdEncoding.EncodeToString(key.Marshal()))
-			f, fErr := os.OpenFile(knownHostsFile, os.O_APPEND|os.O_WRONLY, 0600)
-			if fErr == nil {
-				f.WriteString(string(hostEntry) + "\n")
-				f.Close()
+			// Unknown host — REJECT by default (security). To allow:
+			// Pre-populate ~/.ssh/known_hosts with the server's host key, or
+			// set InsecureKnownHosts=true in provider config (not recommended for production).
+			if p.insecureKnownHosts {
+				// Only for dev/test — log warning and auto-accept
+				hostEntry := fmt.Sprintf("%s %s %s", hostname, key.Type(), base64.StdEncoding.EncodeToString(key.Marshal()))
+				f, fErr := os.OpenFile(knownHostsFile, os.O_APPEND|os.O_WRONLY, 0600)
+				if fErr == nil {
+					f.WriteString(hostEntry + "\n")
+					f.Close()
+				}
+				return nil
 			}
-			return nil
+			return fmt.Errorf("unknown SFTP host %q: not in known_hosts. Pre-add the host key to ~/.ssh/known_hosts or set InsecureKnownHosts=true for first-time connections", hostname)
 		}
 		return nil
 	}
