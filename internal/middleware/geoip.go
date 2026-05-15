@@ -45,7 +45,7 @@ func GeoIP(cfg GeoIPConfig) Middleware {
 		}
 	}
 
-	cache := &geoCache{entries: make(map[string]geoCacheEntry)}
+	cache := &geoCache{entries: make(map[string]geoCacheEntry), inflight: make(map[string]struct{})}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,13 +111,14 @@ func isPrivateIP(ip string) bool {
 }
 
 type geoCacheEntry struct {
-	country string
+	country string // "" means negative (failed lookup), still honored until expires
 	expires time.Time
 }
 
 type geoCache struct {
-	mu      sync.RWMutex
-	entries map[string]geoCacheEntry
+	mu       sync.RWMutex
+	entries  map[string]geoCacheEntry
+	inflight map[string]struct{} // IPs with a queued/running external lookup
 }
 
 func (c *geoCache) get(ip string) (string, bool) {
@@ -133,9 +134,15 @@ func (c *geoCache) get(ip string) (string, bool) {
 func (c *geoCache) set(ip, country string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Successful lookups cached 24h; failed (empty) results 5min so a single
+	// bad IP doesn't keep firing external requests every request.
+	ttl := 24 * time.Hour
+	if country == "" {
+		ttl = 5 * time.Minute
+	}
 	c.entries[ip] = geoCacheEntry{
 		country: country,
-		expires: time.Now().Add(24 * time.Hour),
+		expires: time.Now().Add(ttl),
 	}
 	// Limit cache size
 	if len(c.entries) > 10000 {
@@ -143,6 +150,70 @@ func (c *geoCache) set(ip, country string) {
 			delete(c.entries, k)
 			break
 		}
+	}
+}
+
+// tryClaimInflight returns true if this caller should perform the external
+// lookup for ip; false means another goroutine already owns it (singleflight).
+func (c *geoCache) tryClaimInflight(ip string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, busy := c.inflight[ip]; busy {
+		return false
+	}
+	c.inflight[ip] = struct{}{}
+	return true
+}
+
+func (c *geoCache) releaseInflight(ip string) {
+	c.mu.Lock()
+	delete(c.inflight, ip)
+	c.mu.Unlock()
+}
+
+// geoLookupJob queued onto the bounded worker pool.
+type geoLookupJob struct {
+	ip    string
+	cache *geoCache
+}
+
+var (
+	geoPoolOnce  sync.Once
+	geoPoolQueue chan geoLookupJob
+)
+
+const (
+	geoPoolWorkers  = 4
+	geoPoolCapacity = 256
+)
+
+func geoPoolStart() {
+	geoPoolQueue = make(chan geoLookupJob, geoPoolCapacity)
+	for i := 0; i < geoPoolWorkers; i++ {
+		go func() {
+			for job := range geoPoolQueue {
+				country := lookupExternal(job.ip)
+				// Always cache — empty result acts as negative cache to prevent re-queue storms.
+				job.cache.set(job.ip, country)
+				job.cache.releaseInflight(job.ip)
+			}
+		}()
+	}
+}
+
+// enqueueGeoLookup schedules an external lookup unless one is already running
+// for this IP. Drops silently if the queue is full (bounded pool) — the request
+// is allowed through anyway.
+func enqueueGeoLookup(ip string, cache *geoCache) {
+	geoPoolOnce.Do(geoPoolStart)
+	if !cache.tryClaimInflight(ip) {
+		return // another goroutine already looking it up
+	}
+	select {
+	case geoPoolQueue <- geoLookupJob{ip: ip, cache: cache}:
+	default:
+		// Queue full — release inflight so a future request can retry.
+		cache.releaseInflight(ip)
 	}
 }
 
@@ -166,13 +237,9 @@ func lookupCountry(ip string, db map[string]string, cache *geoCache) string {
 		}
 	}
 
-	// Cache miss + no local DB: fetch async, allow this request through.
+	// Cache miss + no local DB: queue on bounded worker pool (singleflight per IP).
 	// Next request from this IP will use the cached result.
-	go func() {
-		if country := lookupExternal(ip); country != "" {
-			cache.set(ip, country)
-		}
-	}()
+	enqueueGeoLookup(ip, cache)
 	return "" // allow through on first request (default-allow until cached)
 }
 
