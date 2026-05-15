@@ -1,5 +1,32 @@
 package config
 
+// DomainType is the central dispatch axis: which handler family processes
+// requests for this domain. Kept as an underlying string so YAML/JSON
+// serialization is unchanged; Domain.Type stays a bare string for the same
+// reason, and call sites can convert with DomainType(d.Type) when they want
+// the enum semantics.
+type DomainType string
+
+const (
+	DomainTypeStatic   DomainType = "static"
+	DomainTypePHP      DomainType = "php"
+	DomainTypeProxy    DomainType = "proxy"
+	DomainTypeApp      DomainType = "app"
+	DomainTypeRedirect DomainType = "redirect"
+)
+
+// IsValid reports whether t is one of the recognized domain types.
+func (t DomainType) IsValid() bool {
+	switch t {
+	case DomainTypeStatic, DomainTypePHP, DomainTypeProxy, DomainTypeApp, DomainTypeRedirect:
+		return true
+	}
+	return false
+}
+
+// String returns the string form (so DomainType prints as "static" etc.).
+func (t DomainType) String() string { return string(t) }
+
 // Domain is a single virtual host. The Type field selects which feature
 // block(s) are honored (php / proxy / app / static / redirect).
 type Domain struct {
