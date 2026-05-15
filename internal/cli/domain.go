@@ -72,7 +72,7 @@ func (d *DomainCommand) list(args []string) error {
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/domains", *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("list domains: %w", err)
 	}
 
 	var domains []struct {
@@ -118,7 +118,7 @@ func (d *DomainCommand) add(args []string) error {
 
 	body, err := apiRequest("POST", *apiURL+"/api/v1/domains", *apiKey, strings.NewReader(payload))
 	if err != nil {
-		return err
+		return fmt.Errorf("add domain %s: %w", host, err)
 	}
 
 	fmt.Printf("Domain added: %s\n", string(body))
@@ -142,7 +142,7 @@ func (d *DomainCommand) remove(args []string) error {
 
 	_, err := apiRequest("DELETE", *apiURL+"/api/v1/domains/"+host, *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("remove domain %s: %w", host, err)
 	}
 
 	fmt.Printf("Domain removed: %s\n", host)
@@ -200,7 +200,7 @@ func (c *CacheCommand) purge(args []string) error {
 
 	body, err := apiRequest("POST", *apiURL+"/api/v1/cache/purge", *apiKey, strings.NewReader(payload))
 	if err != nil {
-		return err
+		return fmt.Errorf("purge cache: %w", err)
 	}
 
 	fmt.Println(string(body))
@@ -219,7 +219,7 @@ func (c *CacheCommand) stats(args []string) error {
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch cache stats: %w", err)
 	}
 
 	var stats map[string]any
