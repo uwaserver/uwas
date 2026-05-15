@@ -107,7 +107,7 @@ type Server struct {
 
 	// Global installation task manager (serializes apt/dpkg operations).
 	// PHP install state lives entirely in taskMgr (queryable via ActiveByType("php")).
-	taskMgr *install.Manager
+	taskMgr *install.Queue
 
 	// In-memory log + audit ring buffers. Both are populated lazily in
 	// initAudit / RecordLog. Tests reach into the buffer fields directly.

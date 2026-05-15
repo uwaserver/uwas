@@ -37,8 +37,11 @@ type Task struct {
 // It receives an output callback to stream progress.
 type TaskFunc func(appendOutput func(string)) error
 
-// Manager serializes system package operations and tracks their progress.
-type Manager struct {
+// Queue serializes system package operations and tracks their progress.
+// It is request-scoped state (no goroutine lifetime that survives the
+// process), so it is named Queue rather than Manager — refactor.md A15
+// reserves "Manager" for daemon-like owners.
+type Queue struct {
 	mu       sync.Mutex
 	tasks    map[string]*Task
 	queue    chan *queueEntry
@@ -53,25 +56,25 @@ type queueEntry struct {
 	fn   TaskFunc
 }
 
-// New creates a new installation manager and starts the queue worker.
-func New() *Manager {
-	m := &Manager{
+// New creates a new install Queue and starts its background worker.
+func New() *Queue {
+	q := &Queue{
 		tasks:    make(map[string]*Task),
 		queue:    make(chan *queueEntry, 32),
 		stopCh:   make(chan struct{}),
 		maxKeep:  50,
 		keepTime: 30 * time.Minute,
 	}
-	go m.worker()
-	return m
+	go q.worker()
+	return q
 }
 
 // Submit queues a new installation task. Returns the task immediately.
 // The task will execute when the queue worker is ready (serialized).
-func (m *Manager) Submit(taskType, name, action string, fn TaskFunc) *Task {
-	m.mu.Lock()
-	m.taskSeq++
-	id := fmt.Sprintf("%s-%s-%d", taskType, action, m.taskSeq)
+func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
+	q.mu.Lock()
+	q.taskSeq++
+	id := fmt.Sprintf("%s-%s-%d", taskType, action, q.taskSeq)
 	task := &Task{
 		ID:        id,
 		Type:      taskType,
@@ -80,25 +83,25 @@ func (m *Manager) Submit(taskType, name, action string, fn TaskFunc) *Task {
 		Status:    StatusQueued,
 		CreatedAt: time.Now(),
 	}
-	m.tasks[id] = task
-	m.mu.Unlock()
+	q.tasks[id] = task
+	q.mu.Unlock()
 
 	select {
-	case m.queue <- &queueEntry{task: task, fn: fn}:
-	case <-m.stopCh:
-		m.mu.Lock()
+	case q.queue <- &queueEntry{task: task, fn: fn}:
+	case <-q.stopCh:
+		q.mu.Lock()
 		task.Status = StatusError
 		task.Error = "manager stopped"
-		m.mu.Unlock()
+		q.mu.Unlock()
 	}
 	return task
 }
 
 // Get returns a task by ID.
-func (m *Manager) Get(id string) *Task {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	t, ok := m.tasks[id]
+func (q *Queue) Get(id string) *Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	t, ok := q.tasks[id]
 	if !ok {
 		return nil
 	}
@@ -108,10 +111,10 @@ func (m *Manager) Get(id string) *Task {
 }
 
 // Active returns the currently running task, if any.
-func (m *Manager) Active() *Task {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, t := range m.tasks {
+func (q *Queue) Active() *Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, t := range q.tasks {
 		if t.Status == StatusRunning || t.Status == StatusQueued {
 			cp := *t
 			return &cp
@@ -121,10 +124,10 @@ func (m *Manager) Active() *Task {
 }
 
 // ActiveByType returns the running/queued task of the given type.
-func (m *Manager) ActiveByType(taskType string) *Task {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, t := range m.tasks {
+func (q *Queue) ActiveByType(taskType string) *Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, t := range q.tasks {
 		if t.Type == taskType && (t.Status == StatusRunning || t.Status == StatusQueued) {
 			cp := *t
 			return &cp
@@ -135,11 +138,11 @@ func (m *Manager) ActiveByType(taskType string) *Task {
 
 // LatestByType returns the most recently created task of the given type
 // (active or completed). Returns nil if no such task is retained.
-func (m *Manager) LatestByType(taskType string) *Task {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (q *Queue) LatestByType(taskType string) *Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	var latest *Task
-	for _, t := range m.tasks {
+	for _, t := range q.tasks {
 		if t.Type != taskType {
 			continue
 		}
@@ -155,22 +158,22 @@ func (m *Manager) LatestByType(taskType string) *Task {
 }
 
 // List returns all recent tasks (active + recently completed).
-func (m *Manager) List() []Task {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cleanupLocked()
-	result := make([]Task, 0, len(m.tasks))
-	for _, t := range m.tasks {
+func (q *Queue) List() []Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.cleanupLocked()
+	result := make([]Task, 0, len(q.tasks))
+	for _, t := range q.tasks {
 		result = append(result, *t)
 	}
 	return result
 }
 
 // IsRunning returns true if any task is currently running.
-func (m *Manager) IsRunning() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, t := range m.tasks {
+func (q *Queue) IsRunning() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, t := range q.tasks {
 		if t.Status == StatusRunning {
 			return true
 		}
@@ -179,39 +182,39 @@ func (m *Manager) IsRunning() bool {
 }
 
 // Stop shuts down the queue worker.
-func (m *Manager) Stop() {
-	close(m.stopCh)
+func (q *Queue) Stop() {
+	close(q.stopCh)
 }
 
-func (m *Manager) worker() {
+func (q *Queue) worker() {
 	for {
 		select {
-		case <-m.stopCh:
+		case <-q.stopCh:
 			return
-		case entry := <-m.queue:
-			m.runTask(entry)
+		case entry := <-q.queue:
+			q.runTask(entry)
 		}
 	}
 }
 
-func (m *Manager) runTask(entry *queueEntry) {
+func (q *Queue) runTask(entry *queueEntry) {
 	task := entry.task
 
-	m.mu.Lock()
+	q.mu.Lock()
 	now := time.Now()
 	task.Status = StatusRunning
 	task.StartedAt = &now
-	m.mu.Unlock()
+	q.mu.Unlock()
 
 	appendOutput := func(line string) {
-		m.mu.Lock()
+		q.mu.Lock()
 		task.Output += line
-		m.mu.Unlock()
+		q.mu.Unlock()
 	}
 
 	err := entry.fn(appendOutput)
 
-	m.mu.Lock()
+	q.mu.Lock()
 	end := time.Now()
 	task.EndedAt = &end
 	if err != nil {
@@ -220,15 +223,15 @@ func (m *Manager) runTask(entry *queueEntry) {
 	} else {
 		task.Status = StatusDone
 	}
-	m.mu.Unlock()
+	q.mu.Unlock()
 }
 
-func (m *Manager) cleanupLocked() {
-	cutoff := time.Now().Add(-m.keepTime)
-	for id, t := range m.tasks {
+func (q *Queue) cleanupLocked() {
+	cutoff := time.Now().Add(-q.keepTime)
+	for id, t := range q.tasks {
 		if t.Status != StatusRunning && t.Status != StatusQueued {
 			if t.EndedAt != nil && t.EndedAt.Before(cutoff) {
-				delete(m.tasks, id)
+				delete(q.tasks, id)
 			}
 		}
 	}

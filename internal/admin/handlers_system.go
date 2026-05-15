@@ -320,7 +320,7 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"items": pkgs, "total": total, "limit": limit, "offset": offset})
 }
 
-// Package installation is managed by the global task manager (install.Manager).
+// Package installation is managed by the global task queue (install.Queue).
 
 func findPkg(id string) *knownPkg {
 	for i := range knownPackages {
