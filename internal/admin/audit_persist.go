@@ -105,14 +105,14 @@ func (s *Server) appendAuditLine(e AuditEntry) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Warn("audit log open failed", "err", err.Error())
+			s.logger.Warn("audit log open failed", "error", err.Error())
 		}
 		return
 	}
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		_ = f.Close()
 		if s.logger != nil {
-			s.logger.Warn("audit log write failed", "err", err.Error())
+			s.logger.Warn("audit log write failed", "error", err.Error())
 		}
 		return
 	}
@@ -136,10 +136,10 @@ func (s *Server) rotateAuditLog(path string) {
 		from := fmt.Sprintf("%s.%d", path, i)
 		to := fmt.Sprintf("%s.%d", path, i+1)
 		if err := os.Rename(from, to); err != nil && !errors.Is(err, os.ErrNotExist) && s.logger != nil {
-			s.logger.Warn("audit log rotate shift failed", "from", from, "err", err.Error())
+			s.logger.Warn("audit log rotate shift failed", "from", from, "error", err.Error())
 		}
 	}
 	if err := os.Rename(path, path+".1"); err != nil && s.logger != nil {
-		s.logger.Warn("audit log rotate failed", "err", err.Error())
+		s.logger.Warn("audit log rotate failed", "error", err.Error())
 	}
 }

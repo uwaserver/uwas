@@ -60,7 +60,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(500 * time.Millisecond) // let response flush
 		if err := selfupdate.RestartSelf(); err != nil {
-			s.logger.Error("UWAS auto-restart failed after self-update", "err", err.Error(),
+			s.logger.Error("UWAS auto-restart failed after self-update", "error", err.Error(),
 				"hint", "new binary is installed; restart manually: 'sudo systemctl restart uwas' or 'sudo uwas restart'")
 		}
 	}()

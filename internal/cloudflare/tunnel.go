@@ -170,7 +170,7 @@ func (r *Runner) monitor(p *runningProc, token string) {
 	p.cmd = nil
 	r.mu.Unlock()
 	if r.logger != nil {
-		r.logger.Warn("cloudflared exited unexpectedly", "tunnel_id", p.tunnelID, "err", errString(waitErr))
+		r.logger.Warn("cloudflared exited unexpectedly", "tunnel_id", p.tunnelID, "error", errString(waitErr))
 	}
 
 	// Backoff before restart, allowing Stop() to break out.
@@ -182,7 +182,7 @@ func (r *Runner) monitor(p *runningProc, token string) {
 	case <-backoff.C:
 	}
 	if err := r.spawn(p, token); err != nil && r.logger != nil {
-		r.logger.Error("cloudflared restart failed", "tunnel_id", p.tunnelID, "err", err.Error())
+		r.logger.Error("cloudflared restart failed", "tunnel_id", p.tunnelID, "error", err.Error())
 	}
 }
 
