@@ -33,6 +33,29 @@ func NewEngine(rules []*Rule) *Engine {
 	return &Engine{rules: rules}
 }
 
+// MightMatch is a cheap pre-check: returns true if at least one rule's
+// pattern regex matches the URI. Callers use it to skip the Variables
+// allocation + Process() entirely for domains that have rewrites
+// configured but whose request paths never match.
+//
+// False positives (returning true when the rule would not actually fire
+// after condition evaluation) are acceptable — they just mean we fall
+// through to the full Process() like before. False negatives must not
+// happen, so this only inspects rule.Pattern, never conditions.
+//
+// Refs: refactor.md P12.
+func (e *Engine) MightMatch(uri string) bool {
+	if len(e.rules) == 0 {
+		return false
+	}
+	for _, rule := range e.rules {
+		if rule.Pattern != nil && rule.Pattern.MatchString(uri) {
+			return true
+		}
+	}
+	return false
+}
+
 // Process evaluates all rules against the request URI.
 // Uses a wall-clock timeout to prevent ReDoS from malicious regexes.
 func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
