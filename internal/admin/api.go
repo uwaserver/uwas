@@ -111,16 +111,10 @@ type Server struct {
 	// PHP install state lives entirely in taskMgr (queryable via ActiveByType("php")).
 	taskMgr *install.Manager
 
-	logMu      sync.Mutex
-	logEntries []LogEntry
-	logPos     int
-	logFull    bool
-
-	// Audit log ring buffer
-	auditMu      sync.Mutex
-	auditEntries []AuditEntry
-	auditPos     int
-	auditFull    bool
+	// In-memory log + audit ring buffers. Both are populated lazily in
+	// initAudit / RecordLog. Tests reach into the buffer fields directly.
+	logBuf   *ringBuffer[LogEntry]
+	auditBuf *ringBuffer[AuditEntry]
 
 	// 2FA pending setup (per-user, keyed by username)
 	pendingTOTPMu sync.Mutex
@@ -2094,9 +2088,9 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 
 	// Track last seen position
 	var lastSeen int
-	s.logMu.Lock()
-	lastSeen = s.logPos
-	s.logMu.Unlock()
+	if s.logBuf != nil {
+		lastSeen, _ = s.logBuf.PosAndEntries()
+	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -2106,10 +2100,10 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			s.logMu.Lock()
-			pos := s.logPos
-			entries := s.logEntries
-			s.logMu.Unlock()
+			if s.logBuf == nil {
+				continue
+			}
+			pos, entries := s.logBuf.PosAndEntries()
 
 			if len(entries) == 0 || pos == lastSeen {
 				continue
@@ -3070,57 +3064,31 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 
 // RecordLog appends a log entry to the ring buffer. Safe for concurrent use.
 func (s *Server) RecordLog(e LogEntry) {
-	s.logMu.Lock()
-	defer s.logMu.Unlock()
-
-	if s.logEntries == nil {
-		s.logEntries = make([]LogEntry, maxLogEntries)
+	if s.logBuf == nil {
+		s.logBuf = newRingBuffer[LogEntry](maxLogEntries)
 	}
-	s.logEntries[s.logPos] = e
-	s.logPos = (s.logPos + 1) % maxLogEntries
-	if s.logPos == 0 {
-		s.logFull = true
-	}
+	s.logBuf.Append(e)
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	s.logMu.Lock()
-	defer s.logMu.Unlock()
-
 	const returnLimit = 100
 
-	var count int
-	if s.logFull {
-		count = maxLogEntries
-	} else {
-		count = s.logPos
-	}
-	if count == 0 {
+	if s.logBuf == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]\n"))
 		return
 	}
 
-	// Collect entries in chronological order (oldest first).
-	var start int
-	if s.logFull {
-		start = s.logPos // oldest entry
+	all := s.logBuf.Snapshot()
+	if len(all) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]\n"))
+		return
 	}
-	// We only return the most recent `returnLimit` entries.
-	skip := 0
-	if count > returnLimit {
-		skip = count - returnLimit
-		count = returnLimit
+	if len(all) > returnLimit {
+		all = all[len(all)-returnLimit:]
 	}
-
-	result := make([]LogEntry, 0, count)
-	for i := 0; i < count+skip; i++ {
-		idx := (start + i) % maxLogEntries
-		if i >= skip {
-			result = append(result, s.logEntries[idx])
-		}
-	}
-	jsonResponse(w, result)
+	jsonResponse(w, all)
 }
 
 // isAllowedOrigin returns true when the Origin header belongs to the
