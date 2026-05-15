@@ -577,56 +577,87 @@ func (m *Manager) StartRenewal(ctx context.Context) {
 	})
 }
 
+// renewalCandidate is a snapshot taken in pass 1 of checkRenewals so the
+// network-bound ACME call in pass 2 does not run while iterating m.certs.
+// sync.Map.Range is non-blocking for unrelated reads, but holding
+// minutes-long ACME work inside the callback delays any concurrent
+// Range / Store on the same map and serializes against renewals for
+// other hosts.
+type renewalCandidate struct {
+	host      string
+	dnsNames  []string
+	remaining time.Duration
+}
+
 func (m *Manager) checkRenewals(ctx context.Context) {
+	// Pass 1: walk the cert map once and copy out the hosts that need
+	// renewing. The Range callback returns quickly, freeing the map.
+	var candidates []renewalCandidate
 	m.certs.Range(func(key, value any) bool {
 		host := key.(string)
 		if host == "_default" {
 			return true
 		}
-
 		cert := value.(*tls.Certificate)
 		leaf, err := leafCert(cert)
 		if err != nil {
 			return true
 		}
-
 		remaining := time.Until(leaf.NotAfter)
 		if remaining < 30*24*time.Hour {
-			m.logger.Info("renewing certificate",
-				"domain", host,
-				"expires_in", remaining.Round(time.Hour),
-			)
-
-			var newCert *tls.Certificate
-			var certPEM, keyPEM []byte
-			var err error
-			if m.acmeObtainFunc != nil {
-				newCert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, leaf.DNSNames)
-			} else {
-				newCert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, leaf.DNSNames)
-			}
-			if err != nil {
-				m.logger.Error("renewal failed", "domain", host, "error", err)
-				if m.onCertExpiry != nil {
-					daysLeft := int(remaining.Hours() / 24)
-					m.onCertExpiry(host, daysLeft)
-				}
-				return true
-			}
-
-			m.certs.Store(host, newCert)
-			if err := m.storage.Save(host, newCert, keyPEM, certPEM); err != nil {
-				m.logger.Warn("failed to persist renewed cert", "domain", host, "error", err)
-			}
-
-			m.logger.Info("certificate renewed", "domain", host)
-			if m.onCertRenewed != nil {
-				m.onCertRenewed(host)
-			}
+			candidates = append(candidates, renewalCandidate{
+				host:      host,
+				dnsNames:  append([]string(nil), leaf.DNSNames...),
+				remaining: remaining,
+			})
 		}
-
 		return true
 	})
+
+	// Pass 2: renew sequentially outside the Range. ACME issuance is rate-
+	// limited upstream (Let's Encrypt new-cert/new-order quotas) so adding
+	// concurrency here mostly buys 429s; sequential is the right default.
+	// Refs: refactor.md P7.
+	for _, c := range candidates {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		m.renewOne(ctx, c)
+	}
+}
+
+func (m *Manager) renewOne(ctx context.Context, c renewalCandidate) {
+	m.logger.Info("renewing certificate",
+		"domain", c.host,
+		"expires_in", c.remaining.Round(time.Hour),
+	)
+
+	var newCert *tls.Certificate
+	var certPEM, keyPEM []byte
+	var err error
+	if m.acmeObtainFunc != nil {
+		newCert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, c.dnsNames)
+	} else {
+		newCert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, c.dnsNames)
+	}
+	if err != nil {
+		m.logger.Error("renewal failed", "domain", c.host, "error", err)
+		if m.onCertExpiry != nil {
+			daysLeft := int(c.remaining.Hours() / 24)
+			m.onCertExpiry(c.host, daysLeft)
+		}
+		return
+	}
+
+	m.certs.Store(c.host, newCert)
+	if err := m.storage.Save(c.host, newCert, keyPEM, certPEM); err != nil {
+		m.logger.Warn("failed to persist renewed cert", "domain", c.host, "error", err)
+	}
+
+	m.logger.Info("certificate renewed", "domain", c.host)
+	if m.onCertRenewed != nil {
+		m.onCertRenewed(c.host)
+	}
 }
 
 // UpdateDomains updates the domain list (for hot reload).
