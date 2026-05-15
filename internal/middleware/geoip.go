@@ -92,17 +92,30 @@ func geoExtractIP(r *http.Request) string {
 	return host
 }
 
+// privateIPNets is the parsed set of CIDRs treated as "do not GeoIP lookup".
+// Parsed once at package init so isPrivateIP doesn't re-parse strings on every
+// request (was P16).
+var privateIPNets = func() []*net.IPNet {
+	cidrs := []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"127.0.0.0/8", "::1/128", "fc00::/7",
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err == nil {
+			nets = append(nets, n)
+		}
+	}
+	return nets
+}()
+
 func isPrivateIP(ip string) bool {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
 		return false
 	}
-	private := []string{
-		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-		"127.0.0.0/8", "::1/128", "fc00::/7",
-	}
-	for _, cidr := range private {
-		_, network, _ := net.ParseCIDR(cidr)
+	for _, network := range privateIPNets {
 		if network.Contains(parsed) {
 			return true
 		}
