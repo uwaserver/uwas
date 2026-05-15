@@ -260,8 +260,12 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		// Initialize multi-user auth if enabled
 		if cfg.Global.Users.Enabled {
 			s.authMgr = auth.NewManager(cfg.Global.WebRoot, cfg.Global.Admin.APIKey)
+			s.authMgr.SetAllowLegacyPlaintextKey(cfg.Global.Users.AllowLegacyPlaintextAPIKey)
 			s.admin.SetAuthManager(s.authMgr)
-			log.Info("multi-user auth enabled", "allow_reseller", cfg.Global.Users.AllowResller)
+			log.Info("multi-user auth enabled",
+				"allow_reseller", cfg.Global.Users.AllowResller,
+				"allow_legacy_plaintext_api_key", cfg.Global.Users.AllowLegacyPlaintextAPIKey,
+			)
 		}
 	}
 
