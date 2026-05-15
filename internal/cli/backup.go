@@ -3,9 +3,11 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,7 +64,7 @@ func createBackup(output, configPath, certsDir string) error {
 
 	// Add main config file
 	if err := addFileToTar(tw, configPath, "config/"+filepath.Base(configPath)); err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("add config: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "warning: config file not found: %s\n", configPath)
@@ -131,13 +133,13 @@ func createBackup(output, configPath, certsDir string) error {
 func addFileToTar(tw *tar.Writer, srcPath, tarName string) error {
 	file, err := os.Open(srcPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open %s: %w", srcPath, err)
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
-		return err
+		return fmt.Errorf("stat %s: %w", srcPath, err)
 	}
 
 	header := &tar.Header{
@@ -148,11 +150,13 @@ func addFileToTar(tw *tar.Writer, srcPath, tarName string) error {
 	}
 
 	if err := tw.WriteHeader(header); err != nil {
-		return err
+		return fmt.Errorf("write tar header for %s: %w", tarName, err)
 	}
 
-	_, err = io.Copy(tw, file)
-	return err
+	if _, err := io.Copy(tw, file); err != nil {
+		return fmt.Errorf("copy %s to tar: %w", srcPath, err)
+	}
+	return nil
 }
 
 // RestoreCommand restores from a backup archive.
