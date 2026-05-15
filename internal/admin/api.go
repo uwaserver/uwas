@@ -795,18 +795,32 @@ func formatDiskSize(b int64) string {
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	p50, p95, p99, max := s.metrics.Percentiles()
+	// Per-handler latency percentiles surfaced for the Metrics dashboard
+	// so operators can compare "static p99 = 5ms" vs "proxy p99 = 800ms"
+	// without scraping Prometheus. Refs: refactor.md O4.
+	handlerLatency := make(map[string]map[string]float64, 5)
+	for _, h := range []string{"static", "php", "proxy", "redirect", "app"} {
+		hp50, hp95, hp99, hmax := s.metrics.HandlerPercentiles(h)
+		handlerLatency[h] = map[string]float64{
+			"p50_ms": hp50 * 1000,
+			"p95_ms": hp95 * 1000,
+			"p99_ms": hp99 * 1000,
+			"max_ms": hmax * 1000,
+		}
+	}
 	jsonResponse(w, map[string]any{
-		"requests_total": s.metrics.RequestsTotal.Load(),
-		"cache_hits":     s.metrics.CacheHits.Load(),
-		"cache_misses":   s.metrics.CacheMisses.Load(),
-		"active_conns":   s.metrics.ActiveConns.Load(),
-		"bytes_sent":     s.metrics.BytesSent.Load(),
-		"uptime":         humanDuration(time.Since(s.metrics.StartTime)),
-		"slow_requests":  s.metrics.SlowRequests.Load(),
-		"latency_p50_ms": p50 * 1000,
-		"latency_p95_ms": p95 * 1000,
-		"latency_p99_ms": p99 * 1000,
-		"latency_max_ms": max * 1000,
+		"requests_total":  s.metrics.RequestsTotal.Load(),
+		"cache_hits":      s.metrics.CacheHits.Load(),
+		"cache_misses":    s.metrics.CacheMisses.Load(),
+		"active_conns":    s.metrics.ActiveConns.Load(),
+		"bytes_sent":      s.metrics.BytesSent.Load(),
+		"uptime":          humanDuration(time.Since(s.metrics.StartTime)),
+		"slow_requests":   s.metrics.SlowRequests.Load(),
+		"latency_p50_ms":  p50 * 1000,
+		"latency_p95_ms":  p95 * 1000,
+		"latency_p99_ms":  p99 * 1000,
+		"latency_max_ms":  max * 1000,
+		"handler_latency": handlerLatency,
 	})
 }
 

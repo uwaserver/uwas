@@ -1508,23 +1508,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Record handler type for per-handler metrics
 	s.metrics.RecordHandlerType(domain.Type)
 
-	// Dispatch to handler
+	// Dispatch to handler. The capture/no-capture branches used to carry
+	// duplicate dispatch switches; both now go through dispatchHandler,
+	// which is also the single place where O4 per-handler latency timing
+	// fires. Refs: refactor.md A22, O4.
 	if capture != nil {
 		// Temporarily swap the underlying writer so handlers write through the capture.
 		origWriter := ctx.Response.ResponseWriter
 		ctx.Response.ResponseWriter = capture
-		switch domain.Type {
-		case "redirect":
-			s.handleRedirect(ctx, domain)
-		case "static", "php":
-			s.handleFileRequest(ctx, domain)
-		case "proxy":
-			s.handleProxy(ctx, domain)
-		case "app":
-			s.handleAppProxy(ctx, domain)
-		default:
-			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
-		}
+		s.dispatchHandler(ctx, domain)
 		// Restore the original writer.
 		ctx.Response.ResponseWriter = origWriter
 
@@ -1560,18 +1552,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	} else {
-		switch domain.Type {
-		case "redirect":
-			s.handleRedirect(ctx, domain)
-		case "static", "php":
-			s.handleFileRequest(ctx, domain)
-		case "proxy":
-			s.handleProxy(ctx, domain)
-		case "app":
-			s.handleAppProxy(ctx, domain)
-		default:
-			renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
-		}
+		s.dispatchHandler(ctx, domain)
 	}
 
 	// Per-domain access log file
@@ -1738,6 +1719,29 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 			cb.RecordSuccess()
 		}
 	}
+}
+
+// dispatchHandler routes the request to the appropriate per-domain
+// handler and records per-handler latency (refactor.md O4). The two
+// call sites in handleRequest (capture / no-capture branches) and the
+// ESI sub-request path all funnel through here so there is exactly one
+// place that switches on domain.Type, and exactly one place that
+// times handler execution. Refs: refactor.md A22, O4.
+func (s *Server) dispatchHandler(ctx *router.RequestContext, domain *config.Domain) {
+	start := time.Now()
+	switch domain.Type {
+	case "redirect":
+		s.handleRedirect(ctx, domain)
+	case "static", "php":
+		s.handleFileRequest(ctx, domain)
+	case "proxy":
+		s.handleProxy(ctx, domain)
+	case "app":
+		s.handleAppProxy(ctx, domain)
+	default:
+		renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
+	}
+	s.metrics.RecordHandlerLatency(string(domain.Type), ctx.Response.StatusCode(), time.Since(start))
 }
 
 func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domain) {
@@ -2331,16 +2335,10 @@ func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]by
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
 
-	switch domain.Type {
-	case "static", "php":
-		s.handleFileRequest(ctx, domain)
-	case "proxy":
-		s.handleProxy(ctx, domain)
-	case "app":
-		s.handleAppProxy(ctx, domain)
-	default:
+	if domain.Type == "redirect" {
 		return nil, 0, nil, fmt.Errorf("ESI: unsupported type: %s", domain.Type)
 	}
+	s.dispatchHandler(ctx, domain)
 
 	result := rec.Result()
 	body, _ := io.ReadAll(result.Body)
