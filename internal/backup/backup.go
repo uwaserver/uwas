@@ -166,133 +166,95 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 	ts := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("uwas-backup-%s.tar.gz", ts)
 
-	// Create a temporary file for the archive.
-	tmpFile, err := os.CreateTemp("", "uwas-backup-*.tar.gz")
-	if err != nil {
-		return nil, fmt.Errorf("create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	gw := gzip.NewWriter(tmpFile)
-	tw := tar.NewWriter(gw)
-
-	// Add the config file.
-	if err := addFileToTar(tw, configPath, "config/"+filepath.Base(configPath)); err != nil {
-		tw.Close()
-		gw.Close()
-		tmpFile.Close()
-		return nil, fmt.Errorf("add config to archive: %w", err)
-	}
-
-	// Add domains.d/ config directory if it exists.
+	// Snapshot mutable Manager state once so the addEntries closure does
+	// not need the lock during the long tar-write.
 	m.mu.Lock()
 	domainsDir := m.domainsDir
 	domainRoots := make([]string, len(m.domainRoots))
 	copy(domainRoots, m.domainRoots)
 	m.mu.Unlock()
 
-	if domainsDir != "" {
-		if info, err := os.Stat(domainsDir); err == nil && info.IsDir() {
-			if err := addDirToTar(tw, domainsDir, "domains.d"); err != nil {
-				m.logger.Warn("backup: failed to add domains.d", "error", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	size, err := archiveAndUpload(ctx, p, "uwas-backup-*.tar.gz", filename, func(tw *tar.Writer) error {
+		// Config file (top-level uwas.yaml).
+		if err := addFileToTar(tw, configPath, "config/"+filepath.Base(configPath)); err != nil {
+			return fmt.Errorf("add config to archive: %w", err)
+		}
+
+		// domains.d/ — best-effort: log and continue if it fails, since the
+		// rest of the backup is still useful.
+		if domainsDir != "" {
+			if info, err := os.Stat(domainsDir); err == nil && info.IsDir() {
+				if err := addDirToTar(tw, domainsDir, "domains.d"); err != nil {
+					m.logger.Warn("backup: failed to add domains.d", "error", err)
+				}
 			}
 		}
-	}
 
-	// Add certificates directory if it exists.
-	if certsDir != "" {
-		if info, err := os.Stat(certsDir); err == nil && info.IsDir() {
-			if err := addDirToTar(tw, certsDir, "certs"); err != nil {
-				tw.Close()
-				gw.Close()
-				tmpFile.Close()
-				return nil, fmt.Errorf("add certs to archive: %w", err)
+		// Certificates directory — failure here is fatal because cert loss
+		// is non-recoverable from this backup.
+		if certsDir != "" {
+			if info, err := os.Stat(certsDir); err == nil && info.IsDir() {
+				if err := addDirToTar(tw, certsDir, "certs"); err != nil {
+					return fmt.Errorf("add certs to archive: %w", err)
+				}
 			}
 		}
-	}
 
-	// Add domain web content (each domain's web root).
-	for _, root := range domainRoots {
-		if root == "" {
-			continue
-		}
-		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			// Use the last two path components as archive name: e.g. "sites/example.com"
-			dirName := filepath.Base(filepath.Dir(root)) + "/" + filepath.Base(root)
-			if err := addDirToTar(tw, root, "sites/"+dirName); err != nil {
-				m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
-			}
-		}
-	}
-
-	// MySQL/MariaDB database dump (native, if mysqldump available).
-	if dbDump, err := dumpAllDatabases(); err == nil && len(dbDump) > 0 {
-		hdr := &tar.Header{
-			Name:    "databases/native-all-databases.sql",
-			Size:    int64(len(dbDump)),
-			Mode:    0644,
-			ModTime: time.Now(),
-		}
-		if err := tw.WriteHeader(hdr); err == nil {
-			if _, err := tw.Write(dbDump); err != nil {
-				m.logger.Error("backup: failed to write DB dump to tar", "error", err)
-			}
-		}
-	}
-
-	// Docker container database dumps.
-	if dockerDumpFn != nil {
-		dockerDumps := dockerDumpFn()
-		for name, dump := range dockerDumps {
-			if len(dump) == 0 {
+		// Per-domain web content — best-effort per root.
+		for _, root := range domainRoots {
+			if root == "" {
 				continue
 			}
+			if info, err := os.Stat(root); err == nil && info.IsDir() {
+				dirName := filepath.Base(filepath.Dir(root)) + "/" + filepath.Base(root)
+				if err := addDirToTar(tw, root, "sites/"+dirName); err != nil {
+					m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
+				}
+			}
+		}
+
+		// MySQL/MariaDB native dump (best-effort).
+		if dbDump, err := dumpAllDatabases(); err == nil && len(dbDump) > 0 {
 			hdr := &tar.Header{
-				Name:    "databases/docker-" + name + ".sql",
-				Size:    int64(len(dump)),
+				Name:    "databases/native-all-databases.sql",
+				Size:    int64(len(dbDump)),
 				Mode:    0644,
 				ModTime: time.Now(),
 			}
 			if err := tw.WriteHeader(hdr); err == nil {
-				if _, err := tw.Write(dump); err != nil {
-					m.logger.Error("backup: failed to write docker DB dump to tar", "container", name, "error", err)
+				if _, err := tw.Write(dbDump); err != nil {
+					m.logger.Error("backup: failed to write DB dump to tar", "error", err)
 				}
 			}
-			m.logger.Info("backup: docker DB dumped", "container", name, "size", len(dump))
 		}
-	}
 
-	if err := tw.Close(); err != nil {
-		gw.Close()
-		tmpFile.Close()
-		return nil, err
-	}
-	if err := gw.Close(); err != nil {
-		tmpFile.Close()
-		return nil, err
-	}
-
-	stat, statErr := tmpFile.Stat()
-	if statErr != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("stat backup file: %w", statErr)
-	}
-	size := stat.Size()
-	tmpFile.Close()
-
-	// Upload.
-	f, err := os.Open(tmpPath)
+		// Docker container DB dumps (best-effort per container).
+		if dockerDumpFn != nil {
+			for name, dump := range dockerDumpFn() {
+				if len(dump) == 0 {
+					continue
+				}
+				hdr := &tar.Header{
+					Name:    "databases/docker-" + name + ".sql",
+					Size:    int64(len(dump)),
+					Mode:    0644,
+					ModTime: time.Now(),
+				}
+				if err := tw.WriteHeader(hdr); err == nil {
+					if _, err := tw.Write(dump); err != nil {
+						m.logger.Error("backup: failed to write docker DB dump to tar", "container", name, "error", err)
+					}
+				}
+				m.logger.Info("backup: docker DB dumped", "container", name, "size", len(dump))
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer f.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	if err := p.Upload(ctx, filename, f); err != nil {
-		return nil, fmt.Errorf("upload backup: %w", err)
 	}
 
 	m.logger.Info("backup created", "name", filename, "provider", provider, "size", size)
@@ -818,76 +780,42 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 	ts := time.Now().UTC().Format("20060102-150405")
 	filename := fmt.Sprintf("uwas-domain-%s-%s.tar.gz", domain, ts)
 
-	tmpFile, err := os.CreateTemp("", "uwas-domain-backup-*.tar.gz")
-	if err != nil {
-		return nil, err
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	gw := gzip.NewWriter(tmpFile)
-	tw := tar.NewWriter(gw)
-
-	// Domain web root
-	if webRoot != "" {
-		if info, statErr := os.Stat(webRoot); statErr == nil && info.IsDir() {
-			addDirToTar(tw, webRoot, "site")
-		}
-	}
-
-	// Domain config file (domains.d/domain.yaml)
 	m.mu.Lock()
 	domainsDir := m.domainsDir
 	m.mu.Unlock()
-	if domainsDir != "" {
-		cfgFile := filepath.Join(domainsDir, domain+".yaml")
-		if _, statErr := os.Stat(cfgFile); statErr == nil {
-			addFileToTar(tw, cfgFile, "config/"+domain+".yaml")
-		}
-	}
-
-	// Domain database dump
-	if dbName != "" {
-		if dump, dumpErr := dumpDatabase(dbName); dumpErr == nil && len(dump) > 0 {
-			hdr := &tar.Header{
-				Name: "database/" + dbName + ".sql", Size: int64(len(dump)),
-				Mode: 0644, ModTime: time.Now(),
-			}
-			if tw.WriteHeader(hdr) == nil {
-				if _, wErr := tw.Write(dump); wErr != nil {
-					return nil, fmt.Errorf("write database dump to tar: %w", wErr)
-				}
-			}
-		}
-	}
-
-	if err := tw.Close(); err != nil {
-		gw.Close()
-		tmpFile.Close()
-		return nil, fmt.Errorf("finalize tar: %w", err)
-	}
-	if err := gw.Close(); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("finalize gzip: %w", err)
-	}
-	stat, statErr := tmpFile.Stat()
-	if statErr != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("stat backup file: %w", statErr)
-	}
-	size := stat.Size()
-	tmpFile.Close()
-
-	f, err := os.Open(tmpPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := p.Upload(ctx, filename, f); err != nil {
-		return nil, fmt.Errorf("upload: %w", err)
+
+	size, err := archiveAndUpload(ctx, p, "uwas-domain-backup-*.tar.gz", filename, func(tw *tar.Writer) error {
+		if webRoot != "" {
+			if info, statErr := os.Stat(webRoot); statErr == nil && info.IsDir() {
+				addDirToTar(tw, webRoot, "site")
+			}
+		}
+		if domainsDir != "" {
+			cfgFile := filepath.Join(domainsDir, domain+".yaml")
+			if _, statErr := os.Stat(cfgFile); statErr == nil {
+				addFileToTar(tw, cfgFile, "config/"+domain+".yaml")
+			}
+		}
+		if dbName != "" {
+			if dump, dumpErr := dumpDatabase(dbName); dumpErr == nil && len(dump) > 0 {
+				hdr := &tar.Header{
+					Name: "database/" + dbName + ".sql", Size: int64(len(dump)),
+					Mode: 0644, ModTime: time.Now(),
+				}
+				if tw.WriteHeader(hdr) == nil {
+					if _, wErr := tw.Write(dump); wErr != nil {
+						return fmt.Errorf("write database dump to tar: %w", wErr)
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	m.logger.Info("domain backup created", "domain", domain, "name", filename, "size", size)
@@ -1099,4 +1027,82 @@ func (m *BackupManager) ScheduleDetail() ScheduleDetail {
 		LastBackup: lastBak,
 		NextBackup: nextBak,
 	}
+}
+
+// archiveAndUpload writes a gzipped-tar to a temp file (via addEntries
+// → tar writer), uploads it to the provider as filename, and returns the
+// final archive size. Cleanup (close handles, remove temp file) is
+// fully internal — callers do not need to chain defers.
+//
+// The three callers (CreateBackup, RestoreBackup's reverse pair via
+// pruneOld, CreateDomainBackup) used to repeat ~30 lines of "create
+// temp, open gzip+tar, write entries, close, open for upload, upload,
+// cleanup" boilerplate. Refs: refactor.md A25.
+//
+// addEntries is the only per-backup callback; the helper does not
+// inspect what gets written. If addEntries returns an error the upload
+// is skipped and the original error propagates.
+func archiveAndUpload(
+	ctx context.Context,
+	provider StorageProvider,
+	tempPrefix string,
+	filename string,
+	addEntries func(tw *tar.Writer) error,
+) (size int64, err error) {
+	tmpFile, err := os.CreateTemp("", tempPrefix)
+	if err != nil {
+		return 0, fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	gw := gzip.NewWriter(tmpFile)
+	tw := tar.NewWriter(gw)
+
+	// Defer in reverse close order; finalize() flushes both writers and
+	// the underlying file. On the success path we still call it via the
+	// explicit finalize() invocation below so we can stat() the file.
+	closeOnce := false
+	finalize := func() error {
+		if closeOnce {
+			return nil
+		}
+		closeOnce = true
+		if cerr := tw.Close(); cerr != nil {
+			gw.Close()
+			tmpFile.Close()
+			return fmt.Errorf("finalize tar: %w", cerr)
+		}
+		if cerr := gw.Close(); cerr != nil {
+			tmpFile.Close()
+			return fmt.Errorf("finalize gzip: %w", cerr)
+		}
+		return tmpFile.Close()
+	}
+	defer finalize()
+
+	if err := addEntries(tw); err != nil {
+		return 0, err
+	}
+
+	if err := finalize(); err != nil {
+		return 0, err
+	}
+
+	stat, err := os.Stat(tmpPath)
+	if err != nil {
+		return 0, fmt.Errorf("stat backup file: %w", err)
+	}
+	size = stat.Size()
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return 0, fmt.Errorf("open backup for upload: %w", err)
+	}
+	defer f.Close()
+
+	if err := provider.Upload(ctx, filename, f); err != nil {
+		return 0, fmt.Errorf("upload backup: %w", err)
+	}
+	return size, nil
 }
