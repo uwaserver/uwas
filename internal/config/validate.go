@@ -177,6 +177,17 @@ func Validate(cfg *Config) error {
 			}
 		}
 
+		// internal_aliases unlock X-Sendfile/X-Accel-Redirect targets outside
+		// the document root. Reject obvious system directories — these are
+		// never legitimate values and quietly accepting them would let a
+		// compromised PHP app exfiltrate /etc, /root, etc. via X-Sendfile.
+		for j, alias := range d.InternalAliases {
+			if reason := badInternalAliasReason(alias); reason != "" {
+				errs = append(errs, fmt.Sprintf("%s.internal_aliases[%d]: %q rejected — %s",
+					prefix, j, alias, reason))
+			}
+		}
+
 		// Proxy validation
 		if d.Type == "proxy" {
 			if len(d.Proxy.Upstreams) == 0 {
@@ -431,6 +442,61 @@ func IsLoopback(rawURL string) bool {
 		return false
 	}
 	return isLoopback(u.Hostname())
+}
+
+// forbiddenAliasRoots returns the list of system directories that must never
+// appear in internal_aliases on the current operating system. The lists are
+// kept separate (rather than merged) because filepath.Abs on Windows turns
+// "/etc" into "C:\etc", which would otherwise sneak past the Unix check.
+func forbiddenAliasRoots() []string {
+	if filepath.Separator == '\\' {
+		return []string{
+			`C:\Windows`, `C:\ProgramData`,
+			`C:\Program Files`, `C:\Program Files (x86)`,
+		}
+	}
+	return []string{
+		"/etc", "/root", "/proc", "/sys", "/dev", "/boot",
+		"/var/log", "/var/lib/uwas", "/var/run", "/run",
+		"/usr/bin", "/usr/sbin", "/sbin", "/bin",
+	}
+}
+
+// badInternalAliasReason returns a human-readable reason when an
+// internal_aliases entry points at an obviously dangerous system directory.
+// It refuses to load such configs because internal_aliases bypass the
+// document-root containment check for X-Sendfile / X-Accel-Redirect; a
+// compromised PHP application or an honest-but-buggy framework could
+// otherwise emit X-Sendfile: /etc/passwd and have the server stream the
+// file straight back.
+func badInternalAliasReason(alias string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return "must not be empty"
+	}
+	abs, err := filepath.Abs(alias)
+	if err != nil {
+		return "invalid path"
+	}
+	abs = filepath.Clean(abs)
+	cmp := abs
+	if filepath.Separator == '\\' {
+		cmp = strings.ToLower(cmp)
+	}
+	// Reject the filesystem root itself.
+	if cmp == string(filepath.Separator) || (len(cmp) == 3 && cmp[1:] == `:\`) {
+		return "filesystem root is never a valid alias"
+	}
+	for _, root := range forbiddenAliasRoots() {
+		rootCmp := filepath.Clean(root)
+		if filepath.Separator == '\\' {
+			rootCmp = strings.ToLower(rootCmp)
+		}
+		if cmp == rootCmp || strings.HasPrefix(cmp, rootCmp+string(filepath.Separator)) {
+			return fmt.Sprintf("system directory %s is forbidden", root)
+		}
+	}
+	return ""
 }
 
 // NormalizeProxyUpstreamAddress returns the address with an http:// scheme if

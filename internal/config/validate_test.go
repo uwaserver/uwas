@@ -283,6 +283,51 @@ func TestValidateProxyAlgorithm_EmptyIsValid(t *testing.T) {
 	expectNoValidationError(t, cfg)
 }
 
+// --- internal_aliases Tests ---
+
+func TestBadInternalAliasReason(t *testing.T) {
+	// Empty / filesystem-root inputs are always rejected.
+	if r := badInternalAliasReason(""); r == "" {
+		t.Error("empty alias should be rejected")
+	}
+	// A user-provided directory must be accepted.
+	tmp := t.TempDir()
+	if r := badInternalAliasReason(tmp); r != "" {
+		t.Errorf("tempdir %q rejected: %s", tmp, r)
+	}
+}
+
+func TestValidateInternalAliases_RejectsSystemDirs(t *testing.T) {
+	// Use only paths that are dangerous on the current OS — filepath.Abs
+	// normalises Unix paths into C:\... on Windows and vice versa, so a
+	// single mixed list would partially miss either platform.
+	var bad []string
+	if filepath.Separator == '\\' {
+		bad = []string{`C:\Windows`, `C:\Windows\System32`, `C:\Program Files`}
+	} else {
+		bad = []string{"/etc", "/etc/ssl", "/root", "/proc", "/var/log"}
+	}
+	for _, alias := range bad {
+		cfg := minimalValidConfig()
+		cfg.Domains[0].InternalAliases = []string{alias}
+		err := Validate(cfg)
+		if err == nil {
+			t.Errorf("internal_aliases=[%q] should have been rejected", alias)
+			continue
+		}
+		if !strings.Contains(err.Error(), "internal_aliases") {
+			t.Errorf("expected error to mention internal_aliases for %q, got: %v", alias, err)
+		}
+	}
+}
+
+func TestValidateInternalAliases_AcceptsUserDirs(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := minimalValidConfig()
+	cfg.Domains[0].InternalAliases = []string{tmp}
+	expectNoValidationError(t, cfg)
+}
+
 // --- Certificate File Tests ---
 
 func TestValidateSSLManual_FilesExist(t *testing.T) {
