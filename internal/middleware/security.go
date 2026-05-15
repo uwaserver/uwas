@@ -92,6 +92,59 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 	}
 }
 
+// DomainWAFGuard returns a predicate closure equivalent to DomainWAF but
+// callable directly from handleRequest without wrapping a one-shot
+// handler. Returns true when the request should proceed. Refs:
+// refactor.md P2/P3.
+func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecurityStats) func(w http.ResponseWriter, r *http.Request) bool {
+	return func(w http.ResponseWriter, r *http.Request) bool {
+		path := r.URL.Path
+		for _, prefix := range bypassPaths {
+			if strings.HasPrefix(path, prefix) {
+				return true
+			}
+		}
+		fullURI := path
+		if r.URL.RawQuery != "" {
+			fullURI += "?" + r.URL.RawQuery
+		}
+		decodedURI, _ := url.QueryUnescape(fullURI)
+		if matchWAFURL(fullURI, decodedURI) {
+			if stats != nil {
+				stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+			}
+			log.Warn("WAF blocked request (URL)", "path", path, "remote", r.RemoteAddr)
+			if r.Header.Get("Expect") != "" {
+				http.Error(w, "417 Expectation Failed", http.StatusExpectationFailed)
+			} else {
+				http.Error(w, "403 Forbidden", http.StatusForbidden)
+			}
+			return false
+		}
+		if r.Body != nil && (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") {
+			ct := r.Header.Get("Content-Type")
+			if isAPContentType(ct) {
+				return true
+			}
+			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyScan))
+			if err == nil && len(bodyBytes) > 0 {
+				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), r.Body))
+				body := string(bodyBytes)
+				decodedBody, _ := url.QueryUnescape(body)
+				if matchWAFBody(body, decodedBody) {
+					if stats != nil {
+						stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+					}
+					log.Warn("WAF blocked request (body)", "path", path, "remote", r.RemoteAddr)
+					http.Error(w, "403 Forbidden", http.StatusForbidden)
+					return false
+				}
+			}
+		}
+		return true
+	}
+}
+
 // DomainWAF performs WAF URL and body scanning for a specific domain.
 // Content-Type aware: skips body scanning for JSON, multipart, and XML payloads.
 // bypassPaths is a list of path prefixes that skip WAF entirely.

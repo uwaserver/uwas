@@ -117,9 +117,22 @@ type Server struct {
 	connLimiter chan struct{}
 
 	// domainChains holds pre-compiled per-domain IP ACL middleware.
+	// Deprecated path retained only as a fallback; the hot path now uses
+	// ipACLGuards / geoGuards / corsGuards predicates directly.
 	domainChains map[string]middleware.Middleware
 	// geoChains holds pre-compiled per-domain GeoIP middleware.
 	geoChains map[string]middleware.Middleware
+
+	// ipACLGuards / geoGuards / corsGuards / wafGuards are the
+	// predicate-form (refactor.md P2/P3) of the per-domain middlewares.
+	// They are called directly in handleRequest without wrapping a
+	// one-shot http.Handler, saving the closure + handler allocations
+	// that the old chain-with-passed-bool pattern incurred on every
+	// matching request. Nil entry means "no rules for this domain".
+	ipACLGuards map[string]func(http.ResponseWriter, *http.Request) bool
+	geoGuards   map[string]func(http.ResponseWriter, *http.Request) bool
+	corsGuards  map[string]func(http.ResponseWriter, *http.Request) bool
+	wafGuards   map[string]func(http.ResponseWriter, *http.Request) bool
 
 	// domainRateLimiters holds pre-compiled per-domain rate limiters.
 	domainRateLimiters map[string]*middleware.RateLimiter
@@ -533,25 +546,53 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 	}
 
-	// Per-domain IP ACL middleware
+	// Per-domain IP ACL: precompile both the legacy chain form (used by
+	// any out-of-band middleware composition) and the predicate-form
+	// guard the hot path uses (refactor.md P2/P3).
 	s.domainChains = make(map[string]middleware.Middleware)
+	s.ipACLGuards = make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	for _, d := range cfg.Domains {
 		if len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
-			s.domainChains[d.Host] = middleware.IPACL(middleware.IPACLConfig{
+			cfg := middleware.IPACLConfig{
 				Whitelist: d.Security.IPWhitelist,
 				Blacklist: d.Security.IPBlacklist,
-			})
+			}
+			s.domainChains[d.Host] = middleware.IPACL(cfg)
+			s.ipACLGuards[d.Host] = middleware.IPACLGuard(cfg)
 		}
 	}
 
-	// Per-domain GeoIP middleware
+	// Per-domain GeoIP, same precompile-both-forms pattern.
 	s.geoChains = make(map[string]middleware.Middleware)
+	s.geoGuards = make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	for _, d := range cfg.Domains {
 		if len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
-			s.geoChains[d.Host] = middleware.GeoIP(middleware.GeoIPConfig{
+			cfg := middleware.GeoIPConfig{
 				BlockedCountries: d.Security.GeoBlockCountries,
 				AllowedCountries: d.Security.GeoAllowCountries,
+			}
+			s.geoChains[d.Host] = middleware.GeoIP(cfg)
+			s.geoGuards[d.Host] = middleware.GeoIPGuard(cfg)
+		}
+	}
+
+	// Per-domain CORS + WAF guards. These were rebuilt per-request in
+	// handleRequest; precompile here so we only pay the construction
+	// cost once per config load (refactor.md P2).
+	s.corsGuards = make(map[string]func(http.ResponseWriter, *http.Request) bool)
+	s.wafGuards = make(map[string]func(http.ResponseWriter, *http.Request) bool)
+	for _, d := range cfg.Domains {
+		if d.CORS.Enabled {
+			s.corsGuards[d.Host] = middleware.CORSGuard(middleware.CORSConfig{
+				AllowedOrigins:   d.CORS.AllowedOrigins,
+				AllowedMethods:   d.CORS.AllowedMethods,
+				AllowedHeaders:   d.CORS.AllowedHeaders,
+				AllowCredentials: d.CORS.AllowCredentials,
+				MaxAge:           d.CORS.MaxAge,
 			})
+		}
+		if d.Security.WAF.Enabled {
+			s.wafGuards[d.Host] = middleware.DomainWAFGuard(log, d.Security.WAF.BypassPaths, s.securityStats)
 		}
 	}
 
@@ -1092,14 +1133,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-domain WAF (Content-Type aware, with bypass path support)
-	if domain.Security.WAF.Enabled {
-		wafMW := middleware.DomainWAF(s.logger, domain.Security.WAF.BypassPaths, s.securityStats)
-		wafPassed := false
-		wafMW(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			wafPassed = true
-		})).ServeHTTP(ctx.Response, r)
-		if !wafPassed {
+	// Per-domain WAF (Content-Type aware, with bypass path support).
+	// Predicate-form guard precompiled at config load (refactor.md P2/P3);
+	// no per-request closure allocation, no one-shot handler wrap.
+	if guard := s.wafGuards[domain.Host]; guard != nil {
+		if !guard(ctx.Response, r) {
 			return
 		}
 	}
@@ -1301,24 +1339,16 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per-domain IP ACL (whitelist/blacklist)
-	if chain := s.domainChains[domain.Host]; chain != nil {
-		passed := false
-		chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			passed = true
-		})).ServeHTTP(ctx.Response, r)
-		if !passed {
+	// Per-domain IP ACL (whitelist/blacklist) — predicate form (P2/P3).
+	if guard := s.ipACLGuards[domain.Host]; guard != nil {
+		if !guard(ctx.Response, r) {
 			return
 		}
 	}
 
-	// Per-domain GeoIP blocking
-	if chain := s.geoChains[domain.Host]; chain != nil {
-		passed := false
-		chain(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			passed = true
-		})).ServeHTTP(ctx.Response, r)
-		if !passed {
+	// Per-domain GeoIP blocking — predicate form (P2/P3).
+	if guard := s.geoGuards[domain.Host]; guard != nil {
+		if !guard(ctx.Response, r) {
 			return
 		}
 	}
@@ -1344,22 +1374,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per-domain CORS
-	if domain.CORS.Enabled {
-		corsMiddleware := middleware.CORS(middleware.CORSConfig{
-			AllowedOrigins:   domain.CORS.AllowedOrigins,
-			AllowedMethods:   domain.CORS.AllowedMethods,
-			AllowedHeaders:   domain.CORS.AllowedHeaders,
-			AllowCredentials: domain.CORS.AllowCredentials,
-			MaxAge:           domain.CORS.MaxAge,
-		})
-		// CORS always calls next (even for preflight it writes headers first).
-		// For OPTIONS preflight, it handles the response and may not call next.
-		passed := false
-		corsMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			passed = true
-		})).ServeHTTP(ctx.Response, r)
-		if !passed {
+	// Per-domain CORS — predicate form (P2/P3). Guard handles preflight
+	// inline and returns false when the response was terminated there.
+	if guard := s.corsGuards[domain.Host]; guard != nil {
+		if !guard(ctx.Response, r) {
 			return
 		}
 	}
@@ -2070,29 +2088,57 @@ func (s *Server) reload() error {
 	}
 	s.rewriteCache = newRewriteCache
 
-	// Rebuild per-domain middleware chains
+	// Rebuild per-domain middleware chains + predicate guards
+	// (refactor.md P2/P3). Two parallel forms so any composed middleware
+	// path retains the chain-style entry while the hot path uses guards.
 	newDomainChains := make(map[string]middleware.Middleware)
+	newIPACLGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	for _, d := range newCfg.Domains {
 		if len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
-			newDomainChains[d.Host] = middleware.IPACL(middleware.IPACLConfig{
+			cfg := middleware.IPACLConfig{
 				Whitelist: d.Security.IPWhitelist,
 				Blacklist: d.Security.IPBlacklist,
-			})
+			}
+			newDomainChains[d.Host] = middleware.IPACL(cfg)
+			newIPACLGuards[d.Host] = middleware.IPACLGuard(cfg)
 		}
 	}
 	s.domainChains = newDomainChains
+	s.ipACLGuards = newIPACLGuards
 
-	// Rebuild per-domain GeoIP chains
 	newGeoChains := make(map[string]middleware.Middleware)
+	newGeoGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	for _, d := range newCfg.Domains {
 		if len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
-			newGeoChains[d.Host] = middleware.GeoIP(middleware.GeoIPConfig{
+			cfg := middleware.GeoIPConfig{
 				BlockedCountries: d.Security.GeoBlockCountries,
 				AllowedCountries: d.Security.GeoAllowCountries,
-			})
+			}
+			newGeoChains[d.Host] = middleware.GeoIP(cfg)
+			newGeoGuards[d.Host] = middleware.GeoIPGuard(cfg)
 		}
 	}
 	s.geoChains = newGeoChains
+	s.geoGuards = newGeoGuards
+
+	newCORSGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
+	newWAFGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
+	for _, d := range newCfg.Domains {
+		if d.CORS.Enabled {
+			newCORSGuards[d.Host] = middleware.CORSGuard(middleware.CORSConfig{
+				AllowedOrigins:   d.CORS.AllowedOrigins,
+				AllowedMethods:   d.CORS.AllowedMethods,
+				AllowedHeaders:   d.CORS.AllowedHeaders,
+				AllowCredentials: d.CORS.AllowCredentials,
+				MaxAge:           d.CORS.MaxAge,
+			})
+		}
+		if d.Security.WAF.Enabled {
+			newWAFGuards[d.Host] = middleware.DomainWAFGuard(s.logger, d.Security.WAF.BypassPaths, s.securityStats)
+		}
+	}
+	s.corsGuards = newCORSGuards
+	s.wafGuards = newWAFGuards
 
 	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
 	// before swapping the map; otherwise each reload leaks N goroutines bound
