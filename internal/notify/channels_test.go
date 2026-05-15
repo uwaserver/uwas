@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // --- Existing tests ---
@@ -294,6 +296,27 @@ func TestSendTelegramNetworkError(t *testing.T) {
 	err := sendTelegram("token", "chat", testMsg())
 	if err == nil {
 		t.Fatal("expected network error")
+	}
+}
+
+// Telegram channel must apply the same SSRF check as webhook/Slack so a
+// misconfigured telegramAPIBase cannot probe internal services.
+func TestSendTelegramSSRFCheck(t *testing.T) {
+	origBase := telegramAPIBase
+	origCheck := notifyURLSafetyCheck
+	telegramAPIBase = "http://169.254.169.254"
+	notifyURLSafetyCheck = config.IsWebhookURLSafe
+	t.Cleanup(func() {
+		telegramAPIBase = origBase
+		notifyURLSafetyCheck = origCheck
+	})
+
+	err := sendTelegram("token", "chat", testMsg())
+	if err == nil {
+		t.Fatal("expected SSRF rejection for cloud-metadata host")
+	}
+	if !strings.Contains(err.Error(), "not allowed") {
+		t.Errorf("error = %v, want SSRF rejection containing \"not allowed\"", err)
 	}
 }
 

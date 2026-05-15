@@ -135,6 +135,14 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 	}
 	text := fmt.Sprintf("%s <b>%s</b>\n%s\n<i>%s</i>", emoji, msg.Title, msg.Body, msg.Source)
 	url := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBase, botToken)
+	// Match the SSRF policy applied to the webhook and Slack channels.
+	// telegramAPIBase is a package-level var (overridable by tests and any
+	// future caller) so we cannot assume it is always api.telegram.org —
+	// without this check a misconfiguration could turn the notify pipeline
+	// into an internal-network probe.
+	if err := notifyURLSafetyCheck(url); err != nil {
+		return fmt.Errorf("telegram URL not allowed: %w", err)
+	}
 	payload := map[string]string{
 		"chat_id":    chatID,
 		"text":       text,
