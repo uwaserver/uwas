@@ -2661,20 +2661,38 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	certDir := filepath.Join("/var/lib/uwas/certs", host)
-	os.MkdirAll(certDir, 0700)
-	if err := os.WriteFile(filepath.Join(certDir, "cert.pem"), []byte(req.Cert), 0600); err != nil {
+	if err := os.MkdirAll(certDir, 0700); err != nil {
+		jsonError(w, "mkdir cert dir: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Write cert + key atomically: temp file → fsync → rename. This prevents
+	// three failure modes that the previous os.WriteFile pair allowed:
+	//   1. A power loss between the two writes left cert.pem present and
+	//      key.pem missing, so the next LoadX509KeyPair on boot failed.
+	//   2. Without fsync the kernel buffer was free to reorder the rename
+	//      ahead of the data flush, leaving both files visible but truncated.
+	//   3. notifyDomainChange triggered the TLS manager's reload concurrent
+	//      with the writes; if the first WriteFile won the race the manager
+	//      saw a half-written pair. Renaming after both files are fully on
+	//      disk gives the manager an all-or-nothing view.
+	if err := atomicWriteFile(filepath.Join(certDir, "cert.pem"), []byte(req.Cert), 0600); err != nil {
 		jsonError(w, "write cert: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(certDir, "key.pem"), []byte(req.Key), 0600); err != nil {
+	if err := atomicWriteFile(filepath.Join(certDir, "key.pem"), []byte(req.Key), 0600); err != nil {
 		jsonError(w, "write key: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if req.Chain != "" {
-		os.WriteFile(filepath.Join(certDir, "chain.pem"), []byte(req.Chain), 0600)
+		// Chain is non-fatal: log but do not fail the upload.
+		if err := atomicWriteFile(filepath.Join(certDir, "chain.pem"), []byte(req.Chain), 0600); err != nil {
+			s.logger.Warn("cert upload: chain write failed", "host", host, "error", err)
+		}
 	}
 
-	// Update domain SSL mode to manual
+	// Update domain SSL mode to manual. The mutation happens *after* the
+	// files are committed to disk so notifyDomainChange's reload always
+	// finds a consistent pair.
 	s.configMu.Lock()
 	for i, d := range s.config.Domains {
 		if d.Host == host {
