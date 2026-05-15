@@ -1458,6 +1458,28 @@ func TestAuthTicketMissingBearer(t *testing.T) {
 	}
 }
 
+// Session-token authenticated callers must also be able to mint a ticket
+// without falling back to leaking the token in the URL query.
+func TestAuthTicketAcceptsSessionToken(t *testing.T) {
+	s := testServer()
+
+	req := httptest.NewRequest("POST", "/api/v1/auth/ticket", nil)
+	req.Header.Set("X-Session-Token", "session-abc123")
+	rec := httptest.NewRecorder()
+	s.handleAuthTicket(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("session-token ticket issue: status = %d, want 200", rec.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if tkt, _ := resp["ticket"].(string); tkt == "" {
+		t.Error("expected ticket in response")
+	}
+}
+
 // --- Notification Preferences Tests ---
 
 func TestNotifyPrefsGet(t *testing.T) {

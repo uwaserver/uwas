@@ -1881,12 +1881,23 @@ func (s *Server) Close() {
 // as a query parameter for SSE/WebSocket connections. This avoids putting the
 // real token in the URL (which leaks into logs, Referer, browser history).
 func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
-	// The caller is already authenticated (middleware ran).
-	// Extract the token they used to authenticate.
-	authHeader := r.Header.Get("Authorization")
-	realToken := strings.TrimPrefix(authHeader, "Bearer ")
-	if realToken == "" || realToken == authHeader {
-		jsonError(w, "bearer token required", http.StatusBadRequest)
+	// The caller is already authenticated (middleware ran). Extract whichever
+	// token they presented: Authorization: Bearer for API keys, or
+	// X-Session-Token for browser sessions. Both are accepted by the auth
+	// middleware and by redeemTicket, so accepting both here keeps session
+	// users from falling back to passing the raw token in the query string —
+	// which is exactly the leak the ticket system exists to prevent.
+	var realToken string
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		if t := strings.TrimPrefix(authHeader, "Bearer "); t != "" && t != authHeader {
+			realToken = t
+		}
+	}
+	if realToken == "" {
+		realToken = r.Header.Get("X-Session-Token")
+	}
+	if realToken == "" {
+		jsonError(w, "bearer token or session token required", http.StatusBadRequest)
 		return
 	}
 
