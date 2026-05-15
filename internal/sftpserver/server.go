@@ -601,7 +601,11 @@ func (sess *sftpSession) handleOpen(id uint32, payload []byte) {
 		flags |= os.O_APPEND
 	}
 
-	f, err := os.OpenFile(safe, flags, 0644)
+	// Add O_NOFOLLOW (Unix-only; 0 on Windows) so a chrooted SFTP user
+	// cannot win a TOCTOU race by swapping the final path component for a
+	// symlink after safePath() validated containment. Without this, the
+	// kernel happily follows a freshly-planted symlink to /etc/shadow.
+	f, err := os.OpenFile(safe, flags|noFollowFlag, 0644)
 	if err != nil {
 		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
 		return
