@@ -2044,7 +2044,9 @@ func (s *Server) reload() error {
 	}
 	s.geoChains = newGeoChains
 
-	// Rebuild per-domain rate limiters
+	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
+	// before swapping the map; otherwise each reload leaks N goroutines bound
+	// to s.ctx (server lifetime).
 	newRateLimiters := make(map[string]*middleware.RateLimiter)
 	for _, d := range newCfg.Domains {
 		if d.Security.RateLimit.Requests > 0 {
@@ -2055,7 +2057,11 @@ func (s *Server) reload() error {
 			newRateLimiters[d.Host] = middleware.NewRateLimiter(s.ctx, d.Security.RateLimit.Requests, window)
 		}
 	}
+	oldRateLimiters := s.domainRateLimiters
 	s.domainRateLimiters = newRateLimiters
+	for _, rl := range oldRateLimiters {
+		rl.Stop()
+	}
 
 	// Rebuild image optimization chains
 	newImageOpt := make(map[string]middleware.Middleware)
