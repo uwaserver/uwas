@@ -1,0 +1,182 @@
+package config
+
+import "encoding/json"
+
+// DomainPatchFields lists the JSON keys whose presence in the patch
+// body indicates the caller intends to apply that field even when the
+// parsed value is the Go zero value (empty slice, false, zero number).
+// MergeDomain consults this when deciding between "merge: only override
+// non-zero" and "explicit: replace whatever the caller sent". The
+// admin handler builds this by walking the raw JSON, so a missing key
+// means "do not touch the existing value" and an explicit null/empty
+// means "clear it".
+type DomainPatchFields struct {
+	HasAliases     bool
+	HasLocations   bool
+	HasBasicAuth   bool
+	HasSecurity    bool
+	HasCache       bool
+	HasCompression bool
+	HasHtaccess    bool
+	HasSSL         bool
+	HasResources   bool
+}
+
+// NewDomainPatchFields inspects the unmarshalled top-level JSON object
+// for the keys MergeDomain needs to disambiguate from-zero values. The
+// caller is expected to have already unmarshalled the body into a
+// map[string]json.RawMessage; passing nil leaves all fields false
+// (every "did the caller send this?" check returns false), which is
+// safe for purely additive merges.
+func NewDomainPatchFields(raw map[string]json.RawMessage) DomainPatchFields {
+	if raw == nil {
+		return DomainPatchFields{}
+	}
+	_, hasAliases := raw["aliases"]
+	_, hasLocations := raw["locations"]
+	_, hasBasicAuth := raw["basic_auth"]
+	_, hasSecurity := raw["security"]
+	_, hasCache := raw["cache"]
+	_, hasCompression := raw["compression"]
+	_, hasHtaccess := raw["htaccess"]
+	_, hasSSL := raw["ssl"]
+	_, hasResources := raw["resources"]
+	return DomainPatchFields{
+		HasAliases:     hasAliases,
+		HasLocations:   hasLocations,
+		HasBasicAuth:   hasBasicAuth,
+		HasSecurity:    hasSecurity,
+		HasCache:       hasCache,
+		HasCompression: hasCompression,
+		HasHtaccess:    hasHtaccess,
+		HasSSL:         hasSSL,
+		HasResources:   hasResources,
+	}
+}
+
+// MergeDomain produces a merged domain by overlaying patch fields onto
+// existing. The two-mode behavior matches the admin PUT contract:
+//
+//   - replaceMode = false (default): only non-zero patch fields override
+//     existing values. Compression must have Enabled or Algorithms set
+//     to count as "provided". This preserves operator-edited fields when
+//     the dashboard ships partial PUTs.
+//
+//   - replaceMode = true: cache / security / compression are taken
+//     verbatim from patch, even if zeroed, so a caller can disable a
+//     feature (e.g. `cache: { enabled: false }`).
+//
+// The fields field uses presence-of-key detection for collection-shaped
+// fields (aliases, locations, basic_auth, htaccess, ssl, resources)
+// where Go's zero value is ambiguous with "explicitly empty".
+//
+// MergeDomain is deliberately pure: it does not validate, look up
+// duplicates, or persist. Callers handle those. Refs: refactor.md A23.
+func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode bool) Domain {
+	merged := existing
+
+	if patch.Host != "" {
+		merged.Host = patch.Host
+	}
+	if patch.Type != "" {
+		merged.Type = patch.Type
+	}
+	if patch.IP != "" {
+		merged.IP = patch.IP
+	}
+	if patch.Root != "" {
+		merged.Root = patch.Root
+	}
+
+	// SSL is presence-keyed because cert/key/min_version can legitimately
+	// be empty strings under Mode = "auto" / "off".
+	if fields.HasSSL {
+		if patch.SSL.Mode != "" {
+			merged.SSL.Mode = patch.SSL.Mode
+		}
+		if patch.SSL.Cert != "" {
+			merged.SSL.Cert = patch.SSL.Cert
+		}
+		if patch.SSL.Key != "" {
+			merged.SSL.Key = patch.SSL.Key
+		}
+		if patch.SSL.MinVersion != "" {
+			merged.SSL.MinVersion = patch.SSL.MinVersion
+		}
+	} else {
+		// Legacy admin path (no raw inspection): fall back to zero-check on Mode.
+		if patch.SSL.Mode != "" {
+			merged.SSL.Mode = patch.SSL.Mode
+			if patch.SSL.Cert != "" {
+				merged.SSL.Cert = patch.SSL.Cert
+			}
+			if patch.SSL.Key != "" {
+				merged.SSL.Key = patch.SSL.Key
+			}
+			if patch.SSL.MinVersion != "" {
+				merged.SSL.MinVersion = patch.SSL.MinVersion
+			}
+		}
+	}
+
+	if fields.HasAliases {
+		merged.Aliases = patch.Aliases
+	}
+
+	// PHP: each subfield gates independently so partial PHP updates work.
+	if patch.PHP.FPMAddress != "" {
+		merged.PHP.FPMAddress = patch.PHP.FPMAddress
+	}
+	if len(patch.PHP.IndexFiles) > 0 {
+		merged.PHP.IndexFiles = patch.PHP.IndexFiles
+	}
+	if patch.PHP.MaxUpload > 0 {
+		merged.PHP.MaxUpload = patch.PHP.MaxUpload
+	}
+	if len(patch.PHP.Env) > 0 {
+		merged.PHP.Env = patch.PHP.Env
+	}
+
+	if len(patch.Proxy.Upstreams) > 0 {
+		merged.Proxy = patch.Proxy
+	}
+	if patch.Redirect.Target != "" {
+		merged.Redirect = patch.Redirect
+	}
+	if patch.App.Command != "" || patch.App.Runtime != "" {
+		merged.App = patch.App
+	}
+	if fields.HasResources || patch.Resources.CPUPercent > 0 || patch.Resources.MemoryMB > 0 || patch.Resources.PIDMax > 0 {
+		merged.Resources = patch.Resources
+	}
+	if fields.HasHtaccess || patch.Htaccess.Mode != "" {
+		merged.Htaccess = patch.Htaccess
+	}
+
+	// Locations: replace when the caller explicitly sent the key or
+	// requested replace-mode. An empty list clears all routes.
+	if fields.HasLocations || replaceMode {
+		merged.Locations = patch.Locations
+	}
+	if fields.HasBasicAuth || replaceMode {
+		merged.BasicAuth = patch.BasicAuth
+	}
+
+	if replaceMode {
+		merged.Cache = patch.Cache
+		merged.Security = patch.Security
+		merged.Compression = patch.Compression
+	} else {
+		if fields.HasCache {
+			merged.Cache = patch.Cache
+		}
+		if fields.HasSecurity {
+			merged.Security = patch.Security
+		}
+		if fields.HasCompression || patch.Compression.Enabled || len(patch.Compression.Algorithms) > 0 {
+			merged.Compression = patch.Compression
+		}
+	}
+
+	return merged
+}
