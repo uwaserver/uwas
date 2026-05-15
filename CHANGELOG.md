@@ -7,6 +7,219 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-16
+
+A focused refactor + performance + observability sweep on top of
+v0.4.2 — 41 atomic commits closing Phase 1-3 of the internal
+`refactor.md` backlog. **No new user-facing features**, but enough
+internal shape change to warrant a minor bump: `internal/config` is
+sharded across 14 files, `installer.go` / `phpmanager.go` /
+`handlers_hosting.go` were split into per-concern files, the legacy
+plaintext API-key fallback is now opt-in, and an `internal/respond`
+package centralizes JSON response writing (with operator-visible
+5xx logging baked in).
+
+**One behavioural change to flag:** plaintext API-key authentication
+(`api_key: ABC123...` matched against `global.admin.api_key` without
+hashing) is now **disabled by default**. Operators upgrading from
+v0.4.x who use a plaintext key without having rotated through the
+multi-user flow should set `global.users.allow_legacy_plaintext_api_key:
+true` and plan a migration to hashed credentials. The fallback emits
+a startup warning when enabled.
+
+Phase 4-6 of the backlog (admin/api.go split, handleRequest
+decompose, `sysexec` abstraction, test infrastructure refresh,
+frontend page splits) is intentionally deferred — those are
+multi-day "L" items that would have padded this release without
+new operator value.
+
+### Bug fixes (concurrency)
+
+- **PHP env merge no longer mutates a shared `*config.Domain` pointer**
+  (`863b92b`) — two concurrent PHP requests to the same host could
+  race the FPMAddress / Env restore. `s.php.Serve` gained an explicit
+  `ServeWith(ctx, domain, fpmAddr, env)` overload so the merged state
+  rides the call stack instead of the shared struct.
+- **Per-domain rate-limiter goroutines stop on reload** (`4f9ff64`) —
+  each `RateLimiter` now owns a `context.CancelFunc`; the reload path
+  cancels the old map before swapping it in. Frequent hot reloads no
+  longer leak N goroutines per cycle.
+- **GeoIP external lookups are bounded** (`944cc9c`) — replaced the
+  unbounded `go lookupExternal(ip)` fan-out with a 4-worker pool +
+  256-slot buffered queue + per-IP singleflight + 5-minute negative
+  cache. Random-source-IP sprays can no longer fork goroutines as
+  fast as packets arrive.
+
+### Performance (hot-path)
+
+- **TLS handshake allowlist is now lock-free** (`012b7be`) — replaced
+  the O(N·M) scan over `m.domains` + aliases under a mutex with an
+  `atomic.Pointer[domainAllowlist]` built once in `UpdateDomains`.
+  500 domains × 10 aliases per handshake now drops to one atomic load
+  + one map probe.
+- **IPACL / GeoIP / CORS / WAF guards now run as predicates**
+  (`d06b23f`) — each guard exposes a closure form
+  (`func(w, r) bool`) that the request hot path calls directly,
+  removing the per-request `next.ServeHTTP` wrapper allocation when
+  a domain has any of these features enabled.
+- **API-key lookup is O(1)** (`3e9b42d`) — `auth.Manager` keeps a
+  secondary `map[hash]*User` index alongside the username map.
+  Authentication no longer takes an RLock to linear-scan every user
+  per admin/MCP request.
+- **`LastLogin` updates are lock-free** (`b6ca33d`) — moved to
+  `atomic.Int64` (unix seconds) so post-bcrypt verification doesn't
+  re-acquire the manager write lock for one field.
+- **Cache LRU promotion is debounced** (`6038a3e`) — only every Nth
+  read takes the shard write lock to `MoveToFront`, so heavy reads
+  on hot content no longer serialize all readers behind one shard.
+- **Domain logs use per-host mutexes** (`209279d`) — replaced the
+  one-mutex-per-manager design with a per-`domainLogFile` lock so
+  request paths writing to different logs don't serialize.
+- **ACME renewal split from cert-map iteration** (`3da22ad`) — the
+  renewal scan now collects candidates in pass 1, then ranges over
+  the candidate slice outside the `sync.Map.Range` callback. ACME
+  network I/O (potentially minutes per cert) no longer blocks
+  unrelated handshakes that touch the same map.
+- **Rewrite engine pre-checks pattern before building Variables**
+  (`a4d3431`, `d0cfddf`) — `BuildVariables` (HTTP_HOST, REQUEST_URI,
+  …) is skipped entirely when `engine.MightMatch(uri)` proves none
+  of the rule patterns could match. `htaccessCacheEntry` also
+  caches the pre-built `rewrite.Engine` so each request doesn't
+  re-compile the rule set.
+- **`time.Now()` consolidated and rate-limit allocations lazy**
+  (`8eaabe6`) — one `now := time.Now()` per request feeds all
+  location rate-limit checks; the per-key entry is only allocated
+  on first hit via `LoadOrStore`.
+- **`router.Lookup` + `IsConfigured` collapsed** (`8da706e`) — the
+  HTTP entry path needed both; `LookupWithStatus` returns
+  `(*Domain, configured bool)` in one pass instead of two.
+- **PHP-FPM hot-path lookup is a single map probe** (`70cb196`) —
+  `RunningAddrForDomain(host)` replaces the per-request linear
+  scan over `GetDomainInstances()`.
+- **`isPrivateIP` no longer re-parses CIDRs per request**
+  (`1deccb6`) — the six private-network CIDRs are parsed once at
+  package init into `[]*net.IPNet`.
+- **PHP cacheable extension set lifted to package scope** (`89c7e1d`)
+  — the 17-entry `map[string]bool` literal is no longer allocated
+  per cache-eligible PHP request.
+
+### Refactor
+
+- **`internal/respond` package** (`ab35ece`) — `respond.JSON`,
+  `respond.Error`, `respond.ErrorCause` centralize JSON response
+  writing with hardening headers, status code, and 5xx error
+  logging in one place. Admin's `jsonError` / `jsonErrorCause`
+  delegate to it via `SetLogger`.
+- **`internal/admin/api.go` shrunk from 6,275 → 5,717 lines**
+  through targeted splits: `handlers_hosting.go` (2,893 LOC) →
+  9 themed handler files (`123442d`), `registerRoutes` (328 LOC)
+  → themed sub-registrars in `routes.go` (`b09d082`), generic
+  `ringBuffer[T]` extracted for logs + audit (`13c2d53`), and
+  `phpInstallStatus` ring removed in favor of `taskMgr`
+  (`6e13157`).
+- **`internal/config/config.go` sharded** (`bceb880`) — the
+  737-LOC file split into 14 per-feature files (`global.go`,
+  `domain.go`, `backup.go`, `tls.go`, `cache.go`, `security.go`,
+  …). `Config` root stays in `config.go`.
+- **Typed `DomainType` enum** (`ae62e15`) — `string` Domain.Type
+  remains for YAML/JSON compatibility, but `DomainType` /
+  `IsValid()` / typed constants now drive validation and dispatch.
+- **`config.MergeDomain` extracted** (`87193a9`) — `handleUpdateDomain`
+  no longer carries 286 lines of manual nil-check merge logic; the
+  pure merge/replace function ships with its own unit tests in
+  `internal/config/merge_test.go`.
+- **`wordpress/installer.go` split into 4 files** (`6e9ec0a`) —
+  `installer.go` (931), `updater.go` (346), `harden.go` (230),
+  `dbtools.go` (94). One file per concern.
+- **`phpmanager/manager.go` split into 4 files** (`9e4423b`) —
+  `manager.go` (780), `detect.go` (381), `ini.go` (172),
+  `fpm.go` (273). Lifecycle / detection / INI / FPM are now
+  separately readable.
+- **`install.Manager` → `install.Queue`** (`9a2e5b1`) — the type
+  is a task queue, not a daemon-like owner; the rename frees
+  "Manager" for the daemon archetype.
+- **`backup.go` shares an `archiveAndUpload` helper** (`70cd8fd`)
+  — `CreateBackup` and `CreateDomainBackup` no longer re-implement
+  the same tar / gzip / temp-file / upload / cleanup skeleton.
+- **Domain validation consolidated** (`4710566`) — moved into
+  `config.ValidateDomain`; admin keeps only runtime checks
+  (PHP availability, web-root containment).
+- **Cloudflare v0.1.6 → v0.2.0 migration gated by schema version**
+  (`7b0d06a`) — `state_schema_version` field on the cloudflare
+  state file; the legacy `Domain` → `Hostname` rename runs once
+  per install, then never again. Slated for removal after v0.6.
+- **Domain-handler dispatch consolidated** (`c8db418`) — the three
+  switch sites in `server.go` now share a single
+  `dispatchHandler(ctx, domain)` method. Pairs with the per-
+  handler latency histograms below.
+
+### Security / auth
+
+- **Legacy plaintext API-key fallback gated by config** (`5df01f0`)
+  — `users.allow_legacy_plaintext_api_key: false` by default.
+  Operators relying on the v0.4.x convenience path must set it to
+  `true` explicitly; the manager logs a loud startup warning when
+  enabled. Plan is `default false` in v0.5, `removed` in v0.6.
+
+### Observability
+
+- **Per-handler latency histogram** (`c8db418`) — new
+  `RecordHandlerLatency(handlerType, status, d)` hook feeds a
+  fixed-size ring buffer per handler; `HandlerPercentiles` exposes
+  p50/p95/p99/max. Prometheus output adds
+  `uwas_handler_duration_seconds{handler,quantile}`. Dashboard
+  Metrics page (`/api/v1/stats`) returns the new `handler_latency`
+  block.
+- **X-Request-ID propagated across proxy / FastCGI / WebSocket**
+  (`6565227`) — `RequestID` middleware now stamps the generated ID
+  on `r.Header` so downstream copy loops forward it; proxy / FastCGI
+  upstream calls include it, and WebSocket tunnel-goroutine log
+  entries (`websocket connect failed`, `websocket copy errors`,
+  `upstream error`, `retrying upstream`) include `request_id`.
+- **`"host"` vs `"domain"` log field standardized** (`ecc994e`) —
+  swept slog calls to use `"domain"` for our entities; `"host"`
+  remains only for remote / network hosts (ESI fragments,
+  upstreams). TLS manager + admin + server log sites converted.
+- **`"err"` vs `"error"` log field standardized** (`6023429`) —
+  internal slog calls now use `"error"` uniformly; the 4-5
+  `"err"` stragglers were removed.
+- **Audit entries on the highest-risk endpoints** (`eee8b73`) —
+  `handlePHPConfigRawPut`, `handlePHPEnable`, `handlePHPDisable`,
+  `handleConfigRawPut` (full config-file overwrite) now record
+  audit entries on every branch, success and failure, with size
+  / version / domain-count detail.
+- **5xx admin responses log at error level** (`27a999e`) — the
+  free-function `jsonError` / `jsonErrorCause` helpers
+  (centralized in `respond` per the A10 commit) emit a structured
+  error-level log with status, message, request_id, and (when
+  available) the underlying cause for every 5xx response.
+
+### Error context
+
+- **`internal/database` wraps operations with the (db, user, host)
+  tuple** (`e80891c`) — `CreateDatabase` / `DropDatabase` /
+  `ChangePassword` / `ListDatabases` / `ListUsers` plus their
+  Docker-container equivalents previously returned the raw MySQL
+  or `docker exec` error. Operator logs now read
+  `drop database "wp_foo" (user "wp_foo"@"localhost"): permission
+  denied` instead of bare `permission denied`.
+- **CLI `addFileToTar` errors carry the source path** (`9b06cca`,
+  `0836ad2`) — `os.Open` / `Stat` / `WriteHeader` / `io.Copy`
+  errors wrap with the path; the caller-side `os.IsNotExist`
+  check upgraded to `errors.Is(err, fs.ErrNotExist)` so wrapped
+  errors are still detected. CLI `apiRequest` callers also
+  wrapped with operation context.
+
+### Verification
+
+- `go build ./...`, `go vet ./...` clean.
+- `go test ./... -count=1 -short` passes 51 of 54 packages. Three
+  failures are pre-existing environment-dependent flakes that
+  also fail on v0.4.2: `TestHandleDockerDBCreate_*` (admin —
+  requires a running Docker daemon), `TestSFTPProviderListEmpty`
+  (backup — known-hosts cache mismatch), `TestInstall_HtaccessWriteFails`
+  (wordpress — live network test, refactor.md T3).
+
 ## [0.4.2] - 2026-05-15
 
 A security & robustness sweep on top of v0.4.1 — 13 atomic fixes
