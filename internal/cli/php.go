@@ -86,7 +86,7 @@ func (p *PHPCommand) list(args []string) error {
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/php", *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("list PHP installations: %w", err)
 	}
 
 	var installs []struct {
@@ -144,7 +144,7 @@ func (p *PHPCommand) start(args []string) error {
 	payload := fmt.Sprintf(`{"listen_addr":"127.0.0.1:%s"}`, *port)
 	body, err := apiRequest("POST", *apiURL+"/api/v1/php/"+version+"/start", *apiKey, strings.NewReader(payload))
 	if err != nil {
-		return err
+		return fmt.Errorf("start PHP %s: %w", version, err)
 	}
 
 	var result map[string]any
@@ -172,7 +172,7 @@ func (p *PHPCommand) stop(args []string) error {
 
 	_, err := apiRequest("POST", *apiURL+"/api/v1/php/"+version+"/stop", *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("stop PHP %s: %w", version, err)
 	}
 
 	fmt.Printf("PHP %s stopped\n", version)
@@ -198,7 +198,7 @@ func (p *PHPCommand) config(args []string) error {
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/php/"+version+"/config", *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch PHP %s config: %w", version, err)
 	}
 
 	var cfg map[string]any
@@ -236,7 +236,7 @@ func (p *PHPCommand) extensions(args []string) error {
 
 	body, err := apiRequest("GET", *apiURL+"/api/v1/php/"+version+"/extensions", *apiKey, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch PHP %s extensions: %w", version, err)
 	}
 
 	var exts []string
