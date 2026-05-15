@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -41,14 +42,30 @@ type User struct {
 	Password   string    `json:"password_hash,omitempty"` // bcrypt hash
 	Role       Role      `json:"role"`
 	Domains    []string  `json:"domains,omitempty"` // For resellers: managed domains
-	APIKey      string    `json:"api_key,omitempty"`      // Display prefix only (first 8 chars)
-	APIKeyHash  string    `json:"api_key_hash,omitempty"` // SHA256 hash of full API key
-	FullAPIKey  string    `json:"-"`                      // Full key, set only at generation time (not persisted)
-	Enabled     bool      `json:"enabled"`
+	APIKey     string    `json:"api_key,omitempty"`      // Display prefix only (first 8 chars)
+	APIKeyHash string    `json:"api_key_hash,omitempty"` // SHA256 hash of full API key
+	FullAPIKey string    `json:"-"`                      // Full key, set only at generation time (not persisted)
+	Enabled    bool      `json:"enabled"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	LastLogin  time.Time `json:"last_login,omitempty"`
 	EnabledSet bool      `json:"-"`
+
+	// lastLoginNanos is the live, lock-free source of truth for LastLogin
+	// after the user has been authenticated this process. The LastLogin field
+	// holds the last persisted value (used for serialization + tests that read
+	// it as a plain field on a cloned User snapshot). Updated by Authenticate;
+	// synced back into LastLogin by cloneUser and saveUsers (was P13).
+	lastLoginNanos atomic.Int64 `json:"-"`
+}
+
+// latestLastLogin returns the most recent login time for u, preferring the
+// atomic value (live updates) over the persisted LastLogin field.
+func (u *User) latestLastLogin() time.Time {
+	if n := u.lastLoginNanos.Load(); n != 0 {
+		return time.Unix(0, n)
+	}
+	return u.LastLogin
 }
 
 // Session represents an authenticated session.
@@ -337,10 +354,10 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 
 	m.clearFailedAttempts(username)
 
-	// Update last login
-	m.mu.Lock()
-	user.LastLogin = time.Now()
-	m.mu.Unlock()
+	// Update last login lock-free. The atomic value is preferred by
+	// latestLastLogin and synced back into User.LastLogin by cloneUser and
+	// saveUsers, so observers downstream still see the fresh timestamp.
+	user.lastLoginNanos.Store(time.Now().UnixNano())
 
 	token, err := generateToken()
 	if err != nil {
@@ -558,12 +575,28 @@ func cloneUser(user *User) *User {
 	if user == nil {
 		return nil
 	}
-	copyUser := *user
+	// Build the snapshot field-by-field rather than via struct copy because
+	// User now contains sync/atomic.Int64 which go vet flags as noCopy.
+	// The cloned LastLogin reflects the latest atomic value so observers see
+	// in-process Authenticate updates that haven't been persisted yet.
+	copyUser := &User{
+		ID:         user.ID,
+		Username:   user.Username,
+		Email:      user.Email,
+		Password:   user.Password,
+		Role:       user.Role,
+		APIKey:     user.APIKey,
+		APIKeyHash: user.APIKeyHash,
+		FullAPIKey: user.FullAPIKey,
+		Enabled:    user.Enabled,
+		CreatedAt:  user.CreatedAt,
+		UpdatedAt:  user.UpdatedAt,
+		LastLogin:  user.latestLastLogin(),
+	}
 	if user.Domains != nil {
 		copyUser.Domains = append([]string(nil), user.Domains...)
 	}
-	copyUser.EnabledSet = false
-	return &copyUser
+	return copyUser
 }
 
 // DeleteUser deletes a user.
@@ -692,6 +725,11 @@ func (m *Manager) saveUsers() {
 
 	users := make([]*User, 0, len(m.users))
 	for _, user := range m.users {
+		// Sync live atomic LastLogin into the persisted field so the on-disk
+		// JSON reflects in-process authentications.
+		if n := user.lastLoginNanos.Load(); n != 0 {
+			user.LastLogin = time.Unix(0, n)
+		}
 		users = append(users, user)
 	}
 
