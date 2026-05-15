@@ -16,6 +16,12 @@ const (
 	checkTimeout    = 10 * time.Second
 )
 
+// monitorURLSafetyCheck mirrors the indirection used in internal/notify so
+// tests against httptest.NewServer (which always binds to 127.0.0.1) can
+// disable the SSRF gate. The default policy rejects loopback, private,
+// link-local, and cloud-metadata ranges.
+var monitorURLSafetyCheck = config.IsWebhookURLSafe
+
 // Monitor periodically checks domain health.
 type Monitor struct {
 	domainsMu sync.RWMutex
@@ -85,7 +91,7 @@ func (m *Monitor) snapshotDomains() []config.Domain {
 func (m *Monitor) Start(ctx context.Context) {
 	// Run an initial check immediately for all domains.
 	for _, d := range m.snapshotDomains() {
-		m.checkDomain(d)
+		m.checkDomain(ctx, d)
 	}
 
 	ticker := time.NewTicker(defaultInterval)
@@ -97,21 +103,35 @@ func (m *Monitor) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			for _, d := range m.snapshotDomains() {
-				m.checkDomain(d)
+				m.checkDomain(ctx, d)
 			}
 		}
 	}
 }
 
-func (m *Monitor) checkDomain(d config.Domain) {
+func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 	scheme := "http"
 	if d.SSL.Mode == "auto" || d.SSL.Mode == "manual" {
 		scheme = "https"
 	}
 	url := scheme + "://" + d.Host + "/"
 
+	// Even though domain hosts come from operator-controlled config, refusing
+	// to probe loopback / private / cloud-metadata addresses keeps a typo or
+	// stale entry (e.g. Host: "169.254.169.254") from turning the monitor
+	// into an internal-network scanner.
+	if err := monitorURLSafetyCheck(url); err != nil {
+		m.logger.Debug("monitor skipping unsafe host", "host", d.Host, "error", err)
+		return
+	}
+
+	// Per-check deadline bounded by both checkTimeout and the parent context
+	// so a shutdown does not leave HTTP calls hanging in flight.
+	reqCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+
 	start := time.Now()
-	req, reqErr := http.NewRequest("GET", url, nil)
+	req, reqErr := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if reqErr != nil {
 		return
 	}
