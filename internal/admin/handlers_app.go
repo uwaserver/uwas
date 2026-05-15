@@ -418,8 +418,13 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// No signature — check query param ?secret=
-		if qs := r.URL.Query().Get("secret"); qs == "" || qs != secret {
+		// No signature — check query param ?secret=. The lengths must match
+		// before subtle.ConstantTimeCompare, otherwise it short-circuits and
+		// leaks the secret length; the explicit empty check also avoids the
+		// nil-vs-empty edge case where Get returns "".
+		qs := r.URL.Query().Get("secret")
+		if qs == "" || len(qs) != len(secret) ||
+			subtle.ConstantTimeCompare([]byte(qs), []byte(secret)) != 1 {
 			jsonError(w, "webhook secret required", http.StatusForbidden)
 			return
 		}
