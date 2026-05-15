@@ -901,8 +901,8 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Unknown domains: track + reject if host is not a configured domain.
 	// Fallback domain exists for serving configured domains, not for tracking unknown ones.
-	domain := s.vhosts.Lookup(r.Host)
-	if !s.vhosts.IsConfigured(r.Host) {
+	domain, configured := s.vhosts.LookupWithStatus(r.Host)
+	if !configured {
 		// Host does not match any configured domain — record as unknown and reject.
 		blocked := s.unknownHosts.Record(r.Host)
 		if blocked {

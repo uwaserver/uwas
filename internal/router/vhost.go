@@ -86,36 +86,20 @@ func (r *VHostRouter) store(domains []config.Domain) {
 	r.current.Store(m)
 }
 
-// Lookup finds the domain config for a given host.
+// Lookup finds the domain config for a given host. Wrapper over
+// LookupWithStatus for callers that don't need the configured-vs-fallback
+// signal.
 func (r *VHostRouter) Lookup(host string) *config.Domain {
-	// Strip port if present
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
-	}
-	host = strings.ToLower(host)
-
-	m := r.current.Load()
-
-	// 1. Exact match
-	if d, ok := m.exact[host]; ok {
-		return d
-	}
-
-	// 2. Wildcard match (longest suffix first)
-	for _, wc := range m.wildcards {
-		if strings.HasSuffix(host, wc.suffix) {
-			return wc.domain
-		}
-	}
-
-	// 3. Default fallback
-	return m.fallback
+	d, _ := r.LookupWithStatus(host)
+	return d
 }
 
-// IsConfigured returns true if the host matches a configured domain (exact or wildcard),
-// as opposed to falling through to the default fallback.
-func (r *VHostRouter) IsConfigured(host string) bool {
-	// Normalize the same way Lookup does.
+// LookupWithStatus finds the domain config and reports whether the match was
+// against a real configured host/wildcard (true) versus the default fallback
+// (false). One pass over the map + wildcard list instead of two — used by the
+// HTTP entry path which needed both pieces of information per request
+// (was P10).
+func (r *VHostRouter) LookupWithStatus(host string) (*config.Domain, bool) {
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
 		host = host[:idx]
 	}
@@ -123,18 +107,23 @@ func (r *VHostRouter) IsConfigured(host string) bool {
 
 	m := r.current.Load()
 
-	// Check exact — both raw host and port-stripped form may be in the map.
-	if _, ok := m.exact[host]; ok {
-		return true
+	if d, ok := m.exact[host]; ok {
+		return d, true
 	}
-
-	// Check wildcards
 	for _, wc := range m.wildcards {
 		if strings.HasSuffix(host, wc.suffix) {
-			return true
+			return wc.domain, true
 		}
 	}
-	return false
+	return m.fallback, false
+}
+
+// IsConfigured returns true if the host matches a configured domain (exact or
+// wildcard), as opposed to falling through to the default fallback. Thin
+// wrapper over LookupWithStatus; kept for back-compat with existing callers.
+func (r *VHostRouter) IsConfigured(host string) bool {
+	_, ok := r.LookupWithStatus(host)
+	return ok
 }
 
 // Update replaces all domain configurations (hot reload).
