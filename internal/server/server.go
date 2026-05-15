@@ -1155,13 +1155,23 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			limiterKey := domain.Host + "|" + loc.Match + "|" + clientAddr
-			val, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{lastAccess: time.Now()})
-			entry := val.(*rateLimitEntry)
 			window := loc.RateLimit.Window.Duration
 			if window == 0 {
 				window = time.Minute
 			}
+			// One time.Now() per matching rate-limited request (was two), and
+			// no per-request rateLimitEntry alloc when the entry already
+			// exists in the map. LoadOrStore previously eagerly built the
+			// entry even on a hit; now we Load first and fall back to
+			// LoadOrStore only on miss. Refs: refactor.md P11.
 			now := time.Now()
+			var entry *rateLimitEntry
+			if v, ok := s.locationLimiters.Load(limiterKey); ok {
+				entry = v.(*rateLimitEntry)
+			} else {
+				v, _ := s.locationLimiters.LoadOrStore(limiterKey, &rateLimitEntry{lastAccess: now})
+				entry = v.(*rateLimitEntry)
+			}
 			entry.mu.Lock()
 			// Evict stale entry (>10x window since last access) and treat as new.
 			if now.Sub(entry.lastAccess) > 10*window {
