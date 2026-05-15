@@ -152,6 +152,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				"attempt", attempt,
 				"backend", backend.URL.String(),
 				"path", ctx.Request.URL.Path,
+				"request_id", ctx.Request.Header.Get("X-Request-ID"),
 			)
 		}
 		tried[backend] = true
@@ -239,6 +240,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			backend.TotalFails.Add(1)
 			h.logger.Error("upstream error",
 				"backend", backend.URL.String(),
+				"request_id", ctx.Request.Header.Get("X-Request-ID"),
 				"error", err,
 			)
 
@@ -433,9 +435,11 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 		}
 	}
 
+	reqID := ctx.Request.Header.Get("X-Request-ID")
+
 	upstreamConn, err := net.DialTimeout("tcp", backendAddr, 5*time.Second)
 	if err != nil {
-		h.logger.Error("websocket upstream connect failed", "backend", backendAddr, "error", err)
+		h.logger.Error("websocket upstream connect failed", "backend", backendAddr, "request_id", reqID, "error", err)
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		clientConn.Close()
 		return
@@ -491,7 +495,7 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 		defer wg.Done()
 		defer closeBoth()
 		if _, err := io.Copy(upstreamConn, clientBuf); err != nil {
-			h.logger.Debug("websocket client→backend copy error", "error", err)
+			h.logger.Debug("websocket client→backend copy error", "request_id", reqID, "error", err)
 		}
 	}()
 
@@ -499,11 +503,11 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 		defer wg.Done()
 		defer closeBoth()
 		if _, err := io.Copy(clientConn, upstreamConn); err != nil {
-			h.logger.Debug("websocket backend→client copy error", "error", err)
+			h.logger.Debug("websocket backend→client copy error", "request_id", reqID, "error", err)
 		}
 	}()
 
 	// Wait for both directions to finish
 	wg.Wait()
-	h.logger.Debug("websocket connection closed", "backend", backendAddr, "path", ctx.Request.URL.Path)
+	h.logger.Debug("websocket connection closed", "backend", backendAddr, "request_id", reqID, "path", ctx.Request.URL.Path)
 }

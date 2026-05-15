@@ -16,6 +16,12 @@ func RequestID() Middleware {
 			id := r.Header.Get(requestIDHeader)
 			if id == "" {
 				id = generateRequestID()
+				// Stamp the request so downstream handlers (proxy, FastCGI,
+				// WebSocket tunnel) propagate the same ID to upstreams and
+				// emit it in correlated logs. Without this, only the
+				// response carried the ID and upstream traces broke at the
+				// proxy boundary. Refs: refactor.md O5.
+				r.Header.Set(requestIDHeader, id)
 			}
 			w.Header().Set(requestIDHeader, id)
 			next.ServeHTTP(w, r)
