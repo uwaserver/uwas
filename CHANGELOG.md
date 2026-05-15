@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-15
+
 A security & robustness sweep on top of v0.4.1 — 13 atomic fixes
-batched together. No new features; no breaking config changes.
+batched together. No new features; no breaking config changes for
+correctly-configured deployments. **One behavioural change to flag:**
+the admin API now refuses to bind on a non-loopback address when no
+credentials are configured (`api_key` empty AND multi-user disabled)
+— this was previously silently exposing the full 221-endpoint API as
+RoleAdmin. Set `global.admin.api_key` (or `global.users.enabled: true`)
+before upgrading if your listen address is anything other than
+`127.0.0.1:*` / `::1:*` / `localhost:*`.
 
 ### Security
 
