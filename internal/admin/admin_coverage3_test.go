@@ -5,7 +5,36 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/auth"
 )
+
+// TestSensitiveSettingsEndpointsRequireAdmin locks in the requireAdmin guards
+// on the notify/branding endpoints — without them a low-priv user could
+// redirect alerts to an attacker-controlled webhook or inject branding HTML.
+func TestSensitiveSettingsEndpointsRequireAdmin(t *testing.T) {
+	cases := []struct {
+		name, path, body string
+	}{
+		{"notify_prefs", "/api/v1/settings/notifications", `{"alerting":{},"webhooks":[]}`},
+		{"branding", "/api/v1/settings/branding", `{}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testServer()
+			req := httptest.NewRequest("PUT", tc.path, strings.NewReader(tc.body))
+			req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
+				ID: "u1", Username: "regular", Role: auth.RoleUser, Enabled: true,
+			}))
+			rec := httptest.NewRecorder()
+			// Dispatch via the inner mux directly to skip testMux's auto-admin shim.
+			s.mux.(*testMux).mux.ServeHTTP(rec, req)
+			if rec.Code != 403 {
+				t.Errorf("non-admin write to %s returned %d, want 403", tc.path, rec.Code)
+			}
+		})
+	}
+}
 
 // TestGetDomainNotFound2 tests getting a non-existent domain.
 func TestGetDomainNotFound2(t *testing.T) {
