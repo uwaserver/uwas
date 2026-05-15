@@ -5238,18 +5238,24 @@ type cloudflareTunnel struct {
 	DNSRecordID    string    `json:"dns_record_id"`
 	CreatedAt      time.Time `json:"created_at,omitempty"`
 
-	// Legacy stub fields kept for unmarshal back-compat with v0.1.6 state files;
-	// migrated to Hostname on load if non-empty.
+	// Legacy v0.1.6 stub field kept only so old state files unmarshal without
+	// dropping the value; migrated to Hostname once on load when SchemaVersion<2.
+	// Slated for removal after v0.5 (refactor.md A21).
 	Domain string `json:"domain,omitempty"`
 }
 
+// cloudflareStateSchemaCurrent is the current schema version persisted on
+// disk. v0.1.6 wrote no version (treated as 1); v0.2.0+ writes 2.
+const cloudflareStateSchemaCurrent = 2
+
 type cloudflareState struct {
-	Token     string             `json:"token"`
-	AccountID string             `json:"account_id"`
-	Email     string             `json:"email"`
-	Tunnels   []cloudflareTunnel `json:"tunnels"`
-	Connected bool               `json:"connected"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	SchemaVersion int                `json:"schema_version,omitempty"`
+	Token         string             `json:"token"`
+	AccountID     string             `json:"account_id"`
+	Email         string             `json:"email"`
+	Tunnels       []cloudflareTunnel `json:"tunnels"`
+	Connected     bool               `json:"connected"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 var (
