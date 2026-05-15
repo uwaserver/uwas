@@ -53,10 +53,6 @@
       "mcp__dfmt__dfmt_grep",
       "mcp__dfmt__dfmt_edit",
       "mcp__dfmt__dfmt_write"
-    ],
-    "deny": [
-      "WebFetch",
-      "WebSearch"
     ]
   }
 }
