@@ -76,4 +76,11 @@ type UsersConfig struct {
 	Enabled      bool `yaml:"enabled"`        // Enable multi-user mode
 	AllowResller bool `yaml:"allow_reseller"` // Allow reseller role
 	SessionTTL   int  `yaml:"session_ttl"`    // Session TTL in hours (default 24)
+
+	// AllowLegacyPlaintextAPIKey enables the v0.1 plaintext-comparison
+	// fallback for users whose stored APIKey has not yet been rehashed
+	// to APIKeyHash. Defaults to false from v0.5; legacy users must
+	// rotate via RegenerateAPIKey before this flag can stay off.
+	// Removed in a future release. Refs: refactor.md A16.
+	AllowLegacyPlaintextAPIKey bool `yaml:"allow_legacy_plaintext_api_key"`
 }

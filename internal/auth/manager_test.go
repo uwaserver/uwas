@@ -393,12 +393,25 @@ func TestAuthenticateAPIKeyLegacyPlaintext(t *testing.T) {
 	m.mu.Lock()
 	m.users["alice"].APIKey = plaintextKey
 	m.users["alice"].APIKeyHash = ""
+	// Drop the hash-index entry that CreateUser inserted so the only
+	// path to authenticate is the legacy plaintext scan we're exercising.
+	for k, u := range m.usersByAPIKeyHash {
+		if u.Username == "alice" {
+			delete(m.usersByAPIKeyHash, k)
+		}
+	}
 	m.mu.Unlock()
 
-	// Should still authenticate via backward compatibility fallback
+	// Without the legacy flag, plaintext fallback must be rejected.
+	if _, err := m.AuthenticateAPIKey(plaintextKey); err == nil {
+		t.Fatal("legacy plaintext key should be rejected when flag is off")
+	}
+
+	// Opt in to the fallback explicitly (mirrors the v0.5 deprecation flag).
+	m.SetAllowLegacyPlaintextKey(true)
 	authenticated, err := m.AuthenticateAPIKey(plaintextKey)
 	if err != nil {
-		t.Fatalf("legacy plaintext key should authenticate: %v", err)
+		t.Fatalf("legacy plaintext key should authenticate when flag is on: %v", err)
 	}
 	if authenticated.Username != "alice" {
 		t.Errorf("expected alice, got %s", authenticated.Username)

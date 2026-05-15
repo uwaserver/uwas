@@ -133,6 +133,13 @@ type Manager struct {
 	apiKey        string // Global admin API key (backward compat)
 	jwtSecret     []byte
 
+	// allowLegacyPlaintextKey gates the v0.1 plaintext API-key fallback
+	// in AuthenticateAPIKey. Off by default from v0.5; operators with
+	// un-rehashed legacy users opt in via the
+	// users.allow_legacy_plaintext_api_key config flag and are warned
+	// to rotate. Refs: refactor.md A16.
+	allowLegacyPlaintextKey atomic.Bool
+
 	// Brute-force protection: tracks failed login attempts per username.
 	loginAttemptsMu sync.Mutex
 	loginAttempts   map[string][]time.Time // username -> timestamps of failed attempts
@@ -166,6 +173,14 @@ func NewManager(dataDir, globalAPIKey string) *Manager {
 	m.loadSessions()
 	go m.sessionCleanupLoop()
 	return m
+}
+
+// SetAllowLegacyPlaintextKey toggles the legacy plaintext API-key
+// fallback path. The flag is read inside AuthenticateAPIKey on every
+// admin/MCP request, so it is stored as an atomic.Bool to allow live
+// reload without coordinating with auth-side locks.
+func (m *Manager) SetAllowLegacyPlaintextKey(allow bool) {
+	m.allowLegacyPlaintextKey.Store(allow)
 }
 
 // Stop signals the background session-cleanup goroutine to exit. Safe to
@@ -422,16 +437,21 @@ func (m *Manager) AuthenticateAPIKey(key string) (*User, error) {
 	}
 
 	// Backward compatibility: scan only legacy plaintext entries that have
-	// not yet been rehashed. The index above already covered every modern
-	// user, so this scan is bounded by the (shrinking) set of legacy users.
-	for _, user := range m.users {
-		if !user.Enabled || user.APIKeyHash != "" || user.APIKey == "" {
-			continue
-		}
-		if subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
-			slog.Warn("API key authenticated via legacy plaintext comparison; user should regenerate their key",
-				"user", user.Username)
-			return cloneUser(user), nil
+	// not yet been rehashed. Gated by the
+	// users.allow_legacy_plaintext_api_key config flag (off by default
+	// from v0.5; planned for removal). Operators with un-rotated keys
+	// must opt in and rotate before the flag stays off.
+	// Refs: refactor.md A16.
+	if m.allowLegacyPlaintextKey.Load() {
+		for _, user := range m.users {
+			if !user.Enabled || user.APIKeyHash != "" || user.APIKey == "" {
+				continue
+			}
+			if subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
+				slog.Warn("API key authenticated via legacy plaintext comparison; users.allow_legacy_plaintext_api_key is on, rotate keys and disable",
+					"user", user.Username)
+				return cloneUser(user), nil
+			}
 		}
 	}
 
