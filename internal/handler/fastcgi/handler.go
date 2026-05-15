@@ -26,13 +26,22 @@ func New(log *logger.Logger) *Handler {
 	return &Handler{logger: log}
 }
 
-// Serve processes a PHP request via FastCGI.
+// Serve processes a PHP request via FastCGI using the domain's configured
+// FPM address and env. Equivalent to ServeWith(ctx, domain, domain.PHP.FPMAddress, domain.PHP.Env).
 func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
-	if domain.PHP.FPMAddress == "" {
+	h.ServeWith(ctx, domain, domain.PHP.FPMAddress, domain.PHP.Env)
+}
+
+// ServeWith processes a PHP request using an explicit FPM address and env map,
+// without mutating the shared *config.Domain. Use this when per-request overrides
+// (htaccess PHP env, fallback FPM address) need to be applied without racing other
+// concurrent requests to the same domain.
+func (h *Handler) ServeWith(ctx *router.RequestContext, domain *config.Domain, fpmAddr string, env map[string]string) {
+	if fpmAddr == "" {
 		ctx.Response.Error(502, "502 Bad Gateway — no PHP-FPM address configured")
 		return
 	}
-	client := h.getClient(domain.PHP.FPMAddress)
+	client := h.getClient(fpmAddr)
 
 	// Split script name and path info using both original URI and resolved path
 	scriptName, pathInfo := SplitScriptPath(
@@ -43,8 +52,8 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	)
 	scriptFilename := ScriptFilenameFromResolved(ctx.ResolvedPath, domain.Root, scriptName)
 
-	// Build CGI environment
-	env := BuildEnv(ctx, scriptFilename, scriptName, pathInfo, domain.PHP.Env)
+	// Build CGI environment from the explicit env (not domain.PHP.Env, which may be stale)
+	cgiEnv := BuildEnv(ctx, scriptFilename, scriptName, pathInfo, env)
 
 	// Forward request body for non-GET/HEAD methods
 	var stdin io.Reader
@@ -62,7 +71,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 		defer cancel()
 	}
 
-	resp, err := client.Execute(execCtx, env, stdin)
+	resp, err := client.Execute(execCtx, cgiEnv, stdin)
 	if err != nil {
 		// Retry once for GET/HEAD — stale pooled connections cause immediate read/write errors.
 		// PHP-FPM may close idle connections without UWAS noticing.
@@ -73,13 +82,13 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 				"script", scriptFilename,
 				"error", err,
 			)
-			resp, err = client.Execute(execCtx, env, nil)
+			resp, err = client.Execute(execCtx, cgiEnv, nil)
 		}
 		if err != nil {
 			h.logger.Error("fastcgi execute failed",
 				"host", domain.Host,
 				"script", scriptFilename,
-				"fpm", domain.PHP.FPMAddress,
+				"fpm", fpmAddr,
 				"error", err,
 			)
 			ctx.Response.Error(502, "502 Bad Gateway — FastCGI error")
@@ -107,7 +116,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	if stdoutLen == 0 {
 		h.logger.Error("PHP empty response",
 			"host", domain.Host, "uri", ctx.Request.RequestURI,
-			"script", scriptFilename, "fpm", domain.PHP.FPMAddress,
+			"script", scriptFilename, "fpm", fpmAddr,
 		)
 		ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		ctx.Response.WriteHeader(500)
@@ -152,7 +161,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain) {
 	if isWSOD {
 		h.logger.Error("PHP WSOD: headers but no body",
 			"host", domain.Host, "uri", ctx.Request.RequestURI,
-			"script", scriptFilename, "fpm", domain.PHP.FPMAddress,
+			"script", scriptFilename, "fpm", fpmAddr,
 		)
 		ctx.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		ctx.Response.WriteHeader(500)
