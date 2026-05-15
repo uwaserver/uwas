@@ -23,7 +23,7 @@ import (
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	info, err := selfupdate.CheckUpdate(build.Version)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonErrorCause(w, "update check failed", err, http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, info)
@@ -35,7 +35,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := selfupdate.CheckUpdate(build.Version)
 	if err != nil {
-		jsonError(w, "check failed: "+err.Error(), http.StatusInternalServerError)
+		jsonErrorCause(w, "update check failed", err, http.StatusInternalServerError)
 		return
 	}
 	if !info.UpdateAvail {
@@ -43,7 +43,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := selfupdate.Update(info.DownloadURL); err != nil {
-		jsonError(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		jsonErrorCause(w, "update failed", err, http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("UWAS updated", "from", info.CurrentVersion, "to", info.LatestVersion)
@@ -87,7 +87,7 @@ func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := services.StartService(name); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonErrorCause(w, "service start failed", err, http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("service started", "name", name)
@@ -100,7 +100,7 @@ func (s *Server) handleServiceStop(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := services.StopService(name); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonErrorCause(w, "service stop failed", err, http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("service stopped", "name", name)
@@ -113,7 +113,7 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if err := services.RestartService(name); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		jsonErrorCause(w, "service restart failed", err, http.StatusInternalServerError)
 		return
 	}
 	s.logger.Info("service restarted", "name", name)
