@@ -462,30 +462,45 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 	upstreamConn.Write([]byte("Host: " + ctx.Request.Host + "\r\n"))
 	upstreamConn.Write([]byte("\r\n"))
 
-	// Bidirectional copy with WaitGroup for graceful shutdown on error
-	var wg sync.WaitGroup
+	// Bidirectional copy with WaitGroup for graceful shutdown on error.
+	// sync.Once guarantees that closeBoth only fires once — closing a net.Conn
+	// twice is technically safe in stdlib, but the Once also avoids racing
+	// SetDeadline calls and gives us a clean place to bound the *other*
+	// direction's blocked Read when one side returns without closing the TCP
+	// layer cleanly (e.g. half-open / load-balancer idle timeout).
+	var (
+		wg      sync.WaitGroup
+		closeMu sync.Once
+	)
 	wg.Add(2)
 
 	closeBoth := func() {
-		// Close both directions on error from either direction
-		clientConn.Close()
-		upstreamConn.Close()
+		closeMu.Do(func() {
+			// A near-immediate read deadline kicks any goroutine blocked in
+			// io.Copy out of its Read() so we never wedge on a half-closed
+			// peer. Close() then completes the teardown.
+			now := time.Now()
+			_ = clientConn.SetDeadline(now)
+			_ = upstreamConn.SetDeadline(now)
+			clientConn.Close()
+			upstreamConn.Close()
+		})
 	}
 
 	go func() {
 		defer wg.Done()
+		defer closeBoth()
 		if _, err := io.Copy(upstreamConn, clientBuf); err != nil {
 			h.logger.Debug("websocket client→backend copy error", "error", err)
 		}
-		closeBoth()
 	}()
 
 	go func() {
 		defer wg.Done()
+		defer closeBoth()
 		if _, err := io.Copy(clientConn, upstreamConn); err != nil {
 			h.logger.Debug("websocket backend→client copy error", "error", err)
 		}
-		closeBoth()
 	}()
 
 	// Wait for both directions to finish
