@@ -422,7 +422,7 @@ func ListDatabases() ([]DBInfo, error) {
 
 	out, err := runMySQLFn(sql)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list databases: %w", err)
 	}
 
 	var dbs []DBInfo
@@ -481,7 +481,7 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 
 	_, err := runMySQLFn(sql)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create database %q (user %q@%q): %w", name, user, host, err)
 	}
 	return &CreateResult{Name: name, User: user, Password: password, Host: host}, nil
 }
@@ -504,8 +504,10 @@ func DropDatabase(name, user, host string) error {
 		FLUSH PRIVILEGES;
 	`, backtick(name), escapeSQL(user), escapeSQL(host))
 
-	_, err := runMySQLFn(sql)
-	return err
+	if _, err := runMySQLFn(sql); err != nil {
+		return fmt.Errorf("drop database %q (user %q@%q): %w", name, user, host, err)
+	}
+	return nil
 }
 
 // ChangePassword changes the password for a database user.
@@ -514,8 +516,10 @@ func ChangePassword(user, host, newPassword string) error {
 		host = "localhost"
 	}
 	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", escapeSQL(user), escapeSQL(host), escapeSQL(newPassword))
-	_, err := runMySQLFn(sql)
-	return err
+	if _, err := runMySQLFn(sql); err != nil {
+		return fmt.Errorf("change password for user %q@%q: %w", user, host, err)
+	}
+	return nil
 }
 
 // ListUsers returns all non-system database users.
@@ -523,7 +527,7 @@ func ListUsers() ([]DBUser, error) {
 	sql := `SELECT User, Host FROM mysql.user WHERE User NOT IN ('root', 'mysql', 'mariadb.sys', 'debian-sys-maint', '') ORDER BY User`
 	out, err := runMySQLFn(sql)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list users: %w", err)
 	}
 	var users []DBUser
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

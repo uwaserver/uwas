@@ -250,7 +250,7 @@ func DockerDBListDatabases(containerName string) ([]DBInfo, error) {
 	sql := `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema','mysql','performance_schema','sys')`
 	out, err := DockerDBExecSQL(containerName, sql)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list databases in container %q: %w", containerName, err)
 	}
 	var dbs []DBInfo
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -278,7 +278,7 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 
 	_, err := DockerDBExecSQL(containerName, sql)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create database %q (user %q) in container %q: %w", dbName, user, containerName, err)
 	}
 	return &CreateResult{Name: dbName, User: user, Password: password, Host: containerName}, nil
 }
@@ -286,8 +286,10 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 // DockerDBDropDatabase drops a database from a Docker container.
 func DockerDBDropDatabase(containerName, dbName string) error {
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s;", backtick(dbName))
-	_, err := DockerDBExecSQL(containerName, sql)
-	return err
+	if _, err := DockerDBExecSQL(containerName, sql); err != nil {
+		return fmt.Errorf("drop database %q in container %q: %w", dbName, containerName, err)
+	}
+	return nil
 }
 
 // DockerDBExport exports a database from a Docker container as SQL dump.
