@@ -1777,12 +1777,13 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		return
 	}
 
-	// 1. Apply rewrite rules
-	if ruleSet.raw.RewriteEnabled && len(ruleSet.compiledRules) > 0 {
-		engine := rewrite.NewEngine(ruleSet.compiledRules)
+	// 1. Apply rewrite rules. Engine was built once at parse time
+	// (parseHtaccessFull) and cached on the entry; we don't reconstruct it
+	// per request.
+	if ruleSet.engine != nil {
 		requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 		vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
-		result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
+		result := ruleSet.engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
 		if result.Modified {
 			ctx.Request.URL.Path = result.URI
@@ -1885,10 +1886,11 @@ func parseExpiresDuration(expr string) string {
 
 // htaccessCacheEntry holds both raw and compiled htaccess rules.
 type htaccessCacheEntry struct {
-	raw            *htaccess.RuleSet
-	compiledRules  []*rewrite.Rule
-	modTime        time.Time      // file modification time for auto-invalidation
-	errorPages    map[int]string // precomputed ErrorDocument map (immutable after parseHtaccessFull)
+	raw           *htaccess.RuleSet
+	compiledRules []*rewrite.Rule
+	engine        *rewrite.Engine // pre-built rewrite engine, nil when RewriteEnabled is false
+	modTime       time.Time       // file modification time for auto-invalidation
+	errorPages    map[int]string  // precomputed ErrorDocument map (immutable after parseHtaccessFull)
 }
 
 func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
@@ -1978,6 +1980,11 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 			}
 			rule.Flags.Last = true
 			entry.compiledRules = append(entry.compiledRules, rule)
+		}
+		// Pre-build the engine once so applyHtaccess doesn't re-construct it
+		// per request (was P9).
+		if len(entry.compiledRules) > 0 {
+			entry.engine = rewrite.NewEngine(entry.compiledRules)
 		}
 	}
 
