@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"sync"
 	"sync/atomic"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // BackendState represents the health state of a backend.
@@ -43,12 +45,15 @@ type UpstreamPool struct {
 	backends []*Backend
 }
 
-// NewUpstreamPool creates a pool from address/weight pairs.
+// NewUpstreamPool creates a pool from address/weight pairs. Addresses without
+// a scheme are auto-prefixed with http:// so user-friendly "host:port" entries
+// (e.g. "127.0.0.1:3000") do not get silently dropped by url.Parse.
 func NewUpstreamPool(upstreams []UpstreamConfig) *UpstreamPool {
 	pool := &UpstreamPool{}
 	for _, u := range upstreams {
-		parsed, err := url.Parse(u.Address)
-		if err != nil {
+		addr := config.NormalizeProxyUpstreamAddress(u.Address)
+		parsed, err := url.Parse(addr)
+		if err != nil || parsed.Host == "" {
 			continue
 		}
 		b := &Backend{

@@ -188,7 +188,9 @@ func Validate(cfg *Config) error {
 					if u.Address == "" {
 						errs = append(errs, fmt.Sprintf("%s: address is required", uprefix))
 					} else {
-						parsed, err := url.Parse(u.Address)
+						// Accept "host:port" by auto-prefixing http://; users often omit the scheme.
+						addr := NormalizeProxyUpstreamAddress(u.Address)
+						parsed, err := url.Parse(addr)
 						if err != nil || parsed.Host == "" {
 							errs = append(errs, fmt.Sprintf("%s: invalid URL %q", uprefix, u.Address))
 						} else if isCloudMetadataHost(parsed.Hostname()) {
@@ -205,13 +207,10 @@ func Validate(cfg *Config) error {
 				}
 			}
 
-			// Proxy algorithm validation
-			if d.Proxy.Algorithm != "" {
-				switch d.Proxy.Algorithm {
-				case "round-robin", "least-conn", "weighted", "random", "sticky":
-				default:
-					errs = append(errs, fmt.Sprintf("%s: invalid proxy.algorithm %q (must be round-robin, least-conn, weighted, random, sticky)", prefix, d.Proxy.Algorithm))
-				}
+			// Proxy algorithm validation (accept both dashed and underscored forms;
+			// the balancer normalises before dispatch).
+			if d.Proxy.Algorithm != "" && !IsValidProxyAlgorithm(d.Proxy.Algorithm) {
+				errs = append(errs, fmt.Sprintf("%s: invalid proxy.algorithm %q (must be round-robin, least-conn, weighted, ip-hash, uri-hash, random, sticky)", prefix, d.Proxy.Algorithm))
 			}
 
 			// Canary weight validation
@@ -432,6 +431,32 @@ func IsLoopback(rawURL string) bool {
 		return false
 	}
 	return isLoopback(u.Hostname())
+}
+
+// NormalizeProxyUpstreamAddress returns the address with an http:// scheme if
+// no scheme was provided. Users frequently configure upstreams as "host:port"
+// (e.g. "127.0.0.1:3000") which url.Parse silently mis-parses as an opaque URL
+// without a host — dropping the backend from the pool with no warning.
+func NormalizeProxyUpstreamAddress(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return addr
+	}
+	if strings.Contains(addr, "://") {
+		return addr
+	}
+	return "http://" + addr
+}
+
+// IsValidProxyAlgorithm reports whether the algorithm name is recognised by
+// the proxy balancer. Both dashed and underscored forms are accepted because
+// the dashboard emits dashed names while internal tests use underscores.
+func IsValidProxyAlgorithm(algorithm string) bool {
+	switch strings.ReplaceAll(strings.ToLower(algorithm), "-", "_") {
+	case "round_robin", "least_conn", "weighted", "ip_hash", "uri_hash", "random", "sticky":
+		return true
+	}
+	return false
 }
 
 // IsWebhookURLSafe checks whether a URL resolves to an address that external
