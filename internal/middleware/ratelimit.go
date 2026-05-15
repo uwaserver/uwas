@@ -20,6 +20,7 @@ type RateLimiter struct {
 	window         time.Duration
 	cleanup        atomic.Bool
 	trustedProxies []*net.IPNet
+	cancel         context.CancelFunc // stops the background cleanup goroutine
 }
 
 type rateShard struct {
@@ -34,19 +35,33 @@ type bucket struct {
 
 // NewRateLimiter creates a rate limiter with the given limit per window.
 // The ctx parameter controls the lifetime of the background cleanup goroutine.
+// Call Stop() to release the cleanup goroutine early (e.g. on config reload)
+// when the parent ctx outlives the limiter.
 func NewRateLimiter(ctx context.Context, limit int, window time.Duration) *RateLimiter {
+	rlCtx, cancel := context.WithCancel(ctx)
 	rl := &RateLimiter{
-		limit: limit,
+		limit:  limit,
 		window: window,
+		cancel: cancel,
 	}
 	for i := range rl.shards {
 		rl.shards[i].buckets = make(map[string]*bucket)
 	}
 
-	// Background cleanup
-	go rl.cleanupLoop(ctx)
+	// Background cleanup — bound to the limiter's own context so Stop() releases it.
+	go rl.cleanupLoop(rlCtx)
 
 	return rl
+}
+
+// Stop cancels the background cleanup goroutine. Safe to call multiple times.
+// Use this on config reload when the old limiter is being swapped out but the
+// server context is still alive.
+func (rl *RateLimiter) Stop() {
+	if rl == nil || rl.cancel == nil {
+		return
+	}
+	rl.cancel()
 }
 
 // SetTrustedProxies configures CIDR ranges for trusted reverse proxies.
