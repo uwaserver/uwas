@@ -144,6 +144,32 @@ var locationProxyHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
 
+// phpCacheableStaticExts is the set of file extensions whose responses are
+// safe to cache on a PHP-typed domain. PHP requests themselves are always
+// dynamic and bypass the cache; only requests for these static asset
+// extensions enter the cache path. Lifted to package scope so we don't
+// allocate a new map on every cacheable-eligible request (was P4).
+var phpCacheableStaticExts = map[string]bool{
+	".css":   true,
+	".js":    true,
+	".png":   true,
+	".jpg":   true,
+	".jpeg":  true,
+	".gif":   true,
+	".svg":   true,
+	".ico":   true,
+	".webp":  true,
+	".avif":  true,
+	".woff":  true,
+	".woff2": true,
+	".ttf":   true,
+	".eot":   true,
+	".mp4":   true,
+	".webm":  true,
+	".pdf":   true,
+	".zip":   true,
+}
+
 // New creates a fully initialized server from config.
 func New(cfg *config.Config, log *logger.Logger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1377,15 +1403,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// PHP responses go through FastCGI and are always dynamic.
 	cacheEnabled := s.cache != nil && domain.Cache.Enabled && !cache.ShouldBypass(r)
 	if cacheEnabled && domain.Type == "php" {
-		// Only cache requests for known static file extensions on PHP domains
+		// Only cache requests for known static file extensions on PHP domains.
 		ext := strings.ToLower(filepath.Ext(r.URL.Path))
-		staticExts := map[string]bool{
-			".css": true, ".js": true, ".png": true, ".jpg": true, ".jpeg": true,
-			".gif": true, ".svg": true, ".ico": true, ".webp": true, ".avif": true,
-			".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
-			".mp4": true, ".webm": true, ".pdf": true, ".zip": true,
-		}
-		if !staticExts[ext] {
+		if !phpCacheableStaticExts[ext] {
 			cacheEnabled = false
 		}
 	}
