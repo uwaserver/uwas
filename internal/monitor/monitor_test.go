@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,13 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 )
+
+func TestMain(m *testing.M) {
+	// httptest.NewServer always binds to 127.0.0.1, which the production
+	// SSRF policy rejects. Disable the check for the suite.
+	monitorURLSafetyCheck = func(string) error { return nil }
+	os.Exit(m.Run())
+}
 
 func testLogger() *logger.Logger {
 	return logger.New("error", "text")
@@ -47,7 +55,7 @@ func TestCheckDomainUp(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -88,7 +96,7 @@ func TestCheckDomainDown(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -116,7 +124,7 @@ func TestCheckDomainDegraded(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -136,7 +144,7 @@ func TestCheckDomainUnreachable(t *testing.T) {
 
 	m := New(domains, testLogger())
 	m.client.Timeout = 1 * time.Second
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -231,7 +239,7 @@ func TestMaxChecksLimit(t *testing.T) {
 
 	// Run more checks than maxChecks
 	for i := 0; i < maxChecks+20; i++ {
-		m.checkDomain(domains[0])
+		m.checkDomain(context.Background(), domains[0])
 	}
 
 	results := m.Results()
@@ -241,6 +249,25 @@ func TestMaxChecksLimit(t *testing.T) {
 
 	if len(results[0].Checks) > maxChecks {
 		t.Errorf("checks = %d, should be <= %d", len(results[0].Checks), maxChecks)
+	}
+}
+
+// TestCheckDomainSkipsUnsafeHost locks in the SSRF guard: a domain whose
+// host resolves to the cloud-metadata IP must produce no result at all,
+// not a probe to the metadata endpoint.
+func TestCheckDomainSkipsUnsafeHost(t *testing.T) {
+	prev := monitorURLSafetyCheck
+	monitorURLSafetyCheck = config.IsWebhookURLSafe
+	t.Cleanup(func() { monitorURLSafetyCheck = prev })
+
+	domains := []config.Domain{
+		{Host: "169.254.169.254", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+	}
+	m := New(domains, testLogger())
+	m.checkDomain(context.Background(), domains[0])
+
+	if results := m.Results(); len(results) != 0 {
+		t.Errorf("expected no result for blocked host, got %d", len(results))
 	}
 }
 
@@ -307,7 +334,7 @@ func TestSSLSchemeSelection(t *testing.T) {
 		{Host: host, Type: "static", SSL: config.SSLConfig{Mode: "off"}},
 	}
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -330,7 +357,7 @@ func TestResultsReturnsCopy(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results1 := m.Results()
 	results2 := m.Results()
@@ -363,7 +390,7 @@ func TestCheckDomainPHPType(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -386,7 +413,7 @@ func TestCheckDomainProxyType(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -411,7 +438,7 @@ func TestCheckDomainRedirectType(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -440,7 +467,7 @@ func TestCheckDomainHTTPSAutoMode(t *testing.T) {
 
 	m := New(domains, testLogger())
 	m.client.Timeout = 1 * time.Second
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -460,7 +487,7 @@ func TestCheckDomainHTTPSManualMode(t *testing.T) {
 
 	m := New(domains, testLogger())
 	m.client.Timeout = 500 * time.Millisecond
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results := m.Results()
 	if len(results) != 1 {
@@ -485,7 +512,7 @@ func TestResultsMutationIsolation(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	results1 := m.Results()
 	if len(results1) == 0 {
@@ -629,7 +656,7 @@ func TestCheckMultipleDomains(t *testing.T) {
 
 	m := New(domains, testLogger())
 	for _, d := range domains {
-		m.checkDomain(d)
+		m.checkDomain(context.Background(), d)
 	}
 
 	results := m.Results()
@@ -667,7 +694,7 @@ func TestMonitorRedirectLimit(t *testing.T) {
 	}
 
 	m := New(domains, testLogger())
-	m.checkDomain(domains[0])
+	m.checkDomain(context.Background(), domains[0])
 
 	// The client follows up to 3 redirects then uses the last response
 	// redirectCount should be 4 (initial + 3 redirects)
@@ -692,7 +719,7 @@ func TestCheckDomainAccumulates(t *testing.T) {
 	m := New(domains, testLogger())
 
 	for i := 0; i < 5; i++ {
-		m.checkDomain(domains[0])
+		m.checkDomain(context.Background(), domains[0])
 	}
 
 	results := m.Results()
