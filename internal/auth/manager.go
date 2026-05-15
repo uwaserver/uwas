@@ -123,7 +123,12 @@ type Manager struct {
 	mu        sync.RWMutex
 	users     map[string]*User    // key: username
 	usersByID map[string]*User    // key: user ID
-	sessions  map[string]*Session // key: token
+	// usersByAPIKeyHash maps SHA256(api-key) → user for O(1) lookup in
+	// AuthenticateAPIKey. Only populated for users that have an
+	// APIKeyHash (legacy plaintext-only users still require the scan
+	// fallback). Refs: refactor.md P8.
+	usersByAPIKeyHash map[string]*User
+	sessions          map[string]*Session // key: token
 	dataDir       string
 	apiKey        string // Global admin API key (backward compat)
 	jwtSecret     []byte
@@ -145,13 +150,14 @@ const sessionCleanupInterval = 1 * time.Hour
 // NewManager creates a new auth manager.
 func NewManager(dataDir, globalAPIKey string) *Manager {
 	m := &Manager{
-		users:         make(map[string]*User),
-		usersByID:     make(map[string]*User),
-		sessions:      make(map[string]*Session),
-		loginAttempts: make(map[string][]time.Time),
-		dataDir:       dataDir,
-		apiKey:        globalAPIKey,
-		cleanupDone:   make(chan struct{}),
+		users:             make(map[string]*User),
+		usersByID:         make(map[string]*User),
+		usersByAPIKeyHash: make(map[string]*User),
+		sessions:          make(map[string]*Session),
+		loginAttempts:     make(map[string][]time.Time),
+		dataDir:           dataDir,
+		apiKey:            globalAPIKey,
+		cleanupDone:       make(chan struct{}),
 	}
 	if err := m.loadOrCreateJWTSecret(); err != nil {
 		panic("auth: jwt secret init failed: " + err.Error())
@@ -315,6 +321,9 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 
 	m.users[username] = user
 	m.usersByID[user.ID] = user
+	if user.APIKeyHash != "" {
+		m.usersByAPIKeyHash[user.APIKeyHash] = user
+	}
 	m.saveUsers()
 
 	return cloneUser(user), nil
@@ -401,26 +410,28 @@ func (m *Manager) AuthenticateAPIKey(key string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Fast path: O(1) lookup via secondary index. Covers every user
+	// authenticated under the current SHA256-hash scheme.
+	if user, ok := m.usersByAPIKeyHash[keyHash]; ok && user.Enabled {
+		// Re-verify under ConstantTimeCompare to keep equal-length compare
+		// semantics; the map probe itself is short-circuiting, but the
+		// SHA256 input that produced the key is already the secret.
+		if subtle.ConstantTimeCompare([]byte(keyHash), []byte(user.APIKeyHash)) == 1 {
+			return cloneUser(user), nil
+		}
+	}
+
+	// Backward compatibility: scan only legacy plaintext entries that have
+	// not yet been rehashed. The index above already covered every modern
+	// user, so this scan is bounded by the (shrinking) set of legacy users.
 	for _, user := range m.users {
-		if !user.Enabled {
+		if !user.Enabled || user.APIKeyHash != "" || user.APIKey == "" {
 			continue
 		}
-
-		// Prefer hash-based comparison (current scheme)
-		if user.APIKeyHash != "" {
-			if subtle.ConstantTimeCompare([]byte(keyHash), []byte(user.APIKeyHash)) == 1 {
-				return cloneUser(user), nil
-			}
-			continue
-		}
-
-		// Backward compatibility: legacy plaintext key (no hash stored yet)
-		if user.APIKey != "" {
-			if subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
-				slog.Warn("API key authenticated via legacy plaintext comparison; user should regenerate their key",
-					"user", user.Username)
-				return cloneUser(user), nil
-			}
+		if subtle.ConstantTimeCompare([]byte(key), []byte(user.APIKey)) == 1 {
+			slog.Warn("API key authenticated via legacy plaintext comparison; user should regenerate their key",
+				"user", user.Username)
+			return cloneUser(user), nil
 		}
 	}
 
@@ -611,6 +622,9 @@ func (m *Manager) DeleteUser(username string) error {
 
 	delete(m.users, username)
 	delete(m.usersByID, user.ID)
+	if user.APIKeyHash != "" {
+		delete(m.usersByAPIKeyHash, user.APIKeyHash)
+	}
 	m.saveUsers()
 	m.invalidateUserSessionsLocked(user.ID)
 	return nil
@@ -636,8 +650,15 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 		apiKeyPrefix = apiKeyPrefix[:8]
 	}
 
+	// Rotate the secondary index entry: drop the old hash mapping (if any)
+	// before installing the new one so a regenerated key cannot collide
+	// with a stale entry left over from this user.
+	if user.APIKeyHash != "" {
+		delete(m.usersByAPIKeyHash, user.APIKeyHash)
+	}
 	user.APIKey = apiKeyPrefix
 	user.APIKeyHash = hashAPIKey(apiKey)
+	m.usersByAPIKeyHash[user.APIKeyHash] = user
 	user.UpdatedAt = time.Now()
 	m.saveUsers()
 
@@ -707,6 +728,9 @@ func (m *Manager) loadUsers() {
 	for _, user := range users {
 		m.users[user.Username] = user
 		m.usersByID[user.ID] = user
+		if user.APIKeyHash != "" {
+			m.usersByAPIKeyHash[user.APIKeyHash] = user
+		}
 	}
 }
 
