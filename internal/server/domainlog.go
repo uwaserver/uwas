@@ -23,6 +23,12 @@ const (
 )
 
 // domainLogManager manages per-domain access log files with rotation.
+//
+// Locking: the manager's mu protects the files map only. Each
+// domainLogFile carries its own mutex (dlf.mu), so write/rotate work for
+// host A no longer blocks write work for host B. Within a single host,
+// writes remain serialized — file-line ordering depends on it.
+// Refs: refactor.md P15.
 type domainLogManager struct {
 	mu    sync.RWMutex
 	files map[string]*domainLogFile
@@ -30,6 +36,7 @@ type domainLogManager struct {
 }
 
 type domainLogFile struct {
+	mu      sync.Mutex
 	f       *os.File
 	path    string
 	written int64
@@ -93,7 +100,9 @@ func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfi
 		userAgent,
 	)
 
-	m.mu.Lock()
+	// Per-host lock: writes for different domains run in parallel; only
+	// the same domain's writes serialize (needed for correct line order).
+	dlf.mu.Lock()
 	_, _ = dlf.f.WriteString(line)
 	dlf.written += int64(len(line))
 
@@ -101,15 +110,19 @@ func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfi
 	if maxSize <= 0 {
 		maxSize = defaultMaxLogSize
 	}
-	if dlf.written >= maxSize {
-		m.rotate(host, dlf)
+	needsRotate := dlf.written >= maxSize
+	if needsRotate {
+		m.rotateLocked(host, dlf)
 	}
-	m.mu.Unlock()
+	dlf.mu.Unlock()
 }
 
-// rotate closes the current log, renames it with a timestamp, compresses it,
-// and opens a fresh log file.
-func (m *domainLogManager) rotate(host string, dlf *domainLogFile) {
+// rotateLocked closes the current log, renames it with a timestamp,
+// compresses it, and opens a fresh log file. Caller must hold dlf.mu.
+// On reopen failure the file is unlinked from the manager's files map
+// (briefly acquiring m.mu) so a subsequent Write reinitializes from
+// scratch.
+func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 	dlf.f.Close()
 
 	// Rename current → timestamped .gz
@@ -129,7 +142,9 @@ func (m *domainLogManager) rotate(host string, dlf *domainLogFile) {
 	// Open fresh log file
 	f, err := os.OpenFile(dlf.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
+		m.mu.Lock()
 		delete(m.files, host)
+		m.mu.Unlock()
 		return
 	}
 	dlf.f = f
@@ -184,12 +199,16 @@ func (m *domainLogManager) cleanupOld() {
 }
 
 // Close closes all open log files and stops the cleanup goroutine.
+// Each domainLogFile's own mutex is acquired so an in-flight Write
+// finishes before its file handle is closed.
 func (m *domainLogManager) Close() {
 	close(m.stop)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, dlf := range m.files {
+		dlf.mu.Lock()
 		dlf.f.Close()
+		dlf.mu.Unlock()
 	}
 	m.files = make(map[string]*domainLogFile)
 }
