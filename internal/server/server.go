@@ -1600,6 +1600,8 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 			}
 		}
 		// Merge per-request htaccess PHP override into env without mutating domain.
+		// ServeWith takes explicit fpmAddr+env so concurrent requests to the same
+		// domain never race on a shared *config.Domain pointer.
 		if len(ctx.PHPEnvOverride) > 0 || fpmAddr != domain.PHP.FPMAddress {
 			merged := make(map[string]string, len(domain.PHP.Env)+len(ctx.PHPEnvOverride))
 			for k, v := range domain.PHP.Env {
@@ -1608,13 +1610,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 			for k, v := range ctx.PHPEnvOverride {
 				merged[k] = v
 			}
-			origAddr := domain.PHP.FPMAddress
-			origEnv := domain.PHP.Env
-			domain.PHP.FPMAddress = fpmAddr
-			domain.PHP.Env = merged
-			s.php.Serve(ctx, domain)
-			domain.PHP.FPMAddress = origAddr
-			domain.PHP.Env = origEnv
+			s.php.ServeWith(ctx, domain, fpmAddr, merged)
 		} else {
 			s.php.Serve(ctx, domain)
 		}
