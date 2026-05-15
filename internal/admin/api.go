@@ -72,15 +72,6 @@ type LogEntry struct {
 
 const maxLogEntries = 1000
 
-// phpInstallState tracks a background PHP installation.
-type phpInstallState struct {
-	Version string `json:"version"`
-	Status  string `json:"status"` // "running", "done", "error"
-	Output  string `json:"output"`
-	Error   string `json:"error,omitempty"`
-	Distro  string `json:"distro"`
-}
-
 type muxer interface {
 	HandleFunc(string, func(http.ResponseWriter, *http.Request))
 	Handle(string, http.Handler)
@@ -116,12 +107,9 @@ type Server struct {
 	securityStats *middleware.SecurityStats
 	cfRunner      *cfintegration.Runner
 
-	// Global installation task manager (serializes apt/dpkg operations)
+	// Global installation task manager (serializes apt/dpkg operations).
+	// PHP install state lives entirely in taskMgr (queryable via ActiveByType("php")).
 	taskMgr *install.Manager
-
-	// PHP install state (legacy, kept for backward compat)
-	phpInstallMu     sync.Mutex
-	phpInstallStatus *phpInstallState
 
 	logMu      sync.Mutex
 	logEntries []LogEntry
@@ -1332,7 +1320,9 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("starting PHP install", "version", req.Version, "distro", info.Distro)
 
 	phpMgr := s.phpMgr
-	task := s.taskMgr.Submit("php", "PHP "+req.Version, "install", func(appendOutput func(string)) error {
+	// Task Name carries the bare version (e.g. "8.5") so dashboards rendering
+	// "Installing PHP {version}" don't end up with "PHP PHP 8.5".
+	task := s.taskMgr.Submit("php", req.Version, "install", func(appendOutput func(string)) error {
 		output, err := phpmanager.RunInstall(req.Version)
 		appendOutput(output)
 		if err != nil {
@@ -1346,45 +1336,6 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	// Also update legacy status for backward compat
-	s.phpInstallMu.Lock()
-	s.phpInstallStatus = &phpInstallState{
-		Version: req.Version,
-		Status:  "running",
-		Distro:  info.Distro,
-	}
-	s.phpInstallMu.Unlock()
-
-	// Sync legacy status from task in background
-	go func() {
-		timeout := time.After(10 * time.Minute)
-		for {
-			t := s.taskMgr.Get(task.ID)
-			if t == nil || (t.Status != "running" && t.Status != "queued") {
-				s.phpInstallMu.Lock()
-				if t != nil {
-					s.phpInstallStatus.Status = string(t.Status)
-					s.phpInstallStatus.Output = t.Output
-					s.phpInstallStatus.Error = t.Error
-				}
-				s.phpInstallMu.Unlock()
-				return
-			}
-			s.phpInstallMu.Lock()
-			s.phpInstallStatus.Output = t.Output
-			s.phpInstallMu.Unlock()
-			select {
-			case <-timeout:
-				s.phpInstallMu.Lock()
-				s.phpInstallStatus.Status = "failed"
-				s.phpInstallStatus.Error = "timed out waiting for PHP install"
-				s.phpInstallMu.Unlock()
-				return
-			case <-time.After(500 * time.Millisecond):
-			}
-		}
-	}()
-
 	jsonResponse(w, map[string]string{
 		"status":  "started",
 		"task_id": task.ID,
@@ -1394,7 +1345,8 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) {
-	// First check task manager for active PHP task
+	// Active or recently-finished PHP task. ActiveByType only returns running/queued,
+	// so for done/error we fall back to scanning the task list for the latest "php" task.
 	if t := s.taskMgr.ActiveByType("php"); t != nil {
 		jsonResponse(w, map[string]interface{}{
 			"status":  t.Status,
@@ -1405,17 +1357,17 @@ func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-
-	// Fall back to legacy state
-	s.phpInstallMu.Lock()
-	state := s.phpInstallStatus
-	s.phpInstallMu.Unlock()
-
-	if state == nil {
-		jsonResponse(w, map[string]string{"status": "idle"})
+	if t := s.taskMgr.LatestByType("php"); t != nil {
+		jsonResponse(w, map[string]interface{}{
+			"status":  t.Status,
+			"output":  t.Output,
+			"error":   t.Error,
+			"task_id": t.ID,
+			"version": t.Name,
+		})
 		return
 	}
-	jsonResponse(w, state)
+	jsonResponse(w, map[string]string{"status": "idle"})
 }
 
 // --- Task API handlers ---

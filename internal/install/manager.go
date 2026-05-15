@@ -133,6 +133,27 @@ func (m *Manager) ActiveByType(taskType string) *Task {
 	return nil
 }
 
+// LatestByType returns the most recently created task of the given type
+// (active or completed). Returns nil if no such task is retained.
+func (m *Manager) LatestByType(taskType string) *Task {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest *Task
+	for _, t := range m.tasks {
+		if t.Type != taskType {
+			continue
+		}
+		if latest == nil || t.CreatedAt.After(latest.CreatedAt) {
+			latest = t
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	cp := *latest
+	return &cp
+}
+
 // List returns all recent tasks (active + recently completed).
 func (m *Manager) List() []Task {
 	m.mu.Lock()
