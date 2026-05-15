@@ -38,6 +38,12 @@ type Manager struct {
 	domainsMu sync.RWMutex
 	domains   []config.Domain
 
+	// allowlist is consulted lock-free on every TLS handshake by
+	// GetCertificate → isDomainConfigured. Rebuilt under domainsMu in
+	// UpdateDomains; readers load the *current* snapshot atomically.
+	// Refs: refactor.md P1.
+	allowlist atomic.Pointer[domainAllowlist]
+
 	// singleflight per host to prevent parallel ACME issuance for same host.
 	obtainFlight sync.Map // host → singleflight.Group
 
@@ -84,6 +90,7 @@ func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logg
 		logger:  log,
 		domains: append([]config.Domain(nil), domains...),
 	}
+	m.allowlist.Store(buildDomainAllowlist(domains))
 
 	// Initialize ACME client if email is configured
 	if cfg.Email != "" {
@@ -138,39 +145,67 @@ func (m *Manager) LoadManualCerts() {
 	}
 }
 
-// isDomainConfigured checks if a domain is in the configured domains list.
-// It supports exact match, wildcard match, and alias match.
-// If no domains are configured, returns true to allow all (backward compatibility).
-func (m *Manager) isDomainConfigured(host string) bool {
-	m.domainsMu.RLock()
-	defer m.domainsMu.RUnlock()
+// domainAllowlist is the read-mostly snapshot consulted on every TLS
+// handshake. Built once per UpdateDomains, swapped via atomic.Pointer so
+// readers never take a lock. allowAll=true reproduces the
+// "no-configured-domains → allow everything" legacy fallback used by
+// tests / first-boot dev.
+type domainAllowlist struct {
+	allowAll  bool
+	exact     map[string]struct{} // hosts + aliases, lowercased
+	apex      map[string]struct{} // apex hosts implied by "*.x" entries
+	wildcards []string            // dot-prefixed suffixes, e.g. ".example.com"
+}
 
-	// If no domains configured, allow all (for backward compatibility in tests/dev)
-	if len(m.domains) == 0 {
+func (a *domainAllowlist) allow(host string) bool {
+	if a == nil || a.allowAll {
 		return true
 	}
-
-	for _, d := range m.domains {
-		domainHost := strings.ToLower(d.Host)
-		// Exact match
-		if domainHost == host {
+	if _, ok := a.exact[host]; ok {
+		return true
+	}
+	if _, ok := a.apex[host]; ok {
+		return true
+	}
+	for _, suf := range a.wildcards {
+		if strings.HasSuffix(host, suf) {
 			return true
-		}
-		// Wildcard match: *.example.com matches sub.example.com
-		if strings.HasPrefix(domainHost, "*.") {
-			suffix := domainHost[2:] // Remove "*."
-			if strings.HasSuffix(host, "."+suffix) || host == suffix {
-				return true
-			}
-		}
-		// Check aliases
-		for _, alias := range d.Aliases {
-			if strings.ToLower(alias) == host {
-				return true
-			}
 		}
 	}
 	return false
+}
+
+func buildDomainAllowlist(domains []config.Domain) *domainAllowlist {
+	if len(domains) == 0 {
+		return &domainAllowlist{allowAll: true}
+	}
+	a := &domainAllowlist{
+		exact: make(map[string]struct{}, len(domains)*2),
+		apex:  make(map[string]struct{}),
+	}
+	for _, d := range domains {
+		h := strings.ToLower(d.Host)
+		if strings.HasPrefix(h, "*.") {
+			suffix := h[2:]
+			a.wildcards = append(a.wildcards, "."+suffix)
+			a.apex[suffix] = struct{}{}
+		} else {
+			a.exact[h] = struct{}{}
+		}
+		for _, alias := range d.Aliases {
+			a.exact[strings.ToLower(alias)] = struct{}{}
+		}
+	}
+	return a
+}
+
+// isDomainConfigured checks if a domain is in the configured domains list.
+// It supports exact match, wildcard match, and alias match.
+// If no domains are configured, returns true to allow all (backward compatibility).
+//
+// Hot path: every TLS handshake. Reads through atomic.Pointer; no mutex.
+func (m *Manager) isDomainConfigured(host string) bool {
+	return m.allowlist.Load().allow(host)
 }
 
 // GetCertificate is the tls.Config.GetCertificate callback for SNI routing.
@@ -596,9 +631,13 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 
 // UpdateDomains updates the domain list (for hot reload).
 func (m *Manager) UpdateDomains(domains []config.Domain) {
+	allowlist := buildDomainAllowlist(domains)
 	m.domainsMu.Lock()
 	m.domains = append([]config.Domain(nil), domains...)
 	m.domainsMu.Unlock()
+	// Publish *after* the slice swap so any handshake that races us either
+	// sees the old allowlist+old domains or the new allowlist+new domains.
+	m.allowlist.Store(allowlist)
 }
 
 func (m *Manager) snapshotDomains() []config.Domain {
