@@ -541,13 +541,51 @@ func (s *Server) registerRoutes() {
 	}
 }
 
+// isLoopbackListenAddr reports whether the host portion of a "host:port"
+// listen address binds only to loopback. It accepts "127.0.0.1", "::1", and
+// the literal "localhost". A bare ":port" or "0.0.0.0:port" binds to all
+// interfaces and is treated as non-loopback.
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 // Start starts the admin API server.
 func (s *Server) Start() error {
 	s.configMu.RLock()
 	addr := s.config.Global.Admin.Listen
+	apiKey := s.config.Global.Admin.APIKey
+	multiUserEnabled := s.config.Global.Users.Enabled
 	s.configMu.RUnlock()
 	if addr == "" {
 		addr = "127.0.0.1:9443"
+	}
+
+	// If no credentials are configured, the auth middleware injects a virtual
+	// admin user for backward compatibility with first-run setups. That is
+	// safe only as long as the listener is bound to loopback — otherwise the
+	// entire 221-endpoint API is publicly exposed with no authentication.
+	// Refuse to bind in that case and tell the operator how to recover.
+	if apiKey == "" && !multiUserEnabled && !isLoopbackListenAddr(addr) {
+		return fmt.Errorf(
+			"admin API listen address %q exposes the API without authentication; "+
+				"either set global.admin.api_key (or enable global.users.enabled) or "+
+				"bind to 127.0.0.1 / ::1", addr)
+	}
+	if apiKey == "" && !multiUserEnabled {
+		s.logger.Warn("admin API has no credentials configured — every request will be granted admin role",
+			"listen", addr,
+			"fix", "set global.admin.api_key or enable global.users.enabled")
 	}
 
 	s.httpSrv = &http.Server{

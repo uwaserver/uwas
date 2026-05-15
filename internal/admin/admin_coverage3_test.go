@@ -9,6 +9,24 @@ import (
 	"github.com/uwaserver/uwas/internal/auth"
 )
 
+func TestIsLoopbackListenAddr(t *testing.T) {
+	cases := map[string]bool{
+		"127.0.0.1:9443":    true,
+		"localhost:9443":    true,
+		"[::1]:9443":        true,
+		"0.0.0.0:9443":      false,
+		":9443":             false,
+		"192.168.1.10:9443": false,
+		"example.com:443":   false,
+		"not a valid addr":  false,
+	}
+	for addr, want := range cases {
+		if got := isLoopbackListenAddr(addr); got != want {
+			t.Errorf("isLoopbackListenAddr(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
 // TestSensitiveSettingsEndpointsRequireAdmin locks in the requireAdmin guards
 // on the notify/branding endpoints — without them a low-priv user could
 // redirect alerts to an attacker-controlled webhook or inject branding HTML.
