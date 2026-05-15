@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -200,6 +201,10 @@ func TestHandleHTTPRedirectToHTTPS(t *testing.T) {
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
+	// Simulate a loaded cert so handleHTTP performs the HTTPS redirect.
+	// Without a cert the new behaviour is to serve plain HTTP so domains
+	// whose ACME issuance is still pending stay reachable.
+	s.tlsMgr.RegisterCert("secure.com", &tls.Certificate{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/page", nil)
@@ -611,6 +616,7 @@ func TestHandleHTTPSSLDomainRedirect(t *testing.T) {
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
+	s.tlsMgr.RegisterCert("ssl.com", &tls.Certificate{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/page?q=1", nil)

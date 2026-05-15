@@ -375,6 +375,34 @@ func (m *Manager) RenewCert(ctx context.Context, host string) error {
 	return err
 }
 
+// HasCert reports whether a usable TLS certificate is loaded for the given
+// host, considering exact and wildcard matches. Callers on port 80 use this
+// to avoid redirecting to HTTPS for auto-SSL domains whose certificate has
+// not been issued yet (ACME in flight, DNS not pointed, etc.) — without this
+// guard the browser hits a TLS handshake failure and the site is unreachable.
+func (m *Manager) HasCert(host string) bool {
+	host = strings.ToLower(host)
+	if _, ok := m.certs.Load(host); ok {
+		return true
+	}
+	if parts := strings.SplitN(host, ".", 2); len(parts) == 2 {
+		if _, ok := m.certs.Load("*." + parts[1]); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// RegisterCert stores a pre-loaded certificate for the given host. Used when
+// a certificate is supplied out-of-band (uploaded via the API or constructed
+// in tests) rather than read from disk through LoadManualCerts.
+func (m *Manager) RegisterCert(host string, cert *tls.Certificate) {
+	if cert == nil {
+		return
+	}
+	m.certs.Store(strings.ToLower(host), cert)
+}
+
 // CertStatus returns metadata for a loaded certificate, or nil if not loaded.
 func (m *Manager) CertStatus(host string) *CertStatusInfo {
 	host = strings.ToLower(host)

@@ -887,14 +887,21 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual" {
+	// Only redirect to HTTPS when a usable certificate is actually loaded.
+	// For auto-SSL domains whose ACME issuance is still pending (new domain,
+	// DNS not yet pointed, rate-limited, etc.), redirecting blindly produces
+	// an unrecoverable TLS handshake error. Falling through to plain HTTP
+	// keeps the site reachable until the cert is obtained, after which the
+	// redirect path kicks in automatically on the next request.
+	if (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") && s.tlsMgr.HasCert(r.Host) {
 		target := "https://" + r.Host + r.URL.RequestURI()
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 		return
 	}
 
-	// Non-SSL configured domain — serve normally.
+	// Non-SSL configured domain, or SSL configured but cert not yet loaded —
+	// serve over plain HTTP so the upstream/static handler can respond.
 	s.handler.ServeHTTP(w, r)
 }
 
