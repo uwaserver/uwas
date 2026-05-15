@@ -1754,6 +1754,14 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 		return false
 	}
 
+	// Cheap pre-check: skip the Variables allocation + Process loop when
+	// no rule pattern can match this URI. Big win for domains with
+	// rewrites configured but most paths uninteresting (the WP-Admin /
+	// rest of-site split). Refs: refactor.md P12.
+	if !engine.MightMatch(ctx.Request.URL.Path) {
+		return false
+	}
+
 	vars := rewrite.BuildVariables(ctx.Request, domain.Root, ctx.ResolvedPath, ctx.IsHTTPS)
 	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
@@ -1789,8 +1797,9 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 
 	// 1. Apply rewrite rules. Engine was built once at parse time
 	// (parseHtaccessFull) and cached on the entry; we don't reconstruct it
-	// per request.
-	if ruleSet.engine != nil {
+	// per request. Skip Variables allocation + Process loop when no rule
+	// pattern can match this URI (refactor.md P12).
+	if ruleSet.engine != nil && ruleSet.engine.MightMatch(ctx.Request.URL.Path) {
 		requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 		vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
 		result := ruleSet.engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
