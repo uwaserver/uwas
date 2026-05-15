@@ -662,8 +662,12 @@ func TestMemoryCacheEvictLRUPromotesOnAccess(t *testing.T) {
 	mc.Set(sameShardKeys[0], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
 	mc.Set(sameShardKeys[1], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})
 
-	// Access sameShardKeys[0] to promote it to front of LRU
-	mc.Get(sameShardKeys[0])
+	// Access sameShardKeys[0] enough times to cross the LRU-promotion
+	// sample threshold (debounced 1-in-lruPromotionRate per refactor.md
+	// P14). A single Get no longer promotes; hot reads still do.
+	for i := 0; i < lruPromotionRate; i++ {
+		mc.Get(sameShardKeys[0])
+	}
 
 	// Add two more entries to fill and evict
 	mc.Set(sameShardKeys[2], &CachedResponse{Body: make([]byte, 100), Created: time.Now(), TTL: time.Minute})

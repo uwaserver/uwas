@@ -10,6 +10,12 @@ import (
 
 const shardCount = 256
 
+// lruPromotionRate samples LRU promotions: only ~1-in-N reads take the
+// shard write lock to MoveToFront. Hot entries still cross this threshold
+// frequently enough to escape eviction; cold reads no longer serialize on
+// the write lock. Refs: refactor.md P14.
+const lruPromotionRate = 16
+
 // MemoryCache is a sharded in-memory cache with LRU eviction.
 type MemoryCache struct {
 	shards        [shardCount]shard
@@ -23,9 +29,10 @@ type MemoryCache struct {
 }
 
 type shard struct {
-	mu    sync.RWMutex
-	items map[string]*entry
-	lru   *list.List
+	mu        sync.RWMutex
+	items     map[string]*entry
+	lru       *list.List
+	readCount atomic.Uint64 // sampled in Get to debounce LRU promotion
 }
 
 type entry struct {
@@ -60,10 +67,18 @@ func (mc *MemoryCache) Get(key string) (*CachedResponse, string) {
 	resp := e.resp
 
 	if resp.IsFresh() {
-		// Move to front (promote in LRU)
-		s.mu.Lock()
-		s.lru.MoveToFront(e.element)
-		s.mu.Unlock()
+		// Sampled LRU promotion: only ~1-in-lruPromotionRate hits take
+		// the shard write lock. Hot keys cross the sample threshold
+		// often enough to stay near the front of the list; under heavy
+		// read load this cuts shard write-lock contention by ~Nx. The
+		// MoveToFront docs state it is a no-op when e.element has been
+		// removed by a racing Delete/Set, so the existing RLock→Lock
+		// hand-off semantics are preserved.
+		if s.readCount.Add(1)%lruPromotionRate == 0 {
+			s.mu.Lock()
+			s.lru.MoveToFront(e.element)
+			s.mu.Unlock()
+		}
 		mc.hits.Add(1)
 		return resp, StatusHit
 	}
