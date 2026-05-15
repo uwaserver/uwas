@@ -130,9 +130,7 @@ func Validate(cfg *Config) error {
 			hosts[alias] = true
 		}
 
-		switch d.Type {
-		case "static", "php", "proxy", "app", "redirect":
-		default:
+		if !DomainType(d.Type).IsValid() {
 			errs = append(errs, fmt.Sprintf("%s: invalid type %q (must be static, php, proxy, app, redirect)", prefix, d.Type))
 		}
 
@@ -169,7 +167,8 @@ func Validate(cfg *Config) error {
 		}
 
 		// Root: auto-fill from web_root if empty, only error if still empty
-		if (d.Type == "static" || d.Type == "php") && d.Root == "" {
+		dt := DomainType(d.Type)
+		if (dt == DomainTypeStatic || dt == DomainTypePHP) && d.Root == "" {
 			if cfg.Global.WebRoot != "" {
 				cfg.Domains[i].Root = filepath.Join(cfg.Global.WebRoot, d.Host, "public_html")
 			} else {
@@ -189,7 +188,7 @@ func Validate(cfg *Config) error {
 		}
 
 		// Proxy validation
-		if d.Type == "proxy" {
+		if dt == DomainTypeProxy {
 			if len(d.Proxy.Upstreams) == 0 {
 				errs = append(errs, fmt.Sprintf("%s: proxy.upstreams required for type proxy", prefix))
 			} else {
@@ -240,7 +239,7 @@ func Validate(cfg *Config) error {
 		}
 
 		// Redirect validation
-		if d.Type == "redirect" {
+		if dt == DomainTypeRedirect {
 			if d.Redirect.Target == "" {
 				errs = append(errs, fmt.Sprintf("%s: redirect.target required for type redirect", prefix))
 			}
@@ -338,9 +337,7 @@ func validateDomain(d *Domain, partial bool) error {
 		return fmt.Errorf("domain is nil")
 	}
 
-	switch d.Type {
-	case "static", "php", "proxy", "app", "redirect":
-	default:
+	if !DomainType(d.Type).IsValid() {
 		return fmt.Errorf("invalid type %q — must be static, php, proxy, app, or redirect", d.Type)
 	}
 
@@ -354,10 +351,10 @@ func validateDomain(d *Domain, partial bool) error {
 	}
 
 	if !partial {
-		if d.Type == "proxy" && len(d.Proxy.Upstreams) == 0 {
+		if DomainType(d.Type) == DomainTypeProxy && len(d.Proxy.Upstreams) == 0 {
 			return fmt.Errorf("proxy type requires at least one upstream")
 		}
-		if d.Type == "redirect" && d.Redirect.Target == "" {
+		if DomainType(d.Type) == DomainTypeRedirect && d.Redirect.Target == "" {
 			return fmt.Errorf("redirect type requires a target URL")
 		}
 	}
