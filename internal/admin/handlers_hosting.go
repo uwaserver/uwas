@@ -2820,6 +2820,12 @@ func (s *Server) handleNotifyPrefsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
+	// Admin-only: webhook URLs and alerting recipients are sensitive system
+	// state. Without this guard any authenticated user could redirect alerts
+	// to an attacker-controlled endpoint and silently disable notifications.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Alerting config.AlertingConfig  `json:"alerting"`
@@ -2848,6 +2854,12 @@ func (s *Server) handleBrandingGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBrandingPut(w http.ResponseWriter, r *http.Request) {
+	// Admin-only: branding controls the admin UI chrome and may include
+	// image URLs and inline HTML/CSS rendered into other users' sessions —
+	// an unauthenticated branding write is a stored-XSS / phishing pivot.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var branding config.BrandingConfig
 	if err := json.NewDecoder(r.Body).Decode(&branding); err != nil {
