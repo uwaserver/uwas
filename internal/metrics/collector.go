@@ -37,8 +37,30 @@ type Collector struct {
 	RedirectRequests atomic.Int64
 	AppRequests      atomic.Int64
 
+	// Per-handler latency tracking. Each known handler type owns a
+	// fixed-size ring of the last handlerLatencyBufSize samples plus a
+	// per-status-class counter, so the metrics page can show
+	// "static p99 = 800ms" alongside the global percentiles.
+	// Refs: refactor.md O4.
+	handlerLatency map[string]*handlerLatencyStats
+
 	// Per-domain bandwidth and request tracking
 	domainStats sync.Map // host → *DomainStats
+}
+
+const handlerLatencyBufSize = 2048
+
+type handlerLatencyStats struct {
+	mu       sync.Mutex
+	buf      []float64
+	pos      int
+	full     bool
+	count    atomic.Int64
+	byStatus [6]atomic.Int64 // index 0=1xx, 1=2xx, 2=3xx, 3=4xx, 4=5xx, 5=other
+}
+
+func newHandlerLatencyStats() *handlerLatencyStats {
+	return &handlerLatencyStats{buf: make([]float64, handlerLatencyBufSize)}
 }
 
 // DomainStats tracks per-domain bandwidth and request counts.
@@ -54,11 +76,19 @@ type DomainStats struct {
 const latencyBufSize = 10000 // track last 10K requests for percentile calculation
 
 func New() *Collector {
-	return &Collector{
+	c := &Collector{
 		StartTime:     time.Now(),
 		latencyBuf:    make([]float64, latencyBufSize),
 		SlowThreshold: 5 * time.Second, // default: 5s
+		handlerLatency: map[string]*handlerLatencyStats{
+			"static":   newHandlerLatencyStats(),
+			"php":      newHandlerLatencyStats(),
+			"proxy":    newHandlerLatencyStats(),
+			"redirect": newHandlerLatencyStats(),
+			"app":      newHandlerLatencyStats(),
+		},
 	}
+	return c
 }
 
 func (c *Collector) RecordRequest(statusCode int) {
@@ -126,6 +156,62 @@ func percentile(sorted []float64, p float64) float64 {
 	}
 	frac := idx - float64(lower)
 	return sorted[lower]*(1-frac) + sorted[upper]*frac
+}
+
+// RecordHandlerLatency records the duration of a single dispatch under
+// a known handler type, plus the response status class for that hit.
+// Unknown handler types are dropped silently — the metrics map is
+// initialized for the fixed set of dispatch outcomes Server.dispatchHandler
+// knows about. Refs: refactor.md O4.
+func (c *Collector) RecordHandlerLatency(handlerType string, statusCode int, d time.Duration) {
+	stats, ok := c.handlerLatency[handlerType]
+	if !ok {
+		return
+	}
+	stats.count.Add(1)
+	idx := statusCode/100 - 1
+	if idx < 0 || idx > 4 {
+		idx = 5
+	}
+	stats.byStatus[idx].Add(1)
+
+	secs := d.Seconds()
+	stats.mu.Lock()
+	stats.buf[stats.pos] = secs
+	stats.pos = (stats.pos + 1) % handlerLatencyBufSize
+	if stats.pos == 0 {
+		stats.full = true
+	}
+	stats.mu.Unlock()
+}
+
+// HandlerPercentiles returns the p50/p95/p99/max latencies for a given
+// handler type, in seconds. Returns zeros if the handler type is
+// unknown or has never been recorded.
+func (c *Collector) HandlerPercentiles(handlerType string) (p50, p95, p99, max float64) {
+	stats, ok := c.handlerLatency[handlerType]
+	if !ok {
+		return
+	}
+	stats.mu.Lock()
+	n := stats.pos
+	if stats.full {
+		n = handlerLatencyBufSize
+	}
+	if n == 0 {
+		stats.mu.Unlock()
+		return
+	}
+	data := make([]float64, n)
+	copy(data, stats.buf[:n])
+	stats.mu.Unlock()
+
+	sort.Float64s(data)
+	p50 = percentile(data, 0.50)
+	p95 = percentile(data, 0.95)
+	p99 = percentile(data, 0.99)
+	max = data[len(data)-1]
+	return
 }
 
 // RecordHandlerType records which handler type served the request.
@@ -248,6 +334,17 @@ func (c *Collector) Handler() http.Handler {
 		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"php\"} %d\n", c.PHPRequests.Load())
 		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"proxy\"} %d\n", c.ProxyRequests.Load())
 		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"redirect\"} %d\n", c.RedirectRequests.Load())
+
+		// Per-handler latency percentiles. Refs: refactor.md O4.
+		fmt.Fprintf(&b, "# HELP uwas_handler_duration_seconds Latency percentiles per handler type.\n")
+		fmt.Fprintf(&b, "# TYPE uwas_handler_duration_seconds summary\n")
+		for _, h := range []string{"static", "php", "proxy", "redirect", "app"} {
+			hp50, hp95, hp99, hmax := c.HandlerPercentiles(h)
+			fmt.Fprintf(&b, "uwas_handler_duration_seconds{handler=%q,quantile=\"0.5\"} %.6f\n", h, hp50)
+			fmt.Fprintf(&b, "uwas_handler_duration_seconds{handler=%q,quantile=\"0.95\"} %.6f\n", h, hp95)
+			fmt.Fprintf(&b, "uwas_handler_duration_seconds{handler=%q,quantile=\"0.99\"} %.6f\n", h, hp99)
+			fmt.Fprintf(&b, "uwas_handler_duration_seconds{handler=%q,quantile=\"1.0\"} %.6f\n", h, hmax)
+		}
 
 		w.Write([]byte(b.String()))
 	})
