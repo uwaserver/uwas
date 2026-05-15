@@ -1607,14 +1607,10 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 
 	if domain.Type == "php" && strings.HasSuffix(resolved, ".php") {
 		// Resolve FPM address without mutating domain.PHP.FPMAddress (avoids data race).
+		// Single map lookup rather than scanning every instance per request.
 		fpmAddr := domain.PHP.FPMAddress
 		if fpmAddr == "" && s.phpMgr != nil {
-			for _, inst := range s.phpMgr.GetDomainInstances() {
-				if inst.Domain == domain.Host && inst.Running {
-					fpmAddr = inst.ListenAddr
-					break
-				}
-			}
+			fpmAddr = s.phpMgr.RunningAddrForDomain(domain.Host)
 			if fpmAddr == "" {
 				fpmAddr = "127.0.0.1:9000"
 			}

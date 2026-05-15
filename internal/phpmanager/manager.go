@@ -533,6 +533,34 @@ func (m *Manager) GetDomainConfig(domain string) map[string]string {
 	return out
 }
 
+// RunningAddrForDomain returns the listen address of the running PHP-FPM
+// instance assigned to the given domain, or "" when no such instance is
+// running. Single map probe, used by the request hot path instead of
+// scanning all instances on every PHP request (was P6).
+func (m *Manager) RunningAddrForDomain(domain string) string {
+	m.domainMu.RLock()
+	defer m.domainMu.RUnlock()
+	inst, ok := m.domainMap[domain]
+	if !ok {
+		return ""
+	}
+	// Same liveness rules as domainPHPFromInstance.
+	if inst.proc != nil {
+		if inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
+			return inst.listenAddr
+		}
+		if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
+			return inst.listenAddr
+		}
+		return ""
+	}
+	// System-managed (no proc) on a unix socket / abs path: still serving.
+	if strings.HasPrefix(inst.listenAddr, "unix:") || strings.HasPrefix(inst.listenAddr, "/") {
+		return inst.listenAddr
+	}
+	return ""
+}
+
 // GetDomainInstances returns all per-domain PHP assignments.
 func (m *Manager) GetDomainInstances() []DomainPHP {
 	m.domainMu.RLock()
