@@ -22,6 +22,56 @@ type GeoIPConfig struct {
 	DBPath string
 }
 
+// GeoIPGuard returns a closure that performs the country check directly
+// and writes a 403 on denial. The bool is true when the request should
+// proceed. Returns nil for fully empty configs so callers can skip the
+// guard entirely on the hot path. Refs: refactor.md P2/P3.
+func GeoIPGuard(cfg GeoIPConfig) func(w http.ResponseWriter, r *http.Request) bool {
+	if len(cfg.BlockedCountries) == 0 && len(cfg.AllowedCountries) == 0 {
+		return nil
+	}
+	blocked := make(map[string]bool, len(cfg.BlockedCountries))
+	for _, c := range cfg.BlockedCountries {
+		blocked[strings.ToUpper(c)] = true
+	}
+	allowed := make(map[string]bool, len(cfg.AllowedCountries))
+	for _, c := range cfg.AllowedCountries {
+		allowed[strings.ToUpper(c)] = true
+	}
+	var db map[string]string
+	if cfg.DBPath != "" {
+		data, err := os.ReadFile(cfg.DBPath)
+		if err == nil {
+			json.Unmarshal(data, &db)
+		}
+	}
+	cache := &geoCache{entries: make(map[string]geoCacheEntry), inflight: make(map[string]struct{})}
+
+	return func(w http.ResponseWriter, r *http.Request) bool {
+		ip := geoExtractIP(r)
+		if ip == "" || isPrivateIP(ip) {
+			return true
+		}
+		country := lookupCountry(ip, db, cache)
+		if country == "" {
+			return true
+		}
+		country = strings.ToUpper(country)
+		if len(allowed) > 0 {
+			if !allowed[country] {
+				http.Error(w, "Access denied", http.StatusForbidden)
+				return false
+			}
+			return true
+		}
+		if blocked[country] {
+			http.Error(w, "Access denied", http.StatusForbidden)
+			return false
+		}
+		return true
+	}
+}
+
 // GeoIP returns middleware that blocks or allows requests based on country.
 func GeoIP(cfg GeoIPConfig) Middleware {
 	if len(cfg.BlockedCountries) == 0 && len(cfg.AllowedCountries) == 0 {

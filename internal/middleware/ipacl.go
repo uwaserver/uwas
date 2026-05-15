@@ -11,6 +11,45 @@ type IPACLConfig struct {
 	Blacklist []string // CIDR ranges or single IPs to deny
 }
 
+// IPACLGuard returns a closure that evaluates the IP ACL directly and
+// writes a 403 on denial. The bool is true when the request should
+// proceed. Refs: refactor.md P2/P3 — replaces the per-request
+// http.Handler wrapping that handleRequest used to do via
+// "wrap-handler-to-capture-passed" closures.
+//
+// Returns nil if cfg is purely empty, so callers can hoist the
+// "no rules → no guard" decision out of the hot path.
+func IPACLGuard(cfg IPACLConfig) func(w http.ResponseWriter, r *http.Request) bool {
+	whiteNets := parseCIDRs(cfg.Whitelist)
+	blackNets := parseCIDRs(cfg.Blacklist)
+	if len(whiteNets) == 0 && len(blackNets) == 0 {
+		return nil
+	}
+	return func(w http.ResponseWriter, r *http.Request) bool {
+		ip := aclClientIP(r)
+		if ip == nil {
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+			return false
+		}
+		if len(whiteNets) > 0 {
+			if !ipInNets(ip, whiteNets) {
+				http.Error(w, "403 Forbidden", http.StatusForbidden)
+				return false
+			}
+			if len(blackNets) > 0 && ipInNets(ip, blackNets) {
+				http.Error(w, "403 Forbidden", http.StatusForbidden)
+				return false
+			}
+			return true
+		}
+		if ipInNets(ip, blackNets) {
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+			return false
+		}
+		return true
+	}
+}
+
 // IPACL returns middleware that checks client IP against allow/deny lists.
 //
 // Whitelist mode: if any whitelist entries are configured, only listed IPs
