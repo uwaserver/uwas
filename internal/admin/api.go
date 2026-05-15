@@ -174,11 +174,11 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	s.cfRunner = cfintegration.NewRunner(log)
 	s.initAudit()
 	if err := s.loadAuditLog(); err != nil {
-		log.Warn("audit log restore failed", "err", err.Error())
+		log.Warn("audit log restore failed", "error", err.Error())
 	}
 	s.registerRoutes()
 	if err := s.loadCloudflareState(); err != nil {
-		log.Error("cloudflare state load failed", "err", err.Error())
+		log.Error("cloudflare state load failed", "error", err.Error())
 	}
 	return s
 }
@@ -3066,7 +3066,7 @@ func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) SetConfigPath(path string) {
 	s.configPath = path
 	if err := s.loadCloudflareState(); err != nil {
-		s.logger.Error("cloudflare state load failed", "err", err.Error(), "path", path)
+		s.logger.Error("cloudflare state load failed", "error", err.Error(), "path", path)
 	}
 }
 
@@ -4890,7 +4890,7 @@ func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)
 	saveErr := s.saveCloudflareStateLocked()
 	cloudflareMu.Unlock()
 	if saveErr != nil {
-		s.logger.Error("cloudflare state save failed", "err", saveErr.Error())
+		s.logger.Error("cloudflare state save failed", "error", saveErr.Error())
 	}
 
 	s.recordAuditR(r, "cloudflare.connect", "account: "+req.AccountID, true)
@@ -4976,7 +4976,7 @@ func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Reque
 	saveErr := s.saveCloudflareStateLocked()
 	cloudflareMu.Unlock()
 	if saveErr != nil {
-		s.logger.Error("cloudflare state save failed", "err", saveErr.Error())
+		s.logger.Error("cloudflare state save failed", "error", saveErr.Error())
 	}
 
 	if oldCfg != nil {
@@ -5160,7 +5160,7 @@ func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Req
 	cloudflareConfig.Tunnels = append(cloudflareConfig.Tunnels, tunnel)
 	cloudflareConfig.UpdatedAt = time.Now()
 	if err := s.saveCloudflareStateLocked(); err != nil {
-		s.logger.Error("cloudflare state save failed", "err", err.Error())
+		s.logger.Error("cloudflare state save failed", "error", err.Error())
 	}
 	cloudflareMu.Unlock()
 
@@ -5207,7 +5207,7 @@ func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Req
 	// 1. Stop the local cloudflared process so CF can delete the tunnel.
 	if s.cfRunner != nil {
 		if err := s.cfRunner.Stop(id); err != nil {
-			s.logger.Warn("cloudflared stop on delete failed", "tunnel_id", id, "err", err.Error())
+			s.logger.Warn("cloudflared stop on delete failed", "tunnel_id", id, "error", err.Error())
 		}
 	}
 
@@ -5216,7 +5216,7 @@ func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Req
 	// 2. Delete the DNS record (best-effort).
 	if t.ZoneID != "" && t.DNSRecordID != "" {
 		if err := cli.DeleteDNSRecord(t.ZoneID, t.DNSRecordID); err != nil {
-			s.logger.Warn("DNS record delete failed", "zone", t.ZoneID, "record", t.DNSRecordID, "err", err.Error())
+			s.logger.Warn("DNS record delete failed", "zone", t.ZoneID, "record", t.DNSRecordID, "error", err.Error())
 		}
 	}
 
@@ -5237,7 +5237,7 @@ func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Req
 	cloudflareConfig.Tunnels = newTunnels
 	cloudflareConfig.UpdatedAt = time.Now()
 	if err := s.saveCloudflareStateLocked(); err != nil {
-		s.logger.Error("cloudflare state save failed", "err", err.Error())
+		s.logger.Error("cloudflare state save failed", "error", err.Error())
 	}
 	cloudflareMu.Unlock()
 
