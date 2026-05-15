@@ -43,6 +43,7 @@ import (
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/phpmanager"
+	"github.com/uwaserver/uwas/internal/respond"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/siteuser"
@@ -164,10 +165,11 @@ type AuthManager interface {
 }
 
 func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
-	// Make the package-level logger available to free-function helpers
-	// (jsonError / jsonErrorCause) so 5xx responses surface in logs even
-	// when the call site has no Server receiver. Refs: refactor.md O6.
-	pkgLogger = log
+	// Wire the respond package logger so jsonError / jsonErrorCause (and
+	// any direct respond.Error callers) surface 5xx context to operators
+	// via the same logger the rest of the admin server uses. Refs:
+	// refactor.md A10, O6.
+	respond.SetLogger(log)
 	s := &Server{
 		config:  cfg,
 		logger:  log,
@@ -1893,6 +1895,11 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 	w.Write(out)
 }
 
+// jsonResponse writes data as application/json with an implicit 200
+// status (no WriteHeader call), preserving the legacy semantic that
+// allows callers to precede it with their own w.WriteHeader(2xx). For
+// new code prefer respond.JSON(w, code, data) which always writes the
+// status. Refs: refactor.md A10.
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1901,60 +1908,19 @@ func jsonResponse(w http.ResponseWriter, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// pkgLogger is the package-level logger used by free-function helpers
-// (jsonError, jsonErrorCause) that have no Server receiver but still
-// need to surface 5xx context to operators. Populated by Server.New;
-// nil-safe so unit tests that exercise these helpers in isolation do
-// not need to wire a logger.
-var pkgLogger *logger.Logger
-
-// jsonError writes a JSON error response. For 5xx responses it also
-// logs at error level with the request ID so an operator looking at
-// server logs can correlate the failure without reproducing it locally.
-// Callers that already hold an underlying error should prefer
-// jsonErrorCause so the cause is logged with the message.
-// Refs: refactor.md O6.
+// jsonError writes a JSON error response, delegating to respond.Error.
+// 5xx responses are logged at error level (with X-Request-ID when
+// present) via the respond package's registered logger. Refs:
+// refactor.md A10, O6.
 func jsonError(w http.ResponseWriter, msg string, code int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-	w.WriteHeader(code)
-	reqID := w.Header().Get("X-Request-ID")
-	if code >= 500 && pkgLogger != nil {
-		pkgLogger.Error("admin 5xx", "status", code, "message", msg, "request_id", reqID)
-	}
-	if reqID != "" {
-		json.NewEncoder(w).Encode(map[string]string{"error": msg, "request_id": reqID})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	respond.Error(w, code, msg)
 }
 
-// jsonErrorCause is jsonError with an explicit underlying error. The
-// cause is logged with the response so reproducing locally is not
-// necessary; the client still receives only the sanitized msg.
-// Refs: refactor.md O6.
+// jsonErrorCause is jsonError with an explicit underlying error, which
+// is logged alongside the message for 5xx codes but never serialized
+// to the client. Refs: refactor.md A10, O6.
 func jsonErrorCause(w http.ResponseWriter, msg string, cause error, code int) {
-	if code >= 500 && pkgLogger != nil {
-		reqID := w.Header().Get("X-Request-ID")
-		pkgLogger.Error("admin 5xx", "status", code, "message", msg, "error", cause, "request_id", reqID)
-	}
-	// Delegate to jsonError so the headers / body / 5xx log path stay
-	// in one place. The duplicate log entry from jsonError is harmless
-	// (operators get cause + message correlated by request_id) but we
-	// skip it here by inlining the response write.
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-	w.WriteHeader(code)
-	reqID := w.Header().Get("X-Request-ID")
-	if reqID != "" {
-		json.NewEncoder(w).Encode(map[string]string{"error": msg, "request_id": reqID})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	respond.ErrorCause(w, code, msg, cause)
 }
 
 // requireJSONMiddleware enforces Content-Type: application/json for mutation
