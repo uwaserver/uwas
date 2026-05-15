@@ -1507,3 +1507,35 @@ func generateTestCertWithExpiry(t *testing.T, cn string, validFor time.Duration)
 
 	return &cert, certPEM, keyPEM
 }
+
+func TestRegisterCertAndHasCert(t *testing.T) {
+	log := logger.New("error", "text")
+	m := NewManager(config.ACMEConfig{Storage: t.TempDir()}, nil, log)
+
+	if m.HasCert("example.com") {
+		t.Error("HasCert should be false before any cert is loaded")
+	}
+
+	// RegisterCert with nil must be a no-op (defensive).
+	m.RegisterCert("ignored.com", nil)
+	if m.HasCert("ignored.com") {
+		t.Error("HasCert should remain false after RegisterCert(nil)")
+	}
+
+	m.RegisterCert("example.com", &tls.Certificate{})
+	if !m.HasCert("example.com") {
+		t.Error("HasCert should be true after RegisterCert")
+	}
+	if !m.HasCert("EXAMPLE.COM") {
+		t.Error("HasCert should be case-insensitive")
+	}
+
+	// Wildcard match: a "*.foo.com" cert should satisfy "sub.foo.com".
+	m.RegisterCert("*.foo.com", &tls.Certificate{})
+	if !m.HasCert("sub.foo.com") {
+		t.Error("HasCert should match wildcard parent")
+	}
+	if m.HasCert("foo.com") {
+		t.Error("Wildcard *.foo.com must not match the apex foo.com")
+	}
+}

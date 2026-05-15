@@ -1735,6 +1735,41 @@ func TestHandleHTTPNonSSLDomainPassthrough(t *testing.T) {
 
 // --- handleHTTP: manual SSL domain redirects to HTTPS ---
 
+// When SSL is configured but the cert has not been loaded yet (ACME in flight,
+// DNS not pointing here, etc.), port 80 must fall through to the regular
+// handler instead of issuing a 301 to HTTPS — otherwise the browser hits a
+// TLS handshake failure with no path to recover.
+func TestHandleHTTPNoRedirectWhenCertMissing(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("plain-http-body"), 0644)
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text", WebRoot: dir},
+		Domains: []config.Domain{
+			{
+				Host: "pending.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "auto"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+	// Intentionally do NOT register a cert.
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "pending.com"
+	s.handleHTTP(rec, req)
+
+	if rec.Code == http.StatusMovedPermanently {
+		t.Fatalf("must not redirect to HTTPS when cert is not loaded; got 301 to %q", rec.Header().Get("Location"))
+	}
+	if hsts := rec.Header().Get("Strict-Transport-Security"); hsts != "" {
+		t.Errorf("HSTS must not be set on the plain-HTTP fallback path, got %q", hsts)
+	}
+}
+
 func TestHandleHTTPManualSSLRedirect(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
@@ -1749,6 +1784,7 @@ func TestHandleHTTPManualSSLRedirect(t *testing.T) {
 	}
 	log := logger.New("error", "text")
 	s := New(cfg, log)
+	s.tlsMgr.RegisterCert("manual-ssl.com", &tls.Certificate{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/secure-page?token=abc", nil)
