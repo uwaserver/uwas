@@ -38,7 +38,7 @@ const (
 // initAudit initialises the audit ring buffer and rate limiter fields.
 // Called from New() after the Server is allocated.
 func (s *Server) initAudit() {
-	s.auditEntries = make([]AuditEntry, maxAuditEntries)
+	s.auditBuf = newRingBuffer[AuditEntry](maxAuditEntries)
 	s.rateLimit = make(map[string]*rateLimitEntry)
 	s.userRateLimits = make(map[string]*rateLimitEntry)
 
@@ -80,13 +80,9 @@ func (s *Server) RecordAuditUser(action, detail, ip, user string, success bool) 
 		Success: success,
 	}
 
-	s.auditMu.Lock()
-	s.auditEntries[s.auditPos] = entry
-	s.auditPos = (s.auditPos + 1) % maxAuditEntries
-	if s.auditPos == 0 {
-		s.auditFull = true
+	if s.auditBuf != nil {
+		s.auditBuf.Append(entry)
 	}
-	s.auditMu.Unlock()
 
 	// Persist outside the lock — best-effort, errors only logged.
 	s.appendAuditLine(entry)
@@ -107,24 +103,9 @@ func (s *Server) recordAuditR(r *http.Request, action, detail string, success bo
 
 // handleAudit returns the audit log entries in chronological order (oldest first).
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	s.auditMu.Lock()
-	defer s.auditMu.Unlock()
-
-	var count int
-	if s.auditFull {
-		count = maxAuditEntries
-	} else {
-		count = s.auditPos
-	}
-	var start int
-	if s.auditFull {
-		start = s.auditPos // oldest entry
-	}
-
-	result := make([]AuditEntry, 0, count)
-	for i := 0; i < count; i++ {
-		idx := (start + i) % maxAuditEntries
-		result = append(result, s.auditEntries[idx])
+	var result []AuditEntry
+	if s.auditBuf != nil {
+		result = s.auditBuf.Snapshot()
 	}
 
 	limit, offset := parsePagination(r)

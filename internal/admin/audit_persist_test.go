@@ -59,13 +59,13 @@ func TestAuditPersist_AppendAndReload(t *testing.T) {
 	if err := s2.loadAuditLog(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	s2.auditMu.Lock()
-	defer s2.auditMu.Unlock()
-	if s2.auditPos != 2 {
-		t.Errorf("expected auditPos=2 after replay, got %d (full=%v)", s2.auditPos, s2.auditFull)
+	s2.auditBuf.mu.Lock()
+	defer s2.auditBuf.mu.Unlock()
+	if s2.auditBuf.pos != 2 {
+		t.Errorf("expected auditPos=2 after replay, got %d (full=%v)", s2.auditBuf.pos, s2.auditBuf.full)
 	}
-	if s2.auditEntries[0].Detail != "first" || s2.auditEntries[1].Detail != "second" {
-		t.Errorf("entries not replayed in order: %+v", s2.auditEntries[:2])
+	if s2.auditBuf.entries[0].Detail != "first" || s2.auditBuf.entries[1].Detail != "second" {
+		t.Errorf("entries not replayed in order: %+v", s2.auditBuf.entries[:2])
 	}
 }
 
@@ -104,9 +104,9 @@ func TestAuditPersist_RecordAuditUserStoresUsername(t *testing.T) {
 	s := newAuditTestServer(t, dir)
 	s.RecordAuditUser("auth.user.password", "alice", "1.1.1.1", "alice", true)
 
-	s.auditMu.Lock()
-	got := s.auditEntries[0]
-	s.auditMu.Unlock()
+	s.auditBuf.mu.Lock()
+	got := s.auditBuf.entries[0]
+	s.auditBuf.mu.Unlock()
 
 	if got.User != "alice" {
 		t.Errorf("expected User=alice, got %q", got.User)
@@ -116,10 +116,10 @@ func TestAuditPersist_RecordAuditUserStoresUsername(t *testing.T) {
 	if err := s2.loadAuditLog(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	s2.auditMu.Lock()
-	defer s2.auditMu.Unlock()
-	if s2.auditEntries[0].User != "alice" {
-		t.Errorf("user attribution lost across reload: %+v", s2.auditEntries[0])
+	s2.auditBuf.mu.Lock()
+	defer s2.auditBuf.mu.Unlock()
+	if s2.auditBuf.entries[0].User != "alice" {
+		t.Errorf("user attribution lost across reload: %+v", s2.auditBuf.entries[0])
 	}
 }
 
@@ -149,14 +149,14 @@ func TestAuditPersist_RotationKeepsThreeGenerationsAndReloadsAll(t *testing.T) {
 	if err := s.loadAuditLog(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	s.auditMu.Lock()
-	defer s.auditMu.Unlock()
-	if s.auditPos != 4 {
-		t.Fatalf("expected 4 entries replayed, got pos=%d full=%v", s.auditPos, s.auditFull)
+	s.auditBuf.mu.Lock()
+	defer s.auditBuf.mu.Unlock()
+	if s.auditBuf.pos != 4 {
+		t.Fatalf("expected 4 entries replayed, got pos=%d full=%v", s.auditBuf.pos, s.auditBuf.full)
 	}
 	want := []string{"oldest", "older", "old", "newest"}
 	for i, w := range want {
-		if got := s.auditEntries[i].Detail; got != w {
+		if got := s.auditBuf.entries[i].Detail; got != w {
 			t.Errorf("entry %d: got %q, want %q", i, got, w)
 		}
 	}
@@ -215,9 +215,9 @@ func TestAuditPersist_TailsToMaxAuditEntries(t *testing.T) {
 	if err := s2.loadAuditLog(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	s2.auditMu.Lock()
-	defer s2.auditMu.Unlock()
-	if !s2.auditFull {
+	s2.auditBuf.mu.Lock()
+	defer s2.auditBuf.mu.Unlock()
+	if !s2.auditBuf.full {
 		t.Error("ring buffer should be marked full after replaying > maxAuditEntries lines")
 	}
 }

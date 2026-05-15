@@ -26,8 +26,8 @@ func (s *Server) auditLogFile() string {
 // loadAuditLog reads the persisted audit log (plus any rotated generations)
 // and replays the last maxAuditEntries lines into the in-memory ring buffer.
 // Reads oldest → newest so the tail kept in the buffer is the most recent
-// 500 entries across all files. Caller must NOT hold auditMu — this method
-// takes it.
+// 500 entries across all files. Caller must NOT hold the audit ring buffer
+// mutex — Seed() takes it.
 func (s *Server) loadAuditLog() error {
 	path := s.auditLogFile()
 	if path == "" {
@@ -48,16 +48,10 @@ func (s *Server) loadAuditLog() error {
 		}
 	}
 
-	s.auditMu.Lock()
-	defer s.auditMu.Unlock()
-	copy(s.auditEntries, tail)
-	if len(tail) == maxAuditEntries {
-		s.auditFull = true
-		s.auditPos = 0
-	} else {
-		s.auditFull = false
-		s.auditPos = len(tail)
+	if s.auditBuf == nil {
+		s.auditBuf = newRingBuffer[AuditEntry](maxAuditEntries)
 	}
+	s.auditBuf.Seed(tail)
 	return nil
 }
 
