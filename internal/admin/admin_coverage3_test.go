@@ -9,6 +9,22 @@ import (
 	"github.com/uwaserver/uwas/internal/auth"
 )
 
+func TestIsExpensiveGET(t *testing.T) {
+	cases := map[string]bool{
+		"/api/v1/database/foo/export":            true,
+		"/api/v1/config/export":                  true,
+		"/api/v1/backups/abc/download":           true,
+		"/api/v1/domains":                        false,
+		"/api/v1/health":                         false,
+		"/api/v1/database/foo/exporter":          false, // suffix match, "exporter" must not match
+	}
+	for path, want := range cases {
+		if got := isExpensiveGET(path); got != want {
+			t.Errorf("isExpensiveGET(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestIsLoopbackListenAddr(t *testing.T) {
 	cases := map[string]bool{
 		"127.0.0.1:9443":    true,

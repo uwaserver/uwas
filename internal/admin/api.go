@@ -541,6 +541,23 @@ func (s *Server) registerRoutes() {
 	}
 }
 
+// isExpensiveGET reports whether a GET endpoint has enough side-effect cost
+// (full database dump, full config dump, etc.) that an attacker forcing the
+// admin's browser to fetch it via an <img>/<iframe> CSRF would constitute a
+// real denial-of-service even though the attacker never reads the response.
+// The list is path-suffix based — sub-paths (e.g. Docker DB export) match.
+func isExpensiveGET(path string) bool {
+	switch {
+	case strings.HasSuffix(path, "/export"):
+		return true
+	case strings.HasSuffix(path, "/backup"):
+		return true
+	case strings.HasSuffix(path, "/download"):
+		return true
+	}
+	return false
+}
+
 // isLoopbackListenAddr reports whether the host portion of a "host:port"
 // listen address binds only to loopback. It accepts "127.0.0.1", "::1", and
 // the literal "localhost". A bare ":port" or "0.0.0.0:port" binds to all
@@ -813,10 +830,18 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// CSRF protection: state-changing methods must send X-Requested-With header.
-		// This guards against cross-site request forgery attacks.
-		// Allow requests from same origin (dashboard to itself) or with valid X-Requested-With.
-		if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" || r.Method == "DELETE" {
+		// CSRF protection: state-changing methods must send X-Requested-With
+		// or come from the dashboard origin. We also apply the same check to
+		// a handful of expensive GET endpoints (database export, config
+		// export, etc.) — those are technically reads but a CSRF-triggered
+		// request can pin a CPU to a full mysqldump even though the attacker
+		// never sees the response body. Treat them as state-changing for
+		// CSRF purposes.
+		needsCSRFCheck := r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" || r.Method == "DELETE"
+		if !needsCSRFCheck && r.Method == "GET" && isExpensiveGET(r.URL.Path) {
+			needsCSRFCheck = true
+		}
+		if needsCSRFCheck {
 			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
 				// Also allow if Origin/Referer exactly matches the dashboard origin.
 				origin := r.Header.Get("Origin")
