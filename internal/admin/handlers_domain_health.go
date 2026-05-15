@@ -1,0 +1,170 @@
+package admin
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/serverip"
+)
+
+// ============ Domain Debug ============
+
+func (s *Server) handleDomainDebug(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	result := map[string]any{"host": host}
+
+	// Config lookup
+	s.configMu.RLock()
+	var domainCfg *config.Domain
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == host {
+			domainCfg = &s.config.Domains[i]
+			break
+		}
+	}
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	if domainCfg == nil {
+		result["error"] = "domain not found in config"
+		result["configured"] = false
+		jsonResponse(w, result)
+		return
+	}
+
+	result["configured"] = true
+	result["type"] = domainCfg.Type
+	result["root"] = domainCfg.Root
+	result["ssl_mode"] = domainCfg.SSL.Mode
+	result["php_fpm_address"] = domainCfg.PHP.FPMAddress
+	result["web_root_global"] = webRoot
+
+	// Check if root directory exists
+	if domainCfg.Root != "" {
+		if info, err := os.Stat(domainCfg.Root); err != nil {
+			result["root_exists"] = false
+			result["root_error"] = err.Error()
+		} else {
+			result["root_exists"] = true
+			result["root_is_dir"] = info.IsDir()
+			// List files in root
+			entries, _ := os.ReadDir(domainCfg.Root)
+			var files []string
+			for _, e := range entries {
+				files = append(files, e.Name())
+			}
+			result["root_files"] = files
+		}
+	} else {
+		result["root_exists"] = false
+		result["root_error"] = "root is empty"
+	}
+
+	// Config match check
+	result["in_config"] = true
+
+	// PHP status
+	if domainCfg.Type == "php" && s.phpMgr != nil {
+		instances := s.phpMgr.GetDomainInstances()
+		for _, inst := range instances {
+			if inst.Domain == host {
+				result["php_assigned"] = true
+				result["php_version"] = inst.Version
+				result["php_listen"] = inst.ListenAddr
+				result["php_running"] = inst.Running
+				result["php_pid"] = inst.PID
+				break
+			}
+		}
+		if result["php_assigned"] == nil {
+			result["php_assigned"] = false
+		}
+	}
+
+	// SSL/cert status
+	if s.tlsMgr != nil {
+		if certInfo := s.tlsMgr.CertStatus(host); certInfo != nil {
+			result["cert_active"] = true
+			result["cert_issuer"] = certInfo.Issuer
+			result["cert_days_left"] = certInfo.DaysLeft
+		} else {
+			result["cert_active"] = false
+		}
+	} else {
+		result["cert_active"] = false
+	}
+
+	jsonResponse(w, result)
+}
+
+// ============ Domain Health ============
+
+func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	domains := make([]config.Domain, len(s.config.Domains))
+	copy(domains, s.config.Domains)
+	s.configMu.RUnlock()
+
+	type healthResult struct {
+		Host   string `json:"host"`
+		Status string `json:"status"` // "up", "down", "error"
+		Code   int    `json:"code"`
+		Ms     int64  `json:"ms"`
+		Error  string `json:"error,omitempty"`
+	}
+
+	results := make([]healthResult, len(domains))
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
+
+	var wg sync.WaitGroup
+	for i, d := range domains {
+		wg.Add(1)
+		go func(idx int, dom config.Domain) {
+			defer wg.Done()
+			hr := healthResult{Host: dom.Host}
+			scheme := "http"
+			if dom.SSL.Mode == "auto" || dom.SSL.Mode == "manual" {
+				scheme = "https"
+			}
+			url := fmt.Sprintf("%s://%s/", scheme, dom.Host)
+
+			start := time.Now()
+			resp, err := client.Get(url)
+			hr.Ms = time.Since(start).Milliseconds()
+
+			if err != nil {
+				hr.Status = "down"
+				hr.Error = err.Error()
+			} else {
+				resp.Body.Close()
+				hr.Code = resp.StatusCode
+				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+					hr.Status = "up"
+				} else {
+					hr.Status = "error"
+				}
+			}
+			results[idx] = hr
+		}(i, d)
+	}
+	wg.Wait()
+
+	jsonResponse(w, results)
+}
+
+func (s *Server) handleServerIPs(w http.ResponseWriter, r *http.Request) {
+	ips := serverip.DetectAll()
+	pub := serverip.PublicIP()
+	jsonResponse(w, map[string]any{
+		"ips":       ips,
+		"public_ip": pub,
+	})
+}
