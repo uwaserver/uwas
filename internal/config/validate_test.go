@@ -237,6 +237,44 @@ func TestValidateProxyAlgorithm_Invalid(t *testing.T) {
 	expectValidationError(t, cfg, "invalid proxy.algorithm")
 }
 
+func TestValidateProxyAlgorithm_UnderscoredAlsoValid(t *testing.T) {
+	// The balancer accepts both "least-conn" and "least_conn"; validation
+	// must mirror that so configs that round-trip through the API are not
+	// rejected on reload.
+	for _, alg := range []string{"round_robin", "least_conn", "ip_hash", "uri_hash", "ip-hash", "uri-hash"} {
+		cfg := minimalValidConfig()
+		d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
+		d.Proxy.Algorithm = alg
+		cfg.Domains = []Domain{d}
+		expectNoValidationError(t, cfg)
+	}
+}
+
+func TestNormalizeProxyUpstreamAddress(t *testing.T) {
+	cases := map[string]string{
+		"127.0.0.1:3000":          "http://127.0.0.1:3000",
+		"  localhost:8080  ":      "http://localhost:8080",
+		"backend.internal":        "http://backend.internal",
+		"http://x:1":              "http://x:1",
+		"https://example.com":     "https://example.com",
+		"h2c://grpc:50051":        "h2c://grpc:50051",
+		"":                        "",
+	}
+	for in, want := range cases {
+		if got := NormalizeProxyUpstreamAddress(in); got != want {
+			t.Errorf("NormalizeProxyUpstreamAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestValidateProxyUpstream_NoSchemeAccepted(t *testing.T) {
+	// "host:port" without scheme used to be rejected as "invalid URL" because
+	// url.Parse mis-parses it. Validation now normalises the address first.
+	cfg := minimalValidConfig()
+	cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: "127.0.0.1:3000", Weight: 1}})}
+	expectNoValidationError(t, cfg)
+}
+
 func TestValidateProxyAlgorithm_EmptyIsValid(t *testing.T) {
 	cfg := minimalValidConfig()
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})

@@ -4,6 +4,7 @@ import (
 	"hash/fnv"
 	"math/rand/v2"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -126,9 +127,11 @@ func SetStickyCookie(w http.ResponseWriter, cookieName, backendHost string, ttl 
 	})
 }
 
-// NewBalancer creates a balancer by algorithm name.
+// NewBalancer creates a balancer by algorithm name. Accepts both dashed
+// ("least-conn") and underscored ("least_conn") forms — the dashboard emits
+// dashed names while internal callers historically used underscores.
 func NewBalancer(algorithm string) Balancer {
-	switch algorithm {
+	switch strings.ReplaceAll(strings.ToLower(algorithm), "-", "_") {
 	case "least_conn":
 		return &LeastConn{}
 	case "ip_hash":
@@ -140,6 +143,9 @@ func NewBalancer(algorithm string) Balancer {
 	case "sticky":
 		return &StickyBalancer{CookieName: "uwas_sticky", TTL: 3600}
 	default:
+		// "round_robin", "round-robin", "weighted", "" all map here. The
+		// weighted variant of round-robin is built-in, so a plain RoundRobin
+		// is the correct choice for "weighted" too.
 		return &RoundRobin{}
 	}
 }
