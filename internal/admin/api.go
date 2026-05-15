@@ -3779,8 +3779,15 @@ func humanDuration(d time.Duration) string {
 	return strings.Join(parts, " ")
 }
 
-// validateDomainConfig performs comprehensive pre-save validation.
+// validateDomainConfig performs comprehensive pre-save validation. Delegates
+// static checks (type, SSL, basic auth, proxy upstreams, cache, rate-limit)
+// to config.ValidateDomain, then adds runtime-dependent checks (PHP
+// availability, root-under-webroot).
 func validateDomainConfig(d *config.Domain, s *Server) error {
+	if err := config.ValidateDomain(d); err != nil {
+		return err
+	}
+
 	webRoot := "/var/www"
 	if s != nil {
 		s.configMu.RLock()
@@ -3790,23 +3797,8 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 		s.configMu.RUnlock()
 	}
 
-	// Type validation
-	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "app": true, "redirect": true}
-	if !validTypes[d.Type] {
-		return fmt.Errorf("invalid type %q — must be static, php, proxy, app, or redirect", d.Type)
-	}
-
-	// SSL mode validation
-	validSSL := map[string]bool{"auto": true, "manual": true, "off": true, "": true}
-	if !validSSL[d.SSL.Mode] {
-		return fmt.Errorf("invalid ssl.mode %q — must be auto, manual, or off", d.SSL.Mode)
-	}
-	if d.SSL.Mode == "manual" && (d.SSL.Cert == "" || d.SSL.Key == "") {
-		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
-	}
-
-	// PHP type: verify PHP is available
-	if d.Type == "php" && s.phpMgr != nil {
+	// PHP type: verify PHP is available (runtime state, can't live in config pkg).
+	if d.Type == "php" && s != nil && s.phpMgr != nil {
 		phpStatus := s.phpMgr.Status()
 		activePHP := 0
 		for _, p := range phpStatus {
@@ -3819,143 +3811,28 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 		}
 	}
 
-	// Proxy type: must have upstreams
-	if d.Type == "proxy" && len(d.Proxy.Upstreams) == 0 {
-		return fmt.Errorf("proxy type requires at least one upstream")
-	}
-
-	// Redirect type: must have target
-	if d.Type == "redirect" && d.Redirect.Target == "" {
-		return fmt.Errorf("redirect type requires a target URL")
-	}
-
-	// BasicAuth sanity
-	if err := validateBasicAuthConfig("domain", d.BasicAuth); err != nil {
-		return err
-	}
-	for i, loc := range d.Locations {
-		if loc.BasicAuth == nil {
-			continue
-		}
-		scope := fmt.Sprintf("location[%d]", i)
-		if loc.Match != "" {
-			scope = fmt.Sprintf("location %q", loc.Match)
-		}
-		if err := validateBasicAuthConfig(scope, *loc.BasicAuth); err != nil {
-			return err
-		}
-	}
-
-	// Root path: must be under web root (prevent serving /etc, /root, etc.)
+	// Root path: must be under web root (prevent serving /etc, /root, etc.).
+	// Web root is admin-runtime state; lives here, not in config.ValidateDomain.
 	if d.Root != "" && d.Type != "redirect" {
 		if !pathsafe.IsWithinBase(webRoot, d.Root) || !pathsafe.IsWithinBaseResolved(webRoot, d.Root) {
 			return fmt.Errorf("root path must be under %s (got %s)", webRoot, d.Root)
 		}
 	}
 
-	// Cache TTL sanity
-	if d.Cache.TTL < 0 {
-		return fmt.Errorf("cache TTL cannot be negative")
-	}
-
-	// Rate limit sanity
-	if d.Security.RateLimit.Requests < 0 {
-		return fmt.Errorf("rate limit requests cannot be negative")
-	}
-
 	return nil
 }
 
+// validateDomainUpdateConfig is the merge/update variant: same shape checks
+// as validateDomainConfig but lenient about cross-field invariants
+// (config.ValidateDomainPartial) so PATCH-style updates aren't rejected for
+// fields the caller intentionally didn't touch.
 func validateDomainUpdateConfig(d *config.Domain) error {
-	validTypes := map[string]bool{"static": true, "php": true, "proxy": true, "app": true, "redirect": true}
-	if !validTypes[d.Type] {
-		return fmt.Errorf("invalid type %q", d.Type)
-	}
-	validSSL := map[string]bool{"auto": true, "manual": true, "off": true, "": true}
-	if !validSSL[d.SSL.Mode] {
-		return fmt.Errorf("invalid ssl.mode %q", d.SSL.Mode)
-	}
-	if d.SSL.Mode == "manual" && (d.SSL.Cert == "" || d.SSL.Key == "") {
-		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
-	}
-	if err := validateBasicAuthConfig("domain", d.BasicAuth); err != nil {
-		return err
-	}
-	for i, loc := range d.Locations {
-		if loc.BasicAuth == nil {
-			continue
-		}
-		scope := fmt.Sprintf("location[%d]", i)
-		if loc.Match != "" {
-			scope = fmt.Sprintf("location %q", loc.Match)
-		}
-		if err := validateBasicAuthConfig(scope, *loc.BasicAuth); err != nil {
-			return err
-		}
-	}
-	if d.Cache.TTL < 0 {
-		return fmt.Errorf("cache TTL cannot be negative")
-	}
-	if d.Security.RateLimit.Requests < 0 {
-		return fmt.Errorf("rate limit requests cannot be negative")
-	}
-	return nil
+	return config.ValidateDomainPartial(d)
 }
 
-func validateBasicAuthConfig(scope string, ba config.BasicAuthConfig) error {
-	if strings.ContainsAny(ba.Realm, "\r\n") {
-		return fmt.Errorf("%s basic_auth realm contains invalid characters", scope)
-	}
-	if !ba.Enabled {
-		return nil
-	}
-	if len(ba.Users) == 0 {
-		return fmt.Errorf("%s basic_auth enabled requires at least one user", scope)
-	}
-	for username, password := range ba.Users {
-		trimmed := strings.TrimSpace(username)
-		if trimmed == "" {
-			return fmt.Errorf("%s basic_auth username cannot be empty", scope)
-		}
-		if trimmed != username {
-			return fmt.Errorf("%s basic_auth username %q has leading/trailing spaces", scope, username)
-		}
-		if strings.ContainsAny(username, ":\r\n") {
-			return fmt.Errorf("%s basic_auth username %q contains invalid characters", scope, username)
-		}
-		if password == "" {
-			return fmt.Errorf("%s basic_auth user %q must have a non-empty password", scope, username)
-		}
-		if strings.ContainsAny(password, "\r\n") {
-			return fmt.Errorf("%s basic_auth user %q password contains invalid characters", scope, username)
-		}
-	}
-	return nil
-}
-
-// isValidHostname checks if s is a valid domain name per RFC 1035.
-// Rejects: empty, >253 chars, labels >63 chars, leading/trailing hyphens or dots,
-// path traversal sequences (..), and characters outside [a-zA-Z0-9-.*].
-func isValidHostname(s string) bool {
-	if len(s) == 0 || len(s) > 253 {
-		return false
-	}
-	labels := strings.Split(s, ".")
-	for _, label := range labels {
-		if len(label) == 0 || len(label) > 63 {
-			return false
-		}
-		if label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-	}
-	for _, c := range s {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '*') {
-			return false
-		}
-	}
-	return !strings.Contains(s, "..")
-}
+// isValidHostname is kept as a package-local alias for readability at the
+// call sites. config.IsValidHostname is the authoritative implementation.
+func isValidHostname(s string) bool { return config.IsValidHostname(s) }
 
 // maskSecret returns "****" + last 4 chars for non-empty secrets, "" for empty.
 // maskYAMLValue replaces the value of a YAML key with "********" in raw YAML text.

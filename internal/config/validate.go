@@ -311,6 +311,141 @@ func Validate(cfg *Config) error {
 	return nil
 }
 
+// ValidateDomain runs strict single-domain static validation. Returns the
+// first error encountered (admin-style fail-fast), unlike Validate(*Config)
+// which accumulates all errors across the whole config.
+//
+// Strict mode enforces cross-field invariants — proxy type requires at least
+// one upstream, redirect requires a target. Use ValidateDomainPartial for
+// PATCH-style updates that legitimately omit dependent blocks.
+//
+// Runtime checks that need a live *Server (PHP availability, web-root
+// containment, etc.) stay in the admin package and run alongside this call.
+func ValidateDomain(d *Domain) error {
+	return validateDomain(d, false)
+}
+
+// ValidateDomainPartial is the lenient variant used on PUT/PATCH update paths
+// where the dashboard may send only the changed fields. Skips the
+// proxy-needs-upstreams and redirect-needs-target invariants so a partial
+// merge isn't rejected for missing the half it intentionally didn't touch.
+func ValidateDomainPartial(d *Domain) error {
+	return validateDomain(d, true)
+}
+
+func validateDomain(d *Domain, partial bool) error {
+	if d == nil {
+		return fmt.Errorf("domain is nil")
+	}
+
+	switch d.Type {
+	case "static", "php", "proxy", "app", "redirect":
+	default:
+		return fmt.Errorf("invalid type %q — must be static, php, proxy, app, or redirect", d.Type)
+	}
+
+	switch d.SSL.Mode {
+	case "auto", "manual", "off", "":
+	default:
+		return fmt.Errorf("invalid ssl.mode %q — must be auto, manual, or off", d.SSL.Mode)
+	}
+	if d.SSL.Mode == "manual" && (d.SSL.Cert == "" || d.SSL.Key == "") {
+		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
+	}
+
+	if !partial {
+		if d.Type == "proxy" && len(d.Proxy.Upstreams) == 0 {
+			return fmt.Errorf("proxy type requires at least one upstream")
+		}
+		if d.Type == "redirect" && d.Redirect.Target == "" {
+			return fmt.Errorf("redirect type requires a target URL")
+		}
+	}
+
+	if err := ValidateBasicAuth("domain", d.BasicAuth); err != nil {
+		return err
+	}
+	for i, loc := range d.Locations {
+		if loc.BasicAuth == nil {
+			continue
+		}
+		scope := fmt.Sprintf("location[%d]", i)
+		if loc.Match != "" {
+			scope = fmt.Sprintf("location %q", loc.Match)
+		}
+		if err := ValidateBasicAuth(scope, *loc.BasicAuth); err != nil {
+			return err
+		}
+	}
+
+	if d.Cache.TTL < 0 {
+		return fmt.Errorf("cache TTL cannot be negative")
+	}
+	if d.Security.RateLimit.Requests < 0 {
+		return fmt.Errorf("rate limit requests cannot be negative")
+	}
+
+	return nil
+}
+
+// ValidateBasicAuth checks a BasicAuthConfig for shape errors: empty realm
+// chars, missing users when enabled, malformed usernames/passwords. Scope is
+// included in error messages so callers can identify which auth block failed.
+func ValidateBasicAuth(scope string, ba BasicAuthConfig) error {
+	if strings.ContainsAny(ba.Realm, "\r\n") {
+		return fmt.Errorf("%s basic_auth realm contains invalid characters", scope)
+	}
+	if !ba.Enabled {
+		return nil
+	}
+	if len(ba.Users) == 0 {
+		return fmt.Errorf("%s basic_auth enabled requires at least one user", scope)
+	}
+	for username, password := range ba.Users {
+		trimmed := strings.TrimSpace(username)
+		if trimmed == "" {
+			return fmt.Errorf("%s basic_auth username cannot be empty", scope)
+		}
+		if trimmed != username {
+			return fmt.Errorf("%s basic_auth username %q has leading/trailing spaces", scope, username)
+		}
+		if strings.ContainsAny(username, ":\r\n") {
+			return fmt.Errorf("%s basic_auth username %q contains invalid characters", scope, username)
+		}
+		if password == "" {
+			return fmt.Errorf("%s basic_auth user %q must have a non-empty password", scope, username)
+		}
+		if strings.ContainsAny(password, "\r\n") {
+			return fmt.Errorf("%s basic_auth user %q password contains invalid characters", scope, username)
+		}
+	}
+	return nil
+}
+
+// IsValidHostname checks if s is a valid domain name per RFC 1035.
+// Rejects: empty, >253 chars, labels >63 chars, leading/trailing hyphens or
+// dots, path-traversal sequences (..), and characters outside [a-zA-Z0-9-.*].
+func IsValidHostname(s string) bool {
+	if len(s) == 0 || len(s) > 253 {
+		return false
+	}
+	labels := strings.Split(s, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '*') {
+			return false
+		}
+	}
+	return !strings.Contains(s, "..")
+}
+
 // validateListenAddr checks that a listen address is a valid host:port with port in range.
 func validateListenAddr(addr, field string, errs *[]string) {
 	host, portStr, err := net.SplitHostPort(addr)
