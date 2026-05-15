@@ -37,12 +37,18 @@ func (s *Server) loadCloudflareState() error {
 	if st.Tunnels == nil {
 		st.Tunnels = []cloudflareTunnel{}
 	}
-	// Migrate legacy stub-era tunnels (v0.1.6 used Domain; v0.2.0+ uses Hostname).
-	for i := range st.Tunnels {
-		if st.Tunnels[i].Hostname == "" && st.Tunnels[i].Domain != "" {
-			st.Tunnels[i].Hostname = st.Tunnels[i].Domain
+	// One-shot migration: v0.1.6 wrote no schema_version and used Domain
+	// instead of Hostname. Run the rename once, bump the version, and skip on
+	// subsequent loads. The first save() after a successful load persists
+	// SchemaVersion=cloudflareStateSchemaCurrent.
+	if st.SchemaVersion < cloudflareStateSchemaCurrent {
+		for i := range st.Tunnels {
+			if st.Tunnels[i].Hostname == "" && st.Tunnels[i].Domain != "" {
+				st.Tunnels[i].Hostname = st.Tunnels[i].Domain
+			}
+			st.Tunnels[i].Domain = ""
 		}
-		st.Tunnels[i].Domain = ""
+		st.SchemaVersion = cloudflareStateSchemaCurrent
 	}
 	cloudflareMu.Lock()
 	cloudflareConfig = &st
@@ -62,6 +68,11 @@ func (s *Server) saveCloudflareStateLocked() error {
 			return err
 		}
 		return nil
+	}
+	// Stamp the current schema version on every write so new installs (which
+	// never enter the migration branch) still record SchemaVersion=current.
+	if cloudflareConfig.SchemaVersion < cloudflareStateSchemaCurrent {
+		cloudflareConfig.SchemaVersion = cloudflareStateSchemaCurrent
 	}
 	data, err := json.MarshalIndent(cloudflareConfig, "", "  ")
 	if err != nil {
