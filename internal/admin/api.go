@@ -2049,7 +2049,7 @@ func (s *Server) persistConfig() {
 
 		domData, err := yaml.Marshal(&d)
 		if err != nil {
-			s.logger.Error("failed to marshal domain", "host", d.Host, "error", err)
+			s.logger.Error("failed to marshal domain", "domain", d.Host, "error", err)
 			continue
 		}
 		if err := os.WriteFile(fpath, domData, 0600); err != nil {
@@ -2907,7 +2907,7 @@ func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.unknownHT.Block(host)
-	s.logger.Info("blocked unknown domain", "host", host)
+	s.logger.Info("blocked unknown domain", "domain", host)
 	jsonResponse(w, map[string]string{"status": "blocked", "host": host})
 }
 
@@ -2928,7 +2928,7 @@ func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.unknownHT.Unblock(host)
-	s.logger.Info("unblocked unknown domain", "host", host)
+	s.logger.Info("unblocked unknown domain", "domain", host)
 	jsonResponse(w, map[string]string{"status": "unblocked", "host": host})
 }
 

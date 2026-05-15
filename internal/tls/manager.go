@@ -113,7 +113,7 @@ func (m *Manager) LoadExistingCerts() {
 
 	for host, cert := range certs {
 		m.certs.Store(host, cert)
-		m.logger.Debug("loaded certificate", "host", host)
+		m.logger.Debug("loaded certificate", "domain", host)
 	}
 
 	if len(certs) > 0 {
@@ -130,11 +130,11 @@ func (m *Manager) LoadManualCerts() {
 		cert, err := tls.LoadX509KeyPair(d.SSL.Cert, d.SSL.Key)
 		if err != nil {
 			m.logger.Error("failed to load manual cert",
-				"host", d.Host, "error", err)
+				"domain", d.Host, "error", err)
 			continue
 		}
 		m.certs.Store(strings.ToLower(d.Host), &cert)
-		m.logger.Info("loaded manual certificate", "host", d.Host)
+		m.logger.Info("loaded manual certificate", "domain", d.Host)
 	}
 }
 
@@ -223,7 +223,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				m.logger.Error("on-demand ask failed", "host", name, "error", err)
+				m.logger.Error("on-demand ask failed", "domain", name, "error", err)
 				return nil, fmt.Errorf("on-demand ask error for %s: %w", name, err)
 			}
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxOnDemandAskBodyBytes))
@@ -243,7 +243,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 		cert, err := m.obtainCert(obtainCtx, name)
 		if err != nil {
-			m.logger.Error("on-demand cert failed", "host", name, "error", err)
+			m.logger.Error("on-demand cert failed", "domain", name, "error", err)
 			return nil, err
 		}
 		return cert, nil
@@ -256,7 +256,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 	// 5. Fallback: if AllowSelfSigned is set, generate a temp cert so TLS works.
 	if m.AllowSelfSigned {
-		m.logger.Warn("no certificate, generating self-signed", "host", name)
+		m.logger.Warn("no certificate, generating self-signed", "domain", name)
 		cert, err := m.generateSelfSigned(name)
 		if err != nil {
 			return nil, fmt.Errorf("no certificate for %s: %w", name, err)
@@ -339,10 +339,10 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 
 		var failed []string
 		for _, host := range pending {
-			m.logger.Info("obtaining certificate", "host", host)
+			m.logger.Info("obtaining certificate", "domain", host)
 			_, err := m.obtainCert(ctx, host)
 			if err != nil {
-				m.logger.Error("failed to obtain cert", "host", host, "error", err)
+				m.logger.Error("failed to obtain cert", "domain", host, "error", err)
 				failed = append(failed, host)
 				continue
 			}
@@ -467,10 +467,10 @@ func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate
 
 		// Persist to disk
 		if err := m.storage.Save(host, cert, keyPEM, certPEM); err != nil {
-			m.logger.Warn("failed to persist cert", "host", host, "error", err)
+			m.logger.Warn("failed to persist cert", "domain", host, "error", err)
 		}
 
-		m.logger.Info("certificate obtained", "host", host)
+		m.logger.Info("certificate obtained", "domain", host)
 		return cert, nil
 	})
 
@@ -558,7 +558,7 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 		remaining := time.Until(leaf.NotAfter)
 		if remaining < 30*24*time.Hour {
 			m.logger.Info("renewing certificate",
-				"host", host,
+				"domain", host,
 				"expires_in", remaining.Round(time.Hour),
 			)
 
@@ -571,7 +571,7 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 				newCert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, leaf.DNSNames)
 			}
 			if err != nil {
-				m.logger.Error("renewal failed", "host", host, "error", err)
+				m.logger.Error("renewal failed", "domain", host, "error", err)
 				if m.onCertExpiry != nil {
 					daysLeft := int(remaining.Hours() / 24)
 					m.onCertExpiry(host, daysLeft)
@@ -581,10 +581,10 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 
 			m.certs.Store(host, newCert)
 			if err := m.storage.Save(host, newCert, keyPEM, certPEM); err != nil {
-				m.logger.Warn("failed to persist renewed cert", "host", host, "error", err)
+				m.logger.Warn("failed to persist renewed cert", "domain", host, "error", err)
 			}
 
-			m.logger.Info("certificate renewed", "host", host)
+			m.logger.Info("certificate renewed", "domain", host)
 			if m.onCertRenewed != nil {
 				m.onCertRenewed(host)
 			}
@@ -643,7 +643,7 @@ func (m *Manager) stapleOCSP(cert *tls.Certificate, host string) {
 
 	httpResp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		m.logger.Debug("OCSP fetch failed", "host", host, "error", err)
+		m.logger.Debug("OCSP fetch failed", "domain", host, "error", err)
 		return
 	}
 	defer httpResp.Body.Close()
@@ -663,7 +663,7 @@ func (m *Manager) stapleOCSP(cert *tls.Certificate, host string) {
 
 	if ocspResp.Status == ocsp.Good {
 		cert.OCSPStaple = respBytes
-		m.logger.Info("OCSP stapled", "host", host)
+		m.logger.Info("OCSP stapled", "domain", host)
 	}
 }
 

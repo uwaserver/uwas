@@ -121,7 +121,7 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 	// stale entry (e.g. Host: "169.254.169.254") from turning the monitor
 	// into an internal-network scanner.
 	if err := monitorURLSafetyCheck(url); err != nil {
-		m.logger.Debug("monitor skipping unsafe host", "host", d.Host, "error", err)
+		m.logger.Debug("monitor skipping unsafe host", "domain", d.Host, "error", err)
 		return
 	}
 
@@ -188,7 +188,7 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 
 	if status != "up" {
 		m.logger.Warn("domain health check",
-			"host", d.Host, "status", status, "code", statusCode,
+			"domain", d.Host, "status", status, "code", statusCode,
 			"response_ms", elapsed,
 		)
 	}

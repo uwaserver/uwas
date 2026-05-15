@@ -333,7 +333,7 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 	if req.Chain != "" {
 		// Chain is non-fatal: log but do not fail the upload.
 		if err := atomicWriteFile(filepath.Join(certDir, "chain.pem"), []byte(req.Chain), 0600); err != nil {
-			s.logger.Warn("cert upload: chain write failed", "host", host, "error", err)
+			s.logger.Warn("cert upload: chain write failed", "domain", host, "error", err)
 		}
 	}
 
