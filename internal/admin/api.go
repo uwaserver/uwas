@@ -1204,6 +1204,7 @@ func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.phpMgr.SetConfigRaw(version, req.Content); err != nil {
+		s.recordAuditR(r, "php.config_raw_put", fmt.Sprintf("version: %s", version), false)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1213,6 +1214,7 @@ func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	if err := s.phpMgr.RestartFPM(version); err == nil {
 		restarted = true
 	}
+	s.recordAuditR(r, "php.config_raw_put", fmt.Sprintf("version: %s, bytes: %d, restarted: %t", version, len(req.Content), restarted), true)
 	jsonResponse(w, map[string]any{"status": "saved", "version": version, "restarted": restarted})
 }
 
@@ -1224,6 +1226,7 @@ func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
 	version := r.PathValue("version")
 	s.phpMgr.EnableVersion(version)
 	s.logger.Info("PHP version enabled", "version", version)
+	s.recordAuditR(r, "php.enable", fmt.Sprintf("version: %s", version), true)
 	jsonResponse(w, map[string]string{"status": "enabled", "version": version})
 }
 
@@ -1234,10 +1237,12 @@ func (s *Server) handlePHPDisable(w http.ResponseWriter, r *http.Request) {
 	}
 	version := r.PathValue("version")
 	if err := s.phpMgr.DisableVersion(version); err != nil {
+		s.recordAuditR(r, "php.disable", fmt.Sprintf("version: %s", version), false)
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
 	s.logger.Info("PHP version disabled", "version", version)
+	s.recordAuditR(r, "php.disable", fmt.Sprintf("version: %s", version), true)
 	jsonResponse(w, map[string]string{"status": "disabled", "version": version})
 }
 
@@ -3120,6 +3125,7 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.recordAuditR(r, "config.raw_put", "invalid JSON body", false)
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -3128,21 +3134,26 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	// Validate YAML syntax.
 	var probe config.Config
 	if err := yaml.Unmarshal(data, &probe); err != nil {
+		s.recordAuditR(r, "config.raw_put", "invalid YAML", false)
 		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	// Validate config semantics before persisting.
 	if err := config.Validate(&probe); err != nil {
+		s.recordAuditR(r, "config.raw_put", "validation failed", false)
 		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	auditDetail := fmt.Sprintf("bytes: %d, domains: %d", len(data), len(probe.Domains))
 
 	// Atomic write: write to temp file, then rename.
 	dir := filepath.Dir(s.configPath)
 	tmp, err := os.CreateTemp(dir, ".uwas-config-*.yaml")
 	if err != nil {
 		s.logger.Error("config raw put: create temp failed", "error", err)
+		s.recordAuditR(r, "config.raw_put", auditDetail+" (temp file failed)", false)
 		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
@@ -3152,12 +3163,14 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		tmp.Close()
 		os.Remove(tmpName)
 		s.logger.Error("config raw put: write temp failed", "error", err)
+		s.recordAuditR(r, "config.raw_put", auditDetail+" (write failed)", false)
 		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
 		s.logger.Error("config raw put: close temp failed", "error", err)
+		s.recordAuditR(r, "config.raw_put", auditDetail+" (close failed)", false)
 		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
@@ -3165,6 +3178,7 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	if err := os.Rename(tmpName, s.configPath); err != nil {
 		os.Remove(tmpName)
 		s.logger.Error("config raw put: rename failed", "error", err)
+		s.recordAuditR(r, "config.raw_put", auditDetail+" (rename failed)", false)
 		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
@@ -3173,11 +3187,13 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 	if s.reloadFn != nil {
 		if err := s.reloadFn(); err != nil {
 			// File is already written, report reload failure.
+			s.recordAuditR(r, "config.raw_put", auditDetail+" (reload failed after persist)", false)
 			jsonError(w, "config saved but reload failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
+	s.recordAuditR(r, "config.raw_put", auditDetail, true)
 	jsonResponse(w, map[string]string{"status": "saved"})
 }
 
