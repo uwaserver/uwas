@@ -2612,98 +2612,26 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Field-by-field merge moved to config.MergeDomain (refactor.md A23).
+	// It is pure and independently unit-tested in config/merge_test.go;
+	// this handler stays focused on RBAC, validation, and persistence.
+	patchFields := config.DomainPatchFields{
+		HasAliases:     hasAliases,
+		HasLocations:   hasLocations,
+		HasBasicAuth:   hasBasicAuth,
+		HasSecurity:    hasSecurity,
+		HasCache:       hasCache,
+		HasCompression: hasCompression,
+		HasHtaccess:    hasHtaccess,
+		HasSSL:         hasSSL,
+		HasResources:   hasResources,
+	}
+
 	s.configMu.Lock()
 	found := false
 	for i, existing := range s.config.Domains {
 		if existing.Host == host {
-			// Merge: preserve existing values when incoming field is zero/empty
-			merged := existing
-			if d.Host != "" {
-				merged.Host = d.Host
-			}
-			if d.Type != "" {
-				merged.Type = d.Type
-			}
-			if d.IP != "" {
-				merged.IP = d.IP
-			}
-			if d.Root != "" {
-				merged.Root = d.Root
-			}
-			if d.SSL.Mode != "" {
-				merged.SSL.Mode = d.SSL.Mode
-				if d.SSL.Cert != "" {
-					merged.SSL.Cert = d.SSL.Cert
-				}
-				if d.SSL.Key != "" {
-					merged.SSL.Key = d.SSL.Key
-				}
-				if d.SSL.MinVersion != "" {
-					merged.SSL.MinVersion = d.SSL.MinVersion
-				}
-			}
-			if hasAliases {
-				merged.Aliases = d.Aliases
-			}
-			// PHP: only override if provided (preserve existing FPM address)
-			if d.PHP.FPMAddress != "" {
-				merged.PHP.FPMAddress = d.PHP.FPMAddress
-			}
-			if len(d.PHP.IndexFiles) > 0 {
-				merged.PHP.IndexFiles = d.PHP.IndexFiles
-			}
-			if d.PHP.MaxUpload > 0 {
-				merged.PHP.MaxUpload = d.PHP.MaxUpload
-			}
-			if len(d.PHP.Env) > 0 {
-				merged.PHP.Env = d.PHP.Env
-			}
-			// Proxy
-			if len(d.Proxy.Upstreams) > 0 {
-				merged.Proxy = d.Proxy
-			}
-			// Redirect
-			if d.Redirect.Target != "" {
-				merged.Redirect = d.Redirect
-			}
-			// App
-			if d.App.Command != "" || d.App.Runtime != "" {
-				merged.App = d.App
-			}
-			// Resources
-			if d.Resources.CPUPercent > 0 || d.Resources.MemoryMB > 0 || d.Resources.PIDMax > 0 {
-				merged.Resources = d.Resources
-			}
-			// Htaccess
-			if d.Htaccess.Mode != "" {
-				merged.Htaccess = d.Htaccess
-			}
-			// Locations (always replace — empty list clears routes)
-			if hasLocations || replaceMode {
-				merged.Locations = d.Locations
-			}
-			// BasicAuth (replace when provided; enabled=false disables auth)
-			if hasBasicAuth || replaceMode {
-				merged.BasicAuth = d.BasicAuth
-			}
-			// Cache, Security, Compression:
-			// ?replace=true → full replace (allows disabling features)
-			// default → merge (only override non-zero fields)
-			if replaceMode {
-				merged.Cache = d.Cache
-				merged.Security = d.Security
-				merged.Compression = d.Compression
-			} else {
-				if hasCache {
-					merged.Cache = d.Cache
-				}
-				if hasSecurity {
-					merged.Security = d.Security
-				}
-				if d.Compression.Enabled || len(d.Compression.Algorithms) > 0 {
-					merged.Compression = d.Compression
-				}
-			}
+			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
 
 			if !isValidHostname(merged.Host) {
 				s.configMu.Unlock()
