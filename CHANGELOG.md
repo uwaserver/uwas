@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A security & robustness sweep on top of v0.4.1 — 13 atomic fixes
+batched together. No new features; no breaking config changes.
+
+### Security
+
+- **Admin role required on settings/notifications and settings/branding**
+  (`e1268ef`) — both PUT handlers previously accepted any authenticated
+  caller, letting a RoleUser overwrite system-wide webhook URLs or inject
+  branding HTML rendered into other admins' sessions.
+- **Constant-time comparison on the deploy webhook `?secret=` path**
+  (`4117832`) — the GitHub-HMAC and GitLab-token branches already used
+  `subtle.ConstantTimeCompare`, but the fallback query-param branch
+  compared with plain `!=`. Recovered the secret byte-by-byte over the
+  network meant arbitrary deploy → RCE.
+- **SSRF check on Telegram notify channel** (`4128c1c`) — webhook and
+  Slack ran the URL through `notifyURLSafetyCheck`; Telegram did not.
+- **SSRF check + context propagation on uptime monitor** (`769633e`) —
+  the per-30-second domain probe used `http.NewRequest` with no context
+  and no safety policy. A stale domain entry pointing at
+  `169.254.169.254` would turn the monitor into a metadata scanner.
+- **`internal_aliases` validation rejects system directories** (`443969c`)
+  — X-Sendfile / X-Accel-Redirect targets outside the docroot are opt-in
+  via `internal_aliases`. Validate now refuses entries inside `/etc`,
+  `/root`, `/proc`, `/var/log`, `C:\Windows`, `C:\Program Files`, etc.,
+  closing the misconfiguration door before a compromised PHP app can
+  exploit it.
+- **Admin API refuses to bind publicly without credentials** (`39684f8`)
+  — the auth-middleware "no creds → virtual admin" convenience kicked in
+  regardless of listen address. Start now hard-errors when no
+  `api_key` / multi-user is set AND the listen address is non-loopback;
+  loopback startups still proceed but emit a loud WARN.
+- **SFTP open uses `O_NOFOLLOW` on Unix** (`fc34f2e`) — `safePath()`
+  validated containment but a sufficiently fast SFTP user could replace
+  the final path component with a symlink between the check and the
+  open. The flag is build-tagged: real `syscall.O_NOFOLLOW` on Unix, no
+  effect on Windows (which is not vulnerable to the same attack shape).
+- **CSRF guard extended to expensive GET endpoints** (`4f93f46`) — the
+  middleware only fired on POST/PUT/PATCH/DELETE, leaving
+  `GET /api/v1/config/export`, `GET /api/v1/database/{name}/export`, and
+  `*/download` endpoints CSRF-reachable. An attacker page could force an
+  admin's browser into a full `mysqldump` even though the attacker never
+  sees the bytes.
+- **Session-token callers can mint auth tickets** (`884c6d5`) —
+  `handleAuthTicket` only accepted `Authorization: Bearer`, so a
+  browser-session user got a 400 and the dashboard's only escape was to
+  pass the raw token in the SSE/WebSocket URL — the very leak the
+  ticket flow was built to prevent.
+
+### Fixes
+
+- **Reverse-proxy upstreams accept `host:port` without scheme**
+  (`921013e`) — `url.Parse("127.0.0.1:3000")` silently produced an empty
+  host and the backend fell out of the pool, surfacing as a cryptic 502
+  "no healthy upstreams". `NormalizeProxyUpstreamAddress` now adds the
+  `http://` prefix when missing, in both validation and pool
+  construction. Same commit also normalises balancer algorithm names so
+  the dashboard's dashed forms (`least-conn`) actually dispatch instead
+  of silently falling back to round-robin.
+- **HTTP→HTTPS redirect only fires when a cert is loaded** (`8b567ab`) —
+  auto-SSL domains defaulted to `ssl.mode: auto`. While ACME issuance
+  was still in flight (or DNS hadn't propagated), the redirect sent the
+  browser straight into a TLS handshake failure with no recoverable
+  state. Now port 80 falls through to plain HTTP until `tlsMgr.HasCert`
+  reports a usable certificate.
+- **Cert upload is atomic and crash-safe** (`994fb99`) — replaced the
+  two bare `os.WriteFile` calls with a new internal `atomicWriteFile`
+  helper (same-dir temp → fsync → rename). Removes three failure modes:
+  half-written cert/key pair after power loss, kernel reorder hiding
+  the fsync, and TLS-manager reload racing the writes.
+- **WebSocket proxy teardown** (`badf7d3`) — `sync.Once` wraps the
+  bidirectional close so two goroutines can race it safely, and
+  `SetDeadline(now)` is called before `Close` to unstick any Read
+  blocked on a half-open peer. `closeBoth` is now `defer`-ed so a
+  panicking `io.Copy` still tears the partner down.
+
+### Verification
+
+- `go build ./...`, `go vet ./...`, `staticcheck ./...` all clean.
+- Full `go test -count=1 -short ./...` passes on all 53 packages.
+- Live binary regression: schemeless upstream proxies correctly, evil-
+  Referer hitting `/config/export` returns 403, non-loopback admin bind
+  without credentials refuses to start, `C:\Windows` in
+  `internal_aliases` is rejected at reload with a clear error.
+
 ## [0.4.0] - 2026-05-05
 
 A polish + hardening release: 67 commits batched together. Highlights are auth persistence across restart, audit-log user attribution everywhere, a visibility-aware polling sweep across the dashboard, secret redaction on every config-export surface, and a per-page UI quality pass that fixed dirty-edit data loss, poll-handle leaks, and dead-code action buttons across roughly 30 pages.
