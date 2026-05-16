@@ -148,11 +148,12 @@ const (
 // domain-keyed appmanager.Manager.
 //
 // Lifecycle:
-//   m := apps.NewManager(store, log)
-//   m.LoadAll()        // reads /etc/uwas/apps.d, registers everything
-//   m.StartAll()       // launches enabled apps
-//   ... operator API calls Register/Unregister/Start/Stop ...
-//   m.StopAll()        // shutdown
+//
+//	m := apps.NewManager(store, log)
+//	m.LoadAll()        // reads /etc/uwas/apps.d, registers everything
+//	m.StartAll()       // launches enabled apps
+//	... operator API calls Register/Unregister/Start/Stop ...
+//	m.StopAll()        // shutdown
 type Manager struct {
 	mu       sync.RWMutex
 	store    *Store
@@ -256,9 +257,9 @@ func (m *Manager) registerLocked(a *App) {
 	port := a.Port
 
 	// Auto-assign if unset, or if the requested port collides with
-	// another managed app (host-level conflicts surface as EADDRINUSE
-	// at start time — we don't block on host bind here so a temporary
-	// occupant doesn't permanently veto the operator's chosen port).
+	// another managed app. Host-level conflicts are checked again at
+	// Start time so stopped apps recover from orphaned children or
+	// external processes that grabbed their old port.
 	if port > 0 {
 		for _, other := range m.procs {
 			if other.name != a.Name && other.port == port {
@@ -368,6 +369,12 @@ func (m *Manager) Start(name string) error {
 	p.restartCount = 0
 	p.crashloopGave = false
 
+	if p.runtimeKind != RuntimeCustom {
+		if err := m.ensureStartPortAvailable(p); err != nil {
+			return err
+		}
+	}
+
 	if p.runtimeKind == RuntimeDocker {
 		return m.startDocker(p)
 	}
@@ -426,8 +433,46 @@ func (m *Manager) stopLocked(p *process) error {
 	if err := gracefulKill(p.cmd, p.name); err != nil {
 		return fmt.Errorf("apps: kill %s: %w", p.name, err)
 	}
+	p.cmd = nil
 	if m.logger != nil {
 		m.logger.Info("apps: stopped", "app", p.name)
+	}
+	return nil
+}
+
+func (m *Manager) ensureStartPortAvailable(p *process) error {
+	if p.port <= 0 {
+		return nil
+	}
+	if isPortFreeFn(p.port) {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Re-check under the write lock in case a concurrent start/stop
+	// changed the world while we were waiting.
+	if isPortFreeFn(p.port) {
+		return nil
+	}
+
+	oldPort := p.port
+	newPort := m.allocateFreePortLocked()
+	p.port = newPort
+	if p.app != nil {
+		p.app.Port = newPort
+		if err := m.store.Save(p.app); err != nil {
+			p.port = oldPort
+			p.app.Port = oldPort
+			return fmt.Errorf("apps: %s: port %d is already in use and saving replacement port %d failed: %w",
+				p.name, oldPort, newPort, err)
+		}
+	}
+
+	if m.logger != nil {
+		m.logger.Warn("apps: port already in use, auto-assigned replacement",
+			"app", p.name, "old_port", oldPort, "new_port", newPort)
 	}
 	return nil
 }
@@ -575,8 +620,8 @@ type Stats struct {
 	PID       int     `json:"pid,omitempty"`
 	Running   bool    `json:"running"`
 	CPUPct    float64 `json:"cpu_percent"`
-	MemoryRSS int64   `json:"memory_rss"`  // bytes resident
-	MemoryVMS int64   `json:"memory_vms"`  // bytes virtual
+	MemoryRSS int64   `json:"memory_rss"` // bytes resident
+	MemoryVMS int64   `json:"memory_vms"` // bytes virtual
 	Uptime    string  `json:"uptime,omitempty"`
 }
 
@@ -766,11 +811,12 @@ func (m *Manager) startNative(p *process) error {
 	}
 
 	if m.logger != nil {
+		stopCh := p.stopCh
 		m.logger.SafeGo("apps.monitor."+p.name, func() {
-			m.monitorNative(p, logFile)
+			m.monitorNative(p, origCmd, logFile, stopCh)
 		})
 	} else {
-		go m.monitorNative(p, logFile)
+		go m.monitorNative(p, origCmd, logFile, p.stopCh)
 	}
 
 	// 500ms post-launch probe. Long enough for the shell to exec the
@@ -810,32 +856,33 @@ func tailLogFile(path string, lastN int) string {
 
 // monitorNative waits on the process and triggers auto-restart on
 // crash unless stopCh fires first.
-func (m *Manager) monitorNative(p *process, logFile *os.File) {
+func (m *Manager) monitorNative(p *process, cmd *exec.Cmd, logFile *os.File, stopCh <-chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil && m.logger != nil {
 			m.logger.Error("apps: monitor panic", "app", p.name, "panic", r)
 		}
 	}()
 
-	if p.cmd == nil {
+	if cmd == nil {
 		return
 	}
-	waitErr := p.cmd.Wait()
+	waitErr := cmd.Wait()
 	if logFile != nil {
 		_ = logFile.Close()
 	}
 
-	// Snapshot stopCh once — Stop swaps it for a fresh one, and we
-	// must observe the channel that was live when we started.
-	stopCh := p.stopCh
 	select {
 	case <-stopCh:
-		p.cmd = nil
+		if p.cmd == cmd {
+			p.cmd = nil
+		}
 		return
 	default:
 	}
 
-	p.cmd = nil
+	if p.cmd == cmd {
+		p.cmd = nil
+	}
 
 	if waitErr != nil && m.logger != nil {
 		m.logger.Warn("apps: process exited", "app", p.name, "error", waitErr)

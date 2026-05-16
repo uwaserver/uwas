@@ -107,12 +107,14 @@ func (m *Manager) startDocker(p *process) error {
 	}
 
 	// Spawn watcher that triggers auto-restart on container exit.
+	stopCh := p.stopCh
+	dockerID := p.dockerID
 	if m.logger != nil {
 		m.logger.SafeGo("apps.docker."+p.name, func() {
-			m.watchDocker(p)
+			m.watchDocker(p, dockerID, stopCh)
 		})
 	} else {
-		go m.watchDocker(p)
+		go m.watchDocker(p, dockerID, stopCh)
 	}
 
 	// Post-launch liveness probe (same contract as startNative). A
@@ -277,21 +279,16 @@ func (m *Manager) buildImage(p *process, image string) error {
 // watchDocker blocks on `docker wait <id>` and triggers auto-restart
 // when the container exits, unless stopCh has been signaled. Mirrors
 // the native monitor goroutine's contract.
-func (m *Manager) watchDocker(p *process) {
+func (m *Manager) watchDocker(p *process, id string, stopCh <-chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil && m.logger != nil {
 			m.logger.Error("apps: docker watcher panic", "app", p.name, "panic", r)
 		}
 	}()
 
-	if p.dockerID == "" {
+	if id == "" {
 		return
 	}
-
-	// Snapshot the stopCh we're observing. Stop swaps in a fresh
-	// channel; without this snapshot we'd race against that swap.
-	stopCh := p.stopCh
-	id := p.dockerID
 
 	waitCmd := exec.Command("docker", "wait", id)
 	var stderr bytes.Buffer

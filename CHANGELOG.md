@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-16
+
+### Fixed
+
+- Fixed Applications stop/restart/start races where the supervisor
+  could miss a Stop signal, auto-restart the just-stopped process, and
+  leave the port occupied. This surfaced as Node.js `EADDRINUSE`
+  errors such as `listen EADDRINUSE: address already in use 0.0.0.0:3001`.
+- Start now checks whether the app's saved port is already bound on
+  the host and auto-assigns/persists a replacement port before spawn,
+  so orphaned children or external processes no longer make the app
+  crash-loop on the old port.
+
 ## [0.6.1] - 2026-05-16
 
 ### Documentation

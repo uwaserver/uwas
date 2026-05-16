@@ -219,6 +219,90 @@ func TestWaitListeningSkipsCustomRuntime(t *testing.T) {
 	}
 }
 
+func TestEnsureStartPortAvailableReassignsOccupiedPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	occupied := ln.Addr().(*net.TCPAddr).Port
+
+	dir := t.TempDir()
+	mgr := NewManager(NewStore(dir), nil)
+	app := &App{
+		Name:    "port-hop",
+		Runtime: RuntimeNode,
+		Command: "node index.js",
+		Port:    occupied,
+		WorkDir: dir,
+	}
+	p := &process{
+		name:        app.Name,
+		app:         app,
+		runtimeKind: app.Runtime,
+		command:     app.Command,
+		port:        occupied,
+		workDir:     dir,
+		stopCh:      make(chan struct{}),
+	}
+	mgr.mu.Lock()
+	mgr.procs[app.Name] = p
+	mgr.mu.Unlock()
+
+	if err := mgr.ensureStartPortAvailable(p); err != nil {
+		t.Fatalf("ensureStartPortAvailable: %v", err)
+	}
+	if p.port == occupied {
+		t.Fatalf("port should have been reassigned away from occupied %d", occupied)
+	}
+	if !isPortFreeFn(p.port) {
+		t.Fatalf("replacement port %d should be free", p.port)
+	}
+	saved, err := mgr.Store().Get(app.Name)
+	if err != nil {
+		t.Fatalf("load saved app: %v", err)
+	}
+	if saved == nil || saved.Port != p.port {
+		t.Fatalf("saved port = %v, want %d", saved, p.port)
+	}
+}
+
+func TestMonitorNativeUsesStartStopChannelSnapshot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+
+	dir := t.TempDir()
+	mgr := NewManager(NewStore(dir), nil)
+	oldStopCh := make(chan struct{})
+	close(oldStopCh)
+	newStopCh := make(chan struct{})
+
+	cmd := execCommandFn("sh", "-c", "exit 1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start test cmd: %v", err)
+	}
+	p := &process{
+		name:        "stop-snapshot",
+		app:         &App{Name: "stop-snapshot", Runtime: RuntimeCustom, Command: "false", WorkDir: dir},
+		runtimeKind: RuntimeCustom,
+		command:     "false",
+		workDir:     dir,
+		autoRestart: true,
+		cmd:         cmd,
+		stopCh:      newStopCh,
+		startedAt:   time.Now(),
+	}
+
+	mgr.monitorNative(p, cmd, nil, oldStopCh)
+	if p.cmd != nil {
+		t.Fatal("monitor should clear cmd after observing the closed start-time stop channel")
+	}
+	if p.restartCount != 0 {
+		t.Fatalf("monitor should not count a stopped process as a crash, got %d", p.restartCount)
+	}
+}
+
 // silence the unused import linter for fmt when not all branches use it.
 var _ = fmt.Sprintf
 
