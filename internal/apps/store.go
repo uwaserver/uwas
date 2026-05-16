@@ -156,8 +156,14 @@ func (s *Store) Load() ([]*App, []error, error) {
 // the API (which round-trips through Save).
 func (s *Store) applyDefaults(a *App) {
 	if a.WorkDir == "" {
-		a.WorkDir = filepath.Join(s.DataRoot, a.Name)
+		a.WorkDir = s.DefaultWorkDir(a.Name)
 	}
+}
+
+// DefaultWorkDir returns the workdir used for a named app when the
+// operator does not provide one explicitly.
+func (s *Store) DefaultWorkDir(name string) string {
+	return filepath.Join(s.DataRoot, name)
 }
 
 // Get reads a single app by name. Returns nil with no error if the
