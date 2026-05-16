@@ -2227,15 +2227,24 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		if err := os.MkdirAll(d.Root, 0755); err != nil {
 			s.logger.Warn("failed to create web root", "path", d.Root, "error", err)
 		}
-		idx := filepath.Join(d.Root, "index.html")
-		if _, err := os.Stat(idx); os.IsNotExist(err) {
-			placeholder := fmt.Sprintf(`<!DOCTYPE html>
+		if d.Type == "app" {
+			// type=app domains get a runnable demo instead of an HTML placeholder.
+			// Default to Node.js if no runtime specified — most common case.
+			if d.App.Runtime == "" {
+				d.App.Runtime = "node"
+			}
+			scaffoldAppDemo(d.Root, d.Host, &d.App, s.logger)
+		} else {
+			idx := filepath.Join(d.Root, "index.html")
+			if _, err := os.Stat(idx); os.IsNotExist(err) {
+				placeholder := fmt.Sprintf(`<!DOCTYPE html>
 <html><head><title>%s</title></head>
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0">
 <div style="text-align:center"><h1>%s</h1><p style="color:#94a3b8">Site is ready. Upload your files via SFTP or place them in:<br><code>%s</code></p></div>
 </body></html>`, d.Host, d.Host, d.Root)
-			if err := os.WriteFile(idx, []byte(placeholder), 0644); err != nil {
-				s.logger.Warn("failed to write placeholder index", "path", idx, "error", err)
+				if err := os.WriteFile(idx, []byte(placeholder), 0644); err != nil {
+					s.logger.Warn("failed to write placeholder index", "path", idx, "error", err)
+				}
 			}
 		}
 		// Set ownership to www-data so PHP/WordPress can write files

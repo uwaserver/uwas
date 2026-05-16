@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Package, Download, Check, RefreshCw, AlertTriangle, Trash2, Shield } from 'lucide-react';
 import { fetchPackages, installPackage, removePackage, fetchTasks, type PackageInfo } from '@/lib/api';
 
-const categoryOrder = ['Required', 'Database', 'Performance', 'Security', 'WordPress', 'Email'];
+const categoryOrder = ['Required', 'Database', 'Runtime', 'Performance', 'Security', 'WordPress', 'Email'];
 
 export default function Packages() {
   const [packages, setPackages] = useState<PackageInfo[]>([]);

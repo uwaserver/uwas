@@ -282,6 +282,20 @@ var knownPackages = []knownPkg{
 	{"unzip", "Unzip", "Extract archives (used for WordPress install)", "Required",
 		true, "WordPress installer", "", false,
 		[]string{"unzip"}, []string{"unzip"}, nil},
+
+	// ── App Runtimes (for type=app domains via Apps page) ──
+	{"nodejs", "Node.js + npm", "JavaScript runtime for Node.js apps (Express, Next.js, etc.)", "Runtime",
+		false, "Apps page (type=app domains with runtime=node)", "Running Node.js apps will fail until reinstalled.", true,
+		[]string{"node"}, []string{"nodejs", "npm"}, []string{"nodejs", "npm"}},
+	{"python3", "Python 3 + pip", "Python interpreter + pip for Python web apps (Flask, Django, FastAPI)", "Runtime",
+		false, "Apps page (type=app domains with runtime=python)", "Running Python apps will fail until reinstalled.", true,
+		[]string{"python3"}, []string{"python3", "python3-pip", "python3-venv"}, []string{"python3-pip", "python3-venv"}},
+	{"ruby", "Ruby", "Ruby interpreter for Ruby web apps (Rails, Sinatra)", "Runtime",
+		false, "Apps page (type=app domains with runtime=ruby)", "Running Ruby apps will fail until reinstalled.", true,
+		[]string{"ruby"}, []string{"ruby-full"}, []string{"ruby-full"}},
+	{"golang", "Go", "Go toolchain for building Go web apps", "Runtime",
+		false, "Apps page (type=app domains with runtime=go)", "Building Go apps will fail until reinstalled.", true,
+		[]string{"go"}, []string{"golang-go"}, []string{"golang-go"}},
 }
 
 func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
@@ -394,6 +408,10 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 		} else {
 			if pkgID == "wp-cli" {
 				cmd = exec.Command("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
+			} else if pkgID == "nodejs" {
+				// Distro nodejs is typically too old to run modern apps.
+				// Use NodeSource LTS setup so Apps page Node.js sites work out of the box.
+				cmd = exec.Command("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
 			} else if len(aptPkgs) > 0 {
 				args := append([]string{"install", "-y"}, aptPkgs...)
 				cmd = exec.Command("apt", args...)
