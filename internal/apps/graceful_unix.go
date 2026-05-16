@@ -8,40 +8,48 @@ import (
 	"time"
 )
 
+func configureProcessGroup(cmd *exec.Cmd) {
+	if cmd != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+}
+
 // gracefulKill sends SIGTERM, waits up to gracefulStopTimeout for the
-// process to exit on its own, then falls back to SIGKILL. node /
-// python / ruby / go apps that install shutdown handlers (express
-// .close(), Django graceful, etc.) get a chance to flush in-flight
-// requests, close DB connections, and persist state before being
-// hard-killed.
-//
-// Returns nil even when SIGKILL was needed — the goal is "the process
-// is dead", not "the process cooperated". Surfaces the SIGTERM send
-// error only when both the syscall AND the fallback Kill fail.
+// process tree to exit, then falls back to SIGKILL. Native apps are
+// launched through a shell, so killing only the shell can leave npm/node
+// children behind holding the old port after Restart.
 func gracefulKill(cmd *exec.Cmd, _ string) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
+	pid := cmd.Process.Pid
 
-	// SIGTERM first.
-	termErr := cmd.Process.Signal(syscall.SIGTERM)
+	termErr := syscall.Kill(-pid, syscall.SIGTERM)
+	if termErr != nil {
+		termErr = cmd.Process.Signal(syscall.SIGTERM)
+	}
 
-	// Poll exit state via Signal(0) — sends no actual signal but
-	// returns an error if the process is already gone. Cheaper than
-	// reaping cmd.Wait() (which the monitor goroutine owns).
 	deadline := time.Now().Add(gracefulStopTimeout)
 	for time.Now().Before(deadline) {
-		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			// Process is gone — graceful stop succeeded.
+		if err := syscall.Kill(-pid, syscall.Signal(0)); err != nil {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Process is still alive after grace period — escalate to KILL.
-	killErr := cmd.Process.Kill()
+	killErr := syscall.Kill(-pid, syscall.SIGKILL)
+	if killErr != nil {
+		killErr = cmd.Process.Kill()
+	}
 	if termErr != nil && killErr != nil {
 		return killErr
+	}
+
+	for i := 0; i < 10; i++ {
+		if err := syscall.Kill(-pid, syscall.Signal(0)); err != nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	return nil
 }

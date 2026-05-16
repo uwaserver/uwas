@@ -255,8 +255,3 @@ Native `Bash` and `Read` are acceptable for outputs you know are small
 (< 2 KB) and will not be referenced again. For everything else, DFMT
 tools are preferred.
 <!-- dfmt:v1 end -->
-
-
-
-
-

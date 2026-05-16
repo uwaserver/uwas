@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+func configureProcessGroup(_ *exec.Cmd) {}
+
 // gracefulKill on Windows. The OS has no SIGTERM equivalent for
 // non-console GUI/service processes — sending CTRL_BREAK_EVENT only
 // works for child processes spawned with a job object configured for
