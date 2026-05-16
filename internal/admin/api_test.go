@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -535,6 +536,50 @@ func TestAddProxyDomainDoesNotCreateWebRoot(t *testing.T) {
 	}
 	if created.Root != "" {
 		t.Fatalf("proxy app domain root = %q, want empty", created.Root)
+	}
+}
+
+func TestFileManagerAppProxyDomainUsesAppWorkDir(t *testing.T) {
+	s := testServer()
+	webRoot := t.TempDir()
+	appRoot := t.TempDir()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	if err := mgr.Register(&apps.App{
+		Name:    "test-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: appRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAppsManager(mgr)
+	s.config.Global.WebRoot = webRoot
+	s.config.Domains = []config.Domain{
+		{
+			Host: "app.example.com",
+			Type: "proxy",
+			Proxy: config.ProxyConfig{Upstreams: []config.Upstream{
+				{Address: "apps://test-app"},
+			}},
+			SSL: config.SSLConfig{Mode: "auto"},
+		},
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "server.js"), []byte("console.log('ok')"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/files/app.example.com/read?path=server.js", nil)
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), filepath.Join(webRoot, "app.example.com")) {
+		t.Fatalf("file manager used web_root instead of app work_dir: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "console.log('ok')") {
+		t.Fatalf("response did not read app work_dir file: %s", rec.Body.String())
 	}
 }
 

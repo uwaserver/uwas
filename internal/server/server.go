@@ -39,6 +39,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/deploy"
+	"github.com/uwaserver/uwas/internal/domainroot"
 	"github.com/uwaserver/uwas/internal/firewall"
 	fcgihandler "github.com/uwaserver/uwas/internal/handler/fastcgi"
 	proxyhandler "github.com/uwaserver/uwas/internal/handler/proxy"
@@ -808,8 +809,17 @@ func (s *Server) Start() error {
 	if s.config.Global.SFTPListen != "" {
 		users := make(map[string]sftpserver.User)
 		apiKey := s.config.Global.Admin.APIKey
+		var appStore *apps.Store
+		if s.appsMgr != nil {
+			appStore = s.appsMgr.Store()
+		}
 		for _, d := range s.config.Domains {
-			if d.Root != "" {
+			root, err := domainroot.ForDomain(d, appStore)
+			if err != nil {
+				s.logger.Warn("SFTP domain root unavailable", "domain", d.Host, "error", err)
+				continue
+			}
+			if root != "" {
 				// Create an SFTP user per domain with a unique password
 				// derived from API key + domain (so compromising one doesn't
 				// expose all domains).
@@ -821,7 +831,7 @@ func (s *Server) Start() error {
 				}
 				users[d.Host] = sftpserver.User{
 					Password: string(passHash),
-					Root:     d.Root,
+					Root:     root,
 				}
 			}
 		}

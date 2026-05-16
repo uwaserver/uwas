@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-05-17
+
+### Fixed
+
+- Fixed File Manager and built-in SFTP root resolution for application
+  domains. Proxy domains targeting `apps://<name>` now expose the standalone
+  app `work_dir` instead of falling back to a static/PHP web-root path.
+- Added shared domain filesystem-root resolution so static/PHP domains keep
+  using `root`, while app proxy domains consistently use the app source
+  directory.
+
 ## [0.6.5] - 2026-05-17
 
 ### Fixed
