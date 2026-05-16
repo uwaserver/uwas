@@ -2185,6 +2185,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	if d.SSL.Mode == "" {
 		d.SSL.Mode = "auto"
 	}
+	// Proxy/redirect domains do not serve files, so ignore any legacy/UI root.
+	if !domainTypeUsesWebRoot(d.Type) {
+		d.Root = ""
+	}
 
 	// ── Pre-save validation ──
 	if err := validateDomainConfig(&d, s); err != nil {
@@ -2206,13 +2210,14 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 
 	// ── Auto-fill defaults based on domain type ──
 
-	// Web root: always auto-created
-	webRoot := s.config.Global.WebRoot
-	if webRoot == "" {
-		webRoot = "/var/www"
-	}
-	if d.Root == "" {
-		d.Root = filepath.Join(webRoot, d.Host, "public_html")
+	if domainTypeUsesWebRoot(d.Type) {
+		webRoot := s.config.Global.WebRoot
+		if webRoot == "" {
+			webRoot = "/var/www"
+		}
+		if d.Root == "" {
+			d.Root = filepath.Join(webRoot, d.Host, "public_html")
+		}
 	}
 
 	// PHP defaults
@@ -3504,6 +3509,15 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 // fields the caller intentionally didn't touch.
 func validateDomainUpdateConfig(d *config.Domain) error {
 	return config.ValidateDomainPartial(d)
+}
+
+func domainTypeUsesWebRoot(domainType string) bool {
+	switch domainType {
+	case "static", "php":
+		return true
+	default:
+		return false
+	}
 }
 
 // isValidHostname is kept as a package-local alias for readability at the

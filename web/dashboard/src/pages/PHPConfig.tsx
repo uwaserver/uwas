@@ -4,6 +4,7 @@ import {
   fetchPHP, fetchPHPConfig, updatePHPConfigKey, fetchPHPConfigRaw, savePHPConfigRaw,
   restartPHP,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 const popularSettings = [
   { key: 'memory_limit', label: 'Memory Limit', placeholder: '256M', hint: 'Max memory per PHP process', validate: /^\d+[KMG]$/i },
@@ -30,6 +31,7 @@ const presets: { name: string; desc: string; values: Record<string, string> }[] 
 type Tab = 'form' | 'raw';
 
 export default function PHPConfig() {
+  const { confirmAction } = useConfirm();
   const [versions, setVersions] = useState<string[]>([]);
   const [selectedVer, setSelectedVer] = useState('');
   const [tab, setTab] = useState<Tab>('form');
@@ -88,9 +90,19 @@ export default function PHPConfig() {
   const hasDirty = dirtyKeys.length > 0;
 
   // Confirm before discarding unsaved changes in either tab.
-  const confirmDiscard = (): boolean => {
-    if (hasDirty) return window.confirm('You have unsaved settings changes. Discard them?');
-    if (rawDirty) return window.confirm('You have unsaved php.ini changes. Discard them?');
+  const confirmDiscard = async (): Promise<boolean> => {
+    if (hasDirty) return confirmAction({
+      title: 'Discard unsaved settings?',
+      message: 'You have unsaved settings changes. They will be lost if you continue.',
+      confirmLabel: 'Discard',
+      variant: 'warning',
+    });
+    if (rawDirty) return confirmAction({
+      title: 'Discard unsaved php.ini changes?',
+      message: 'You have unsaved php.ini changes. They will be lost if you continue.',
+      confirmLabel: 'Discard',
+      variant: 'warning',
+    });
     return true;
   };
 
@@ -191,8 +203,8 @@ export default function PHPConfig() {
       <div className="flex items-center gap-4">
         <select
           value={selectedVer}
-          onChange={e => {
-            if (!confirmDiscard()) {
+          onChange={async e => {
+            if (!await confirmDiscard()) {
               e.target.value = selectedVer;
               return;
             }
@@ -202,11 +214,11 @@ export default function PHPConfig() {
           {versions.map(v => <option key={v} value={v}>PHP {v}</option>)}
         </select>
         <div className="flex rounded-md border border-border overflow-hidden">
-          <button onClick={() => { if (tab !== 'form' && confirmDiscard()) setTab('form'); }}
+          <button onClick={async () => { if (tab !== 'form' && await confirmDiscard()) setTab('form'); }}
             className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'form' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
             <Sliders size={13} /> Settings
           </button>
-          <button onClick={() => { if (tab !== 'raw' && confirmDiscard()) setTab('raw'); }}
+          <button onClick={async () => { if (tab !== 'raw' && await confirmDiscard()) setTab('raw'); }}
             className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition ${tab === 'raw' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
             <Code size={13} /> Raw php.ini
           </button>

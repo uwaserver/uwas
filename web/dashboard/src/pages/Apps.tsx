@@ -5,6 +5,7 @@ import {
   GitBranch, Activity,
 } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
+import { useConfirm } from '@/components/ConfirmModal';
 import {
   fetchApps,
   fetchApp,
@@ -111,6 +112,7 @@ function formatBytes(n: number): string {
 }
 
 export default function Apps() {
+  const { confirmAction } = useConfirm();
   const [apps, setApps] = useState<AppInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -437,7 +439,13 @@ export default function Apps() {
   };
 
   const doDelete = async (name: string) => {
-    if (!confirm(`Delete app "${name}"? The YAML and process will be removed; workdir is left in place.`)) return;
+    const ok = await confirmAction({
+      title: `Delete app "${name}"?`,
+      message: 'The YAML and process will be removed; the workdir is left in place.',
+      confirmLabel: 'Delete app',
+      variant: 'danger',
+    });
+    if (!ok) return;
     setBusyName(name);
     try {
       await deleteApp(name);

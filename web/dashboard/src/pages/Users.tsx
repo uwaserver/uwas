@@ -5,8 +5,10 @@ import {
   fetchSSHKeys, addSSHKey, deleteSSHKey,
   type SiteUser, type SiteUserCreated, type DomainData,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 function SSHKeyPanel({ domain }: { domain: string }) {
+  const { confirmAction } = useConfirm();
   const [keys, setKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [newKey, setNewKey] = useState('');
@@ -43,9 +45,13 @@ function SSHKeyPanel({ domain }: { domain: string }) {
   };
 
   const handleDelete = async (key: string) => {
-    if (!window.confirm(
-      `Remove this SSH key from ${domain}?\n\nIf this is the only key configured AND the user has no password set, they will be locked out of SFTP. There is no undo.`,
-    )) {
+    const ok = await confirmAction({
+      title: `Remove SSH key from ${domain}?`,
+      message: 'If this is the only key configured and the user has no password set, they will be locked out of SFTP. There is no undo.',
+      confirmLabel: 'Remove key',
+      variant: 'danger',
+    });
+    if (!ok) {
       return;
     }
     try {

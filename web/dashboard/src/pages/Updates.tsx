@@ -15,6 +15,7 @@ import {
   performUpdate,
   type UpdateInfo,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return '--';
@@ -32,6 +33,7 @@ function formatDate(dateStr: string): string {
 }
 
 export default function Updates() {
+  const { confirmAction } = useConfirm();
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [checking, setChecking] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -57,11 +59,13 @@ export default function Updates() {
     // flight requests die, terminal/SFTP/log streams break. Surprise the
     // operator at your peril — confirm first.
     if (!info?.update_available) return;
-    if (!window.confirm(
-      `Install ${info.latest_version}?\n\n` +
-      `The server will replace its binary and restart. All active sessions ` +
-      `(dashboard, terminal, SFTP) will drop and you'll need to log in again.`,
-    )) return;
+    const ok = await confirmAction({
+      title: `Install ${info.latest_version}?`,
+      message: 'The server will replace its binary and restart. All active sessions (dashboard, terminal, SFTP) will drop and you will need to log in again.',
+      confirmLabel: 'Install update',
+      variant: 'warning',
+    });
+    if (!ok) return;
     setUpdating(true);
     setError('');
     try {

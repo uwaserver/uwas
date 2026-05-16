@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +171,25 @@ func TestAppEndpoints(t *testing.T) {
 	// Should return 200 with empty list or apps
 	if rec.Code != 200 {
 		t.Logf("apps endpoint status: %d", rec.Code)
+	}
+}
+
+func TestAppDeleteRequiresPin(t *testing.T) {
+	s := testServer()
+	s.config.Global.Admin.PinCode = "123456"
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/apps/demo-app", nil))
+
+	if rec.Code != 403 {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["error"] != "pin_required" {
+		t.Fatalf("error = %q, want pin_required", body["error"])
 	}
 }
 
@@ -486,6 +507,34 @@ func TestAddDomain(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &created)
 	if created["host"] != "new.com" {
 		t.Errorf("created host = %v, want new.com", created["host"])
+	}
+}
+
+func TestAddProxyDomainDoesNotCreateWebRoot(t *testing.T) {
+	s := testServer()
+	webRoot := t.TempDir()
+	s.config.Global.WebRoot = webRoot
+	appRoot := filepath.Join(webRoot, "app.example.com", "public_html")
+
+	body := strings.NewReader(fmt.Sprintf(
+		`{"host":"app.example.com","type":"proxy","root":%q,"proxy":{"upstreams":[{"address":"apps://test-app"}]},"ssl":{"mode":"auto"}}`,
+		appRoot,
+	))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+
+	if rec.Code != 201 {
+		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(appRoot); !os.IsNotExist(err) {
+		t.Fatalf("proxy app domain created root %q, stat err=%v", appRoot, err)
+	}
+	var created config.Domain
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if created.Root != "" {
+		t.Fatalf("proxy app domain root = %q, want empty", created.Root)
 	}
 }
 

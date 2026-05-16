@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-05-17
+
+### Fixed
+
+- Fixed proxy domains, including `apps://<name>` application routes, creating
+  unnecessary web-root directories such as `/var/www/<domain>/public_html`.
+  Only `static` and `php` domains now get an auto-created web root.
+- Application delete now requires the dashboard PIN, matching other
+  destructive operations.
+- Replaced dashboard-native `alert`, `confirm`, and `prompt` dialogs with
+  in-app modals, including bulk domain import, app deletion, Cloudflare,
+  firewall, PHP, update, file-manager, and other destructive/confirm flows.
+
 ## [0.6.2] - 2026-05-16
 
 ### Fixed

@@ -41,8 +41,10 @@ import {
   type CloudflareTunnel,
 } from '@/lib/api';
 import Card from '@/components/Card';
+import { useConfirm } from '@/components/ConfirmModal';
 
 export default function Cloudflare() {
+  const { confirmAction } = useConfirm();
   const [status, setStatus] = useState<CloudflareStatus | null>(null);
   const [zones, setZones] = useState<CloudflareZone[]>([]);
   const [loading, setLoading] = useState(false);
@@ -189,7 +191,13 @@ export default function Cloudflare() {
   };
 
   const handleDeleteTunnel = async (id: string, name: string) => {
-    if (!confirm(`Delete tunnel "${name}"? This removes it from Cloudflare and deletes the DNS record.`)) return;
+    const ok = await confirmAction({
+      title: `Delete tunnel "${name}"?`,
+      message: 'This removes it from Cloudflare and deletes the DNS record.',
+      confirmLabel: 'Delete tunnel',
+      variant: 'danger',
+    });
+    if (!ok) return;
     setTunnelBusy(id);
     setError('');
     setSuccess('');
@@ -304,7 +312,13 @@ export default function Cloudflare() {
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Disconnect from Cloudflare?\n\nThis wipes the stored API token. Existing tunnels keep running, but you will need to paste the token again to manage zones, run new tunnels, or purge cache.')) {
+    const ok = await confirmAction({
+      title: 'Disconnect from Cloudflare?',
+      message: 'This wipes the stored API token. Existing tunnels keep running, but you will need to paste the token again to manage zones, run new tunnels, or purge cache.',
+      confirmLabel: 'Disconnect',
+      variant: 'warning',
+    });
+    if (!ok) {
       return;
     }
     try {

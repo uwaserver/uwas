@@ -13,8 +13,10 @@ import {
   type ServerIPInfo,
   type DomainData,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 export default function IPManagement() {
+  const { confirmAction } = useConfirm();
   const [ips, setIPs] = useState<ServerIPInfo[]>([]);
   const [publicIP, setPublicIP] = useState('');
   const [domains, setDomains] = useState<DomainData[]>([]);
@@ -58,9 +60,13 @@ export default function IPManagement() {
     // without a clear "yes I meant that" step.
     const fromLabel = currentIP || 'Default';
     const toLabel = newIP || 'Default';
-    if (!window.confirm(
-      `Change ${host} from ${fromLabel} to ${toLabel}?\n\nLive traffic to ${host} may be disrupted until DNS picks up the change.`,
-    )) {
+    const ok = await confirmAction({
+      title: `Change ${host} IP binding?`,
+      message: `Change from ${fromLabel} to ${toLabel}. Live traffic may be disrupted until DNS picks up the change.`,
+      confirmLabel: 'Change IP',
+      variant: 'warning',
+    });
+    if (!ok) {
       // Force a re-render so the select snaps back to the previous value.
       // (loadAll() pulls fresh state which the select binds to.)
       void loadAll();

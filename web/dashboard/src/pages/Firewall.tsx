@@ -19,8 +19,10 @@ import {
   type FirewallStatus,
   type FirewallRule,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 export default function Firewall() {
+  const { confirmAction } = useConfirm();
   const [fw, setFw] = useState<FirewallStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -65,9 +67,13 @@ export default function Firewall() {
     if (!fw) return;
 
     if (fw.active) {
-      if (!window.confirm(
-        'Disable the firewall?\n\nEvery listening service on this server will be reachable from the internet — including SSH, databases, and any internal admin ports. This is rarely what you want on a production server.\n\nAre you sure?',
-      )) {
+      const ok = await confirmAction({
+        title: 'Disable the firewall?',
+        message: 'Every listening service on this server will be reachable from the internet, including SSH, databases, and any internal admin ports. This is rarely what you want on a production server.',
+        confirmLabel: 'Disable firewall',
+        variant: 'danger',
+      });
+      if (!ok) {
         return;
       }
     } else {
@@ -79,9 +85,13 @@ export default function Firewall() {
         (r.port === '22' || r.port === '22/tcp' || /\b22\b/.test(r.port || '')),
       );
       if (!hasSSH) {
-        if (!window.confirm(
-          'Enable the firewall WITHOUT an SSH allow rule (port 22)?\n\nIf you are managing this server over SSH, enabling the firewall now will drop your session and lock you out. UWAS recommends adding "allow 22/tcp" first.\n\nProceed anyway?',
-        )) {
+        const ok = await confirmAction({
+          title: 'Enable without SSH allow rule?',
+          message: 'If you are managing this server over SSH, enabling the firewall now can drop your session and lock you out. UWAS recommends adding "allow 22/tcp" first.',
+          confirmLabel: 'Enable anyway',
+          variant: 'danger',
+        });
+        if (!ok) {
           return;
         }
       }

@@ -4,6 +4,7 @@ import { getToken, onPinRequired } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 import SystemStatsBar from '@/components/SystemStatsBar';
 import PinModal from '@/components/PinModal';
+import { ConfirmProvider } from '@/components/ConfirmModal';
 import Login from '@/pages/Login';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -107,7 +108,7 @@ export default function App() {
   }, []);
 
   return (
-    <>
+    <ConfirmProvider>
     <PinModal
       open={pinOpen}
       onConfirm={(pin) => {
@@ -173,6 +174,6 @@ export default function App() {
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-    </>
+    </ConfirmProvider>
   );
 }

@@ -25,6 +25,7 @@ import {
   type FeatureStatus,
 } from '@/lib/api';
 import FeatureBanner from '@/components/FeatureBanner';
+import { useConfirm } from '@/components/ConfirmModal';
 
 const SCHEDULE_PRESETS = [
   { label: 'Every 5 minutes', value: '*/5 * * * *' },
@@ -39,6 +40,7 @@ const SCHEDULE_PRESETS = [
 ];
 
 export default function CronJobs() {
+  const { confirmAction } = useConfirm();
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -362,8 +364,14 @@ export default function CronJobs() {
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span className="text-emerald-400">{job.success_count} ok</span>
                       <span className="text-red-400">{job.failure_count} fail</span>
-                      <button disabled={!!executing} onClick={() => {
-                        if (!window.confirm(`Run "${job.command}" on ${job.domain} now?`)) return;
+                      <button disabled={!!executing} onClick={async () => {
+                        const ok = await confirmAction({
+                          title: 'Run cron job now?',
+                          message: <span>Run <code>{job.command}</code> on {job.domain} now?</span>,
+                          confirmLabel: 'Run now',
+                          variant: 'info',
+                        });
+                        if (!ok) return;
                         (async () => {
                           setExecuting(job.command);
                           try {

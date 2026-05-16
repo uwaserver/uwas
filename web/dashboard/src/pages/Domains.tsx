@@ -14,6 +14,7 @@ import {
   type AppInstance,
 } from '@/lib/api';
 import { usePolling } from '@/hooks/usePolling';
+import { useConfirm } from '@/components/ConfirmModal';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -264,6 +265,7 @@ const selectCls = inputCls;
 /* ------------------------------------------------------------------ */
 
 export default function Domains() {
+  const { promptText } = useConfirm();
   /* list state */
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -603,8 +605,15 @@ export default function Domains() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => {
-            const input = window.prompt('Paste domain list (one per line):');
+          <button onClick={async () => {
+            const input = await promptText({
+              title: 'Bulk import domains',
+              message: 'Paste one domain per line.',
+              placeholder: 'example.com\napi.example.com',
+              confirmLabel: 'Import',
+              variant: 'info',
+              multiline: true,
+            });
             if (!input) return;
             const hosts = input.split('\n').map(h => h.trim()).filter(Boolean);
             if (hosts.length === 0) return;

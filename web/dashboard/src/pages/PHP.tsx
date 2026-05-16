@@ -35,6 +35,7 @@ import {
   type DomainPHP,
   type DomainData,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -109,6 +110,7 @@ const defaultRow: RowState = {
 /* ------------------------------------------------------------------ */
 
 export default function PHP() {
+  const { confirmAction } = useConfirm();
   /* Data */
   const [installs, setInstalls] = useState<PHPInstall[]>([]);
   const [instances, setInstances] = useState<DomainPHP[]>([]);
@@ -227,9 +229,13 @@ export default function PHP() {
   };
 
   const handleRemoveDomain = async (domain: string) => {
-    if (!window.confirm(
-      `Unassign PHP from ${domain}?\n\nThe site will stop serving PHP immediately. Static files keep working, but any .php request will return an error until you re-assign a PHP version.`,
-    )) {
+    const ok = await confirmAction({
+      title: `Unassign PHP from ${domain}?`,
+      message: 'The site will stop serving PHP immediately. Static files keep working, but any .php request will return an error until you re-assign a PHP version.',
+      confirmLabel: 'Unassign PHP',
+      variant: 'warning',
+    });
+    if (!ok) {
       return;
     }
     patchRow(domain, { removing: true });
