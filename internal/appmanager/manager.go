@@ -4,6 +4,7 @@ package appmanager
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +68,51 @@ func New(log *logger.Logger) *Manager {
 		nextPort: 3001, // start above common dev ports
 		logger:   log,
 	}
+}
+
+// allocateFreePort finds the next port that is (a) not already claimed by
+// another managed app and (b) not currently bound by some other process on
+// 127.0.0.1. Caller must hold m.mu.
+//
+// We walk forward from m.nextPort, skipping anything in use, and advance
+// nextPort past whatever we hand out so the next caller starts further on.
+// The bind-test is best-effort — between this check and the child process
+// actually starting another process could grab the port, but in practice
+// it eliminates the common "auto-assigned a port that was already busy"
+// failure mode where the proxy then 502'd against a managed app that had
+// never actually managed to listen.
+func (m *Manager) allocateFreePort() int {
+	const maxAttempts = 1000
+	port := m.nextPort
+	for i := 0; i < maxAttempts; i++ {
+		taken := false
+		for _, other := range m.apps {
+			if other.port == port {
+				taken = true
+				break
+			}
+		}
+		if !taken && isPortFreeFn(port) {
+			m.nextPort = port + 1
+			return port
+		}
+		port++
+	}
+	// Couldn't find one — return the counter anyway, the start attempt
+	// will surface EADDRINUSE and the operator can intervene.
+	m.nextPort = port + 1
+	return port
+}
+
+// isPortFreeFn checks whether 127.0.0.1:port is free to bind. Replaceable
+// in tests via the package-level var below.
+var isPortFreeFn = func(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 // detectCommand infers the start command from project files if not explicitly set.
@@ -138,10 +184,34 @@ func (m *Manager) Register(domain string, appCfg config.AppConfig, webRoot strin
 		return fmt.Errorf("no command configured and could not detect for runtime %q in %s", rt, workDir)
 	}
 
+	// Port resolution:
+	//   - appCfg.Port > 0 → operator pinned a specific port; honour it
+	//     even if busy (the start will surface EADDRINUSE clearly and
+	//     they can react), unless we'd be picking a port already claimed
+	//     by another UWAS-managed app — in that case we promote to an
+	//     auto-assigned port so two apps don't clobber each other.
+	//   - appCfg.Port == 0 → auto-assign starting from nextPort, but
+	//     SKIP any port that's already bound (whether by us, by another
+	//     UWAS-managed app on this same manager, or by some unrelated
+	//     process on the host). Pre-v0.5.3 the auto-assign was a naive
+	//     counter that could happily hand out a busy port and then the
+	//     proxy talked to the wrong process.
 	port := appCfg.Port
+	if port > 0 {
+		// Check for collision against another managed app (not the host)
+		for _, other := range m.apps {
+			if other.domain != domain && other.port == port {
+				if m.logger != nil {
+					m.logger.Warn("requested app port already used by another managed app, auto-assigning instead",
+						"domain", domain, "requested_port", port, "conflict_domain", other.domain)
+				}
+				port = 0
+				break
+			}
+		}
+	}
 	if port == 0 {
-		port = m.nextPort
-		m.nextPort++
+		port = m.allocateFreePort()
 	}
 
 	// PM2-like default: auto-restart on crash unless the operator has

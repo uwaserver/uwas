@@ -2323,11 +2323,21 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	if d.Type == "app" && s.appMgr != nil && (d.App.Command != "" || d.App.Runtime != "") {
 		if err := s.appMgr.Register(d.Host, d.App, d.Root); err != nil {
 			s.logger.Warn("app register on create failed", "domain", d.Host, "error", err)
-		} else if !d.App.Disabled {
-			if err := s.appMgr.Start(d.Host); err != nil {
-				s.logger.Warn("app start on create failed", "domain", d.Host, "error", err)
-			} else {
-				s.logger.Info("app started on domain create", "domain", d.Host, "runtime", d.App.Runtime)
+		} else {
+			// Reflect the actually-assigned port back into the domain config so
+			// the YAML and the running process agree. Without this, a domain
+			// created with port=0 (auto-assign) ended up with port:0 in YAML
+			// and the next restart re-rolled the port — the dashboard kept
+			// showing "3000" because the form default leaked in.
+			if inst := s.appMgr.Get(d.Host); inst != nil && inst.Port > 0 {
+				d.App.Port = inst.Port
+			}
+			if !d.App.Disabled {
+				if err := s.appMgr.Start(d.Host); err != nil {
+					s.logger.Warn("app start on create failed", "domain", d.Host, "error", err)
+				} else {
+					s.logger.Info("app started on domain create", "domain", d.Host, "runtime", d.App.Runtime, "port", d.App.Port)
+				}
 			}
 		}
 	}
@@ -2684,12 +2694,37 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Auto-register app if domain type changed to app
+	// Auto-register app if domain type changed to app, or if the port changed.
+	// If the operator edited the port via dashboard, we tear down the old
+	// registration and re-register with the new config — otherwise the
+	// running process stays on the old port and the proxy keeps going to it.
 	if d.Type == "app" && s.appMgr != nil && (d.App.Command != "" || d.App.Runtime != "") {
-		if s.appMgr.Get(d.Host) == nil {
+		existing := s.appMgr.Get(d.Host)
+		needsReregister := existing == nil ||
+			(d.App.Port > 0 && existing.Port != d.App.Port) ||
+			(d.App.Command != "" && existing.Command != d.App.Command)
+		if needsReregister {
+			if existing != nil {
+				_ = s.appMgr.Stop(d.Host)
+				s.appMgr.Unregister(d.Host)
+			}
 			if err := s.appMgr.Register(d.Host, d.App, d.Root); err == nil {
-				s.appMgr.Start(d.Host)
-				s.logger.Info("auto-registered app on update", "domain", d.Host)
+				if inst := s.appMgr.Get(d.Host); inst != nil && inst.Port > 0 {
+					d.App.Port = inst.Port // write actual assigned port back to YAML
+					s.configMu.Lock()
+					for i := range s.config.Domains {
+						if s.config.Domains[i].Host == d.Host {
+							s.config.Domains[i].App.Port = inst.Port
+							break
+						}
+					}
+					s.configMu.Unlock()
+					s.persistConfig()
+				}
+				if !d.App.Disabled {
+					_ = s.appMgr.Start(d.Host)
+				}
+				s.logger.Info("re-registered app on update", "domain", d.Host, "port", d.App.Port)
 			}
 		}
 	}
