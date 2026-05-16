@@ -2942,6 +2942,41 @@ func TestPersistConfig(t *testing.T) {
 	}
 }
 
+// TestPersistConfigPreservesUnknownDomainFiles asserts that persistConfig
+// never silently deletes domain YAML files that aren't in s.config.Domains.
+// Regression: pre-v0.5.6, persistConfig had an "orphan cleanup" step that
+// rm -f'd every domains.d/*.yaml not present in memory. That blew away the
+// operator's domain configs whenever the in-memory state was incomplete for
+// any reason — a bad validation skip, a load race, a fresh-install seed
+// before old files migrated. Now persistConfig only writes; deletions happen
+// only via the explicit DELETE /api/v1/domains/{host} handler.
+func TestPersistConfigPreservesUnknownDomainFiles(t *testing.T) {
+	s := testServer()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(cfgPath, []byte("global: {}"), 0644)
+	s.SetConfigPath(cfgPath)
+
+	// Create domains.d/ with a pre-existing file that uwas DOESN'T know about
+	// in memory (simulates an operator who dropped a YAML in by hand, or a
+	// file from a previous install that hadn't migrated yet, or a transient
+	// load failure that left the file on disk but skipped it in memory).
+	domainsDir := filepath.Join(dir, "domains.d")
+	os.MkdirAll(domainsDir, 0755)
+	preexisting := filepath.Join(domainsDir, "unknown.example.com.yaml")
+	if err := os.WriteFile(preexisting, []byte("host: unknown.example.com\ntype: static\n"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s.persistConfig()
+
+	// The pre-existing file MUST still be there. Pre-v0.5.6 this test would
+	// fail because persistConfig deleted everything it didn't write.
+	if _, err := os.Stat(preexisting); os.IsNotExist(err) {
+		t.Fatalf("persistConfig destroyed an unknown domain file we never asked to delete")
+	}
+}
+
 func TestPersistConfigNoPath(t *testing.T) {
 	s := testServer()
 	// No config path set - should not panic
