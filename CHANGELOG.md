@@ -13,16 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The pre-v0.6 domain-keyed app system (`internal/appmanager`,
 `type: app` domains, `/api/v1/apps/{domain}/*` endpoints) has been
-deleted entirely. v0.6.0 is a hard cutover, not a coexistence window.
-Migration is automatic, but there is no opt-out:
+deleted entirely. v0.6.0 is a hard cutover, not a coexistence or
+migration window:
 
 - **`internal/appmanager` package**: removed. App lifecycle is owned
   exclusively by `internal/apps` (name-keyed, `/etc/uwas/apps.d/`).
 - **`type: app` domain config**: rejected by the API (`400 Bad
-  Request`). The router returns `502` with a deprecation message if
-  one slips through on disk. The boot-time auto-migrator converts
-  any existing on-disk `type=app` domain into an `apps.d/<name>.yaml`
-  entry plus a `type: proxy` domain pointing at `apps://<name>`.
+  Request`). The router returns `502` with a hard-removal message if
+  one slips through on disk. Operators should create a standalone app
+  and route domains with `type: proxy` + `apps://<name>`.
 - **`/api/v1/apps/{domain}/*` endpoints**: removed. The path
   `/api/v1/apps/*` now serves the v0.6 name-keyed API (previously
   `/api/v1/apps/*`). Equivalents:
@@ -33,9 +32,6 @@ Migration is automatic, but there is no opt-out:
   - `POST /api/v1/apps/{name}/deploy` (was `POST /api/v1/apps/{domain}/deploy`)
   - `POST /api/v1/apps/{name}/webhook` (HMAC-authenticated; same
     contract as before but keyed by name)
-  - `POST /api/v1/apps/migrate` — kept as an idempotent operator-
-    triggered migration in case the auto-migration is disabled or
-    needs to re-run.
 - **Removed admin endpoints**: `/api/v1/deploys` (was a legacy-only
   global deploys list). Per-app deploy status now flows through
   `/api/v1/apps/{name}/webhook-status`.
@@ -43,15 +39,12 @@ Migration is automatic, but there is no opt-out:
   now the only one and is registered at `/apps`. The "Apps (v0.6)"
   sidebar entry collapsed back to a single "Applications" link.
 
-Migration runs once per boot (idempotent — a clean install with no
-legacy domains is a no-op). Operators with `type=app` domains can
-upgrade in place: the binary swap converts them on the next start.
-The migration report is logged at info level (`apps: auto-migrated
-legacy type=app domains count=N`).
+The legacy migration API and boot-time auto-migrator were removed with
+the legacy app system.
 
 ### Fixed — admin/server config pointer drift (caught by API smoke test)
 
-After ANY config reload (boot migration, post-app-change reload, SIGHUP,
+After ANY config reload (post-app-change reload, SIGHUP,
 operator-triggered reload), every subsequent domain CRUD via the admin
 API silently broke. New domains landed in a config object the server no
 longer referenced, so vhost router never saw them — every request to a
@@ -94,34 +87,6 @@ different allocated port, or operator-triggered port reassignment).
 The whole point of `apps://<name>` is dynamic name-based resolution
 at pool-build time — the dashboard now writes that form.
 
-### Fixed — boot migration regressions (caught by end-to-end smoke test)
-
-Three bugs in the boot-time auto-migration that would have caused
-the v0.6.0 rollout to silently 502 every migrated domain in the
-field. None were caught by unit tests because the failure mode
-requires the full server lifecycle plus an actual HTTP request to
-the migrated host.
-
-- **`config path not set`** — migration ran inside `server.New()`
-  but `SetConfigPath()` is called by the CLI *after* `New()` returns.
-  The on-disk YAML rewrite silently no-op'd, so the next boot would
-  re-migrate the same domain every time. Fix: migration now runs in
-  `Start()`, after `SetConfigPath` has populated `s.configPath`.
-- **`apps: <name> already running` on every boot with a migrated
-  app** — `MigrateLegacyAppsAtBoot` started apps as it converted
-  them, then the unconditional `appsMgr.StartAll()` in the boot
-  sequence tried again. Fix: migration no longer starts apps;
-  `StartAll()` is the single source of truth for the boot-time start.
-- **Migrated domain proxies returned 502 until the first manual
-  reload** — `New()` built proxy pools against the pre-migration
-  config, where the legacy domain was still `type: app` (no pool
-  built). After `MigrateLegacyAppsAtBoot` rewrote it to `type: proxy`
-  with `apps://<name>` upstream, the pool builder had already
-  finished. Fix: when migration converts at least one domain,
-  `Start()` triggers `s.reload()` so pools rebuild against the
-  migrated config and resolve `apps://<name>` to the supervisor's
-  assigned port.
-
 ### Hardening — docker probe timeout
 
 `apps.Manager.cleanupOrphanContainers` and `dockerContainerRunning`
@@ -157,10 +122,6 @@ notice above):
 - `POST /api/v1/apps/{name}/{start|stop|restart}`
 - `GET /api/v1/apps/{name}/logs` — tails runtime log,
   falls back to build log for docker apps
-- `POST /api/v1/apps/migrate` — operator-triggered conversion of
-  legacy `type=app` domains into apps + `type=proxy` domains.
-  Supports `?dry_run=true` for preview. Same conversion runs
-  automatically at boot.
 
 **Proxy `apps://<name>` upstream scheme** — `type=proxy` domains can
 target a standalone app by name. The server resolves `apps://<name>`
@@ -172,8 +133,8 @@ trigger a config reload so proxy pools re-resolve immediately.
 
 **Dashboard API bindings** — `web/dashboard/src/lib/api.ts` adds
 typed bindings for every new endpoint (`StandaloneApp`,
-`StandaloneAppInstance`, `DockerSpec`, `DockerBuild`,
-`StandaloneAppsMigrationReport` + CRUD/lifecycle functions).
+`StandaloneAppInstance`, `DockerSpec`, `DockerBuild` +
+CRUD/lifecycle functions).
 
 **Webhook auto-deploy (git push → automatic redeploy):**
 
@@ -319,10 +280,10 @@ every app, status pill (running / stopped / disabled), runtime badge,
 inline start / stop / restart / logs / edit / delete buttons. Create
 form has a runtime selector that conditionally shows native fields
 (command + workdir + port + env) or docker fields (image + container
-port + optional build context + dockerfile). One-shot "Find legacy
-apps" button runs a migration dry-run and renders a preview report
-with an "Apply migration" CTA. Replaces the legacy `/apps` page
-entirely (see breaking-change notice at the top of this section).
+port + optional build context + dockerfile). Creating an empty native
+app workdir now seeds a small runnable demo for the selected runtime.
+Replaces the legacy `/apps` page entirely (see breaking-change notice
+at the top of this section).
 
 ### Why split apps off
 

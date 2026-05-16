@@ -897,7 +897,7 @@ POST /api/v1/domains
 └──────┬───────┘
        ▼
 ┌──────────────┐
-│ App register │ Start process if type=app
+│ App routing  │ proxy domains resolve apps://<name>
 └──────┬───────┘
        ▼
   201 Created + webhook event

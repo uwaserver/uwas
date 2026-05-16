@@ -149,8 +149,7 @@ func (s *Server) registerPHPRoutes() {
 // registerAppRoutes covers app process management (Node.js, Python,
 // Ruby, Go, Docker), the deploy pipeline, the web terminal, and the
 // install task queue. Apps are first-class objects keyed by name —
-// the pre-v0.6 domain-keyed surface was removed; legacy `type=app`
-// domains auto-migrate at boot.
+// the pre-v0.6 domain-keyed surface was removed.
 func (s *Server) registerAppRoutes() {
 	// Apps CRUD + lifecycle.
 	s.mux.HandleFunc("GET /api/v1/apps", s.handleAppsList)
@@ -178,10 +177,6 @@ func (s *Server) registerAppRoutes() {
 	// Install task queue (apt/dpkg/etc. serialised)
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleTaskList)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskGet)
-
-	// One-shot migration: legacy type=app domains → standalone apps + type=proxy domains.
-	// Idempotent — boot also runs this automatically.
-	s.mux.HandleFunc("POST /api/v1/apps/migrate", s.handleAppsMigrate)
 }
 
 // registerDatabaseRoutes covers system MySQL/MariaDB management, Docker DB

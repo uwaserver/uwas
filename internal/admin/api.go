@@ -197,7 +197,6 @@ func maskCloudflareToken(token string) string {
 	return "****" + token[len(token)-4:]
 }
 
-
 // isExpensiveGET reports whether a GET endpoint has enough side-effect cost
 // (full database dump, full config dump, etc.) that an attacker forcing the
 // admin's browser to fetch it via an <img>/<iframe> CSRF would constitute a
@@ -2303,6 +2302,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		if d.PHP.FPMAddress != "" {
 			// User explicitly provided FPM address — register so it shows in PHP page.
 			phpStatus := s.phpMgr.Status()
+			if len(phpStatus) == 0 {
+				_ = s.phpMgr.Detect()
+				phpStatus = s.phpMgr.Status()
+			}
 			ver := ""
 			if len(phpStatus) > 0 {
 				ver = phpStatus[0].Version
@@ -2312,6 +2315,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Auto-assign: prefer FPM socket, fallback to CGI TCP port
 			phpStatus := s.phpMgr.Status()
+			if len(phpStatus) == 0 {
+				_ = s.phpMgr.Detect()
+				phpStatus = s.phpMgr.Status()
+			}
 			if len(phpStatus) > 0 {
 				// Pick best version: prefer FPM over CGI
 				version := phpStatus[0].Version
@@ -2682,6 +2689,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		if !hasAssign {
 			phpStatus := s.phpMgr.Status()
+			if len(phpStatus) == 0 {
+				_ = s.phpMgr.Detect()
+				phpStatus = s.phpMgr.Status()
+			}
 			if len(phpStatus) > 0 {
 				version := phpStatus[0].Version
 				if inst, err := s.phpMgr.AssignDomainWithRoot(d.Host, version, d.Root); err == nil {
@@ -2702,9 +2713,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// type=app is no longer a routing decision; legacy domains are
-	// auto-migrated at boot. An operator who explicitly PUTs
-	// type=app via dashboard gets a deprecation error.
+	// type=app is no longer a routing decision. An operator who
+	// explicitly PUTs type=app via dashboard gets a deprecation error.
 	if d.Type == "app" {
 		jsonError(w,
 			"type=app is no longer supported. Manage apps via /api/v1/apps and route domains to them with type=proxy + apps://<name>.",
@@ -4772,7 +4782,7 @@ func paginateSlice[T any](items []T, limit, offset int) ([]T, int) {
 // --- Cloudflare Integration ---
 
 type cloudflareTunnel struct {
-	ID             string    `json:"id"`              // real Cloudflare tunnel UUID
+	ID             string    `json:"id"` // real Cloudflare tunnel UUID
 	Name           string    `json:"name"`
 	Hostname       string    `json:"hostname"`        // public, e.g. app.example.com
 	LocalTarget    string    `json:"local_target"`    // http://localhost:8080 or tcp://localhost:22
@@ -5600,9 +5610,9 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		DefaultType string `json:"default_type"`
-		DefaultRoot string `json:"default_root"`
-		DryRun      bool   `json:"dry_run"`     // preview only — don't persist
+		DefaultType string   `json:"default_type"`
+		DefaultRoot string   `json:"default_root"`
+		DryRun      bool     `json:"dry_run"`   // preview only — don't persist
 		Hostnames   []string `json:"hostnames"` // optional whitelist; if set, only these are imported
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
