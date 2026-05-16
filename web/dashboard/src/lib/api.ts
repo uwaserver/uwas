@@ -1107,18 +1107,25 @@ export const deleteApp = (name: string) =>
     `/api/v1/apps/${encodeURIComponent(name)}`,
     { method: 'DELETE' });
 
+export interface AppActionResult {
+  status: string;
+  name: string;
+  listening?: boolean;
+  listening_warning?: string;
+}
+
 export const startApp = (name: string) =>
-  api<{ status: string; name: string }>(
+  api<AppActionResult>(
     `/api/v1/apps/${encodeURIComponent(name)}/start`,
     { method: 'POST' });
 
 export const stopApp = (name: string) =>
-  api<{ status: string; name: string }>(
+  api<AppActionResult>(
     `/api/v1/apps/${encodeURIComponent(name)}/stop`,
     { method: 'POST' });
 
 export const restartApp = (name: string) =>
-  api<{ status: string; name: string }>(
+  api<AppActionResult>(
     `/api/v1/apps/${encodeURIComponent(name)}/restart`,
     { method: 'POST' });
 

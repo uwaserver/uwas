@@ -764,6 +764,7 @@ func (m *Manager) startNative(p *process) error {
 	} else {
 		cmd = execCommandFn("sh", "-c", cmdStr)
 	}
+	configureProcessGroup(cmd)
 	cmd.Dir = p.workDir
 
 	cmd.Env = os.Environ()

@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.0)
+## Current Snapshot (v0.6.5)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 221 (route registrations under `/api/v1` in `internal/admin/api.go`)
@@ -33,10 +33,14 @@ One binary. Zero hassle.
 - **Test status:** `go test -p 1 ./...` passing
 - **69 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
 
-**v0.6.0 highlights (standalone apps + hard legacy cutover):**
+**v0.6.x highlights (standalone apps + hard legacy cutover):**
 - Apps are first-class objects under `/etc/uwas/apps.d/<name>.yaml`
 - Domains expose apps with reverse proxy upstreams such as `apps://my-api`
 - Creating an empty Node.js, Python, Ruby, or Go app seeds a tiny runnable demo
+- Native app restart stops the full process tree so npm/node children do not
+  keep old ports bound
+- The Applications dashboard uses an inline app builder instead of a creation
+  overlay
 - Legacy domain-keyed `type=app` config and migration endpoints are removed
 - Docker apps support image or BuildKit build context workflows
 

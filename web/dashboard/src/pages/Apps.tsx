@@ -46,6 +46,8 @@ const runtimeColor: Record<AppRuntime, string> = {
   custom: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
 };
 
+const runtimeOptions: AppRuntime[] = ['node', 'python', 'ruby', 'go', 'docker', 'custom'];
+
 interface CreateForm {
   name: string;
   description: string;
@@ -245,6 +247,11 @@ export default function Apps() {
     setEditing({ mode: 'create' });
   };
 
+  const closeEditor = () => {
+    setEditing(null);
+    setForm(blankForm);
+  };
+
   const openEdit = async (name: string) => {
     try {
       const { app } = await fetchApp(name);
@@ -426,10 +433,24 @@ export default function Apps() {
   const doAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
     setBusyName(name);
     try {
-      if (action === 'start') await startApp(name);
-      else if (action === 'stop') await stopApp(name);
-      else await restartApp(name);
-      setStatus({ ok: true, message: `${name}: ${action} ok` });
+      const res = action === 'start'
+        ? await startApp(name)
+        : action === 'stop'
+          ? await stopApp(name)
+          : await restartApp(name);
+      if (res.listening === false) {
+        setStatus({
+          ok: false,
+          message: `${name}: ${action} completed but the app is not listening on its port`,
+        });
+        setCreateOutcome({
+          name,
+          started: true,
+          error: res.listening_warning,
+        });
+      } else {
+        setStatus({ ok: true, message: `${name}: ${action} ok` });
+      }
       await load();
     } catch (e) {
       setStatusErr(e);
@@ -532,9 +553,188 @@ export default function Apps() {
         </div>
       )}
 
+      {editing && (
+        <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">
+                {editing.mode === 'edit' ? `Edit "${editing.name}"` : 'Create application'}
+              </h2>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>{runtimeLabel[form.runtime]}</span>
+                <span>port {form.port || 'auto'}</span>
+                <span>{form.work_dir || `/var/lib/uwas/apps/${form.name || '<name>'}`}</span>
+              </div>
+            </div>
+            <button
+              onClick={closeEditor}
+              className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label="Close app editor"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                {runtimeOptions.map(rt => (
+                  <button
+                    key={rt}
+                    type="button"
+                    onClick={() => setForm(f => ({
+                      ...f,
+                      runtime: rt,
+                      docker_container_port: rt === 'docker' && !f.docker_container_port ? '80' : f.docker_container_port,
+                    }))}
+                    className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-xs transition ${
+                      form.runtime === rt
+                        ? runtimeColor[rt]
+                        : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                  >
+                    {rt === 'docker' ? <Container size={16} /> : <Cpu size={16} />}
+                    {runtimeLabel[rt]}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Name</span>
+                  <input
+                    value={form.name}
+                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                    disabled={editing.mode === 'edit'}
+                    placeholder="my-api"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono disabled:opacity-60"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Port</span>
+                  <input
+                    value={form.port}
+                    onChange={e => setForm(f => ({ ...f, port: e.target.value }))}
+                    placeholder="auto"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                  />
+                </label>
+                <label className="space-y-1 md:col-span-2">
+                  <span className="text-xs text-muted-foreground">Description</span>
+                  <input
+                    value={form.description}
+                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="Internal API"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+
+              {!isDocker && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Start command</span>
+                    <input
+                      value={form.command}
+                      onChange={e => setForm(f => ({ ...f, command: e.target.value }))}
+                      placeholder={form.runtime === 'node' ? 'node index.js' : ''}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Work directory</span>
+                    <input
+                      value={form.work_dir}
+                      onChange={e => setForm(f => ({ ...f, work_dir: e.target.value }))}
+                      placeholder={`/var/lib/uwas/apps/${form.name || '<name>'}`}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {isDocker && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Docker image</span>
+                    <input
+                      value={form.docker_image}
+                      onChange={e => setForm(f => ({ ...f, docker_image: e.target.value }))}
+                      placeholder="nginx:latest"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Container port</span>
+                    <input
+                      value={form.docker_container_port}
+                      onChange={e => setForm(f => ({ ...f, docker_container_port: e.target.value }))}
+                      placeholder="80"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Build context</span>
+                    <input
+                      value={form.docker_build_context}
+                      onChange={e => setForm(f => ({ ...f, docker_build_context: e.target.value }))}
+                      placeholder="."
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Dockerfile</span>
+                    <input
+                      value={form.docker_build_dockerfile}
+                      onChange={e => setForm(f => ({ ...f, docker_build_dockerfile: e.target.value }))}
+                      placeholder="Dockerfile"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <label className="flex min-h-48 flex-1 flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Environment</span>
+                <textarea
+                  value={form.envText}
+                  onChange={e => setForm(f => ({ ...f, envText: e.target.value }))}
+                  placeholder="NODE_ENV=production"
+                  className="min-h-40 flex-1 resize-y rounded-md border border-border bg-background px-3 py-2 text-xs font-mono"
+                />
+              </label>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={closeEditor}
+                  disabled={submitting}
+                  className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submit}
+                  disabled={submitting}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {submitting ? 'Saving...' : editing.mode === 'edit' ? 'Save' : 'Create'}
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {sortedApps.length === 0 ? (
         <div className="rounded-md border border-dashed border-border p-12 text-center text-sm text-muted-foreground">
-          No apps yet. Click <span className="text-foreground">New app</span> to create one.
+          <button
+            onClick={openCreate}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus size={14} /> New app
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -685,160 +885,6 @@ export default function Apps() {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-card p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-medium">
-                {editing.mode === 'edit' ? `Edit "${editing.name}"` : 'New app'}
-              </h2>
-              <button onClick={() => setEditing(null)} className="opacity-60 hover:opacity-100">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="space-y-1 col-span-1">
-                <span className="text-xs text-muted-foreground">Name</span>
-                <input
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  disabled={editing.mode === 'edit'}
-                  placeholder="my-api"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono disabled:opacity-60"
-                />
-              </label>
-              <label className="space-y-1 col-span-1">
-                <span className="text-xs text-muted-foreground">Runtime</span>
-                <select
-                  value={form.runtime}
-                  onChange={e => setForm(f => ({ ...f, runtime: e.target.value as AppRuntime }))}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-                >
-                  {Object.entries(runtimeLabel).map(([k, v]) => (
-                    <option key={k} value={k}>{v}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1 col-span-2">
-                <span className="text-xs text-muted-foreground">Description (optional)</span>
-                <input
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="What does this app do?"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-                />
-              </label>
-
-              {!isDocker && (
-                <label className="space-y-1 col-span-2">
-                  <span className="text-xs text-muted-foreground">
-                    Start command (leave blank to auto-detect from workdir)
-                  </span>
-                  <input
-                    value={form.command}
-                    onChange={e => setForm(f => ({ ...f, command: e.target.value }))}
-                    placeholder="node index.js"
-                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                  />
-                </label>
-              )}
-
-              <label className="space-y-1 col-span-1">
-                <span className="text-xs text-muted-foreground">
-                  Work directory (defaults to /var/lib/uwas/apps/&lt;name&gt;/)
-                </span>
-                <input
-                  value={form.work_dir}
-                  onChange={e => setForm(f => ({ ...f, work_dir: e.target.value }))}
-                  placeholder=""
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                />
-              </label>
-              <label className="space-y-1 col-span-1">
-                <span className="text-xs text-muted-foreground">Port (0 = auto-assign)</span>
-                <input
-                  value={form.port}
-                  onChange={e => setForm(f => ({ ...f, port: e.target.value }))}
-                  placeholder="0"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                />
-              </label>
-
-              {isDocker && (
-                <>
-                  <label className="space-y-1 col-span-1">
-                    <span className="text-xs text-muted-foreground">Docker image</span>
-                    <input
-                      value={form.docker_image}
-                      onChange={e => setForm(f => ({ ...f, docker_image: e.target.value }))}
-                      placeholder="nginx:latest"
-                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                    />
-                  </label>
-                  <label className="space-y-1 col-span-1">
-                    <span className="text-xs text-muted-foreground">Container port</span>
-                    <input
-                      value={form.docker_container_port}
-                      onChange={e => setForm(f => ({ ...f, docker_container_port: e.target.value }))}
-                      placeholder="80"
-                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                    />
-                  </label>
-                  <label className="space-y-1 col-span-1">
-                    <span className="text-xs text-muted-foreground">Build context (optional)</span>
-                    <input
-                      value={form.docker_build_context}
-                      onChange={e => setForm(f => ({ ...f, docker_build_context: e.target.value }))}
-                      placeholder="."
-                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                    />
-                  </label>
-                  <label className="space-y-1 col-span-1">
-                    <span className="text-xs text-muted-foreground">Dockerfile path (optional)</span>
-                    <input
-                      value={form.docker_build_dockerfile}
-                      onChange={e => setForm(f => ({ ...f, docker_build_dockerfile: e.target.value }))}
-                      placeholder="Dockerfile"
-                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                    />
-                  </label>
-                </>
-              )}
-
-              <label className="space-y-1 col-span-2">
-                <span className="text-xs text-muted-foreground">Environment (one KEY=value per line)</span>
-                <textarea
-                  value={form.envText}
-                  onChange={e => setForm(f => ({ ...f, envText: e.target.value }))}
-                  placeholder="NODE_ENV=production&#10;API_URL=https://api.example.com"
-                  rows={6}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono"
-                />
-              </label>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                onClick={() => setEditing(null)}
-                disabled={submitting}
-                className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submit}
-                disabled={submitting}
-                className="text-sm rounded-md bg-primary text-primary-foreground px-3 py-1.5 hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-1.5"
-              >
-                {submitting ? 'Saving…' : editing.mode === 'edit' ? 'Save' : 'Create'}
-                <ArrowRight size={14} />
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

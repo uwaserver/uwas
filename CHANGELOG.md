@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-05-17
+
+### Fixed
+
+- Fixed Node.js/npm app restart leaving child processes alive on Unix. Native
+  apps now run in their own process group and Stop/Restart terminates the
+  whole process tree, preventing orphaned children from holding ports and
+  causing `EADDRINUSE`.
+- Reworked the Applications create/edit flow from an overlay modal into an
+  inline app builder with runtime buttons and cleaner Node.js defaults.
+- Start/restart action responses in the dashboard now surface listening
+  warnings instead of reporting a plain success when the process is alive but
+  not bound to its assigned port.
+
 ## [0.6.4] - 2026-05-17
 
 ### Fixed
