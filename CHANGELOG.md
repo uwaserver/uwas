@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-05-17
+
+### Fixed
+
+- Unified the Services stop/restart and Packages remove confirmations with the
+  dashboard-wide modal system, removing the remaining legacy per-page confirm
+  dialog implementations.
+- Rebuilt the embedded dashboard after verifying there are no native
+  `alert`, `confirm`, or `prompt` browser dialogs left in dashboard sources or
+  built assets.
+
 ## [0.6.3] - 2026-05-17
 
 ### Fixed
