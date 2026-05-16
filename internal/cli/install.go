@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Hooks for testing install.go functions.
@@ -20,6 +23,19 @@ var (
 	installOsSymlink    = os.Symlink
 	installOsStat       = os.Stat
 	installOsMkdirAll   = os.MkdirAll
+	// installStdin is the source for the interactive [Y/n] prompt; replaceable in tests.
+	installStdin = func() *os.File { return os.Stdin }
+	// installIsTTY reports whether the install prompt should be shown. Wrapped
+	// in a var so tests can force non-interactive behavior regardless of how
+	// the test runner attaches stdin (Windows cmd terminals report stdin as a
+	// character device even when go test pipes /dev/null in).
+	installIsTTY = func() bool {
+		fi, err := installStdin().Stat()
+		if err != nil {
+			return false
+		}
+		return fi.Mode()&os.ModeCharDevice != 0
+	}
 )
 
 // InstallCmd installs UWAS as a system service.
@@ -40,7 +56,32 @@ func (c *DoctorCmd) Run(args []string) error {
 	return DoctorCommand(args)
 }
 
+// installUWAS is the system-service installer.
+//
+// Layout it produces:
+//
+//	/usr/local/bin/uwas             — binary (copy of the running executable)
+//	/usr/bin/uwas                   — convenience symlink → /usr/local/bin/uwas
+//	/etc/uwas/uwas.yaml             — seeded if missing; never overwritten
+//	/etc/uwas/.env                  — UWAS_ADMIN_KEY for CLI; never overwritten
+//	/etc/uwas/domains.d/            — empty per-domain include dir
+//	/etc/systemd/system/uwas.service
+//
+// Flags:
+//
+//	--no-start    install + enable, but don't start the service
+//	--no-config   skip /etc/uwas/uwas.yaml seeding (operators with custom configs)
+//	--yes -y      non-interactive — assume "yes" on every prompt
 func installUWAS(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	noStart := fs.Bool("no-start", false, "install but do not start the service")
+	noConfig := fs.Bool("no-config", false, "do not seed /etc/uwas/uwas.yaml")
+	yes := fs.Bool("yes", false, "non-interactive — assume yes on every prompt")
+	fs.BoolVar(yes, "y", false, "alias for --yes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	if installRuntimeGOOS != "linux" {
 		return fmt.Errorf("install command is only supported on Linux")
 	}
@@ -74,7 +115,7 @@ func installUWAS(args []string) error {
 		fmt.Printf("  ✓ Binary already at %s\n", binPath)
 	}
 
-	// 2. Create config directory
+	// 2. Create config + per-domain include directories.
 	if err := installOsMkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("create %s: %w", configDir, err)
 	}
@@ -84,9 +125,46 @@ func installUWAS(args []string) error {
 	}
 	fmt.Printf("  ✓ Config directory: %s\n", configDir)
 
-	// 3. Create systemd service
+	// 2.5. Seed /etc/uwas/uwas.yaml + .env if missing (skipped with --no-config).
+	cfgPath := filepath.Join(configDir, "uwas.yaml")
+	envPath := filepath.Join(configDir, ".env")
+	if !*noConfig {
+		if _, statErr := installOsStat(cfgPath); os.IsNotExist(statErr) {
+			// System install defaults: bind admin to loopback only, /var/www web root,
+			// /var/lib/uwas for cert/cache/backup storage. Operators who want public
+			// admin access can flip global.admin.listen by hand or via dashboard.
+			apiKey := generateAPIKey()
+			pinCode := generatePinCode()
+			content := generateDefaultConfig(
+				"80", "9443", "127.0.0.1",
+				apiKey, pinCode,
+				"/var/lib/uwas",
+				"/var/www",
+				"",
+			)
+			if err := installOsWriteFile(cfgPath, []byte(content), 0600); err != nil {
+				return fmt.Errorf("write %s: %w", cfgPath, err)
+			}
+			envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, generateAPIKey())
+			_ = installOsWriteFile(envPath, []byte(envContent), 0600)
+			fmt.Printf("  ✓ Baseline config: %s\n", cfgPath)
+		} else {
+			fmt.Printf("  ✓ Config already exists: %s (untouched)\n", cfgPath)
+		}
+	}
+
+	// 3. Create runtime-storage dirs the systemd service expects.
+	for _, d := range []string{"/var/lib/uwas", "/var/cache/uwas", "/var/log/uwas", "/var/www"} {
+		if err := installOsMkdirAll(d, 0755); err != nil {
+			return fmt.Errorf("create %s: %w", d, err)
+		}
+	}
+
+	// 4. Create systemd service. Reads /etc/uwas/uwas.yaml so the seeded baseline
+	// above is what the service serves on first boot.
 	service := `[Unit]
 Description=UWAS — Unified Web Application Server
+Documentation=https://github.com/uwaserver/uwas
 After=network.target php8.3-fpm.service mariadb.service
 Wants=php8.3-fpm.service
 
@@ -109,7 +187,7 @@ WantedBy=multi-user.target
 	}
 	fmt.Printf("  ✓ Systemd service: %s\n", servicePath)
 
-	// 4. Reload systemd and enable
+	// 5. Reload systemd, enable on-boot.
 	if err := installExecCommand("systemctl", "daemon-reload").Run(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
@@ -118,7 +196,7 @@ WantedBy=multi-user.target
 	}
 	fmt.Println("  ✓ Service enabled (starts on boot)")
 
-	// 5. Create symlink for convenience
+	// 6. Convenience symlink at /usr/bin/uwas.
 	if _, err := installOsStat("/usr/bin/uwas"); err == nil {
 		// Already exists.
 	} else if os.IsNotExist(err) {
@@ -129,26 +207,137 @@ WantedBy=multi-user.target
 		return fmt.Errorf("stat /usr/bin/uwas: %w", err)
 	}
 
+	// 7. Start now? Default yes; interactive prompt only when stdin is a TTY
+	// AND --yes wasn't passed. Non-interactive runs (curl|sh, CI) auto-start.
+	doStart := !*noStart
+	if doStart && !*yes && installIsTTY() {
+		fmt.Println()
+		fmt.Print("Start UWAS now? [Y/n] ")
+		reader := bufio.NewReader(installStdin())
+		line, _ := reader.ReadString('\n')
+		resp := strings.ToLower(strings.TrimSpace(line))
+		if resp != "" && resp != "y" && resp != "yes" {
+			doStart = false
+		}
+	}
+
+	if doStart {
+		if err := installExecCommand("systemctl", "start", "uwas").Run(); err != nil {
+			fmt.Printf("  ⚠ systemctl start uwas failed: %v\n", err)
+			fmt.Println("    Inspect logs: journalctl -u uwas -e")
+		} else {
+			fmt.Println("  ✓ Service started")
+		}
+	}
+
+	// 8. Final summary — pull the live api_key / pin_code / admin listen from the
+	// actual config so this output is correct whether we just seeded a fresh
+	// /etc/uwas/uwas.yaml or left an operator's existing one untouched.
 	fmt.Println()
-	fmt.Println("Installation complete! Next steps:")
+	fmt.Println("Installation complete.")
 	fmt.Println()
-	fmt.Println("  # First-time setup (creates config):")
-	fmt.Println("  uwas serve")
+	fmt.Println("━━━ UWAS is ready ━━━")
 	fmt.Println()
-	fmt.Println("  # Or start as service:")
-	fmt.Println("  sudo systemctl start uwas")
+	creds := extractCredsFromConfig(cfgPath)
+	dashHost := creds.adminHost
+	if dashHost == "0.0.0.0" || dashHost == "" {
+		dashHost = "127.0.0.1"
+	}
+	dashPort := creds.adminPort
+	if dashPort == "" {
+		dashPort = "9443"
+	}
+	fmt.Printf("  Config:    %s\n", cfgPath)
+	fmt.Printf("             sudo nano %s   # edit\n", cfgPath)
+	fmt.Printf("             sudo systemctl reload uwas    # apply changes (no downtime)\n")
 	fmt.Println()
-	fmt.Println("  # Check status:")
-	fmt.Println("  sudo systemctl status uwas")
+	fmt.Printf("  Dashboard: http://%s:%s/_uwas/dashboard/\n", dashHost, dashPort)
+	if creds.apiKey != "" {
+		fmt.Printf("  API Key:   %s\n", creds.apiKey)
+	}
+	if creds.pinCode != "" {
+		fmt.Printf("  Pin Code:  %s\n", creds.pinCode)
+	}
 	fmt.Println()
-	fmt.Println("  # View dashboard:")
-	fmt.Println("  http://YOUR_IP:9443/_uwas/dashboard/")
+	fmt.Println("  Service:")
+	if !doStart {
+		fmt.Println("    sudo systemctl start uwas      # start now (autostarts on boot)")
+	}
+	fmt.Println("    sudo systemctl status uwas")
+	fmt.Println("    sudo journalctl -u uwas -f     # tail logs")
 	fmt.Println()
-	fmt.Println("  # Diagnose issues:")
-	fmt.Println("  uwas doctor")
+	fmt.Println("  Diagnose:  uwas doctor")
+	fmt.Println()
 
 	return nil
 }
+
+// configCreds is the small slice of /etc/uwas/uwas.yaml that the installer
+// surfaces back to the operator. Empty fields are treated as "not present
+// in the config" — the summary suppresses the line rather than printing
+// blanks.
+type configCreds struct {
+	apiKey    string
+	pinCode   string
+	adminHost string // listen host (e.g. 127.0.0.1)
+	adminPort string // listen port (e.g. 9443)
+}
+
+// extractCredsFromConfig does a minimal line-scan of /etc/uwas/uwas.yaml to
+// surface the dashboard URL + api_key + pin_code for the post-install
+// summary. Deliberately avoids pulling in the full config package so that
+// installs against a future config shape don't break — fields not found
+// stay empty and the summary degrades gracefully.
+func extractCredsFromConfig(path string) configCreds {
+	var c configCreds
+	data, err := installOsReadFile(path)
+	if err != nil {
+		return c
+	}
+	inAdmin := false
+	scan := bufio.NewScanner(strings.NewReader(string(data)))
+	for scan.Scan() {
+		raw := scan.Text()
+		line := strings.TrimRight(raw, " \t\r")
+		trimmed := strings.TrimLeft(line, " \t")
+		indent := len(line) - len(trimmed)
+		// Top-level "admin:" inside global:
+		if indent == 2 && trimmed == "admin:" {
+			inAdmin = true
+			continue
+		}
+		// Leaving the admin: block (a new top-level or sibling key at indent ≤ 2).
+		if inAdmin && indent <= 2 && trimmed != "" && !strings.HasPrefix(trimmed, "#") && trimmed != "admin:" {
+			inAdmin = false
+		}
+		if !inAdmin {
+			continue
+		}
+		// Parse key: value (strip optional surrounding quotes from value).
+		colon := strings.Index(trimmed, ":")
+		if colon == -1 {
+			continue
+		}
+		key := strings.TrimSpace(trimmed[:colon])
+		val := strings.TrimSpace(trimmed[colon+1:])
+		val = strings.TrimPrefix(strings.TrimSuffix(val, `"`), `"`)
+		val = strings.TrimPrefix(strings.TrimSuffix(val, `'`), `'`)
+		switch key {
+		case "api_key":
+			c.apiKey = val
+		case "pin_code":
+			c.pinCode = val
+		case "listen":
+			// "host:port" or ":port"
+			if idx := strings.LastIndex(val, ":"); idx != -1 {
+				c.adminHost = val[:idx]
+				c.adminPort = val[idx+1:]
+			}
+		}
+	}
+	return c
+}
+
 
 // UninstallCmd removes UWAS service and binary.
 type UninstallCmd struct{}

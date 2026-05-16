@@ -861,6 +861,7 @@ func TestInstallCmd_Success(t *testing.T) {
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
 	origMkdirAll := installOsMkdirAll
+	origIsTTY := installIsTTY
 
 	installRuntimeGOOS = "linux"
 	installOsGetuid = func() int { return 0 }
@@ -873,6 +874,7 @@ func TestInstallCmd_Success(t *testing.T) {
 		return exec.Command("echo", "mocked")
 	}
 	installOsMkdirAll = func(path string, perm os.FileMode) error { return nil }
+	installIsTTY = func() bool { return false } // never prompt in tests
 	defer func() {
 		installRuntimeGOOS = origGOOS
 		installOsGetuid = origGetuid
@@ -883,6 +885,7 @@ func TestInstallCmd_Success(t *testing.T) {
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
 		installOsMkdirAll = origMkdirAll
+		installIsTTY = origIsTTY
 	}()
 
 	c := &InstallCmd{}
@@ -4423,16 +4426,18 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 	origStat := installOsStat
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
+	origIsTTY := installIsTTY
 
-	callCount := 0
 	installRuntimeGOOS = "linux"
 	installOsGetuid = func() int { return 0 }
 	installOsExecutable = func() (string, error) { return fakeBin, nil }
 	installOsReadFile = func(name string) ([]byte, error) { return []byte("binary"), nil }
+	// Write order: (1) binary copy → /usr/local/bin/uwas, (2) baseline
+	// /etc/uwas/uwas.yaml, (3) /etc/uwas/.env, (4) systemd service file.
+	// Fail the service write specifically by matching the target path so the
+	// test is robust against future reordering.
 	installOsWriteFile = func(name string, data []byte, perm os.FileMode) error {
-		callCount++
-		if callCount == 2 {
-			// Second write is the service file — fail it.
+		if name == "/etc/systemd/system/uwas.service" {
 			return fmt.Errorf("permission denied")
 		}
 		return nil
@@ -4442,6 +4447,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("echo", "ok")
 	}
+	installIsTTY = func() bool { return false }
 	defer func() {
 		installRuntimeGOOS = origGOOS
 		installOsGetuid = origGetuid
@@ -4451,6 +4457,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 		installOsStat = origStat
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
+		installIsTTY = origIsTTY
 	}()
 
 	c := &InstallCmd{}

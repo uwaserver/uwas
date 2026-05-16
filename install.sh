@@ -93,18 +93,60 @@ echo ""
 ok "UWAS installed to ${INSTALL_DIR}/${BINARY}"
 echo ""
 
-# Post-install guidance
-printf "${BOLD}Quick start:${NC}\n"
-echo "  uwas                    # Auto-setup + start server"
-echo "  uwas serve -c uwas.yaml # Start with specific config"
-echo "  uwas doctor             # System diagnostics"
-echo ""
-printf "${BOLD}Systemd service:${NC}\n"
-echo "  sudo uwas install       # Install systemd service"
-echo "  sudo systemctl start uwas"
-echo ""
-printf "${BOLD}Dashboard:${NC}\n"
-echo "  http://your-ip:9443/_uwas/dashboard/"
-echo ""
+# Post-install: on Linux, seed /etc/uwas/uwas.yaml + register and start the
+# systemd service automatically. macOS skips this entire block (no systemd).
+#
+# `uwas install` itself runs the full setup:
+#   - seeds /etc/uwas/uwas.yaml + /etc/uwas/.env with a generated API key + pin
+#   - writes /etc/systemd/system/uwas.service
+#   - systemctl daemon-reload + enable
+#   - starts the service (or asks on a TTY; --yes for non-interactive auto)
+#   - prints the dashboard URL + credentials so the operator can log in
+#
+# Skip with UWAS_NO_SERVICE=1 to install only the binary.
+if [ "$OS" = "linux" ] && [ -z "$UWAS_NO_SERVICE" ]; then
+    INSTALL_FLAGS="--yes"
+    if [ -t 0 ]; then
+        # Interactive shell — let uwas install ask before starting.
+        INSTALL_FLAGS=""
+    fi
+
+    if [ "$(id -u)" = "0" ]; then
+        info "Running 'uwas install' to register the systemd service..."
+        echo ""
+        $BINARY install $INSTALL_FLAGS
+    elif command -v sudo >/dev/null 2>&1; then
+        info "Running 'sudo uwas install' to register the systemd service..."
+        echo "  (you'll be prompted for your sudo password)"
+        echo ""
+        sudo $BINARY install $INSTALL_FLAGS
+    else
+        echo ""
+        printf "${BOLD}Finish setup manually:${NC}\n"
+        echo "  sudo uwas install          # creates /etc/uwas/uwas.yaml, registers + starts service"
+        echo ""
+        printf "${BOLD}Dashboard:${NC}\n"
+        echo "  http://127.0.0.1:9443/_uwas/dashboard/  (credentials printed by 'uwas install')"
+        echo ""
+        echo "Docs: https://github.com/$REPO"
+        exit 0
+    fi
+else
+    # macOS or UWAS_NO_SERVICE=1 — print manual guidance only.
+    printf "${BOLD}Quick start:${NC}\n"
+    echo "  uwas                    # Auto-setup + start server (config in ~/.uwas/)"
+    echo "  uwas serve -c uwas.yaml # Start with specific config"
+    echo "  uwas doctor             # System diagnostics"
+    echo ""
+    if [ "$OS" = "linux" ]; then
+        printf "${BOLD}Systemd service:${NC}\n"
+        echo "  sudo uwas install       # /etc/uwas/uwas.yaml + systemd service + autostart"
+        echo ""
+    fi
+    printf "${BOLD}Dashboard:${NC}\n"
+    echo "  http://127.0.0.1:9443/_uwas/dashboard/"
+    echo ""
+fi
+
 echo "Docs: https://github.com/$REPO"
 echo ""
