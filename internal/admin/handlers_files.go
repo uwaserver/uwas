@@ -8,31 +8,52 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/uwaserver/uwas/internal/apps"
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
+	"github.com/uwaserver/uwas/internal/domainroot"
 	"github.com/uwaserver/uwas/internal/filemanager"
 )
 
 // ============ File Manager ============
 
 func (s *Server) domainRoot(domain string) string {
+	root, _ := s.domainRootForFiles(domain)
+	return root
+}
+
+func (s *Server) domainRootForFiles(domain string) (string, error) {
 	s.configMu.RLock()
-	defer s.configMu.RUnlock()
+	var found *config.Domain
 	for _, d := range s.config.Domains {
 		if d.Host == domain {
-			return d.Root
+			dd := d
+			found = &dd
+			break
 		}
 	}
-	if s.config.Global.WebRoot != "" {
-		return filepath.Join(s.config.Global.WebRoot, domain, "public_html")
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	if found != nil {
+		var store = (*apps.Store)(nil)
+		if s.appsMgr != nil {
+			store = s.appsMgr.Store()
+		}
+		return domainroot.ForDomain(*found, store)
 	}
-	return ""
+	return domainroot.Fallback(webRoot, domain), nil
 }
 
 func (s *Server) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, domain, action string) (string, bool) {
 	if !s.requireDomainAccess(w, r, domain, action) {
 		return "", false
 	}
-	root := s.domainRoot(domain)
+	root, err := s.domainRootForFiles(domain)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return "", false
+	}
 	if root == "" {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return "", false
