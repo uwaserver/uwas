@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-16
+
+Three production-affecting silent-failure bugs fixed, plus installable
+runtimes and a runnable demo app for `type=app` domains.
+
+### Bug fixes
+
+- **TLS Force Renew was a no-op.** `obtainCert` short-circuited on the
+  in-memory cert cache before reaching the ACME client, so the
+  Certificates page's "Force Renew" button silently returned the
+  existing cert. Added a `force` flag that bypasses the cache lookup;
+  `RenewCert` passes `true`, on-demand TLS and pending-issuance paths
+  pass `false`. `TestRenewCertBypassesCache` locks the regression.
+- **Reverse proxy returned 502 against HTTPS upstreams.** Go silently
+  disables HTTP/2 ALPN when `http.Transport.DialContext` is set, so
+  proxying to modern HTTPS origins (e.g. `https://dnsapi.oxog.net`)
+  failed with no useful diagnostic. The proxy transport now sets
+  `ForceAttemptHTTP2: true`. Added `proxy.insecure_skip_verify` config
+  for self-signed upstreams (opt-in). Added `classifyUpstreamErr` which
+  expands the 502 body and log line into a specific cause: TLS / DNS /
+  refused / reset / timeout / unreachable / HTTP/2 / EOF.
+- **App proxy 502 was silent when the process wasn't running.**
+  `appmanager.ListenAddr` returned the configured address even when the
+  child process had never started or had exited, so the proxy
+  connected to a dead port and surfaced "upstream connection failed."
+  `ListenAddr` now returns `""` unless `cmd.Process` is alive. Added
+  `AppState` (NotRegistered/Stopped/Running) and `Manager.State`;
+  `handleAppProxy` dispatches with explicit messages — "no app deployed
+  for this domain yet" vs "app is registered but not running" —
+  instead of a generic 502.
+
+### Features
+
+- **End-to-end installer.** Both `install.sh` and `uwas install` now
+  force `/etc/uwas/` as the config directory, seed `uwas.yaml` + `.env`
+  when missing, create `/var/lib/uwas`, `/var/cache/uwas`, `/var/log/uwas`,
+  `/var/www`, register the systemd unit, and `systemctl start` it
+  immediately. The final summary block prints the dashboard URL, API
+  key, pin code, and config path parsed from the seeded yaml so the
+  operator doesn't have to chase them. Flags: `--no-start`,
+  `--no-config`, `--yes`/`-y` for non-interactive runs. The shell
+  installer auto-invokes `uwas install` (with `sudo` if non-root, and
+  `--yes` if stdin isn't a TTY). `UWAS_NO_SERVICE=1` skips service
+  install.
+- **Installable app runtimes on the Packages page.** New "Runtime"
+  category exposes Node.js + npm (NodeSource LTS, not the ancient
+  distro version), Python 3 + pip + venv, Ruby (`ruby-full`), and the
+  Go toolchain (`golang-go`). Each is removable with an explicit
+  "running apps of this type will stop working" warning.
+- **`type=app` domains scaffold a runnable demo.** Domain create no
+  longer drops a generic index.html for application domains. Instead,
+  `scaffoldAppDemo` writes a stdlib-only working web server matched to
+  the chosen runtime (`index.js`, `app.py`, `app.rb`, or `main.go`),
+  plus the matching manifest (`package.json` / `requirements.txt` /
+  `go.mod`), and seeds `App.Command` if the operator left it blank.
+  Demos are stdlib-only on purpose — zero install step before the app
+  comes up. Existing files in the web root are never clobbered.
+
+### Verification
+
+- `go build ./...` clean.
+- `go vet ./...` clean.
+- `go test ./internal/admin/... -short` — 14.6s, all pass.
+- `go test ./internal/appmanager/...` — `ListenAddr` regression covered.
+- `go test ./internal/handler/proxy/...` — `classifyUpstreamErr` 13-case
+  table covers TLS / DNS / refused / reset / timeout / unreachable /
+  HTTP/2 / EOF / unknown.
+- `go test ./internal/tls/... -run TestRenew` — cache-bypass regression.
+- `cd web/dashboard && npx tsc -b` clean (Packages category order).
+
 ## [0.5.0] - 2026-05-16
 
 A focused refactor + performance + observability sweep on top of
