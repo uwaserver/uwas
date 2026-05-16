@@ -15,6 +15,11 @@ type ProxyConfig struct {
 	Mirror                MirrorConfig      `yaml:"mirror,omitempty" json:"mirror,omitempty"`
 	BufferResponse        bool              `yaml:"buffer_response,omitempty" json:"buffer_response,omitempty"`               // buffer entire upstream response
 	AllowPrivateUpstreams bool              `yaml:"allow_private_upstreams,omitempty" json:"allow_private_upstreams,omitempty"` // allow private IP upstreams (default false for SSRF protection)
+	// InsecureSkipVerify disables TLS certificate verification for HTTPS
+	// upstreams. Opt-in only — needed for self-signed or hostname-mismatched
+	// origin certificates (test environments, internal services with private
+	// CAs). Default false keeps the secure-by-default posture.
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 }
 
 // CanaryConfig is a side-traffic canary subset of upstreams.

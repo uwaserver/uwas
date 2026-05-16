@@ -2395,12 +2395,30 @@ func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]by
 // handleAppProxy proxies the request to the app process listening on its assigned port.
 func (s *Server) handleAppProxy(ctx *router.RequestContext, domain *config.Domain) {
 	if s.appMgr == nil {
-		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+		s.logger.Warn("app proxy: app manager disabled", "domain", domain.Host)
+		http.Error(ctx.Response, "502 Bad Gateway — app manager not enabled on this server", http.StatusBadGateway)
+		return
+	}
+	// State drives the operator-facing message: "not registered" vs "stopped"
+	// vs healthy. Without this distinction every misconfigured app surface
+	// looked identical to a generic upstream 502 and was near-impossible to
+	// debug from the browser side.
+	switch s.appMgr.State(domain.Host) {
+	case appmanager.AppStateNotRegistered:
+		s.logger.Warn("app proxy: domain not registered with app manager", "domain", domain.Host)
+		http.Error(ctx.Response, "502 Bad Gateway — no app deployed for this domain yet (use Apps page to deploy)", http.StatusBadGateway)
+		return
+	case appmanager.AppStateStopped:
+		s.logger.Warn("app proxy: app process not running", "domain", domain.Host)
+		http.Error(ctx.Response, "502 Bad Gateway — app is registered but not running (check Apps page / logs)", http.StatusBadGateway)
 		return
 	}
 	addr := s.appMgr.ListenAddr(domain.Host)
 	if addr == "" {
-		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+		// Race: app was running when State() returned Running but stopped
+		// before ListenAddr(). Fall through to a clear message rather than
+		// the generic 502.
+		http.Error(ctx.Response, "502 Bad Gateway — app process exited between health check and proxy", http.StatusBadGateway)
 		return
 	}
 	// Build a temporary proxy config pointing to the app's port

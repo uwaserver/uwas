@@ -111,12 +111,22 @@ func TestStartStop(t *testing.T) {
 func TestListenAddr(t *testing.T) {
 	m := New(nil)
 	m.Register("addr.com", config.AppConfig{Command: "echo", Runtime: "node", Port: 5555}, "/tmp")
-	addr := m.ListenAddr("addr.com")
-	if addr != "127.0.0.1:5555" {
-		t.Errorf("addr = %q", addr)
+	// Registered but not running → empty so the proxy returns a useful
+	// "app not running" diagnostic instead of generic 502 on a refused
+	// connection to localhost:5555.
+	if got := m.ListenAddr("addr.com"); got != "" {
+		t.Errorf("registered+stopped: addr = %q, want empty", got)
+	}
+	// State() distinguishes the cases so handleAppProxy can pick its
+	// message.
+	if s := m.State("addr.com"); s != AppStateStopped {
+		t.Errorf("registered+stopped: State = %v, want AppStateStopped", s)
 	}
 	if m.ListenAddr("nonexistent.com") != "" {
 		t.Error("should return empty for unknown domain")
+	}
+	if s := m.State("nonexistent.com"); s != AppStateNotRegistered {
+		t.Errorf("unknown: State = %v, want AppStateNotRegistered", s)
 	}
 }
 
@@ -470,9 +480,11 @@ func TestStatsRunning(t *testing.T) {
 func TestListenAddrWithPort(t *testing.T) {
 	m := New(nil)
 	m.Register("port.com", config.AppConfig{Command: "echo", Runtime: "node", Port: 9000}, "/tmp")
-	addr := m.ListenAddr("port.com")
-	if addr != "127.0.0.1:9000" {
-		t.Errorf("addr = %q, want '127.0.0.1:9000'", addr)
+	// Registered but not running — listen addr stays empty until Start()
+	// successfully spawns the process. The State() flow is the contract
+	// callers should depend on.
+	if got := m.ListenAddr("port.com"); got != "" {
+		t.Errorf("addr = %q, want empty (registered but not running)", got)
 	}
 }
 

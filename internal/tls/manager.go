@@ -276,7 +276,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 		obtainCtx, cancel := context.WithTimeout(handshakeCtx, onDemandObtainTimeout)
 		defer cancel()
 
-		cert, err := m.obtainCert(obtainCtx, name)
+		cert, err := m.obtainCert(obtainCtx, name, false)
 		if err != nil {
 			m.logger.Error("on-demand cert failed", "domain", name, "error", err)
 			return nil, err
@@ -375,7 +375,7 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 		var failed []string
 		for _, host := range pending {
 			m.logger.Info("obtaining certificate", "domain", host)
-			_, err := m.obtainCert(ctx, host)
+			_, err := m.obtainCert(ctx, host, false)
 			if err != nil {
 				m.logger.Error("failed to obtain cert", "domain", host, "error", err)
 				failed = append(failed, host)
@@ -400,13 +400,18 @@ func (m *Manager) SetOnCertExpiry(fn func(host string, daysLeft int)) {
 	m.onCertExpiry = fn
 }
 
-// RenewCert forces renewal of a certificate for the given host.
+// RenewCert forces renewal of a certificate for the given host. Unlike
+// obtainCert called from the on-demand TLS path or the pending-issuance
+// retry loop, this MUST hit ACME even when a (still-valid) cert is
+// already cached — operators click "Force Renew" precisely because they
+// want a fresh certificate, and silently returning the cached one would
+// look indistinguishable from a no-op button.
 func (m *Manager) RenewCert(ctx context.Context, host string) error {
-	if m.acme == nil {
+	if m.acme == nil && m.acmeObtainFunc == nil {
 		return fmt.Errorf("ACME client not configured (set acme.email in config)")
 	}
 	host = strings.ToLower(host)
-	_, err := m.obtainCert(ctx, host)
+	_, err := m.obtainCert(ctx, host, true)
 	return err
 }
 
@@ -465,7 +470,12 @@ type CertStatusInfo struct {
 	DaysLeft int
 }
 
-func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate, error) {
+// obtainCert issues (or returns the cached) certificate for host. When
+// force is true the cache short-circuit is bypassed so an explicit
+// RenewCert always hits ACME — handshake-driven on-demand callers and
+// startup retry loops pass force=false to coalesce concurrent first-
+// issuance requests onto a single ACME call.
+func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls.Certificate, error) {
 	if m.acme == nil && m.acmeObtainFunc == nil {
 		return nil, fmt.Errorf("ACME client not configured")
 	}
@@ -477,9 +487,14 @@ func (m *Manager) obtainCert(ctx context.Context, host string) (*tls.Certificate
 	// Use singleflight so only one caller does the actual ACME issuance.
 	// Subsequent callers for the same host block until the first completes.
 	v, err, _ := gVal.(*singleflight.Group).Do("", func() (any, error) {
-		// Double-check: another caller may have just stored the cert.
-		if cert, ok := m.certs.Load(host); ok {
-			return cert.(*tls.Certificate), nil
+		// Double-check the cache only when force=false. Forced renewal
+		// (the "Force Renew" dashboard button) must skip this so a fresh
+		// cert is actually obtained from ACME — otherwise the call returns
+		// the still-cached cert and the operator sees no change.
+		if !force {
+			if cert, ok := m.certs.Load(host); ok {
+				return cert.(*tls.Certificate), nil
+			}
 		}
 
 		var cert *tls.Certificate

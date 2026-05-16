@@ -461,15 +461,58 @@ func (m *Manager) Stats(domain string) *AppStats {
 	return s
 }
 
-// ListenAddr returns the address the app for this domain listens on.
+// ListenAddr returns the address the app for this domain listens on. Empty
+// when the domain has no app registered OR the app is registered but its
+// process is not currently running. The "registered but stopped" case
+// previously returned the address anyway, which made the proxy attempt a
+// connection to localhost:PORT and surface a generic 502 (connection
+// refused) with no hint that the app itself was the problem — see
+// handleAppProxy for the operator-facing diagnostic that depends on this
+// distinction.
 func (m *Manager) ListenAddr(domain string) string {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	app, exists := m.apps[domain]
-	m.mu.RUnlock()
 	if !exists {
 		return ""
 	}
+	if app.cmd == nil || app.cmd.Process == nil {
+		return ""
+	}
 	return fmt.Sprintf("127.0.0.1:%d", app.port)
+}
+
+// AppState describes whether an app domain is wired up and running. Used
+// by handleAppProxy to render a meaningful error body instead of a generic
+// 502 when the upstream side of the proxy is misconfigured.
+type AppState int
+
+const (
+	// AppStateNotRegistered means the domain has no app entry — operator
+	// likely added a `type: app` domain but never called the deploy flow.
+	AppStateNotRegistered AppState = iota
+	// AppStateStopped means the app exists but its process is not running
+	// (crashed, manually stopped, or never started).
+	AppStateStopped
+	// AppStateRunning means the process is currently up and the address
+	// returned by ListenAddr is valid.
+	AppStateRunning
+)
+
+// State reports the lifecycle phase of the app for the given domain so a
+// caller can distinguish "not configured" from "configured but down" when
+// surfacing errors.
+func (m *Manager) State(domain string) AppState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	app, exists := m.apps[domain]
+	if !exists {
+		return AppStateNotRegistered
+	}
+	if app.cmd == nil || app.cmd.Process == nil {
+		return AppStateStopped
+	}
+	return AppStateRunning
 }
 
 // validateShellCommand rejects commands with dangerous shell metacharacters.
