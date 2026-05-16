@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-05-16
+
+The "why does my app keep ending up on port 3000?!" release. Four
+independent bugs all conspired to ignore whatever port the operator
+typed in the Add Domain form:
+
+### Bug fixes
+
+- **Dashboard form no longer defaults `Port` to `3000`.** The Add
+  Domain form had `appPort: '3000'` baked into the initial state, the
+  Node.js runtime preset, the Ruby runtime preset, the Custom runtime
+  preset, the post-submit `|| 3000` fallback, the routing-diagram
+  preview, and the placeholder text. Every one of those is now `''`
+  (with placeholder `auto`); the backend handles the empty case.
+- **Runtime preset buttons no longer rewrite the user's port/command.**
+  The previous click handler silently overwrote `appPort` if it equalled
+  one of `'3000' | '8000' | '8080'`, and overwrote `appCommand` if it
+  matched any of the canonical defaults. So if you typed `3010` then
+  clicked the Node.js runtime tile to confirm your selection visually,
+  the dashboard quietly reset you back. The handler now records the
+  picked runtime and leaves user input alone — the backend can
+  auto-detect command and auto-assign port without the form
+  second-guessing.
+- **Backend now writes the assigned port back to YAML.** When a domain
+  was created with port=0 (or got auto-assigned because of a collision),
+  the appmanager started the process on, say, 3001, but the YAML
+  config kept `port: 0`. On the next uwas restart, the auto-assign
+  re-rolled and could pick a different number, so the dashboard and the
+  running process disagreed indefinitely. `handleCreateDomain` and
+  `handleUpdateDomain` now read `appMgr.Get(host).Port` after Register
+  and persist it.
+- **Port allocation now skips ports that are already bound.** The
+  auto-assign counter was a naive increment that happily handed out a
+  port already in use by another process on the host — so the spawned
+  node child hit `EADDRINUSE` and the proxy 502'd. `allocateFreePort`
+  now walks forward, skips both managed-app collisions and
+  host-process collisions (best-effort bind test), and advances
+  `nextPort` past whatever it returns.
+- **Operator-pinned port that collides with another managed app gets
+  promoted to auto-assign.** If you ask for `port: 3001` but another
+  domain on the same manager is already using 3001, we log a warning
+  and pick the next free port instead of letting two managed apps
+  silently target the same socket.
+- **Domain update now re-registers the app when port or command
+  changes.** Previously the update handler only called Register when
+  the appmanager had no record for the host, so editing the port on an
+  existing app left the running process untouched. The update now
+  detects port/command drift, stops + unregisters, re-registers with
+  the new config, persists the actually-assigned port back to YAML,
+  and starts.
+
+### Verification
+
+- `go build ./...` clean.
+- `go vet ./...` clean.
+- `go test ./internal/appmanager/... ./internal/admin/...` clean.
+- `cd web/dashboard && npx tsc -b` clean.
+
 ## [0.5.2] - 2026-05-16
 
 PM2-style supervision fixes — surfaced by a production deploy where a

@@ -69,7 +69,7 @@ const emptyForm: DomainFormState = {
   redirectCode: '301',
   appRuntime: 'node',
   appCommand: '',
-  appPort: '3000',
+  appPort: '',
   appEnv: '',
   blockedPaths: '',
   wafEnabled: false,
@@ -155,8 +155,8 @@ const templates: Record<string, TemplateConfig> = {
       type: 'app',
       ssl: 'auto',
       appRuntime: 'node',
-      appCommand: 'npm start',
-      appPort: '3000',
+      appCommand: '',
+      appPort: '',
     },
   },
   python: {
@@ -168,8 +168,8 @@ const templates: Record<string, TemplateConfig> = {
       type: 'app',
       ssl: 'auto',
       appRuntime: 'python',
-      appCommand: 'gunicorn app:app -b 0.0.0.0:${PORT}',
-      appPort: '8000',
+      appCommand: '',
+      appPort: '',
     },
   },
   redirect: {
@@ -479,7 +479,7 @@ export default function Domains() {
         redirectCode: String(d.redirect?.status ?? 301),
         appRuntime: d.app?.runtime ?? 'node',
         appCommand: d.app?.command ?? '',
-        appPort: String(d.app?.port ?? 3000),
+        appPort: d.app?.port ? String(d.app.port) : '',
         appEnv: '',
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
@@ -551,10 +551,14 @@ export default function Domains() {
         const eq = line.indexOf('=');
         if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
       });
+      const trimmedPort = form.appPort.trim();
+      const parsedPort = trimmedPort ? parseInt(trimmedPort, 10) : 0;
       payload.app = {
         runtime: form.appRuntime || 'custom',
         command: form.appCommand || undefined,
-        port: parseInt(form.appPort, 10) || 3000,
+        // 0 = let backend auto-assign a free port (3001+). Never default to 3000
+        // on the client — that's how every app ended up colliding on the same port.
+        port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 0,
         auto_restart: true,
         env: Object.keys(env).length > 0 ? env : undefined,
       };
@@ -1017,7 +1021,7 @@ export default function Domains() {
                       <ArrowRight size={10} className="text-muted-foreground" />
                       <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-purple-400 font-medium">UWAS</span>
                       <ArrowRight size={10} className="text-muted-foreground" />
-                      <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-400 font-mono">127.0.0.1:{form.appPort || '3000'}</span>
+                      <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-400 font-mono">127.0.0.1:{form.appPort || 'auto'}</span>
                     </div>
 
                     {/* Runtime selector — visual cards. Color classes embedded
@@ -1027,23 +1031,23 @@ export default function Domains() {
                       <label className="text-xs font-medium text-muted-foreground mb-2 block">Runtime</label>
                       <div className="grid grid-cols-5 gap-2">
                         {[
-                          { value: 'node', label: 'Node.js', icon: 'N', cmd: 'npm start', port: '3000', selected: 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30', text: 'text-green-400' },
-                          { value: 'python', label: 'Python', icon: 'Py', cmd: 'gunicorn app:app -b 0.0.0.0:${PORT}', port: '8000', selected: 'border-yellow-500/50 bg-yellow-500/10 ring-1 ring-yellow-500/30', text: 'text-yellow-400' },
-                          { value: 'ruby', label: 'Ruby', icon: 'Rb', cmd: 'bundle exec puma -p ${PORT}', port: '3000', selected: 'border-red-500/50 bg-red-500/10 ring-1 ring-red-500/30', text: 'text-red-400' },
-                          { value: 'go', label: 'Go', icon: 'Go', cmd: './main', port: '8080', selected: 'border-cyan-500/50 bg-cyan-500/10 ring-1 ring-cyan-500/30', text: 'text-cyan-400' },
-                          { value: 'custom', label: 'Custom', icon: '?', cmd: '', port: '3000', selected: 'border-slate-500/50 bg-slate-500/10 ring-1 ring-slate-500/30', text: 'text-slate-400' },
+                          { value: 'node', label: 'Node.js', icon: 'N', selected: 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30', text: 'text-green-400' },
+                          { value: 'python', label: 'Python', icon: 'Py', selected: 'border-yellow-500/50 bg-yellow-500/10 ring-1 ring-yellow-500/30', text: 'text-yellow-400' },
+                          { value: 'ruby', label: 'Ruby', icon: 'Rb', selected: 'border-red-500/50 bg-red-500/10 ring-1 ring-red-500/30', text: 'text-red-400' },
+                          { value: 'go', label: 'Go', icon: 'Go', selected: 'border-cyan-500/50 bg-cyan-500/10 ring-1 ring-cyan-500/30', text: 'text-cyan-400' },
+                          { value: 'custom', label: 'Custom', icon: '?', selected: 'border-slate-500/50 bg-slate-500/10 ring-1 ring-slate-500/30', text: 'text-slate-400' },
                         ].map(rt => {
                           const isSelected = form.appRuntime === rt.value;
                           return (
                             <button key={rt.value} type="button"
                               onClick={() => {
+                                // Just record which runtime the user picked.
+                                // Don't touch command or port — those are user input. Letting the
+                                // runtime button silently rewrite either field is how 3010 → 3000
+                                // bugs happen. The backend auto-detects the command from
+                                // package.json/server.js/main.go etc. and auto-assigns the port
+                                // when empty; the dashboard doesn't need to second-guess.
                                 patchField('appRuntime', rt.value);
-                                if (!form.appCommand || form.appCommand === 'npm start' || form.appCommand === 'gunicorn app:app -b 0.0.0.0:${PORT}' || form.appCommand === 'bundle exec puma -p ${PORT}' || form.appCommand === './main') {
-                                  patchField('appCommand', rt.cmd);
-                                }
-                                if (form.appPort === '3000' || form.appPort === '8000' || form.appPort === '8080') {
-                                  patchField('appPort', rt.port);
-                                }
                               }}
                               className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
                                 isSelected ? rt.selected : 'border-border hover:border-foreground/20'
@@ -1071,7 +1075,8 @@ export default function Domains() {
                       </FormField>
                       <FormField label="Port" htmlFor="add-app-port">
                         <input id="add-app-port" type="number" value={form.appPort} onChange={e => patchField('appPort', e.target.value)}
-                          placeholder="3000" className={inputCls} />
+                          placeholder="auto" className={inputCls} />
+                        <p className="mt-1 text-[9px] text-muted-foreground">Leave empty for auto-assign (3001+)</p>
                       </FormField>
                     </div>
 
