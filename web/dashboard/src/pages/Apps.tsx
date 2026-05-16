@@ -15,26 +15,17 @@ import {
   stopApp,
   restartApp,
   fetchAppLogs,
-  migrateLegacyApps,
   deployApp,
   fetchAppStats,
   type App,
   type AppInstance,
   type AppRuntime,
-  type AppsMigrationReport,
   type AppDeployResult,
   type AppStats,
 } from '@/lib/api';
 
-// v0.6.0 apps dashboard at /apps. The pre-v0.6 domain-keyed page was
-// removed when the legacy app system was deleted.
-//
-// What this page does:
-//   • list every app in /etc/uwas/apps.d/
-//   • create a new app (native runtime OR docker)
-//   • start / stop / restart / delete
-//   • tail its log
-//   • offer a one-shot migration of any leftover legacy type=app domains
+// Apps dashboard: list apps, create runnable workdirs, manage lifecycle,
+// tail logs, deploy from git, and show lightweight runtime stats.
 
 const runtimeLabel: Record<AppRuntime, string> = {
   node: 'Node.js',
@@ -135,10 +126,6 @@ export default function Apps() {
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logsContent, setLogsContent] = useState('');
   const [logsKind, setLogsKind] = useState<'runtime' | 'build'>('runtime');
-
-  // Migration banner state.
-  const [migrationReport, setMigrationReport] = useState<AppsMigrationReport | null>(null);
-  const [migrationDryRun, setMigrationDryRun] = useState(true);
 
   // Deploy-from-git modal state. The webhook secret + branch_filter
   // live alongside the per-deploy fields because operators usually
@@ -316,32 +303,34 @@ export default function Apps() {
       } else {
         // Create attempts auto-start AND a port-readiness probe.
         const res = await createApp(body);
+        const createdName = res.app.name || body.name!;
+        const demoNote = res.scaffolded ? ' with demo files' : '';
         if (!res.started) {
           setStatus({
             ok: false,
-            message: `Created "${body.name}" but the start failed — check logs`,
+            message: `Created "${createdName}"${demoNote} but the start failed — check logs`,
           });
           setCreateOutcome({
-            name: body.name!,
+            name: createdName,
             started: false,
             error: res.start_error,
           });
         } else if (res.listening === false) {
           setStatus({
             ok: false,
-            message: `Created "${body.name}" — process started but is not listening on port ${res.app.port}`,
+            message: `Created "${createdName}"${demoNote} — process started but is not listening on port ${res.app.port}`,
           });
           setCreateOutcome({
-            name: body.name!,
+            name: createdName,
             started: true,
             error: res.listening_warning,
           });
         } else {
           setStatus({
             ok: true,
-            message: `Created "${body.name}" — started and listening on port ${res.app.port}`,
+            message: `Created "${createdName}"${demoNote} — started and listening on port ${res.app.port}`,
           });
-          setCreateOutcome({ name: body.name!, started: true });
+          setCreateOutcome({ name: createdName, started: true });
         }
         setEditing(null);
       }
@@ -485,23 +474,6 @@ export default function Apps() {
     }
   };
 
-  const runMigration = async (dryRun: boolean) => {
-    try {
-      const r = await migrateLegacyApps(dryRun);
-      setMigrationReport(r.report);
-      setMigrationDryRun(dryRun);
-      if (!dryRun) {
-        setStatus({
-          ok: true,
-          message: `Migration complete: ${r.report.migrated.length} migrated, ${r.report.skipped.length} skipped, ${r.report.conflicts.length} conflicts`,
-        });
-        await load();
-      }
-    } catch (e) {
-      setStatusErr(e);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center text-muted-foreground">
@@ -521,12 +493,6 @@ export default function Apps() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => runMigration(true)}
-            className="text-xs rounded-md border border-border px-3 py-1.5 hover:bg-muted transition-colors"
-          >
-            Find legacy apps
-          </button>
           <button
             onClick={openCreate}
             className="text-xs rounded-md bg-primary text-primary-foreground px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-primary/90 transition-colors"
@@ -558,56 +524,9 @@ export default function Apps() {
         </div>
       )}
 
-      {migrationReport && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-medium text-amber-300">
-              {migrationDryRun ? 'Migration preview' : 'Migration complete'}
-            </span>
-            <button onClick={() => setMigrationReport(null)} className="text-muted-foreground hover:text-foreground">
-              <X size={14} />
-            </button>
-          </div>
-          <div className="text-xs text-muted-foreground space-y-1">
-            {migrationReport.migrated.length > 0 && (
-              <div>
-                <span className="text-green-400">Migrate</span> {migrationReport.migrated.length}:&nbsp;
-                {migrationReport.migrated.map(m => m.domain).join(', ')}
-              </div>
-            )}
-            {migrationReport.conflicts.length > 0 && (
-              <div>
-                <span className="text-red-400">Conflict</span> {migrationReport.conflicts.length}:&nbsp;
-                {migrationReport.conflicts.map(m => `${m.domain} (${m.reason})`).join('; ')}
-              </div>
-            )}
-            {migrationReport.skipped.length > 0 && (
-              <div>
-                <span className="text-amber-400">Skip</span> {migrationReport.skipped.length}:&nbsp;
-                {migrationReport.skipped.map(m => `${m.domain} (${m.reason})`).join('; ')}
-              </div>
-            )}
-            {migrationReport.migrated.length === 0
-              && migrationReport.skipped.length === 0
-              && migrationReport.conflicts.length === 0 && (
-              <div>No legacy <code>type=app</code> domains found.</div>
-            )}
-          </div>
-          {migrationDryRun && migrationReport.migrated.length > 0 && (
-            <button
-              onClick={() => runMigration(false)}
-              className="text-xs rounded-md bg-amber-500/20 border border-amber-500/40 px-3 py-1.5 text-amber-200 hover:bg-amber-500/30"
-            >
-              Apply migration
-            </button>
-          )}
-        </div>
-      )}
-
       {sortedApps.length === 0 ? (
         <div className="rounded-md border border-dashed border-border p-12 text-center text-sm text-muted-foreground">
-          No apps yet. Click <span className="text-foreground">New app</span> to create one,
-          or <span className="text-foreground">Find legacy apps</span> to migrate existing <code>type=app</code> domains.
+          No apps yet. Click <span className="text-foreground">New app</span> to create one.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

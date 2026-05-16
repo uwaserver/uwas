@@ -117,17 +117,19 @@ func (s *Server) handleAppGet(w http.ResponseWriter, r *http.Request) {
 // asked for "create → ready to use" instead of "create → click Start".
 //
 // Query params:
-//   start=false    Skip the start attempt (only persist the definition).
-//                  Useful when uploading source via SFTP first.
+//
+//	start=false    Skip the start attempt (only persist the definition).
+//	               Useful when uploading source via SFTP first.
 //
 // Response shape:
-//   {
-//     "app":          {...},        // resolved definition with port/workdir
-//     "started":      true|false,   // outcome of the start attempt
-//     "start_error":  "..."         // present iff started=false and a start
-//                                    // was attempted; carries the supervisor's
-//                                    // diagnostic (incl. log tail).
-//   }
+//
+//	{
+//	  "app":          {...},        // resolved definition with port/workdir
+//	  "started":      true|false,   // outcome of the start attempt
+//	  "start_error":  "..."         // present iff started=false and a start
+//	                                 // was attempted; carries the supervisor's
+//	                                 // diagnostic (incl. log tail).
+//	}
 //
 // On start failure the HTTP status is still 201 (the definition
 // persisted) — the client uses the start_error field to render a
@@ -160,6 +162,19 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if a.WorkDir == "" {
+		a.WorkDir = s.appsMgr.Store().DefaultWorkDir(a.Name)
+	}
+	if err := a.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	scaffolded, err := apps.ScaffoldDemo(&a)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if err := s.appsMgr.Register(&a); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -175,8 +190,9 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	wantStart := startMode != "false" && !a.Disabled
 
 	result := map[string]any{
-		"app":     def,
-		"started": false,
+		"app":        def,
+		"started":    false,
+		"scaffolded": scaffolded,
 	}
 
 	if wantStart {

@@ -1052,6 +1052,7 @@ export interface CreateAppResult {
   // the app technically "started ok".
   listening?: boolean;
   listening_warning?: string;
+  scaffolded?: boolean;
 }
 
 export const createApp = (
@@ -1154,17 +1155,6 @@ export interface AppWebhookStatus {
 export const fetchAppWebhookStatus = (name: string) =>
   api<AppWebhookStatus>(
     `/api/v1/apps/${encodeURIComponent(name)}/webhook-status`);
-
-export interface AppsMigrationReport {
-  migrated: Array<{ domain: string; app_name?: string; reason?: string }>;
-  skipped: Array<{ domain: string; app_name?: string; reason?: string }>;
-  conflicts: Array<{ domain: string; app_name?: string; reason?: string }>;
-}
-
-export const migrateLegacyApps = (dryRun = false) =>
-  api<{ dry_run: boolean; report: AppsMigrationReport }>(
-    `/api/v1/apps/migrate?dry_run=${dryRun}`,
-    { method: 'POST' });
 
 // ── Database Explorer ──
 
