@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-05-16
+
+### Bug fixes
+
+- **`config.MergeDomain` no longer wipes the `app:` block on partial
+  updates.** The previous merge said: "if patch's Command or Runtime
+  is non-empty, replace the entire App struct with patch." So a
+  dashboard PUT that only changed, say, the command silently reset
+  Port back to 0, Env to nil, AutoRestart to false, etc. Operators
+  saw the YAML's `app:` block shrink or disappear after each edit and
+  the proxy lost track of the running process's port. Merge now goes
+  field-by-field: Command/Runtime/Port/WorkDir/Env each gate on
+  their own non-zero patch value. Bool fields (AutoRestart, Disabled)
+  are full-replace only under explicit `replaceMode` since their
+  zero value can be a legitimate user choice.
+
+### Verification
+
+- `go test ./internal/config/...` clean.
+- `go build ./...` / `go vet ./...` clean.
+
 ## [0.5.4] - 2026-05-16
 
 Install-flow fix: upgrading to v0.5.3 via `install.sh | sh` left the

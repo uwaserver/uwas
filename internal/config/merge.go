@@ -143,8 +143,35 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 	if patch.Redirect.Target != "" {
 		merged.Redirect = patch.Redirect
 	}
-	if patch.App.Command != "" || patch.App.Runtime != "" {
-		merged.App = patch.App
+	// App: merge field-by-field instead of wholesale replace. Previously this
+	// said `if patch.App.Command != "" || Runtime != "" { merged.App = patch.App }`
+	// — which meant a dashboard PUT that only adjusted, say, command silently
+	// reset Port back to 0, Env to nil, AutoRestart to false, etc. Operators
+	// then saw the YAML's `app:` block shrink or disappear after each edit and
+	// the proxy lost track of the running process. Merge each field on its own
+	// merit; if the patch field is the zero value, keep what existing had.
+	if patch.App.Command != "" {
+		merged.App.Command = patch.App.Command
+	}
+	if patch.App.Runtime != "" {
+		merged.App.Runtime = patch.App.Runtime
+	}
+	if patch.App.Port > 0 {
+		merged.App.Port = patch.App.Port
+	}
+	if patch.App.WorkDir != "" {
+		merged.App.WorkDir = patch.App.WorkDir
+	}
+	if len(patch.App.Env) > 0 {
+		merged.App.Env = patch.App.Env
+	}
+	// Bool fields need separate gating because zero-value (false) can be a
+	// legitimate user choice. We can't tell "user set false" from "user didn't
+	// touch it" without a tri-state — accept that AutoRestart and Disabled
+	// are full-replace in replaceMode only.
+	if replaceMode {
+		merged.App.AutoRestart = patch.App.AutoRestart
+		merged.App.Disabled = patch.App.Disabled
 	}
 	if fields.HasResources || patch.Resources.CPUPercent > 0 || patch.Resources.MemoryMB > 0 || patch.Resources.PIDMax > 0 {
 		merged.Resources = patch.Resources
