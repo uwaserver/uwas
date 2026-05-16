@@ -196,6 +196,15 @@ WantedBy=multi-user.target
 	}
 	fmt.Println("  ✓ Service enabled (starts on boot)")
 
+	// 5b. Stop any old running instance before we (re)start. This matters on
+	// upgrade: install.sh replaced the binary on disk while the old uwas was
+	// still running. If we just `systemctl start` now, the new binary's
+	// already-instance check would fire, ExecStart would exit 0, systemd
+	// would mark the service deactivated, ExecStop would run, and the OLD
+	// uwas would be killed — leaving nothing running. Stop first, then start
+	// a clean process.
+	_ = installExecCommand("systemctl", "stop", "uwas").Run()
+
 	// 6. Convenience symlink at /usr/bin/uwas.
 	if _, err := installOsStat("/usr/bin/uwas"); err == nil {
 		// Already exists.
