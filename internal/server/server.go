@@ -29,7 +29,7 @@ import (
 	"github.com/uwaserver/uwas/internal/admin"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
-	"github.com/uwaserver/uwas/internal/appmanager"
+	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
@@ -51,7 +51,6 @@ import (
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
-	"github.com/uwaserver/uwas/internal/rlimit"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/sftpserver"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
@@ -149,8 +148,11 @@ type Server struct {
 	// locationLimiters holds per-location rate limit counters.
 	locationLimiters sync.Map
 
-	// appMgr manages non-PHP application processes (Node.js, Python, etc.)
-	appMgr *appmanager.Manager
+	// appsMgr supervises standalone apps (Node, Python, Ruby, Go,
+	// Docker). Apps are keyed by name and persisted under
+	// /etc/uwas/apps.d/<name>.yaml; domains reach them via reverse
+	// proxy with `apps://<name>` upstreams.
+	appsMgr *apps.Manager
 }
 
 var locationProxyHTTPClient = &http.Client{
@@ -307,6 +309,15 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			// Obtain certs for any new auto-SSL domains.
 			go s.tlsMgr.ObtainCerts(s.ctx)
 
+			// Rebuild proxy pools (+ circuit breakers, canaries,
+			// mirrors) against the in-memory config. Operates on
+			// the live domains slice — no disk roundtrip — so a
+			// brand-new domain whose YAML hasn't been persisted yet
+			// still gets a working pool. Without this, every
+			// request to a newly-added type=proxy domain 502s
+			// because the proxy handler has no upstream.
+			s.rebuildProxyPools(domains)
+
 			// Start HTTPS listener dynamically if a new SSL domain was added
 			// and HTTPS isn't running yet.
 			if s.httpsSrv == nil {
@@ -334,41 +345,34 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.esiProcessor = cache.NewESIProcessor(cacheEngine, s, log, 3)
 	}
 
-	// App Manager — Node.js, Python, Ruby, Go, custom processes
-	s.appMgr = appmanager.New(log)
-	for _, d := range cfg.Domains {
-		if d.Type == "app" && (d.App.Command != "" || d.App.Runtime != "") {
-			if err := s.appMgr.Register(d.Host, d.App, d.Root); err != nil {
-				log.Warn("app register failed", "domain", d.Host, "error", err)
-				continue
-			}
-			// Apply resource limits (cgroups) if configured
-			if d.Resources.CPUPercent > 0 || d.Resources.MemoryMB > 0 || d.Resources.PIDMax > 0 {
-				cgPath, err := rlimit.Apply(d.Host, rlimit.Limits{
-					CPUPercent: d.Resources.CPUPercent,
-					MemoryMB:   d.Resources.MemoryMB,
-					PIDMax:     d.Resources.PIDMax,
-				})
-				if err != nil {
-					log.Warn("cgroup apply failed", "domain", d.Host, "error", err)
-				} else if cgPath != "" {
-					s.appMgr.SetCgroupPath(d.Host, cgPath)
-				}
-			}
-			// Respect a user-set Disabled flag — don't auto-start apps the user
-			// explicitly stopped via the dashboard.
-			if d.App.Disabled {
-				log.Info("app boot start skipped (disabled by user)", "domain", d.Host)
-				continue
-			}
-			if err := s.appMgr.Start(d.Host); err != nil {
-				log.Warn("app start failed", "domain", d.Host, "error", err)
-			}
+	// Apps — first-class objects independent of domains. Live in
+	// /etc/uwas/apps.d/<name>.yaml; domains reach them via reverse
+	// proxy with `apps://<name>` upstreams. The pre-v0.6 domain-keyed
+	// supervisor (internal/appmanager) was removed in v0.6.0 — any
+	// `type=app` domain still on disk is auto-converted below.
+	s.appsMgr = apps.NewManager(nil, log)
+	if loaded, skipErrs, err := s.appsMgr.LoadAll(); err != nil {
+		log.Warn("apps: load failed (continuing without standalone apps)", "error", err)
+	} else {
+		for _, se := range skipErrs {
+			log.Warn("apps: skipped invalid file", "error", se)
 		}
+		log.Info("apps: loaded", "count", len(loaded))
 	}
+
 	if s.admin != nil {
-		s.admin.SetAppManager(s.appMgr)
+		s.admin.SetAppsManager(s.appsMgr)
 	}
+
+	// Note: boot-time auto-migration of legacy `type=app` domains runs
+	// in Start(), not here. It needs s.admin.configPath to be set so
+	// it can rewrite the on-disk YAML, and SetConfigPath is called by
+	// the CLI AFTER New() returns. Running here would log a "config
+	// path not set" warning and leak the rewrite.
+	//
+	// We also defer StartAll() to after the migration so newly-
+	// registered migrated apps come up alongside pre-existing ones in
+	// a single uniform pass — no double-start race.
 
 	// Deploy manager (git clone → build → restart)
 	deployMgr := deploy.New(log)
@@ -505,7 +509,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 		var ups []proxyhandler.UpstreamConfig
 		for _, u := range d.Proxy.Upstreams {
-			ups = append(ups, proxyhandler.UpstreamConfig{Address: u.Address, Weight: u.Weight})
+			ups = append(ups, proxyhandler.UpstreamConfig{Address: s.resolveAppsUpstream(u.Address), Weight: u.Weight})
 		}
 		s.proxyPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
 		s.proxyBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
@@ -736,6 +740,38 @@ func (s *Server) Start() error {
 
 	if err := s.writePID(); err != nil {
 		s.logger.Warn("failed to write pid file", "error", err)
+	}
+
+	// Auto-migration of legacy `type=app` domains. Runs here (not in
+	// New) because s.admin.configPath was set by SetConfigPath after
+	// New returned, and the migration needs that path to rewrite the
+	// converted domain YAMLs in-place.
+	migratedCount := 0
+	if s.admin != nil && s.appsMgr != nil {
+		migratedCount = s.admin.MigrateLegacyAppsAtBoot()
+		if migratedCount > 0 {
+			s.logger.Info("apps: auto-migrated legacy type=app domains", "count", migratedCount)
+		}
+	}
+
+	// Start every registered app — pre-existing entries from
+	// /etc/uwas/apps.d/ plus anything the migration just registered.
+	// Single pass, no race with the migrator.
+	if s.appsMgr != nil {
+		s.appsMgr.StartAll()
+	}
+
+	// If we migrated any legacy domains, reload the config so the
+	// proxy pool builder picks up the now-`type=proxy` domains and
+	// resolves their `apps://<name>` upstreams to the live ports the
+	// supervisor just assigned. New() built pools against the original
+	// (pre-migration) config — those pools have no entry for the
+	// converted hosts, so without this reload the proxy would 502 the
+	// migrated traffic until the next manual reload.
+	if migratedCount > 0 && s.configPath != "" {
+		if err := s.reload(); err != nil {
+			s.logger.Warn("apps: post-migration reload failed", "error", err)
+		}
 	}
 
 	s.tlsMgr.AllowSelfSigned = true
@@ -1755,7 +1791,14 @@ func (s *Server) dispatchHandler(ctx *router.RequestContext, domain *config.Doma
 	case "proxy":
 		s.handleProxy(ctx, domain)
 	case "app":
-		s.handleAppProxy(ctx, domain)
+		// Legacy type=app domains are auto-migrated to type=proxy at
+		// boot. Anything reaching this branch is a YAML the operator
+		// hand-edited AFTER boot — surface a clear "needs migration"
+		// message instead of a confused 500.
+		http.Error(ctx.Response,
+			"502 Bad Gateway — type=app is no longer supported. "+
+				"Run POST /api/v1/apps/migrate or restart uwas to auto-migrate.",
+			http.StatusBadGateway)
 	default:
 		renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 	}
@@ -2171,40 +2214,11 @@ func (s *Server) reload() error {
 	}
 	s.imageOptChains = newImageOpt
 
-	// Stop old proxy health checkers before rebuilding
-	for _, hc := range s.proxyHealthChks {
-		hc.Stop()
-	}
-
-	// Rebuild proxy pools, balancers, and health checkers
-	newPools := make(map[string]*proxyhandler.UpstreamPool)
-	newBalancers := make(map[string]proxyhandler.Balancer)
-	newHealthChks := make(map[string]*proxyhandler.HealthChecker)
-	for _, d := range newCfg.Domains {
-		if d.Type == "proxy" && len(d.Proxy.Upstreams) > 0 {
-			var ups []proxyhandler.UpstreamConfig
-			for _, u := range d.Proxy.Upstreams {
-				ups = append(ups, proxyhandler.UpstreamConfig{Address: u.Address, Weight: u.Weight})
-			}
-			newPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
-			newBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
-
-			if d.Proxy.HealthCheck.Path != "" {
-				hc := proxyhandler.NewHealthChecker(newPools[d.Host], proxyhandler.HealthConfig{
-					Path:      d.Proxy.HealthCheck.Path,
-					Interval:  d.Proxy.HealthCheck.Interval.Duration,
-					Timeout:   d.Proxy.HealthCheck.Timeout.Duration,
-					Threshold: d.Proxy.HealthCheck.Threshold,
-					Rise:      d.Proxy.HealthCheck.Rise,
-				}, s.logger)
-				hc.Start(s.ctx)
-				newHealthChks[d.Host] = hc
-			}
-		}
-	}
-	s.proxyPools = newPools
-	s.proxyBalancers = newBalancers
-	s.proxyHealthChks = newHealthChks
+	// Rebuild proxy pools + balancers + health checkers against the new
+	// config. Factored into rebuildProxyPools so onDomainChange (which
+	// doesn't go through reload — it operates on in-memory state) can
+	// reuse the same logic.
+	s.rebuildProxyPools(newCfg.Domains)
 
 	// Update bandwidth manager with new domain configs
 	if s.bwMgr != nil {
@@ -2221,38 +2235,84 @@ func (s *Server) reload() error {
 		s.monitor.UpdateDomains(newCfg.Domains)
 	}
 
-	// Sync app manager: stop removed apps, register new ones
-	if s.appMgr != nil {
-		newAppDomains := make(map[string]bool)
-		for _, d := range newCfg.Domains {
-			if d.Type == "app" {
-				newAppDomains[d.Host] = true
-			}
-		}
-		// Stop apps for removed domains
-		for _, inst := range s.appMgr.Instances() {
-			if !newAppDomains[inst.Domain] {
-				s.appMgr.Unregister(inst.Domain)
-				s.logger.Info("unregistered removed app", "domain", inst.Domain)
-			}
-		}
-		// Register new app domains
-		for _, d := range newCfg.Domains {
-			if d.Type == "app" && s.appMgr.Get(d.Host) == nil {
-				if err := s.appMgr.Register(d.Host, d.App, d.Root); err == nil {
-					s.appMgr.Start(d.Host)
-				}
-			}
+	// Apps refresh — pick up any new YAML files in
+	// /etc/uwas/apps.d/ and re-register them. Existing apps are
+	// left running; their command/port changes only take effect on
+	// an explicit Restart (the LoadAll contract).
+	if s.appsMgr != nil {
+		if _, _, err := s.appsMgr.LoadAll(); err != nil {
+			s.logger.Warn("apps: reload failed", "error", err)
 		}
 	}
 
-	// Update stored config under write lock
+	// Update stored config IN PLACE under write lock. The admin server
+	// was constructed with a *config.Config pointer that it dereferences
+	// for every read; if we swapped the pointer here (s.config = newCfg)
+	// admin would keep reading the stale config, which means subsequent
+	// domain CRUDs through the admin API would mutate a config no other
+	// subsystem references and the vhost router would never see them —
+	// every request to a freshly-created domain would 421.
 	s.configMu.Lock()
-	s.config = newCfg
+	*s.config = *newCfg
 	s.configMu.Unlock()
 
 	s.logger.Info("config reloaded", "domains", len(newCfg.Domains))
 	return nil
+}
+
+// rebuildProxyPools regenerates proxy pools, balancers, and health
+// checkers from the given domains slice. Used by both reload() (after
+// reading config from disk) and onDomainChange (after admin API mutates
+// in-memory config, BEFORE persistConfig runs). Operates purely on the
+// passed slice so it works regardless of whether the caller has
+// committed to disk yet.
+//
+// `apps://<name>` upstreams are resolved here via resolveAppsUpstream,
+// so the pool gets a concrete `http://127.0.0.1:<port>` (or the 0-port
+// placeholder if the app is currently down). Re-resolution requires
+// calling this method again — typically via onDomainChange or reload
+// when an app state changes.
+func (s *Server) rebuildProxyPools(domains []config.Domain) {
+	// Stop old proxy health checkers before rebuilding so we don't
+	// leak goroutines on every reload.
+	for _, hc := range s.proxyHealthChks {
+		hc.Stop()
+	}
+
+	newPools := make(map[string]*proxyhandler.UpstreamPool)
+	newBalancers := make(map[string]proxyhandler.Balancer)
+	newHealthChks := make(map[string]*proxyhandler.HealthChecker)
+
+	for _, d := range domains {
+		if d.Type != "proxy" || len(d.Proxy.Upstreams) == 0 {
+			continue
+		}
+		var ups []proxyhandler.UpstreamConfig
+		for _, u := range d.Proxy.Upstreams {
+			ups = append(ups, proxyhandler.UpstreamConfig{
+				Address: s.resolveAppsUpstream(u.Address),
+				Weight:  u.Weight,
+			})
+		}
+		newPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
+		newBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
+
+		if d.Proxy.HealthCheck.Path != "" {
+			hc := proxyhandler.NewHealthChecker(newPools[d.Host], proxyhandler.HealthConfig{
+				Path:      d.Proxy.HealthCheck.Path,
+				Interval:  d.Proxy.HealthCheck.Interval.Duration,
+				Timeout:   d.Proxy.HealthCheck.Timeout.Duration,
+				Threshold: d.Proxy.HealthCheck.Threshold,
+				Rise:      d.Proxy.HealthCheck.Rise,
+			}, s.logger)
+			hc.Start(s.ctx)
+			newHealthChks[d.Host] = hc
+		}
+	}
+
+	s.proxyPools = newPools
+	s.proxyBalancers = newBalancers
+	s.proxyHealthChks = newHealthChks
 }
 
 func (s *Server) handleSignals() {
@@ -2317,9 +2377,9 @@ func (s *Server) shutdown() {
 		s.admin.Close()
 	}
 
-	// Stop all app processes (Node.js, Python, etc.)
-	if s.appMgr != nil {
-		s.appMgr.StopAll()
+	// Stop all standalone app processes (Node.js, Python, Docker, etc.)
+	if s.appsMgr != nil {
+		s.appsMgr.StopAll()
 		s.logger.Info("all app processes stopped")
 	}
 
@@ -2390,44 +2450,6 @@ func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]by
 	body, _ := io.ReadAll(result.Body)
 	result.Body.Close()
 	return body, result.StatusCode, result.Header, nil
-}
-
-// handleAppProxy proxies the request to the app process listening on its assigned port.
-func (s *Server) handleAppProxy(ctx *router.RequestContext, domain *config.Domain) {
-	if s.appMgr == nil {
-		s.logger.Warn("app proxy: app manager disabled", "domain", domain.Host)
-		http.Error(ctx.Response, "502 Bad Gateway — app manager not enabled on this server", http.StatusBadGateway)
-		return
-	}
-	// State drives the operator-facing message: "not registered" vs "stopped"
-	// vs healthy. Without this distinction every misconfigured app surface
-	// looked identical to a generic upstream 502 and was near-impossible to
-	// debug from the browser side.
-	switch s.appMgr.State(domain.Host) {
-	case appmanager.AppStateNotRegistered:
-		s.logger.Warn("app proxy: domain not registered with app manager", "domain", domain.Host)
-		http.Error(ctx.Response, "502 Bad Gateway — no app deployed for this domain yet (use Apps page to deploy)", http.StatusBadGateway)
-		return
-	case appmanager.AppStateStopped:
-		s.logger.Warn("app proxy: app process not running", "domain", domain.Host)
-		http.Error(ctx.Response, "502 Bad Gateway — app is registered but not running (check Apps page / logs)", http.StatusBadGateway)
-		return
-	}
-	addr := s.appMgr.ListenAddr(domain.Host)
-	if addr == "" {
-		// Race: app was running when State() returned Running but stopped
-		// before ListenAddr(). Fall through to a clear message rather than
-		// the generic 502.
-		http.Error(ctx.Response, "502 Bad Gateway — app process exited between health check and proxy", http.StatusBadGateway)
-		return
-	}
-	// Build a temporary proxy config pointing to the app's port
-	proxyDomain := *domain
-	proxyDomain.Type = "proxy"
-	proxyDomain.Proxy = config.ProxyConfig{
-		Upstreams: []config.Upstream{{Address: "http://" + addr, Weight: 1}},
-	}
-	s.handleProxy(ctx, &proxyDomain)
 }
 
 func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {

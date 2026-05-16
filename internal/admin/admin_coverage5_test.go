@@ -580,16 +580,6 @@ func TestHandleStartEndpointExtended(t *testing.T) {
 
 // App handlers tests for low coverage functions
 
-func TestHandleAppEnvUpdateEndpoint(t *testing.T) {
-	s := testServer()
-	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"env":{"KEY":"value"}}`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/apps/test.com/env", body))
-	if rec.Code != 200 && rec.Code != 400 && rec.Code != 404 && rec.Code != 500 && rec.Code != 501 && rec.Code != 503 {
-		t.Errorf("status = %d, want 200, 400, 404, 500, 501, or 503", rec.Code)
-	}
-}
-
 func TestHandleAppRestartEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
