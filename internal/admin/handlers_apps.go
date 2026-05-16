@@ -386,7 +386,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 // users may want to inspect logs or recover source from there. A
 // future endpoint can offer a `?purge=true` to also wipe the workdir.
 func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
 	if s.appsMgr == nil {

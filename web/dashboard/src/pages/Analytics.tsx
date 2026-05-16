@@ -10,6 +10,7 @@ import { fetchAnalytics, fetchBandwidth, resetBandwidth, fetchFeatures, type Dom
 import Card from '@/components/Card';
 import FeatureBanner from '@/components/FeatureBanner';
 import { usePolling } from '@/hooks/usePolling';
+import { useConfirm } from '@/components/ConfirmModal';
 
 function formatBytes(b: number): string {
   if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;
@@ -133,6 +134,7 @@ function DomainRow({ d }: { d: DomainAnalytics }) {
 }
 
 export default function Analytics() {
+  const { confirmAction } = useConfirm();
   const [domains, setDomains] = useState<DomainAnalytics[]>([]);
   const [bwData, setBwData] = useState<BandwidthStatus[]>([]);
   const [error, setError] = useState('');
@@ -272,7 +274,13 @@ export default function Analytics() {
                     </td>
                     <td className="px-5 py-3 text-right">
                       <button disabled={!!resetting} onClick={async () => {
-                        if (!window.confirm(`Reset bandwidth counters for ${bw.host}?\n\nThis clears the daily and monthly usage totals — useful for testing limits or after a billing period reset.`)) {
+                        const ok = await confirmAction({
+                          title: `Reset bandwidth counters for ${bw.host}?`,
+                          message: 'This clears the daily and monthly usage totals. Useful for testing limits or after a billing period reset.',
+                          confirmLabel: 'Reset counters',
+                          variant: 'warning',
+                        });
+                        if (!ok) {
                           return;
                         }
                         setResetting(bw.host);

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { UserPlus, Trash2, RefreshCw, Copy, Check, Key, Shield, Lock } from 'lucide-react';
 import { fetchAdminUsers, createAdminUser, deleteAdminUser, changeAdminPassword, regenAdminApiKey, type AdminUser } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 export default function AdminUsers() {
+  const { confirmAction } = useConfirm();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -82,7 +84,13 @@ export default function AdminUsers() {
   const handleRegenKey = async (username: string) => {
     // Regenerating invalidates any external script/integration using the old
     // key. No undo, no way to recover the previous key.
-    if (!window.confirm(`Regenerate API key for ${username}?\n\nThe old key stops working immediately. Any scripts or integrations using it will break until updated.`)) return;
+    const ok = await confirmAction({
+      title: `Regenerate API key for ${username}?`,
+      message: 'The old key stops working immediately. Any scripts or integrations using it will break until updated.',
+      confirmLabel: 'Regenerate key',
+      variant: 'warning',
+    });
+    if (!ok) return;
     setActionLoading('key-' + username);
     try {
       const res = await regenAdminApiKey(username);

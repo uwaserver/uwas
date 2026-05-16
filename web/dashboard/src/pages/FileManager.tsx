@@ -27,6 +27,7 @@ import {
   type DomainData,
   type FileEntry,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -51,6 +52,7 @@ function formatDate(dateStr: string): string {
 }
 
 export default function FileManager() {
+  const { confirmAction } = useConfirm();
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -114,17 +116,22 @@ export default function FileManager() {
   }, [selectedDomain, currentPath]);
 
   // Helper: confirm before discarding unsaved edits.
-  const confirmDiscardEdits = (): boolean => {
+  const confirmDiscardEdits = async (): Promise<boolean> => {
     if (!editDirty) return true;
-    return window.confirm('You have unsaved changes. Discard them?');
+    return confirmAction({
+      title: 'Discard unsaved changes?',
+      message: 'You have unsaved changes. They will be lost if you continue.',
+      confirmLabel: 'Discard',
+      variant: 'warning',
+    });
   };
 
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
 
-  const navigateTo = (path: string) => {
-    if (!confirmDiscardEdits()) return;
+  const navigateTo = async (path: string) => {
+    if (!await confirmDiscardEdits()) return;
     setEditingFile(null);
     setEditDirty(false);
     setCurrentPath(path);
@@ -143,7 +150,7 @@ export default function FileManager() {
 
   const handleOpenFile = async (entry: FileEntry) => {
     if (entry.is_dir) {
-      navigateTo(entry.path);
+      await navigateTo(entry.path);
       return;
     }
 
@@ -181,7 +188,7 @@ export default function FileManager() {
     }
 
     // Open text editor — confirm if user has unsaved changes in another file.
-    if (!confirmDiscardEdits()) return;
+    if (!await confirmDiscardEdits()) return;
     setError('');
     try {
       const result = await readFile(selectedDomain, entry.path);
@@ -246,7 +253,12 @@ export default function FileManager() {
     if (!file) return;
     // Check if file already exists
     const exists = files.some(f => f.name === file.name && !f.is_dir);
-    if (exists && !window.confirm(`"${file.name}" already exists. Overwrite?`)) {
+    if (exists && !await confirmAction({
+      title: `Overwrite "${file.name}"?`,
+      message: 'A file with this name already exists in the current directory.',
+      confirmLabel: 'Overwrite',
+      variant: 'warning',
+    })) {
       e.target.value = '';
       return;
     }
@@ -290,8 +302,8 @@ export default function FileManager() {
           <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Domain</label>
           <select
             value={selectedDomain}
-            onChange={e => {
-              if (!confirmDiscardEdits()) {
+            onChange={async e => {
+              if (!await confirmDiscardEdits()) {
                 // Snap the select element back to the previously selected
                 // domain so the UI matches state after the user cancels.
                 e.target.value = selectedDomain;
@@ -410,8 +422,8 @@ export default function FileManager() {
                 Save
               </button>
               <button
-                onClick={() => {
-                  if (!confirmDiscardEdits()) return;
+                onClick={async () => {
+                  if (!await confirmDiscardEdits()) return;
                   setEditingFile(null);
                   setEditDirty(false);
                 }}

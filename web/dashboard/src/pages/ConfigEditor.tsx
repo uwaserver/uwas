@@ -7,6 +7,7 @@ import {
   fetchDomainConfigRaw, saveDomainConfigRaw,
   fetchDomains, type DomainData,
 } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 interface ConfigFile {
   id: string;
@@ -15,6 +16,7 @@ interface ConfigFile {
 }
 
 export default function ConfigEditor() {
+  const { confirmAction } = useConfirm();
   const [files, setFiles] = useState<ConfigFile[]>([{ id: '__main__', label: 'Main Config' }]);
   const [activeFile, setActiveFile] = useState('__main__');
   const [content, setContent] = useState('');
@@ -39,10 +41,15 @@ export default function ConfigEditor() {
 
   // In-app navigation (sidebar click, Reload button) bypasses beforeunload
   // entirely — those branches must check this themselves.
-  const confirmDiscard = useCallback(
-    () => !isDirty || window.confirm('You have unsaved changes. Discard them?'),
-    [isDirty],
-  );
+  const confirmDiscard = useCallback(async () => {
+    if (!isDirty) return true;
+    return confirmAction({
+      title: 'Discard unsaved changes?',
+      message: 'You have unsaved changes. They will be lost if you continue.',
+      confirmLabel: 'Discard',
+      variant: 'warning',
+    });
+  }, [confirmAction, isDirty]);
 
   // Load domain list for sidebar
   useEffect(() => {
@@ -129,14 +136,14 @@ export default function ConfigEditor() {
     }
   };
 
-  const handleReload = () => {
-    if (!confirmDiscard()) return;
-    loadContent();
+  const handleReload = async () => {
+    if (!await confirmDiscard()) return;
+    void loadContent();
   };
 
-  const handleSelectFile = (id: string) => {
+  const handleSelectFile = async (id: string) => {
     if (id === activeFile) return;
-    if (!confirmDiscard()) return;
+    if (!await confirmDiscard()) return;
     setActiveFile(id);
   };
 

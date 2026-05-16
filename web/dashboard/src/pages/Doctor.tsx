@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Stethoscope, Wrench, CheckCircle, AlertTriangle, XCircle, Sparkles } from 'lucide-react';
 import { fetchDoctorReport, fetchDoctorFix, type DoctorReport } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmModal';
 
 const statusIcon = (s: string) => {
   switch (s) {
@@ -23,6 +24,7 @@ const statusBg = (s: string) => {
 };
 
 export default function Doctor() {
+  const { confirmAction } = useConfirm();
   const [report, setReport] = useState<DoctorReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [fixing, setFixing] = useState(false);
@@ -40,17 +42,19 @@ export default function Doctor() {
     // Auto-Fix mutates system state (creates files, fixes permissions,
     // can install packages). One stray click on a remote server is too
     // easy — confirm first.
-    if (!window.confirm(
-      'Run Auto-Fix?\n\n' +
-      'This will modify system state to repair detected issues — ' +
-      'creating directories, fixing permissions, and possibly installing packages.',
-    )) return;
+    const ok = await confirmAction({
+      title: 'Run Auto-Fix?',
+      message: 'This will modify system state to repair detected issues: creating directories, fixing permissions, and possibly installing packages.',
+      confirmLabel: 'Run Auto-Fix',
+      variant: 'warning',
+    });
+    if (!ok) return;
     setFixing(true);
     setError('');
     try { setReport(await fetchDoctorFix()); }
     catch (e) { setError((e as Error).message); }
     finally { setFixing(false); }
-  }, []);
+  }, [confirmAction]);
 
   const counts = (report?.checks ?? []).reduce((acc, c) => {
     acc[c.status] = (acc[c.status] || 0) + 1;
