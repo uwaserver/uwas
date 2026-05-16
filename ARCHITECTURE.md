@@ -148,8 +148,10 @@ internal/
 │
 ├── alerting/                   Threshold-based alerts + notifications
 ├── analytics/                  Per-domain traffic analytics + bandwidth
-├── appmanager/                 Node.js/Python/Ruby/Go process management
+├── apps/                       Standalone app supervision (Node/Python/Ruby/Go/Docker)
 │   ├── manager.go              Register, Start, Stop, Stats
+│   ├── scaffold.go             Runtime demo file generation for empty workdirs
+│   ├── store.go                /etc/uwas/apps.d YAML persistence
 │   ├── stats_linux.go          /proc CPU/memory reading
 │   └── stats_other.go          No-op stub (non-Linux)
 │
