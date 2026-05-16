@@ -850,6 +850,59 @@ func TestInstallCmd_NotRoot(t *testing.T) {
 	}
 }
 
+// TestMigrateInlineDomains_WritesPerHostFiles asserts that a legacy uwas.yaml
+// with a `domains: [...]` block becomes one file per host under domains.d/,
+// preserving operator data when they upgrade from a pre-v0.5.x install.
+func TestMigrateInlineDomains_WritesPerHostFiles(t *testing.T) {
+	dst := t.TempDir()
+	yamlBlob := []byte(`
+domains:
+  - host: a.example.com
+    type: static
+    root: /var/www/a
+  - host: b.example.com
+    type: app
+    root: /var/www/b
+    app:
+      runtime: node
+      port: 3001
+`)
+	n := migrateInlineDomains(yamlBlob, dst)
+	if n != 2 {
+		t.Fatalf("expected 2 files migrated, got %d", n)
+	}
+	for _, host := range []string{"a.example.com", "b.example.com"} {
+		p := filepath.Join(dst, host+".yaml")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing migrated file %s: %v", p, err)
+		}
+	}
+}
+
+// TestMigrateInlineDomains_SkipsExisting refuses to clobber a file that's
+// already at the destination — the operator's hand-edits win.
+func TestMigrateInlineDomains_SkipsExisting(t *testing.T) {
+	dst := t.TempDir()
+	existing := filepath.Join(dst, "keep.example.com.yaml")
+	if err := os.WriteFile(existing, []byte("# operator edits\nhost: keep.example.com\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	yamlBlob := []byte(`
+domains:
+  - host: keep.example.com
+    type: static
+    root: /should/not/overwrite
+`)
+	n := migrateInlineDomains(yamlBlob, dst)
+	if n != 0 {
+		t.Fatalf("expected 0 written (existing file should be preserved), got %d", n)
+	}
+	got, _ := os.ReadFile(existing)
+	if !strings.Contains(string(got), "operator edits") {
+		t.Errorf("destination file was overwritten:\n%s", got)
+	}
+}
+
 func TestInstallCmd_Success(t *testing.T) {
 	// Mock all system calls for a successful install.
 	origGOOS := installRuntimeGOOS
@@ -871,6 +924,12 @@ func TestInstallCmd_Success(t *testing.T) {
 	installOsStat = func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	installOsSymlink = func(old, new string) error { return nil }
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
+		// `systemctl is-active uwas` must report "active" so the
+		// post-start verification poll in installUWAS sees a healthy
+		// unit. Everything else echos a benign placeholder.
+		if name == "systemctl" && len(arg) >= 2 && arg[0] == "is-active" {
+			return exec.Command("echo", "active")
+		}
 		return exec.Command("echo", "mocked")
 	}
 	installOsMkdirAll = func(path string, perm os.FileMode) error { return nil }
@@ -952,6 +1011,9 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 	installOsStat = func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	installOsSymlink = func(old, new string) error { return nil }
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
+		if name == "systemctl" && len(arg) >= 2 && arg[0] == "is-active" {
+			return exec.Command("echo", "active")
+		}
 		return exec.Command("echo", "mocked")
 	}
 	installOsMkdirAll = func(path string, perm os.FileMode) error { return nil }

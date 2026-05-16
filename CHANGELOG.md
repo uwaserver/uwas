@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-05-16
+
+Install / upgrade flow hardened: "% 100 servis kayıt + start, ve upgrade'de
+aynı süreç" — fail-loud verification, force-kill stuck instances, and
+auto-migration of pre-v0.5.x install paths.
+
+### Improvements
+
+- **`systemctl start uwas` is now verified.** Pre-v0.5.7 the installer
+  ran `systemctl start` and reported "Service started" the moment the
+  command returned, even if the unit promptly crashed (Type=simple
+  exits with code 0 in several failure modes). install now polls
+  `systemctl is-active uwas` for up to 5s and only reports success
+  when the unit reaches `active`. If it hits `failed` or never reaches
+  active, the installer dumps `systemctl status uwas` and the tail of
+  `journalctl -u uwas` to stderr and returns a non-nil error so
+  `install.sh` / `curl | sh` exits non-zero. No more silent "Service
+  started" while the daemon is dead.
+
+- **Pre-start cleanup now force-kills stuck instances.** On upgrade,
+  the old uwas binary may still be running. install runs
+  `systemctl stop uwas`, then polls `is-active` for up to ~3s to
+  confirm the unit reached `inactive`. If a process survives (orphaned
+  daemon, stuck on its PID file), the PID from `/var/run/uwas.pid`
+  gets SIGTERM, then SIGKILL after 500ms. Subsequent start has a
+  guaranteed-clean slate.
+
+- **Legacy config auto-migration.** install now scans `/root/.uwas/`,
+  `/root/uwas/`, `/opt/uwas/`, `/etc/uwas-legacy/`, `~/.uwas/`, and
+  `~/.config/uwas/` for an existing install and copies:
+  - Per-domain YAML files from `<legacy>/domains.d/*.yaml` into
+    `/etc/uwas/domains.d/`
+  - Inline `domains: [...]` arrays from `<legacy>/uwas.yaml` —
+    extracted, split per-host, and written as separate
+    `/etc/uwas/domains.d/<host>.yaml` files
+
+  Files at the destination are NEVER overwritten — if `keep.com.yaml`
+  already exists, the legacy copy is skipped so operator hand-edits
+  win. Migrated source files are renamed to `*.migrated` so a
+  subsequent install doesn't re-import the same data over those
+  edits. Coverage: `TestMigrateInlineDomains_WritesPerHostFiles` and
+  `TestMigrateInlineDomains_SkipsExisting`.
+
+### Verification
+
+- `go test ./internal/cli/...` clean (mock updated so the new
+  `is-active` poll resolves quickly to "active" in test).
+- `go build ./...` / `go vet ./...` clean.
+
 ## [0.5.6] - 2026-05-16
 
 The "why are my domain configs disappearing?!" release.

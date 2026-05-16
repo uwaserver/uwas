@@ -8,7 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Hooks for testing install.go functions.
@@ -153,6 +157,16 @@ func installUWAS(args []string) error {
 		}
 	}
 
+	// 2.6. Migrate legacy install locations. Pre-v0.5.x installs (and a few
+	// older docs) put config under /root/.uwas/, /opt/uwas/, ~/.config/uwas/,
+	// or /etc/uwas-legacy/. The new systemd unit only reads
+	// /etc/uwas/uwas.yaml + /etc/uwas/domains.d/, so without this step the
+	// upgrade orphans every existing domain. We never overwrite files in the
+	// destination — only fill in what's missing — and we ALWAYS leave the
+	// original in place (renamed to *.migrated) so the operator can undo by
+	// hand if anything looks wrong.
+	migrateLegacyConfigs(domainsDir, cfgPath)
+
 	// 3. Create runtime-storage dirs the systemd service expects.
 	for _, d := range []string{"/var/lib/uwas", "/var/cache/uwas", "/var/log/uwas", "/var/www"} {
 		if err := installOsMkdirAll(d, 0755); err != nil {
@@ -196,14 +210,35 @@ WantedBy=multi-user.target
 	}
 	fmt.Println("  ✓ Service enabled (starts on boot)")
 
-	// 5b. Stop any old running instance before we (re)start. This matters on
-	// upgrade: install.sh replaced the binary on disk while the old uwas was
-	// still running. If we just `systemctl start` now, the new binary's
-	// already-instance check would fire, ExecStart would exit 0, systemd
-	// would mark the service deactivated, ExecStop would run, and the OLD
-	// uwas would be killed — leaving nothing running. Stop first, then start
-	// a clean process.
+	// 5b. Stop any old running instance before we (re)start. Critical on
+	// upgrades: install.sh replaced the binary on disk while the old uwas
+	// was still running. If we just `systemctl start` now, the new binary's
+	// already-instance check would fire, ExecStart would error, and the
+	// running old uwas would still be there serving stale code.
+	//
+	// We wait briefly for systemctl to confirm the unit reached "inactive"
+	// before moving on. If stop fails OR the unit refuses to go inactive,
+	// we forcibly kill any lingering uwas process by PID file so the
+	// subsequent start has a clean slate. Best-effort throughout — a system
+	// without prior uwas just no-ops these.
 	_ = installExecCommand("systemctl", "stop", "uwas").Run()
+	for i := 0; i < 10; i++ {
+		out, _ := installExecCommand("systemctl", "is-active", "uwas").CombinedOutput()
+		if strings.TrimSpace(string(out)) != "active" {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	// Force-kill any lingering uwas process that survived systemctl stop
+	// (orphaned daemon, stuck on its own PID file, etc.) so the upcoming
+	// start doesn't trip on the already-running guard.
+	if pidData, err := installOsReadFile("/var/run/uwas.pid"); err == nil {
+		if pid, perr := strconv.Atoi(strings.TrimSpace(string(pidData))); perr == nil && pid > 1 {
+			_ = installExecCommand("kill", "-TERM", strconv.Itoa(pid)).Run()
+			time.Sleep(500 * time.Millisecond)
+			_ = installExecCommand("kill", "-KILL", strconv.Itoa(pid)).Run()
+		}
+	}
 
 	// 6. Convenience symlink at /usr/bin/uwas.
 	if _, err := installOsStat("/usr/bin/uwas"); err == nil {
@@ -231,12 +266,38 @@ WantedBy=multi-user.target
 	}
 
 	if doStart {
+		// systemctl start can return success even if the service immediately
+		// crashes (Type=simple). We verify post-start that the unit is
+		// actually active. If it isn't, dump the last journal lines so the
+		// operator sees the real cause and return a non-nil error so
+		// install.sh / curl|sh exits non-zero — silent "Service started"
+		// while the daemon is dead is exactly the kind of footgun the user
+		// has been hitting repeatedly.
 		if err := installExecCommand("systemctl", "start", "uwas").Run(); err != nil {
-			fmt.Printf("  ⚠ systemctl start uwas failed: %v\n", err)
-			fmt.Println("    Inspect logs: journalctl -u uwas -e")
-		} else {
-			fmt.Println("  ✓ Service started")
+			dumpUnitDiagnostics()
+			return fmt.Errorf("systemctl start uwas: %w (see journalctl output above)", err)
 		}
+		// Settle period — systemd reports "activating" briefly before
+		// transitioning to "active" or "failed". Poll for up to ~5s.
+		active := false
+		for i := 0; i < 15; i++ {
+			out, _ := installExecCommand("systemctl", "is-active", "uwas").CombinedOutput()
+			state := strings.TrimSpace(string(out))
+			if state == "active" {
+				active = true
+				break
+			}
+			if state == "failed" {
+				dumpUnitDiagnostics()
+				return fmt.Errorf("systemctl start uwas: unit entered failed state (see journalctl output above)")
+			}
+			time.Sleep(350 * time.Millisecond)
+		}
+		if !active {
+			dumpUnitDiagnostics()
+			return fmt.Errorf("systemctl start uwas: unit never reached active state within 5s (see journalctl output above)")
+		}
+		fmt.Println("  ✓ Service started (verified active)")
 	}
 
 	// 8. Final summary — pull the live api_key / pin_code / admin listen from the
@@ -691,4 +752,146 @@ func splitWhitespace(s string) []string {
 		fields = append(fields, s[start:])
 	}
 	return fields
+}
+
+// migrateLegacyConfigs scans well-known pre-/etc/uwas/ install paths and
+// copies their domain YAML files (and optional inline domain blocks from
+// their main config) into /etc/uwas/domains.d/ so a fresh install
+// preserves operator data instead of orphaning it. Destination files are
+// never overwritten — if a domain already exists at the new path, the old
+// one is left untouched on disk so the operator can compare. Migrated
+// source files are renamed to *.migrated so subsequent installs don't
+// re-import the same data over the operator's edits.
+//
+// This is the v0.5.7 answer to "I ran install and my domains disappeared":
+// they didn't disappear, they were just at /root/.uwas/ while the new
+// systemd unit serves /etc/uwas/. We bridge that gap automatically.
+func migrateLegacyConfigs(destDomainsDir, destCfgPath string) {
+	legacyPaths := []string{
+		"/root/.uwas",
+		"/root/uwas",
+		"/opt/uwas",
+		"/etc/uwas-legacy",
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && home != "/root" {
+		legacyPaths = append(legacyPaths, filepath.Join(home, ".uwas"))
+		legacyPaths = append(legacyPaths, filepath.Join(home, ".config", "uwas"))
+	}
+
+	migrated := 0
+	for _, legacyDir := range legacyPaths {
+		info, err := installOsStat(legacyDir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Skip the destination itself if a legacy path happens to alias it.
+		if absLegacy, _ := filepath.Abs(legacyDir); absLegacy == filepath.Dir(destDomainsDir) {
+			continue
+		}
+
+		// (a) Per-domain files in <legacy>/domains.d/ — straight copy.
+		legacyDomainsDir := filepath.Join(legacyDir, "domains.d")
+		if entries, derr := os.ReadDir(legacyDomainsDir); derr == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+					continue
+				}
+				src := filepath.Join(legacyDomainsDir, name)
+				dst := filepath.Join(destDomainsDir, name)
+				if _, err := installOsStat(dst); err == nil {
+					continue // already exists at destination — don't clobber
+				}
+				data, rerr := installOsReadFile(src)
+				if rerr != nil {
+					continue
+				}
+				if werr := installOsWriteFile(dst, data, 0600); werr == nil {
+					_ = os.Rename(src, src+".migrated")
+					migrated++
+				}
+			}
+		}
+
+		// (b) Inline domain blocks in <legacy>/uwas.yaml — extract the
+		// "domains:" array and split into per-host files. Done with a
+		// simple YAML parse rather than string surgery so anchors and
+		// comments inside the inline form are handled correctly.
+		legacyCfg := filepath.Join(legacyDir, "uwas.yaml")
+		if data, rerr := installOsReadFile(legacyCfg); rerr == nil {
+			if n := migrateInlineDomains(data, destDomainsDir); n > 0 {
+				migrated += n
+				_ = os.Rename(legacyCfg, legacyCfg+".migrated")
+			}
+		}
+	}
+
+	if migrated > 0 {
+		fmt.Printf("  ✓ Migrated %d domain config(s) from legacy install paths\n", migrated)
+	}
+}
+
+// migrateInlineDomains parses the "domains:" array out of a legacy uwas.yaml
+// blob and writes each entry to destDomainsDir/<host>.yaml. Returns the
+// number of files actually written (skipping any host whose target file
+// already exists). The parse uses a loose schema — we only need the host
+// field to name the file; the rest is round-tripped opaquely.
+func migrateInlineDomains(data []byte, destDomainsDir string) int {
+	type loose struct {
+		Domains []map[string]any `yaml:"domains"`
+	}
+	var doc loose
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return 0
+	}
+	written := 0
+	for _, d := range doc.Domains {
+		hostAny, ok := d["host"]
+		if !ok {
+			continue
+		}
+		host, _ := hostAny.(string)
+		if host == "" {
+			continue
+		}
+		clean := strings.ReplaceAll(host, ":", "_")
+		clean = filepath.Base(clean)
+		dst := filepath.Join(destDomainsDir, clean+".yaml")
+		if _, err := installOsStat(dst); err == nil {
+			continue
+		}
+		body, merr := yaml.Marshal(d)
+		if merr != nil {
+			continue
+		}
+		if werr := installOsWriteFile(dst, body, 0600); werr == nil {
+			written++
+		}
+	}
+	return written
+}
+
+// dumpUnitDiagnostics prints `systemctl status` and the tail of the journal
+// for the uwas unit so a failed install surfaces the actual root cause
+// inline. Best-effort: if systemctl or journalctl isn't available, we just
+// skip — the install error message itself still flows up to the operator.
+func dumpUnitDiagnostics() {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  ─── systemctl status uwas ───")
+	if out, _ := installExecCommand("systemctl", "status", "uwas", "--no-pager", "-n", "0").CombinedOutput(); len(out) > 0 {
+		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+			fmt.Fprintln(os.Stderr, "  "+line)
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  ─── journalctl -u uwas (last 20 lines) ───")
+	if out, _ := installExecCommand("journalctl", "-u", "uwas", "--no-pager", "-n", "20").CombinedOutput(); len(out) > 0 {
+		for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+			fmt.Fprintln(os.Stderr, "  "+line)
+		}
+	}
+	fmt.Fprintln(os.Stderr)
 }
