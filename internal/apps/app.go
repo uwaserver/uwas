@@ -6,10 +6,8 @@
 // does so by reverse-proxying to the app's local port — never by
 // declaring the app inline as part of the domain definition.
 //
-// This package is the v0.6.0 successor to the domain-keyed appmanager.
-// The two coexist during the deprecation window: legacy `type=app`
-// domains continue to spawn via internal/appmanager, while new
-// deployments land here.
+// This package is the v0.6.0 successor to the removed domain-keyed
+// appmanager.
 package apps
 
 import (

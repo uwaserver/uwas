@@ -77,10 +77,8 @@ func TestMatchLocationEmptyPattern(t *testing.T) {
 	}
 }
 
-// handleAppProxy was removed in v0.6.0 — type=app domains are auto-
-// migrated to type=proxy at boot. Coverage for the deprecation
-// branch in dispatchHandler is exercised indirectly by the proxy
-// upstream resolver tests in apps_upstream_test.go.
+// handleAppProxy was removed in v0.6.0. Coverage for app upstreams
+// lives in apps_upstream_test.go.
 
 // =============================================================================
 // FetchFragment tests

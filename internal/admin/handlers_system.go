@@ -283,18 +283,18 @@ var knownPackages = []knownPkg{
 		true, "WordPress installer", "", false,
 		[]string{"unzip"}, []string{"unzip"}, nil},
 
-	// ── App Runtimes (for type=app domains via Apps page) ──
+	// ── App Runtimes (for standalone apps) ──
 	{"nodejs", "Node.js + npm", "JavaScript runtime for Node.js apps (Express, Next.js, etc.)", "Runtime",
-		false, "Apps page (type=app domains with runtime=node)", "Running Node.js apps will fail until reinstalled.", true,
+		false, "Apps page (runtime=node)", "Running Node.js apps will fail until reinstalled.", true,
 		[]string{"node"}, []string{"nodejs", "npm"}, []string{"nodejs", "npm"}},
 	{"python3", "Python 3 + pip", "Python interpreter + pip for Python web apps (Flask, Django, FastAPI)", "Runtime",
-		false, "Apps page (type=app domains with runtime=python)", "Running Python apps will fail until reinstalled.", true,
+		false, "Apps page (runtime=python)", "Running Python apps will fail until reinstalled.", true,
 		[]string{"python3"}, []string{"python3", "python3-pip", "python3-venv"}, []string{"python3-pip", "python3-venv"}},
 	{"ruby", "Ruby", "Ruby interpreter for Ruby web apps (Rails, Sinatra)", "Runtime",
-		false, "Apps page (type=app domains with runtime=ruby)", "Running Ruby apps will fail until reinstalled.", true,
+		false, "Apps page (runtime=ruby)", "Running Ruby apps will fail until reinstalled.", true,
 		[]string{"ruby"}, []string{"ruby-full"}, []string{"ruby-full"}},
 	{"golang", "Go", "Go toolchain for building Go web apps", "Runtime",
-		false, "Apps page (type=app domains with runtime=go)", "Building Go apps will fail until reinstalled.", true,
+		false, "Apps page (runtime=go)", "Building Go apps will fail until reinstalled.", true,
 		[]string{"go"}, []string{"golang-go"}, []string{"golang-go"}},
 }
 

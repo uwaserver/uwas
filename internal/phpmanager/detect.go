@@ -11,12 +11,14 @@
 package phpmanager
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Installations returns a copy of the detected PHP installations.
@@ -154,11 +156,40 @@ func (m *Manager) probe(binary string) (PHPInstall, error) {
 // runPHP executes a PHP binary with given arguments and returns stdout.
 func (m *Manager) runPHP(binary string, args ...string) (string, error) {
 	cmd := m.execCommand(binary, args...)
-	out, err := cmd.Output()
-	if err != nil {
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	return string(out), nil
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				return "", fmt.Errorf("%w: %s", err, msg)
+			}
+			return "", err
+		}
+	case <-time.After(3 * time.Second):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+		}
+		return "", fmt.Errorf("php probe timed out after 3s")
+	}
+
+	return stdout.String(), nil
 }
 
 var versionRegex = regexp.MustCompile(`PHP\s+(\d+\.\d+\.\d+)`)

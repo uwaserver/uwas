@@ -348,8 +348,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	// Apps — first-class objects independent of domains. Live in
 	// /etc/uwas/apps.d/<name>.yaml; domains reach them via reverse
 	// proxy with `apps://<name>` upstreams. The pre-v0.6 domain-keyed
-	// supervisor (internal/appmanager) was removed in v0.6.0 — any
-	// `type=app` domain still on disk is auto-converted below.
+	// supervisor (internal/appmanager) was removed in v0.6.0.
 	s.appsMgr = apps.NewManager(nil, log)
 	if loaded, skipErrs, err := s.appsMgr.LoadAll(); err != nil {
 		log.Warn("apps: load failed (continuing without standalone apps)", "error", err)
@@ -364,16 +363,6 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		s.admin.SetAppsManager(s.appsMgr)
 	}
 
-	// Note: boot-time auto-migration of legacy `type=app` domains runs
-	// in Start(), not here. It needs s.admin.configPath to be set so
-	// it can rewrite the on-disk YAML, and SetConfigPath is called by
-	// the CLI AFTER New() returns. Running here would log a "config
-	// path not set" warning and leak the rewrite.
-	//
-	// We also defer StartAll() to after the migration so newly-
-	// registered migrated apps come up alongside pre-existing ones in
-	// a single uniform pass — no double-start race.
-
 	// Deploy manager (git clone → build → restart)
 	deployMgr := deploy.New(log)
 	if s.admin != nil {
@@ -382,8 +371,10 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 
 	// PHP Manager — detect, auto-assign to PHP domains, start all
 	s.phpMgr = phpmanager.New(log)
-	s.phpMgr.Detect()
-	s.autoAssignPHP(s.phpMgr, cfg)
+	if configHasPHPDomains(cfg) {
+		s.phpMgr.Detect()
+		s.autoAssignPHP(s.phpMgr, cfg)
+	}
 	if s.admin != nil {
 		s.admin.SetPHPManager(s.phpMgr)
 	}
@@ -742,36 +733,9 @@ func (s *Server) Start() error {
 		s.logger.Warn("failed to write pid file", "error", err)
 	}
 
-	// Auto-migration of legacy `type=app` domains. Runs here (not in
-	// New) because s.admin.configPath was set by SetConfigPath after
-	// New returned, and the migration needs that path to rewrite the
-	// converted domain YAMLs in-place.
-	migratedCount := 0
-	if s.admin != nil && s.appsMgr != nil {
-		migratedCount = s.admin.MigrateLegacyAppsAtBoot()
-		if migratedCount > 0 {
-			s.logger.Info("apps: auto-migrated legacy type=app domains", "count", migratedCount)
-		}
-	}
-
-	// Start every registered app — pre-existing entries from
-	// /etc/uwas/apps.d/ plus anything the migration just registered.
-	// Single pass, no race with the migrator.
+	// Start every registered app from /etc/uwas/apps.d/.
 	if s.appsMgr != nil {
 		s.appsMgr.StartAll()
-	}
-
-	// If we migrated any legacy domains, reload the config so the
-	// proxy pool builder picks up the now-`type=proxy` domains and
-	// resolves their `apps://<name>` upstreams to the live ports the
-	// supervisor just assigned. New() built pools against the original
-	// (pre-migration) config — those pools have no entry for the
-	// converted hosts, so without this reload the proxy would 502 the
-	// migrated traffic until the next manual reload.
-	if migratedCount > 0 && s.configPath != "" {
-		if err := s.reload(); err != nil {
-			s.logger.Warn("apps: post-migration reload failed", "error", err)
-		}
 	}
 
 	s.tlsMgr.AllowSelfSigned = true
@@ -1791,13 +1755,9 @@ func (s *Server) dispatchHandler(ctx *router.RequestContext, domain *config.Doma
 	case "proxy":
 		s.handleProxy(ctx, domain)
 	case "app":
-		// Legacy type=app domains are auto-migrated to type=proxy at
-		// boot. Anything reaching this branch is a YAML the operator
-		// hand-edited AFTER boot — surface a clear "needs migration"
-		// message instead of a confused 500.
 		http.Error(ctx.Response,
 			"502 Bad Gateway — type=app is no longer supported. "+
-				"Run POST /api/v1/apps/migrate or restart uwas to auto-migrate.",
+				"Create an app under /api/v1/apps and route domains with type=proxy + apps://<name>.",
 			http.StatusBadGateway)
 	default:
 		renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
@@ -2495,6 +2455,18 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		}
 		s.logger.Info("PHP assigned to domain", "domain", d.Host, "version", defaultVer, "listen", inst.ListenAddr)
 	}
+}
+
+func configHasPHPDomains(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, d := range cfg.Domains {
+		if d.Type == "php" {
+			return true
+		}
+	}
+	return false
 }
 
 // isAddrReachable checks if an FPM address (tcp or unix socket) is reachable.

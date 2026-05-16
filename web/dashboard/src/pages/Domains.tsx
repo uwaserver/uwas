@@ -51,10 +51,8 @@ type TemplateName = 'wordpress' | 'laravel' | 'nodejs' | 'python' | 'static' | '
 // type=app is intentionally OMITTED from the create UI. App lifecycle
 // (deploy / start / stop / logs / port allocation) is managed on the Apps
 // page now; Domains only routes. To expose a running app on a hostname,
-// add a type=proxy domain pointing to the app's 127.0.0.1:<port> endpoint
+// add a type=proxy domain pointing to the app's apps://<name> endpoint
 // (the Reverse Proxy template offers a dropdown of registered apps).
-// Legacy domains with type=app in YAML keep working — they just don't
-// appear as a choice in the create wizard.
 const domainTypes = ['static', 'php', 'proxy', 'redirect'] as const;
 const sslModes = ['auto', 'manual', 'off'] as const;
 // proxyAlgorithms and redirectCodes are now rendered as visual cards inline
@@ -548,9 +546,8 @@ export default function Domains() {
     }
 
     // type=app submission was removed in v0.5.8. The dashboard no longer
-    // creates managed app processes via domain create — that's the Apps
-    // page's job now. Legacy type=app domains in YAML keep working but
-    // can't be created from this form.
+    // creates managed app processes via domain create; that's the Apps
+    // page's job now.
 
     // Cache settings
     if (form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0) {
