@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
-import { RefreshCw, Play, Square, RotateCw, CheckCircle, XCircle, AlertTriangle, X } from 'lucide-react';
+import { RefreshCw, Play, Square, RotateCw, CheckCircle, XCircle } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
+import { useConfirm } from '@/components/ConfirmModal';
 import {
   fetchServices,
   startService,
@@ -10,12 +11,12 @@ import {
 } from '@/lib/api';
 
 export default function Services() {
+  const { confirmAction } = useConfirm();
   const [services, setServices] = useState<SystemService[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ name: string; action: 'stop' | 'restart' } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -42,16 +43,6 @@ export default function Services() {
     }
   }, [status]);
 
-  // Escape key closes the confirm modal — standard keyboard expectation.
-  useEffect(() => {
-    if (!confirmAction) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setConfirmAction(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [confirmAction]);
-
   const handleAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
     setActionLoading((prev) => ({ ...prev, [name]: action }));
     setStatus(null);
@@ -70,6 +61,20 @@ export default function Services() {
         return next;
       });
     }
+  };
+
+  const requestServiceAction = async (name: string, action: 'stop' | 'restart') => {
+    const ok = await confirmAction({
+      title: `${action === 'stop' ? 'Stop' : 'Restart'} Service`,
+      message: (
+        <>
+          {action === 'stop' ? 'Stopping' : 'Restarting'} <strong>{name}</strong> may cause downtime for sites depending on it.
+        </>
+      ),
+      confirmLabel: action === 'stop' ? 'Stop' : 'Restart',
+      variant: action === 'stop' ? 'danger' : 'warning',
+    });
+    if (ok) await handleAction(name, action);
   };
 
   if (loading) {
@@ -167,7 +172,7 @@ export default function Services() {
                         Start
                       </button>
                       <button
-                        onClick={() => setConfirmAction({ name: svc.name, action: 'stop' })}
+                        onClick={() => requestServiceAction(svc.name, 'stop')}
                         disabled={!!actionLoading[svc.name]}
                         className="flex items-center gap-1 rounded-md bg-red-600/15 px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-600/25 disabled:opacity-50"
                         title="Stop service"
@@ -180,7 +185,7 @@ export default function Services() {
                         Stop
                       </button>
                       <button
-                        onClick={() => setConfirmAction({ name: svc.name, action: 'restart' })}
+                        onClick={() => requestServiceAction(svc.name, 'restart')}
                         disabled={!!actionLoading[svc.name]}
                         className="flex items-center gap-1 rounded-md bg-blue-600/15 px-2.5 py-1.5 text-xs font-medium text-blue-400 transition hover:bg-blue-600/25 disabled:opacity-50"
                         title="Restart service"
@@ -207,32 +212,6 @@ export default function Services() {
           </table>
         </div>
       </div>
-      {/* Confirm stop/restart modal */}
-      {confirmAction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmAction(null)}>
-          <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground capitalize">{confirmAction.action} Service</h3>
-              <button onClick={() => setConfirmAction(null)} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>
-            </div>
-            <div className="mb-5 flex items-start gap-2 rounded-md bg-amber-500/10 p-3 text-amber-400 text-sm">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              <p>{confirmAction.action === 'stop' ? 'Stopping' : 'Restarting'} <strong>{confirmAction.name}</strong> may cause downtime for sites depending on it.</p>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmAction(null)}
-                className="rounded-md border border-border px-4 py-2 text-sm text-card-foreground hover:bg-accent">Cancel</button>
-              <button onClick={() => { handleAction(confirmAction.name, confirmAction.action); setConfirmAction(null); }}
-                className={`flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium text-white ${
-                  confirmAction.action === 'stop' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
-                }`}>
-                {confirmAction.action === 'stop' ? <Square size={12} /> : <RotateCw size={12} />}
-                {confirmAction.action === 'stop' ? 'Stop' : 'Restart'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
