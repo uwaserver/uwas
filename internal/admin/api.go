@@ -24,7 +24,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
-	"github.com/uwaserver/uwas/internal/appmanager"
+	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
@@ -94,7 +94,7 @@ type Server struct {
 	monitor       *monitor.Monitor
 	alerter       *alerting.Alerter
 	phpMgr        *phpmanager.Manager
-	appMgr        *appmanager.Manager
+	appsMgr       *apps.Manager // standalone apps supervisor
 	deployMgr     *deploy.Manager
 	backupMgr     *backup.BackupManager
 	bwMgr         *bandwidth.Manager
@@ -579,8 +579,8 @@ func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
 
 	out := map[string]featureStatus{}
 
-	if s.appMgr == nil {
-		out["apps"] = disabled("App manager not initialized — pass --enable-apps or set apps.enabled in uwas.yaml")
+	if s.appsMgr == nil {
+		out["apps"] = disabled("App supervisor not initialized")
 	} else {
 		out["apps"] = enabled
 	}
@@ -2250,14 +2250,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		if err := os.MkdirAll(d.Root, 0755); err != nil {
 			s.logger.Warn("failed to create web root", "path", d.Root, "error", err)
 		}
-		if d.Type == "app" {
-			// type=app domains get a runnable demo instead of an HTML placeholder.
-			// Default to Node.js if no runtime specified — most common case.
-			if d.App.Runtime == "" {
-				d.App.Runtime = "node"
-			}
-			scaffoldAppDemo(d.Root, d.Host, &d.App, s.logger)
-		} else {
+		{
 			idx := filepath.Join(d.Root, "index.html")
 			if _, err := os.Stat(idx); os.IsNotExist(err) {
 				placeholder := fmt.Sprintf(`<!DOCTYPE html>
@@ -2342,27 +2335,15 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// App type: register with app manager and start (unless user has disabled it)
-	if d.Type == "app" && s.appMgr != nil && (d.App.Command != "" || d.App.Runtime != "") {
-		if err := s.appMgr.Register(d.Host, d.App, d.Root); err != nil {
-			s.logger.Warn("app register on create failed", "domain", d.Host, "error", err)
-		} else {
-			// Reflect the actually-assigned port back into the domain config so
-			// the YAML and the running process agree. Without this, a domain
-			// created with port=0 (auto-assign) ended up with port:0 in YAML
-			// and the next restart re-rolled the port — the dashboard kept
-			// showing "3000" because the form default leaked in.
-			if inst := s.appMgr.Get(d.Host); inst != nil && inst.Port > 0 {
-				d.App.Port = inst.Port
-			}
-			if !d.App.Disabled {
-				if err := s.appMgr.Start(d.Host); err != nil {
-					s.logger.Warn("app start on create failed", "domain", d.Host, "error", err)
-				} else {
-					s.logger.Info("app started on domain create", "domain", d.Host, "runtime", d.App.Runtime, "port", d.App.Port)
-				}
-			}
-		}
+	// Reject type=app — apps are first-class objects now. Operator
+	// should create a standalone app via /api/v1/apps then add a
+	// type=proxy domain pointing at apps://<name>.
+	if d.Type == "app" {
+		s.configMu.Unlock()
+		jsonError(w,
+			"type=app is no longer supported. Create the app via /api/v1/apps then add a type=proxy domain with apps://<name> upstream.",
+			http.StatusBadRequest)
+		return
 	}
 
 	s.config.Domains = append(s.config.Domains, d)
@@ -2453,9 +2434,6 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		if s.phpMgr != nil {
 			s.phpMgr.StopDomain(host)
 			s.phpMgr.UnassignDomain(host)
-		}
-		if s.appMgr != nil {
-			s.appMgr.Stop(host)
 		}
 		if s.cache != nil {
 			s.cache.PurgeByTag("site:" + host)
@@ -2724,39 +2702,14 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Auto-register app if domain type changed to app, or if the port changed.
-	// If the operator edited the port via dashboard, we tear down the old
-	// registration and re-register with the new config — otherwise the
-	// running process stays on the old port and the proxy keeps going to it.
-	if d.Type == "app" && s.appMgr != nil && (d.App.Command != "" || d.App.Runtime != "") {
-		existing := s.appMgr.Get(d.Host)
-		needsReregister := existing == nil ||
-			(d.App.Port > 0 && existing.Port != d.App.Port) ||
-			(d.App.Command != "" && existing.Command != d.App.Command)
-		if needsReregister {
-			if existing != nil {
-				_ = s.appMgr.Stop(d.Host)
-				s.appMgr.Unregister(d.Host)
-			}
-			if err := s.appMgr.Register(d.Host, d.App, d.Root); err == nil {
-				if inst := s.appMgr.Get(d.Host); inst != nil && inst.Port > 0 {
-					d.App.Port = inst.Port // write actual assigned port back to YAML
-					s.configMu.Lock()
-					for i := range s.config.Domains {
-						if s.config.Domains[i].Host == d.Host {
-							s.config.Domains[i].App.Port = inst.Port
-							break
-						}
-					}
-					s.configMu.Unlock()
-					s.persistConfig()
-				}
-				if !d.App.Disabled {
-					_ = s.appMgr.Start(d.Host)
-				}
-				s.logger.Info("re-registered app on update", "domain", d.Host, "port", d.App.Port)
-			}
-		}
+	// type=app is no longer a routing decision; legacy domains are
+	// auto-migrated at boot. An operator who explicitly PUTs
+	// type=app via dashboard gets a deprecation error.
+	if d.Type == "app" {
+		jsonError(w,
+			"type=app is no longer supported. Manage apps via /api/v1/apps and route domains to them with type=proxy + apps://<name>.",
+			http.StatusBadRequest)
+		return
 	}
 
 	jsonResponse(w, d)
@@ -4673,8 +4626,8 @@ func (s *Server) SetAuthManager(m AuthManager) { s.authMgr = m }
 // SetWebhookManager sets the webhook manager for event delivery.
 func (s *Server) SetWebhookManager(m *webhook.Manager) { s.webhookMgr = m }
 
-// SetAppManager sets the application process manager.
-func (s *Server) SetAppManager(m *appmanager.Manager) { s.appMgr = m }
+// SetAppsManager sets the standalone apps supervisor.
+func (s *Server) SetAppsManager(m *apps.Manager) { s.appsMgr = m }
 
 // SetDeployManager sets the deployment manager.
 func (s *Server) SetDeployManager(m *deploy.Manager) { s.deployMgr = m }

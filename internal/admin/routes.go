@@ -146,24 +146,26 @@ func (s *Server) registerPHPRoutes() {
 	s.mux.HandleFunc("PUT /api/v1/php/domains/{domain}/config", s.handlePHPDomainConfigPut)
 }
 
-// registerAppRoutes covers app process management (Node.js, Python, etc.),
-// the deploy pipeline (git clone → build → restart), the web terminal, and
-// the install task queue.
+// registerAppRoutes covers app process management (Node.js, Python,
+// Ruby, Go, Docker), the deploy pipeline, the web terminal, and the
+// install task queue. Apps are first-class objects keyed by name —
+// the pre-v0.6 domain-keyed surface was removed; legacy `type=app`
+// domains auto-migrate at boot.
 func (s *Server) registerAppRoutes() {
-	s.mux.HandleFunc("GET /api/v1/apps", s.handleAppList)
-	s.mux.HandleFunc("GET /api/v1/apps/{domain}", s.handleAppGet)
-	s.mux.HandleFunc("POST /api/v1/apps/{domain}/start", s.handleAppStart)
-	s.mux.HandleFunc("POST /api/v1/apps/{domain}/stop", s.handleAppStop)
-	s.mux.HandleFunc("POST /api/v1/apps/{domain}/restart", s.handleAppRestart)
-	s.mux.HandleFunc("PUT /api/v1/apps/{domain}/env", s.handleAppEnvUpdate)
-	s.mux.HandleFunc("GET /api/v1/apps/{domain}/logs", s.handleAppLogs)
-	s.mux.HandleFunc("GET /api/v1/apps/{domain}/stats", s.handleAppStats)
-
-	// Deploy
-	s.mux.HandleFunc("POST /api/v1/apps/{domain}/deploy", s.handleDeploy)
-	s.mux.HandleFunc("GET /api/v1/apps/{domain}/deploy", s.handleDeployStatus)
-	s.mux.HandleFunc("GET /api/v1/deploys", s.handleDeployList)
-	s.mux.HandleFunc("POST /api/v1/apps/{domain}/webhook", s.handleDeployWebhook)
+	// Apps CRUD + lifecycle.
+	s.mux.HandleFunc("GET /api/v1/apps", s.handleAppsList)
+	s.mux.HandleFunc("POST /api/v1/apps", s.handleAppCreate)
+	s.mux.HandleFunc("GET /api/v1/apps/{name}", s.handleAppGet)
+	s.mux.HandleFunc("PUT /api/v1/apps/{name}", s.handleAppUpdate)
+	s.mux.HandleFunc("DELETE /api/v1/apps/{name}", s.handleAppDelete)
+	s.mux.HandleFunc("POST /api/v1/apps/{name}/start", s.handleAppStart)
+	s.mux.HandleFunc("POST /api/v1/apps/{name}/stop", s.handleAppStop)
+	s.mux.HandleFunc("POST /api/v1/apps/{name}/restart", s.handleAppRestart)
+	s.mux.HandleFunc("GET /api/v1/apps/{name}/logs", s.handleAppLogs)
+	s.mux.HandleFunc("GET /api/v1/apps/{name}/stats", s.handleAppStats)
+	s.mux.HandleFunc("POST /api/v1/apps/{name}/deploy", s.handleAppDeploy)
+	s.mux.HandleFunc("POST /api/v1/apps/{name}/webhook", s.handleAppWebhook)
+	s.mux.HandleFunc("GET /api/v1/apps/{name}/webhook-status", s.handleAppWebhookStatus)
 
 	// Web terminal (WebSocket → PTY) — requires admin + pin for security.
 	s.mux.HandleFunc("GET /api/v1/terminal", func(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +178,10 @@ func (s *Server) registerAppRoutes() {
 	// Install task queue (apt/dpkg/etc. serialised)
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleTaskList)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskGet)
+
+	// One-shot migration: legacy type=app domains → standalone apps + type=proxy domains.
+	// Idempotent — boot also runs this automatically.
+	s.mux.HandleFunc("POST /api/v1/apps/migrate", s.handleAppsMigrate)
 }
 
 // registerDatabaseRoutes covers system MySQL/MariaDB management, Docker DB

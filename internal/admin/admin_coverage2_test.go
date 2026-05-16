@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uwaserver/uwas/internal/appmanager"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/config"
@@ -3770,42 +3769,10 @@ func TestSetPHPManagerSetsManager(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Additional coverage: handleAppStart endpoint
-// =============================================================================
-
-func TestHandleAppStartNoManager(t *testing.T) {
-	s := testServer()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/apps/example.com/start", nil)
-	req.SetPathValue("domain", "example.com")
-	s.handleAppStart(rec, req)
-	if rec.Code != 501 {
-		t.Errorf("status = %d, want 501 (no app manager)", rec.Code)
-	}
-}
-
-func TestHandleAppStartWithManager(t *testing.T) {
-	s := testServer()
-	am := appmanager.New(nil)
-	s.SetAppManager(am)
-
-	// Register an app first
-	am.Register("testapp.com", config.AppConfig{
-		Runtime: "node",
-		Command: "echo hello",
-		Port:    9999,
-	}, t.TempDir())
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/apps/testapp.com/start", nil)
-	req.SetPathValue("domain", "testapp.com")
-	s.handleAppStart(rec, req)
-	// May fail on Windows but exercises the code path
-	if rec.Code != 200 && rec.Code != 500 {
-		t.Errorf("status = %d", rec.Code)
-	}
-}
+// Note: Tests for the legacy domain-keyed /api/v1/apps/{domain}/*
+// endpoints (handleAppStart, handleAppStop, etc.) were removed in
+// v0.6.0 when the apps surface was rewritten to be name-keyed.
+// Coverage for the new endpoints lives in handlers_apps_*_test.go.
 
 // =============================================================================
 // Additional coverage: handleDBStart endpoint

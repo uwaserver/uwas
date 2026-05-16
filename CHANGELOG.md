@@ -7,6 +7,331 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### BREAKING — legacy app system removed
+
+The pre-v0.6 domain-keyed app system (`internal/appmanager`,
+`type: app` domains, `/api/v1/apps/{domain}/*` endpoints) has been
+deleted entirely. v0.6.0 is a hard cutover, not a coexistence window.
+Migration is automatic, but there is no opt-out:
+
+- **`internal/appmanager` package**: removed. App lifecycle is owned
+  exclusively by `internal/apps` (name-keyed, `/etc/uwas/apps.d/`).
+- **`type: app` domain config**: rejected by the API (`400 Bad
+  Request`). The router returns `502` with a deprecation message if
+  one slips through on disk. The boot-time auto-migrator converts
+  any existing on-disk `type=app` domain into an `apps.d/<name>.yaml`
+  entry plus a `type: proxy` domain pointing at `apps://<name>`.
+- **`/api/v1/apps/{domain}/*` endpoints**: removed. The path
+  `/api/v1/apps/*` now serves the v0.6 name-keyed API (previously
+  `/api/v1/apps/*`). Equivalents:
+  - `GET /api/v1/apps` — list (name-keyed payload, was domain-keyed)
+  - `GET|PUT|DELETE /api/v1/apps/{name}` — full CRUD
+  - `POST /api/v1/apps/{name}/{start|stop|restart}`
+  - `GET /api/v1/apps/{name}/logs|stats`
+  - `POST /api/v1/apps/{name}/deploy` (was `POST /api/v1/apps/{domain}/deploy`)
+  - `POST /api/v1/apps/{name}/webhook` (HMAC-authenticated; same
+    contract as before but keyed by name)
+  - `POST /api/v1/apps/migrate` — kept as an idempotent operator-
+    triggered migration in case the auto-migration is disabled or
+    needs to re-run.
+- **Removed admin endpoints**: `/api/v1/deploys` (was a legacy-only
+  global deploys list). Per-app deploy status now flows through
+  `/api/v1/apps/{name}/webhook-status`.
+- **Dashboard**: the legacy `Apps` page is gone; the v0.6 page is
+  now the only one and is registered at `/apps`. The "Apps (v0.6)"
+  sidebar entry collapsed back to a single "Applications" link.
+
+Migration runs once per boot (idempotent — a clean install with no
+legacy domains is a no-op). Operators with `type=app` domains can
+upgrade in place: the binary swap converts them on the next start.
+The migration report is logged at info level (`apps: auto-migrated
+legacy type=app domains count=N`).
+
+### Fixed — admin/server config pointer drift (caught by API smoke test)
+
+After ANY config reload (boot migration, post-app-change reload, SIGHUP,
+operator-triggered reload), every subsequent domain CRUD via the admin
+API silently broke. New domains landed in a config object the server no
+longer referenced, so vhost router never saw them — every request to a
+freshly-created domain returned 421 Misdirected Request, every new
+proxy upstream returned 502.
+
+Root cause: server's `reload()` did `s.config = newCfg` (pointer swap).
+admin's `Server` was constructed in `New()` with the ORIGINAL `*config.Config`
+pointer and never re-bound. After reload, admin and server pointed at
+different config objects:
+
+- Admin's append to `s.config.Domains` mutated the orphaned old config.
+- Server's `onDomainChange` callback read from the new config (empty).
+- Vhost.Update saw zero domains.
+
+The fix is two-part:
+
+- `reload()` now does `*s.config = *newCfg` (in-place struct copy) so
+  the shared pointer stays valid. Admin keeps seeing fresh state for
+  free, no rebinding needed.
+- `onDomainChange` now calls a new `rebuildProxyPools(domains)` method
+  that operates on the in-memory domains slice — not a disk reload.
+  The previous code missed proxy-pool reconstruction entirely for
+  admin-API-added domains; even with the pointer fix, a new
+  type=proxy domain would have had a vhost entry but no upstream pool
+  (502 on first request). `rebuildProxyPools` was factored out of
+  `reload()`; the two paths now share the same logic.
+
+Combined effect: `POST /api/v1/apps` → `POST /api/v1/domains` with
+`apps://<name>` upstream → first request to the new domain proxies
+through to the live app. Verified end-to-end with curl returning the
+node app's response on the first hit, no manual reload needed.
+
+### Fixed — dashboard upstream picker used static port instead of apps://
+
+`web/dashboard/src/pages/Domains.tsx` "Pick from registered apps"
+button wrote `http://127.0.0.1:<port>` into the upstream field. That
+silently breaks if the app's port changes (crash → restart on a
+different allocated port, or operator-triggered port reassignment).
+The whole point of `apps://<name>` is dynamic name-based resolution
+at pool-build time — the dashboard now writes that form.
+
+### Fixed — boot migration regressions (caught by end-to-end smoke test)
+
+Three bugs in the boot-time auto-migration that would have caused
+the v0.6.0 rollout to silently 502 every migrated domain in the
+field. None were caught by unit tests because the failure mode
+requires the full server lifecycle plus an actual HTTP request to
+the migrated host.
+
+- **`config path not set`** — migration ran inside `server.New()`
+  but `SetConfigPath()` is called by the CLI *after* `New()` returns.
+  The on-disk YAML rewrite silently no-op'd, so the next boot would
+  re-migrate the same domain every time. Fix: migration now runs in
+  `Start()`, after `SetConfigPath` has populated `s.configPath`.
+- **`apps: <name> already running` on every boot with a migrated
+  app** — `MigrateLegacyAppsAtBoot` started apps as it converted
+  them, then the unconditional `appsMgr.StartAll()` in the boot
+  sequence tried again. Fix: migration no longer starts apps;
+  `StartAll()` is the single source of truth for the boot-time start.
+- **Migrated domain proxies returned 502 until the first manual
+  reload** — `New()` built proxy pools against the pre-migration
+  config, where the legacy domain was still `type: app` (no pool
+  built). After `MigrateLegacyAppsAtBoot` rewrote it to `type: proxy`
+  with `apps://<name>` upstream, the pool builder had already
+  finished. Fix: when migration converts at least one domain,
+  `Start()` triggers `s.reload()` so pools rebuild against the
+  migrated config and resolve `apps://<name>` to the supervisor's
+  assigned port.
+
+### Hardening — docker probe timeout
+
+`apps.Manager.cleanupOrphanContainers` and `dockerContainerRunning`
+now run `docker` CLI calls under a 3-second context timeout. A
+wedged docker daemon (Docker Desktop paused/restarting) used to hang
+`LoadAll` indefinitely; the probe now gives up promptly and the next
+LoadAll retries. Best-effort orphan sweep, same as before — just no
+longer blocking.
+
+### Added (v0.6.0 backend foundation)
+
+Apps are now first-class objects, fully independent of domains. The
+v0.5.8 split (domains stop scaffolding apps) was step one; this is the
+durable storage + supervisor + API + reverse-proxy plumbing behind it.
+
+**New package `internal/apps`** — successor to the domain-keyed
+`internal/appmanager`. Apps live at `/etc/uwas/apps.d/<name>.yaml`,
+workdirs default to `/var/lib/uwas/apps/<name>/`, and the supervisor
+handles native runtimes (node/python/ruby/go/custom) AND docker
+containers with optional BuildKit pre-build. PM2-style auto-restart,
+collision-detected port allocation, atomic YAML save (0600 perms),
+write-only persistence (no orphan cleanup that can erase live config).
+
+**New API endpoints** (`/api/v1/apps/...` — these replaced the
+legacy `/api/v1/apps/{domain}/*` endpoints, see breaking-change
+notice above):
+
+- `GET /api/v1/apps` — list
+- `POST /api/v1/apps` — create (saves YAML, reserves port)
+- `GET /api/v1/apps/{name}` — definition + runtime state
+- `PUT /api/v1/apps/{name}` — field-by-field partial update
+- `DELETE /api/v1/apps/{name}` — stop + remove YAML
+- `POST /api/v1/apps/{name}/{start|stop|restart}`
+- `GET /api/v1/apps/{name}/logs` — tails runtime log,
+  falls back to build log for docker apps
+- `POST /api/v1/apps/migrate` — operator-triggered conversion of
+  legacy `type=app` domains into apps + `type=proxy` domains.
+  Supports `?dry_run=true` for preview. Same conversion runs
+  automatically at boot.
+
+**Proxy `apps://<name>` upstream scheme** — `type=proxy` domains can
+target a standalone app by name. The server resolves `apps://<name>`
+at proxy-pool build time against `apps.Manager.ListenAddr(name)`.
+Unresolved names get a `127.0.0.1:0` placeholder so the existing
+proxy-error classifier renders a meaningful "no app running" diagnostic
+instead of a parse error. App state changes (start/stop/register) auto-
+trigger a config reload so proxy pools re-resolve immediately.
+
+**Dashboard API bindings** — `web/dashboard/src/lib/api.ts` adds
+typed bindings for every new endpoint (`StandaloneApp`,
+`StandaloneAppInstance`, `DockerSpec`, `DockerBuild`,
+`StandaloneAppsMigrationReport` + CRUD/lifecycle functions).
+
+**Webhook auto-deploy (git push → automatic redeploy):**
+
+- New `App.Deploy` sub-block on the schema: `{git_url, git_branch,
+  build_cmd, webhook_secret, branch_filter}`. Populated on the first
+  manual `POST /deploy` and reused for every subsequent webhook push,
+  so operators don't re-enter git config per deploy.
+- `POST /api/v1/apps/{name}/webhook` — public endpoint
+  (auth via HMAC, not session cookie). Supports both:
+  - **GitHub**: `X-Hub-Signature-256: sha256=HEX` over the raw body
+  - **GitLab**: `X-Gitlab-Token: <secret>` verbatim
+  Constant-time signature comparison throughout. Branch-filter check
+  rejects pushes that aren't on the configured branch. Returns 202
+  immediately (GitHub treats >10s as failure) and runs the deploy in
+  a background goroutine with a 30-minute context.
+- Per-app deploy lock (`sync.Mutex` keyed by name) so two pushes for
+  the same app run serially — no interleaved git operations on a
+  shared workdir. Different apps still parallelize freely.
+- `GET /api/v1/apps/{name}/webhook-status` returns the
+  most recent webhook deploy outcome (started/finished timestamps,
+  ok bool, commit SHA, error, log tail) for dashboard display.
+- Shared `runDeployCore` function: the clone-or-pull + build sequence
+  was extracted from the manual handler so both code paths exercise
+  identical logic. Means a bug fix in deploy automatically improves
+  both UX paths.
+- Dashboard deploy modal gains a collapsible "Auto-deploy on git push"
+  section showing the per-app webhook URL plus inputs for secret and
+  branch filter. Operator pastes the URL into GitHub/GitLab and
+  pushes; subsequent commits redeploy without dashboard interaction.
+
+**Orphan container reaper + resource stats:**
+
+- **Boot-time orphan cleanup**: `LoadAll` now sweeps the docker host
+  for `uwas-app-*` containers whose names don't correspond to a
+  currently registered app, and force-removes them with their
+  anonymous volumes. The failure mode this addresses: uwas is killed
+  hard (OOM, host reboot) while a docker app is running, then the
+  operator deletes that app via dashboard. The container survives
+  with no record in /etc/uwas/apps.d/ and the next `docker run --name
+  uwas-app-<name>` would fail with "container name already in use".
+  Sweep runs AFTER the LoadAll lock is released — docker CLI stalls
+  don't block API readers.
+- **Resource stats**: new `Manager.Stats(name)` + `GET /api/v1/apps/{name}/stats` returning CPU%, RSS, VMS, PID,
+  uptime. Native runtimes get the data from `/proc` on Linux;
+  docker runtimes from `docker stats --no-stream`. Non-Linux falls
+  back to zero (no signal) rather than misleading data. Build-tagged
+  sibling files keep platform code out of the cross-cutting path.
+- **Dashboard inline stats**: each running app card gains an
+  Activity-icon button that fetches one-shot stats and renders them
+  inline ("CPU 3.4% · RSS 45 MB · PID 12345"). Refresh icon for
+  re-polling. On-demand rather than per-card poll loops keeps the
+  docker daemon from getting hammered.
+
+**Port-readiness probing (the last silent-failure path):**
+
+The 500ms liveness probe catches processes that die instantly, but a
+healthy-looking process can still spend 2-3 seconds binding to its
+port — and during that window the proxy returns 502 to every client.
+"Started ok" was therefore not the same as "actually serving traffic".
+
+`Manager.WaitListening(name, timeout)` does a TCP probe against
+`127.0.0.1:<port>` with a 250ms dial timeout and 150ms retry until
+either the connect succeeds, the process exits, or the budget is
+exhausted. Wired into:
+
+- `POST /api/v1/apps` (Create with auto-start)
+- `PUT /api/v1/apps/{name}` (Update with restart)
+- `POST /api/v1/apps/{name}/start`
+- `POST /api/v1/apps/{name}/restart`
+- `POST /api/v1/apps/{name}/deploy` (after the post-deploy restart)
+
+Default budget 3 seconds; covers normal startup. Response gains
+`listening` and `listening_warning` fields. Custom runtime is exempt
+(batch workers / queue consumers have no obligation to bind a port).
+
+The deploy endpoint treats a not-listening outcome as a HARD failure:
+a `git pull && build` that produces code which crashes on bind is no
+longer reported as "deploy ok" — `resp.OK = false` with a diagnostic
+the dashboard renders inline.
+
+Dashboard banner upgrades: "started but not listening" gets its own
+amber styling and copy distinct from "saved but failed to start".
+
+**Supervisor hardening (round 2):**
+
+- **Exponential crashloop backoff**. The previous fixed 2-second retry
+  meant a permanently broken app (typo in command, missing dependency,
+  bound port forever in use) hammered the host indefinitely. The
+  supervisor now escalates the restart delay 2s → 4s → 8s → 16s → … up
+  to a 5-minute cap, then gives up entirely after 10 consecutive
+  crashes inside a 30-second window. An explicit operator Start
+  clears the counter — pressing Start means "I fixed it, try again
+  clean". Surfaced via new `crashloop_gave_up` and `restart_count`
+  fields on `Instance`. Dashboard shows distinct "crashloop" and
+  "unstable" pills.
+- **Graceful SIGTERM → SIGKILL stop** on native runtimes. Apps with
+  shutdown handlers (express `.close()`, Django graceful, queue
+  drains) now get 3 seconds to clean up before the kernel takes them.
+  Windows continues to use direct `Process.Kill` because the OS has
+  no usable SIGTERM equivalent for non-console processes — build-
+  tagged sibling files keep the platform difference out of the
+  cross-cutting code path.
+- **Update endpoint mirrors Create's response shape**:
+  `{app, started, start_error?}`. A failed restart-after-edit now
+  surfaces the supervisor's full diagnostic to the dashboard instead
+  of being silently logged server-side. The dashboard reuses the same
+  "saved but failed to start" banner with View logs + Retry start
+  buttons.
+
+**Deploy hardening — "zero errors in deploy" pass:**
+
+- **Post-launch liveness probe** in both `startNative` and `startDocker`.
+  After spawning, we wait 500ms and verify the process / container is
+  still alive. Apps that die during boot (missing dependency, EADDRINUSE
+  inside the process, unhandled exception, bad docker entrypoint) now
+  surface synchronously with the last 4KB of log output attached to the
+  error — instead of the old failure mode where the create call reported
+  "started ok" and the operator discovered the truth via polling.
+- **Auto-start on create**: `POST /api/v1/apps` now attempts a
+  start immediately after persisting the YAML (unless `?start=false` or
+  `disabled: true`). Response shape becomes `{app, started, start_error?}`
+  so the dashboard can render "saved AND started" vs "saved but failed
+  to start, click for logs" without a second round-trip.
+- **Detect-hint in start errors**: when no command is set and detection
+  fails, the error now lists the files that *would* have been accepted
+  for the runtime, e.g. "expected one of: server.js, index.js, app.js,
+  or package.json in workdir" — instead of a generic "no command".
+- **New `POST /api/v1/apps/{name}/deploy`** endpoint —
+  synchronous git clone (or fetch + reset --hard) into the app's workdir
+  with optional build command, then triggers a supervisor restart.
+  5-minute timeout, returns full git/build log. URL/branch/build command
+  are all validated against shell-injection patterns. Dashboard exposes
+  this via a "Deploy" button on each app card with a git URL + branch
+  + build command form and live result rendering.
+- **Dashboard wizard rework**: on Create the modal closes immediately
+  but a banner appears if the auto-start failed, showing the start-error
+  log tail + buttons for "View logs" and "Retry start". Deploy modal
+  renders the streaming-style git/build log inline.
+
+**New dashboard page** `/apps` (sidebar: "Applications") —
+purpose-built UI for the v0.6 apps API. Card-based list of
+every app, status pill (running / stopped / disabled), runtime badge,
+inline start / stop / restart / logs / edit / delete buttons. Create
+form has a runtime selector that conditionally shows native fields
+(command + workdir + port + env) or docker fields (image + container
+port + optional build context + dockerfile). One-shot "Find legacy
+apps" button runs a migration dry-run and renders a preview report
+with an "Apply migration" CTA. Replaces the legacy `/apps` page
+entirely (see breaking-change notice at the top of this section).
+
+### Why split apps off
+
+User feedback that drove this: "appler yine desiliniyor bence apps i
+ayrı yapalım sonra calısan amk applerine reverse proxy ekleyelim".
+Domains kept eating apps because every domain merge / persist / install
+touched a shared structure. v0.6.0 enforces separation by ownership:
+domains have no `App` block anymore, apps have no `Host`. A domain
+wanting to expose an app uses a reverse-proxy upstream of
+`apps://<name>` and the supervisor owns everything app-related.
+
 ## [0.5.8] - 2026-05-16
 
 Architectural split: the Add Domain wizard no longer creates managed app

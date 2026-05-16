@@ -38,17 +38,6 @@ func TestAppEnvUpdateEndpoint(t *testing.T) {
 	}
 }
 
-func TestAppEnvUpdateInvalidJSON(t *testing.T) {
-	s := testServer()
-	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{not valid`)
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/apps/test-app/env", body))
-	// May return 400 or 501
-	if rec.Code != 400 && rec.Code != 501 {
-		t.Errorf("status = %d, want 400 or 501", rec.Code)
-	}
-}
-
 func TestAppLogsEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()

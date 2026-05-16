@@ -1,1018 +1,1133 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import {
-  Play, Square, RefreshCw, Clock, Hash, Terminal, Cpu, Rocket, GitBranch,
-  X, CheckCircle, ChevronRight, Save, FileText, Settings, Copy, Plus,
-  Trash2, Eye, EyeOff, ArrowRight, Circle, Globe,
-  GitCommit, Container, Zap, AlertCircle, Server,
+  Play, Square, RefreshCw, Plus, Trash2, FileText, Edit2, X,
+  Container, Cpu, AlertCircle, CheckCircle, Circle, ArrowRight,
+  GitBranch, Activity,
 } from 'lucide-react';
+import { usePolling } from '@/hooks/usePolling';
 import {
-  fetchApps, startApp, stopApp, restartApp, deployApp, fetchDeployStatus,
-  updateAppEnv, fetchAppLogs, fetchAppStats, fetchFeatures,
-  type AppInstance, type DeployStatus, type AppStats, type FeatureStatus,
+  fetchApps,
+  fetchApp,
+  createApp,
+  updateApp,
+  deleteApp,
+  startApp,
+  stopApp,
+  restartApp,
+  fetchAppLogs,
+  migrateLegacyApps,
+  deployApp,
+  fetchAppStats,
+  type App,
+  type AppInstance,
+  type AppRuntime,
+  type AppsMigrationReport,
+  type AppDeployResult,
+  type AppStats,
 } from '@/lib/api';
-import FeatureBanner from '@/components/FeatureBanner';
 
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  Constants                                                         */
-/* ═══════════════════════════════════════════════════════════════════ */
+// v0.6.0 apps dashboard at /apps. The pre-v0.6 domain-keyed page was
+// removed when the legacy app system was deleted.
+//
+// What this page does:
+//   • list every app in /etc/uwas/apps.d/
+//   • create a new app (native runtime OR docker)
+//   • start / stop / restart / delete
+//   • tail its log
+//   • offer a one-shot migration of any leftover legacy type=app domains
 
-const runtimeMeta: Record<string, { color: string; bg: string; icon: string }> = {
-  node:   { color: 'text-green-400',  bg: 'bg-green-500/15',  icon: 'N' },
-  python: { color: 'text-yellow-400', bg: 'bg-yellow-500/15', icon: 'Py' },
-  ruby:   { color: 'text-red-400',    bg: 'bg-red-500/15',    icon: 'Rb' },
-  go:     { color: 'text-cyan-400',   bg: 'bg-cyan-500/15',   icon: 'Go' },
-  custom: { color: 'text-slate-400',  bg: 'bg-slate-500/15',  icon: '?' },
+const runtimeLabel: Record<AppRuntime, string> = {
+  node: 'Node.js',
+  python: 'Python',
+  ruby: 'Ruby',
+  go: 'Go',
+  custom: 'Custom',
+  docker: 'Docker',
 };
 
-const SENSITIVE_KEYS = ['SECRET', 'TOKEN', 'PASSWORD', 'KEY', 'PRIVATE', 'CREDENTIAL', 'API_KEY'];
-
-function isSensitiveKey(key: string): boolean {
-  const upper = key.toUpperCase();
-  return SENSITIVE_KEYS.some(s => upper.includes(s));
-}
-
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return '';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  EnvEditor — Key-Value rows with add/remove                       */
-/* ═══════════════════════════════════════════════════════════════════ */
-
-interface EnvRow { key: string; value: string }
-
-function EnvEditor({ rows, onChange }: { rows: EnvRow[]; onChange: (rows: EnvRow[]) => void }) {
-  const [revealed, setRevealed] = useState<Set<number>>(new Set());
-
-  const update = (i: number, field: 'key' | 'value', val: string) => {
-    const next = rows.map((r, j) => j === i ? { ...r, [field]: val } : r);
-    onChange(next);
-  };
-  const remove = (i: number) => {
-    onChange(rows.filter((_, j) => j !== i));
-    setRevealed(prev => { const s = new Set(prev); s.delete(i); return s; });
-  };
-  const add = () => onChange([...rows, { key: '', value: '' }]);
-  const toggleReveal = (i: number) =>
-    setRevealed(prev => {
-      const s = new Set(prev);
-      if (s.has(i)) s.delete(i);
-      else s.add(i);
-      return s;
-    });
-
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-[1fr_1fr_72px] gap-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-1">
-        <span>Key</span><span>Value</span><span />
-      </div>
-      {rows.map((row, i) => {
-        const sensitive = isSensitiveKey(row.key);
-        const hidden = sensitive && !revealed.has(i);
-        return (
-          <div key={i} className="grid grid-cols-[1fr_1fr_72px] gap-2 items-center group">
-            <input
-              value={row.key} onChange={e => update(i, 'key', e.target.value)}
-              placeholder="KEY"
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono text-foreground outline-none focus:border-blue-500/50 transition-colors"
-            />
-            <div className="relative">
-              <input
-                type={hidden ? 'password' : 'text'}
-                value={row.value} onChange={e => update(i, 'value', e.target.value)}
-                placeholder="value"
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 pr-8 text-xs font-mono text-foreground outline-none focus:border-blue-500/50 transition-colors"
-              />
-              {sensitive && (
-                <button onClick={() => toggleReveal(i)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  {hidden ? <EyeOff size={12} /> : <Eye size={12} />}
-                </button>
-              )}
-            </div>
-            <div className="flex gap-1 justify-end">
-              <button onClick={() => remove(i)}
-                className="rounded-md p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Trash2 size={13} />
-              </button>
-            </div>
-          </div>
-        );
-      })}
-      <button onClick={add}
-        className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors w-full justify-center">
-        <Plus size={12} /> Add Variable
-      </button>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  RoutingDiagram — visual domain → UWAS → container:port           */
-/* ═══════════════════════════════════════════════════════════════════ */
-
-function RoutingDiagram({ domain, port, running }: { domain: string; port: number; running: boolean }) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg bg-background/50 border border-border/50 px-4 py-3">
-      <div className="flex items-center gap-2">
-        <Globe size={14} className="text-blue-400" />
-        <span className="text-xs font-mono text-foreground">{domain}</span>
-      </div>
-      <ArrowRight size={14} className="text-muted-foreground" />
-      <div className="flex items-center gap-2 rounded-md bg-purple-500/10 px-2.5 py-1">
-        <Server size={12} className="text-purple-400" />
-        <span className="text-[10px] font-medium text-purple-400">UWAS</span>
-      </div>
-      <ArrowRight size={14} className="text-muted-foreground" />
-      <div className={`flex items-center gap-2 rounded-md px-2.5 py-1 ${running ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
-        <Container size={12} className={running ? 'text-emerald-400' : 'text-red-400'} />
-        <span className={`text-[10px] font-mono font-medium ${running ? 'text-emerald-400' : 'text-red-400'}`}>
-          127.0.0.1:{port}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  ResourceGauge — CPU/Memory visual bar                            */
-/* ═══════════════════════════════════════════════════════════════════ */
-
-const gaugeColors = {
-  blue:   { bar: 'bg-blue-500',   bg: 'bg-blue-500/10',   text: 'text-blue-400' },
-  purple: { bar: 'bg-purple-500', bg: 'bg-purple-500/10', text: 'text-purple-400' },
-  cyan:   { bar: 'bg-cyan-500',   bg: 'bg-cyan-500/10',   text: 'text-cyan-400' },
+const runtimeColor: Record<AppRuntime, string> = {
+  node: 'bg-green-500/15 text-green-400 border-green-500/30',
+  python: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+  ruby: 'bg-red-500/15 text-red-400 border-red-500/30',
+  go: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
+  docker: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  custom: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
 };
 
-function ResourceGauge({ label, value, unit, max, color }: {
-  label: string; value: number; unit: string; max: number; color: keyof typeof gaugeColors;
-}) {
-  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
-  const c = gaugeColors[color];
-  const display = value < 10 ? value.toFixed(1) : Math.round(value);
-
-  return (
-    <div className="rounded-lg bg-background/50 border border-border/50 p-3">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-medium text-muted-foreground">{label}</span>
-        <span className={`text-xs font-semibold font-mono ${c.text}`}>{display}{unit}</span>
-      </div>
-      <div className={`h-2 rounded-full ${c.bg} overflow-hidden`}>
-        <div
-          className={`h-full rounded-full ${c.bar} transition-all duration-500 ease-out`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <div className="flex justify-end mt-1">
-        <span className="text-[9px] text-muted-foreground">{pct.toFixed(0)}%</span>
-      </div>
-    </div>
-  );
+interface CreateForm {
+  name: string;
+  description: string;
+  runtime: AppRuntime;
+  command: string;
+  work_dir: string;
+  port: string;
+  envText: string;
+  // docker
+  docker_image: string;
+  docker_container_port: string;
+  docker_build_context: string;
+  docker_build_dockerfile: string;
 }
 
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  DeployWizard — Step-by-step deploy modal                         */
-/* ═══════════════════════════════════════════════════════════════════ */
+const blankForm: CreateForm = {
+  name: '',
+  description: '',
+  runtime: 'node',
+  command: '',
+  work_dir: '',
+  port: '',
+  envText: '',
+  docker_image: '',
+  docker_container_port: '',
+  docker_build_context: '',
+  docker_build_dockerfile: '',
+};
 
-interface WizardProps {
-  domain: string;
-  deploying: boolean;
-  deployStatus: DeployStatus | null;
-  onDeploy: (form: { gitUrl: string; branch: string; buildCmd: string; dockerfile: string; sshKey: string; gitToken: string }) => void;
-  onClose: () => void;
+// envTextToMap and envMapToText keep the form's textarea-based env
+// editor symmetrical: KEY=value lines round-trip with the on-disk
+// map. Empty or comment lines are skipped on parse.
+function envTextToMap(t: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of t.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const k = line.slice(0, eq).trim();
+    const v = line.slice(eq + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+function envMapToText(m: Record<string, string> | undefined): string {
+  if (!m) return '';
+  return Object.entries(m).map(([k, v]) => `${k}=${v}`).join('\n');
 }
 
-function DeployWizard({ domain, deploying, deployStatus, onDeploy, onClose }: WizardProps) {
-  const [step, setStep] = useState(0);
-  const [form, setForm] = useState({ gitUrl: '', branch: 'main', buildCmd: '', dockerfile: '', sshKey: '', gitToken: '' });
-  const logEndRef = useRef<HTMLDivElement>(null);
-  const activeStep = deployStatus ? 2 : step;
-
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [deployStatus?.log]);
-
-  const steps = [
-    { label: 'Source', icon: <GitBranch size={14} /> },
-    { label: 'Build', icon: <Zap size={14} /> },
-    { label: 'Deploy', icon: <Rocket size={14} /> },
-  ];
-
-  const canNext = activeStep < 2;
-  const canBack = activeStep > 0 && !deploying && !deployStatus;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !deploying && onClose()}>
-      <div className="w-full max-w-2xl rounded-xl border border-border bg-card shadow-2xl" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-500/15">
-              <Rocket size={16} className="text-purple-400" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Deploy Application</h2>
-              <p className="text-xs text-muted-foreground font-mono">{domain}</p>
-            </div>
-          </div>
-          {!deploying && (
-            <button onClick={onClose} className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-              <X size={16} />
-            </button>
-          )}
-        </div>
-
-        {/* Step indicator */}
-        <div className="flex items-center gap-0 px-6 py-4 border-b border-border">
-          {steps.map((s, i) => (
-            <div key={i} className="flex items-center">
-              <div className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                i === activeStep ? 'bg-blue-600 text-white' :
-                i < activeStep ? 'bg-emerald-500/15 text-emerald-400' :
-                'bg-accent text-muted-foreground'
-              }`}>
-                {i < activeStep ? <CheckCircle size={12} /> : s.icon}
-                {s.label}
-              </div>
-              {i < steps.length - 1 && (
-                <ChevronRight size={14} className="mx-2 text-muted-foreground" />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-auto">
-          {/* Step 0: Source */}
-          {activeStep === 0 && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Git Repository URL</label>
-                <input value={form.gitUrl} onChange={e => setForm(f => ({ ...f, gitUrl: e.target.value }))}
-                  placeholder="https://github.com/user/repo.git (leave empty for git pull)"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none font-mono focus:border-blue-500/50 transition-colors" />
-                <p className="mt-1 text-[10px] text-muted-foreground">Leave empty to pull latest from existing repository</p>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Branch</label>
-                  <div className="relative">
-                    <GitBranch size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <input value={form.branch} onChange={e => setForm(f => ({ ...f, branch: e.target.value }))}
-                      placeholder="main"
-                      className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500/50 transition-colors" />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Access Token</label>
-                  <input type="password" value={form.gitToken} onChange={e => setForm(f => ({ ...f, gitToken: e.target.value }))}
-                    placeholder="ghp_xxxx or glpat-xxxx"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none font-mono focus:border-blue-500/50 transition-colors" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">SSH Key Path (for private repos)</label>
-                <input value={form.sshKey} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))}
-                  placeholder="/root/.ssh/deploy_key"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none font-mono focus:border-blue-500/50 transition-colors" />
-              </div>
-            </>
-          )}
-
-          {/* Step 1: Build */}
-          {activeStep === 1 && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Build Command</label>
-                <input value={form.buildCmd} onChange={e => setForm(f => ({ ...f, buildCmd: e.target.value }))}
-                  placeholder="npm install && npm run build (auto-detected if empty)"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none font-mono focus:border-blue-500/50 transition-colors" />
-                <p className="mt-1 text-[10px] text-muted-foreground">Leave empty for auto-detection based on package.json / requirements.txt / Gemfile</p>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Dockerfile (optional)</label>
-                <input value={form.dockerfile} onChange={e => setForm(f => ({ ...f, dockerfile: e.target.value }))}
-                  placeholder="Dockerfile"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none font-mono focus:border-blue-500/50 transition-colors" />
-                <p className="mt-1 text-[10px] text-muted-foreground">If set, UWAS will build and run a Docker container instead of bare-metal process</p>
-              </div>
-
-              {/* Visual deploy pipeline */}
-              <div className="mt-4 rounded-lg bg-background/50 border border-border/50 p-4">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-3">Deploy Pipeline</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-col items-center gap-1.5">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-500/15">
-                      <GitBranch size={16} className="text-slate-400" />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">Clone</span>
-                  </div>
-                  <div className="h-px flex-1 mx-3 bg-gradient-to-r from-slate-500/30 via-blue-500/30 to-blue-500/30" />
-                  <div className="flex flex-col items-center gap-1.5">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/15">
-                      <Zap size={16} className="text-blue-400" />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">Build</span>
-                  </div>
-                  <div className="h-px flex-1 mx-3 bg-gradient-to-r from-blue-500/30 via-purple-500/30 to-purple-500/30" />
-                  <div className="flex flex-col items-center gap-1.5">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-500/15">
-                      <Container size={16} className="text-purple-400" />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">{form.dockerfile ? 'Container' : 'Process'}</span>
-                  </div>
-                  <div className="h-px flex-1 mx-3 bg-gradient-to-r from-purple-500/30 via-emerald-500/30 to-emerald-500/30" />
-                  <div className="flex flex-col items-center gap-1.5">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/15">
-                      <CheckCircle size={16} className="text-emerald-400" />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">Live</span>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Step 2: Deploy (live output) */}
-          {activeStep === 2 && (
-            <>
-              {deployStatus && (
-                <div className="space-y-3">
-                  {/* Status banner */}
-                  <div className={`flex items-center gap-2.5 rounded-lg px-4 py-3 ${
-                    deployStatus.status === 'running' ? 'bg-emerald-500/10 border border-emerald-500/20' :
-                    deployStatus.status === 'failed' ? 'bg-red-500/10 border border-red-500/20' :
-                    'bg-blue-500/10 border border-blue-500/20'
-                  }`}>
-                    {(deployStatus.status === 'deploying' || deployStatus.status === 'building') ? (
-                      <RefreshCw size={14} className="animate-spin text-blue-400" />
-                    ) : deployStatus.status === 'running' ? (
-                      <CheckCircle size={14} className="text-emerald-400" />
-                    ) : (
-                      <AlertCircle size={14} className="text-red-400" />
-                    )}
-                    <span className="text-xs font-medium text-foreground capitalize">{deployStatus.status}</span>
-                    {deployStatus.commit_sha && (
-                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
-                        <GitCommit size={10} /> {deployStatus.commit_sha.slice(0, 7)}
-                      </span>
-                    )}
-                    {deployStatus.duration && (
-                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <Clock size={10} /> {deployStatus.duration}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Live build log */}
-                  <div className="rounded-lg bg-[#0a0e14] border border-border/50 overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-2 bg-[#0d1117] border-b border-border/30">
-                      <span className="text-[10px] font-medium text-muted-foreground flex items-center gap-1.5">
-                        <Terminal size={10} /> Build Output
-                      </span>
-                      {(deployStatus.status === 'deploying' || deployStatus.status === 'building') && (
-                        <span className="flex items-center gap-1.5 text-[10px] text-blue-400">
-                          <Circle size={6} className="fill-blue-400 animate-pulse" /> streaming
-                        </span>
-                      )}
-                    </div>
-                    <pre className="p-4 text-[11px] text-green-400 font-mono whitespace-pre-wrap leading-5 max-h-64 overflow-auto">
-                      {deployStatus.log || 'Waiting for build output...'}
-                      <div ref={logEndRef} />
-                    </pre>
-                  </div>
-
-                  {deployStatus.error && (
-                    <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3">
-                      <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
-                      <p className="text-xs text-red-400">{deployStatus.error}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {!deployStatus && (
-                <div className="text-center py-8">
-                  <Rocket size={32} className="mx-auto mb-3 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">Ready to deploy</p>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border px-6 py-4">
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <GitBranch size={10} />
-            <span>Webhook:</span>
-            <WebhookCopy url={`/api/v1/apps/${domain}/webhook`} />
-          </div>
-          <div className="flex gap-2">
-            {canBack && (
-              <button onClick={() => setStep(s => s - 1)}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-card-foreground hover:bg-accent transition-colors">
-                Back
-              </button>
-            )}
-            {activeStep < 2 && !deploying && (
-              <button onClick={() => canNext ? (activeStep === 1 ? onDeploy(form) : setStep(s => s + 1)) : undefined}
-                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                  activeStep === 1 ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'
-                }`}>
-                {activeStep === 1 ? <><Rocket size={14} /> Deploy</> : <>Next <ChevronRight size={14} /></>}
-              </button>
-            )}
-            {deploying && (
-              <button disabled className="flex items-center gap-1.5 rounded-lg bg-purple-600/50 px-4 py-2 text-sm font-medium text-white cursor-not-allowed">
-                <RefreshCw size={14} className="animate-spin" /> Deploying...
-              </button>
-            )}
-            {deployStatus && !deploying && (
-              <button onClick={onClose}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors">
-                Done
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+// formatBytes renders an int byte count as a short human-readable
+// string. Used for the inline stats display so a 524288000-byte RSS
+// shows as "500 MB" instead of a wall of digits.
+function formatBytes(n: number): string {
+  if (n <= 0) return '0';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
-
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  WebhookCopy — Copy webhook URL to clipboard                      */
-/* ═══════════════════════════════════════════════════════════════════ */
-
-function WebhookCopy({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
-  const fullUrl = `${window.location.origin}${url}`;
-  const copy = () => {
-    navigator.clipboard.writeText(fullUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-  return (
-    <button onClick={copy} className="flex items-center gap-1 rounded bg-accent px-2 py-0.5 font-mono hover:bg-accent/80 transition-colors">
-      <code className="text-[10px]">{url}</code>
-      {copied ? <CheckCircle size={10} className="text-emerald-400" /> : <Copy size={10} />}
-    </button>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  AppCard — Single application card (Vercel-style)                 */
-/* ═══════════════════════════════════════════════════════════════════ */
-
-interface AppCardProps {
-  app: AppInstance;
-  acting: boolean;
-  onAction: (action: 'start' | 'stop' | 'restart') => void;
-  onDeploy: () => void;
-  onSaveConfig: (env: Record<string, string>, command?: string, port?: number) => Promise<void>;
-  onError: (msg: string) => void;
-}
-
-function AppCard({ app, acting, onAction, onDeploy, onSaveConfig, onError }: AppCardProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'env' | 'logs'>('overview');
-  const [envRows, setEnvRows] = useState<EnvRow[]>([]);
-  const [editCmd, setEditCmd] = useState(app.command);
-  const [editPort, setEditPort] = useState(String(app.port));
-  const [appLog, setAppLog] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [stats, setStats] = useState<AppStats | null>(null);
-  const statsInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const rm = runtimeMeta[app.runtime] || runtimeMeta.custom;
-
-  const loadStats = useCallback(() => {
-    if (app.running) {
-      fetchAppStats(app.domain).then(setStats).catch(() => {});
-    }
-  }, [app.domain, app.running]);
-
-  const expand = () => {
-    if (!expanded) {
-      const rows = Object.entries(app.env || {}).map(([key, value]) => ({ key, value }));
-      if (rows.length === 0) rows.push({ key: '', value: '' });
-      setEnvRows(rows);
-      setEditCmd(app.command);
-      setEditPort(String(app.port));
-      fetchAppLogs(app.domain).then(r => setAppLog(r?.log || '')).catch(() => setAppLog(''));
-      loadStats();
-    }
-    setExpanded(!expanded);
-  };
-
-  // Poll stats every 5s while expanded on overview tab
-  useEffect(() => {
-    if (expanded && activeTab === 'overview' && app.running) {
-      loadStats();
-      statsInterval.current = setInterval(loadStats, 5000);
-      return () => { if (statsInterval.current) clearInterval(statsInterval.current); };
-    }
-    return () => { if (statsInterval.current) clearInterval(statsInterval.current); };
-  }, [expanded, activeTab, app.running, loadStats]);
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const env: Record<string, string> = {};
-      envRows.forEach(r => { if (r.key.trim()) env[r.key.trim()] = r.value; });
-      await onSaveConfig(env, editCmd || undefined, parseInt(editPort) || undefined);
-    } catch (e) {
-      // Without this catch, a failed updateAppEnv call became an uncaught
-      // promise rejection and the user saw no error — they assumed the
-      // save worked and would later be confused when ENV vars were stale.
-      onError((e as Error).message || 'Save failed');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className={`rounded-xl border bg-card transition-all duration-200 ${
-      app.running ? 'border-emerald-500/20 shadow-lg shadow-emerald-500/5' : 'border-border'
-    }`}>
-      {/* Card header */}
-      <div className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3.5">
-            {/* Runtime icon */}
-            <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${rm.bg} font-bold text-sm ${rm.color}`}>
-              {rm.icon}
-            </div>
-            <div>
-              <div className="flex items-center gap-2.5">
-                <h3 className="text-sm font-semibold text-foreground">{app.domain}</h3>
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                  app.running ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/10 text-red-400'
-                }`}>
-                  <Circle size={6} className={`fill-current ${app.running ? 'animate-pulse' : ''}`} />
-                  {app.running ? 'Running' : 'Stopped'}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1 font-mono">
-                  <Terminal size={11} /> {app.command}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-1.5">
-            <button onClick={onDeploy}
-              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 transition-colors shadow-sm">
-              <Rocket size={12} /> Deploy
-            </button>
-            {!app.running ? (
-              <button onClick={() => onAction('start')} disabled={acting}
-                className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                {acting ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} Start
-              </button>
-            ) : (
-              <>
-                <button onClick={() => onAction('restart')} disabled={acting}
-                  className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent/80 transition-colors disabled:opacity-50">
-                  {acting ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />} Restart
-                </button>
-                <button onClick={() => onAction('stop')} disabled={acting}
-                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50">
-                  <Square size={12} />
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Info bar */}
-        <div className="mt-4 flex items-center justify-between">
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5 rounded-md bg-accent/50 px-2 py-1">
-              <Hash size={11} /> Port {app.port}
-            </span>
-            {app.pid > 0 && (
-              <span className="flex items-center gap-1.5">
-                <Cpu size={11} /> PID {app.pid}
-              </span>
-            )}
-            {app.uptime && (
-              <span className="flex items-center gap-1.5">
-                <Clock size={11} /> {app.uptime}
-              </span>
-            )}
-            {app.started_at && (
-              <span className="flex items-center gap-1.5">
-                <Circle size={6} className="fill-current text-emerald-400" /> Started {timeAgo(app.started_at)}
-              </span>
-            )}
-          </div>
-          <button onClick={expand}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            {expanded ? 'Collapse' : 'Details'}
-            <ChevronRight size={12} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
-          </button>
-        </div>
-      </div>
-
-      {/* Expanded detail panel */}
-      {expanded && (
-        <div className="border-t border-border">
-          {/* Tabs */}
-          <div className="flex border-b border-border">
-            {([
-              { key: 'overview' as const, label: 'Overview', icon: <Globe size={12} /> },
-              { key: 'env' as const, label: 'Environment', icon: <Settings size={12} /> },
-              { key: 'logs' as const, label: 'Logs', icon: <FileText size={12} /> },
-            ]).map(tab => (
-              <button key={tab.key}
-                onClick={() => {
-                  setActiveTab(tab.key);
-                  if (tab.key === 'logs') fetchAppLogs(app.domain).then(r => setAppLog(r?.log || '')).catch(() => setAppLog(''));
-                }}
-                className={`flex items-center gap-1.5 px-4 py-3 text-xs font-medium transition-colors border-b-2 ${
-                  activeTab === tab.key
-                    ? 'border-blue-500 text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}>
-                {tab.icon} {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="p-5">
-            {/* Overview tab */}
-            {activeTab === 'overview' && (
-              <div className="space-y-4">
-                <div>
-                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Request Routing</p>
-                  <RoutingDiagram domain={app.domain} port={app.port} running={app.running} />
-                </div>
-                {/* Resource monitoring */}
-                {app.running && (
-                  <div>
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Resource Usage</p>
-                    <div className="grid grid-cols-3 gap-3">
-                      <ResourceGauge
-                        label="CPU"
-                        value={stats?.cpu_percent ?? 0}
-                        unit="%"
-                        max={100}
-                        color="blue"
-                      />
-                      <ResourceGauge
-                        label="Memory (RSS)"
-                        value={stats ? stats.memory_rss / (1024 * 1024) : 0}
-                        unit="MB"
-                        max={stats && stats.memory_vms > 0 ? stats.memory_vms / (1024 * 1024) : 512}
-                        color="purple"
-                      />
-                      <ResourceGauge
-                        label="Virtual Memory"
-                        value={stats ? stats.memory_vms / (1024 * 1024) : 0}
-                        unit="MB"
-                        max={stats && stats.memory_vms > 0 ? stats.memory_vms / (1024 * 1024) * 1.2 : 1024}
-                        color="cyan"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Configuration</p>
-                    <div className="space-y-2 text-xs">
-                      <div className="flex justify-between rounded-md bg-background/50 px-3 py-2">
-                        <span className="text-muted-foreground">Runtime</span>
-                        <span className={`font-medium ${rm.color}`}>{app.runtime}</span>
-                      </div>
-                      <div className="flex justify-between rounded-md bg-background/50 px-3 py-2">
-                        <span className="text-muted-foreground">Port</span>
-                        <span className="font-mono font-medium text-foreground">{app.port}</span>
-                      </div>
-                      <div className="flex justify-between rounded-md bg-background/50 px-3 py-2">
-                        <span className="text-muted-foreground">Command</span>
-                        <span className="font-mono text-foreground truncate max-w-[200px]">{app.command}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Webhook (Auto-Deploy)</p>
-                    <div className="space-y-2">
-                      <div className="rounded-lg bg-background/50 border border-border/50 p-3">
-                        <p className="text-[10px] text-muted-foreground mb-2">Add this URL to your Git provider:</p>
-                        <WebhookCopy url={`/api/v1/apps/${app.domain}/webhook`} />
-                        <p className="mt-2 text-[10px] text-muted-foreground">
-                          Triggers deploy on push to configured branch
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ENV tab */}
-            {activeTab === 'env' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Start Command</label>
-                    <input value={editCmd} onChange={e => setEditCmd(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-foreground outline-none focus:border-blue-500/50 transition-colors" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Port</label>
-                    <input type="number" value={editPort} onChange={e => setEditPort(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500/50 transition-colors" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-2 block">Environment Variables</label>
-                  <EnvEditor rows={envRows} onChange={setEnvRows} />
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-                  <button onClick={save} disabled={saving}
-                    className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50">
-                    {saving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />} Save Changes
-                  </button>
-                  <button onClick={() => onAction('restart')} disabled={acting}
-                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                    <RefreshCw size={12} /> Restart to Apply
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Logs tab */}
-            {activeTab === 'logs' && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Application Logs</span>
-                  <button onClick={() => fetchAppLogs(app.domain).then(r => setAppLog(r?.log || '')).catch(() => setAppLog(''))}
-                    className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors">
-                    <RefreshCw size={10} /> Refresh
-                  </button>
-                </div>
-                <div className="rounded-lg bg-[#0a0e14] border border-border/50 overflow-hidden">
-                  <pre className="p-4 text-[11px] text-green-400 font-mono whitespace-pre-wrap leading-5 max-h-80 overflow-auto">
-                    {appLog || 'No logs available'}
-                  </pre>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════ */
-/*  Main Page                                                         */
-/* ═══════════════════════════════════════════════════════════════════ */
 
 export default function Apps() {
   const [apps, setApps] = useState<AppInstance[]>([]);
   const [loading, setLoading] = useState(true);
-  const [acting, setActing] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
+  const [error, setError] = useState('');
+  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [busyName, setBusyName] = useState<string | null>(null);
 
-  // Deploy wizard state
-  const [wizardDomain, setWizardDomain] = useState('');
-  const [deploying, setDeploying] = useState(false);
-  const [deployStatusData, setDeployStatusData] = useState<DeployStatus | null>(null);
-  const deployPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Create / edit modal state.
+  const [editing, setEditing] = useState<{ mode: 'create' | 'edit'; name?: string } | null>(null);
+  const [form, setForm] = useState<CreateForm>(blankForm);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Cancel any in-flight deploy poll on unmount so the interval doesn't
-  // leak after the user navigates away from the Apps page mid-deploy.
-  useEffect(() => () => {
-    if (deployPollRef.current) {
-      clearInterval(deployPollRef.current);
-      deployPollRef.current = null;
-    }
-  }, []);
+  // Logs modal state.
+  const [logsFor, setLogsFor] = useState<string | null>(null);
+  const [logsContent, setLogsContent] = useState('');
+  const [logsKind, setLogsKind] = useState<'runtime' | 'build'>('runtime');
+
+  // Migration banner state.
+  const [migrationReport, setMigrationReport] = useState<AppsMigrationReport | null>(null);
+  const [migrationDryRun, setMigrationDryRun] = useState(true);
+
+  // Deploy-from-git modal state. The webhook secret + branch_filter
+  // live alongside the per-deploy fields because operators usually
+  // set up auto-deploy as part of their first manual deploy.
+  const [deployFor, setDeployFor] = useState<string | null>(null);
+  const [deployForm, setDeployForm] = useState({
+    git_url: '',
+    git_branch: '',
+    build_cmd: '',
+    webhook_secret: '',
+    branch_filter: '',
+  });
+  const [deployRunning, setDeployRunning] = useState(false);
+  const [deployResult, setDeployResult] = useState<AppDeployResult | null>(null);
+
+  // Per-app stats cache. Keyed by name; only running apps with the
+  // stats panel toggled open are kept in here. Polling each running
+  // app independently would multiply load on the docker daemon, so
+  // stats are fetched on-demand when the operator clicks the chip.
+  const [statsByName, setStatsByName] = useState<Record<string, AppStats | undefined>>({});
+  const [statsLoadingFor, setStatsLoadingFor] = useState<string | null>(null);
+
+  // Inline post-create banner with start outcome + log shortcut. Sits
+  // below the toast so an operator who created a "saved but didn't
+  // start" app can click straight through to the logs without
+  // hunting for the card.
+  const [createOutcome, setCreateOutcome] = useState<{
+    name: string;
+    started: boolean;
+    error?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
       const data = await fetchApps();
       setApps(data ?? []);
-    } catch { /* ignore */ } finally { setLoading(false); }
+      setError('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
+  usePolling(load, 8_000);
+
   useEffect(() => {
-    load();
-    fetchFeatures().then(f => setFeatureStatus(f.apps ?? null)).catch(() => {});
-  }, [load]);
-
-  const showStatus = (ok: boolean, msg: string) => {
-    setStatus({ ok, msg });
-    setTimeout(() => setStatus(null), 4000);
-  };
-
-  const handleAction = async (domain: string, action: 'start' | 'stop' | 'restart') => {
-    setActing(domain);
-    try {
-      const fn = action === 'start' ? startApp : action === 'stop' ? stopApp : restartApp;
-      await fn(domain);
-      showStatus(true, `${domain}: ${action}ed successfully`);
-      await load();
-    } catch (e) { showStatus(false, (e as Error).message); }
-    finally { setActing(null); }
-  };
-
-  const handleSaveConfig = async (domain: string, env: Record<string, string>, command?: string, port?: number) => {
-    await updateAppEnv(domain, env, command, port);
-    showStatus(true, `Config saved for ${domain}. Restart to apply.`);
-    await load();
-  };
-
-  const handleDeploy = async (form: { gitUrl: string; branch: string; buildCmd: string; dockerfile: string; sshKey: string; gitToken: string }) => {
-    if (!wizardDomain) return;
-    setDeploying(true);
-    setDeployStatusData(null);
-    // Clear any previous deploy poll before starting a new one.
-    if (deployPollRef.current) {
-      clearInterval(deployPollRef.current);
-      deployPollRef.current = null;
+    if (status?.ok) {
+      const id = window.setTimeout(() => setStatus(s => s === status ? null : s), 4000);
+      return () => window.clearTimeout(id);
     }
+  }, [status]);
+
+  const isDocker = form.runtime === 'docker';
+
+  const sortedApps = useMemo(
+    () => [...apps].sort((a, b) => a.name.localeCompare(b.name)),
+    [apps],
+  );
+
+  const setStatusErr = (e: unknown) =>
+    setStatus({ ok: false, message: e instanceof Error ? e.message : String(e) });
+
+  // Build the request body from form, validating that required fields
+  // are present. Returns null + sets status on error.
+  const formToApp = (): Partial<App> | null => {
+    if (!form.name.trim()) {
+      setStatus({ ok: false, message: 'Name is required' });
+      return null;
+    }
+    const env = form.envText ? envTextToMap(form.envText) : undefined;
+    const portNum = form.port ? parseInt(form.port, 10) : 0;
+    if (form.port && (isNaN(portNum) || portNum < 0 || portNum > 65535)) {
+      setStatus({ ok: false, message: 'Port must be 0–65535 (0 = auto-assign)' });
+      return null;
+    }
+
+    const body: Partial<App> = {
+      name: form.name.trim(),
+      description: form.description.trim() || undefined,
+      runtime: form.runtime,
+      work_dir: form.work_dir.trim() || undefined,
+      port: portNum || undefined,
+      env,
+    };
+
+    if (isDocker) {
+      const cport = parseInt(form.docker_container_port, 10);
+      if (isNaN(cport) || cport <= 0) {
+        setStatus({ ok: false, message: 'Docker container_port is required (1–65535)' });
+        return null;
+      }
+      body.docker = {
+        image: form.docker_image.trim() || undefined,
+        container_port: cport,
+      };
+      if (form.docker_build_context.trim()) {
+        body.docker.build = {
+          context: form.docker_build_context.trim(),
+          dockerfile: form.docker_build_dockerfile.trim() || undefined,
+        };
+      }
+      if (!body.docker.image && !body.docker.build?.context) {
+        setStatus({ ok: false, message: 'Docker apps need either an image or a build context' });
+        return null;
+      }
+    } else {
+      body.command = form.command.trim() || undefined;
+    }
+    return body;
+  };
+
+  const openCreate = () => {
+    setForm(blankForm);
+    setEditing({ mode: 'create' });
+  };
+
+  const openEdit = async (name: string) => {
     try {
-      await deployApp(wizardDomain, {
-        git_url: form.gitUrl || undefined,
-        git_branch: form.branch || 'main',
-        build_cmd: form.buildCmd || undefined,
-        dockerfile: form.dockerfile || undefined,
-        ssh_key_path: form.sshKey || undefined,
-        git_token: form.gitToken || undefined,
+      const { app } = await fetchApp(name);
+      setForm({
+        name: app.name,
+        description: app.description ?? '',
+        runtime: app.runtime,
+        command: app.command ?? '',
+        work_dir: app.work_dir ?? '',
+        port: app.port ? String(app.port) : '',
+        envText: envMapToText(app.env),
+        docker_image: app.docker?.image ?? '',
+        docker_container_port: app.docker?.container_port ? String(app.docker.container_port) : '',
+        docker_build_context: app.docker?.build?.context ?? '',
+        docker_build_dockerfile: app.docker?.build?.dockerfile ?? '',
       });
-      // Poll for status — handle stored in ref so unmount/cancel can clear it.
-      deployPollRef.current = setInterval(async () => {
-        try {
-          const st = await fetchDeployStatus(wizardDomain);
-          setDeployStatusData(st);
-          if (st.status === 'running' || st.status === 'failed') {
-            if (deployPollRef.current) {
-              clearInterval(deployPollRef.current);
-              deployPollRef.current = null;
-            }
-            setDeploying(false);
-            await load();
-            if (st.status === 'running') showStatus(true, `Deploy complete: ${wizardDomain}`);
-            else showStatus(false, `Deploy failed: ${st.error}`);
-          }
-        } catch {
-          if (deployPollRef.current) {
-            clearInterval(deployPollRef.current);
-            deployPollRef.current = null;
-          }
-          setDeploying(false);
-        }
-      }, 2000);
+      setEditing({ mode: 'edit', name });
     } catch (e) {
-      showStatus(false, (e as Error).message);
-      setDeploying(false);
+      setStatusErr(e);
     }
   };
 
-  const runningCount = apps.filter(a => a.running).length;
-  const stoppedCount = apps.length - runningCount;
+  const submit = async () => {
+    const body = formToApp();
+    if (!body) return;
+    setSubmitting(true);
+    try {
+      if (editing?.mode === 'edit' && editing.name) {
+        // Update endpoint mirrors Create: it stops the app, applies
+        // the patch, and tries to start. Surface a failed restart
+        // OR a successful start that didn't bind to its port — both
+        // are deploy-time problems the operator needs to see.
+        const res = await updateApp(editing.name, body);
+        if (!res.started && !res.start_error?.includes('disabled')) {
+          setStatus({
+            ok: false,
+            message: `Updated "${editing.name}" but the restart failed — check logs`,
+          });
+          setCreateOutcome({
+            name: editing.name,
+            started: false,
+            error: res.start_error,
+          });
+        } else if (res.started && res.listening === false) {
+          setStatus({
+            ok: false,
+            message: `Updated "${editing.name}" — process is running but not listening on its port`,
+          });
+          setCreateOutcome({
+            name: editing.name,
+            started: true,
+            error: res.listening_warning,
+          });
+        } else {
+          setStatus({ ok: true, message: `Updated "${editing.name}"` });
+        }
+        setEditing(null);
+      } else {
+        // Create attempts auto-start AND a port-readiness probe.
+        const res = await createApp(body);
+        if (!res.started) {
+          setStatus({
+            ok: false,
+            message: `Created "${body.name}" but the start failed — check logs`,
+          });
+          setCreateOutcome({
+            name: body.name!,
+            started: false,
+            error: res.start_error,
+          });
+        } else if (res.listening === false) {
+          setStatus({
+            ok: false,
+            message: `Created "${body.name}" — process started but is not listening on port ${res.app.port}`,
+          });
+          setCreateOutcome({
+            name: body.name!,
+            started: true,
+            error: res.listening_warning,
+          });
+        } else {
+          setStatus({
+            ok: true,
+            message: `Created "${body.name}" — started and listening on port ${res.app.port}`,
+          });
+          setCreateOutcome({ name: body.name!, started: true });
+        }
+        setEditing(null);
+      }
+      await load();
+    } catch (e) {
+      setStatusErr(e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openDeploy = async (name: string) => {
+    // Pre-fill from the app's stored DeployConfig so a follow-up
+    // deploy doesn't make the operator re-type git URL / branch /
+    // build cmd. Webhook secret is also pre-filled so they can see
+    // it (and rotate by typing a new value).
+    setDeployFor(name);
+    setDeployResult(null);
+    try {
+      const { app } = await fetchApp(name);
+      setDeployForm({
+        git_url: app.deploy?.git_url ?? '',
+        git_branch: app.deploy?.git_branch ?? '',
+        build_cmd: app.deploy?.build_cmd ?? '',
+        webhook_secret: app.deploy?.webhook_secret ?? '',
+        branch_filter: app.deploy?.branch_filter ?? '',
+      });
+    } catch {
+      // Fall back to empty form on fetch error.
+      setDeployForm({ git_url: '', git_branch: '', build_cmd: '', webhook_secret: '', branch_filter: '' });
+    }
+  };
+
+  // saveWebhookConfig persists the webhook_secret + branch_filter
+  // fields to the app's DeployConfig via the PUT endpoint. Kept
+  // separate from runDeploy because operators often want to
+  // configure the hook BEFORE pushing code that would trigger a
+  // deploy.
+  const saveWebhookConfig = async () => {
+    if (!deployFor) return;
+    try {
+      await updateApp(deployFor, {
+        deploy: {
+          git_url: deployForm.git_url.trim() || undefined,
+          git_branch: deployForm.git_branch.trim() || undefined,
+          build_cmd: deployForm.build_cmd.trim() || undefined,
+          webhook_secret: deployForm.webhook_secret.trim() || undefined,
+          branch_filter: deployForm.branch_filter.trim() || undefined,
+        },
+      });
+      setStatus({ ok: true, message: `Saved webhook config for ${deployFor}` });
+    } catch (e) {
+      setStatusErr(e);
+    }
+  };
+
+  const runDeploy = async () => {
+    if (!deployFor) return;
+    if (!deployForm.git_url.trim()) {
+      setStatus({ ok: false, message: 'Git URL is required' });
+      return;
+    }
+    setDeployRunning(true);
+    setDeployResult(null);
+    try {
+      const r = await deployApp(deployFor, {
+        git_url: deployForm.git_url.trim(),
+        git_branch: deployForm.git_branch.trim() || undefined,
+        build_cmd: deployForm.build_cmd.trim() || undefined,
+      });
+      setDeployResult(r);
+      if (r.ok) {
+        setStatus({
+          ok: true,
+          message: `Deployed ${deployFor}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ''}`,
+        });
+        await load();
+      } else {
+        setStatus({
+          ok: false,
+          message: r.error || 'Deploy failed (see log in modal)',
+        });
+      }
+    } catch (e) {
+      setStatusErr(e);
+    } finally {
+      setDeployRunning(false);
+    }
+  };
+
+  const doAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
+    setBusyName(name);
+    try {
+      if (action === 'start') await startApp(name);
+      else if (action === 'stop') await stopApp(name);
+      else await restartApp(name);
+      setStatus({ ok: true, message: `${name}: ${action} ok` });
+      await load();
+    } catch (e) {
+      setStatusErr(e);
+    } finally {
+      setBusyName(null);
+    }
+  };
+
+  const doDelete = async (name: string) => {
+    if (!confirm(`Delete app "${name}"? The YAML and process will be removed; workdir is left in place.`)) return;
+    setBusyName(name);
+    try {
+      await deleteApp(name);
+      setStatus({ ok: true, message: `Deleted "${name}"` });
+      await load();
+    } catch (e) {
+      setStatusErr(e);
+    } finally {
+      setBusyName(null);
+    }
+  };
+
+  const loadStats = async (name: string) => {
+    setStatsLoadingFor(name);
+    try {
+      const s = await fetchAppStats(name);
+      setStatsByName(prev => ({ ...prev, [name]: s }));
+    } catch (e) {
+      setStatusErr(e);
+    } finally {
+      setStatsLoadingFor(null);
+    }
+  };
+
+  const openLogs = async (name: string) => {
+    setLogsFor(name);
+    setLogsContent('Loading…');
+    try {
+      const r = await fetchAppLogs(name);
+      setLogsContent(r.log || '(no log output yet)');
+      setLogsKind(r.kind);
+    } catch (e) {
+      setLogsContent(`Failed to load log: ${(e as Error).message}`);
+    }
+  };
+
+  const runMigration = async (dryRun: boolean) => {
+    try {
+      const r = await migrateLegacyApps(dryRun);
+      setMigrationReport(r.report);
+      setMigrationDryRun(dryRun);
+      if (!dryRun) {
+        setStatus({
+          ok: true,
+          message: `Migration complete: ${r.report.migrated.length} migrated, ${r.report.skipped.length} skipped, ${r.report.conflicts.length} conflicts`,
+        });
+        await load();
+      }
+    } catch (e) {
+      setStatusErr(e);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-96 items-center justify-center text-muted-foreground">
+        Loading apps…
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <FeatureBanner feature="apps" status={featureStatus} label="Application manager" />
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold sm:text-2xl text-foreground">Applications</h1>
-          <p className="text-sm text-muted-foreground">Deploy and manage application processes</p>
+          <h1 className="text-2xl font-semibold">Applications</h1>
+          <p className="text-sm text-muted-foreground">
+             apps under <code className="text-xs">/etc/uwas/apps.d/</code>.
+            Domains reach them via reverse proxy with <code className="text-xs">apps://&lt;name&gt;</code> upstream.
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          {apps.length > 0 && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-emerald-400">
-                <Circle size={6} className="fill-current" /> {runningCount} running
-              </span>
-              {stoppedCount > 0 && (
-                <span className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-red-400">
-                  <Circle size={6} className="fill-current" /> {stoppedCount} stopped
-                </span>
-              )}
-            </div>
-          )}
-          <button onClick={() => { setLoading(true); load(); }}
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent transition-colors">
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => runMigration(true)}
+            className="text-xs rounded-md border border-border px-3 py-1.5 hover:bg-muted transition-colors"
+          >
+            Find legacy apps
+          </button>
+          <button
+            onClick={openCreate}
+            className="text-xs rounded-md bg-primary text-primary-foreground px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-primary/90 transition-colors"
+          >
+            <Plus size={14} /> New app
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Status toast */}
       {status && (
-        <div className={`flex items-center gap-2.5 rounded-lg px-4 py-3 text-sm transition-all ${
-          status.ok ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'
-        }`}>
-          {status.ok ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
-          {status.msg}
+        <div
+          className={`rounded-md border px-3 py-2 text-sm flex items-start gap-2 ${
+            status.ok
+              ? 'border-green-500/30 bg-green-500/10 text-green-400'
+              : 'border-red-500/30 bg-red-500/10 text-red-400'
+          }`}
+        >
+          {status.ok ? <CheckCircle size={16} className="mt-0.5" /> : <AlertCircle size={16} className="mt-0.5" />}
+          <span className="flex-1">{status.message}</span>
+          <button onClick={() => setStatus(null)} className="opacity-60 hover:opacity-100">
+            <X size={14} />
+          </button>
         </div>
       )}
 
-      {/* Empty state */}
-      {apps.length === 0 && !loading && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-12 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-500/10">
-            <Rocket size={28} className="text-purple-400" />
-          </div>
-          <h3 className="text-sm font-semibold text-foreground">No applications yet</h3>
-          <p className="mt-1.5 text-xs text-muted-foreground max-w-sm mx-auto">
-            Add a domain with <code className="rounded bg-accent px-1.5 py-0.5 text-[10px]">type: app</code> in your
-            config to get started. UWAS supports Node.js, Python, Ruby, and Go applications.
-          </p>
-          <div className="mt-6 flex items-center justify-center gap-6 text-muted-foreground">
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
-                <span className="text-xs font-bold text-green-400">N</span>
-              </div>
-              <span className="text-[10px]">Node.js</span>
-            </div>
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-yellow-500/10">
-                <span className="text-xs font-bold text-yellow-400">Py</span>
-              </div>
-              <span className="text-[10px]">Python</span>
-            </div>
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/10">
-                <span className="text-xs font-bold text-red-400">Rb</span>
-              </div>
-              <span className="text-[10px]">Ruby</span>
-            </div>
-            <div className="flex flex-col items-center gap-1.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/10">
-                <span className="text-xs font-bold text-cyan-400">Go</span>
-              </div>
-              <span className="text-[10px]">Go</span>
-            </div>
-          </div>
+      {error && (
+        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+          {error}
         </div>
       )}
 
-      {/* Loading skeleton */}
-      {loading && apps.length === 0 && (
-        <div className="space-y-4">
-          {[1, 2].map(i => (
-            <div key={i} className="rounded-xl border border-border bg-card p-5 animate-pulse">
-              <div className="flex items-center gap-3.5">
-                <div className="h-11 w-11 rounded-xl bg-accent" />
-                <div className="space-y-2">
-                  <div className="h-4 w-48 rounded bg-accent" />
-                  <div className="h-3 w-32 rounded bg-accent" />
+      {migrationReport && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-amber-300">
+              {migrationDryRun ? 'Migration preview' : 'Migration complete'}
+            </span>
+            <button onClick={() => setMigrationReport(null)} className="text-muted-foreground hover:text-foreground">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="text-xs text-muted-foreground space-y-1">
+            {migrationReport.migrated.length > 0 && (
+              <div>
+                <span className="text-green-400">Migrate</span> {migrationReport.migrated.length}:&nbsp;
+                {migrationReport.migrated.map(m => m.domain).join(', ')}
+              </div>
+            )}
+            {migrationReport.conflicts.length > 0 && (
+              <div>
+                <span className="text-red-400">Conflict</span> {migrationReport.conflicts.length}:&nbsp;
+                {migrationReport.conflicts.map(m => `${m.domain} (${m.reason})`).join('; ')}
+              </div>
+            )}
+            {migrationReport.skipped.length > 0 && (
+              <div>
+                <span className="text-amber-400">Skip</span> {migrationReport.skipped.length}:&nbsp;
+                {migrationReport.skipped.map(m => `${m.domain} (${m.reason})`).join('; ')}
+              </div>
+            )}
+            {migrationReport.migrated.length === 0
+              && migrationReport.skipped.length === 0
+              && migrationReport.conflicts.length === 0 && (
+              <div>No legacy <code>type=app</code> domains found.</div>
+            )}
+          </div>
+          {migrationDryRun && migrationReport.migrated.length > 0 && (
+            <button
+              onClick={() => runMigration(false)}
+              className="text-xs rounded-md bg-amber-500/20 border border-amber-500/40 px-3 py-1.5 text-amber-200 hover:bg-amber-500/30"
+            >
+              Apply migration
+            </button>
+          )}
+        </div>
+      )}
+
+      {sortedApps.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border p-12 text-center text-sm text-muted-foreground">
+          No apps yet. Click <span className="text-foreground">New app</span> to create one,
+          or <span className="text-foreground">Find legacy apps</span> to migrate existing <code>type=app</code> domains.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {sortedApps.map(app => (
+            <div
+              key={app.name}
+              className="rounded-lg border border-border bg-card p-4 space-y-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium truncate" title={app.name}>{app.name}</h3>
+                    {app.running ? (
+                      <span className="text-[10px] inline-flex items-center gap-1 rounded-full bg-green-500/15 border border-green-500/30 px-2 py-0.5 text-green-400">
+                        <Circle size={6} className="fill-green-400 stroke-none" /> running
+                      </span>
+                    ) : app.crashloop_gave_up ? (
+                      <span
+                        className="text-[10px] inline-flex items-center gap-1 rounded-full bg-orange-500/15 border border-orange-500/40 px-2 py-0.5 text-orange-400"
+                        title="The supervisor gave up auto-restarting after too many consecutive crashes. Check logs, fix the underlying issue, then click Start."
+                      >
+                        <AlertCircle size={9} /> crashloop
+                      </span>
+                    ) : app.disabled ? (
+                      <span className="text-[10px] inline-flex items-center gap-1 rounded-full bg-slate-500/15 border border-slate-500/30 px-2 py-0.5 text-slate-400">
+                        disabled
+                      </span>
+                    ) : (
+                      <span className="text-[10px] inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/30 px-2 py-0.5 text-red-400">
+                        stopped
+                      </span>
+                    )}
+                    {app.running && app.restart_count != null && app.restart_count > 0 && (
+                      <span
+                        className="text-[10px] inline-flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-amber-400"
+                        title={`Recovered from ${app.restart_count} recent crashes — watch for stability.`}
+                      >
+                        unstable
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className={`text-[10px] inline-flex items-center gap-1 rounded border px-1.5 py-0.5 ${runtimeColor[app.runtime] ?? runtimeColor.custom}`}>
+                      {app.runtime === 'docker' ? <Container size={10} /> : <Cpu size={10} />}
+                      {runtimeLabel[app.runtime] ?? app.runtime}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">port {app.port}</span>
+                    {app.uptime && <span className="text-[10px] text-muted-foreground">· up {app.uptime}</span>}
+                  </div>
                 </div>
+              </div>
+
+              {app.command && (
+                <code className="block text-[10px] text-muted-foreground bg-muted/50 rounded px-2 py-1 truncate" title={app.command}>
+                  {app.command}
+                </code>
+              )}
+              {app.docker_image && (
+                <code className="block text-[10px] text-muted-foreground bg-muted/50 rounded px-2 py-1 truncate" title={app.docker_image}>
+                  {app.docker_image}
+                </code>
+              )}
+
+              {app.running && statsByName[app.name] && (
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1">
+                  <span title="CPU usage (% of one core)">
+                    CPU {statsByName[app.name]!.cpu_percent.toFixed(1)}%
+                  </span>
+                  <span title="Resident set size">
+                    RSS {formatBytes(statsByName[app.name]!.memory_rss)}
+                  </span>
+                  {statsByName[app.name]!.pid ? (
+                    <span title="OS process ID">PID {statsByName[app.name]!.pid}</span>
+                  ) : null}
+                  <button
+                    onClick={() => loadStats(app.name)}
+                    disabled={statsLoadingFor === app.name}
+                    className="ml-auto opacity-60 hover:opacity-100 disabled:opacity-30"
+                    title="Refresh"
+                  >
+                    <RefreshCw size={10} />
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1 pt-1">
+                {app.running ? (
+                  <button
+                    onClick={() => doAction(app.name, 'stop')}
+                    disabled={busyName === app.name}
+                    className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
+                  >
+                    <Square size={12} /> Stop
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => doAction(app.name, 'start')}
+                    disabled={busyName === app.name}
+                    className="text-xs rounded-md border border-green-500/30 bg-green-500/10 text-green-400 px-2 py-1 hover:bg-green-500/20 disabled:opacity-50 inline-flex items-center gap-1"
+                  >
+                    <Play size={12} /> Start
+                  </button>
+                )}
+                <button
+                  onClick={() => doAction(app.name, 'restart')}
+                  disabled={busyName === app.name}
+                  className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  <RefreshCw size={12} /> Restart
+                </button>
+                <button
+                  onClick={() => openLogs(app.name)}
+                  className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted inline-flex items-center gap-1"
+                >
+                  <FileText size={12} /> Logs
+                </button>
+                <button
+                  onClick={() => openEdit(app.name)}
+                  className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted inline-flex items-center gap-1"
+                >
+                  <Edit2 size={12} /> Edit
+                </button>
+                {app.runtime !== 'docker' && (
+                  <button
+                    onClick={() => openDeploy(app.name)}
+                    className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted inline-flex items-center gap-1"
+                  >
+                    <GitBranch size={12} /> Deploy
+                  </button>
+                )}
+                {app.running && !statsByName[app.name] && (
+                  <button
+                    onClick={() => loadStats(app.name)}
+                    disabled={statsLoadingFor === app.name}
+                    className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
+                    title="Fetch CPU / memory stats"
+                  >
+                    <Activity size={12} />
+                  </button>
+                )}
+                <button
+                  onClick={() => doDelete(app.name)}
+                  disabled={busyName === app.name}
+                  className="ml-auto text-xs rounded-md border border-border px-2 py-1 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* App cards */}
-      <div className="space-y-4">
-        {apps.map(app => (
-          <AppCard
-            key={app.domain}
-            app={app}
-            acting={acting === app.domain}
-            onAction={action => handleAction(app.domain, action)}
-            onDeploy={() => { setWizardDomain(app.domain); setDeployStatusData(null); }}
-            onSaveConfig={(env, cmd, port) => handleSaveConfig(app.domain, env, cmd, port)}
-            onError={msg => showStatus(false, msg)}
-          />
-        ))}
-      </div>
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium">
+                {editing.mode === 'edit' ? `Edit "${editing.name}"` : 'New app'}
+              </h2>
+              <button onClick={() => setEditing(null)} className="opacity-60 hover:opacity-100">
+                <X size={18} />
+              </button>
+            </div>
 
-      {/* Deploy wizard modal */}
-      {wizardDomain && (
-        <DeployWizard
-          domain={wizardDomain}
-          deploying={deploying}
-          deployStatus={deployStatusData}
-          onDeploy={handleDeploy}
-          onClose={() => { if (!deploying) { setWizardDomain(''); setDeployStatusData(null); } }}
-        />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1 col-span-1">
+                <span className="text-xs text-muted-foreground">Name</span>
+                <input
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  disabled={editing.mode === 'edit'}
+                  placeholder="my-api"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono disabled:opacity-60"
+                />
+              </label>
+              <label className="space-y-1 col-span-1">
+                <span className="text-xs text-muted-foreground">Runtime</span>
+                <select
+                  value={form.runtime}
+                  onChange={e => setForm(f => ({ ...f, runtime: e.target.value as AppRuntime }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                >
+                  {Object.entries(runtimeLabel).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 col-span-2">
+                <span className="text-xs text-muted-foreground">Description (optional)</span>
+                <input
+                  value={form.description}
+                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder="What does this app do?"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                />
+              </label>
+
+              {!isDocker && (
+                <label className="space-y-1 col-span-2">
+                  <span className="text-xs text-muted-foreground">
+                    Start command (leave blank to auto-detect from workdir)
+                  </span>
+                  <input
+                    value={form.command}
+                    onChange={e => setForm(f => ({ ...f, command: e.target.value }))}
+                    placeholder="node index.js"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                  />
+                </label>
+              )}
+
+              <label className="space-y-1 col-span-1">
+                <span className="text-xs text-muted-foreground">
+                  Work directory (defaults to /var/lib/uwas/apps/&lt;name&gt;/)
+                </span>
+                <input
+                  value={form.work_dir}
+                  onChange={e => setForm(f => ({ ...f, work_dir: e.target.value }))}
+                  placeholder=""
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                />
+              </label>
+              <label className="space-y-1 col-span-1">
+                <span className="text-xs text-muted-foreground">Port (0 = auto-assign)</span>
+                <input
+                  value={form.port}
+                  onChange={e => setForm(f => ({ ...f, port: e.target.value }))}
+                  placeholder="0"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                />
+              </label>
+
+              {isDocker && (
+                <>
+                  <label className="space-y-1 col-span-1">
+                    <span className="text-xs text-muted-foreground">Docker image</span>
+                    <input
+                      value={form.docker_image}
+                      onChange={e => setForm(f => ({ ...f, docker_image: e.target.value }))}
+                      placeholder="nginx:latest"
+                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1 col-span-1">
+                    <span className="text-xs text-muted-foreground">Container port</span>
+                    <input
+                      value={form.docker_container_port}
+                      onChange={e => setForm(f => ({ ...f, docker_container_port: e.target.value }))}
+                      placeholder="80"
+                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1 col-span-1">
+                    <span className="text-xs text-muted-foreground">Build context (optional)</span>
+                    <input
+                      value={form.docker_build_context}
+                      onChange={e => setForm(f => ({ ...f, docker_build_context: e.target.value }))}
+                      placeholder="."
+                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1 col-span-1">
+                    <span className="text-xs text-muted-foreground">Dockerfile path (optional)</span>
+                    <input
+                      value={form.docker_build_dockerfile}
+                      onChange={e => setForm(f => ({ ...f, docker_build_dockerfile: e.target.value }))}
+                      placeholder="Dockerfile"
+                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                    />
+                  </label>
+                </>
+              )}
+
+              <label className="space-y-1 col-span-2">
+                <span className="text-xs text-muted-foreground">Environment (one KEY=value per line)</span>
+                <textarea
+                  value={form.envText}
+                  onChange={e => setForm(f => ({ ...f, envText: e.target.value }))}
+                  placeholder="NODE_ENV=production&#10;API_URL=https://api.example.com"
+                  rows={6}
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono"
+                />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setEditing(null)}
+                disabled={submitting}
+                className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submit}
+                disabled={submitting}
+                className="text-sm rounded-md bg-primary text-primary-foreground px-3 py-1.5 hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {submitting ? 'Saving…' : editing.mode === 'edit' ? 'Save' : 'Create'}
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {createOutcome && (createOutcome.error || !createOutcome.started) && (
+        <div className={`rounded-md border p-3 text-sm space-y-2 ${
+          createOutcome.started
+            ? 'border-amber-500/30 bg-amber-500/10'
+            : 'border-red-500/30 bg-red-500/10'
+        }`}>
+          <div className="flex items-center justify-between">
+            <span className={`font-medium ${createOutcome.started ? 'text-amber-300' : 'text-red-300'}`}>
+              {createOutcome.started
+                ? `"${createOutcome.name}" started but is not listening on its port`
+                : `"${createOutcome.name}" was saved but failed to start`}
+            </span>
+            <button
+              onClick={() => setCreateOutcome(null)}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          {createOutcome.error && (
+            <pre className="text-[11px] font-mono whitespace-pre-wrap bg-background/50 rounded p-2 max-h-40 overflow-auto">
+              {createOutcome.error}
+            </pre>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (createOutcome) openLogs(createOutcome.name);
+              }}
+              className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted inline-flex items-center gap-1"
+            >
+              <FileText size={12} /> View logs
+            </button>
+            <button
+              onClick={() => {
+                if (createOutcome) doAction(createOutcome.name, 'start');
+                setCreateOutcome(null);
+              }}
+              className="text-xs rounded-md border border-green-500/30 bg-green-500/10 text-green-400 px-2 py-1 hover:bg-green-500/20 inline-flex items-center gap-1"
+            >
+              <Play size={12} /> Retry start
+            </button>
+          </div>
+        </div>
+      )}
+
+      {deployFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium inline-flex items-center gap-2">
+                <GitBranch size={16} /> Deploy {deployFor}
+              </h2>
+              <button
+                onClick={() => { setDeployFor(null); setDeployResult(null); }}
+                className="opacity-60 hover:opacity-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Clones (or fast-forwards) a git repo into the app's workdir, runs the
+              optional build command, then restarts the supervisor. Times out after 5 minutes.
+            </p>
+
+            <div className="space-y-2">
+              <label className="space-y-1 block">
+                <span className="text-xs text-muted-foreground">Git URL</span>
+                <input
+                  value={deployForm.git_url}
+                  onChange={e => setDeployForm(f => ({ ...f, git_url: e.target.value }))}
+                  placeholder="https://github.com/user/repo.git"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                />
+              </label>
+              <label className="space-y-1 block">
+                <span className="text-xs text-muted-foreground">Branch (optional)</span>
+                <input
+                  value={deployForm.git_branch}
+                  onChange={e => setDeployForm(f => ({ ...f, git_branch: e.target.value }))}
+                  placeholder="main"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                />
+              </label>
+              <label className="space-y-1 block">
+                <span className="text-xs text-muted-foreground">Build command (optional)</span>
+                <input
+                  value={deployForm.build_cmd}
+                  onChange={e => setDeployForm(f => ({ ...f, build_cmd: e.target.value }))}
+                  placeholder="npm ci && npm run build"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                />
+              </label>
+            </div>
+
+            <details className="rounded-md border border-border p-3 text-xs">
+              <summary className="cursor-pointer font-medium">
+                Auto-deploy on git push (webhook)
+              </summary>
+              <div className="space-y-2 mt-3">
+                <p className="text-muted-foreground">
+                  Set a shared secret here, then add a webhook in your repo
+                  pointing at the URL below with that secret. Pushes will
+                  auto-trigger a redeploy.
+                </p>
+                <label className="space-y-1 block">
+                  <span className="text-muted-foreground">Webhook secret</span>
+                  <input
+                    type="text"
+                    value={deployForm.webhook_secret}
+                    onChange={e => setDeployForm(f => ({ ...f, webhook_secret: e.target.value }))}
+                    placeholder="any random string"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono"
+                  />
+                </label>
+                <label className="space-y-1 block">
+                  <span className="text-muted-foreground">Only deploy when push is on this branch (optional)</span>
+                  <input
+                    type="text"
+                    value={deployForm.branch_filter}
+                    onChange={e => setDeployForm(f => ({ ...f, branch_filter: e.target.value }))}
+                    placeholder="main"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono"
+                  />
+                </label>
+                <div className="space-y-1">
+                  <span className="text-muted-foreground">Webhook URL</span>
+                  <code className="block bg-muted/50 rounded px-2 py-1.5 break-all">
+                    {`${window.location.origin}/api/v1/apps/${encodeURIComponent(deployFor ?? '')}/webhook`}
+                  </code>
+                  <span className="text-[10px] text-muted-foreground">
+                    GitHub: Content type <code>application/json</code>, secret as above.
+                    GitLab: pass the secret as the <code>X-Gitlab-Token</code> header.
+                  </span>
+                </div>
+                <button
+                  onClick={saveWebhookConfig}
+                  className="text-xs rounded-md border border-border px-3 py-1.5 hover:bg-muted"
+                >
+                  Save webhook config
+                </button>
+              </div>
+            </details>
+
+            {deployResult && (
+              <div className={`rounded-md border p-2 text-xs space-y-1 ${
+                deployResult.ok
+                  ? 'border-green-500/30 bg-green-500/5'
+                  : 'border-red-500/30 bg-red-500/5'
+              }`}>
+                <div className="flex items-center gap-2 font-medium">
+                  {deployResult.ok
+                    ? <CheckCircle size={12} className="text-green-400" />
+                    : <AlertCircle size={12} className="text-red-400" />}
+                  <span>
+                    {deployResult.ok ? `${deployResult.mode} ok` : 'Failed'}
+                  </span>
+                  {deployResult.commit_sha && (
+                    <span className="font-mono text-muted-foreground">
+                      @ {deployResult.commit_sha.slice(0, 7)}
+                    </span>
+                  )}
+                </div>
+                {deployResult.error && (
+                  <div className="text-red-400">{deployResult.error}</div>
+                )}
+                <pre className="text-[10px] font-mono whitespace-pre-wrap bg-background/50 rounded p-2 max-h-60 overflow-auto">
+                  {deployResult.log || '(no output)'}
+                </pre>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setDeployFor(null); setDeployResult(null); }}
+                disabled={deployRunning}
+                className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:opacity-50"
+              >
+                Close
+              </button>
+              <button
+                onClick={runDeploy}
+                disabled={deployRunning || !deployForm.git_url.trim()}
+                className="text-sm rounded-md bg-primary text-primary-foreground px-3 py-1.5 hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {deployRunning ? 'Deploying…' : 'Deploy'}
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {logsFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-4xl max-h-[80vh] flex flex-col rounded-lg border border-border bg-card">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div>
+                <h2 className="text-lg font-medium">{logsFor} logs</h2>
+                <span className="text-xs text-muted-foreground">
+                  {logsKind === 'build' ? 'Build log (no runtime log yet)' : 'Runtime log (last 100 KB)'}
+                </span>
+              </div>
+              <button onClick={() => setLogsFor(null)} className="opacity-60 hover:opacity-100">
+                <X size={18} />
+              </button>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-[11px] font-mono whitespace-pre-wrap text-foreground bg-background">
+              {logsContent}
+            </pre>
+          </div>
+        </div>
       )}
     </div>
   );

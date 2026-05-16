@@ -958,76 +958,213 @@ export const fetchTask = (id: string) => api<InstallTask>(`/api/v1/tasks/${encod
 
 // ── App Process Manager (Node.js, Python, Ruby, Go) ──
 
+// ── Applications (v0.6.0) ──
+//
+// Apps are first-class objects keyed by name (not by domain) and stored
+// under /etc/uwas/apps.d/<name>.yaml. Domains link to them via reverse
+// proxy with `apps://<name>` upstreams. See internal/apps for the Go side.
+
+export type AppRuntime = 'node' | 'python' | 'ruby' | 'go' | 'custom' | 'docker';
+
+export interface DockerBuild {
+  context?: string;
+  dockerfile?: string;
+  args?: Record<string, string>;
+  target?: string;
+}
+
+export interface DockerSpec {
+  image?: string;
+  build?: DockerBuild;
+  container_port?: number;
+  volumes?: string[];
+  extra_args?: string[];
+}
+
+export interface AppDeployConfig {
+  git_url?: string;
+  git_branch?: string;
+  build_cmd?: string;
+  webhook_secret?: string;
+  branch_filter?: string;
+}
+
+export interface App {
+  name: string;
+  description?: string;
+  runtime: AppRuntime;
+  command?: string;
+  work_dir?: string;
+  port?: number;
+  env?: Record<string, string>;
+  auto_restart?: boolean;
+  disabled?: boolean;
+  docker?: DockerSpec;
+  deploy?: AppDeployConfig;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface AppInstance {
-  domain: string;
-  runtime: string;
-  command: string;
+  name: string;
+  runtime: AppRuntime;
+  command?: string;
   port: number;
-  pid: number;
+  work_dir?: string;
+  pid?: number;
   running: boolean;
+  disabled?: boolean;
   uptime?: string;
   started_at?: string;
   env?: Record<string, string>;
+  docker_image?: string;
+  // Set true when the supervisor stopped attempting auto-restart
+  // after a crashloop. Renders differently from a user-initiated stop.
+  crashloop_gave_up?: boolean;
+  // Non-zero when the app has been crash-looping recently. Even at
+  // 0 (recovered), the dashboard can surface "was unstable".
+  restart_count?: number;
 }
 
 export const fetchApps = () =>
   api<{ items: AppInstance[]; total: number; limit: number; offset: number }>('/api/v1/apps')
     .then(r => r.items ?? []);
-export const fetchApp = (domain: string) => api<AppInstance>(`/api/v1/apps/${encodeURIComponent(domain)}`);
-export const startApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/start`, { method: 'POST' });
-export const stopApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/stop`, { method: 'POST' });
-export const restartApp = (domain: string) => api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/restart`, { method: 'POST' });
 
-export const updateAppEnv = (domain: string, env: Record<string, string>, command?: string, port?: number) =>
-  api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/env`, { method: 'PUT', body: JSON.stringify({ env, command, port }) });
-export const fetchAppLogs = (domain: string) =>
-  api<{ log: string; error?: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/logs`);
+export const fetchApp = (name: string) =>
+  api<{ app: App; instance: AppInstance | null }>(
+    `/api/v1/apps/${encodeURIComponent(name)}`);
+
+export interface CreateAppResult {
+  app: App;
+  // The supervisor attempts to start the app immediately after
+  // persistence (unless ?start=false is passed). `started` is the
+  // outcome of that attempt; if false and a start was attempted,
+  // `start_error` carries the supervisor's full diagnostic
+  // (typically the last 4KB of the runtime log).
+  started: boolean;
+  start_error?: string;
+  // When the start succeeded, the supervisor also probes the app's
+  // port for TCP reachability within a few seconds. `listening`
+  // reports the probe outcome; `listening_warning` carries the
+  // diagnostic when listening=false. This catches the failure mode
+  // where the process is alive but isn't yet bound to its port —
+  // the proxy would 502 for clients hitting the domain even though
+  // the app technically "started ok".
+  listening?: boolean;
+  listening_warning?: string;
+}
+
+export const createApp = (
+  app: Partial<App>,
+  opts?: { start?: boolean },
+) => {
+  const qs = opts?.start === false ? '?start=false' : '';
+  return api<CreateAppResult>(`/api/v1/apps${qs}`, {
+    method: 'POST',
+    body: JSON.stringify(app),
+  });
+};
+
+export interface AppDeployRequest {
+  git_url: string;
+  git_branch?: string;
+  build_cmd?: string;
+  env?: Record<string, string>;
+  skip_restart?: boolean;
+}
+
+export interface AppDeployResult {
+  ok: boolean;
+  mode: 'clone' | 'pull';
+  commit_sha?: string;
+  log: string;
+  error?: string;
+}
+
+export const deployApp = (name: string, body: AppDeployRequest) =>
+  api<AppDeployResult>(`/api/v1/apps/${encodeURIComponent(name)}/deploy`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+export interface UpdateAppResult {
+  app: App;
+  started: boolean;
+  start_error?: string;
+  listening?: boolean;
+  listening_warning?: string;
+}
+
+export const updateApp = (name: string, patch: Partial<App>) =>
+  api<UpdateAppResult>(`/api/v1/apps/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  });
+
+export const deleteApp = (name: string) =>
+  api<{ status: string; name: string }>(
+    `/api/v1/apps/${encodeURIComponent(name)}`,
+    { method: 'DELETE' });
+
+export const startApp = (name: string) =>
+  api<{ status: string; name: string }>(
+    `/api/v1/apps/${encodeURIComponent(name)}/start`,
+    { method: 'POST' });
+
+export const stopApp = (name: string) =>
+  api<{ status: string; name: string }>(
+    `/api/v1/apps/${encodeURIComponent(name)}/stop`,
+    { method: 'POST' });
+
+export const restartApp = (name: string) =>
+  api<{ status: string; name: string }>(
+    `/api/v1/apps/${encodeURIComponent(name)}/restart`,
+    { method: 'POST' });
+
+export const fetchAppLogs = (name: string) =>
+  api<{ log: string; kind: 'runtime' | 'build' }>(
+    `/api/v1/apps/${encodeURIComponent(name)}/logs`);
 
 export interface AppStats {
-  domain: string;
-  pid: number;
+  name: string;
+  pid?: number;
   running: boolean;
   cpu_percent: number;
   memory_rss: number;
   memory_vms: number;
   uptime?: string;
 }
-export const fetchAppStats = (domain: string) =>
-  api<AppStats>(`/api/v1/apps/${encodeURIComponent(domain)}/stats`);
 
-// ── Deploy (git clone → build → restart) ──
+export const fetchAppStats = (name: string) =>
+  api<AppStats>(
+    `/api/v1/apps/${encodeURIComponent(name)}/stats`);
 
-export interface DeployRequest {
-  git_url?: string;
-  git_branch?: string;
-  ssh_key_path?: string;
-  git_token?: string;
-  build_cmd?: string;
-  dockerfile?: string;
-  docker_port?: number;
-  env?: Record<string, string>;
-}
-
-export interface DeployStatus {
-  domain: string;
-  status: string;
-  git_url?: string;
-  git_branch?: string;
+export interface AppWebhookStatus {
+  started_at?: string;
+  finished_at?: string;
+  ok?: boolean;
   commit_sha?: string;
-  mode: string;
-  log: string;
-  started_at: string;
-  duration?: string;
+  ref?: string;
   error?: string;
+  log_tail?: string;
+  name?: string;
+  status?: string;
 }
 
-export const deployApp = (domain: string, req: DeployRequest) =>
-  api<{ status: string }>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`, { method: 'POST', body: JSON.stringify(req) });
-export const fetchDeployStatus = (domain: string) =>
-  api<DeployStatus>(`/api/v1/apps/${encodeURIComponent(domain)}/deploy`);
-export const fetchDeploys = () =>
-  api<{ items: DeployStatus[]; total: number; limit: number; offset: number }>('/api/v1/deploys')
-    .then(r => r.items ?? []);
+export const fetchAppWebhookStatus = (name: string) =>
+  api<AppWebhookStatus>(
+    `/api/v1/apps/${encodeURIComponent(name)}/webhook-status`);
+
+export interface AppsMigrationReport {
+  migrated: Array<{ domain: string; app_name?: string; reason?: string }>;
+  skipped: Array<{ domain: string; app_name?: string; reason?: string }>;
+  conflicts: Array<{ domain: string; app_name?: string; reason?: string }>;
+}
+
+export const migrateLegacyApps = (dryRun = false) =>
+  api<{ dry_run: boolean; report: AppsMigrationReport }>(
+    `/api/v1/apps/migrate?dry_run=${dryRun}`,
+    { method: 'POST' });
 
 // ── Database Explorer ──
 

@@ -8,7 +8,6 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
-	"github.com/uwaserver/uwas/internal/router"
 )
 
 // =============================================================================
@@ -78,54 +77,10 @@ func TestMatchLocationEmptyPattern(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// handleAppProxy tests
-// =============================================================================
-
-func TestHandleAppProxyNilAppMgr(t *testing.T) {
-	cfg := &config.Config{
-		Domains: []config.Domain{
-			{Host: "app.example.com", Type: "app"},
-		},
-	}
-	s := newMinimalServer(cfg)
-	// s.appMgr is nil by default
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := router.AcquireContext(rec, req)
-	defer router.ReleaseContext(ctx)
-
-	domain := &cfg.Domains[0]
-	s.handleAppProxy(ctx, domain)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 for nil appMgr, got %d", rec.Code)
-	}
-}
-
-func TestHandleAppProxyEmptyListenAddr(t *testing.T) {
-	cfg := &config.Config{
-		Domains: []config.Domain{
-			{Host: "unknown-app.com", Type: "app"},
-		},
-	}
-	s := newMinimalServer(cfg)
-	// appMgr is nil, so we set it to a non-nil but empty manager
-	// Actually, we can use a mock: appmanager.New(nil) which returns empty addr
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := router.AcquireContext(rec, req)
-	defer router.ReleaseContext(ctx)
-
-	domain := &cfg.Domains[0]
-	s.handleAppProxy(ctx, domain)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 for empty listen addr, got %d", rec.Code)
-	}
-}
+// handleAppProxy was removed in v0.6.0 — type=app domains are auto-
+// migrated to type=proxy at boot. Coverage for the deprecation
+// branch in dispatchHandler is exercised indirectly by the proxy
+// upstream resolver tests in apps_upstream_test.go.
 
 // =============================================================================
 // FetchFragment tests

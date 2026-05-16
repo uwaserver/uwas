@@ -349,16 +349,6 @@ func TestHandleAppRestart_NoAppManager(t *testing.T) {
 	}
 }
 
-func TestHandleAppEnvUpdate_InvalidJSON(t *testing.T) {
-	s := testServer()
-	body := strings.NewReader(`{invalid json}`)
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/apps/test.com/env", body))
-	if rec.Code != 400 && rec.Code != 501 && rec.Code != 500 {
-		t.Errorf("status = %d, want 400, 501, or 500", rec.Code)
-	}
-}
-
 func TestHandleAppEnvUpdate_NoAppManager(t *testing.T) {
 	s := testServer()
 	body := strings.NewReader(`{"env":{"KEY":"value"}}`)
