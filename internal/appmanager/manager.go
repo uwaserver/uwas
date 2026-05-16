@@ -73,15 +73,20 @@ func New(log *logger.Logger) *Manager {
 func detectCommand(runtimeName, workDir string) string {
 	switch runtimeName {
 	case "node":
-		// Check for package.json start script
-		if _, err := osStatFn(filepath.Join(workDir, "package.json")); err == nil {
-			return "npm start"
-		}
-		// Check for common entry points
+		// Prefer direct `node <file>` over `npm start`:
+		//   1. Avoids requiring npm to be installed
+		//   2. PORT and other env vars propagate cleanly (npm's run-script
+		//      wrapper has historically dropped or mangled them on some
+		//      versions), so the appmanager-assigned port reliably reaches
+		//      the app
 		for _, f := range []string{"server.js", "index.js", "app.js"} {
 			if _, err := osStatFn(filepath.Join(workDir, f)); err == nil {
 				return "node " + f
 			}
+		}
+		// Last resort — only if no entry-point file was found
+		if _, err := osStatFn(filepath.Join(workDir, "package.json")); err == nil {
+			return "npm start"
 		}
 	case "python":
 		// Check for common WSGI/ASGI patterns
@@ -139,7 +144,13 @@ func (m *Manager) Register(domain string, appCfg config.AppConfig, webRoot strin
 		m.nextPort++
 	}
 
-	autoRestart := appCfg.AutoRestart
+	// PM2-like default: auto-restart on crash unless the operator has
+	// explicitly stopped the app (Disabled flag). Pre-v0.5.2 the AutoRestart
+	// bool defaulted to false (Go zero value) even though the field comment
+	// claimed "default true" — which meant a fresh process that crashed once
+	// stayed dead and the operator had to find the Apps page to click
+	// Restart. That's the opposite of what a process supervisor should do.
+	autoRestart := appCfg.AutoRestart || !appCfg.Disabled
 
 	m.apps[domain] = &appProcess{
 		domain:      domain,
