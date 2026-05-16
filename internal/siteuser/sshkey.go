@@ -9,6 +9,12 @@ import (
 
 // AddSSHKey adds a public SSH key to a domain user's authorized_keys.
 func AddSSHKey(webRootBase, hostname, pubKey string) error {
+	return AddSSHKeyForWebDir(filepath.Join(webRootBase, hostname, "public_html"), hostname, pubKey)
+}
+
+// AddSSHKeyForWebDir adds a public SSH key for a domain whose writable
+// directory has already been resolved.
+func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
 	if runtimeGOOS == "windows" {
 		return fmt.Errorf("SSH key management not supported on Windows")
 	}
@@ -17,7 +23,7 @@ func AddSSHKey(webRootBase, hostname, pubKey string) error {
 	}
 
 	username := domainToUsername(hostname)
-	domainDir := filepath.Join(webRootBase, hostname)
+	domainDir := filepath.Dir(webDir)
 	sshDir := filepath.Join(domainDir, ".ssh")
 	authKeys := filepath.Join(sshDir, "authorized_keys")
 
@@ -50,10 +56,15 @@ func AddSSHKey(webRootBase, hostname, pubKey string) error {
 
 // RemoveSSHKey removes a public SSH key from a domain user's authorized_keys.
 func RemoveSSHKey(webRootBase, hostname, pubKeyFingerprint string) error {
+	return RemoveSSHKeyForWebDir(filepath.Join(webRootBase, hostname, "public_html"), hostname, pubKeyFingerprint)
+}
+
+// RemoveSSHKeyForWebDir removes a public SSH key using a resolved writable dir.
+func RemoveSSHKeyForWebDir(webDir, hostname, pubKeyFingerprint string) error {
 	if err := validateSiteHostname(hostname); err != nil {
 		return err
 	}
-	domainDir := filepath.Join(webRootBase, hostname)
+	domainDir := filepath.Dir(webDir)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
 
 	data, err := osReadFileFn(authKeys)
@@ -77,10 +88,15 @@ func RemoveSSHKey(webRootBase, hostname, pubKeyFingerprint string) error {
 
 // ListSSHKeys returns the SSH public keys for a domain user.
 func ListSSHKeys(webRootBase, hostname string) []string {
+	return ListSSHKeysForWebDir(filepath.Join(webRootBase, hostname, "public_html"), hostname)
+}
+
+// ListSSHKeysForWebDir returns SSH public keys using a resolved writable dir.
+func ListSSHKeysForWebDir(webDir, hostname string) []string {
 	if validateSiteHostname(hostname) != nil {
 		return nil
 	}
-	domainDir := filepath.Join(webRootBase, hostname)
+	domainDir := filepath.Dir(webDir)
 	authKeys := filepath.Join(domainDir, ".ssh", "authorized_keys")
 
 	data, err := osReadFileFn(authKeys)

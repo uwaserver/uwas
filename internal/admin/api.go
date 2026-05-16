@@ -2986,14 +2986,17 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webRoot := "/var/www"
-	s.configMu.RLock()
-	if s.config.Global.WebRoot != "" {
-		webRoot = s.config.Global.WebRoot
+	root, err := s.siteUserRoot(req.Domain)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	s.configMu.RUnlock()
+	if root == "" {
+		jsonError(w, "domain root not found", http.StatusNotFound)
+		return
+	}
 
-	user, password, err := siteuser.CreateUser(webRoot, req.Domain)
+	user, password, err := siteuser.CreateUserForWebDir(root, req.Domain)
 	if err != nil {
 		jsonError(w, "create user: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -311,6 +311,85 @@ func TestCreateUser_Success(t *testing.T) {
 	if !strings.Contains(content, "Match User uwas-example--com") {
 		t.Error("sshd_config should contain Match User block")
 	}
+	if !strings.Contains(content, "ForceCommand internal-sftp -d /public_html") {
+		t.Error("sshd_config should start the user in public_html")
+	}
+}
+
+func TestCreateUserForWebDir_AppWorkDir(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	runtimeGOOS = "linux"
+	tmp := t.TempDir()
+	appRoot := filepath.Join(tmp, "apps", "demo-api")
+	osMkdirAllFn = os.MkdirAll
+	execCommandFn = fakeExecCommand
+
+	sshdFile := filepath.Join(tmp, "sshd_config")
+	os.WriteFile(sshdFile, []byte("Subsystem sftp internal-sftp\n"), 0644)
+	sshdConfigPath = sshdFile
+	osReadFileFn = os.ReadFile
+	osWriteFileFn = os.WriteFile
+
+	u, pass, err := CreateUserForWebDir(appRoot, "api.example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pass == "" {
+		t.Fatal("expected generated password")
+	}
+	if u.HomeDir != filepath.Dir(appRoot) {
+		t.Fatalf("home dir = %q, want %q", u.HomeDir, filepath.Dir(appRoot))
+	}
+	if u.WebDir != appRoot {
+		t.Fatalf("web dir = %q, want app workdir %q", u.WebDir, appRoot)
+	}
+
+	data, _ := os.ReadFile(sshdFile)
+	content := string(data)
+	if !strings.Contains(content, "ChrootDirectory "+filepath.Dir(appRoot)) {
+		t.Fatalf("sshd_config does not chroot to app parent:\n%s", content)
+	}
+	if !strings.Contains(content, "ForceCommand internal-sftp -d /demo-api") {
+		t.Fatalf("sshd_config does not start in app dir:\n%s", content)
+	}
+}
+
+func TestEnsureSFTPConfigUpdatesManagedBlock(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	tmp := t.TempDir()
+	sshdFile := filepath.Join(tmp, "sshd_config")
+	old := `
+Subsystem sftp internal-sftp
+# UWAS SFTP user: uwas-app--example--com
+Match User uwas-app--example--com
+    ChrootDirectory /var/www/app.example.com
+    ForceCommand internal-sftp
+    AllowTcpForwarding no
+    X11Forwarding no
+`
+	os.WriteFile(sshdFile, []byte(old), 0644)
+	sshdConfigPath = sshdFile
+	osReadFileFn = os.ReadFile
+	osWriteFileFn = os.WriteFile
+	execCommandFn = fakeExecCommand
+
+	ensureSFTPConfig("uwas-app--example--com", "/var/lib/uwas/apps", "/demo")
+
+	data, _ := os.ReadFile(sshdFile)
+	content := string(data)
+	if strings.Contains(content, "/var/www/app.example.com") {
+		t.Fatalf("old chroot still present:\n%s", content)
+	}
+	if !strings.Contains(content, "ChrootDirectory /var/lib/uwas/apps") {
+		t.Fatalf("new chroot missing:\n%s", content)
+	}
+	if !strings.Contains(content, "ForceCommand internal-sftp -d /demo") {
+		t.Fatalf("new start dir missing:\n%s", content)
+	}
 }
 
 func TestCreateUser_AlreadyExists(t *testing.T) {
@@ -771,6 +850,32 @@ func TestAddSSHKey_Success(t *testing.T) {
 	}
 	if !strings.Contains(string(data), key) {
 		t.Error("authorized_keys should contain the added key")
+	}
+}
+
+func TestAddSSHKeyForWebDir_AppWorkDir(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	runtimeGOOS = "linux"
+	tmp := t.TempDir()
+	appRoot := filepath.Join(tmp, "apps", "demo")
+	osMkdirAllFn = os.MkdirAll
+	osOpenFileFn = os.OpenFile
+	osReadFileFn = os.ReadFile
+	execCommandFn = fakeExecCommand
+
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemo app@example"
+	if err := AddSSHKeyForWebDir(appRoot, "app.example.com", key); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	authKeys := filepath.Join(filepath.Dir(appRoot), ".ssh", "authorized_keys")
+	data, err := os.ReadFile(authKeys)
+	if err != nil {
+		t.Fatalf("authorized_keys not written: %v", err)
+	}
+	if !strings.Contains(string(data), key) {
+		t.Fatalf("authorized_keys missing key: %s", string(data))
 	}
 }
 
