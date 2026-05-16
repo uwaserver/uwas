@@ -5,12 +5,13 @@ import { setPinCode, clearPinCode } from '@/lib/api';
 import {
   X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
-  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Cpu, Upload,
+  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Upload,
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
-  fetchPHP, fetchServerIPs, fetchDomainHealth,
+  fetchPHP, fetchServerIPs, fetchDomainHealth, fetchApps,
   type DomainData, type DomainDetail, type CertInfo, type PHPInstall, type ServerIPInfo, type DomainHealth,
+  type AppInstance,
 } from '@/lib/api';
 import { usePolling } from '@/hooks/usePolling';
 
@@ -33,10 +34,9 @@ interface DomainFormState {
   proxyAlgorithm: string;
   redirectTarget: string;
   redirectCode: string;
-  appRuntime: string;
-  appCommand: string;
-  appPort: string;
-  appEnv: string;
+  // App fields removed from create UI in v0.5.8 — Apps page owns app
+  // lifecycle now. The interface stays narrow on purpose so a future
+  // accidental "set form.appPort" stops compiling.
   blockedPaths: string;
   wafEnabled: boolean;
   htaccessEnabled: boolean;
@@ -48,7 +48,14 @@ type TemplateName = 'wordpress' | 'laravel' | 'nodejs' | 'python' | 'static' | '
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const domainTypes = ['static', 'php', 'proxy', 'app', 'redirect'] as const;
+// type=app is intentionally OMITTED from the create UI. App lifecycle
+// (deploy / start / stop / logs / port allocation) is managed on the Apps
+// page now; Domains only routes. To expose a running app on a hostname,
+// add a type=proxy domain pointing to the app's 127.0.0.1:<port> endpoint
+// (the Reverse Proxy template offers a dropdown of registered apps).
+// Legacy domains with type=app in YAML keep working — they just don't
+// appear as a choice in the create wizard.
+const domainTypes = ['static', 'php', 'proxy', 'redirect'] as const;
 const sslModes = ['auto', 'manual', 'off'] as const;
 // proxyAlgorithms and redirectCodes are now rendered as visual cards inline
 
@@ -67,10 +74,6 @@ const emptyForm: DomainFormState = {
   proxyAlgorithm: 'round-robin',
   redirectTarget: '',
   redirectCode: '301',
-  appRuntime: 'node',
-  appCommand: '',
-  appPort: '',
-  appEnv: '',
   blockedPaths: '',
   wafEnabled: false,
   htaccessEnabled: false,
@@ -146,30 +149,22 @@ const templates: Record<string, TemplateConfig> = {
       blockedPaths: '.env,.git,composer.json,composer.lock,storage/logs',
     },
   },
-  nodejs: {
-    label: 'Node.js App',
-    description: 'Managed Node process — auto-start, crash restart, git deploy',
+  // Node.js / Python app templates were removed in v0.5.8. Apps are now
+  // managed independently on the Apps page (deploy → start → port assigned)
+  // and a separate Reverse Proxy domain points the public hostname at
+  // the app's local endpoint. Decoupling these two concerns eliminated the
+  // class of bugs where a domain edit silently corrupted the running
+  // app's port/command/env.
+  proxy_app: {
+    label: 'Reverse Proxy to App',
+    description: 'Forward to a managed app you deployed via the Apps page',
     icon: <Box size={20} />,
     color: 'text-green-400 bg-green-500/15 border-green-500/30',
     form: {
-      type: 'app',
+      type: 'proxy',
       ssl: 'auto',
-      appRuntime: 'node',
-      appCommand: '',
-      appPort: '',
-    },
-  },
-  python: {
-    label: 'Python App',
-    description: 'Managed Python process — Gunicorn/Django/Flask with git deploy',
-    icon: <Cpu size={20} />,
-    color: 'text-yellow-400 bg-yellow-500/15 border-yellow-500/30',
-    form: {
-      type: 'app',
-      ssl: 'auto',
-      appRuntime: 'python',
-      appCommand: '',
-      appPort: '',
+      proxyUpstreams: '',
+      proxyAlgorithm: 'round-robin',
     },
   },
   redirect: {
@@ -310,6 +305,9 @@ export default function Domains() {
   /* domain health status */
   const [healthMap, setHealthMap] = useState<Record<string, DomainHealth>>({});
 
+  /* running apps (for the Reverse Proxy upstream picker) */
+  const [apps, setApps] = useState<AppInstance[]>([]);
+
   /* -------- data loading -------- */
 
   const loadDomains = useCallback(() => {
@@ -350,6 +348,14 @@ export default function Domains() {
       })
       .catch(() => {});
   }, []);
+
+  // Fetch running apps when the add/edit wizard opens — used by the
+  // Reverse Proxy upstream picker so the operator can click an app instead
+  // of typing 127.0.0.1:<port> by hand.
+  useEffect(() => {
+    if (!showAdd) return;
+    fetchApps().then(r => setApps(r ?? [])).catch(() => setApps([]));
+  }, [showAdd]);
 
   useEffect(() => {
     loadDomains();
@@ -477,10 +483,6 @@ export default function Domains() {
         proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
         redirectTarget: d.redirect?.target ?? '',
         redirectCode: String(d.redirect?.status ?? 301),
-        appRuntime: d.app?.runtime ?? 'node',
-        appCommand: d.app?.command ?? '',
-        appPort: d.app?.port ? String(d.app.port) : '',
-        appEnv: '',
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
         htaccessEnabled: !!d.htaccess?.mode,
@@ -545,24 +547,10 @@ export default function Domains() {
       payload.htaccess = { mode: 'import' };
     }
 
-    if (form.type === 'app') {
-      const env: Record<string, string> = {};
-      form.appEnv.split('\n').forEach(line => {
-        const eq = line.indexOf('=');
-        if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-      });
-      const trimmedPort = form.appPort.trim();
-      const parsedPort = trimmedPort ? parseInt(trimmedPort, 10) : 0;
-      payload.app = {
-        runtime: form.appRuntime || 'custom',
-        command: form.appCommand || undefined,
-        // 0 = let backend auto-assign a free port (3001+). Never default to 3000
-        // on the client — that's how every app ended up colliding on the same port.
-        port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 0,
-        auto_restart: true,
-        env: Object.keys(env).length > 0 ? env : undefined,
-      };
-    }
+    // type=app submission was removed in v0.5.8. The dashboard no longer
+    // creates managed app processes via domain create — that's the Apps
+    // page's job now. Legacy type=app domains in YAML keep working but
+    // can't be created from this form.
 
     // Cache settings
     if (form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0) {
@@ -957,6 +945,40 @@ export default function Domains() {
                       </span>
                     </div>
 
+                    {/* Pick from registered apps — the v0.5.8 entry point.
+                        Operator deploys an app on the Apps page (which
+                        assigns it a port), then comes here and one-clicks
+                        it as an upstream instead of typing 127.0.0.1:<port>
+                        by hand and getting it wrong. Manual upstream input
+                        below still works. */}
+                    {apps.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-2 block">Pick from registered apps</label>
+                        <div className="grid grid-cols-1 gap-1.5 max-h-32 overflow-auto rounded border border-border/40 p-1.5 bg-background/40">
+                          {apps.map(a => {
+                            const addr = `http://127.0.0.1:${a.port}`;
+                            const current = form.proxyUpstreams.split(',').map(s => s.trim());
+                            const picked = current.includes(addr);
+                            return (
+                              <button key={a.domain} type="button" disabled={picked && current.length === 1}
+                                onClick={() => patchField('proxyUpstreams', addr)}
+                                className={`flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-xs transition ${
+                                  picked ? 'bg-green-500/10 border border-green-500/30' : 'hover:bg-foreground/5 border border-transparent'
+                                }`}>
+                                <span className="flex items-center gap-2">
+                                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${a.running ? 'bg-green-500' : 'bg-slate-500'}`} />
+                                  <span className="font-medium text-foreground">{a.domain}</span>
+                                  <span className="text-[10px] text-muted-foreground">{a.runtime || 'app'}</span>
+                                </span>
+                                <span className="font-mono text-[10px] text-muted-foreground">127.0.0.1:{a.port}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-1 text-[9px] text-muted-foreground">Deploy and manage apps on the Apps page; they appear here once running.</p>
+                      </div>
+                    )}
+
                     {/* Upstream list — row-based */}
                     <div>
                       <label className="text-xs font-medium text-muted-foreground mb-2 block">Upstreams</label>
@@ -1010,118 +1032,10 @@ export default function Domains() {
                   </div>
                 )}
 
-                {/* App section */}
-                {form.type === 'app' && (
-                  <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-4 space-y-4">
-                    <h3 className="flex items-center gap-2 text-sm font-semibold text-green-400"><Box size={14} /> Application Configuration</h3>
-
-                    {/* Visual routing diagram */}
-                    <div className="flex items-center gap-2 rounded-md bg-background/50 border border-border/50 px-3 py-2 text-[10px]">
-                      <span className="font-mono text-foreground">{form.host || 'domain.com'}</span>
-                      <ArrowRight size={10} className="text-muted-foreground" />
-                      <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-purple-400 font-medium">UWAS</span>
-                      <ArrowRight size={10} className="text-muted-foreground" />
-                      <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-400 font-mono">127.0.0.1:{form.appPort || 'auto'}</span>
-                    </div>
-
-                    {/* Runtime selector — visual cards. Color classes embedded
-                        literally (NOT template-string-interpolated) so the
-                        Tailwind v4 JIT keeps them in the production bundle. */}
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Runtime</label>
-                      <div className="grid grid-cols-5 gap-2">
-                        {[
-                          { value: 'node', label: 'Node.js', icon: 'N', selected: 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30', text: 'text-green-400' },
-                          { value: 'python', label: 'Python', icon: 'Py', selected: 'border-yellow-500/50 bg-yellow-500/10 ring-1 ring-yellow-500/30', text: 'text-yellow-400' },
-                          { value: 'ruby', label: 'Ruby', icon: 'Rb', selected: 'border-red-500/50 bg-red-500/10 ring-1 ring-red-500/30', text: 'text-red-400' },
-                          { value: 'go', label: 'Go', icon: 'Go', selected: 'border-cyan-500/50 bg-cyan-500/10 ring-1 ring-cyan-500/30', text: 'text-cyan-400' },
-                          { value: 'custom', label: 'Custom', icon: '?', selected: 'border-slate-500/50 bg-slate-500/10 ring-1 ring-slate-500/30', text: 'text-slate-400' },
-                        ].map(rt => {
-                          const isSelected = form.appRuntime === rt.value;
-                          return (
-                            <button key={rt.value} type="button"
-                              onClick={() => {
-                                // Just record which runtime the user picked.
-                                // Don't touch command or port — those are user input. Letting the
-                                // runtime button silently rewrite either field is how 3010 → 3000
-                                // bugs happen. The backend auto-detects the command from
-                                // package.json/server.js/main.go etc. and auto-assigns the port
-                                // when empty; the dashboard doesn't need to second-guess.
-                                patchField('appRuntime', rt.value);
-                              }}
-                              className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
-                                isSelected ? rt.selected : 'border-border hover:border-foreground/20'
-                              }`}>
-                              <span className={`text-xs font-bold ${isSelected ? rt.text : 'text-muted-foreground'}`}>{rt.icon}</span>
-                              <span className="text-[10px] text-muted-foreground">{rt.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Command + Port */}
-                    <div className="grid grid-cols-[1fr_100px] gap-3">
-                      <FormField label="Start Command" htmlFor="add-app-cmd">
-                        <input id="add-app-cmd" type="text" value={form.appCommand} onChange={e => patchField('appCommand', e.target.value)}
-                          placeholder="Leave empty for auto-detection" className={inputCls + ' font-mono text-xs'} />
-                        <p className="mt-1 text-[9px] text-muted-foreground">
-                          {form.appRuntime === 'node' && 'Detected from package.json scripts.start or server.js/index.js'}
-                          {form.appRuntime === 'python' && 'Detected from manage.py, app.py, or requirements.txt'}
-                          {form.appRuntime === 'ruby' && 'Detected from config.ru (Puma) or Gemfile'}
-                          {form.appRuntime === 'go' && 'Runs compiled binary from project root'}
-                          {form.appRuntime === 'custom' && 'Specify the exact command to run your application'}
-                        </p>
-                      </FormField>
-                      <FormField label="Port" htmlFor="add-app-port">
-                        <input id="add-app-port" type="number" value={form.appPort} onChange={e => patchField('appPort', e.target.value)}
-                          placeholder="auto" className={inputCls} />
-                        <p className="mt-1 text-[9px] text-muted-foreground">Leave empty for auto-assign (3001+)</p>
-                      </FormField>
-                    </div>
-
-                    {/* Environment Variables — key-value rows */}
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-2 block">Environment Variables</label>
-                      {(() => {
-                        const rows = form.appEnv ? form.appEnv.split('\n').map(line => {
-                          const eq = line.indexOf('=');
-                          return eq > 0 ? { key: line.slice(0, eq), value: line.slice(eq + 1) } : { key: line, value: '' };
-                        }) : [];
-                        if (rows.length === 0) rows.push({ key: '', value: '' });
-
-                        const updateEnv = (newRows: typeof rows) => {
-                          patchField('appEnv', newRows.filter(r => r.key || r.value).map(r => `${r.key}=${r.value}`).join('\n'));
-                        };
-
-                        return (
-                          <div className="space-y-1.5">
-                            {rows.map((row, i) => (
-                              <div key={i} className="grid grid-cols-[1fr_1fr_28px] gap-1.5 items-center">
-                                <input value={row.key} onChange={e => { rows[i] = { ...row, key: e.target.value }; updateEnv(rows); }}
-                                  placeholder="KEY" className={inputCls + ' font-mono text-xs py-1.5'} />
-                                <input value={row.value} onChange={e => { rows[i] = { ...row, value: e.target.value }; updateEnv(rows); }}
-                                  placeholder="value" className={inputCls + ' font-mono text-xs py-1.5'} />
-                                <button type="button" onClick={() => { rows.splice(i, 1); if (rows.length === 0) rows.push({ key: '', value: '' }); updateEnv(rows); }}
-                                  className="rounded p-1 text-muted-foreground hover:text-red-400 hover:bg-red-500/10">
-                                  <X size={12} />
-                                </button>
-                              </div>
-                            ))}
-                            <button type="button" onClick={() => { rows.push({ key: '', value: '' }); updateEnv(rows); }}
-                              className="flex items-center gap-1 rounded border border-dashed border-border px-2.5 py-1.5 text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors w-full justify-center">
-                              <Plus size={10} /> Add Variable
-                            </button>
-                          </div>
-                        );
-                      })()}
-                    </div>
-
-                    <div className="rounded-md bg-background/50 border border-border/50 px-3 py-2 text-[10px] text-muted-foreground">
-                      Process auto-starts on domain creation. Use the <span className="text-foreground font-medium">Apps</span> page to deploy from Git, manage builds, and monitor resources.
-                    </div>
-                  </div>
-                )}
+                {/* App configuration section removed in v0.5.8. Apps are
+                    managed on the Apps page; this form only routes traffic.
+                    Use type=proxy with the upstream pointing at a running
+                    app, or pick an app from the proxy picker below. */}
 
                 {/* Redirect section */}
                 {form.type === 'redirect' && (

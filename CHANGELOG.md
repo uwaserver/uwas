@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-05-16
+
+Architectural split: the Add Domain wizard no longer creates managed app
+processes. Apps and routing are now fully decoupled.
+
+### Why
+
+Every "my port is wrong / my app config got wiped / my domain points
+at the wrong process" bug traced back to the same root cause: Add
+Domain tried to do two completely different jobs at once. It accepted
+a hostname AND a runtime AND a start command AND a port AND env vars,
+then asked the backend to scaffold files, register a managed process,
+assign a port, write that port back to YAML, and route HTTPS traffic
+to it. Every step had its own edge cases, and any merge / persist /
+restart that touched the domain risked corrupting the app side.
+
+v0.5.8 cuts the wire. Add Domain only routes traffic. Apps are
+managed exclusively on the Apps page (deploy → port assigned →
+visible as an upstream option in Domains).
+
+### Changes
+
+- **`type=app` removed from the Add Domain wizard.** The form now
+  offers static / php / proxy / redirect only. The Node.js / Python
+  app templates were replaced with a single "Reverse Proxy to App"
+  template that uses `type=proxy`. Existing YAML domains with
+  `type=app` keep working unchanged — they just don't appear as a
+  choice in the create UI.
+- **App runtime / command / port / env fields removed from the form.**
+  The form state interface no longer contains them at all, so any
+  future accidental "set form.appPort" stops compiling. The submit
+  handler's `type === 'app'` branch is gone with the fields.
+- **Reverse Proxy section gains a "Pick from registered apps"
+  picker.** When the wizard opens, the dashboard fetches
+  `/api/v1/apps` and renders a one-click list with each app's
+  hostname, runtime, and assigned port. Clicking one fills the
+  upstream field with `http://127.0.0.1:<port>`. The manual text
+  input below still works.
+
+### Roadmap (planned for v0.6.0)
+
+- App lifecycle fully owned by the Apps page: deploy from Apps,
+  not from Domain create. App YAML lives in `/etc/uwas/apps.d/<name>.yaml`
+  and the workdir at `/var/lib/uwas/apps/<name>/`, completely independent
+  of any domain.
+- Docker runtime support: image, ports, volumes, env. Same
+  PM2-style supervision wrapped around `docker run` / `docker exec`.
+
+### Verification
+
+- `cd web/dashboard && npx tsc -b` clean.
+- `go test ./internal/admin/... ./internal/appmanager/...` clean.
+- `go build ./...` / `go vet ./...` clean.
+
 ## [0.5.7] - 2026-05-16
 
 Install / upgrade flow hardened: "% 100 servis kayıt + start, ve upgrade'de
