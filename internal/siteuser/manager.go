@@ -1,5 +1,5 @@
 // Package siteuser manages per-domain system users for SFTP access.
-// It creates chroot-jailed SFTP users that can only access their domain's web root.
+// It creates chroot-jailed SFTP users for domain file uploads.
 package siteuser
 
 import (
@@ -69,19 +69,33 @@ func PrepareWebRoot(webRootBase, hostname string) (string, error) {
 // CreateUser creates a system user for SFTP access to a domain.
 // Returns the user info and generated password.
 func CreateUser(webRootBase, hostname string) (*User, string, error) {
+	return CreateUserForWebDir(filepath.Join(webRootBase, hostname, "public_html"), hostname)
+}
+
+// CreateUserForWebDir creates a system SFTP user for an already-resolved
+// writable directory. Static/PHP domains pass their web root; app domains pass
+// the app work_dir.
+func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	if runtimeGOOS == "windows" {
 		return nil, "", fmt.Errorf("user management not supported on Windows")
 	}
 	if err := validateSiteHostname(hostname); err != nil {
 		return nil, "", err
 	}
+	if strings.TrimSpace(webDir) == "" {
+		return nil, "", fmt.Errorf("web directory is required")
+	}
+	webDir, err := filepath.Abs(webDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve web directory: %w", err)
+	}
 
 	username := domainToUsername(hostname)
-	domainDir := filepath.Join(webRootBase, hostname)
-	publicDir := filepath.Join(domainDir, "public_html")
+	domainDir := filepath.Dir(webDir)
+	startDir := "/" + filepath.ToSlash(filepath.Base(webDir))
 
 	// Create domain directory structure
-	if err := osMkdirAllFn(publicDir, 0755); err != nil {
+	if err := osMkdirAllFn(webDir, 0755); err != nil {
 		return nil, "", fmt.Errorf("create directories: %w", err)
 	}
 
@@ -92,7 +106,7 @@ func CreateUser(webRootBase, hostname string) (*User, string, error) {
 	// - home dir = domain dir (for chroot)
 	// - shell = nologin (SFTP only)
 	// - group = www-data
-	err := execCommandFn("useradd",
+	err = execCommandFn("useradd",
 		"-d", domainDir,
 		"-s", "/usr/sbin/nologin",
 		"-g", "www-data",
@@ -118,17 +132,17 @@ func CreateUser(webRootBase, hostname string) (*User, string, error) {
 	// - public_html owned by user:www-data (writable)
 	chown(domainDir, "root", "root")
 	chmodDir(domainDir, "755")
-	chownRecursive(publicDir, username, "www-data")
-	chmodDir(publicDir, "775")
+	chownRecursive(webDir, username, "www-data")
+	chmodDir(webDir, "775")
 
 	// Ensure SFTP chroot config exists in sshd_config
-	ensureSFTPConfig(username, domainDir)
+	ensureSFTPConfig(username, domainDir, startDir)
 
 	return &User{
 		Username: username,
 		Domain:   hostname,
 		HomeDir:  domainDir,
-		WebDir:   publicDir,
+		WebDir:   webDir,
 	}, password, nil
 }
 
@@ -243,12 +257,16 @@ func chmodDir(path, mode string) {
 }
 
 // ensureSFTPConfig ensures sshd is configured for chroot SFTP and adds a Match block.
-func ensureSFTPConfig(username, chrootDir string) {
+func ensureSFTPConfig(username, chrootDir string, startDirs ...string) {
 	data, err := osReadFileFn(sshdConfigPath)
 	if err != nil {
 		return
 	}
 	content := string(data)
+	startDir := ""
+	if len(startDirs) > 0 {
+		startDir = cleanSFTPStartDir(startDirs[0])
+	}
 
 	changed := false
 
@@ -276,17 +294,29 @@ func ensureSFTPConfig(username, chrootDir string) {
 		changed = true
 	}
 
+	block := renderSFTPMatchBlock(username, chrootDir, startDir)
+
+	// Update a UWAS-managed block in-place if the domain root changed.
+	if next, ok := replaceManagedSFTPBlock(content, username, block); ok {
+		if next != content {
+			content = next
+			changed = true
+		}
+		if !changed {
+			return
+		}
+		if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
+			return
+		}
+		if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
+			execCommandFn("systemctl", "reload", "sshd").Run()
+		}
+		return
+	}
+
 	// Add Match User block if not present
 	marker := fmt.Sprintf("Match User %s", username)
 	if !strings.Contains(content, marker) {
-		block := fmt.Sprintf(`
-# UWAS SFTP user: %s
-Match User %s
-    ChrootDirectory %s
-    ForceCommand internal-sftp
-    AllowTcpForwarding no
-    X11Forwarding no
-`, username, username, chrootDir)
 		content += block
 		changed = true
 	}
@@ -303,6 +333,63 @@ Match User %s
 	if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
 		execCommandFn("systemctl", "reload", "sshd").Run()
 	}
+}
+
+func cleanSFTPStartDir(startDir string) string {
+	startDir = strings.TrimSpace(filepath.ToSlash(startDir))
+	if startDir == "" || strings.ContainsAny(startDir, "\r\n\t ") {
+		return ""
+	}
+	if !strings.HasPrefix(startDir, "/") {
+		startDir = "/" + startDir
+	}
+	clean := filepath.ToSlash(filepath.Clean(startDir))
+	if clean == "." || clean == "/" || strings.HasPrefix(clean, "/../") || clean == "/.." {
+		return ""
+	}
+	return clean
+}
+
+func renderSFTPMatchBlock(username, chrootDir, startDir string) string {
+	command := "internal-sftp"
+	if startDir != "" {
+		command += " -d " + startDir
+	}
+	return fmt.Sprintf(`
+# UWAS SFTP user: %s
+Match User %s
+    ChrootDirectory %s
+    ForceCommand %s
+    AllowTcpForwarding no
+    X11Forwarding no
+`, username, username, chrootDir, command)
+}
+
+func replaceManagedSFTPBlock(content, username, block string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	marker := "# UWAS SFTP user: " + username
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != marker {
+			continue
+		}
+		if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) != "Match User "+username {
+			continue
+		}
+		j := i + 2
+		for j < len(lines) {
+			trimmed := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(trimmed, "Match ") || strings.HasPrefix(trimmed, "# UWAS SFTP user: ") {
+				break
+			}
+			j++
+		}
+		replacement := strings.Split(strings.Trim(block, "\n"), "\n")
+		next := append([]string{}, lines[:i]...)
+		next = append(next, replacement...)
+		next = append(next, lines[j:]...)
+		return strings.Join(next, "\n"), true
+	}
+	return content, false
 }
 
 // GetServerIP returns the server's primary non-loopback IP.

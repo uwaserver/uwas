@@ -113,14 +113,17 @@ func (s *Server) handleSSHKeyList(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDomainAccess(w, r, domain, "ssh.keys.list") {
 		return
 	}
-	webRoot := "/var/www"
-	s.configMu.RLock()
-	if s.config.Global.WebRoot != "" {
-		webRoot = s.config.Global.WebRoot
+	root, err := s.siteUserRoot(domain)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	s.configMu.RUnlock()
+	if root == "" {
+		jsonError(w, "domain root not found", http.StatusNotFound)
+		return
+	}
 
-	keys := siteuser.ListSSHKeys(webRoot, domain)
+	keys := siteuser.ListSSHKeysForWebDir(root, domain)
 	if keys == nil {
 		keys = []string{}
 	}
@@ -145,14 +148,17 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webRoot := "/var/www"
-	s.configMu.RLock()
-	if s.config.Global.WebRoot != "" {
-		webRoot = s.config.Global.WebRoot
+	root, err := s.siteUserRoot(domain)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	s.configMu.RUnlock()
+	if root == "" {
+		jsonError(w, "domain root not found", http.StatusNotFound)
+		return
+	}
 
-	if err := siteuser.AddSSHKey(webRoot, domain, req.PublicKey); err != nil {
+	if err := siteuser.AddSSHKeyForWebDir(root, domain, req.PublicKey); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -177,14 +183,17 @@ func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webRoot := "/var/www"
-	s.configMu.RLock()
-	if s.config.Global.WebRoot != "" {
-		webRoot = s.config.Global.WebRoot
+	root, err := s.siteUserRoot(domain)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	s.configMu.RUnlock()
+	if root == "" {
+		jsonError(w, "domain root not found", http.StatusNotFound)
+		return
+	}
 
-	if err := siteuser.RemoveSSHKey(webRoot, domain, req.Fingerprint); err != nil {
+	if err := siteuser.RemoveSSHKeyForWebDir(root, domain, req.Fingerprint); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -61,6 +61,17 @@ func (s *Server) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, do
 	return root, true
 }
 
+func (s *Server) siteUserRoot(domain string) (string, error) {
+	root, err := s.domainRootForFiles(domain)
+	if err != nil {
+		return "", err
+	}
+	if root != "" {
+		return root, nil
+	}
+	return domainroot.Fallback("/var/www", domain), nil
+}
+
 func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
 	root, ok := s.authorizedDomainRoot(w, r, domain, "file.list")

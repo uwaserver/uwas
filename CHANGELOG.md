@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-05-17
+
+### Fixed
+
+- Fixed dashboard-managed OS SFTP user provisioning and SSH key management for
+  app domains. Creating an SFTP user or adding/listing/removing SSH keys now
+  uses the resolved domain file root, so `apps://<name>` domains target the
+  app `work_dir` instead of `/var/www/<domain>/public_html`.
+- Existing UWAS-managed sshd `Match User` blocks are now updated when a
+  domain's SFTP root moves, so previously-created app-domain users can be
+  corrected by re-creating/updating the user from the dashboard.
+
 ## [0.6.6] - 2026-05-17
 
 ### Fixed
