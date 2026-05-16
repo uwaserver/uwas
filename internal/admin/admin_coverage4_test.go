@@ -707,8 +707,10 @@ func TestHandleDockerDBCreate_NoDocker(t *testing.T) {
 	body := strings.NewReader(`{"engine":"mysql","name":"test","port":3306}`)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/docker", body))
-	if rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
-		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
+	// 503 is the canonical "Docker is not installed or not running" response;
+	// 400/500/501/404 cover other no-Docker / no-route environments.
+	if rec.Code != 503 && rec.Code != 501 && rec.Code != 404 && rec.Code != 400 && rec.Code != 500 {
+		t.Errorf("status = %d, want 503, 501, 404, 400, or 500", rec.Code)
 	}
 }
 
