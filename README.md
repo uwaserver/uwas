@@ -24,14 +24,23 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.4.2)
+## Current Snapshot (v0.5.0)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 221 (route registrations under `/api/v1` in `internal/admin/api.go`)
-- **Go packages:** 53 (from `go list ./...`)
+- **Go packages:** 54 (from `go list ./...`)
 - **CLI commands:** 19
 - **Test status:** `go test -p 1 ./...` passing
-- **66 security/stability bugs fixed** (see [CHANGELOG](CHANGELOG.md))
+- **69 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
+
+**v0.5.0 highlights (refactor + perf + observability sweep, 43 commits):**
+- TLS handshake allowlist is now lock-free (atomic pointer instead of mutex + linear scan)
+- IPACL / GeoIP / CORS / WAF middleware run as predicates on the hot path (no per-request wrapper allocation)
+- API-key authentication is O(1) (secondary hash index alongside the username map)
+- Cache LRU promotion debounced; per-host mutex on access-log writes; ACME renewal split from cert-map iteration
+- New `internal/respond` package centralizes JSON responses with operator-visible 5xx logging
+- Per-handler latency histogram (`uwas_handler_duration_seconds{handler,quantile}`)
+- **Behavioural change:** plaintext `api_key` fallback is now opt-in (`global.users.allow_legacy_plaintext_api_key`, default `false`). Operators upgrading from v0.4.x with a plaintext key must set the flag or migrate to hashed credentials.
 
 ## Features
 
@@ -310,6 +319,7 @@ internal/
   notify/                → Webhook, Slack, Telegram, Email (SMTP) channels
   pathsafe/              → Path traversal guard (symlink-resolving containment check)
   phpmanager/            → PHP detect, install, start/stop, per-domain assign
+  respond/               → Centralized JSON response helpers (status + hardening headers + 5xx logging)
   rewrite/               → URL rewrite engine (Apache mod_rewrite compatible)
   rlimit/                → Per-domain resource limits via Linux cgroups v2
   router/                → Virtual host routing, request context
