@@ -82,6 +82,43 @@ func TestRenewCertWithACME(t *testing.T) {
 	}
 }
 
+// TestRenewCertBypassesCache locks in the fix for the "Force Renew button
+// does nothing" bug: previously RenewCert called obtainCert which would
+// short-circuit on a cached cert and return the old one untouched, so the
+// operator clicking "Force Renew" got a 200 OK but no actual new cert.
+// The cache short-circuit must be skipped when force=true so ACME is
+// always invoked.
+func TestRenewCertBypassesCache(t *testing.T) {
+	log := logger.New("error", "text")
+	cfg := config.ACMEConfig{Storage: t.TempDir()}
+	m := NewManager(cfg, nil, log)
+
+	// Seed a "stale" cert into the map so the old behavior would short-circuit.
+	staleCert, _, _ := generateTestCert(t, "renew.example")
+	m.certs.Store("renew.example", staleCert)
+
+	// Stub the ACME func to return a distinguishable "fresh" cert. If
+	// obtainCert short-circuits on the cached cert this stub never runs
+	// and the test catches the regression.
+	freshCert, freshCertPEM, freshKeyPEM := generateTestCert(t, "renew.example")
+	called := false
+	m.acmeObtainFunc = func(ctx context.Context, domains []string) (*tls.Certificate, []byte, []byte, error) {
+		called = true
+		return freshCert, freshCertPEM, freshKeyPEM, nil
+	}
+
+	if err := m.RenewCert(context.Background(), "renew.example"); err != nil {
+		t.Fatalf("RenewCert: %v", err)
+	}
+	if !called {
+		t.Fatal("RenewCert did not invoke ACME — cache short-circuit not bypassed")
+	}
+	got, ok := m.certs.Load("renew.example")
+	if !ok || got.(*tls.Certificate) != freshCert {
+		t.Error("renewed cert not stored in map")
+	}
+}
+
 // --- CertStatus ---
 
 func TestCertStatusFound(t *testing.T) {
@@ -590,7 +627,7 @@ func TestObtainCertSuccessful(t *testing.T) {
 		return testCert, testCertPEM, testKeyPEM, nil
 	}
 
-	got, err := m.obtainCert(context.Background(), "obtain-ok.com")
+	got, err := m.obtainCert(context.Background(), "obtain-ok.com", false)
 	if err != nil {
 		t.Fatalf("obtainCert: %v", err)
 	}
@@ -633,7 +670,7 @@ func TestObtainCertStoragePersistFails(t *testing.T) {
 	}
 
 	// Should succeed (storage error is logged but not returned)
-	got, err := m.obtainCert(context.Background(), "persist-fail.com")
+	got, err := m.obtainCert(context.Background(), "persist-fail.com", false)
 	if err != nil {
 		t.Fatalf("obtainCert: %v", err)
 	}
@@ -649,7 +686,7 @@ func TestObtainCertBothNil(t *testing.T) {
 	cfg := config.ACMEConfig{Storage: t.TempDir()}
 	m := NewManager(cfg, nil, log)
 
-	_, err := m.obtainCert(context.Background(), "test.com")
+	_, err := m.obtainCert(context.Background(), "test.com", false)
 	if err == nil {
 		t.Error("obtainCert should fail with both nil")
 	}

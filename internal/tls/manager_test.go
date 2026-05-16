@@ -1395,7 +1395,7 @@ func TestObtainCertNilACME(t *testing.T) {
 	cfg := config.ACMEConfig{Storage: t.TempDir()}
 	m := NewManager(cfg, nil, log)
 
-	_, err := m.obtainCert(context.Background(), "test.com")
+	_, err := m.obtainCert(context.Background(), "test.com", false)
 	if err == nil {
 		t.Error("obtainCert should fail when ACME client is nil")
 	}

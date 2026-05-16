@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -64,11 +65,20 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       90 * time.Second,
 		ExpectContinueTimeout: writeTimeout,
+		// Go disables HTTP/2 when a custom DialContext is set; opt back in
+		// explicitly so modern HTTPS origins (Cloudflare, h2-preferred CDNs)
+		// negotiate h2 via ALPN. Falls back to HTTP/1.1 transparently when
+		// the upstream doesn't advertise h2 — safe to leave on for every
+		// HTTPS upstream. gRPC/h2c still relies on the same flag.
+		ForceAttemptHTTP2: true,
 	}
 
-	// gRPC/h2c: allow HTTP/2 cleartext to upstream
-	if domain.Proxy.GRPC {
-		t.ForceAttemptHTTP2 = true
+	// TLS config — only override the default when the operator opts into
+	// skipping cert verification (self-signed origin, private CA, hostname
+	// mismatch). Leaving TLSClientConfig nil otherwise keeps Go's secure
+	// defaults (system roots, verify peer, SNI from URL.Host).
+	if domain.Proxy.InsecureSkipVerify {
+		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — opt-in via per-domain config
 	}
 
 	actual, _ := h.transports.LoadOrStore(domain.Host, t)
@@ -242,6 +252,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				"backend", backend.URL.String(),
 				"request_id", ctx.Request.Header.Get("X-Request-ID"),
 				"error", err,
+				"error_class", classifyUpstreamErr(err),
 			)
 
 			// Don't retry if the original client request context is done
@@ -250,7 +261,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				return
 			}
 			if ctx.Request.Context().Err() != nil {
-				ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+				ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — "+classifyUpstreamErr(err))
 				return
 			}
 
@@ -260,7 +271,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				continue
 			}
 
-			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
+			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — "+classifyUpstreamErr(err))
 			return
 		}
 
@@ -345,6 +356,42 @@ func removeHopByHop(h http.Header) {
 	for _, key := range hopByHopHeaders {
 		h.Del(key)
 	}
+}
+
+// classifyUpstreamErr maps a transport-layer error to a short, stable label
+// suitable for the 502 response body. The goal is to give an operator
+// reading `curl -v` enough hint to know whether to look at DNS, TLS,
+// timeouts, or the origin itself — without leaking the full Go error
+// string (which can include internal addresses or stack-ish noise).
+// The matching is intentionally pattern-based: Go's net/http does not
+// expose typed errors for most transport failures, so we sniff the
+// canonical error substrings.
+func classifyUpstreamErr(err error) string {
+	if err == nil {
+		return "no upstream error"
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "x509:") || strings.Contains(s, "certificate"):
+		return "TLS certificate verification failed (consider proxy.insecure_skip_verify)"
+	case strings.Contains(s, "tls:"):
+		return "TLS handshake failed"
+	case strings.Contains(s, "no such host"):
+		return "DNS lookup failed for upstream"
+	case strings.Contains(s, "connection refused"):
+		return "upstream refused connection"
+	case strings.Contains(s, "connection reset"):
+		return "upstream reset the connection"
+	case strings.Contains(s, "i/o timeout") || strings.Contains(s, "deadline exceeded"):
+		return "upstream timed out"
+	case strings.Contains(s, "network is unreachable") || strings.Contains(s, "no route to host"):
+		return "upstream unreachable from this network"
+	case strings.Contains(s, "http2:"):
+		return "HTTP/2 protocol error from upstream"
+	case strings.Contains(s, "EOF"):
+		return "upstream closed the connection prematurely"
+	}
+	return "upstream connection failed"
 }
 
 func clientIP(r *http.Request) string {
