@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-05-16
+
+The "why are my domain configs disappearing?!" release.
+
+### Bug fix
+
+- **`persistConfig` no longer destroys files in `domains.d/`.** The
+  function had a step 3 called "orphan cleanup" that scanned
+  `/etc/uwas/domains.d/` and `rm -f`'d every `.yaml` file not present
+  in `s.config.Domains`. The intent was to clean up after domain
+  deletions — but it ran on EVERY persist call (settings update, PHP
+  auto-assign, any in-memory mutation), and any time the in-memory
+  state was incomplete for any reason (transient load failure, fresh
+  install seeded `uwas.yaml` before old files migrated, validation
+  skipped a file), the very next persist call silently wiped every
+  domain config off disk.
+
+  persistConfig is now write-only: it serializes what's in memory but
+  never removes anything. Domain deletion now happens via an explicit
+  `removeDomainFile(host)` call from `handleDeleteDomain`, which knows
+  exactly which host to remove.
+
+  Regression locked by `TestPersistConfigPreservesUnknownDomainFiles`:
+  drop a YAML in `domains.d/` that uwas doesn't know about, call
+  persistConfig, the file must still exist afterwards.
+
+### Verification
+
+- `go test ./internal/admin/... ./internal/config/...` clean.
+- `go build ./...` / `go vet ./...` clean.
+
 ## [0.5.5] - 2026-05-16
 
 ### Bug fixes

@@ -2083,16 +2083,39 @@ func (s *Server) persistConfig() {
 		}
 	}
 
-	// 3. Remove orphan domain files (deleted domains)
-	entries, err := os.ReadDir(domainsDir)
-	if err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && (strings.HasSuffix(e.Name(), ".yaml") || strings.HasSuffix(e.Name(), ".yml")) {
-				if !activeFiles[e.Name()] {
-					os.Remove(filepath.Join(domainsDir, e.Name()))
-					s.logger.Debug("removed orphan domain file", "file", e.Name())
-				}
-			}
+	// 3. Orphan cleanup REMOVED in v0.5.6. Previously this step deleted any
+	// .yaml file in domains.d/ that didn't match a domain currently in memory.
+	// That was catastrophic when the in-memory state was incomplete for any
+	// reason — load validation skipped a file, fresh install seeded an empty
+	// uwas.yaml before old domain files migrated, a transient bug zeroed
+	// s.config.Domains — and the very next persistConfig call (which fires
+	// on settings changes, PHP auto-assign, anything) would silently wipe
+	// every domain file on disk. Domain files now only get removed by the
+	// explicit delete handler via removeDomainFile(); persistConfig only
+	// WRITES, never destroys.
+	_ = activeFiles // kept above so future "soft cleanup" features can use it
+}
+
+// removeDomainFile deletes the YAML file for a host from domains.d/. Called by
+// handleDeleteDomain after the in-memory state has been updated; safe because
+// the caller has explicitly identified the host to remove.
+func (s *Server) removeDomainFile(host string) {
+	if s.configPath == "" {
+		return
+	}
+	domainsDir := s.config.DomainsDir
+	if domainsDir == "" {
+		domainsDir = "domains.d"
+	}
+	if !filepath.IsAbs(domainsDir) {
+		domainsDir = filepath.Join(filepath.Dir(s.configPath), domainsDir)
+	}
+	clean := strings.ReplaceAll(host, ":", "_")
+	clean = filepath.Base(clean)
+	for _, ext := range []string{".yaml", ".yml"} {
+		path := filepath.Join(domainsDir, clean+ext)
+		if err := os.Remove(path); err == nil {
+			s.logger.Info("removed domain file", "path", path)
 		}
 	}
 }
@@ -2417,6 +2440,13 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return
 	}
+
+	// Explicit YAML file deletion. Previously persistConfig's orphan cleanup
+	// did this implicitly, but that scan deleted *any* domains.d/ file not in
+	// memory — including ones we hadn't loaded due to a transient failure. We
+	// now know exactly which host the operator asked to delete, so remove
+	// only that file.
+	s.removeDomainFile(host)
 
 	// Cleanup: stop PHP, stop app, remove cron jobs, purge cache, remove SFTP user, delete files
 	if cleanup {
