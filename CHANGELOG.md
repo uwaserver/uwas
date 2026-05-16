@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-16
+
+Install-flow fix: upgrading to v0.5.3 via `install.sh | sh` left the
+service in an inactive state because the old uwas was still running
+when systemd tried to start the new binary.
+
+### Bug fixes
+
+- **`uwas serve` now exits non-zero when another instance is running.**
+  Previously the "UWAS is already running" branch printed a friendly
+  message to stdout and returned `nil` — fine for an interactive shell,
+  but disastrous under systemd: `Type=simple` saw a clean exit, marked
+  the unit "deactivated successfully", and then `ExecStop=uwas stop`
+  ran and killed the legitimate running instance. Net result: every
+  upgrade left the service down. The message now goes to stderr and
+  the command returns an error, so systemd marks the unit failed and
+  doesn't touch the running process.
+- **`uwas install` stops the existing service before starting it.**
+  Before writing the new systemd unit and starting, install.go now
+  runs `systemctl stop uwas` (best-effort, ignored if not running) so
+  the upgrade hands cleanly from old binary to new binary instead of
+  racing against the already-installed older process. The install
+  flow becomes: write unit → daemon-reload → enable → stop → start.
+
+### Upgrade workaround
+
+If you're already stuck because v0.5.3 install left the service down,
+just `sudo systemctl start uwas` once — the old process is gone and
+the new binary will start cleanly. v0.5.4+ does this for you.
+
+### Verification
+
+- `go build ./...` clean.
+- `go vet ./...` clean.
+- `go test ./...` — all 30+ packages pass; CLI test suite updated to
+  assert the new non-nil-error contract on the already-running branch.
+
 ## [0.5.3] - 2026-05-16
 
 The "why does my app keep ending up on port 3000?!" release. Four

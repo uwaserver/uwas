@@ -142,24 +142,28 @@ func (s *ServeCommand) Run(args []string) error {
 
 	// Check if another instance is already running.
 	if pid, ok := readAlivePID(cfg.Global.PIDFile); ok {
-		fmt.Println()
-		fmt.Println("  \033[33mUWAS is already running\033[0m")
-		fmt.Println()
-		fmt.Printf("    PID:       %d\n", pid)
-		fmt.Printf("    Config:    %s\n", cfgFile)
-		fmt.Printf("    HTTP:      %s\n", cfg.Global.HTTPListen)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  \033[33mUWAS is already running\033[0m")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "    PID:       %d\n", pid)
+		fmt.Fprintf(os.Stderr, "    Config:    %s\n", cfgFile)
+		fmt.Fprintf(os.Stderr, "    HTTP:      %s\n", cfg.Global.HTTPListen)
 		if cfg.Global.HTTPSListen != "" {
-			fmt.Printf("    HTTPS:     %s\n", cfg.Global.HTTPSListen)
+			fmt.Fprintf(os.Stderr, "    HTTPS:     %s\n", cfg.Global.HTTPSListen)
 		}
 		if cfg.Global.Admin.Enabled {
-			fmt.Printf("    Dashboard: http://%s/_uwas/dashboard/\n", cfg.Global.Admin.Listen)
+			fmt.Fprintf(os.Stderr, "    Dashboard: http://%s/_uwas/dashboard/\n", cfg.Global.Admin.Listen)
 		}
-		fmt.Printf("    Domains:   %d configured\n", len(cfg.Domains))
-		fmt.Println()
-		fmt.Println("  Use \033[1muwas stop\033[0m to stop the running instance, or")
-		fmt.Println("  \033[1muwas serve -c other.yaml\033[0m to run with a different config.")
-		fmt.Println()
-		return nil
+		fmt.Fprintf(os.Stderr, "    Domains:   %d configured\n", len(cfg.Domains))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  Use \033[1muwas stop\033[0m to stop the running instance, or")
+		fmt.Fprintln(os.Stderr, "  \033[1muwas serve -c other.yaml\033[0m to run with a different config.")
+		fmt.Fprintln(os.Stderr)
+		// Return a non-nil error so systemd's ExecStart sees a non-zero exit
+		// and marks the unit as "failed" rather than as "deactivated
+		// successfully" — otherwise ExecStop runs and kills the running
+		// instance we just detected.
+		return fmt.Errorf("uwas already running (pid %d)", pid)
 	}
 
 	// CLI flag overrides

@@ -3639,21 +3639,33 @@ domains:
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
+	errStderrOld := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+
 	err := cmd.Run([]string{"-c", cfgFile, "--no-banner"})
 
 	w.Close()
 	os.Stdout = old
+	wErr.Close()
+	os.Stderr = errStderrOld
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
+	var errBuf bytes.Buffer
+	errBuf.ReadFrom(rErr)
 
-	if err != nil {
-		t.Fatalf("serve error: %v", err)
+	// Non-nil error contract: systemd's ExecStart must exit non-zero so the
+	// unit is marked failed, not "deactivated", or ExecStop kills the
+	// already-running legitimate instance.
+	if err == nil {
+		t.Fatalf("expected error when another instance is running, got nil")
 	}
-	// Should detect already running and print info.
-	output := buf.String()
-	if !strings.Contains(output, "already running") {
-		t.Errorf("should detect already running, got:\n%s", output)
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("error should mention already running, got: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "already running") {
+		t.Errorf("stderr should show already running, got:\n%s", errBuf.String())
 	}
 }
 
@@ -3686,21 +3698,27 @@ domains:
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
+	errStderrOld := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+
 	err := cmd.Run([]string{"-c", cfgFile, "--no-banner"})
 
 	w.Close()
 	os.Stdout = old
+	wErr.Close()
+	os.Stderr = errStderrOld
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
+	var errBuf bytes.Buffer
+	errBuf.ReadFrom(rErr)
 
-	if err != nil {
-		t.Fatalf("serve error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error when another instance is running, got nil")
 	}
-	// Since PID is alive, it should report "already running".
-	output := buf.String()
-	if !strings.Contains(output, "already running") {
-		t.Errorf("should detect already running, got:\n%s", output)
+	if !strings.Contains(errBuf.String(), "already running") {
+		t.Errorf("stderr should show already running, got:\n%s", errBuf.String())
 	}
 }
 
@@ -3732,23 +3750,30 @@ domains:
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
+	errStderrOld := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
+
 	err := cmd.Run([]string{"-c", cfgFile})
 
 	w.Close()
 	os.Stdout = old
+	wErr.Close()
+	os.Stderr = errStderrOld
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
+	var errBuf bytes.Buffer
+	errBuf.ReadFrom(rErr)
 
-	if err != nil {
-		t.Fatalf("serve error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error when another instance is running, got nil")
 	}
-	output := buf.String()
-	if !strings.Contains(output, "already running") {
-		t.Errorf("should detect already running, got:\n%s", output)
+	if !strings.Contains(errBuf.String(), "already running") {
+		t.Errorf("stderr should show already running, got:\n%s", errBuf.String())
 	}
-	if !strings.Contains(output, "HTTPS") {
-		t.Errorf("should show HTTPS info, got:\n%s", output)
+	if !strings.Contains(errBuf.String(), "HTTPS") {
+		t.Errorf("stderr should show HTTPS info, got:\n%s", errBuf.String())
 	}
 }
 
