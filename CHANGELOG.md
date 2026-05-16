@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-16
+
+PM2-style supervision fixes — surfaced by a production deploy where a
+`type=app` Node.js domain looked registered but the proxy returned 502
+because the appmanager's expected port and node's actual bound port
+disagreed.
+
+### Bug fixes
+
+- **`detectCommand` now prefers `node <entry.js>` over `npm start`.**
+  When a node-runtime domain has both `package.json` and an entry-point
+  file (`server.js`/`index.js`/`app.js`), the appmanager used to pick
+  `npm start`. That had two problems: (a) it required npm to be
+  installed, and (b) some npm versions mangled the `PORT` env var on
+  the way to the child process, so node bound to the wrong port and the
+  proxy couldn't reach it. Direct exec sidesteps both. `npm start` is
+  still used as a fallback when no entry-point file exists.
+- **`autoRestart` now defaults to true.** The `AppConfig.AutoRestart`
+  field's "default true" comment was aspirational — Go's zero value
+  is false, so a crashed app stayed dead until the operator opened the
+  Apps page. Register now treats AutoRestart as true unless the
+  operator has explicitly stopped the app via the Disabled flag,
+  matching PM2's default supervision behaviour.
+- **Node demo scaffold no longer falls back to port 3000 silently.**
+  The v0.5.1 demo used `parseInt(process.env.PORT || '0') || 3000`,
+  which masked a missing PORT env by quietly binding to 3000 — so if
+  PORT didn't reach the child (the `npm start` case above), node bound
+  to 3000 while the proxy talked to whatever appmanager assigned. The
+  new demo refuses to start and logs the visible env keys when PORT is
+  missing, surfacing the real cause instead of the symptom.
+
+### Verification
+
+- `go build ./...` clean.
+- `go vet ./...` clean.
+- `go test ./internal/appmanager/...` — `TestDetectCommandPriority` now
+  asserts the new priority (`node server.js` over `npm start`); the
+  `npm start` fallback path is covered by the new
+  `TestDetectCommandPackageJSONFallback`.
+
 ## [0.5.1] - 2026-05-16
 
 Three production-affecting silent-failure bugs fixed, plus installable

@@ -52,14 +52,21 @@ func scaffoldNodeDemo(root, host string, app *config.AppConfig, log *logger.Logg
 	}
 
 	// index.js — stdlib-only HTTP server. PORT env var is injected by appmanager.
+	// We deliberately do NOT fall back to a hard-coded port: if PORT isn't set,
+	// the proxy will be expecting one port while node binds another, and you
+	// get a silent 502. Fail loud instead so the log shows the real cause.
 	indexJS := fmt.Sprintf(`// UWAS demo Node.js app for %s.
 // Replace this with your real app. To use Express, Fastify, etc.:
-//   1. Edit package.json dependencies
-//   2. Run: npm install
-//   3. Update the "start" script and the App command in the dashboard.
+//   1. Edit package.json dependencies and run: npm install
+//   2. Update the start command on the Apps page.
 const http = require('node:http');
 
-const port = parseInt(process.env.PORT || '%d', 10) || 3000;
+const port = parseInt(process.env.PORT || '', 10);
+if (!port) {
+  console.error('FATAL: PORT env var is not set. UWAS appmanager must supply it.');
+  console.error('Visible env keys: ' + Object.keys(process.env).filter(k => !k.startsWith('npm_')).join(', '));
+  process.exit(1);
+}
 const host = '127.0.0.1';
 
 const server = http.createServer((req, res) => {
@@ -78,7 +85,7 @@ const server = http.createServer((req, res) => {
 server.listen(port, host, () => {
   console.log('listening on http://' + host + ':' + port);
 });
-`, host, app.Port, host, host)
+`, host, host, host)
 	writeIfMissing(filepath.Join(root, "index.js"), []byte(indexJS), log)
 
 	// package.json — no deps so `npm install` is instant (or unnecessary).

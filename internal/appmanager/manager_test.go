@@ -606,14 +606,28 @@ func TestStartAlreadyRunning(t *testing.T) {
 }
 
 func TestDetectCommandPriority(t *testing.T) {
-	// Test that package.json takes priority over server.js for node
+	// Prefer `node server.js` over `npm start` even when package.json exists.
+	// Reason: npm's run-script wrapper has historically mangled PORT env on
+	// some versions, and npm may not even be installed. Direct exec is more
+	// reliable and the appmanager-assigned port reaches the app cleanly.
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0644)
 	os.WriteFile(filepath.Join(dir, "server.js"), []byte(""), 0644)
 
 	cmd := detectCommand("node", dir)
+	if cmd != "node server.js" {
+		t.Errorf("entry-point file should beat npm start, got %q", cmd)
+	}
+}
+
+func TestDetectCommandPackageJSONFallback(t *testing.T) {
+	// When no entry-point file exists, fall back to npm start as a last resort.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0644)
+
+	cmd := detectCommand("node", dir)
 	if cmd != "npm start" {
-		t.Errorf("package.json should take priority, got %q", cmd)
+		t.Errorf("package.json alone should yield npm start, got %q", cmd)
 	}
 }
 
