@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-16
+
+### Documentation
+
+- Updated README and architecture docs for the v0.6 standalone
+  Applications model: apps live under `/etc/uwas/apps.d/`, domains route
+  with `apps://<name>`, and empty native app workdirs get a small demo
+  scaffold on create.
+- Replaced stale `internal/appmanager` documentation with
+  `internal/apps` package references.
+
 ## [0.6.0] - 2026-05-16
 
 ### BREAKING — legacy app system removed

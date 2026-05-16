@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.5.0)
+## Current Snapshot (v0.6.0)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 221 (route registrations under `/api/v1` in `internal/admin/api.go`)
@@ -32,6 +32,13 @@ One binary. Zero hassle.
 - **CLI commands:** 19
 - **Test status:** `go test -p 1 ./...` passing
 - **69 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
+
+**v0.6.0 highlights (standalone apps + hard legacy cutover):**
+- Apps are first-class objects under `/etc/uwas/apps.d/<name>.yaml`
+- Domains expose apps with reverse proxy upstreams such as `apps://my-api`
+- Creating an empty Node.js, Python, Ruby, or Go app seeds a tiny runnable demo
+- Legacy domain-keyed `type=app` config and migration endpoints are removed
+- Docker apps support image or BuildKit build context workflows
 
 **v0.5.0 highlights (refactor + perf + observability sweep, 43 commits):**
 - TLS handshake allowlist is now lock-free (atomic pointer instead of mutex + linear scan)
@@ -58,7 +65,7 @@ One binary. Zero hassle.
 
 ### Hosting Control Panel
 - **40-page Dashboard** — React 19 admin panel with dark/light theme
-- **App Manager** — Deploy and manage Node.js, Python, Ruby, Go applications
+- **Applications** — Deploy and supervise Node.js, Python, Ruby, Go, custom, and Docker apps
 - **Web Terminal** — Browser-based shell via WebSocket-to-PTY bridge
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
 - **WordPress Management** — One-click install, plugin updates, debug mode, error log viewer
@@ -178,6 +185,36 @@ domains:
       ttl: 1800
 ```
 
+### Standalone App + Domain Route
+
+Apps live outside the main domain YAML. Create them from the dashboard
+Applications page or as files under `/etc/uwas/apps.d/`; then route a
+domain to the app by using `apps://<name>` as a proxy upstream.
+
+```yaml
+# /etc/uwas/apps.d/my-api.yaml
+name: my-api
+runtime: node
+work_dir: /var/lib/uwas/apps/my-api
+port: 0
+env:
+  NODE_ENV: production
+
+# uwas.yaml or domains.d/api.example.com.yaml
+domains:
+  - host: api.example.com
+    type: proxy
+    ssl:
+      mode: auto
+    proxy:
+      upstreams:
+        - address: "apps://my-api"
+```
+
+Native runtimes with an empty workdir get a small demo file on create
+(`index.js`, `app.py`, `app.rb`, or `main.go`) so the app has something
+runnable immediately. Existing files are never overwritten.
+
 ### Reverse Proxy with WebSocket
 
 ```yaml
@@ -223,7 +260,7 @@ domains:
 |-----------|---------|-------------|-------|
 | Go | 1.26+ | 1.26+ | For building from source |
 | PHP | 7.4+ | 8.3+ / 8.4+ | Only needed for PHP sites |
-| Docker | 20.10+ | 24+ | Only for Docker database containers |
+| Docker | 20.10+ | 24+ | Only for Docker apps and database containers |
 
 **No PHP needed** for static sites, reverse proxy, or redirect domains.
 
@@ -289,7 +326,7 @@ internal/
   admin/                 → REST API (205+ routes) + dashboard embed + TOTP auth
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
-  appmanager/            → Node.js/Python/Ruby/Go process management
+  apps/                  → Standalone Node/Python/Ruby/Go/custom/Docker app supervision
   auth/                  → Multi-user RBAC (admin/reseller/user) + session + TOTP 2FA
   backup/                → Local/S3/SFTP backup + restore + scheduling
   bandwidth/             → Per-domain bandwidth limits (throttle/block)
