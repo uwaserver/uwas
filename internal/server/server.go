@@ -1424,7 +1424,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain header transforms
 	if h := domain.Headers; len(h.RequestAdd) > 0 || len(h.RequestRemove) > 0 {
 		for k, v := range h.RequestAdd {
-			r.Header.Set(k, v)
+			r.Header.Set(k, substituteHeaderVars(v, r))
 		}
 		for _, k := range h.RequestRemove {
 			r.Header.Del(k)
@@ -1434,10 +1434,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		len(h.ResponseAdd) > 0 || len(h.ResponseRemove) > 0 {
 		w := ctx.Response.Header()
 		for k, v := range h.Add {
-			w.Set(k, v)
+			w.Set(k, substituteHeaderVars(v, r))
 		}
 		for k, v := range h.ResponseAdd {
-			w.Set(k, v)
+			w.Set(k, substituteHeaderVars(v, r))
 		}
 		for _, k := range h.Remove {
 			w.Del(k)
