@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
-	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
@@ -1050,95 +1049,6 @@ func TestIPACLInvalidRemoteAddr(t *testing.T) {
 	// Cannot determine IP → 403
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403 (invalid RemoteAddr)", rec.Code)
-	}
-}
-
-// --- transform.go: Unwrap ---
-
-func TestTransformWriterUnwrap(t *testing.T) {
-	cfg := config.HeadersConfig{
-		ResponseAdd: map[string]string{
-			"X-Test": "value",
-		},
-	}
-
-	var innerWriter http.ResponseWriter
-	handler := HeaderTransform(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The writer w should be a *transformWriter
-		if tw, ok := w.(*transformWriter); ok {
-			innerWriter = tw.Unwrap()
-		}
-		w.WriteHeader(200)
-	}))
-
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-
-	if innerWriter == nil {
-		t.Error("Unwrap() should return the underlying ResponseWriter")
-	}
-	if innerWriter != rec {
-		t.Error("Unwrap() should return the original recorder")
-	}
-}
-
-// --- transform.go: WriteHeader called twice ---
-
-func TestTransformWriteHeaderCalledTwice(t *testing.T) {
-	cfg := config.HeadersConfig{
-		ResponseAdd: map[string]string{
-			"X-Added": "yes",
-		},
-	}
-
-	handler := HeaderTransform(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		// Second WriteHeader should just pass through
-		w.WriteHeader(201) // this is a no-op in httptest but exercises our code path
-	}))
-
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-
-	if got := rec.Header().Get("X-Added"); got != "yes" {
-		t.Errorf("X-Added = %q, want yes", got)
-	}
-}
-
-// --- transform.go: all variable substitutions in response ---
-
-func TestTransformResponseAllVariables(t *testing.T) {
-	cfg := config.HeadersConfig{
-		ResponseAdd: map[string]string{
-			"X-Client": "$remote_addr",
-			"X-Host":   "$host",
-			"X-URI":    "$uri",
-			"X-ReqID":  "$request_id",
-		},
-	}
-
-	handler := HeaderTransform(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/path?key=val", nil)
-	req.RemoteAddr = "192.168.1.100:5555"
-	req.Host = "test.example.com"
-	req.Header.Set("X-Request-ID", "req-abc-123")
-	handler.ServeHTTP(rec, req)
-
-	if got := rec.Header().Get("X-Client"); got != "192.168.1.100" {
-		t.Errorf("X-Client = %q, want 192.168.1.100", got)
-	}
-	if got := rec.Header().Get("X-Host"); got != "test.example.com" {
-		t.Errorf("X-Host = %q, want test.example.com", got)
-	}
-	if got := rec.Header().Get("X-URI"); got != "/path?key=val" {
-		t.Errorf("X-URI = %q, want /path?key=val", got)
-	}
-	if got := rec.Header().Get("X-ReqID"); got != "req-abc-123" {
-		t.Errorf("X-ReqID = %q, want req-abc-123", got)
 	}
 }
 

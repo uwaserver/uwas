@@ -1414,6 +1414,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if hp := domain.Security.HotlinkProtection; hp.Enabled {
+		guard := middleware.HotlinkGuard(s.logger, hp.AllowedReferers, hp.Extensions)
+		if !guard(ctx.Response, r) {
+			return
+		}
+	}
+
 	// Per-domain header transforms
 	if h := domain.Headers; len(h.RequestAdd) > 0 || len(h.RequestRemove) > 0 {
 		for k, v := range h.RequestAdd {

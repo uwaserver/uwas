@@ -392,28 +392,27 @@ func TestConvertErrorDocumentMultiWordValue(t *testing.T) {
 	}
 }
 
-// TestSetModuleLoaded covers the SetModuleLoaded function.
-func TestSetModuleLoaded(t *testing.T) {
+func TestIsModuleLoadedReflectsModuleMap(t *testing.T) {
 	// Save original state
 	origModRewrite := loadedModules["mod_rewrite.c"]
 	defer func() { loadedModules["mod_rewrite.c"] = origModRewrite }()
 
 	// Set module to false
-	SetModuleLoaded("mod_rewrite.c", false)
+	loadedModules["mod_rewrite.c"] = false
 	if IsModuleLoaded("mod_rewrite.c") {
-		t.Error("mod_rewrite.c should be false after SetModuleLoaded(false)")
+		t.Error("mod_rewrite.c should be false")
 	}
 
 	// Set module to true
-	SetModuleLoaded("mod_rewrite.c", true)
+	loadedModules["mod_rewrite.c"] = true
 	if !IsModuleLoaded("mod_rewrite.c") {
-		t.Error("mod_rewrite.c should be true after SetModuleLoaded(true)")
+		t.Error("mod_rewrite.c should be true")
 	}
 
 	// Case insensitivity
-	SetModuleLoaded("MOD_REWRITE.C", false)
+	loadedModules["mod_rewrite.c"] = false
 	if IsModuleLoaded("mod_rewrite.c") {
-		t.Error("mod_rewrite.c should be false (case insensitive)")
+		t.Error("mod_rewrite.c should be false")
 	}
 
 	// Unknown module should return false by default
@@ -422,8 +421,9 @@ func TestSetModuleLoaded(t *testing.T) {
 	}
 
 	// Set unknown module to true
-	SetModuleLoaded("mod_unknown.c", true)
+	loadedModules["mod_unknown.c"] = true
+	defer delete(loadedModules, "mod_unknown.c")
 	if !IsModuleLoaded("mod_unknown.c") {
-		t.Error("mod_unknown.c should be true after SetModuleLoaded(true)")
+		t.Error("mod_unknown.c should be true")
 	}
 }

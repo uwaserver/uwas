@@ -12,7 +12,7 @@ import (
 
 const cgroupBase = "/sys/fs/cgroup/uwas"
 
-// Testable hooks — can be overridden in tests.
+// Testable hooks can be overridden in tests.
 var (
 	osMkdirAllFn  = os.MkdirAll
 	osWriteFileFn = os.WriteFile
@@ -32,14 +32,13 @@ type Limits struct {
 }
 
 // Apply creates/updates a cgroup for the given domain with the specified limits.
-// Returns the cgroup path so a process can be assigned to it.
-// No-op on non-Linux.
+// Returns the cgroup path so a process can be assigned to it. No-op on non-Linux.
 func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	if runtimeGOOS() != "linux" {
 		return "", nil
 	}
 	if limits.CPUPercent == 0 && limits.MemoryMB == 0 && limits.PIDMax == 0 {
-		return "", nil // no limits configured
+		return "", nil
 	}
 
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
@@ -47,17 +46,14 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		return "", fmt.Errorf("create cgroup %s: %w", path, err)
 	}
 
-	// CPU limit: cpu.max = "$QUOTA 100000"
-	// CPUPercent 50 means 50000 out of 100000 period
 	if limits.CPUPercent > 0 {
-		quota := limits.CPUPercent * 1000 // percent → microseconds per 100ms period
+		quota := limits.CPUPercent * 1000
 		val := fmt.Sprintf("%d 100000", quota)
 		if err := osWriteFileFn(filepath.Join(path, "cpu.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set cpu.max: %w", err)
 		}
 	}
 
-	// Memory limit: memory.max in bytes
 	if limits.MemoryMB > 0 {
 		val := strconv.FormatInt(int64(limits.MemoryMB)*1024*1024, 10)
 		if err := osWriteFileFn(filepath.Join(path, "memory.max"), []byte(val), 0644); err != nil {
@@ -65,7 +61,6 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		}
 	}
 
-	// PID limit: pids.max
 	if limits.PIDMax > 0 {
 		val := strconv.Itoa(limits.PIDMax)
 		if err := osWriteFileFn(filepath.Join(path, "pids.max"), []byte(val), 0644); err != nil {
@@ -91,7 +86,7 @@ func Remove(domain string) error {
 		return nil
 	}
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
-	return osRemoveFn(path) // rmdir — only works if empty (no processes)
+	return osRemoveFn(path)
 }
 
 // sanitizeDomain converts a domain name to a safe cgroup directory name.
@@ -101,7 +96,7 @@ func sanitizeDomain(domain string) string {
 		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' {
 			safe = append(safe, c)
 		} else if c >= 'A' && c <= 'Z' {
-			safe = append(safe, c+32) // lowercase
+			safe = append(safe, c+32)
 		} else {
 			safe = append(safe, '_')
 		}
