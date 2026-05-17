@@ -37,10 +37,12 @@ func (s *Server) domainRootForFiles(domain string) (string, error) {
 
 	if found != nil {
 		var store = (*apps.Store)(nil)
+		var instances []apps.Instance
 		if s.appsMgr != nil {
 			store = s.appsMgr.Store()
+			instances = s.appsMgr.Instances()
 		}
-		return domainroot.ForDomain(*found, store)
+		return domainroot.ForDomainWithApps(*found, store, instances)
 	}
 	return domainroot.Fallback(webRoot, domain), nil
 }

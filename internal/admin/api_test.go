@@ -583,6 +583,53 @@ func TestFileManagerAppProxyDomainUsesAppWorkDir(t *testing.T) {
 	}
 }
 
+func TestFileManagerLegacyPortAppProxyDomainUsesAppWorkDir(t *testing.T) {
+	s := testServer()
+	webRoot := t.TempDir()
+	appRoot := t.TempDir()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	if err := mgr.Register(&apps.App{
+		Name:    "test-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: appRoot,
+		Port:    3123,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inst := mgr.Get("test-app")
+	if inst == nil {
+		t.Fatal("registered app instance not found")
+	}
+	s.SetAppsManager(mgr)
+	s.config.Global.WebRoot = webRoot
+	s.config.Domains = []config.Domain{
+		{
+			Host: "app.example.com",
+			Type: "proxy",
+			Root: filepath.Join(webRoot, "app.example.com", "public_html"),
+			Proxy: config.ProxyConfig{Upstreams: []config.Upstream{
+				{Address: fmt.Sprintf("http://127.0.0.1:%d", inst.Port)},
+			}},
+			SSL: config.SSLConfig{Mode: "auto"},
+		},
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "server.js"), []byte("console.log('legacy')"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/files/app.example.com/read?path=server.js", nil)
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "console.log('legacy')") {
+		t.Fatalf("response did not read app work_dir file: %s", rec.Body.String())
+	}
+}
+
 func TestAddDomainDuplicate(t *testing.T) {
 	s := testServer()
 	body := strings.NewReader(`{"host":"example.com","type":"static"}`)
