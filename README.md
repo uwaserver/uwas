@@ -24,14 +24,14 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.7)
+## Current Snapshot (v0.6.8)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
-- **Admin API routes:** 221 (route registrations under `/api/v1` in `internal/admin/api.go`)
-- **Go packages:** 54 (from `go list ./...`)
+- **Admin API routes:** 220 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
+- **Go packages:** 55 (from `go list ./...`)
 - **CLI commands:** 19
 - **Test status:** `go test -p 1 ./...` passing
-- **69 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
+- **70 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
 
 **v0.6.x highlights (standalone apps + hard legacy cutover):**
 - Apps are first-class objects under `/etc/uwas/apps.d/<name>.yaml`

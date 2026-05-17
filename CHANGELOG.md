@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-05-17
+
+### Fixed
+
+- Fixed per-domain header transforms so `$remote_addr`, `$host`, `$uri`, and
+  `$request_id` variables are substituted before request/response headers are
+  applied. Header values are sanitized to strip CR/LF characters before they
+  reach the response writer.
+
+### Changed
+
+- Converted hot-path CORS and hotlink handling to guard predicates and removed
+  unused middleware wrappers, keeping behavior covered by focused server and
+  middleware tests.
+- Pruned unused exports and dead code across admin, config, DNS, file manager,
+  middleware, notification, PHP, resource-limit, site-user, TLS, WordPress, and
+  dashboard client code.
+
 ## [0.6.7] - 2026-05-17
 
 ### Fixed
