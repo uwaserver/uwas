@@ -476,58 +476,6 @@ func TestRestartService_UnknownService(t *testing.T) {
 
 // ── EnableService ────────────────────────────────────────────────────────
 
-func TestEnableService(t *testing.T) {
-	withMock(t, fakeExecCommand)
-
-	err := EnableService("mariadb")
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-}
-
-func TestEnableService_Failure(t *testing.T) {
-	withMock(t, fakeExecCommandFail)
-
-	err := EnableService("mariadb")
-	if err == nil {
-		t.Error("expected error from failing enable command")
-	}
-}
-
-func TestEnableService_UnknownService(t *testing.T) {
-	withMock(t, fakeExecCommand)
-	if err := EnableService("evil-service"); err == nil {
-		t.Error("expected error for unknown service")
-	}
-}
-
-// ── DisableService ───────────────────────────────────────────────────────
-
-func TestDisableService(t *testing.T) {
-	withMock(t, fakeExecCommand)
-
-	err := DisableService("mariadb")
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-}
-
-func TestDisableService_Failure(t *testing.T) {
-	withMock(t, fakeExecCommandFail)
-
-	err := DisableService("mariadb")
-	if err == nil {
-		t.Error("expected error from failing disable command")
-	}
-}
-
-func TestDisableService_UnknownService(t *testing.T) {
-	withMock(t, fakeExecCommand)
-	if err := DisableService("evil-service"); err == nil {
-		t.Error("expected error for unknown service")
-	}
-}
-
 // ── StartService enable-phase failure ────────────────────────────────────
 
 func TestStartService_EnableFailure(t *testing.T) {

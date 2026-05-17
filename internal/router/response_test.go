@@ -135,16 +135,16 @@ func TestAcquireContextPoolReuse(t *testing.T) {
 }
 
 func TestGenerateID(t *testing.T) {
-	id1 := generateID()
-	id2 := generateID()
+	id1 := newRequestContextID(t)
+	id2 := newRequestContextID(t)
 
 	// Basic format check: UUID-like with dashes
 	if len(id1) == 0 {
-		t.Fatal("generateID returned empty string")
+		t.Fatal("RequestContextID returned empty string")
 	}
 	// Should be unique
 	if id1 == id2 {
-		t.Errorf("generateID returned duplicate IDs: %q", id1)
+		t.Errorf("RequestContextID returned duplicate IDs: %q", id1)
 	}
 	// Check it contains dashes (UUID format)
 	parts := 0
@@ -258,7 +258,7 @@ func TestGenerateIDUniquenessOverManyCalls(t *testing.T) {
 	const n = 10000
 	seen := make(map[string]struct{}, n)
 	for i := 0; i < n; i++ {
-		id := generateID()
+		id := newRequestContextID(t)
 		if _, dup := seen[id]; dup {
 			t.Fatalf("duplicate ID at iteration %d: %q", i, id)
 		}
@@ -271,7 +271,7 @@ func TestGenerateIDUniquenessOverManyCalls(t *testing.T) {
 
 func TestGenerateIDFormat(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		id := generateID()
+		id := newRequestContextID(t)
 		// Should be 36 chars: 8-4-4-4-12
 		if len(id) != 36 {
 			t.Errorf("generateID length = %d, want 36: %q", len(id), id)
@@ -289,4 +289,14 @@ func TestGenerateIDFormat(t *testing.T) {
 			break
 		}
 	}
+}
+
+func newRequestContextID(t *testing.T) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := AcquireContext(rec, req)
+	id := ctx.RequestContextID()
+	ReleaseContext(ctx)
+	return id
 }

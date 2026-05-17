@@ -2,7 +2,6 @@ package siteuser
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,30 +14,28 @@ import (
 // ---------------------------------------------------------------------------
 
 type hookSnapshot struct {
-	goos              string
-	execCommand       func(string, ...string) *exec.Cmd
-	readFile          func(string) ([]byte, error)
-	writeFile         func(string, []byte, os.FileMode) error
-	mkdirAll          func(string, os.FileMode) error
-	stat              func(string) (os.FileInfo, error)
-	openFile          func(string, int, os.FileMode) (*os.File, error)
-	sshdConfig        string
-	passwd            string
-	netInterfaceAddrs func() ([]net.Addr, error)
+	goos        string
+	execCommand func(string, ...string) *exec.Cmd
+	readFile    func(string) ([]byte, error)
+	writeFile   func(string, []byte, os.FileMode) error
+	mkdirAll    func(string, os.FileMode) error
+	stat        func(string) (os.FileInfo, error)
+	openFile    func(string, int, os.FileMode) (*os.File, error)
+	sshdConfig  string
+	passwd      string
 }
 
 func saveHooks() hookSnapshot {
 	return hookSnapshot{
-		goos:              runtimeGOOS,
-		execCommand:       execCommandFn,
-		readFile:          osReadFileFn,
-		writeFile:         osWriteFileFn,
-		mkdirAll:          osMkdirAllFn,
-		stat:              osStatFn,
-		openFile:          osOpenFileFn,
-		sshdConfig:        sshdConfigPath,
-		passwd:            passwdPath,
-		netInterfaceAddrs: netInterfaceAddrsFn,
+		goos:        runtimeGOOS,
+		execCommand: execCommandFn,
+		readFile:    osReadFileFn,
+		writeFile:   osWriteFileFn,
+		mkdirAll:    osMkdirAllFn,
+		stat:        osStatFn,
+		openFile:    osOpenFileFn,
+		sshdConfig:  sshdConfigPath,
+		passwd:      passwdPath,
 	}
 }
 
@@ -52,7 +49,6 @@ func restoreHooks(s hookSnapshot) {
 	osOpenFileFn = s.openFile
 	sshdConfigPath = s.sshdConfig
 	passwdPath = s.passwd
-	netInterfaceAddrsFn = s.netInterfaceAddrs
 }
 
 // fakeExecCommand builds a *exec.Cmd that always succeeds (exit 0) without
@@ -126,69 +122,6 @@ func TestHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-// ---------------------------------------------------------------------------
-// Tests: manager.go — PrepareWebRoot
-// ---------------------------------------------------------------------------
-
-func TestPrepareWebRoot_Windows(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	runtimeGOOS = "windows"
-	tmp := t.TempDir()
-	osMkdirAllFn = os.MkdirAll
-
-	dir, err := PrepareWebRoot(tmp, "example.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	expected := filepath.Join(tmp, "example.com")
-	if dir != expected {
-		t.Errorf("got dir %q, want %q", dir, expected)
-	}
-}
-
-func TestPrepareWebRoot_Success(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	runtimeGOOS = "linux"
-	tmp := t.TempDir()
-	osMkdirAllFn = os.MkdirAll
-	execCommandFn = fakeExecCommand // chown/chmod are no-ops
-
-	dir, err := PrepareWebRoot(tmp, "example.com")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	expected := filepath.Join(tmp, "example.com", "public_html")
-	if dir != expected {
-		t.Errorf("got dir %q, want %q", dir, expected)
-	}
-	// Verify directory was created
-	if _, err := os.Stat(expected); os.IsNotExist(err) {
-		t.Error("public_html directory was not created")
-	}
-}
-
-func TestPrepareWebRoot_MkdirFail(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	runtimeGOOS = "linux"
-	osMkdirAllFn = func(path string, perm os.FileMode) error {
-		return fmt.Errorf("mkdir fail")
-	}
-
-	_, err := PrepareWebRoot("/nonexistent", "example.com")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "create web root") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateSiteHostname(t *testing.T) {
 	tests := []struct {
 		name string
@@ -218,26 +151,6 @@ func TestValidateSiteHostname(t *testing.T) {
 				t.Fatalf("validateSiteHostname(%q) error = %v, want valid=%v", tt.host, err, tt.want)
 			}
 		})
-	}
-}
-
-func TestPrepareWebRootRejectsUnsafeHostname(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	runtimeGOOS = "linux"
-	called := false
-	osMkdirAllFn = func(path string, perm os.FileMode) error {
-		called = true
-		return nil
-	}
-
-	_, err := PrepareWebRoot(t.TempDir(), "example.com\nMatch User root")
-	if err == nil {
-		t.Fatal("expected invalid hostname error")
-	}
-	if called {
-		t.Fatal("mkdir should not be called for invalid hostname")
 	}
 }
 
@@ -816,7 +729,7 @@ func TestAddSSHKey_Windows(t *testing.T) {
 
 	runtimeGOOS = "windows"
 
-	err := AddSSHKey("/var/www", "example.com", "ssh-rsa AAAA...")
+	err := AddSSHKeyForWebDir(filepath.Join("/var/www", "example.com", "public_html"), "example.com", "ssh-rsa AAAA...")
 	if err == nil {
 		t.Fatal("expected error on Windows")
 	}
@@ -837,7 +750,7 @@ func TestAddSSHKey_Success(t *testing.T) {
 	execCommandFn = fakeExecCommand // chown no-ops
 
 	key := "ssh-rsa AAAAB3NzaC1yc2EAAA test@host"
-	err := AddSSHKey(tmp, "example.com", key)
+	err := AddSSHKeyForWebDir(filepath.Join(tmp, "example.com", "public_html"), "example.com", key)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -893,13 +806,14 @@ func TestAddSSHKey_Duplicate(t *testing.T) {
 	key := "ssh-rsa AAAAB3NzaC1yc2EAAA test@host"
 
 	// Add key first time
-	err := AddSSHKey(tmp, "example.com", key)
+	webDir := filepath.Join(tmp, "example.com", "public_html")
+	err := AddSSHKeyForWebDir(webDir, "example.com", key)
 	if err != nil {
 		t.Fatalf("first add failed: %v", err)
 	}
 
 	// Add same key again — should return nil without duplicating
-	err = AddSSHKey(tmp, "example.com", key)
+	err = AddSSHKeyForWebDir(webDir, "example.com", key)
 	if err != nil {
 		t.Fatalf("duplicate add returned error: %v", err)
 	}
@@ -922,7 +836,7 @@ func TestAddSSHKey_MkdirFail(t *testing.T) {
 		return fmt.Errorf("mkdir fail")
 	}
 
-	err := AddSSHKey("/var/www", "example.com", "ssh-rsa AAAA...")
+	err := AddSSHKeyForWebDir(filepath.Join("/var/www", "example.com", "public_html"), "example.com", "ssh-rsa AAAA...")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -942,7 +856,7 @@ func TestSSHKeyFunctionsRejectUnsafeHostname(t *testing.T) {
 		return nil
 	}
 
-	err := AddSSHKey(t.TempDir(), "../evil", "ssh-rsa AAAA test@host")
+	err := AddSSHKeyForWebDir(filepath.Join(t.TempDir(), "evil", "public_html"), "../evil", "ssh-rsa AAAA test@host")
 	if err == nil {
 		t.Fatal("expected AddSSHKey to reject invalid hostname")
 	}
@@ -950,11 +864,11 @@ func TestSSHKeyFunctionsRejectUnsafeHostname(t *testing.T) {
 		t.Fatal("AddSSHKey should not create directories for invalid hostname")
 	}
 
-	if err := RemoveSSHKey(t.TempDir(), "example.com:bad", "AAAA"); err == nil {
+	if err := RemoveSSHKeyForWebDir(filepath.Join(t.TempDir(), "example.com", "public_html"), "example.com:bad", "AAAA"); err == nil {
 		t.Fatal("expected RemoveSSHKey to reject invalid hostname")
 	}
 
-	if keys := ListSSHKeys(t.TempDir(), "example.com\nbad"); keys != nil {
+	if keys := ListSSHKeysForWebDir(filepath.Join(t.TempDir(), "example.com", "public_html"), "example.com\nbad"); keys != nil {
 		t.Fatalf("expected ListSSHKeys to return nil for invalid hostname, got %v", keys)
 	}
 }
@@ -973,8 +887,9 @@ func TestAddSSHKey_MultipleKeys(t *testing.T) {
 	key1 := "ssh-rsa AAAAB3NzaC1yc2EAAA user1@host"
 	key2 := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 user2@host"
 
-	AddSSHKey(tmp, "example.com", key1)
-	AddSSHKey(tmp, "example.com", key2)
+	webDir := filepath.Join(tmp, "example.com", "public_html")
+	AddSSHKeyForWebDir(webDir, "example.com", key1)
+	AddSSHKeyForWebDir(webDir, "example.com", key2)
 
 	authKeys := filepath.Join(tmp, "example.com", ".ssh", "authorized_keys")
 	data, _ := os.ReadFile(authKeys)
@@ -1009,7 +924,7 @@ func TestRemoveSSHKey_Success(t *testing.T) {
 	osWriteFileFn = os.WriteFile
 
 	// Remove key1 by matching a substring (fingerprint-like)
-	err := RemoveSSHKey(tmp, domain, "AAAAB3NzaC1yc2EAAA")
+	err := RemoveSSHKeyForWebDir(filepath.Join(tmp, domain, "public_html"), domain, "AAAAB3NzaC1yc2EAAA")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1040,7 +955,7 @@ func TestRemoveSSHKey_NotFound(t *testing.T) {
 	osReadFileFn = os.ReadFile
 	osWriteFileFn = os.WriteFile
 
-	err := RemoveSSHKey(tmp, domain, "nonexistent-fingerprint")
+	err := RemoveSSHKeyForWebDir(filepath.Join(tmp, domain, "public_html"), domain, "nonexistent-fingerprint")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1059,7 +974,7 @@ func TestRemoveSSHKey_NoFile(t *testing.T) {
 	osReadFileFn = os.ReadFile
 
 	// No authorized_keys file — should return nil
-	err := RemoveSSHKey("/nonexistent", "example.com", "fingerprint")
+	err := RemoveSSHKeyForWebDir(filepath.Join("/nonexistent", "example.com", "public_html"), "example.com", "fingerprint")
 	if err != nil {
 		t.Fatalf("expected nil when no keys file, got: %v", err)
 	}
@@ -1085,7 +1000,7 @@ func TestListSSHKeys_Success(t *testing.T) {
 
 	osReadFileFn = os.ReadFile
 
-	keys := ListSSHKeys(tmp, domain)
+	keys := ListSSHKeysForWebDir(filepath.Join(tmp, domain, "public_html"), domain)
 	if len(keys) != 2 {
 		t.Fatalf("expected 2 keys, got %d", len(keys))
 	}
@@ -1110,7 +1025,7 @@ func TestListSSHKeys_Empty(t *testing.T) {
 
 	osReadFileFn = os.ReadFile
 
-	keys := ListSSHKeys(tmp, domain)
+	keys := ListSSHKeysForWebDir(filepath.Join(tmp, domain, "public_html"), domain)
 	if len(keys) != 0 {
 		t.Errorf("expected 0 keys, got %d", len(keys))
 	}
@@ -1122,7 +1037,7 @@ func TestListSSHKeys_NoFile(t *testing.T) {
 
 	osReadFileFn = os.ReadFile
 
-	keys := ListSSHKeys("/nonexistent", "example.com")
+	keys := ListSSHKeysForWebDir(filepath.Join("/nonexistent", "example.com", "public_html"), "example.com")
 	if keys != nil {
 		t.Errorf("expected nil when no file, got %v", keys)
 	}
@@ -1138,7 +1053,7 @@ func TestListSSHKeys_Windows(t *testing.T) {
 		return nil, fmt.Errorf("not found")
 	}
 
-	keys := ListSSHKeys("/var/www", "example.com")
+	keys := ListSSHKeysForWebDir(filepath.Join("/var/www", "example.com", "public_html"), "example.com")
 	if keys != nil {
 		t.Errorf("expected nil, got %v", keys)
 	}
@@ -1255,116 +1170,6 @@ func TestUserExists_False(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Tests: manager.go — GetServerIP
-// ---------------------------------------------------------------------------
-
-func TestGetServerIP(t *testing.T) {
-	ip := GetServerIP()
-	if ip == "" {
-		t.Error("expected non-empty IP")
-	}
-	// On any machine this should return either a real IP or the fallback
-	if ip != "your-server-ip" {
-		// It returned a real IP — verify it looks like an IP
-		if !strings.Contains(ip, ".") {
-			t.Errorf("expected an IPv4 address, got %q", ip)
-		}
-	}
-}
-
-func TestGetServerIP_Error(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	netInterfaceAddrsFn = func() ([]net.Addr, error) {
-		return nil, fmt.Errorf("network error")
-	}
-
-	ip := GetServerIP()
-	if ip != "your-server-ip" {
-		t.Errorf("expected fallback 'your-server-ip', got %q", ip)
-	}
-}
-
-// fakeAddr implements net.Addr for testing.
-type fakeAddr struct {
-	network string
-	str     string
-}
-
-func (a fakeAddr) Network() string { return a.network }
-func (a fakeAddr) String() string  { return a.str }
-
-func TestGetServerIP_OnlyLoopback(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	// Return only loopback addresses — GetServerIP should fall through to fallback
-	netInterfaceAddrsFn = func() ([]net.Addr, error) {
-		return []net.Addr{
-			&net.IPNet{IP: net.IPv4(127, 0, 0, 1), Mask: net.CIDRMask(8, 32)},
-		}, nil
-	}
-
-	ip := GetServerIP()
-	if ip != "your-server-ip" {
-		t.Errorf("expected fallback 'your-server-ip', got %q", ip)
-	}
-}
-
-func TestGetServerIP_OnlyIPv6(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	// Return only an IPv6 address — To4() returns nil so should fall through
-	netInterfaceAddrsFn = func() ([]net.Addr, error) {
-		return []net.Addr{
-			&net.IPNet{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)},
-			&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)},
-		}, nil
-	}
-
-	ip := GetServerIP()
-	if ip != "your-server-ip" {
-		t.Errorf("expected fallback 'your-server-ip', got %q", ip)
-	}
-}
-
-func TestGetServerIP_NonIPNetAddr(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	// Return a non-*net.IPNet addr — the type assertion should fail, skip it
-	netInterfaceAddrsFn = func() ([]net.Addr, error) {
-		return []net.Addr{
-			fakeAddr{network: "tcp", str: "192.168.1.1:80"},
-		}, nil
-	}
-
-	ip := GetServerIP()
-	if ip != "your-server-ip" {
-		t.Errorf("expected fallback 'your-server-ip', got %q", ip)
-	}
-}
-
-func TestGetServerIP_ValidIPv4(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	netInterfaceAddrsFn = func() ([]net.Addr, error) {
-		return []net.Addr{
-			&net.IPNet{IP: net.IPv4(127, 0, 0, 1), Mask: net.CIDRMask(8, 32)},
-			&net.IPNet{IP: net.IPv4(10, 0, 0, 5), Mask: net.CIDRMask(24, 32)},
-		}, nil
-	}
-
-	ip := GetServerIP()
-	if ip != "10.0.0.5" {
-		t.Errorf("expected '10.0.0.5', got %q", ip)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Tests: sshkey.go — AddSSHKey OpenFile error
 // ---------------------------------------------------------------------------
 
@@ -1381,7 +1186,7 @@ func TestAddSSHKey_OpenFileFail(t *testing.T) {
 		return nil, fmt.Errorf("open fail")
 	}
 
-	err := AddSSHKey(tmp, "example.com", "ssh-rsa AAAA test@host")
+	err := AddSSHKeyForWebDir(filepath.Join(tmp, "example.com", "public_html"), "example.com", "ssh-rsa AAAA test@host")
 	if err == nil {
 		t.Fatal("expected error when OpenFile fails")
 	}

@@ -24,7 +24,7 @@ const (
 
 // Testable hooks
 var (
-	githubAPIBase          = "https://api.github.com"
+	githubAPIBase        = "https://api.github.com"
 	isTrustedDownloadURL = func(u string) bool {
 		return strings.HasPrefix(u, "https://github.com/") ||
 			strings.HasPrefix(u, "https://objects.githubusercontent.com/")
@@ -210,15 +210,6 @@ func Update(downloadURL string) error {
 
 	osRemoveFn(backup)
 	return nil
-}
-
-// UpdateAndRestart downloads the update, replaces the binary, and restarts
-// the process using syscall.Exec (replaces current process in-place).
-func UpdateAndRestart(downloadURL string) error {
-	if err := Update(downloadURL); err != nil {
-		return err
-	}
-	return RestartSelf()
 }
 
 // RestartSelf replaces the current process with a fresh exec of the same binary.

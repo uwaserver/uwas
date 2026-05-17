@@ -605,15 +605,6 @@ func TestLoadExistingCertsLoadAllError(t *testing.T) {
 	}
 }
 
-// --- EncodeCertPEM with empty chain ---
-
-func TestEncodeCertPEMEmpty(t *testing.T) {
-	result := EncodeCertPEM(nil)
-	if len(result) != 0 {
-		t.Errorf("EncodeCertPEM(nil) should return empty, got %d bytes", len(result))
-	}
-}
-
 // --- obtainCert: successful path using acmeObtainFunc hook ---
 
 func TestObtainCertSuccessful(t *testing.T) {

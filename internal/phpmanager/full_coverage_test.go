@@ -465,27 +465,6 @@ func TestAssignDomainWithRootError(t *testing.T) {
 }
 
 // ============================================================
-// manager.go — AllowedDomainDirectives
-// ============================================================
-
-func TestAllowedDomainDirectives(t *testing.T) {
-	directives := AllowedDomainDirectives()
-	if len(directives) == 0 {
-		t.Fatal("expected non-empty directives list")
-	}
-	found := false
-	for _, d := range directives {
-		if d == "memory_limit" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected memory_limit in allowed directives")
-	}
-}
-
-// ============================================================
 // manager.go — SetDomainConfig blocked directive
 // ============================================================
 
