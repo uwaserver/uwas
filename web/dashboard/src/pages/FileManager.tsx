@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   FolderOpen,
   File,
@@ -13,6 +13,7 @@ import {
   Upload,
   ArrowLeft,
   Home,
+  Search,
 } from 'lucide-react';
 import {
   fetchDomains,
@@ -56,6 +57,7 @@ export default function FileManager() {
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [fileFilter, setFileFilter] = useState('');
   const [currentPath, setCurrentPath] = useState('.');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -66,6 +68,7 @@ export default function FileManager() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
 
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -134,6 +137,8 @@ export default function FileManager() {
     if (!await confirmDiscardEdits()) return;
     setEditingFile(null);
     setEditDirty(false);
+    setSaveState('idle');
+    setFileFilter('');
     setCurrentPath(path);
   };
 
@@ -147,6 +152,15 @@ export default function FileManager() {
   const breadcrumbs = currentPath === '.'
     ? ['.']
     : ['.', ...currentPath.split('/').filter(Boolean)];
+
+  const visibleFiles = useMemo(() => {
+    const q = fileFilter.trim().toLowerCase();
+    if (!q) return files;
+    return files.filter(entry =>
+      entry.name.toLowerCase().includes(q) ||
+      entry.path.toLowerCase().includes(q),
+    );
+  }, [fileFilter, files]);
 
   const handleOpenFile = async (entry: FileEntry) => {
     if (entry.is_dir) {
@@ -195,24 +209,48 @@ export default function FileManager() {
       setEditingFile(entry.path);
       setEditContent(result.content);
       setEditDirty(false);
+      setSaveState('idle');
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const handleSaveFile = async () => {
-    if (!editingFile) return;
+  const handleSaveFile = useCallback(async () => {
+    if (!editingFile || saving) return;
     setSaving(true);
     setError('');
+    setSaveState('idle');
     try {
       await writeFile(selectedDomain, editingFile, editContent);
       setEditDirty(false);
+      setSaveState('saved');
     } catch (e) {
+      setSaveState('error');
       setError((e as Error).message);
     } finally {
       setSaving(false);
     }
-  };
+  }, [editContent, editingFile, saving, selectedDomain]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!editingFile || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
+      e.preventDefault();
+      if (editDirty && !saving) void handleSaveFile();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [editDirty, editingFile, handleSaveFile, saving]);
+
+  useEffect(() => {
+    if (!editDirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [editDirty]);
 
   const handleDelete = async (path: string) => {
     setDeleting(true);
@@ -222,6 +260,8 @@ export default function FileManager() {
       setConfirmDelete(null);
       if (editingFile === path) {
         setEditingFile(null);
+        setEditDirty(false);
+        setSaveState('idle');
       }
       await loadFiles();
     } catch (e) {
@@ -311,8 +351,10 @@ export default function FileManager() {
               }
               setSelectedDomain(e.target.value);
               setCurrentPath('.');
+              setFileFilter('');
               setEditingFile(null);
               setEditDirty(false);
+              setSaveState('idle');
             }}
             className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
           >
@@ -340,8 +382,8 @@ export default function FileManager() {
       </div>
 
       {/* Breadcrumb + actions */}
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
-        <div className="flex items-center gap-1 text-sm text-muted-foreground overflow-x-auto">
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto text-sm text-muted-foreground">
           <button onClick={() => navigateTo('.')} className="hover:text-foreground" title="Home">
             <Home size={14} />
           </button>
@@ -360,7 +402,16 @@ export default function FileManager() {
             );
           })}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:shrink-0">
+          <div className="relative min-w-48 sm:w-56">
+            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={fileFilter}
+              onChange={e => setFileFilter(e.target.value)}
+              placeholder="Filter files"
+              className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground outline-none focus:border-blue-500"
+            />
+          </div>
           {currentPath !== '.' && (
             <button
               onClick={navigateUp}
@@ -420,21 +471,26 @@ export default function FileManager() {
               <File size={16} className="text-blue-400" />
               <span className="font-mono text-sm text-foreground">{editingFile}</span>
               {editDirty && <span className="text-xs text-amber-400">(modified)</span>}
+              {saveState === 'saved' && !editDirty && <span className="text-xs text-emerald-400">Saved</span>}
+              {saveState === 'error' && <span className="text-xs text-red-400">Save failed</span>}
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveFile}
                 disabled={saving || !editDirty}
-                className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                title="Save file"
+                aria-label="Save file"
+                className="flex min-w-20 items-center justify-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
-                Save
+                {saving ? 'Saving' : 'Save'}
               </button>
               <button
                 onClick={async () => {
                   if (!await confirmDiscardEdits()) return;
                   setEditingFile(null);
                   setEditDirty(false);
+                  setSaveState('idle');
                 }}
                 className="text-muted-foreground hover:text-foreground"
               >
@@ -444,8 +500,12 @@ export default function FileManager() {
           </div>
           <textarea
             value={editContent}
-            onChange={e => { setEditContent(e.target.value); setEditDirty(true); }}
-            className="h-96 w-full resize-y bg-background p-4 font-mono text-sm text-foreground outline-none"
+            onChange={e => {
+              setEditContent(e.target.value);
+              setEditDirty(true);
+              setSaveState('idle');
+            }}
+            className="h-96 w-full resize-y bg-background p-4 font-mono text-sm leading-6 text-foreground outline-none focus:ring-1 focus:ring-blue-500/40"
             spellCheck={false}
           />
         </div>
@@ -460,6 +520,12 @@ export default function FileManager() {
           <p className="text-card-foreground font-medium">Empty directory</p>
           <p className="text-sm text-muted-foreground mt-1">Upload a file or create a folder to get started.</p>
         </div>
+      ) : visibleFiles.length === 0 && !editingFile ? (
+        <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
+          <Search size={36} className="mx-auto mb-3 text-muted-foreground" />
+          <p className="font-medium text-card-foreground">No matches</p>
+          <p className="mt-1 text-sm text-muted-foreground">Try a different file name.</p>
+        </div>
       ) : !editingFile && (
         <div className="overflow-hidden rounded-lg border border-border">
           <table className="w-full text-sm">
@@ -473,7 +539,7 @@ export default function FileManager() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {files.map(entry => (
+              {visibleFiles.map(entry => (
                 <tr key={entry.path} className="bg-background hover:bg-card/50">
                   <td className="px-4 py-3">
                     <button
