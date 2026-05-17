@@ -204,12 +204,6 @@ func SplitScriptPath(originalURI, resolvedPath, docRoot string, indexFiles []str
 	return origPath, ""
 }
 
-// ScriptFilename constructs the full filesystem path for the PHP script.
-func ScriptFilename(docRoot, scriptName string) string {
-	// If resolvedPath is available and exists, use it directly
-	return fmt.Sprintf("%s%s", strings.TrimRight(docRoot, "/"), scriptName)
-}
-
 // ScriptFilenameFromResolved returns the resolved path if it exists,
 // otherwise constructs from docRoot + scriptName.
 func ScriptFilenameFromResolved(resolvedPath, docRoot, scriptName string) string {

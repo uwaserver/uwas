@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -43,10 +42,10 @@ func TestMergeDomain_PHPSubfieldsIndependent(t *testing.T) {
 	existing := Domain{
 		Host: "x",
 		PHP: PHPConfig{
-			FPMAddress:  "127.0.0.1:9000",
-			IndexFiles:  []string{"index.php"},
-			MaxUpload:   ByteSize(8 << 20),
-			Env:         map[string]string{"FOO": "bar"},
+			FPMAddress: "127.0.0.1:9000",
+			IndexFiles: []string{"index.php"},
+			MaxUpload:  ByteSize(8 << 20),
+			Env:        map[string]string{"FOO": "bar"},
 		},
 	}
 	patch := Domain{
@@ -107,32 +106,6 @@ func TestMergeDomain_LocationsClearedByEmptyList(t *testing.T) {
 	out := MergeDomain(existing, patch, DomainPatchFields{HasLocations: true}, false)
 	if len(out.Locations) != 0 {
 		t.Errorf("locations should clear, got %v", out.Locations)
-	}
-}
-
-func TestMergeDomain_NewDomainPatchFieldsFromJSON(t *testing.T) {
-	var raw map[string]json.RawMessage
-	body := `{"host":"x.example.com","aliases":["a"],"cache":{"enabled":true}}`
-	if err := json.Unmarshal([]byte(body), &raw); err != nil {
-		t.Fatal(err)
-	}
-	fields := NewDomainPatchFields(raw)
-	if !fields.HasAliases {
-		t.Errorf("HasAliases should be true")
-	}
-	if !fields.HasCache {
-		t.Errorf("HasCache should be true")
-	}
-	if fields.HasSecurity {
-		t.Errorf("HasSecurity should be false")
-	}
-}
-
-func TestMergeDomain_NewDomainPatchFieldsNil(t *testing.T) {
-	// Nil raw map should yield all-zero fields (no presence detected).
-	fields := NewDomainPatchFields(nil)
-	if fields.HasAliases || fields.HasCache || fields.HasSecurity {
-		t.Errorf("nil raw map should yield zero fields, got %+v", fields)
 	}
 }
 

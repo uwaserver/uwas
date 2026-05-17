@@ -562,20 +562,6 @@ func isLoopback(host string) bool {
 	return false
 }
 
-// IsLoopback returns true if the rawURL points to a loopback address.
-// This is safe to call for test URLs that use httptest.NewServer on localhost.
-// It does NOT perform DNS resolution, so it only detects literal loopback IPs.
-func IsLoopback(rawURL string) bool {
-	if rawURL == "" {
-		return false
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	return isLoopback(u.Hostname())
-}
-
 // forbiddenAliasRoots returns the list of system directories that must never
 // appear in internal_aliases on the current operating system. The lists are
 // kept separate (rather than merged) because filepath.Abs on Windows turns
@@ -677,12 +663,6 @@ func IsProxyUpstreamSafe(rawURL string) error {
 // documentation ranges.
 func IsPrivateProxyUpstreamSafe(rawURL string) error {
 	return isURLSafe(rawURL, urlSafetyPolicy{allowLoopback: true, allowPrivate: true})
-}
-
-// IsSSRFSafe is kept for older callers. New code should use IsWebhookURLSafe
-// or IsProxyUpstreamSafe so the intended trust boundary is explicit.
-func IsSSRFSafe(rawURL string) error {
-	return IsWebhookURLSafe(rawURL)
 }
 
 func isURLSafe(rawURL string, policy urlSafetyPolicy) error {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
-	"time"
 )
 
 func configureProcessGroup(_ *exec.Cmd) {}
@@ -48,7 +47,3 @@ func gracefulKill(cmd *exec.Cmd, _ string) error {
 	}
 	return nil
 }
-
-// gracefulStopTimeout is unused on Windows (no SIGTERM ladder) but
-// kept as a symbol so any cross-platform code reading it compiles.
-const gracefulStopTimeout = 0 * time.Second

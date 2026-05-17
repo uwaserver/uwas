@@ -25,13 +25,6 @@ var maliciousBots = []string{
 	"thesis-research", "research-scanner",
 }
 
-// Known good bots (search engines).
-var goodBots = []string{
-	"googlebot", "bingbot", "yandexbot", "baiduspider",
-	"duckduckbot", "slurp", "facebot", "twitterbot",
-	"linkedinbot", "applebot", "petalbot",
-}
-
 // SecurityStats tracks blocked requests for the security dashboard.
 type SecurityStats struct {
 	WAFBlocked     atomic.Int64
@@ -172,15 +165,4 @@ func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// IsGoodBot checks if the user-agent is a known search engine bot.
-func IsGoodBot(ua string) bool {
-	ua = strings.ToLower(ua)
-	for _, bot := range goodBots {
-		if strings.Contains(ua, bot) {
-			return true
-		}
-	}
-	return false
 }

@@ -1,7 +1,5 @@
 package config
 
-import "encoding/json"
-
 // DomainPatchFields lists the JSON keys whose presence in the patch
 // body indicates the caller intends to apply that field even when the
 // parsed value is the Go zero value (empty slice, false, zero number).
@@ -20,38 +18,6 @@ type DomainPatchFields struct {
 	HasHtaccess    bool
 	HasSSL         bool
 	HasResources   bool
-}
-
-// NewDomainPatchFields inspects the unmarshalled top-level JSON object
-// for the keys MergeDomain needs to disambiguate from-zero values. The
-// caller is expected to have already unmarshalled the body into a
-// map[string]json.RawMessage; passing nil leaves all fields false
-// (every "did the caller send this?" check returns false), which is
-// safe for purely additive merges.
-func NewDomainPatchFields(raw map[string]json.RawMessage) DomainPatchFields {
-	if raw == nil {
-		return DomainPatchFields{}
-	}
-	_, hasAliases := raw["aliases"]
-	_, hasLocations := raw["locations"]
-	_, hasBasicAuth := raw["basic_auth"]
-	_, hasSecurity := raw["security"]
-	_, hasCache := raw["cache"]
-	_, hasCompression := raw["compression"]
-	_, hasHtaccess := raw["htaccess"]
-	_, hasSSL := raw["ssl"]
-	_, hasResources := raw["resources"]
-	return DomainPatchFields{
-		HasAliases:     hasAliases,
-		HasLocations:   hasLocations,
-		HasBasicAuth:   hasBasicAuth,
-		HasSecurity:    hasSecurity,
-		HasCache:       hasCache,
-		HasCompression: hasCompression,
-		HasHtaccess:    hasHtaccess,
-		HasSSL:         hasSSL,
-		HasResources:   hasResources,
-	}
 }
 
 // MergeDomain produces a merged domain by overlaying patch fields onto

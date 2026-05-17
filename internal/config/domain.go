@@ -24,9 +24,6 @@ func (t DomainType) IsValid() bool {
 	return false
 }
 
-// String returns the string form (so DomainType prints as "static" etc.).
-func (t DomainType) String() string { return string(t) }
-
 // Domain is a single virtual host. The Type field selects which feature
 // block(s) are honored (php / proxy / app / static / redirect).
 type Domain struct {

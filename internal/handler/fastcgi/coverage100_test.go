@@ -893,15 +893,6 @@ func TestBuildEnvTrailingSlashDocRoot(t *testing.T) {
 	}
 }
 
-// --- ScriptFilename: with trailing slash in docRoot ---
-
-func TestScriptFilenameTrailingSlash(t *testing.T) {
-	got := ScriptFilename("/var/www/", "/test.php")
-	if got != "/var/www/test.php" {
-		t.Errorf("ScriptFilename = %q, want /var/www/test.php", got)
-	}
-}
-
 // --- SplitScriptPath: resolvedPath same as docRoot (rel is empty, no leading slash) ---
 
 func TestSplitScriptPathResolvedSameAsDocRoot(t *testing.T) {

@@ -86,11 +86,11 @@ func (c *Client) do(method, path string, body any) (json.RawMessage, error) {
 
 // Tunnel mirrors the Cloudflare Tunnel API resource (cfd_tunnel).
 type Tunnel struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	Status    string    `json:"status,omitempty"`
+	Status    string     `json:"status,omitempty"`
 }
 
 // CreateTunnel creates a locally-managed tunnel and returns its UUID + name.
@@ -116,19 +116,6 @@ func (c *Client) CreateTunnel(name string) (*Tunnel, error) {
 func (c *Client) DeleteTunnel(tunnelID string) error {
 	_, err := c.do("DELETE", "/accounts/"+c.accountID+"/cfd_tunnel/"+tunnelID, nil)
 	return err
-}
-
-// ListTunnels returns all (non-deleted) tunnels in the account.
-func (c *Client) ListTunnels() ([]Tunnel, error) {
-	raw, err := c.do("GET", "/accounts/"+c.accountID+"/cfd_tunnel?is_deleted=false", nil)
-	if err != nil {
-		return nil, err
-	}
-	var ts []Tunnel
-	if err := json.Unmarshal(raw, &ts); err != nil {
-		return nil, fmt.Errorf("parse tunnels: %w", err)
-	}
-	return ts, nil
 }
 
 // GetTunnelToken returns the connector token used by `cloudflared tunnel run --token <T>`.
@@ -236,6 +223,3 @@ func (c *Client) DeleteDNSRecord(zoneID, recordID string) error {
 	_, err := c.do("DELETE", "/zones/"+zoneID+"/dns_records/"+recordID, nil)
 	return err
 }
-
-// SetBaseURL is for tests.
-func (c *Client) SetBaseURL(u string) { c.baseURL = u }

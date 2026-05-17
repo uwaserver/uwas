@@ -182,31 +182,6 @@ func TestSecurityStatsRecentBlockedRingBuffer(t *testing.T) {
 	}
 }
 
-// --- IsGoodBot tests ---
-
-func TestIsGoodBot(t *testing.T) {
-	tests := []struct {
-		ua   string
-		want bool
-	}{
-		{"Googlebot/2.1", true},
-		{"Mozilla/5.0 (compatible; bingbot/2.0)", true},
-		{"Baiduspider/2.0", true},
-		{"DuckDuckBot/1.0", true},
-		{"facebot", true},
-		{"sqlmap/1.0", false},
-		{"Mozilla/5.0 Chrome/120", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		got := IsGoodBot(tt.ua)
-		if got != tt.want {
-			t.Errorf("IsGoodBot(%q) = %v, want %v", tt.ua, got, tt.want)
-		}
-	}
-}
-
 // --- HotlinkProtection tests ---
 
 func TestHotlinkProtectionBlocks(t *testing.T) {

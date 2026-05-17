@@ -26,11 +26,11 @@ type DomainUsage struct {
 	mu           sync.Mutex
 	MonthlyBytes atomic.Int64 `json:"-"`
 	DailyBytes   atomic.Int64 `json:"-"`
-	LastReset    time.Time     `json:"last_reset"`
-	DailyReset   time.Time     `json:"daily_reset"`
-	LastUpdated  time.Time     `json:"last_updated"`
-	Blocked      bool          `json:"blocked"`
-	Throttled    bool          `json:"throttled"`
+	LastReset    time.Time    `json:"last_reset"`
+	DailyReset   time.Time    `json:"daily_reset"`
+	LastUpdated  time.Time    `json:"last_updated"`
+	Blocked      bool         `json:"blocked"`
+	Throttled    bool         `json:"throttled"`
 }
 
 // Status represents the current bandwidth status for a domain.
@@ -373,16 +373,4 @@ func (m *Manager) Handler() (allHandler, hostHandler http.HandlerFunc) {
 		json.NewEncoder(w).Encode(status)
 	}
 	return
-}
-
-// BlockResponse writes a bandwidth exceeded response.
-func BlockResponse(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	w.Write([]byte(`{"error":"bandwidth limit exceeded","code":"BANDWIDTH_EXCEEDED"}`))
-}
-
-// ThrottleDelay returns the delay duration for throttled requests.
-func ThrottleDelay() time.Duration {
-	return 500 * time.Millisecond // Add 500ms delay for throttled requests
 }
