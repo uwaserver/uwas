@@ -499,7 +499,7 @@ export const readFile = (domain: string, path: string) => api<{ content: string 
 export const writeFile = (domain: string, path: string, content: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/write`, { method: 'PUT', body: JSON.stringify({ path, content }) });
 export const deleteFile = (domain: string, path: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
 export const createDir = (domain: string, path: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/mkdir`, { method: 'POST', body: JSON.stringify({ path }) });
-export const fetchDiskUsage = (domain: string) => api<{ domain: string; bytes: number; human: string }>(`/api/v1/files/${encodeURIComponent(domain)}/disk-usage`);
+export const fetchDiskUsage = (domain: string) => api<{ domain: string; bytes: number; human: string; root: string }>(`/api/v1/files/${encodeURIComponent(domain)}/disk-usage`);
 export async function uploadFile(domain: string, path: string, file: File): Promise<{ status: string }> {
   const form = new FormData();
   form.append('path', path);

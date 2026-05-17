@@ -59,7 +59,7 @@ export default function FileManager() {
   const [currentPath, setCurrentPath] = useState('.');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [diskUsage, setDiskUsage] = useState<{ bytes: number; human: string } | null>(null);
+  const [diskUsage, setDiskUsage] = useState<{ bytes: number; human: string; root: string } | null>(null);
 
   // Editor state
   const [editingFile, setEditingFile] = useState<string | null>(null);
@@ -322,10 +322,19 @@ export default function FileManager() {
           </select>
         </div>
         {diskUsage && (
-          <div className="flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2.5">
-            <HardDrive size={16} className="text-muted-foreground" />
-            <span className="text-sm text-card-foreground">Disk Usage:</span>
-            <span className="text-sm font-semibold text-foreground">{diskUsage.human}</span>
+          <div className="flex max-w-full items-center gap-2 rounded-md border border-border bg-card px-4 py-2.5 sm:max-w-[52%]">
+            <HardDrive size={16} className="shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-card-foreground">Disk Usage:</span>
+                <span className="text-sm font-semibold text-foreground">{diskUsage.human}</span>
+              </div>
+              {diskUsage.root && (
+                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={diskUsage.root}>
+                  {diskUsage.root}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </div>
