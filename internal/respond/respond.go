@@ -2,13 +2,13 @@
 // don't reach for json.NewEncoder + manual header sets at every
 // handler. Refs: refactor.md A10.
 //
-// The three exported helpers always:
+// Error and ErrorCause always:
 //   - set Content-Type: application/json + standard hardening headers
 //     (X-Content-Type-Options, X-Frame-Options, HSTS)
 //   - call WriteHeader exactly once with the supplied code
 //   - emit a single newline-terminated JSON document
 //
-// Error and ErrorCause additionally log at error level for 5xx codes,
+// They additionally log at error level for 5xx codes,
 // using the package logger registered via SetLogger and (if present)
 // the X-Request-ID set on the response header by RequestID middleware,
 // so operators can correlate the failure without reproducing it.
@@ -40,15 +40,6 @@ func setBaseHeaders(h http.Header) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-}
-
-// JSON writes data as application/json with the given status code.
-// Always calls WriteHeader(code), so callers must not call WriteHeader
-// themselves before invoking JSON.
-func JSON(w http.ResponseWriter, code int, data any) {
-	setBaseHeaders(w.Header())
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(data)
 }
 
 // Error writes a JSON error body {"error": msg} with the given status

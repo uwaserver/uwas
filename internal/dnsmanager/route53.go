@@ -241,41 +241,6 @@ func hmacSHA256(key, data []byte) []byte {
 	return h.Sum(nil)
 }
 
-// --- Helper for provider detection ---
-
-// NewProvider creates a DNS provider based on type and credentials.
-func NewProvider(providerType string, credentials map[string]string) (Provider, error) {
-	switch providerType {
-	case "cloudflare":
-		token := credentials["api_token"]
-		if token == "" {
-			return nil, fmt.Errorf("cloudflare requires api_token")
-		}
-		return NewCloudflare(token), nil
-	case "route53":
-		ak := credentials["access_key"]
-		sk := credentials["secret_key"]
-		if ak == "" || sk == "" {
-			return nil, fmt.Errorf("route53 requires access_key and secret_key")
-		}
-		return NewRoute53(ak, sk, credentials["region"]), nil
-	case "hetzner":
-		token := credentials["api_token"]
-		if token == "" {
-			return nil, fmt.Errorf("hetzner requires api_token")
-		}
-		return NewHetzner(token), nil
-	case "digitalocean":
-		token := credentials["api_token"]
-		if token == "" {
-			return nil, fmt.Errorf("digitalocean requires api_token")
-		}
-		return NewDigitalOcean(token), nil
-	default:
-		return nil, fmt.Errorf("unknown DNS provider: %s", providerType)
-	}
-}
-
 // xmlEscape escapes a string for safe inclusion in XML text content.
 func xmlEscape(s string) string {
 	var buf bytes.Buffer

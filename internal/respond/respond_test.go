@@ -8,28 +8,6 @@ import (
 	"testing"
 )
 
-func TestJSON_SetsHeadersAndCode(t *testing.T) {
-	w := httptest.NewRecorder()
-	JSON(w, http.StatusCreated, map[string]string{"ok": "yes"})
-
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status: got %d want %d", w.Code, http.StatusCreated)
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type: got %q", ct)
-	}
-	if ns := w.Header().Get("X-Content-Type-Options"); ns != "nosniff" {
-		t.Errorf("X-Content-Type-Options: got %q", ns)
-	}
-	if fo := w.Header().Get("X-Frame-Options"); fo != "DENY" {
-		t.Errorf("X-Frame-Options: got %q", fo)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	if body != `{"ok":"yes"}` {
-		t.Errorf("body: got %q", body)
-	}
-}
-
 func TestError_NoRequestID(t *testing.T) {
 	w := httptest.NewRecorder()
 	Error(w, http.StatusBadRequest, "bad request")

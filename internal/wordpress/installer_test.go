@@ -1181,24 +1181,6 @@ func TestDeletePlugin(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestUpdateTheme
-// ---------------------------------------------------------------------------
-
-func TestUpdateTheme(t *testing.T) {
-	snap := saveHooks()
-	defer restoreHooks(snap)
-
-	execCommandFn = fakeCmd("Theme updated.\n")
-	out, err := UpdateTheme(t.TempDir(), "twentytwentyfour")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "Theme updated") {
-		t.Errorf("output = %q", out)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // TestFixPermissions_Linux
 // ---------------------------------------------------------------------------
 

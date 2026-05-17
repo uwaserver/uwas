@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,9 +28,6 @@ var (
 
 	// passwdPath allows tests to redirect /etc/passwd reads.
 	passwdPath = "/etc/passwd"
-
-	// netInterfaceAddrsFn allows tests to mock net.InterfaceAddrs.
-	netInterfaceAddrsFn = net.InterfaceAddrs
 )
 
 // User describes a site-level system user for SFTP access.
@@ -40,30 +36,6 @@ type User struct {
 	Domain   string `json:"domain"`
 	HomeDir  string `json:"home_dir"`
 	WebDir   string `json:"web_dir"` // actual writable dir inside chroot
-}
-
-// PrepareWebRoot creates the domain directory structure with proper ownership.
-// Structure: /var/www/domain.com/public_html/ (owned by www-data:www-data, 755)
-func PrepareWebRoot(webRootBase, hostname string) (string, error) {
-	if err := validateSiteHostname(hostname); err != nil {
-		return "", err
-	}
-	if runtimeGOOS == "windows" {
-		dir := filepath.Join(webRootBase, hostname)
-		return dir, osMkdirAllFn(dir, 0755)
-	}
-
-	domainDir := filepath.Join(webRootBase, hostname)
-	publicDir := filepath.Join(domainDir, "public_html")
-
-	if err := osMkdirAllFn(publicDir, 0755); err != nil {
-		return "", fmt.Errorf("create web root: %w", err)
-	}
-
-	// Set ownership to www-data (the standard web server group)
-	chownRecursive(domainDir, "www-data", "www-data")
-
-	return publicDir, nil
 }
 
 // CreateUser creates a system user for SFTP access to a domain.
@@ -393,15 +365,3 @@ func replaceManagedSFTPBlock(content, username, block string) (string, bool) {
 }
 
 // GetServerIP returns the server's primary non-loopback IP.
-func GetServerIP() string {
-	addrs, err := netInterfaceAddrsFn()
-	if err != nil {
-		return "your-server-ip"
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			return ipnet.IP.String()
-		}
-	}
-	return "your-server-ip"
-}

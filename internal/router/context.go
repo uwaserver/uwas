@@ -11,8 +11,8 @@ import (
 
 type RequestContext struct {
 	// Identity
-	idCached string         // lazily computed string form of idBytes
-	idBytes  [16]byte      // raw UUID bytes — avoids string alloc on hot path
+	idCached  string   // lazily computed string form of idBytes
+	idBytes   [16]byte // raw UUID bytes — avoids string alloc on hot path
 	StartTime time.Time
 
 	// HTTP
@@ -35,8 +35,8 @@ type RequestContext struct {
 	PathInfo     string
 
 	// State
-	CacheStatus   string
-	Upstream      string
+	CacheStatus    string
+	Upstream       string
 	PHPEnvOverride map[string]string // htaccess-derived PHP_VALUE override (per-request, not mutated on domain)
 
 	// Metrics
@@ -118,22 +118,4 @@ func generateIDBytes(buf *[16]byte) {
 	// Set version (7) and variant (RFC 9562)
 	buf[6] = (buf[6] & 0x0F) | 0x70
 	buf[8] = (buf[8] & 0x3F) | 0x80
-}
-
-// generateID is exported for tests. Applications should use ctx.RequestContextID().
-func generateID() string {
-	var b [16]byte
-	generateIDBytes(&b)
-	const hex = "0123456789abcdef"
-	var sb [36]byte
-	for i, j := 0, 0; i < 16; i++ {
-		if i == 4 || i == 6 || i == 8 || i == 10 {
-			sb[j] = '-'
-			j++
-		}
-		sb[j] = hex[b[i]>>4]
-		sb[j+1] = hex[b[i]&0xF]
-		j += 2
-	}
-	return string(sb[:])
 }

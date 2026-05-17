@@ -1896,9 +1896,8 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 
 // jsonResponse writes data as application/json with an implicit 200
 // status (no WriteHeader call), preserving the legacy semantic that
-// allows callers to precede it with their own w.WriteHeader(2xx). For
-// new code prefer respond.JSON(w, code, data) which always writes the
-// status. Refs: refactor.md A10.
+// allows callers to precede it with their own w.WriteHeader(2xx).
+// Refs: refactor.md A10.
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -164,14 +163,4 @@ func (s *CertStorage) LoadMeta(domain string) (*CertMeta, error) {
 // Delete removes a certificate and all its files from disk.
 func (s *CertStorage) Delete(domain string) error {
 	return os.RemoveAll(s.domainDir(domain))
-}
-
-// EncodeCertPEM encodes a raw DER certificate chain as PEM.
-func EncodeCertPEM(derChain [][]byte) []byte {
-	var out []byte
-	for _, der := range derChain {
-		block := &pem.Block{Type: "CERTIFICATE", Bytes: der}
-		out = append(out, pem.EncodeToMemory(block)...)
-	}
-	return out
 }

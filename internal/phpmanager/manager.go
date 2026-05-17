@@ -473,16 +473,6 @@ var blockedPHPDirectives = map[string]bool{
 	"cgi.redirect_status_env":         true,
 }
 
-// Allowed per-domain directives — only these can be set.
-var allowedDomainDirectives = []string{
-	"memory_limit", "max_execution_time", "max_input_time",
-	"upload_max_filesize", "post_max_size", "max_file_uploads", "max_input_vars",
-	"display_errors", "error_reporting", "log_errors",
-	"date.timezone", "session.gc_maxlifetime", "session.cookie_secure",
-	"opcache.enable", "opcache.memory_consumption", "opcache.max_accelerated_files",
-	"short_open_tag", "output_buffering", "default_charset",
-}
-
 // SetDomainConfig sets a per-domain php.ini override with security validation.
 func (m *Manager) SetDomainConfig(domain, key, value string) error {
 	if key == "" {
@@ -505,11 +495,6 @@ func (m *Manager) SetDomainConfig(domain, key, value string) error {
 	inst.configOverrides[key] = value
 	m.logger.Info("set domain PHP config", "domain", domain, "key", key, "value", value)
 	return nil
-}
-
-// AllowedDomainDirectives returns the list of directives that can be set per-domain.
-func AllowedDomainDirectives() []string {
-	return allowedDomainDirectives
 }
 
 // GetDomainConfig returns the per-domain php.ini overrides.

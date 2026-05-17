@@ -148,11 +148,6 @@ func DeletePlugin(webRoot, plugin string) (string, error) {
 	return wpCLI(webRoot, "plugin", "delete", plugin)
 }
 
-// UpdateTheme updates a specific theme.
-func UpdateTheme(webRoot, theme string) (string, error) {
-	return wpCLI(webRoot, "theme", "update", theme)
-}
-
 // FixPermissions sets correct WordPress file permissions.
 func FixPermissions(webRoot string) (string, error) {
 	var log strings.Builder

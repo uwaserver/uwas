@@ -131,19 +131,3 @@ func RestartService(name string) error {
 	}
 	return execCommandFn("systemctl", "restart", name).Run()
 }
-
-// EnableService enables a service to start on boot.
-func EnableService(name string) error {
-	if !IsKnownService(name) {
-		return fmt.Errorf("unknown service: %s", name)
-	}
-	return execCommandFn("systemctl", "enable", name).Run()
-}
-
-// DisableService disables a service from starting on boot.
-func DisableService(name string) error {
-	if !IsKnownService(name) {
-		return fmt.Errorf("unknown service: %s", name)
-	}
-	return execCommandFn("systemctl", "disable", name).Run()
-}
