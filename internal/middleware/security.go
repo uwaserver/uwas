@@ -24,7 +24,7 @@ var defaultBlockedPaths = []string{
 	".editorconfig", ".gitignore",
 }
 
-// wafURLPatterns — checked against URL + query string only.
+// wafURLPatterns are checked against URL + query string only.
 var wafURLPatterns = []*regexp.Regexp{
 	// SQL injection
 	regexp.MustCompile(`(?i)(union\s+select|insert\s+into|delete\s+from|drop\s+table|alter\s+table)`),
@@ -46,22 +46,21 @@ var wafURLPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)php://(input|filter|data)`),
 }
 
-// wafBodyPatterns — checked against POST body only.
+// wafBodyPatterns are checked against POST body only.
 // Intentionally less strict than URL patterns:
-//   - No <script> check (CMS editors, email templates submit HTML)
-//   - No sleep()/benchmark() (code playgrounds, JS snippets are legitimate)
-//   - Only patterns that are almost certainly attacks in form data
+//   - No <script> check; CMS editors and email templates submit HTML.
+//   - No sleep()/benchmark(); code playgrounds and JS snippets are legitimate.
+//   - Only patterns that are almost certainly attacks in form data.
 var wafBodyPatterns = []*regexp.Regexp{
-	// XSS protocol execution (javascript:alert(...) — never legitimate in form data)
+	// XSS protocol execution is never legitimate in form data.
 	regexp.MustCompile(`(?i)(javascript|vbscript)\s*:\s*[a-z]`),
-	// SQL injection — multi-word patterns have very low false positive rate
+	// SQL injection multi-word patterns have very low false positive rate.
 	regexp.MustCompile(`(?i)(union\s+select|drop\s+table|alter\s+table)`),
-	// PHP stream wrappers — never legitimate in form submissions
+	// PHP stream wrappers are never legitimate in form submissions.
 	regexp.MustCompile(`(?i)php://(input|filter|data)`),
 }
 
 // SecurityGuard blocks access to sensitive paths (global middleware).
-// Only handles blocked path checks — WAF scanning is per-domain via DomainWAF.
 func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecurityStats) Middleware {
 	allBlocked := make([]string, 0, len(defaultBlockedPaths)+len(blockedPaths))
 	allBlocked = append(allBlocked, defaultBlockedPaths...)
@@ -71,7 +70,6 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
 
-			// Check blocked paths
 			for _, blocked := range allBlocked {
 				if strings.Contains(path, blocked) {
 					if stats != nil {
@@ -92,10 +90,8 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 	}
 }
 
-// DomainWAFGuard returns a predicate closure equivalent to DomainWAF but
-// callable directly from handleRequest without wrapping a one-shot
-// handler. Returns true when the request should proceed. Refs:
-// refactor.md P2/P3.
+// DomainWAFGuard returns a predicate closure for per-domain WAF checks.
+// It returns true when the request should proceed.
 func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecurityStats) func(w http.ResponseWriter, r *http.Request) bool {
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		path := r.URL.Path
@@ -104,6 +100,7 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecuritySta
 				return true
 			}
 		}
+
 		fullURI := path
 		if r.URL.RawQuery != "" {
 			fullURI += "?" + r.URL.RawQuery
@@ -121,6 +118,7 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecuritySta
 			}
 			return false
 		}
+
 		if r.Body != nil && (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") {
 			ct := r.Header.Get("Content-Type")
 			if isAPContentType(ct) {
@@ -141,86 +139,14 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecuritySta
 				}
 			}
 		}
+
 		return true
 	}
 }
 
-// DomainWAF performs WAF URL and body scanning for a specific domain.
-// Content-Type aware: skips body scanning for JSON, multipart, and XML payloads.
-// bypassPaths is a list of path prefixes that skip WAF entirely.
-func DomainWAF(log *logger.Logger, bypassPaths []string, stats *SecurityStats) Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path := r.URL.Path
-
-			// Check bypass paths
-			for _, prefix := range bypassPaths {
-				if strings.HasPrefix(path, prefix) {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-
-			// Check URL + query
-			fullURI := path
-			if r.URL.RawQuery != "" {
-				fullURI += "?" + r.URL.RawQuery
-			}
-			decodedURI, _ := url.QueryUnescape(fullURI)
-
-			if matchWAFURL(fullURI, decodedURI) {
-				if stats != nil {
-					stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
-				}
-				log.Warn("WAF blocked request (URL)", "path", path, "remote", r.RemoteAddr)
-				if r.Header.Get("Expect") != "" {
-					// Client is waiting for 100 Continue — send 417 so it knows not to send body
-					http.Error(w, "417 Expectation Failed", http.StatusExpectationFailed)
-				} else {
-					http.Error(w, "403 Forbidden", http.StatusForbidden)
-				}
-				return
-			}
-
-			// Check request body (POST/PUT/PATCH) — first 64KB
-			if r.Body != nil && (r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") {
-				// Skip body scanning for structured API/webhook payloads
-				// These content types carry legitimate code/data that triggers false positives
-				ct := r.Header.Get("Content-Type")
-				if isAPContentType(ct) {
-					next.ServeHTTP(w, r)
-					return
-				}
-
-				bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyScan))
-				if err == nil && len(bodyBytes) > 0 {
-					// Restore FULL body: scanned prefix + unread remainder
-					r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), r.Body))
-					body := string(bodyBytes)
-					decodedBody, _ := url.QueryUnescape(body)
-
-					if matchWAFBody(body, decodedBody) {
-						if stats != nil {
-							stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
-						}
-						log.Warn("WAF blocked request (body)", "path", path, "remote", r.RemoteAddr)
-						http.Error(w, "403 Forbidden", http.StatusForbidden)
-						return
-					}
-				}
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // isAPContentType returns true for content types that should skip WAF body scanning.
-// JSON APIs, multipart uploads, and XML webhooks may legitimately contain
-// SQL keywords, HTML tags, and code snippets in their payloads.
 func isAPContentType(ct string) bool {
 	ct = strings.ToLower(ct)
-	// Strip parameters like charset, boundary, etc.
 	if idx := strings.Index(ct, ";"); idx != -1 {
 		ct = ct[:idx]
 	}
@@ -238,11 +164,7 @@ func isAPContentType(ct string) bool {
 		"application/graphql+json":
 		return true
 	}
-	// Also skip for any vendor-specific JSON types (e.g., application/vnd.api+json)
-	if strings.HasSuffix(ct, "+json") || strings.HasSuffix(ct, "+xml") {
-		return true
-	}
-	return false
+	return strings.HasSuffix(ct, "+json") || strings.HasSuffix(ct, "+xml")
 }
 
 func matchWAFURL(raw, decoded string) bool {
