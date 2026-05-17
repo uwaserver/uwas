@@ -207,22 +207,6 @@ func respond500(w http.ResponseWriter, resp *AppDeployResponse, log string) {
 	jsonResponse(w, resp)
 }
 
-// gitEnv builds the environment for a git command, injecting an SSH
-// command override when a private key is needed. For now we don't
-// support per-deploy SSH keys — operators with private repos use the
-// server's deploy key in ~root/.ssh/. This hook is here for the
-// follow-up that adds per-app credentials.
-func gitEnv(_ AppDeployRequest) []string {
-	env := os.Environ()
-	// Non-interactive: never prompt for credentials. A repo that
-	// needs auth and doesn't have it should fail fast, not hang.
-	env = append(env,
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=/bin/true",
-	)
-	return env
-}
-
 // runStep executes a command + args (no shell), tees stdout/stderr
 // into `out`, and honors the context's timeout. The `wd` argument
 // chooses the working directory; empty means "current directory".
@@ -422,7 +406,6 @@ func runDeployCore(
 
 // defaultGitEnv is the environment we hand to git — no interactive
 // prompts (would hang) and no askpass fallback (would also hang).
-// Same as gitEnv() but doesn't require a AppDeployRequest.
 func defaultGitEnv() []string {
 	env := os.Environ()
 	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/true")

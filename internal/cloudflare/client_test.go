@@ -99,6 +99,8 @@ func newTestClient(t *testing.T) (*Client, *cfState) {
 	return c, state
 }
 
+func (c *Client) SetBaseURL(u string) { c.baseURL = u }
+
 func TestCreateAndDeleteTunnel(t *testing.T) {
 	c, state := newTestClient(t)
 	tn, err := c.CreateTunnel("my-tunnel")

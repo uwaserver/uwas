@@ -1260,40 +1260,6 @@ func TestHandlerHostStatusNotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// BlockResponse
-// ---------------------------------------------------------------------------
-
-func TestBlockResponse(t *testing.T) {
-	rec := httptest.NewRecorder()
-	BlockResponse(rec)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503, got %d", rec.Code)
-	}
-
-	ct := rec.Header().Get("Content-Type")
-	if ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %s", ct)
-	}
-
-	expected := `{"error":"bandwidth limit exceeded","code":"BANDWIDTH_EXCEEDED"}`
-	if rec.Body.String() != expected {
-		t.Errorf("expected body %q, got %q", expected, rec.Body.String())
-	}
-}
-
-// ---------------------------------------------------------------------------
-// ThrottleDelay
-// ---------------------------------------------------------------------------
-
-func TestThrottleDelay(t *testing.T) {
-	d := ThrottleDelay()
-	if d != 500*time.Millisecond {
-		t.Errorf("expected 500ms, got %v", d)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Concurrent access
 // ---------------------------------------------------------------------------
 

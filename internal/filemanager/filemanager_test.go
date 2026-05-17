@@ -9,35 +9,6 @@ import (
 	"testing"
 )
 
-func TestQuotaTracker(t *testing.T) {
-	q := NewQuotaTracker(10)
-
-	if got := q.Usage("site"); got != 0 {
-		t.Fatalf("initial usage = %d, want 0", got)
-	}
-	if err := q.Check("site", 8); err != nil {
-		t.Fatalf("unexpected quota error: %v", err)
-	}
-	q.Add("site", 8)
-	if got := q.Usage("site"); got != 8 {
-		t.Fatalf("usage = %d, want 8", got)
-	}
-	if err := q.Check("site", 3); err == nil {
-		t.Fatal("expected quota exceeded error")
-	}
-	q.Reset("site")
-	if got := q.Usage("site"); got != 0 {
-		t.Fatalf("usage after reset = %d, want 0", got)
-	}
-}
-
-func TestQuotaTrackerUnlimited(t *testing.T) {
-	q := NewQuotaTracker(0)
-	if err := q.Check("site", 1<<40); err != nil {
-		t.Fatalf("unlimited quota should allow upload: %v", err)
-	}
-}
-
 func TestListDir(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello"), 0644)

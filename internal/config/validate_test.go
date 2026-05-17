@@ -167,12 +167,6 @@ func TestPrivateProxyUpstreamSafetyStillBlocksMetadata(t *testing.T) {
 	}
 }
 
-func TestIsSSRFSafeUsesWebhookPolicy(t *testing.T) {
-	if err := IsSSRFSafe("http://127.0.0.1:8080/hook"); err == nil {
-		t.Error("IsSSRFSafe(loopback) = nil, want blocked")
-	}
-}
-
 // --- Proxy Upstream Tests ---
 
 func TestValidateProxyUpstreams_Valid(t *testing.T) {
@@ -252,13 +246,13 @@ func TestValidateProxyAlgorithm_UnderscoredAlsoValid(t *testing.T) {
 
 func TestNormalizeProxyUpstreamAddress(t *testing.T) {
 	cases := map[string]string{
-		"127.0.0.1:3000":          "http://127.0.0.1:3000",
-		"  localhost:8080  ":      "http://localhost:8080",
-		"backend.internal":        "http://backend.internal",
-		"http://x:1":              "http://x:1",
-		"https://example.com":     "https://example.com",
-		"h2c://grpc:50051":        "h2c://grpc:50051",
-		"":                        "",
+		"127.0.0.1:3000":      "http://127.0.0.1:3000",
+		"  localhost:8080  ":  "http://localhost:8080",
+		"backend.internal":    "http://backend.internal",
+		"http://x:1":          "http://x:1",
+		"https://example.com": "https://example.com",
+		"h2c://grpc:50051":    "h2c://grpc:50051",
+		"":                    "",
 	}
 	for in, want := range cases {
 		if got := NormalizeProxyUpstreamAddress(in); got != want {

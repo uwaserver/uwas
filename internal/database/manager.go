@@ -636,11 +636,6 @@ func runMySQL(sql string) (string, error) {
 	return runMySQLOnHost(sql, "", 0, "")
 }
 
-// RunMySQLOnDocker runs SQL on a Docker container's MySQL via TCP port.
-func RunMySQLOnDocker(sql, containerName string, port int, rootPass string) (string, error) {
-	return runMySQLOnHost(sql, fmt.Sprintf("127.0.0.1:%d", port), port, rootPass)
-}
-
 func runMySQLOnHost(sql, host string, port int, password string) (string, error) {
 	// Ensure socket directory exists for native installs
 	if host == "" {

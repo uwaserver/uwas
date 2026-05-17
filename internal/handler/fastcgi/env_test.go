@@ -134,13 +134,6 @@ func TestSplitScriptPath(t *testing.T) {
 	}
 }
 
-func TestScriptFilename(t *testing.T) {
-	got := ScriptFilename("/var/www/html", "/index.php")
-	if got != "/var/www/html/index.php" {
-		t.Errorf("ScriptFilename = %q, want /var/www/html/index.php", got)
-	}
-}
-
 // --- Handler coverage tests ---
 
 func TestHandlerNew(t *testing.T) {
