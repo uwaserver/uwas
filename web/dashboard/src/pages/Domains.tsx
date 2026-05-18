@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, type ClipboardEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import PinModal from '@/components/PinModal';
 import { setPinCode, clearPinCode } from '@/lib/api';
@@ -23,7 +23,7 @@ import { useConfirm } from '@/components/ConfirmModal';
 interface DomainFormState {
   host: string;
   ip: string;
-  aliases: string;
+  aliases: string[];
   type: string;
   root: string;
   ssl: string;
@@ -61,7 +61,7 @@ const sslModes = ['auto', 'manual', 'off'] as const;
 const emptyForm: DomainFormState = {
   host: '',
   ip: '',
-  aliases: '',
+  aliases: [],
   type: 'static',
   root: '',
   ssl: 'auto',
@@ -77,6 +77,26 @@ const emptyForm: DomainFormState = {
   wafEnabled: false,
   htaccessEnabled: false,
 };
+
+function normalizeAlias(value: string) {
+  return value.trim().toLowerCase().replace(/\.$/, '');
+}
+
+function splitAliasInput(value: string) {
+  return value.split(/[\s,;]+/).map(normalizeAlias).filter(Boolean);
+}
+
+function addAliases(current: string[], input: string, host?: string) {
+  const hostKey = normalizeAlias(host ?? '');
+  const seen = new Set(current.map(normalizeAlias));
+  const next = [...current];
+  for (const alias of splitAliasInput(input)) {
+    if (alias === hostKey || seen.has(alias)) continue;
+    seen.add(alias);
+    next.push(alias);
+  }
+  return next;
+}
 
 interface TemplateConfig {
   label: string;
@@ -220,6 +240,67 @@ function StatusDot({ active }: { active: boolean }) {
       <span className={`inline-block h-2 w-2 rounded-full ${active ? 'bg-emerald-400' : 'bg-red-400'}`} />
       <span className={`text-xs ${active ? 'text-emerald-400' : 'text-red-400'}`}>{active ? 'Active' : 'Inactive'}</span>
     </span>
+  );
+}
+
+function AliasChipsInput({
+  aliases,
+  host,
+  onChange,
+  placeholder,
+}: {
+  aliases: string[];
+  host?: string;
+  onChange: (aliases: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const commit = (value = draft) => {
+    const next = addAliases(aliases, value, host);
+    onChange(next);
+    setDraft('');
+  };
+  const remove = (alias: string) => onChange(aliases.filter(a => normalizeAlias(a) !== normalizeAlias(alias)));
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (['Enter', 'Tab', ',', ';'].includes(e.key)) {
+      e.preventDefault();
+      commit();
+    }
+  };
+  const onPaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text');
+    if (/[\s,;]/.test(text)) {
+      e.preventDefault();
+      commit(text);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5 focus-within:border-blue-500/60">
+        {aliases.map(alias => (
+          <span key={alias} className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-2 py-1 font-mono text-xs text-blue-300">
+            {alias}
+            <button type="button" onClick={() => remove(alias)} className="text-blue-300/70 hover:text-red-300" title="Remove alias">
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => draft.trim() && commit()}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          placeholder={aliases.length === 0 ? placeholder : ''}
+          className="min-w-[180px] flex-1 bg-transparent px-1 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      <p className="text-[10px] leading-4 text-muted-foreground">
+        Aliases serve the same site and auto SSL issues a certificate for each one. For a canonical hostname, create a redirect domain with 301 instead.
+      </p>
+    </div>
   );
 }
 
@@ -471,7 +552,7 @@ export default function Domains() {
       const editForm: DomainFormState = {
         host: d.host,
         ip: d.ip ?? '',
-        aliases: d.aliases?.join(', ') ?? '',
+        aliases: d.aliases ?? [],
         type: d.type,
         root: d.root || '',
         ssl: d.ssl?.mode ?? 'off',
@@ -519,8 +600,8 @@ export default function Domains() {
     };
 
     if (form.ip) payload.ip = form.ip;
-    if (form.aliases.trim()) {
-      payload.aliases = form.aliases.split(',').map(s => s.trim()).filter(Boolean);
+    if (form.aliases.length > 0) {
+      payload.aliases = form.aliases;
     }
 
     // Only send type-specific fields
@@ -810,10 +891,13 @@ export default function Domains() {
                       placeholder="example.com" required autoFocus disabled={!!editingHost}
                       className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
                   </FormField>
-                  <FormField label="Aliases (comma-separated)" htmlFor="add-aliases">
-                    <input id="add-aliases" type="text" value={form.aliases} onChange={e => patchField('aliases', e.target.value)}
-                      placeholder="www.example.com, blog.example.com"
-                      className={inputCls} />
+                  <FormField label="Aliases" htmlFor="add-aliases">
+                    <AliasChipsInput
+                      aliases={form.aliases}
+                      host={form.host}
+                      onChange={aliases => patchField('aliases', aliases)}
+                      placeholder="www.example.com"
+                    />
                   </FormField>
                 </div>
 

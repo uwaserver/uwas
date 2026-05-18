@@ -665,6 +665,25 @@ domains:
 	}
 }
 
+func TestValidationApexAndWWWAreDistinctHostnames(t *testing.T) {
+	yaml := `
+domains:
+  - host: "example.com"
+    root: /var/www/example
+    type: static
+    ssl:
+      mode: off
+  - host: "www.example.com"
+    root: /var/www/www-example
+    type: static
+    ssl:
+      mode: off
+`
+	if _, err := loadStringConfig(yaml); err != nil {
+		t.Fatalf("example.com and www.example.com must not be treated as duplicates: %v", err)
+	}
+}
+
 func TestValidationSSLManualMissingCert(t *testing.T) {
 	yaml := `
 domains:

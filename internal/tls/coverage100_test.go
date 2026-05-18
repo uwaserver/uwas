@@ -810,6 +810,38 @@ func TestObtainCertsSuccessful(t *testing.T) {
 	}
 }
 
+func TestObtainCertsIncludesAliases(t *testing.T) {
+	log := logger.New("error", "text")
+	dir := t.TempDir()
+	cfg := config.ACMEConfig{
+		Email:   "test@example.com",
+		CAURL:   "https://acme.example.com/directory",
+		Storage: dir,
+	}
+	domains := []config.Domain{
+		{Host: "example.com", Aliases: []string{"www.example.com", "blog.example.com"}, SSL: config.SSLConfig{Mode: "auto"}},
+	}
+	m := NewManager(cfg, domains, log)
+
+	issued := map[string]bool{}
+	m.acmeObtainFunc = func(ctx context.Context, doms []string) (*tls.Certificate, []byte, []byte, error) {
+		issued[doms[0]] = true
+		cert, certPEM, keyPEM := generateTestCert(t, doms[0])
+		return cert, certPEM, keyPEM, nil
+	}
+
+	m.ObtainCerts(context.Background())
+
+	for _, host := range []string{"example.com", "www.example.com", "blog.example.com"} {
+		if !issued[host] {
+			t.Fatalf("expected separate certificate request for %s; issued=%v", host, issued)
+		}
+		if !m.HasCert(host) {
+			t.Fatalf("expected loaded certificate for %s", host)
+		}
+	}
+}
+
 // --- ObtainCerts: retry with some failures then success ---
 
 func TestObtainCertsRetryWithEventualSuccess(t *testing.T) {

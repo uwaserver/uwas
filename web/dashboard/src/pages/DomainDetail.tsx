@@ -854,6 +854,14 @@ function RoutesEditor({ host, detail, onSave, saving }: {
   });
   const [aliases, setAliases] = useState<string[]>(() => detail.aliases || []);
   const [newAlias, setNewAlias] = useState('');
+  const addAlias = (value: string) => {
+    const hostKey = (host || '').trim().toLowerCase().replace(/\.$/, '');
+    const nextAlias = value.trim().toLowerCase().replace(/\.$/, '');
+    if (!nextAlias || nextAlias === hostKey) return;
+    if (aliases.some(a => a.trim().toLowerCase().replace(/\.$/, '') === nextAlias)) return;
+    setAliases([...aliases, nextAlias]);
+    setNewAlias('');
+  };
 
   const addRoute = () => setRoutes([...routes, {
     match: '/',
@@ -915,7 +923,9 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       {/* Aliases */}
       <div className="rounded-lg border border-border bg-card p-5">
         <h3 className="text-sm font-semibold text-card-foreground mb-1">Domain Aliases</h3>
-        <p className="text-xs text-muted-foreground mb-3">Additional hostnames that point to this domain (e.g. www.{host})</p>
+        <p className="text-xs text-muted-foreground mb-3">
+          Aliases serve this same site and get their own auto SSL certificate. Prefer a 301 redirect domain when you want one canonical hostname.
+        </p>
         <div className="flex flex-wrap gap-2 mb-3">
           {aliases.map((a, i) => (
             <span key={i} className="flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs text-foreground">
@@ -929,9 +939,9 @@ function RoutesEditor({ host, detail, onSave, saving }: {
         </div>
         <div className="flex gap-2">
           <input value={newAlias} onChange={e => setNewAlias(e.target.value)} placeholder={`www.${host}`}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (newAlias.trim()) { setAliases([...aliases, newAlias.trim()]); setNewAlias(''); } } }}
+            onKeyDown={e => { if (['Enter', ',', ';', 'Tab'].includes(e.key)) { e.preventDefault(); addAlias(newAlias); } }}
             className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono text-foreground outline-none focus:border-blue-500/50" />
-          <button type="button" onClick={() => { if (newAlias.trim()) { setAliases([...aliases, newAlias.trim()]); setNewAlias(''); } }}
+          <button type="button" onClick={() => addAlias(newAlias)}
             className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent/80">
             <Plus size={12} />
           </button>

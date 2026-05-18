@@ -67,6 +67,7 @@ func (s *Server) registerDomainRoutes() {
 
 	// Unknown-host tracker (lives logically with domains).
 	s.mux.HandleFunc("GET /api/v1/unknown-domains", s.handleUnknownDomainsList)
+	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/alias", s.handleUnknownDomainsAlias)
 	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/block", s.handleUnknownDomainsBlock)
 	s.mux.HandleFunc("POST /api/v1/unknown-domains/{host}/unblock", s.handleUnknownDomainsUnblock)
 	s.mux.HandleFunc("DELETE /api/v1/unknown-domains/{host}", s.handleUnknownDomainsDismiss)
