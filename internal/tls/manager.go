@@ -140,8 +140,10 @@ func (m *Manager) LoadManualCerts() {
 				"domain", d.Host, "error", err)
 			continue
 		}
-		m.certs.Store(strings.ToLower(d.Host), &cert)
-		m.logger.Info("loaded manual certificate", "domain", d.Host)
+		for _, host := range tlsHostsForDomain(d) {
+			m.certs.Store(host, &cert)
+		}
+		m.logger.Info("loaded manual certificate", "domain", d.Host, "aliases", len(d.Aliases))
 	}
 }
 
@@ -193,7 +195,11 @@ func buildDomainAllowlist(domains []config.Domain) *domainAllowlist {
 			a.exact[h] = struct{}{}
 		}
 		for _, alias := range d.Aliases {
-			a.exact[strings.ToLower(alias)] = struct{}{}
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" {
+				continue
+			}
+			a.exact[alias] = struct{}{}
 		}
 	}
 	return a
@@ -347,17 +353,19 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 		return
 	}
 
-	// Collect domains that need certificates.
+	// Collect every auto-SSL hostname that needs a certificate. Aliases get
+	// their own certs so SNI works cleanly for both example.com and www.example.com.
 	var pending []string
 	for _, d := range m.snapshotDomains() {
 		if d.SSL.Mode != "auto" {
 			continue
 		}
-		host := strings.ToLower(d.Host)
-		if _, ok := m.certs.Load(host); ok {
-			continue
+		for _, host := range tlsHostsForDomain(d) {
+			if _, ok := m.certs.Load(host); ok {
+				continue
+			}
+			pending = append(pending, host)
 		}
-		pending = append(pending, host)
 	}
 
 	backoff := 30 * time.Second
@@ -388,6 +396,23 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 	if len(pending) > 0 {
 		m.logger.Warn("some certificates could not be obtained after retries", "hosts", pending)
 	}
+}
+
+func tlsHostsForDomain(d config.Domain) []string {
+	seen := make(map[string]struct{}, 1+len(d.Aliases))
+	hosts := make([]string, 0, 1+len(d.Aliases))
+	for _, host := range append([]string{d.Host}, d.Aliases...) {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	return hosts
 }
 
 // SetOnCertRenewed sets a callback that fires after a certificate is renewed.

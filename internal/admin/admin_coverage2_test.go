@@ -920,6 +920,48 @@ func TestUnknownDomainsDismissSuccess(t *testing.T) {
 	}
 }
 
+func TestUnknownDomainsAliasSuccess(t *testing.T) {
+	s := testServer()
+	tracker := router.NewUnknownHostTracker()
+	tracker.Record("www.example.com")
+	tracker.Block("www.example.com")
+	s.SetUnknownHostTracker(tracker)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/unknown-domains/www.example.com/alias", strings.NewReader(`{"domain":"example.com"}`))
+	req.SetPathValue("host", "www.example.com")
+	s.handleUnknownDomainsAlias(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if got := s.config.Domains[0].Aliases; len(got) != 1 || got[0] != "www.example.com" {
+		t.Fatalf("aliases = %#v, want [www.example.com]", got)
+	}
+	if tracker.IsBlocked("www.example.com") {
+		t.Fatal("aliased unknown host should be unblocked")
+	}
+	if got := tracker.List(); len(got) != 0 {
+		t.Fatalf("unknown host should be dismissed, got %#v", got)
+	}
+}
+
+func TestUnknownDomainsAliasRejectsExistingHostname(t *testing.T) {
+	s := testServer()
+	s.config.Domains[1].Aliases = []string{"www.example.com"}
+	s.SetUnknownHostTracker(router.NewUnknownHostTracker())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/unknown-domains/www.example.com/alias", strings.NewReader(`{"domain":"example.com"}`))
+	req.SetPathValue("host", "www.example.com")
+	s.handleUnknownDomainsAlias(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body: %s", rec.Code, rec.Body.String())
+	}
+	if len(s.config.Domains[0].Aliases) != 0 {
+		t.Fatalf("target aliases changed unexpectedly: %#v", s.config.Domains[0].Aliases)
+	}
+}
+
 // =============================================================================
 // Security stats handlers
 // =============================================================================
@@ -4111,4 +4153,3 @@ func TestHandleDockerDBCreate_InvalidJSON(t *testing.T) {
 		t.Errorf("status = %d, want 400 or 503", rec.Code)
 	}
 }
-

@@ -118,16 +118,21 @@ func Validate(cfg *Config) error {
 			continue
 		}
 
-		if hosts[d.Host] {
+		hostKey := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d.Host), "."))
+		if hosts[hostKey] {
 			errs = append(errs, fmt.Sprintf("%s: duplicate host %q", prefix, d.Host))
 		}
-		hosts[d.Host] = true
+		hosts[hostKey] = true
 
 		for _, alias := range d.Aliases {
-			if hosts[alias] {
+			aliasKey := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(alias), "."))
+			if aliasKey == "" {
+				continue
+			}
+			if hosts[aliasKey] {
 				errs = append(errs, fmt.Sprintf("%s: duplicate alias %q", prefix, alias))
 			}
-			hosts[alias] = true
+			hosts[aliasKey] = true
 		}
 
 		if !DomainType(d.Type).IsValid() {

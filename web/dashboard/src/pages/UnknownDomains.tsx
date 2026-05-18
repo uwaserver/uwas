@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldAlert, ShieldOff, ShieldCheck, Trash2, RefreshCw } from 'lucide-react';
+import { Link2, ShieldAlert, ShieldOff, ShieldCheck, Trash2, RefreshCw } from 'lucide-react';
 import {
   fetchUnknownDomains, blockUnknownDomain, unblockUnknownDomain, dismissUnknownDomain,
-  fetchFeatures,
-  type UnknownDomainEntry, type FeatureStatus,
+  fetchFeatures, fetchDomains, aliasUnknownDomain,
+  type UnknownDomainEntry, type FeatureStatus, type DomainData,
 } from '@/lib/api';
 import FeatureBanner from '@/components/FeatureBanner';
 import { usePolling } from '@/hooks/usePolling';
@@ -28,6 +28,9 @@ export default function UnknownDomains() {
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
+  const [domains, setDomains] = useState<DomainData[]>([]);
+  const [aliasHost, setAliasHost] = useState('');
+  const [aliasTarget, setAliasTarget] = useState('');
 
   const load = useCallback(() => {
     fetchUnknownDomains()
@@ -38,6 +41,10 @@ export default function UnknownDomains() {
 
   useEffect(() => {
     fetchFeatures().then(f => setFeatureStatus(f.unknown_domains ?? null)).catch(() => {});
+    fetchDomains().then(d => {
+      setDomains(d ?? []);
+      if ((d ?? []).length > 0) setAliasTarget((d ?? [])[0].host);
+    }).catch(() => {});
   }, []);
   usePolling(load, 10_000);
 
@@ -60,6 +67,21 @@ export default function UnknownDomains() {
 
   const blocked = entries.filter(e => e.blocked);
   const unblocked = entries.filter(e => !e.blocked);
+  const attachAlias = async () => {
+    if (!aliasHost || !aliasTarget) return;
+    setActing(aliasHost);
+    setError('');
+    try {
+      await aliasUnknownDomain(aliasHost, aliasTarget);
+      setAliasHost('');
+      load();
+      fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
+    } catch (e) {
+      setError(`${aliasHost}: ${(e as Error).message}`);
+    } finally {
+      setActing(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -86,6 +108,41 @@ export default function UnknownDomains() {
       {error && (
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">
           {error}
+        </div>
+      )}
+
+      {aliasHost && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-blue-200">
+                Attach <span className="font-mono">{aliasHost}</span> as an alias
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                The alias will share the selected site and auto SSL will request a separate certificate for it.
+              </p>
+            </div>
+            <select
+              value={aliasTarget}
+              onChange={e => setAliasTarget(e.target.value)}
+              className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+            >
+              {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={attachAlias}
+                disabled={!aliasTarget || acting === aliasHost}
+                className="rounded-md bg-blue-500 px-3 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
+              >
+                Attach
+              </button>
+              <button type="button" onClick={() => setAliasHost('')} className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-card">
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -131,6 +188,18 @@ export default function UnknownDomains() {
                     <td className="px-4 py-3 text-muted-foreground">{timeAgo(e.last_seen)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setAliasHost(e.host);
+                            if (!aliasTarget && domains.length > 0) setAliasTarget(domains[0].host);
+                          }}
+                          disabled={acting === e.host || domains.length === 0}
+                          className="flex items-center gap-1 rounded-md bg-blue-500/15 px-2.5 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/25 disabled:opacity-50"
+                          title="Attach as alias to an existing domain"
+                        >
+                          <Link2 size={13} />
+                          Alias
+                        </button>
                         <button
                           onClick={() => act(e.host, blockUnknownDomain)}
                           disabled={acting === e.host}
@@ -186,6 +255,18 @@ export default function UnknownDomains() {
                     <td className="px-4 py-3 text-muted-foreground">{timeAgo(e.last_seen)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setAliasHost(e.host);
+                            if (!aliasTarget && domains.length > 0) setAliasTarget(domains[0].host);
+                          }}
+                          disabled={acting === e.host || domains.length === 0}
+                          className="flex items-center gap-1 rounded-md bg-blue-500/15 px-2.5 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/25 disabled:opacity-50"
+                          title="Attach as alias to an existing domain"
+                        >
+                          <Link2 size={13} />
+                          Alias
+                        </button>
                         <button
                           onClick={() => act(e.host, unblockUnknownDomain)}
                           disabled={acting === e.host}

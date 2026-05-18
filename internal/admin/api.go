@@ -2145,6 +2145,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
 	}
+	normalizeDomainHostnames(&d)
 
 	// Check domain permissions for resellers
 	if s.authMgr != nil {
@@ -2197,12 +2198,13 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 
 	s.configMu.Lock()
 
-	// Check for duplicates.
-	for _, existing := range s.config.Domains {
-		if strings.EqualFold(existing.Host, d.Host) {
+	// Check for duplicate hostnames across hosts and aliases. This is exact
+	// hostname matching only: example.com and www.example.com are distinct.
+	for _, host := range domainHostnames(d) {
+		if conflict := findDomainHostnameConflict(s.config.Domains, -1, host); conflict != "" {
 			s.configMu.Unlock()
-			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate)", false)
-			jsonError(w, "domain already exists", http.StatusConflict)
+			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate hostname)", false)
+			jsonError(w, fmt.Sprintf("hostname %q is already configured on %s", host, conflict), http.StatusConflict)
 			return
 		}
 	}
@@ -2545,6 +2547,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	normalizeDomainHostnames(&d)
 	if d.Host != "" && !isValidHostname(d.Host) {
 		s.recordAuditR(r, "domain.update", "domain: "+host+" (invalid hostname)", false)
 		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
@@ -2636,6 +2639,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	for i, existing := range s.config.Domains {
 		if existing.Host == host {
 			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
+			normalizeDomainHostnames(&merged)
 
 			if !isValidHostname(merged.Host) {
 				s.configMu.Unlock()
@@ -2651,6 +2655,14 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 						jsonError(w, "domain already exists", http.StatusConflict)
 						return
 					}
+				}
+			}
+			for _, candidate := range domainHostnames(merged) {
+				if conflict := findDomainHostnameConflict(s.config.Domains, i, candidate); conflict != "" {
+					s.configMu.Unlock()
+					s.recordAuditR(r, "domain.update", "domain: "+host+" (duplicate hostname)", false)
+					jsonError(w, fmt.Sprintf("hostname %q is already configured on %s", candidate, conflict), http.StatusConflict)
+					return
 				}
 			}
 			if err := validateDomainUpdateConfig(&merged); err != nil {
@@ -2797,6 +2809,8 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 
 	type certInfo struct {
 		Host     string `json:"host"`
+		Domain   string `json:"domain,omitempty"`
+		Alias    bool   `json:"alias,omitempty"`
 		SSLMode  string `json:"ssl_mode"`
 		Status   string `json:"status"`
 		Issuer   string `json:"issuer"`
@@ -2806,47 +2820,51 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 
 	certs := make([]certInfo, 0)
 	for _, d := range s.config.Domains {
-		ci := certInfo{
-			Host:    d.Host,
-			SSLMode: d.SSL.Mode,
-		}
-		switch d.SSL.Mode {
-		case "off":
-			ci.Status = "none"
-		case "auto":
-			// Check real cert status from TLS manager.
-			if s.tlsMgr != nil {
-				if info := s.tlsMgr.CertStatus(d.Host); info != nil {
-					ci.Status = "active"
-					ci.Issuer = info.Issuer
-					ci.Expiry = info.Expiry.Format(time.RFC3339)
-					ci.DaysLeft = info.DaysLeft
-					if info.DaysLeft <= 0 {
-						ci.Status = "expired"
+		for _, host := range domainHostnames(d) {
+			ci := certInfo{
+				Host:    host,
+				Domain:  d.Host,
+				Alias:   host != d.Host,
+				SSLMode: d.SSL.Mode,
+			}
+			switch d.SSL.Mode {
+			case "off":
+				ci.Status = "none"
+			case "auto":
+				// Check real cert status from TLS manager.
+				if s.tlsMgr != nil {
+					if info := s.tlsMgr.CertStatus(host); info != nil {
+						ci.Status = "active"
+						ci.Issuer = info.Issuer
+						ci.Expiry = info.Expiry.Format(time.RFC3339)
+						ci.DaysLeft = info.DaysLeft
+						if info.DaysLeft <= 0 {
+							ci.Status = "expired"
+						}
+					} else {
+						ci.Status = "pending"
+						ci.Issuer = "Let's Encrypt"
 					}
 				} else {
 					ci.Status = "pending"
 					ci.Issuer = "Let's Encrypt"
 				}
-			} else {
-				ci.Status = "pending"
-				ci.Issuer = "Let's Encrypt"
-			}
-		case "manual":
-			ci.Status = "active"
-			ci.Issuer = "Manual"
-			if s.tlsMgr != nil {
-				if info := s.tlsMgr.CertStatus(d.Host); info != nil {
-					ci.Issuer = info.Issuer
-					ci.Expiry = info.Expiry.Format(time.RFC3339)
-					ci.DaysLeft = info.DaysLeft
-					if info.DaysLeft <= 0 {
-						ci.Status = "expired"
+			case "manual":
+				ci.Status = "active"
+				ci.Issuer = "Manual"
+				if s.tlsMgr != nil {
+					if info := s.tlsMgr.CertStatus(host); info != nil {
+						ci.Issuer = info.Issuer
+						ci.Expiry = info.Expiry.Format(time.RFC3339)
+						ci.DaysLeft = info.DaysLeft
+						if info.DaysLeft <= 0 {
+							ci.Status = "expired"
+						}
 					}
 				}
 			}
+			certs = append(certs, ci)
 		}
-		certs = append(certs, ci)
 	}
 	jsonResponse(w, certs)
 }
@@ -2883,6 +2901,86 @@ func (s *Server) handleUnknownDomainsList(w http.ResponseWriter, r *http.Request
 		return
 	}
 	jsonResponse(w, s.unknownHT.List())
+}
+
+func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Request) {
+	host := normalizeDomainHostname(r.PathValue("host"))
+
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			s.recordAuditR(r, "unknown_domain.alias", "host: "+host+" (forbidden)", false)
+			jsonError(w, "forbidden: admin access required", http.StatusForbidden)
+			return
+		}
+	}
+	if !isValidHostname(host) {
+		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	target := normalizeDomainHostname(req.Domain)
+	if target == "" {
+		jsonError(w, "domain is required", http.StatusBadRequest)
+		return
+	}
+
+	s.configMu.Lock()
+	targetIndex := -1
+	for i, d := range s.config.Domains {
+		if normalizeDomainHostname(d.Host) == target {
+			targetIndex = i
+			break
+		}
+	}
+	if targetIndex == -1 {
+		s.configMu.Unlock()
+		s.recordAuditR(r, "unknown_domain.alias", "host: "+host+" -> "+target+" (target not found)", false)
+		jsonError(w, "target domain not found", http.StatusNotFound)
+		return
+	}
+
+	if host == normalizeDomainHostname(s.config.Domains[targetIndex].Host) {
+		s.configMu.Unlock()
+		if s.unknownHT != nil {
+			s.unknownHT.Unblock(host)
+			s.unknownHT.Dismiss(host)
+		}
+		jsonResponse(w, map[string]string{"status": "already_primary", "host": host, "domain": target})
+		return
+	}
+	if conflict := findDomainHostnameConflict(s.config.Domains, targetIndex, host); conflict != "" {
+		s.configMu.Unlock()
+		s.recordAuditR(r, "unknown_domain.alias", "host: "+host+" (duplicate hostname)", false)
+		jsonError(w, fmt.Sprintf("hostname %q is already configured on %s", host, conflict), http.StatusConflict)
+		return
+	}
+
+	alreadyAlias := false
+	for _, alias := range s.config.Domains[targetIndex].Aliases {
+		if normalizeDomainHostname(alias) == host {
+			alreadyAlias = true
+			break
+		}
+	}
+	if !alreadyAlias {
+		s.config.Domains[targetIndex].Aliases = append(s.config.Domains[targetIndex].Aliases, host)
+	}
+	s.configMu.Unlock()
+
+	if s.unknownHT != nil {
+		s.unknownHT.Unblock(host)
+		s.unknownHT.Dismiss(host)
+	}
+	s.recordAuditR(r, "unknown_domain.alias", "host: "+host+" -> "+target, true)
+	s.notifyDomainChange()
+	jsonResponse(w, map[string]string{"status": "aliased", "host": host, "domain": target})
 }
 
 func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Request) {
@@ -3520,6 +3618,66 @@ func domainTypeUsesWebRoot(domainType string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeDomainHostnames(d *config.Domain) {
+	d.Host = normalizeDomainHostname(d.Host)
+	seen := make(map[string]struct{}, len(d.Aliases))
+	aliases := make([]string, 0, len(d.Aliases))
+	for _, alias := range d.Aliases {
+		alias = normalizeDomainHostname(alias)
+		if alias == "" || alias == d.Host {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		aliases = append(aliases, alias)
+	}
+	d.Aliases = aliases
+}
+
+func normalizeDomainHostname(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+}
+
+func domainHostnames(d config.Domain) []string {
+	seen := make(map[string]struct{}, 1+len(d.Aliases))
+	hosts := make([]string, 0, 1+len(d.Aliases))
+	for _, host := range append([]string{d.Host}, d.Aliases...) {
+		host = normalizeDomainHostname(host)
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+func findDomainHostnameConflict(domains []config.Domain, skipIndex int, host string) string {
+	host = normalizeDomainHostname(host)
+	if host == "" {
+		return ""
+	}
+	for i, d := range domains {
+		if i == skipIndex {
+			continue
+		}
+		if normalizeDomainHostname(d.Host) == host {
+			return d.Host
+		}
+		for _, alias := range d.Aliases {
+			if normalizeDomainHostname(alias) == host {
+				return d.Host
+			}
+		}
+	}
+	return ""
 }
 
 // isValidHostname is kept as a package-local alias for readability at the
