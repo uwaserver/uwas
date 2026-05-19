@@ -687,10 +687,10 @@ export const fetchSecurityStats = () => api<SecurityStats>('/api/v1/security/sta
 export const fetchSecurityBlocked = () => api<BlockedRequest[]>('/api/v1/security/blocked').then(r => r ?? []);
 
 // Domain health
-export interface DomainHealth { host: string; status: string; code: number; ms: number; error?: string; }
+export interface DomainHealth { host: string; parent_host?: string; kind?: 'primary' | 'alias'; status: string; code: number; ms: number; error?: string; }
 export const fetchDomainHealth = () =>
-  api<{ items: DomainHealth[]; total: number; limit: number; offset: number }>('/api/v1/domains/health')
-    .then(r => r.items);
+  api<DomainHealth[] | { items: DomainHealth[]; total: number; limit: number; offset: number }>('/api/v1/domains/health')
+    .then(r => Array.isArray(r) ? r : (r.items ?? []));
 
 // Server IPs
 export interface ServerIPInfo { ip: string; version: number; interface: string; primary: boolean; }
