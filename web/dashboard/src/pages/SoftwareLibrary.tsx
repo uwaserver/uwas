@@ -10,8 +10,10 @@ import {
   fetchSoftwareMonitorSummary,
   fetchSoftwareProcesses,
   fetchSoftwareBackups,
+  connectSoftwareDomain,
   deleteSoftware,
   deleteSoftwareBackup,
+  disconnectSoftwareDomain,
   installSoftware,
   restoreSoftwareBackup,
   restartSoftware,
@@ -27,7 +29,7 @@ import {
   type SoftwareInstance,
   type SoftwareTemplate,
 } from '@/lib/api';
-import { Activity, Box, CheckCircle, DatabaseBackup, Download, FileText, Gauge, Globe, HardDrive, Play, RefreshCw, Square, Trash2, X, Zap } from 'lucide-react';
+import { Activity, Box, CheckCircle, DatabaseBackup, Download, FileText, Gauge, Globe, HardDrive, Link, Play, RefreshCw, Square, Trash2, Unlink, X, Zap } from 'lucide-react';
 
 const secretKeys: Record<string, string[]> = {
   n8n: ['N8N_BASIC_AUTH_USER', 'N8N_BASIC_AUTH_PASSWORD'],
@@ -77,6 +79,8 @@ export default function SoftwareLibrary() {
   const [monitor, setMonitor] = useState<SoftwareMonitor | null>(null);
   const [processes, setProcesses] = useState<SoftwareProcessInfo[]>([]);
   const [backups, setBackups] = useState<SoftwareBackupInfo[]>([]);
+  const [domainFor, setDomainFor] = useState<SoftwareInstance | null>(null);
+  const [domainValue, setDomainValue] = useState('');
 
   const load = useCallback(async () => {
     const [tpls, inst, mon] = await Promise.all([fetchSoftwareTemplates(), fetchSoftwareInstances(), fetchSoftwareMonitorSummary()]);
@@ -345,6 +349,45 @@ export default function SoftwareLibrary() {
     }
   };
 
+  const openDomainConnect = (inst: SoftwareInstance) => {
+    setDomainFor(inst);
+    setDomainValue(inst.domain ?? '');
+    setStatus(null);
+  };
+
+  const submitDomainConnect = async () => {
+    if (!domainFor) return;
+    if (!domainValue.trim()) {
+      setStatus({ ok: false, message: 'Domain is required' });
+      return;
+    }
+    setBusy(`${domainFor.name}:domain`);
+    try {
+      const inst = await connectSoftwareDomain(domainFor.name, domainValue.trim());
+      setStatus({ ok: true, message: `${inst.name} connected to ${inst.domain}` });
+      setDomainFor(null);
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const submitDomainDisconnect = async (inst: SoftwareInstance) => {
+    if (!inst.domain || !window.confirm(`Disconnect ${inst.domain} from ${inst.name}?`)) return;
+    setBusy(`${inst.name}:domain`);
+    try {
+      await disconnectSoftwareDomain(inst.name);
+      setStatus({ ok: true, message: `${inst.name} domain disconnected` });
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -446,6 +489,18 @@ export default function SoftwareLibrary() {
                   <button onClick={() => backup(inst)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">
                     <DatabaseBackup size={12} /> Backup
                   </button>
+                  {inst.has_web && (
+                    <>
+                      <button onClick={() => openDomainConnect(inst)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-xs text-blue-300 hover:bg-blue-500/15 disabled:opacity-50">
+                        <Link size={12} /> {inst.domain ? 'Change Domain' : 'Connect Domain'}
+                      </button>
+                      {inst.domain && (
+                        <button onClick={() => submitDomainDisconnect(inst)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50">
+                          <Unlink size={12} /> Unlink
+                        </button>
+                      )}
+                    </>
+                  )}
                   <button onClick={() => remove(inst)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300 hover:bg-red-500/15 disabled:opacity-50">
                     <Trash2 size={12} /> Remove
                   </button>
@@ -550,6 +605,39 @@ export default function SoftwareLibrary() {
               <button onClick={submitInstall} disabled={busy === 'install'} className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
                 {busy === 'install' ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle size={14} />}
                 Install
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {domainFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-medium">Connect Domain</h2>
+                <p className="mt-1 text-xs text-muted-foreground">{domainFor.name}{' -> '}127.0.0.1:{domainFor.host_port}</p>
+              </div>
+              <button onClick={() => setDomainFor(null)} className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close domain dialog">
+                <X size={16} />
+              </button>
+            </div>
+            <label className="mt-4 block space-y-1">
+              <span className="text-xs text-muted-foreground">Domain</span>
+              <input
+                value={domainValue}
+                onChange={e => setDomainValue(e.target.value)}
+                placeholder="app.example.com"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                autoFocus
+              />
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setDomainFor(null)} disabled={busy.endsWith(':domain')} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">Cancel</button>
+              <button onClick={submitDomainConnect} disabled={busy.endsWith(':domain')} className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                {busy.endsWith(':domain') ? <RefreshCw size={14} className="animate-spin" /> : <Link size={14} />}
+                Connect
               </button>
             </div>
           </div>

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.22] - 2026-05-19
+
+### Added
+
+- Added post-install domain binding for Dockerized Software Library web
+  instances. Installed cards now support connecting, changing, and unlinking a
+  public auto-SSL proxy domain without reinstalling the software.
+- Software Library domain binding updates n8n's compose environment
+  (`N8N_HOST` and `WEBHOOK_URL`) when a domain is connected or removed.
+
 ## [0.6.21] - 2026-05-19
 
 ### Fixed
