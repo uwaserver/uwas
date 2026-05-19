@@ -936,11 +936,21 @@ func TestUnknownDomainsAliasSuccess(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
 	}
-	if got := s.config.Domains[0].Aliases; len(got) != 1 || got[0] != "www.example.com" {
-		t.Fatalf("aliases = %#v, want [www.example.com]", got)
+	if got := s.config.Domains[0].Aliases; len(got) != 0 {
+		t.Fatalf("aliases = %#v, want none", got)
+	}
+	if len(s.config.Domains) != 3 {
+		t.Fatalf("domains len = %d, want redirect domain appended", len(s.config.Domains))
+	}
+	redirectDomain := s.config.Domains[2]
+	if redirectDomain.Host != "www.example.com" || redirectDomain.Type != "redirect" {
+		t.Fatalf("redirect domain = %#v", redirectDomain)
+	}
+	if redirectDomain.Redirect.Target != "https://example.com" || redirectDomain.Redirect.Status != http.StatusMovedPermanently {
+		t.Fatalf("redirect config = %#v", redirectDomain.Redirect)
 	}
 	if tracker.IsBlocked("www.example.com") {
-		t.Fatal("aliased unknown host should be unblocked")
+		t.Fatal("redirected unknown host should be unblocked")
 	}
 	if got := tracker.List(); len(got) != 0 {
 		t.Fatalf("unknown host should be dismissed, got %#v", got)

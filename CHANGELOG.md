@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-05-19
+
+### Added
+
+- Added per-domain Force SSL support. Domains can now store `ssl.force_ssl`,
+  redirect HTTP to HTTPS with 301 when enabled, and expose the setting in the
+  Domains list, add/edit form, and domain detail settings.
+- Added automatic `www.<domain>` redirect-domain creation for new primary
+  domains and replaced dashboard alias entry flows with explicit 301/302
+  redirect-domain creation.
+- Added redirect-first handling for legacy alias payloads and Unknown Domains
+  actions so they create or update SSL-enabled redirect domains instead of
+  appending same-site aliases.
+- Simplified redirect-domain screens so redirect records no longer show alias,
+  cache, security, route, or file-management controls that do not apply.
+- Removed Redirect from the generic Add Domain templates; redirect records now
+  use the dedicated Add Redirect flow only.
+
 ## [0.6.11] - 2026-05-19
 
 ### Added

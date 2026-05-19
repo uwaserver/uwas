@@ -127,3 +127,23 @@ func TestMergeDomain_ProxyReplacedAsBlock(t *testing.T) {
 		t.Errorf("proxy block should be replaced wholesale, got %d upstreams", len(out.Proxy.Upstreams))
 	}
 }
+
+func TestMergeDomain_SSLForcePreservesAndClearsByNestedKey(t *testing.T) {
+	existing := Domain{
+		Host: "x",
+		SSL:  SSLConfig{Mode: "auto", ForceSSL: true, MinVersion: "1.2"},
+	}
+
+	out := MergeDomain(existing, Domain{SSL: SSLConfig{Mode: "auto"}}, DomainPatchFields{HasSSL: true}, false)
+	if !out.SSL.ForceSSL {
+		t.Fatalf("force_ssl should be preserved when ssl.force_ssl key is absent")
+	}
+
+	out = MergeDomain(existing, Domain{SSL: SSLConfig{ForceSSL: false}}, DomainPatchFields{HasSSL: true, HasSSLForce: true}, false)
+	if out.SSL.ForceSSL {
+		t.Fatalf("force_ssl should clear when ssl.force_ssl=false is explicitly sent")
+	}
+	if out.SSL.Mode != "auto" || out.SSL.MinVersion != "1.2" {
+		t.Fatalf("other SSL fields should be preserved, got %+v", out.SSL)
+	}
+}

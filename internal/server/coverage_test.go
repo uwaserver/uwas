@@ -1770,6 +1770,66 @@ func TestHandleHTTPNoRedirectWhenCertMissing(t *testing.T) {
 	}
 }
 
+func TestHandleHTTPForceSSLRedirectsWithoutLoadedCert(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("plain-http-body"), 0644)
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text", WebRoot: dir},
+		Domains: []config.Domain{
+			{
+				Host: "forced.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "auto", ForceSSL: true},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/secure?x=1", nil)
+	req.Host = "forced.com"
+	s.handleHTTP(rec, req)
+
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want 301", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://forced.com/secure?x=1" {
+		t.Fatalf("Location = %q, want https://forced.com/secure?x=1", loc)
+	}
+	if hsts := rec.Header().Get("Strict-Transport-Security"); hsts == "" {
+		t.Fatal("HSTS header should be set for force_ssl redirect")
+	}
+}
+
+func TestHandleHTTPForceSSLIgnoredWhenSSLModeOff(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("plain-http-body"), 0644)
+	cfg := &config.Config{
+		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text", WebRoot: dir},
+		Domains: []config.Domain{
+			{
+				Host: "plain-forced.com",
+				Root: dir,
+				Type: "static",
+				SSL:  config.SSLConfig{Mode: "off", ForceSSL: true},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/index.html", nil)
+	req.Host = "plain-forced.com"
+	s.handleHTTP(rec, req)
+
+	if rec.Code == http.StatusMovedPermanently {
+		t.Fatalf("force_ssl must not redirect when SSL mode is off; got 301 to %q", rec.Header().Get("Location"))
+	}
+}
+
 func TestHandleHTTPManualSSLRedirect(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},

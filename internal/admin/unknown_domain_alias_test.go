@@ -60,7 +60,43 @@ func TestUnknownDomainAliasCanCreateCanonicalRedirect(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["status"] != "redirect_alias" || body["domain"] != "dgnteknoloji.com" {
+	if body["status"] != "redirect" || body["domain"] != "dgnteknoloji.com" {
 		t.Fatalf("unexpected response body: %#v", body)
+	}
+}
+
+func TestUnknownDomainRedirectEndpointUpdatesExistingRedirect(t *testing.T) {
+	s := testServer()
+	s.config.Domains = []config.Domain{
+		{Host: "example.com", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
+		{
+			Host: "www.example.com",
+			Type: "redirect",
+			SSL:  config.SSLConfig{Mode: "auto"},
+			Redirect: config.RedirectConfig{
+				Target:       "https://old.example.com",
+				Status:       http.StatusMovedPermanently,
+				PreservePath: true,
+			},
+		},
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/unknown-domains/www.example.com/redirect", strings.NewReader(`{"domain":"example.com","redirect_code":302,"preserve_path":false}`))
+	req.SetPathValue("host", "www.example.com")
+	rec := httptest.NewRecorder()
+
+	s.handleUnknownDomainsAlias(rec, withAdminContext(req))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if len(s.config.Domains) != 2 {
+		t.Fatalf("domains len = %d, want 2", len(s.config.Domains))
+	}
+	redirectDomain := s.config.Domains[1]
+	if redirectDomain.Redirect.Target != "https://example.com" ||
+		redirectDomain.Redirect.Status != http.StatusFound ||
+		redirectDomain.Redirect.PreservePath {
+		t.Fatalf("unexpected redirect config: %#v", redirectDomain.Redirect)
 	}
 }
