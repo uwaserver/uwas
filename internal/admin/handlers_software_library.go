@@ -1171,6 +1171,9 @@ func removeSoftwareInstanceDir(inst softwareInstance) error {
 }
 
 func runSoftwareCompose(inst softwareInstance, args ...string) (string, error) {
+	if err := ensureSoftwareComposeFileCompatible(inst); err != nil {
+		return "", err
+	}
 	composeArgs := []string{"-p", inst.Project, "-f", inst.ComposeFile}
 	composeArgs = append(composeArgs, args...)
 
@@ -1189,6 +1192,49 @@ func runSoftwareCompose(inst softwareInstance, args ...string) (string, error) {
 		return strings.TrimSpace(out + fallbackOut), softwareComposeMissingError{Reason: "Docker Compose is not installed or not available in PATH"}
 	}
 	return out + fallbackOut, fallbackErr
+}
+
+func ensureSoftwareComposeFileCompatible(inst softwareInstance) error {
+	if strings.TrimSpace(inst.ComposeFile) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(inst.ComposeFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read docker-compose.yml: %w", err)
+	}
+	cleaned, changed := stripTopLevelComposeName(data)
+	if !changed {
+		return nil
+	}
+	if err := os.WriteFile(inst.ComposeFile, cleaned, 0600); err != nil {
+		return fmt.Errorf("rewrite docker-compose.yml for legacy Compose compatibility: %w", err)
+	}
+	return nil
+}
+
+func stripTopLevelComposeName(data []byte) ([]byte, bool) {
+	lines := strings.SplitAfter(string(data), "\n")
+	out := make([]string, 0, len(lines))
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(trimmed, "#") {
+			out = append(out, line)
+			continue
+		}
+		if strings.HasPrefix(trimmed, "name:") {
+			changed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	if !changed {
+		return data, false
+	}
+	return []byte(strings.Join(out, "")), true
 }
 
 func runSoftwareComposeEnsuringInstalled(inst softwareInstance, args ...string) (string, error) {
@@ -1751,8 +1797,8 @@ func envValue(req softwareInstallRequest, key, fallback string) string {
 	return fallback
 }
 
-func composeHeader(name string) string {
-	return "name: " + name + "\nservices:\n"
+func composeHeader(_ string) string {
+	return "services:\n"
 }
 
 func composeUptimeKuma(req softwareInstallRequest, tpl softwareTemplate) string {

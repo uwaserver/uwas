@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.21] - 2026-05-19
+
+### Fixed
+
+- Fixed Software Library Compose files for hosts that only have legacy
+  `docker-compose`. New templates no longer write a top-level `name:` field,
+  and existing software compose files are automatically rewritten before
+  lifecycle actions so legacy Compose no longer fails with
+  `'name' does not match any of the regexes: '^x-'`.
+
 ## [0.6.20] - 2026-05-19
 
 ### Added

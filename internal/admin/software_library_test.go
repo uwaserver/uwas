@@ -94,6 +94,9 @@ func TestSoftwareInstallWritesComposeAndRunsUp(t *testing.T) {
 	if !strings.Contains(string(data), fmt.Sprintf("127.0.0.1:%d:3001", hostPort)) {
 		t.Fatalf("compose did not bind expected web port:\n%s", string(data))
 	}
+	if strings.Contains(string(data), "\nname:") || strings.HasPrefix(string(data), "name:") {
+		t.Fatalf("compose should not use top-level name because legacy docker-compose rejects it:\n%s", string(data))
+	}
 	if !softwareCallsContain(calls, "compose -p uwas-my-kuma", "up -d") {
 		t.Fatalf("compose up was not called: %#v", *calls)
 	}
@@ -949,6 +952,47 @@ func TestRunSoftwareComposeFallsBackToLegacyDockerCompose(t *testing.T) {
 	}
 	if !softwareCallsContain(&calls, "docker-compose -p uwas-legacy", "up -d") {
 		t.Fatalf("docker-compose fallback should be used: %#v", calls)
+	}
+}
+
+func TestRunSoftwareComposeStripsTopLevelNameForLegacyCompose(t *testing.T) {
+	dir := t.TempDir()
+	inst := softwareInstance{
+		Name:        "legacy-name",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-legacy-name",
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte("name: legacy-name\nservices:\n  redis:\n    image: redis:7-alpine\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stubSoftwareComposeFunc(t, func(name string, args ...string) string {
+		if name == "docker" {
+			return "unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n"
+		}
+		data, err := os.ReadFile(inst.ComposeFile)
+		if err != nil {
+			t.Fatalf("read compose: %v", err)
+		}
+		if strings.Contains(string(data), "name: legacy-name") {
+			return "The Compose file is invalid because: 'name' does not match any of the regexes: '^x-'\n"
+		}
+		return "legacy ok\n"
+	}, 1)
+
+	out, err := runSoftwareCompose(inst, "start")
+	if err == nil {
+		t.Fatalf("expected docker command failure to force fallback in stub, got output: %s", out)
+	}
+	data, readErr := os.ReadFile(inst.ComposeFile)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(data), "name: legacy-name") {
+		t.Fatalf("top-level name should be stripped for legacy Compose:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), "services:") {
+		t.Fatalf("services should be preserved:\n%s", string(data))
 	}
 }
 
