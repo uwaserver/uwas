@@ -3,7 +3,15 @@ import { Package, Download, Check, RefreshCw, Trash2, Shield } from 'lucide-reac
 import { useConfirm } from '@/components/ConfirmModal';
 import { fetchPackages, installPackage, removePackage, fetchTasks, type PackageInfo } from '@/lib/api';
 
-const categoryOrder = ['Required', 'Database', 'Runtime', 'Performance', 'Security', 'WordPress', 'Email'];
+const categoryOrder = ['Required', 'Infrastructure', 'Database', 'Runtime', 'Performance', 'Security', 'WordPress', 'Email'];
+
+function installLabel(pkg: PackageInfo): string {
+  return pkg.id === 'docker-compose' ? 'Fix Compose' : 'Install';
+}
+
+function installingLabel(pkg: PackageInfo): string {
+  return pkg.id === 'docker-compose' ? 'Fixing...' : 'Installing...';
+}
 
 export default function Packages() {
   const { confirmAction } = useConfirm();
@@ -178,7 +186,7 @@ export default function Packages() {
                   {!pkg.installed && (
                     <button onClick={() => handleInstall(pkg)} disabled={!!acting}
                       className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-                      {acting === pkg.id ? <><RefreshCw size={12} className="animate-spin" /> Installing...</> : <><Download size={12} /> Install</>}
+                      {acting === pkg.id ? <><RefreshCw size={12} className="animate-spin" /> {installingLabel(pkg)}</> : <><Download size={12} /> {installLabel(pkg)}</>}
                     </button>
                   )}
                   {pkg.installed && pkg.can_remove && (

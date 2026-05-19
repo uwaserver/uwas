@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.19)
+## Current Snapshot (v0.6.20)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 220 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
@@ -42,6 +42,8 @@ One binary. Zero hassle.
 - Dockerized Software Library actions self-repair missing Docker Compose on
   Debian/Ubuntu, clean up failed installs, and show `needs Docker Compose`
   instead of leaving broken cards as vague unknown states
+- Packages exposes Docker Compose as an Infrastructure dependency with a
+  dashboard Fix Compose action for Software Library hosts
 - File Manager, built-in SFTP, dashboard SFTP users, and SSH keys open app
   domains at the app `work_dir`
 - Creating an empty Node.js, Python, Ruby, or Go app seeds a tiny runnable demo
