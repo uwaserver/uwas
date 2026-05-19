@@ -50,6 +50,18 @@ function formatBytes(n: number): string {
   return `${value >= 10 || i === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[i]}`;
 }
 
+function statusBadgeClass(status?: string): string {
+  if (status === 'running') return 'bg-emerald-500/15 text-emerald-400';
+  if (status === 'needs-compose') return 'bg-amber-500/15 text-amber-300';
+  if (status === 'unknown') return 'bg-red-500/10 text-red-300';
+  return 'bg-slate-500/15 text-muted-foreground';
+}
+
+function statusLabel(status?: string): string {
+  if (status === 'needs-compose') return 'needs Docker Compose';
+  return status || 'unknown';
+}
+
 export default function SoftwareLibrary() {
   const [templates, setTemplates] = useState<SoftwareTemplate[]>([]);
   const [instances, setInstances] = useState<SoftwareInstance[]>([]);
@@ -408,10 +420,8 @@ export default function SoftwareLibrary() {
                       </p>
                     )}
                   </div>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
-                    inst.status === 'running' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-500/15 text-muted-foreground'
-                  }`}>
-                    <Activity size={10} /> {inst.status || 'unknown'}
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${statusBadgeClass(inst.status)}`}>
+                    <Activity size={10} /> {statusLabel(inst.status)}
                   </span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
