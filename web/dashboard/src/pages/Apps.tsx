@@ -192,12 +192,17 @@ export default function Apps() {
   }, [status]);
 
   const isDocker = form.runtime === 'docker';
-  const createFromGit = editing?.mode === 'create' && form.sourceMode === 'git' && !isDocker;
+  const createFromGit = editing?.mode === 'create' && form.sourceMode === 'git';
 
   const sortedApps = useMemo(
     () => [...apps].sort((a, b) => a.name.localeCompare(b.name)),
     [apps],
   );
+  const deployTargetApp = useMemo(
+    () => apps.find(app => app.name === deployFor),
+    [apps, deployFor],
+  );
+  const deployTargetIsDocker = deployTargetApp?.runtime === 'docker';
 
   const setStatusErr = (e: unknown) =>
     setStatus({ ok: false, message: e instanceof Error ? e.message : String(e) });
@@ -246,9 +251,10 @@ export default function Apps() {
         image: form.docker_image.trim() || undefined,
         container_port: cport,
       };
-      if (form.docker_build_context.trim()) {
+      const dockerBuildContext = form.docker_build_context.trim() || (createFromGit ? '.' : '');
+      if (dockerBuildContext) {
         body.docker.build = {
-          context: form.docker_build_context.trim(),
+          context: dockerBuildContext,
           dockerfile: form.docker_build_dockerfile.trim() || undefined,
         };
       }
@@ -342,7 +348,7 @@ export default function Apps() {
           const deploy = await deployApp(createdName, {
             git_url: form.git_url.trim(),
             git_branch: form.git_branch.trim() || undefined,
-            build_cmd: form.build_cmd.trim() || undefined,
+            build_cmd: isDocker ? undefined : form.build_cmd.trim() || undefined,
           });
           if (deploy.ok) {
             setStatus({
@@ -455,7 +461,7 @@ export default function Apps() {
       const r = await deployApp(deployFor, {
         git_url: deployForm.git_url.trim(),
         git_branch: deployForm.git_branch.trim() || undefined,
-        build_cmd: deployForm.build_cmd.trim() || undefined,
+        build_cmd: deployTargetIsDocker ? undefined : deployForm.build_cmd.trim() || undefined,
       });
       setDeployResult(r);
       if (r.ok) {
@@ -643,7 +649,12 @@ export default function Apps() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setForm(f => ({ ...f, sourceMode: 'git', runtime: f.runtime === 'docker' ? 'node' : f.runtime }))}
+                    onClick={() => setForm(f => ({
+                      ...f,
+                      sourceMode: 'git',
+                      docker_container_port: f.runtime === 'docker' && !f.docker_container_port ? '80' : f.docker_container_port,
+                      docker_build_context: f.runtime === 'docker' && !f.docker_build_context ? '.' : f.docker_build_context,
+                    }))}
                     className={`flex items-start gap-3 rounded-md border p-3 text-left transition ${
                       form.sourceMode === 'git'
                         ? 'border-blue-500/50 bg-blue-500/10 text-blue-200'
@@ -667,8 +678,8 @@ export default function Apps() {
                     onClick={() => setForm(f => ({
                       ...f,
                       runtime: rt,
-                      sourceMode: rt === 'docker' ? 'blank' : f.sourceMode,
                       docker_container_port: rt === 'docker' && !f.docker_container_port ? '80' : f.docker_container_port,
+                      docker_build_context: rt === 'docker' && f.sourceMode === 'git' && !f.docker_build_context ? '.' : f.docker_build_context,
                     }))}
                     className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-xs transition ${
                       form.runtime === rt
@@ -734,15 +745,17 @@ export default function Apps() {
                         className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
                       />
                     </label>
-                    <label className="space-y-1">
-                      <span className="text-xs text-blue-200">Build command</span>
-                      <input
-                        value={form.build_cmd}
-                        onChange={e => setForm(f => ({ ...f, build_cmd: e.target.value }))}
-                        placeholder="npm ci && npm run build"
-                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
-                      />
-                    </label>
+                    {!isDocker && (
+                      <label className="space-y-1">
+                        <span className="text-xs text-blue-200">Build command</span>
+                        <input
+                          value={form.build_cmd}
+                          onChange={e => setForm(f => ({ ...f, build_cmd: e.target.value }))}
+                          placeholder="npm ci && npm run build"
+                          className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                        />
+                      </label>
+                    )}
                   </div>
                 </div>
               )}
@@ -778,7 +791,7 @@ export default function Apps() {
                     <input
                       value={form.docker_image}
                       onChange={e => setForm(f => ({ ...f, docker_image: e.target.value }))}
-                      placeholder="nginx:latest"
+                      placeholder={createFromGit ? 'optional: uwas-app/my-api:latest' : 'nginx:latest'}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
                     />
                   </label>
@@ -796,7 +809,7 @@ export default function Apps() {
                     <input
                       value={form.docker_build_context}
                       onChange={e => setForm(f => ({ ...f, docker_build_context: e.target.value }))}
-                      placeholder="."
+                      placeholder={createFromGit ? '.' : '.'}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
                     />
                   </label>
@@ -975,14 +988,12 @@ export default function Apps() {
                 >
                   <Edit2 size={12} /> Edit
                 </button>
-                {app.runtime !== 'docker' && (
-                  <button
-                    onClick={() => openDeploy(app.name)}
-                    className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted inline-flex items-center gap-1"
-                  >
-                    <GitBranch size={12} /> Deploy
-                  </button>
-                )}
+                <button
+                  onClick={() => openDeploy(app.name)}
+                  className="text-xs rounded-md border border-border px-2 py-1 hover:bg-muted inline-flex items-center gap-1"
+                >
+                  <GitBranch size={12} /> Deploy
+                </button>
                 {app.running && !statsByName[app.name] && (
                   <button
                     onClick={() => loadStats(app.name)}
@@ -1068,8 +1079,9 @@ export default function Apps() {
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Clones (or fast-forwards) a git repo into the app's workdir, runs the
-              optional build command, then restarts the supervisor. Times out after 5 minutes.
+              {deployTargetIsDocker
+                ? "Clones (or fast-forwards) a git repo into the app's workdir, then restarts the Docker app. The restart packages the repo with BuildKit via docker buildx build --load."
+                : "Clones (or fast-forwards) a git repo into the app's workdir, runs the optional build command, then restarts the supervisor. Times out after 5 minutes."}
             </p>
 
             <div className="space-y-2">
@@ -1091,15 +1103,17 @@ export default function Apps() {
                   className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
                 />
               </label>
-              <label className="space-y-1 block">
-                <span className="text-xs text-muted-foreground">Build command (optional)</span>
-                <input
-                  value={deployForm.build_cmd}
-                  onChange={e => setDeployForm(f => ({ ...f, build_cmd: e.target.value }))}
-                  placeholder="npm ci && npm run build"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                />
-              </label>
+              {!deployTargetIsDocker && (
+                <label className="space-y-1 block">
+                  <span className="text-xs text-muted-foreground">Build command (optional)</span>
+                  <input
+                    value={deployForm.build_cmd}
+                    onChange={e => setDeployForm(f => ({ ...f, build_cmd: e.target.value }))}
+                    placeholder="npm ci && npm run build"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                  />
+                </label>
+              )}
             </div>
 
             <details className="rounded-md border border-border p-3 text-xs">

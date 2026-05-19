@@ -118,6 +118,10 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := validateDockerGitDeploy(def); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if def.WorkDir == "" {
 		jsonError(w, "app has no work_dir resolved", http.StatusInternalServerError)
@@ -150,6 +154,9 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
 		resp.Error = err.Error()
 		respond500(w, &resp, logBuf.String())
 		return
+	}
+	if def.Runtime == apps.RuntimeDocker {
+		logBuf.WriteString("\nDocker runtime: restarting will package the checked-out repo with docker buildx build --load.\n")
 	}
 
 	// Capture commit SHA for the response (operator-visible audit trail).
@@ -198,6 +205,13 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
 	s.recordAuditR(r, "app.deploy", fmt.Sprintf("%s commit=%s", name, resp.CommitSHA), true)
 	s.maybeReloadForApps()
 	jsonResponse(w, resp)
+}
+
+func validateDockerGitDeploy(def *apps.App) error {
+	if def != nil && def.Runtime == apps.RuntimeDocker && strings.TrimSpace(def.Docker.Build.Context) == "" {
+		return fmt.Errorf("docker git deploy requires docker.build.context so the repo can be packaged with BuildKit")
+	}
+	return nil
 }
 
 func respond500(w http.ResponseWriter, resp *AppDeployResponse, log string) {

@@ -16,6 +16,7 @@ cover_*
 *_coverage.html
 coverage.html
 coverage.txt
+coverage-*
 
 # ── IDE ──
 .idea/

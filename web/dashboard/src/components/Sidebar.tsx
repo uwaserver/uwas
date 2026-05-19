@@ -94,6 +94,7 @@ const groups: NavGroup[] = [
       { to: '/php', label: 'PHP', icon: Cpu },
       { to: '/php-config', label: 'PHP Config', icon: Settings },
       { to: '/apps', label: 'Applications', icon: Box, featureKey: 'apps' },
+      { to: '/software', label: 'Software Library', icon: Package },
       { to: '/database', label: 'Database', icon: HardDrive },
       { to: '/db-explorer', label: 'DB Explorer', icon: Database },
       { to: '/users', label: 'SFTP Users', icon: Users },

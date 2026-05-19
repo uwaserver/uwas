@@ -214,6 +214,13 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		s.recordLastWebhook(name, status)
 		return
 	}
+	if err := validateDockerGitDeploy(def); err != nil {
+		status.OK = false
+		status.Error = err.Error()
+		status.Finished = time.Now()
+		s.recordLastWebhook(name, status)
+		return
+	}
 
 	logBuf := &strings.Builder{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -265,7 +272,6 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 			"app", name, "commit", status.CommitSHA, "duration", status.Finished.Sub(status.StartedAt))
 	}
 }
-
 
 // recordLastWebhook stashes the outcome of the most recent webhook
 // deploy for an app so the status endpoint can return it.
@@ -323,4 +329,3 @@ func tailString(s string, n int) string {
 	}
 	return strings.TrimSpace(s[len(s)-n:])
 }
-

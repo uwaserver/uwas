@@ -1818,7 +1818,7 @@ func TestAddFileToTarNonexistent(t *testing.T) {
 	gw := gzip.NewWriter(f)
 	tw := tar.NewWriter(gw)
 
-	err = addFileToTar(tw, "/nonexistent/file.txt", "missing.txt")
+	err = addFileToTar(tw, filepath.Join(tmpDir, "missing.txt"), "missing.txt")
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}

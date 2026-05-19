@@ -1095,6 +1095,179 @@ export const deployApp = (name: string, body: AppDeployRequest) =>
     body: JSON.stringify(body),
   });
 
+export interface SoftwareTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  has_web: boolean;
+  web_service?: string;
+  web_port?: number;
+  default_port?: number;
+  internal?: boolean;
+  env?: Record<string, string>;
+}
+
+export interface SoftwareInstance {
+  name: string;
+  template_id: string;
+  template: string;
+  category: string;
+  dir: string;
+  compose_file: string;
+  project: string;
+  has_web: boolean;
+  web_service?: string;
+  web_port?: number;
+  host_port?: number;
+  domain?: string;
+  status?: string;
+}
+
+export interface SoftwareInstallRequest {
+  template_id: string;
+  name: string;
+  host_port?: number;
+  domain?: string;
+  env?: Record<string, string>;
+}
+
+export interface SoftwarePortCheck {
+  port: number;
+  available: boolean;
+  reason?: string;
+  suggested_port?: number;
+}
+
+export interface SoftwareContainerStat {
+  id: string;
+  name: string;
+  service?: string;
+  state?: string;
+  cpu_percent: number;
+  memory_usage: number;
+  memory_limit: number;
+  memory_percent: number;
+  network_input: number;
+  network_output: number;
+  block_input: number;
+  block_output: number;
+  pids: number;
+}
+
+export interface SoftwareVolumeInfo {
+  name: string;
+  key?: string;
+  driver?: string;
+  mountpoint?: string;
+  scope?: string;
+  backup_hint?: string;
+}
+
+export interface SoftwareBackupInfo {
+  name: string;
+  path: string;
+  volume_key?: string;
+  size: number;
+  created_at: string;
+}
+
+export interface SoftwareMonitor {
+  instance: SoftwareInstance;
+  containers: SoftwareContainerStat[];
+  volumes: SoftwareVolumeInfo[];
+  total_cpu_percent: number;
+  total_memory: number;
+  total_memory_limit: number;
+  total_network_input: number;
+  total_network_output: number;
+}
+
+export interface SoftwareMonitorSummary {
+  items: SoftwareMonitor[];
+  total_cpu_percent: number;
+  total_memory: number;
+  total_memory_limit: number;
+  total_network_input: number;
+  total_network_output: number;
+  container_count: number;
+  volume_count: number;
+}
+
+export const fetchSoftwareTemplates = () =>
+  api<{ items: SoftwareTemplate[]; total: number; limit: number; offset: number }>('/api/v1/software/templates')
+    .then(r => r.items ?? []);
+export const fetchSoftwareInstances = () =>
+  api<{ items: SoftwareInstance[]; total: number; limit: number; offset: number }>('/api/v1/software/instances')
+    .then(r => r.items ?? []);
+export const checkSoftwarePort = (port?: number, defaultPort?: number) => {
+  const params = new URLSearchParams();
+  if (port) params.set('port', String(port));
+  if (defaultPort) params.set('default_port', String(defaultPort));
+  return api<SoftwarePortCheck>(`/api/v1/software/ports/check?${params.toString()}`);
+};
+export const installSoftware = (body: SoftwareInstallRequest) =>
+  api<SoftwareInstance>('/api/v1/software/install', { method: 'POST', body: JSON.stringify(body) });
+export const deleteSoftware = (name: string, volumes = false) =>
+  api<{ status: string; name: string; output?: string }>(
+    `/api/v1/software/${encodeURIComponent(name)}${volumes ? '?volumes=true' : ''}`,
+    { method: 'DELETE' },
+  );
+export const startSoftware = (name: string) =>
+  api<{ status: string; output?: string }>(`/api/v1/software/${encodeURIComponent(name)}/start`, { method: 'POST' });
+export const stopSoftware = (name: string) =>
+  api<{ status: string; output?: string }>(`/api/v1/software/${encodeURIComponent(name)}/stop`, { method: 'POST' });
+export const restartSoftware = (name: string) =>
+  api<{ status: string; output?: string }>(`/api/v1/software/${encodeURIComponent(name)}/restart`, { method: 'POST' });
+export const updateSoftware = (name: string) =>
+  api<{ status: string; name: string; backup_status: string; backup_files: string[]; output?: string }>(
+    `/api/v1/software/${encodeURIComponent(name)}/update`,
+    { method: 'POST' },
+  );
+export const updateAllSoftware = () =>
+  api<{
+    status: string;
+    items: { status: string; name: string; backup_status: string; backup_files: string[]; output?: string }[];
+    total: number;
+    updated: number;
+    skipped: number;
+    failed: number;
+  }>('/api/v1/software/updates', { method: 'POST' });
+export const fetchSoftwareLogs = (name: string) =>
+  api<{ logs: string }>(`/api/v1/software/${encodeURIComponent(name)}/logs`);
+export const fetchSoftwareMonitor = (name: string) =>
+  api<SoftwareMonitor>(`/api/v1/software/${encodeURIComponent(name)}/monitor`);
+export const fetchSoftwareMonitorSummary = () =>
+  api<SoftwareMonitorSummary>('/api/v1/software/monitor');
+export const backupSoftware = (name: string) =>
+  api<{ status: string; name: string; files: string[]; output?: string }>(
+    `/api/v1/software/${encodeURIComponent(name)}/backup`,
+    { method: 'POST' },
+  );
+export const backupAllSoftware = () =>
+  api<{
+    status: string;
+    items: { status: string; name: string; files: string[]; output?: string }[];
+    files: string[];
+    total: number;
+    created: number;
+    skipped: number;
+    failed: number;
+  }>('/api/v1/software/backups', { method: 'POST' });
+export const fetchSoftwareBackups = (name: string) =>
+  api<{ items: SoftwareBackupInfo[]; total: number }>(`/api/v1/software/${encodeURIComponent(name)}/backups`)
+    .then(r => r.items ?? []);
+export const deleteSoftwareBackup = (name: string, backup: string) =>
+  api<{ status: string; name: string; backup: string }>(
+    `/api/v1/software/${encodeURIComponent(name)}/backups/${encodeURIComponent(backup)}`,
+    { method: 'DELETE' },
+  );
+export const restoreSoftwareBackup = (name: string, backup: string) =>
+  api<{ status: string; name: string; volume: string; output?: string }>(
+    `/api/v1/software/${encodeURIComponent(name)}/restore`,
+    { method: 'POST', body: JSON.stringify({ backup }) },
+  );
+
 export interface UpdateAppResult {
   app: App;
   started: boolean;
