@@ -180,6 +180,7 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("POST /api/v1/software/{name}/update", s.handleSoftwareUpdate)
 	s.mux.HandleFunc("GET /api/v1/software/{name}/logs", s.handleSoftwareLogs)
 	s.mux.HandleFunc("GET /api/v1/software/{name}/monitor", s.handleSoftwareMonitor)
+	s.mux.HandleFunc("GET /api/v1/software/{name}/processes", s.handleSoftwareProcesses)
 	s.mux.HandleFunc("GET /api/v1/software/{name}/backups", s.handleSoftwareBackupList)
 	s.mux.HandleFunc("DELETE /api/v1/software/{name}/backups/{backup}", s.handleSoftwareBackupDelete)
 	s.mux.HandleFunc("POST /api/v1/software/{name}/backup", s.handleSoftwareBackup)

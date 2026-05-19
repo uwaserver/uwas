@@ -1155,6 +1155,20 @@ export interface SoftwareContainerStat {
   pids: number;
 }
 
+export interface SoftwareProcessInfo {
+  container_id: string;
+  container_name?: string;
+  service?: string;
+  user?: string;
+  pid: string;
+  ppid?: string;
+  cpu?: string;
+  stime?: string;
+  tty?: string;
+  time?: string;
+  command: string;
+}
+
 export interface SoftwareVolumeInfo {
   name: string;
   key?: string;
@@ -1237,6 +1251,9 @@ export const fetchSoftwareLogs = (name: string) =>
   api<{ logs: string }>(`/api/v1/software/${encodeURIComponent(name)}/logs`);
 export const fetchSoftwareMonitor = (name: string) =>
   api<SoftwareMonitor>(`/api/v1/software/${encodeURIComponent(name)}/monitor`);
+export const fetchSoftwareProcesses = (name: string) =>
+  api<{ items: SoftwareProcessInfo[]; total: number }>(`/api/v1/software/${encodeURIComponent(name)}/processes`)
+    .then(r => r.items ?? []);
 export const fetchSoftwareMonitorSummary = () =>
   api<SoftwareMonitorSummary>('/api/v1/software/monitor');
 export const backupSoftware = (name: string) =>

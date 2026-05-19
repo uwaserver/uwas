@@ -650,9 +650,11 @@ func TestSoftwareMonitorAndBackupVolumes(t *testing.T) {
 		case strings.Contains(joined, "compose -p uwas-kuma -f") && strings.Contains(joined, "ps -q"):
 			return "abc123\n"
 		case strings.Contains(joined, "compose -p uwas-kuma -f") && strings.Contains(joined, "ps --format json"):
-			return `{"Name":"uwas-kuma-uptime-kuma-1","Service":"uptime-kuma","State":"running"}` + "\n"
+			return `{"ID":"abc123","Name":"uwas-kuma-uptime-kuma-1","Service":"uptime-kuma","State":"running"}` + "\n"
 		case strings.Contains(joined, "stats --no-stream"):
 			return `{"Container":"abc123","Name":"uwas-kuma-uptime-kuma-1","CPUPerc":"1.25%","MemUsage":"12MiB / 1GiB","MemPerc":"1.17%","NetIO":"2kB / 4kB","BlockIO":"8kB / 16kB","PIDs":"7"}` + "\n"
+		case strings.Contains(joined, "top abc123"):
+			return "UID PID PPID C STIME TTY TIME CMD\nroot 101 1 0 12:00 ? 00:00:01 node server.js --port 3001\n"
 		case strings.Contains(joined, "volume inspect uwas-kuma_uptime-kuma-data"):
 			return `[{"Name":"uwas-kuma_uptime-kuma-data","Driver":"local","Mountpoint":"/var/lib/docker/volumes/uwas-kuma_uptime-kuma-data/_data","Scope":"local"}]`
 		case strings.Contains(joined, "run --rm"):
@@ -714,6 +716,23 @@ func TestSoftwareMonitorAndBackupVolumes(t *testing.T) {
 	}
 	if summary.ContainerCount != 1 || summary.VolumeCount != 1 || summary.TotalMemory != 12*1024*1024 {
 		t.Fatalf("unexpected monitor summary: %#v", summary)
+	}
+
+	req = httptest.NewRequest("GET", "/api/v1/software/kuma/processes", nil)
+	req.SetPathValue("name", "kuma")
+	rec = httptest.NewRecorder()
+	s.handleSoftwareProcesses(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("processes status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var procList struct {
+		Items []softwareProcessInfo `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &procList); err != nil {
+		t.Fatal(err)
+	}
+	if len(procList.Items) != 1 || procList.Items[0].Service != "uptime-kuma" || procList.Items[0].PID != "101" || !strings.Contains(procList.Items[0].Command, "node server.js") {
+		t.Fatalf("unexpected process list: %#v", procList.Items)
 	}
 
 	req = httptest.NewRequest("POST", "/api/v1/software/kuma/backup", nil)
