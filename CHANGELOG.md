@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.20] - 2026-05-19
+
+### Added
+
+- Added Docker Compose to the Packages page as a first-class Infrastructure
+  dependency for the Software Library. It probes `docker compose version`,
+  falls back to legacy `docker-compose --version`, and exposes a dashboard
+  install/fix action that installs Docker + Compose on Debian/Ubuntu.
+
 ## [0.6.19] - 2026-05-19
 
 ### Fixed

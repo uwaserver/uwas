@@ -247,9 +247,12 @@ var knownPackages = []knownPkg{
 	// ── PHP (managed separately via PHP page) ──
 
 	// ── Docker ──
-	{"docker", "Docker", "Container runtime for dockerized databases (MariaDB, MySQL, PostgreSQL)", "Database",
-		false, "Database page (Docker containers)", "All Docker containers will remain, only Docker engine removed.", true,
+	{"docker", "Docker", "Container runtime for dockerized databases and software library apps", "Infrastructure",
+		false, "Database page, Software Library", "All Docker containers will remain, only Docker engine removed.", true,
 		[]string{"docker"}, []string{"docker.io"}, []string{"docker.io"}},
+	{"docker-compose", "Docker Compose", "Compose plugin for one-click Software Library apps", "Infrastructure",
+		true, "Software Library", "Dockerized software will stop working without Compose.", false,
+		nil, []string{"docker.io", "docker-compose-plugin"}, nil},
 
 	// ── Image Optimization ──
 	{"webp", "WebP Tools", "Convert images to WebP (smaller, faster loading)", "Performance",
@@ -321,20 +324,17 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 			Warning:     kp.warning,
 			CanRemove:   kp.canRemove,
 		}
-		for _, bin := range kp.binaries {
-			if p, err := exec.LookPath(bin); err == nil {
-				pi.Installed = true
-				if out, err := systemExecCommand(p, "--version").CombinedOutput(); err == nil {
-					lines := strings.SplitN(string(out), "\n", 2)
-					if len(lines) > 0 {
-						v := strings.TrimSpace(lines[0])
-						if len(v) > 60 {
-							v = v[:60]
-						}
-						pi.Version = v
+		if kp.id == "docker-compose" {
+			pi.Installed, pi.Version = detectDockerComposePackage()
+		} else {
+			for _, bin := range kp.binaries {
+				if p, err := exec.LookPath(bin); err == nil {
+					pi.Installed = true
+					if out, err := systemExecCommand(p, "--version").CombinedOutput(); err == nil {
+						pi.Version = packageVersionLine(out)
 					}
+					break
 				}
-				break
 			}
 		}
 		pkgs = append(pkgs, pi)
@@ -342,6 +342,28 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 	limit, offset := parsePagination(r)
 	pkgs, total := paginateSlice(pkgs, limit, offset)
 	jsonResponse(w, map[string]any{"items": pkgs, "total": total, "limit": limit, "offset": offset})
+}
+
+func detectDockerComposePackage() (bool, string) {
+	if out, err := systemExecCommand("docker", "compose", "version").CombinedOutput(); err == nil {
+		return true, packageVersionLine(out)
+	}
+	if out, err := systemExecCommand("docker-compose", "--version").CombinedOutput(); err == nil {
+		return true, packageVersionLine(out)
+	}
+	return false, ""
+}
+
+func packageVersionLine(out []byte) string {
+	lines := strings.SplitN(string(out), "\n", 2)
+	if len(lines) == 0 {
+		return ""
+	}
+	v := strings.TrimSpace(lines[0])
+	if len(v) > 60 {
+		v = v[:60]
+	}
+	return v
 }
 
 // Package installation is managed by the global task queue (install.Queue).
@@ -422,6 +444,12 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 				// Distro nodejs is typically too old to run modern apps.
 				// Use NodeSource LTS setup so Apps page Node.js sites work out of the box.
 				cmd = systemExecCommand("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
+			} else if pkgID == "docker-compose" {
+				cmd = systemExecCommand("bash", "-c", strings.Join([]string{
+					"apt-get update",
+					"(apt-get install -y docker.io docker-compose-plugin || apt-get install -y docker.io docker-compose)",
+					"(systemctl enable --now docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true)",
+				}, " && "))
 			} else if len(aptPkgs) > 0 {
 				args := append([]string{"install", "-y"}, aptPkgs...)
 				cmd = systemExecCommand("apt", args...)

@@ -1562,6 +1562,39 @@ func TestPackageListIncludesCacheBackends(t *testing.T) {
 	}
 }
 
+func TestPackageListIncludesDockerCompose(t *testing.T) {
+	s := testServer()
+	calls := stubPackageExec(t)
+	rec := httptest.NewRecorder()
+	s.handlePackageList(rec, httptest.NewRequest("GET", "/api/v1/packages", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var result struct {
+		Items []PackageInfo `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]PackageInfo{}
+	for _, item := range result.Items {
+		seen[item.ID] = item
+	}
+	item, ok := seen["docker-compose"]
+	if !ok {
+		t.Fatalf("docker-compose package not listed")
+	}
+	if item.Category != "Infrastructure" || !item.Required || item.CanRemove {
+		t.Fatalf("unexpected docker-compose metadata: %#v", item)
+	}
+	if !item.Installed || item.Version == "" {
+		t.Fatalf("docker-compose detection should use docker compose version: %#v", item)
+	}
+	if !packageCallsContain(calls, "docker", "compose version") {
+		t.Fatalf("docker compose version probe was not called: %#v", *calls)
+	}
+}
+
 func TestPackageInstallBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
@@ -1754,6 +1787,21 @@ func TestPackageInstallNodeUsesNodeSourceScript(t *testing.T) {
 	}
 	if !packageCallsContain(calls, "bash", "deb.nodesource.com/setup_lts.x") {
 		t.Fatalf("node install did not use NodeSource script: %#v", *calls)
+	}
+}
+
+func TestPackageInstallDockerComposeUsesRepairScript(t *testing.T) {
+	s := testServer()
+	calls := stubPackageExec(t)
+	code, body := packageInstallRequest(t, s, `{"id":"docker-compose"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "done" {
+		t.Fatalf("task status = %s, want done", status)
+	}
+	if !packageCallsContain(calls, "bash", "apt-get update", "docker.io docker-compose-plugin") {
+		t.Fatalf("docker compose install did not use repair script: %#v", *calls)
 	}
 }
 
