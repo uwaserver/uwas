@@ -130,6 +130,8 @@ export interface StatsData {
 
 export interface DomainData {
   host: string;
+  main_host?: string;
+  canonical_host?: 'apex' | 'www';
   ip?: string;
   aliases: string[] | null;
   type: string;
@@ -269,6 +271,8 @@ export interface DomainLocationRule {
 
 export interface DomainDetail {
   host: string;
+  main_host?: string;
+  canonical_host?: 'apex' | 'www';
   ip?: string;
   aliases: string[] | null;
   type: string;
@@ -290,6 +294,8 @@ export interface DomainDetail {
 export interface CertInfo {
   host: string;
   domain?: string;
+  main_host?: string;
+  canonical_host?: 'apex' | 'www';
   alias?: boolean;
   ssl_mode: string;
   status: string;
@@ -504,6 +510,19 @@ export const fetchWPInstallStatus = () => api<WPInstallStatus>('/api/v1/wordpres
 
 // File manager
 export interface FileEntry { name: string; path: string; is_dir: boolean; size: number; mod_time: string; mode: string; }
+export interface FileWorkspace {
+  id: string;
+  label: string;
+  kind: 'domain' | 'application';
+  root?: string;
+  host?: string;
+  app_name?: string;
+  runtime?: string;
+  domains?: string[] | null;
+}
+export const fetchFileWorkspaces = () =>
+  api<{ items: FileWorkspace[]; total: number; limit: number; offset: number }>('/api/v1/files/workspaces')
+    .then(r => r.items ?? []);
 export const fetchFiles = (domain: string, path?: string) =>
   api<{ items: FileEntry[]; total: number; limit: number; offset: number }>(`/api/v1/files/${encodeURIComponent(domain)}/list?path=${encodeURIComponent(path || '.')}`)
     .then(r => r.items ?? []);

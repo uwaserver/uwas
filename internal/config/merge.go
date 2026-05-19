@@ -19,6 +19,7 @@ type DomainPatchFields struct {
 	HasSSL         bool
 	HasSSLForce    bool
 	HasResources   bool
+	HasCanonical   bool
 }
 
 // MergeDomain produces a merged domain by overlaying patch fields onto
@@ -53,6 +54,9 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 	}
 	if patch.Root != "" {
 		merged.Root = patch.Root
+	}
+	if fields.HasCanonical {
+		merged.CanonicalHost = patch.CanonicalHost
 	}
 
 	// SSL is presence-keyed because cert/key/min_version can legitimately

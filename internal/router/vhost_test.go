@@ -37,6 +37,21 @@ func TestVHostAliasMatch(t *testing.T) {
 	}
 }
 
+func TestVHostImplicitWWWMatch(t *testing.T) {
+	domains := []config.Domain{
+		{Host: "example.com", Root: "/var/www"},
+	}
+	r := NewVHostRouter(domains)
+
+	d := r.Lookup("www.example.com")
+	if d == nil || d.Host != "example.com" {
+		t.Fatalf("Lookup(www.example.com) = %#v, want example.com", d)
+	}
+	if !r.IsConfigured("www.example.com") {
+		t.Fatal("www.example.com should be configured implicitly for example.com")
+	}
+}
+
 func TestVHostWildcardMatch(t *testing.T) {
 	domains := []config.Domain{
 		{Host: "*.example.com", Root: "/var/www/wildcard"},
@@ -462,11 +477,11 @@ func TestVHostComplexRouting(t *testing.T) {
 		wantConf bool
 	}{
 		{"primary.com", "/var/www/primary", true},
-		{"www.primary.com", "/var/www/primary", true},              // alias exact match
-		{"assets.cdn.primary.com", "/var/www/primary", true},      // alias wildcard
-		{"blog.primary.com", "/var/www/primary-wild", true},       // wildcard
+		{"www.primary.com", "/var/www/primary", true},        // alias exact match
+		{"assets.cdn.primary.com", "/var/www/primary", true}, // alias wildcard
+		{"blog.primary.com", "/var/www/primary-wild", true},  // wildcard
 		{"secondary.com", "/var/www/secondary", true},
-		{"unknown.com", "/var/www/primary", false},                 // fallback
+		{"unknown.com", "/var/www/primary", false}, // fallback
 	}
 
 	for _, tt := range tests {

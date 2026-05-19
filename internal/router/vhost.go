@@ -46,11 +46,7 @@ func (r *VHostRouter) store(domains []config.Domain) {
 			suffix := host[1:] // "*.example.com" → ".example.com"
 			wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
 		} else {
-			exact[host] = d
-			// Also register port-stripped form so IsConfigured matches.
-			if idx := strings.LastIndex(host, ":"); idx != -1 {
-				exact[host[:idx]] = d
-			}
+			registerExactHost(exact, host, d)
 		}
 
 		// Register aliases
@@ -60,10 +56,7 @@ func (r *VHostRouter) store(domains []config.Domain) {
 				suffix := alias[1:]
 				wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
 			} else {
-				exact[alias] = d
-				if idx := strings.LastIndex(alias, ":"); idx != -1 {
-					exact[alias[:idx]] = d
-				}
+				registerExactHost(exact, alias, d)
 			}
 		}
 
@@ -79,11 +72,33 @@ func (r *VHostRouter) store(domains []config.Domain) {
 	})
 
 	m := &vhostMap{
-		exact:    exact,
+		exact:     exact,
 		wildcards: wildcards,
-		fallback: fallback,
+		fallback:  fallback,
 	}
 	r.current.Store(m)
+}
+
+func registerExactHost(exact map[string]*config.Domain, host string, d *config.Domain) {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" {
+		return
+	}
+	exact[host] = d
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		exact[host[:idx]] = d
+		return
+	}
+	if strings.HasPrefix(host, "www.") {
+		apex := strings.TrimPrefix(host, "www.")
+		if apex != "" && strings.Contains(apex, ".") {
+			exact[apex] = d
+		}
+		return
+	}
+	if !strings.HasPrefix(host, "*.") && strings.Contains(host, ".") {
+		exact["www."+host] = d
+	}
 }
 
 // Lookup finds the domain config for a given host. Wrapper over

@@ -643,26 +643,28 @@ func TestHandleCerts(t *testing.T) {
 	}
 	var certs []map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &certs)
-	if len(certs) != 3 {
-		t.Fatalf("certs count = %d, want 3", len(certs))
+	if len(certs) != 6 {
+		t.Fatalf("certs count = %d, want 6", len(certs))
 	}
 	// Verify statuses
 	for _, c := range certs {
 		host := c["host"].(string)
 		status := c["status"].(string)
 		switch host {
-		case "auto.com":
+		case "auto.com", "www.auto.com":
 			if status != "pending" {
-				t.Errorf("auto.com status = %q, want pending", status)
+				t.Errorf("%s status = %q, want pending", host, status)
 			}
-		case "manual.com":
+		case "manual.com", "www.manual.com":
 			if status != "active" {
-				t.Errorf("manual.com status = %q, want active", status)
+				t.Errorf("%s status = %q, want active", host, status)
 			}
-		case "off.com":
+		case "off.com", "www.off.com":
 			if status != "none" {
-				t.Errorf("off.com status = %q, want none", status)
+				t.Errorf("%s status = %q, want none", host, status)
 			}
+		default:
+			t.Errorf("unexpected cert host %q", host)
 		}
 	}
 }
@@ -1060,4 +1062,3 @@ func TestHandleCloudflareCachePurge_InvalidJSON(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
-

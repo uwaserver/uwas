@@ -35,7 +35,7 @@ interface DomainFormState {
   proxyAlgorithm: string;
   redirectTarget: string;
   redirectCode: string;
-  canonicalHost: 'apex' | 'www' | 'both';
+  canonicalHost: 'apex' | 'www';
   // App fields removed from create UI in v0.5.8 — Apps page owns app
   // lifecycle now. The interface stays narrow on purpose so a future
   // accidental "set form.appPort" stops compiling.
@@ -85,6 +85,10 @@ const emptyForm: DomainFormState = {
 
 function normalizeAlias(value: string) {
   return value.trim().toLowerCase().replace(/\.$/, '');
+}
+
+function stripLeadingWWW(value: string) {
+  return value.replace(/^www\./i, '');
 }
 
 interface TemplateConfig {
@@ -465,7 +469,7 @@ export default function Domains() {
   const openRedirectModal = (targetHost?: string) => {
     const target = targetHost || domains.find(d => d.type !== 'redirect')?.host || '';
     setRedirectForm({
-      baseHost: target ? normalizeAlias(target).replace(/^www\./, '') : '',
+      baseHost: '',
       targetHost: target,
       code: '301',
     });
@@ -474,10 +478,10 @@ export default function Domains() {
 
   const handleAddRedirectDomain = async (e: FormEvent) => {
     e.preventDefault();
-    const baseHost = normalizeAlias(redirectForm.baseHost).replace(/^www\./, '');
+    const baseHost = stripLeadingWWW(normalizeAlias(redirectForm.baseHost));
     const targetHost = normalizeAlias(redirectForm.targetHost);
     if (!baseHost || !targetHost) return;
-    const redirectHost = `www.${baseHost}`;
+    const redirectHost = baseHost;
     const existingRedirect = domains.find(d => normalizeAlias(d.host) === redirectHost);
     if (existingRedirect && existingRedirect.type !== 'redirect') {
       setStatus({ ok: false, message: `"${redirectHost}" is already configured as a ${existingRedirect.type} domain.` });
@@ -555,7 +559,7 @@ export default function Domains() {
         proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
         redirectTarget: d.redirect?.target ?? '',
         redirectCode: String(d.redirect?.status ?? 301),
-        canonicalHost: 'apex',
+        canonicalHost: d.canonical_host === 'www' ? 'www' : 'apex',
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
         htaccessEnabled: !!d.htaccess?.mode,
@@ -600,11 +604,11 @@ export default function Domains() {
 
     /* Build API payload — minimal fields, backend fills defaults */
     const payload: Record<string, unknown> = {
-      host: form.host.trim(),
+      host: stripLeadingWWW(form.host.trim()),
       type: form.type,
       ssl: { mode: form.ssl, force_ssl: form.ssl !== 'off' && form.forceSSL },
     };
-    if (!editingHost && form.type !== 'redirect') payload.canonical_host = form.canonicalHost;
+    if (form.type !== 'redirect') payload.canonical_host = form.canonicalHost;
 
     if (form.ip) payload.ip = form.ip;
     // Only send type-specific fields
@@ -898,18 +902,17 @@ export default function Domains() {
                 {/* Host */}
                 <div className="grid grid-cols-1 gap-4">
                   <FormField label="Host" htmlFor="add-host">
-                    <input id="add-host" type="text" value={form.host} onChange={e => patchField('host', e.target.value)}
+                    <input id="add-host" type="text" value={form.host} onChange={e => patchField('host', stripLeadingWWW(e.target.value))}
                       placeholder="example.com" required autoFocus disabled={!!editingHost}
                       className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
                   </FormField>
                 </div>
 
-                {!editingHost && form.type !== 'redirect' && (
-                  <div className="grid gap-2 sm:grid-cols-3">
+                {form.type !== 'redirect' && (
+                  <div className="grid gap-2 sm:grid-cols-2">
                     {[
-                      { value: 'apex', title: 'domain.com', desc: 'www redirects here' },
-                      { value: 'www', title: 'www.domain.com', desc: 'domain.com redirects here' },
-                      { value: 'both', title: 'Both', desc: 'no redirect' },
+                      { value: 'apex', title: form.host ? stripLeadingWWW(normalizeAlias(form.host)) || 'domain.com' : 'domain.com', desc: 'Primary URL without www' },
+                      { value: 'www', title: form.host ? `www.${stripLeadingWWW(normalizeAlias(form.host)) || 'domain.com'}` : 'www.domain.com', desc: 'Primary URL with www' },
                     ].map(item => (
                       <button
                         key={item.value}
@@ -1279,18 +1282,15 @@ export default function Domains() {
             </div>
             <form onSubmit={handleAddRedirectDomain} className="space-y-4">
               <FormField label="Domain" htmlFor="redirect-base-host">
-                <div className="flex rounded-md border border-border bg-card focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
-                  <span className="flex items-center border-r border-border px-3 text-sm font-mono text-muted-foreground">www.</span>
-                  <input
-                    id="redirect-base-host"
-                    value={redirectForm.baseHost}
-                    onChange={e => setRedirectForm(prev => ({ ...prev, baseHost: e.target.value.replace(/^www\./i, '') }))}
-                    placeholder="example.com"
-                    required
-                    autoFocus
-                    className="min-w-0 flex-1 rounded-r-md bg-transparent px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
+                <input
+                  id="redirect-base-host"
+                  value={redirectForm.baseHost}
+                  onChange={e => setRedirectForm(prev => ({ ...prev, baseHost: stripLeadingWWW(e.target.value) }))}
+                  placeholder="old-domain.com"
+                  required
+                  autoFocus
+                  className={inputCls}
+                />
               </FormField>
               <FormField label="Redirect To" htmlFor="redirect-target-host">
                 <select
@@ -1424,7 +1424,14 @@ function DomainRow({
             ) : (
               <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-500 shrink-0" title="Health unknown" />
             )}
-            <span className="font-mono text-xs">{d.host}</span>
+            <div className="min-w-0">
+              <span className="block font-mono text-xs">{d.host}</span>
+              {d.type !== 'redirect' && (
+                <span className="block truncate text-[9px] text-muted-foreground">
+                  Main: <span className="font-mono">{d.main_host || (d.canonical_host === 'www' ? `www.${d.host}` : d.host)}</span>
+                </span>
+              )}
+            </div>
             {health && !isHealthy && (
               <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-medium text-red-400">DOWN</span>
             )}

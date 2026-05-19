@@ -831,13 +831,15 @@ func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	type domainInfo struct {
-		Host     string   `json:"host"`
-		IP       string   `json:"ip,omitempty"`
-		Aliases  []string `json:"aliases"`
-		Type     string   `json:"type"`
-		SSL      string   `json:"ssl"`
-		ForceSSL bool     `json:"force_ssl"`
-		Root     string   `json:"root,omitempty"`
+		Host          string   `json:"host"`
+		MainHost      string   `json:"main_host,omitempty"`
+		CanonicalHost string   `json:"canonical_host,omitempty"`
+		IP            string   `json:"ip,omitempty"`
+		Aliases       []string `json:"aliases"`
+		Type          string   `json:"type"`
+		SSL           string   `json:"ssl"`
+		ForceSSL      bool     `json:"force_ssl"`
+		Root          string   `json:"root,omitempty"`
 	}
 
 	// Get current user for domain filtering
@@ -856,19 +858,33 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 
 	s.configMu.RLock()
 	domains := make([]domainInfo, 0)
+	seenHosts := make(map[string]struct{})
 	for _, d := range s.config.Domains {
+		displayHost := canonicalDomainHostname(d.Host)
+		if displayHost == "" {
+			displayHost = normalizeDomainHostname(d.Host)
+		}
+		if isImplicitWWWRedirectForDomains(d, s.config.Domains) {
+			continue
+		}
+		if _, ok := seenHosts[displayHost]; ok {
+			continue
+		}
+		seenHosts[displayHost] = struct{}{}
 		// Filter domains for non-admin users
-		if allowedDomains != nil && !allowedDomains[d.Host] {
+		if allowedDomains != nil && !allowedDomains[d.Host] && !allowedDomains[displayHost] {
 			continue
 		}
 		domains = append(domains, domainInfo{
-			Host:     d.Host,
-			IP:       d.IP,
-			Aliases:  d.Aliases,
-			Type:     d.Type,
-			SSL:      d.SSL.Mode,
-			ForceSSL: d.SSL.ForceSSL,
-			Root:     d.Root,
+			Host:          displayHost,
+			MainHost:      mainDomainHostname(d),
+			CanonicalHost: normalizeCanonicalHostPreference(d.CanonicalHost),
+			IP:            d.IP,
+			Aliases:       publicDomainAliases(d),
+			Type:          d.Type,
+			SSL:           d.SSL.Mode,
+			ForceSSL:      d.SSL.ForceSSL,
+			Root:          d.Root,
 		})
 	}
 	s.configMu.RUnlock()
@@ -2157,6 +2173,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
 	}
+	if d.Type == string(config.DomainTypeRedirect) && len(d.Aliases) > 0 {
+		jsonError(w, "redirect domains cannot have aliases; create separate redirect domains instead", http.StatusBadRequest)
+		return
+	}
 	if err := validateRequestedDomainAliases(d.Host, d.Aliases); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -2177,8 +2197,7 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		redirectAliases = append(redirectAliases, explicitRedirectAliases...)
 		d.Aliases = nil
 	}
-	canonicalRedirectAliases := applyDomainCanonicalPreference(&d, aliasOptions)
-	redirectAliases = append(redirectAliases, canonicalRedirectAliases...)
+	applyDomainCanonicalPreference(&d, aliasOptions)
 	redirectAliases = uniqueNormalizedHostnames(redirectAliases)
 	if err := validateRequestedDomainAliases(d.Host, d.Aliases); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -2236,8 +2255,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 
 	s.configMu.Lock()
 
-	// Check for duplicate hostnames across hosts and aliases. This is exact
-	// hostname matching only: example.com and www.example.com are distinct.
+	removeImplicitWWWRedirectDomains(&s.config.Domains, d.Host, -1)
+
+	// Check for duplicate hostnames across hosts and aliases. Apex and www are
+	// one site identity, so they must never become separate records.
 	for _, host := range domainHostnames(d) {
 		if conflict := findDomainHostnameConflict(s.config.Domains, -1, host); conflict != "" {
 			s.configMu.Unlock()
@@ -2252,11 +2273,6 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate redirect alias)", false)
 			jsonError(w, fmt.Sprintf("alias %q is already configured on %s", alias, conflict), http.StatusConflict)
 			return
-		}
-	}
-	for _, alias := range canonicalRedirectAliases {
-		if conflict := findDomainHostnameConflict(s.config.Domains, -1, alias); conflict != "" {
-			redirectAliases = removeNormalizedHost(redirectAliases, alias)
 		}
 	}
 	// ── Auto-fill defaults based on domain type ──
@@ -2438,7 +2454,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePin(w, r) {
 		return
 	}
-	host := r.PathValue("host")
+	host := canonicalDomainHostname(r.PathValue("host"))
 	cleanup := r.URL.Query().Get("cleanup") == "true"
 	confirm := r.URL.Query().Get("confirm") == "true"
 	if !confirm {
@@ -2468,7 +2484,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	found := false
 	var domainRoot string
 	for i, d := range s.config.Domains {
-		if d.Host == host {
+		if canonicalDomainHostname(d.Host) == host {
 			domainRoot = d.Root
 			s.config.Domains = append(s.config.Domains[:i], s.config.Domains[i+1:]...)
 			found = true
@@ -2569,7 +2585,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	host := r.PathValue("host")
+	host := canonicalDomainHostname(r.PathValue("host"))
 	var currentUser *auth.User
 
 	// Check domain permissions for non-admin users
@@ -2607,9 +2623,17 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if len(d.Aliases) > 0 && s.domainTypeForHost(host) == string(config.DomainTypeRedirect) {
+		s.recordAuditR(r, "domain.update", "domain: "+host+" (redirect aliases rejected)", false)
+		jsonError(w, "redirect domains cannot have aliases; create separate redirect domains instead", http.StatusBadRequest)
+		return
+	}
 	if err := validateRequestedDomainAliases(firstNonEmpty(d.Host, host), d.Aliases); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if d.Host == "" {
+		d.Host = host
 	}
 	normalizeDomainHostnames(&d)
 	redirectAliases := []string(nil)
@@ -2648,6 +2672,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	_, hasCompression := raw["compression"]
 	_, hasResources := raw["resources"]
 	_, hasHtaccess := raw["htaccess"]
+	_, hasCanonical := raw["canonical_host"]
 	replaceMode := r.URL.Query().Get("replace") == "true"
 
 	// Mass-assignment protection: non-admin users cannot modify sensitive fields.
@@ -2709,12 +2734,13 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		HasSSL:         hasSSL,
 		HasSSLForce:    hasSSLForce,
 		HasResources:   hasResources,
+		HasCanonical:   hasCanonical,
 	}
 
 	s.configMu.Lock()
 	found := false
 	for i, existing := range s.config.Domains {
-		if existing.Host == host {
+		if canonicalDomainHostname(existing.Host) == host {
 			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
 			normalizeDomainHostnames(&merged)
 			if merged.Type == string(config.DomainTypeRedirect) {
@@ -2744,7 +2770,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			for _, candidate := range domainHostnames(merged) {
-				if conflict := findDomainHostnameConflict(s.config.Domains, i, candidate); conflict != "" {
+				if conflict := findDomainHostnameConflictAllowingRedirect(s.config.Domains, i, candidate, merged.Host); conflict != "" {
 					s.configMu.Unlock()
 					s.recordAuditR(r, "domain.update", "domain: "+host+" (duplicate hostname)", false)
 					jsonError(w, fmt.Sprintf("hostname %q is already configured on %s", candidate, conflict), http.StatusConflict)
@@ -2767,6 +2793,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 
 			s.config.Domains[i] = merged
+			removeImplicitWWWRedirectDomains(&s.config.Domains, merged.Host, i)
 			if len(redirectAliases) > 0 {
 				upsertCanonicalRedirectAliasDomains(&s.config.Domains, i, redirectAliases, merged.Host, aliasOptions.redirectCode, aliasOptions.preservePath)
 			}
@@ -2905,24 +2932,30 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 	defer s.configMu.RUnlock()
 
 	type certInfo struct {
-		Host     string `json:"host"`
-		Domain   string `json:"domain,omitempty"`
-		Alias    bool   `json:"alias,omitempty"`
-		SSLMode  string `json:"ssl_mode"`
-		Status   string `json:"status"`
-		Issuer   string `json:"issuer"`
-		Expiry   string `json:"expiry,omitempty"`
-		DaysLeft int    `json:"days_left"`
+		Host          string `json:"host"`
+		Domain        string `json:"domain,omitempty"`
+		MainHost      string `json:"main_host,omitempty"`
+		CanonicalHost string `json:"canonical_host,omitempty"`
+		Alias         bool   `json:"alias,omitempty"`
+		SSLMode       string `json:"ssl_mode"`
+		Status        string `json:"status"`
+		Issuer        string `json:"issuer"`
+		Expiry        string `json:"expiry,omitempty"`
+		DaysLeft      int    `json:"days_left"`
 	}
 
 	certs := make([]certInfo, 0)
 	for _, d := range s.config.Domains {
+		mainHost := mainDomainHostname(d)
+		canonicalHost := normalizeCanonicalHostPreference(d.CanonicalHost)
 		for _, host := range domainHostnames(d) {
 			ci := certInfo{
-				Host:    host,
-				Domain:  d.Host,
-				Alias:   host != d.Host,
-				SSLMode: d.SSL.Mode,
+				Host:          host,
+				Domain:        canonicalDomainHostname(d.Host),
+				MainHost:      mainHost,
+				CanonicalHost: canonicalHost,
+				Alias:         host != mainHost,
+				SSLMode:       d.SSL.Mode,
 			}
 			switch d.SSL.Mode {
 			case "off":
@@ -3025,7 +3058,7 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	target := normalizeDomainHostname(req.Domain)
+	target := canonicalDomainHostname(req.Domain)
 	if target == "" {
 		jsonError(w, "domain is required", http.StatusBadRequest)
 		return
@@ -3058,7 +3091,7 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 	s.configMu.Lock()
 	targetIndex := -1
 	for i, d := range s.config.Domains {
-		if normalizeDomainHostname(d.Host) == target {
+		if canonicalDomainHostname(d.Host) == target {
 			targetIndex = i
 			break
 		}
@@ -3070,12 +3103,14 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if host == normalizeDomainHostname(s.config.Domains[targetIndex].Host) {
+	if canonicalDomainHostname(host) == canonicalDomainHostname(s.config.Domains[targetIndex].Host) {
+		s.config.Domains[targetIndex].Aliases = removeDomainAlias(s.config.Domains[targetIndex].Aliases, host)
 		s.configMu.Unlock()
 		if s.unknownHT != nil {
 			s.unknownHT.Unblock(host)
 			s.unknownHT.Dismiss(host)
 		}
+		s.notifyDomainChange()
 		jsonResponse(w, map[string]string{"status": "already_primary", "host": host, "domain": target})
 		return
 	}
@@ -3085,12 +3120,12 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 		if i == targetIndex {
 			continue
 		}
-		if normalizeDomainHostname(d.Host) == host {
+		if canonicalDomainHostname(d.Host) == canonicalDomainHostname(host) {
 			hostIndex = i
 			break
 		}
 		for _, alias := range d.Aliases {
-			if normalizeDomainHostname(alias) == host {
+			if canonicalDomainHostname(alias) == canonicalDomainHostname(host) {
 				hostIndex = i
 				break
 			}
@@ -3148,10 +3183,11 @@ func removeDomainAlias(aliases []string, host string) []string {
 }
 
 type domainAliasOptions struct {
-	redirect      bool
-	redirectCode  int
-	preservePath  bool
-	canonicalHost string
+	redirect         bool
+	redirectCode     int
+	preservePath     bool
+	canonicalHost    string
+	canonicalHostSet bool
 }
 
 func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
@@ -3165,19 +3201,17 @@ func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
 		return domainAliasOptions{}, fmt.Errorf("invalid JSON")
 	}
 	mode := strings.ToLower(strings.TrimSpace(raw.AliasMode))
-	opts := domainAliasOptions{preservePath: true, canonicalHost: "apex"}
+	opts := domainAliasOptions{preservePath: true}
 	if raw.AliasPreservePath != nil {
 		opts.preservePath = *raw.AliasPreservePath
 	}
-	switch canonicalHost := strings.ToLower(strings.TrimSpace(raw.CanonicalHost)); canonicalHost {
-	case "", "apex", "root", "naked", "domain":
-		opts.canonicalHost = "apex"
-	case "www":
-		opts.canonicalHost = "www"
-	case "both", "none", "no-redirect":
-		opts.canonicalHost = "both"
-	default:
-		return domainAliasOptions{}, fmt.Errorf("canonical_host must be apex, www, or both")
+	if raw.CanonicalHost != "" {
+		opts.canonicalHostSet = true
+		canonicalHost, err := normalizeRequestedCanonicalHost(raw.CanonicalHost)
+		if err != nil {
+			return domainAliasOptions{}, err
+		}
+		opts.canonicalHost = canonicalHost
 	}
 	switch mode {
 	case "", "alias", "redirect":
@@ -3196,27 +3230,32 @@ func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
 }
 
 func validateRequestedDomainAliases(host string, aliases []string) error {
-	host = normalizeDomainHostname(host)
+	rawHost := normalizeDomainHostname(host)
+	host = canonicalDomainHostname(host)
 	seen := make(map[string]struct{}, len(aliases))
 	for _, alias := range aliases {
-		alias = normalizeDomainHostname(alias)
-		if alias == "" {
+		rawAlias := normalizeDomainHostname(alias)
+		aliasKey := canonicalDomainHostname(alias)
+		if aliasKey == "" {
 			continue
 		}
-		if alias == host {
-			return fmt.Errorf("alias %q cannot be the same as the domain host", alias)
+		if rawAlias == rawHost {
+			return fmt.Errorf("alias %q cannot be the same as the domain host", rawAlias)
 		}
-		if _, ok := seen[alias]; ok {
-			return fmt.Errorf("duplicate alias %q", alias)
+		if aliasKey == host {
+			continue
 		}
-		seen[alias] = struct{}{}
+		if _, ok := seen[aliasKey]; ok {
+			return fmt.Errorf("duplicate alias %q", aliasKey)
+		}
+		seen[aliasKey] = struct{}{}
 	}
 	return nil
 }
 
 func newCanonicalRedirectAliasDomain(alias, targetHost string, status int, preservePath bool) config.Domain {
-	alias = normalizeDomainHostname(alias)
-	targetHost = normalizeDomainHostname(targetHost)
+	alias = canonicalDomainHostname(alias)
+	targetHost = canonicalDomainHostname(targetHost)
 	if status == 0 {
 		status = http.StatusMovedPermanently
 	}
@@ -3249,35 +3288,42 @@ func autoWWWRedirectHost(d config.Domain) string {
 func applyDomainCanonicalPreference(d *config.Domain, opts domainAliasOptions) []string {
 	host := normalizeDomainHostname(d.Host)
 	if host == "" || d.Type == string(config.DomainTypeRedirect) {
+		d.CanonicalHost = ""
 		return nil
 	}
-	apex, www, ok := apexAndWWWHost(host)
+	apex, _, ok := apexAndWWWHost(host)
 	if !ok {
 		return nil
 	}
-	switch opts.canonicalHost {
-	case "www":
-		d.Host = www
-		d.Aliases = removeNormalizedHost(d.Aliases, apex)
-		return []string{apex}
-	case "both":
-		if strings.EqualFold(host, www) {
-			d.Host = www
-			if !containsNormalizedHostname(d.Aliases, apex) {
-				d.Aliases = append(d.Aliases, apex)
-			}
-			return nil
-		}
-		d.Host = apex
-		if !containsNormalizedHostname(d.Aliases, www) {
-			d.Aliases = append(d.Aliases, www)
-		}
-		return nil
-	default:
-		d.Host = apex
-		d.Aliases = removeNormalizedHost(d.Aliases, www)
-		return []string{www}
+	d.Host = apex
+	if opts.canonicalHostSet {
+		d.CanonicalHost = opts.canonicalHost
+	} else {
+		d.CanonicalHost = normalizeCanonicalHostPreference(d.CanonicalHost)
 	}
+	normalizeDomainHostnames(d)
+	return nil
+}
+
+func normalizeRequestedCanonicalHost(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "apex", "root", "naked", "domain":
+		return "apex", nil
+	case "www":
+		return "www", nil
+	case "both", "none", "no-redirect":
+		return "apex", nil
+	default:
+		return "", fmt.Errorf("canonical_host must be apex or www")
+	}
+}
+
+func normalizeCanonicalHostPreference(value string) string {
+	canonical, err := normalizeRequestedCanonicalHost(value)
+	if err != nil {
+		return "apex"
+	}
+	return canonical
 }
 
 func apexAndWWWHost(host string) (string, string, bool) {
@@ -3336,7 +3382,7 @@ func removeNormalizedHost(hosts []string, host string) []string {
 
 func upsertCanonicalRedirectAliasDomains(domains *[]config.Domain, skipIndex int, aliases []string, targetHost string, status int, preservePath bool) {
 	for _, alias := range aliases {
-		alias = normalizeDomainHostname(alias)
+		alias = canonicalDomainHostname(alias)
 		if alias == "" {
 			continue
 		}
@@ -3346,7 +3392,7 @@ func upsertCanonicalRedirectAliasDomains(domains *[]config.Domain, skipIndex int
 			if i == skipIndex {
 				continue
 			}
-			if normalizeDomainHostname((*domains)[i].Host) == alias {
+			if canonicalDomainHostname((*domains)[i].Host) == alias {
 				(*domains)[i] = redirectDomain
 				updated = true
 				break
@@ -3358,9 +3404,60 @@ func upsertCanonicalRedirectAliasDomains(domains *[]config.Domain, skipIndex int
 	}
 }
 
+func removeImplicitWWWRedirectDomains(domains *[]config.Domain, targetHost string, skipIndex int) {
+	targetHost = canonicalDomainHostname(targetHost)
+	if targetHost == "" {
+		return
+	}
+	out := (*domains)[:0]
+	for i, d := range *domains {
+		if i == skipIndex || !isCanonicalRedirectAliasDomain(d, implicitWWWHostname(targetHost), targetHost) {
+			out = append(out, d)
+		}
+	}
+	*domains = out
+}
+
+func isImplicitWWWRedirectForDomains(d config.Domain, domains []config.Domain) bool {
+	if d.Type != string(config.DomainTypeRedirect) {
+		return false
+	}
+	host := canonicalDomainHostname(d.Host)
+	if host == "" {
+		return false
+	}
+	for _, candidate := range domains {
+		if candidate.Type == string(config.DomainTypeRedirect) {
+			continue
+		}
+		if canonicalDomainHostname(candidate.Host) == host && isCanonicalRedirectAliasDomain(d, d.Host, candidate.Host) {
+			return true
+		}
+	}
+	return false
+}
+
+func publicDomainAliases(d config.Domain) []string {
+	host := canonicalDomainHostname(d.Host)
+	seen := make(map[string]struct{}, len(d.Aliases))
+	out := make([]string, 0, len(d.Aliases))
+	for _, alias := range d.Aliases {
+		alias = canonicalDomainHostname(alias)
+		if alias == "" || alias == host {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		out = append(out, alias)
+	}
+	return out
+}
+
 func findDomainHostnameConflictAllowingRedirect(domains []config.Domain, skipIndex int, host, targetHost string) string {
-	host = normalizeDomainHostname(host)
-	targetHost = normalizeDomainHostname(targetHost)
+	host = canonicalDomainHostname(host)
+	targetHost = canonicalDomainHostname(targetHost)
 	if host == "" {
 		return ""
 	}
@@ -3368,14 +3465,14 @@ func findDomainHostnameConflictAllowingRedirect(domains []config.Domain, skipInd
 		if i == skipIndex {
 			continue
 		}
-		if normalizeDomainHostname(d.Host) == host {
+		if canonicalDomainHostname(d.Host) == host {
 			if isCanonicalRedirectAliasDomain(d, host, targetHost) {
 				return ""
 			}
 			return d.Host
 		}
 		for _, alias := range d.Aliases {
-			if normalizeDomainHostname(alias) == host {
+			if canonicalDomainHostname(alias) == host {
 				return d.Host
 			}
 		}
@@ -3384,14 +3481,14 @@ func findDomainHostnameConflictAllowingRedirect(domains []config.Domain, skipInd
 }
 
 func isCanonicalRedirectAliasDomain(d config.Domain, host, targetHost string) bool {
-	if normalizeDomainHostname(d.Host) != normalizeDomainHostname(host) {
+	if canonicalDomainHostname(d.Host) != canonicalDomainHostname(host) {
 		return false
 	}
 	if d.Type != string(config.DomainTypeRedirect) {
 		return false
 	}
 	target := strings.TrimRight(strings.ToLower(strings.TrimSpace(d.Redirect.Target)), "/")
-	return target == "https://"+normalizeDomainHostname(targetHost)
+	return target == "https://"+canonicalDomainHostname(targetHost) || target == "https://"+implicitWWWHostname(targetHost)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -3550,7 +3647,7 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 // --- Domain detail ---
 
 func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
-	host := r.PathValue("host")
+	host := canonicalDomainHostname(r.PathValue("host"))
 
 	// Check domain permissions for non-admin users
 	if s.authMgr != nil {
@@ -3567,8 +3664,11 @@ func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
 	defer s.configMu.RUnlock()
 
 	for _, d := range s.config.Domains {
-		if d.Host == host {
-			jsonResponse(w, d)
+		if canonicalDomainHostname(d.Host) == host {
+			out := d
+			normalizeDomainHostnames(&out)
+			out.Aliases = publicDomainAliases(out)
+			jsonResponse(w, out)
 			return
 		}
 	}
@@ -3980,6 +4080,18 @@ func humanDuration(d time.Duration) string {
 	return strings.Join(parts, " ")
 }
 
+func (s *Server) domainTypeForHost(host string) string {
+	host = canonicalDomainHostname(host)
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	for _, d := range s.config.Domains {
+		if canonicalDomainHostname(d.Host) == host {
+			return d.Type
+		}
+	}
+	return ""
+}
+
 // validateDomainConfig performs comprehensive pre-save validation. Delegates
 // static checks (type, SSL, basic auth, proxy upstreams, cache, rate-limit)
 // to config.ValidateDomain, then adds runtime-dependent checks (PHP
@@ -4041,11 +4153,16 @@ func domainTypeUsesWebRoot(domainType string) bool {
 }
 
 func normalizeDomainHostnames(d *config.Domain) {
-	d.Host = normalizeDomainHostname(d.Host)
+	d.Host = canonicalDomainHostname(d.Host)
+	if d.Type == string(config.DomainTypeRedirect) {
+		d.CanonicalHost = ""
+	} else if d.Host != "" {
+		d.CanonicalHost = normalizeCanonicalHostPreference(d.CanonicalHost)
+	}
 	seen := make(map[string]struct{}, len(d.Aliases))
 	aliases := make([]string, 0, len(d.Aliases))
 	for _, alias := range d.Aliases {
-		alias = normalizeDomainHostname(alias)
+		alias = canonicalDomainHostname(alias)
 		if alias == "" || alias == d.Host {
 			continue
 		}
@@ -4062,25 +4179,69 @@ func normalizeDomainHostname(host string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 }
 
+func canonicalDomainHostname(host string) string {
+	host = normalizeDomainHostname(host)
+	if host == "" || strings.Contains(host, ":") || strings.HasPrefix(host, "*.") {
+		return host
+	}
+	if strings.HasPrefix(host, "www.") {
+		apex := strings.TrimPrefix(host, "www.")
+		if apex != "" && strings.Contains(apex, ".") {
+			return apex
+		}
+	}
+	return host
+}
+
+func implicitWWWHostname(host string) string {
+	host = canonicalDomainHostname(host)
+	if host == "" || strings.Contains(host, ":") || strings.HasPrefix(host, "*.") || !strings.Contains(host, ".") {
+		return ""
+	}
+	return "www." + host
+}
+
 func domainHostnames(d config.Domain) []string {
-	seen := make(map[string]struct{}, 1+len(d.Aliases))
-	hosts := make([]string, 0, 1+len(d.Aliases))
+	seen := make(map[string]struct{}, 2+len(d.Aliases)*2)
+	hosts := make([]string, 0, 2+len(d.Aliases)*2)
 	for _, host := range append([]string{d.Host}, d.Aliases...) {
-		host = normalizeDomainHostname(host)
+		host = canonicalDomainHostname(host)
 		if host == "" {
 			continue
 		}
-		if _, ok := seen[host]; ok {
-			continue
+		candidates := []string{host, implicitWWWHostname(host)}
+		if normalizeCanonicalHostPreference(d.CanonicalHost) == "www" && implicitWWWHostname(host) != "" {
+			candidates = []string{implicitWWWHostname(host), host}
 		}
-		seen[host] = struct{}{}
-		hosts = append(hosts, host)
+		for _, candidate := range candidates {
+			if candidate == "" {
+				continue
+			}
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			hosts = append(hosts, candidate)
+		}
 	}
 	return hosts
 }
 
+func mainDomainHostname(d config.Domain) string {
+	host := canonicalDomainHostname(d.Host)
+	if host == "" {
+		return normalizeDomainHostname(d.Host)
+	}
+	if d.Type != string(config.DomainTypeRedirect) && normalizeCanonicalHostPreference(d.CanonicalHost) == "www" {
+		if www := implicitWWWHostname(host); www != "" {
+			return www
+		}
+	}
+	return host
+}
+
 func findDomainHostnameConflict(domains []config.Domain, skipIndex int, host string) string {
-	host = normalizeDomainHostname(host)
+	host = canonicalDomainHostname(host)
 	if host == "" {
 		return ""
 	}
@@ -4088,11 +4249,11 @@ func findDomainHostnameConflict(domains []config.Domain, skipIndex int, host str
 		if i == skipIndex {
 			continue
 		}
-		if normalizeDomainHostname(d.Host) == host {
+		if canonicalDomainHostname(d.Host) == host {
 			return d.Host
 		}
 		for _, alias := range d.Aliases {
-			if normalizeDomainHostname(alias) == host {
+			if canonicalDomainHostname(alias) == host {
 				return d.Host
 			}
 		}

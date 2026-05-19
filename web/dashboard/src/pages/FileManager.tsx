@@ -16,8 +16,7 @@ import {
   Search,
 } from 'lucide-react';
 import {
-  fetchDomains,
-  fetchApps,
+  fetchFileWorkspaces,
   fetchFiles,
   readFile,
   writeFile,
@@ -26,9 +25,8 @@ import {
   uploadFile,
   fetchDiskUsage,
   getToken,
-  type DomainData,
-  type AppInstance,
   type FileEntry,
+  type FileWorkspace,
 } from '@/lib/api';
 import { useConfirm } from '@/components/ConfirmModal';
 
@@ -56,8 +54,7 @@ function formatDate(dateStr: string): string {
 
 export default function FileManager() {
   const { confirmAction } = useConfirm();
-  const [domains, setDomains] = useState<DomainData[]>([]);
-  const [apps, setApps] = useState<AppInstance[]>([]);
+  const [workspaces, setWorkspaces] = useState<FileWorkspace[]>([]);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [fileFilter, setFileFilter] = useState('');
@@ -86,22 +83,19 @@ export default function FileManager() {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    Promise.allSettled([fetchDomains(), fetchApps()])
-      .then(([domainsRes, appsRes]) => {
-        const d = domainsRes.status === 'fulfilled' ? domainsRes.value : [];
-        const a = appsRes.status === 'fulfilled' ? appsRes.value : [];
-        setDomains(d ?? []);
-        setApps(a ?? []);
-        if (d && d.length > 0) setSelectedDomain(d[0].host);
-        else if (a && a.length > 0) setSelectedDomain(`app:${a[0].name}`);
+    fetchFileWorkspaces()
+      .then(items => {
+        const next = items ?? [];
+        setWorkspaces(next);
+        setSelectedDomain(current => current || next[0]?.id || '');
       })
       .catch(() => {});
   }, []);
 
-  const fileTargets = useMemo(() => [
-    ...domains.map(d => ({ value: d.host, label: d.host, kind: 'Domain' })),
-    ...apps.map(app => ({ value: `app:${app.name}`, label: app.name, kind: 'Application' })),
-  ], [apps, domains]);
+  const selectedWorkspace = useMemo(
+    () => workspaces.find(w => w.id === selectedDomain) ?? null,
+    [selectedDomain, workspaces],
+  );
 
   const loadFiles = useCallback(async () => {
     if (!selectedDomain) return;
@@ -348,10 +342,10 @@ export default function FileManager() {
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
       )}
 
-      {/* Domain selector + disk usage */}
+      {/* Workspace selector + disk usage */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
         <div className="flex-1">
-          <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Target</label>
+          <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Workspace</label>
           <select
             value={selectedDomain}
             onChange={async e => {
@@ -370,10 +364,18 @@ export default function FileManager() {
             }}
             className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
           >
-            {fileTargets.map(target => (
-              <option key={target.value} value={target.value}>{target.kind}: {target.label}</option>
+            {workspaces.map(target => (
+              <option key={target.id} value={target.id}>
+                {target.kind === 'application' ? 'App' : 'Domain'}: {target.label}
+                {target.kind === 'application' && target.domains?.length ? ` (${target.domains.join(', ')})` : ''}
+              </option>
             ))}
           </select>
+          {selectedWorkspace?.root && (
+            <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={selectedWorkspace.root}>
+              {selectedWorkspace.root}
+            </p>
+          )}
         </div>
         {diskUsage && (
           <div className="flex max-w-full items-center gap-2 rounded-md border border-border bg-card px-4 py-2.5 sm:max-w-[52%]">

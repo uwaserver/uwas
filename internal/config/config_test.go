@@ -665,7 +665,7 @@ domains:
 	}
 }
 
-func TestValidationApexAndWWWAreDistinctHostnames(t *testing.T) {
+func TestValidationApexAndWWWAreSameSiteIdentity(t *testing.T) {
 	yaml := `
 domains:
   - host: "example.com"
@@ -679,8 +679,12 @@ domains:
     ssl:
       mode: off
 `
-	if _, err := loadStringConfig(yaml); err != nil {
-		t.Fatalf("example.com and www.example.com must not be treated as duplicates: %v", err)
+	_, err := loadStringConfig(yaml)
+	if err == nil {
+		t.Fatal("expected validation error for apex/www duplicate hosts")
+	}
+	if !contains(err.Error(), "duplicate host") {
+		t.Errorf("error = %q, want to contain 'duplicate host'", err.Error())
 	}
 }
 

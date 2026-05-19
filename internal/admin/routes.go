@@ -305,6 +305,7 @@ func (s *Server) registerSystemAdminRoutes() {
 // manager, cron, WordPress, SFTP user provisioning.
 func (s *Server) registerHostingRoutes() {
 	// File manager
+	s.mux.HandleFunc("GET /api/v1/files/workspaces", s.handleFileWorkspaces)
 	s.mux.HandleFunc("GET /api/v1/files/{domain}/list", s.handleFileList)
 	s.mux.HandleFunc("GET /api/v1/files/{domain}/read", s.handleFileRead)
 	s.mux.HandleFunc("PUT /api/v1/files/{domain}/write", s.handleFileWrite)

@@ -166,7 +166,7 @@ export default function DomainDetail() {
         seenBasicAuthUsers.add(u.username);
       }
       if (basicAuthEnabled && cleanedBasicAuthUsers.length === 0) {
-        setMsg({ ok: false, text: 'Basic Auth aktifken en az bir kullanıcı gerekli.' });
+        setMsg({ ok: false, text: 'At least one user is required when Basic Auth is enabled.' });
         setSaving(false);
         return;
       }
@@ -174,24 +174,26 @@ export default function DomainDetail() {
       const basicAuthMap = Object.fromEntries(cleanedBasicAuthUsers.map(u => [u.username, u.password]));
       const geoBlockList = geoBlock.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       const geoAllowList = geoAllow.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const currentSecurity: Partial<NonNullable<DDType['security']>> = detail?.security ?? {};
       await updateDomain(host, {
         basic_auth: basicAuthEnabled
           ? { enabled: true, realm: basicAuthRealm.trim() || undefined, users: basicAuthMap }
           : { enabled: false },
         security: {
-          waf: { enabled: wafEnabled },
-          rate_limit: rateLimitReqs > 0 ? { requests: rateLimitReqs, window: rateLimitWindow } : undefined,
-          blocked_paths: blockedPaths.length > 0 ? blockedPaths : undefined,
-          ip_blacklist: ipBlacklist.length > 0 ? ipBlacklist : undefined,
-          hotlink_protection: { enabled: hotlinkEnabled },
-          geo_block_countries: geoBlockList.length > 0 ? geoBlockList : undefined,
-          geo_allow_countries: geoAllowList.length > 0 ? geoAllowList : undefined,
+          waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled },
+          rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow },
+          blocked_paths: blockedPaths,
+          ip_whitelist: currentSecurity.ip_whitelist ?? [],
+          ip_blacklist: ipBlacklist,
+          hotlink_protection: { ...(currentSecurity.hotlink_protection ?? {}), enabled: hotlinkEnabled },
+          geo_block_countries: geoBlockList,
+          geo_allow_countries: geoAllowList,
         },
-        resources: (cpuPercent > 0 || memoryMB > 0 || pidMax > 0) ? {
-          cpu_percent: cpuPercent || undefined,
-          memory_mb: memoryMB || undefined,
-          pid_max: pidMax || undefined,
-        } : undefined,
+        resources: {
+          cpu_percent: cpuPercent,
+          memory_mb: memoryMB,
+          pid_max: pidMax,
+        },
       });
       setMsg({ ok: true, text: 'Security & resource settings saved' });
     } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
@@ -215,6 +217,22 @@ export default function DomainDetail() {
       });
       setDetail({ ...detail, ssl: { ...detail.ssl, force_ssl: force } });
       setMsg({ ok: true, text: force ? 'Force SSL enabled' : 'Force SSL disabled' });
+      load();
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const setCanonicalHost = async (canonical: 'apex' | 'www') => {
+    if (!host || !detail || detail.type === 'redirect') return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      await updateDomain(host, { canonical_host: canonical });
+      setDetail({ ...detail, canonical_host: canonical });
+      setMsg({ ok: true, text: canonical === 'www' ? 'Main host set to www' : 'Main host set to apex' });
       load();
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message });
@@ -255,8 +273,9 @@ export default function DomainDetail() {
     </div>
   );
 
-  const siteUrl = `https://${host}`;
   const isRedirectDomain = detail.type === 'redirect';
+  const mainHost = !isRedirectDomain && detail.canonical_host === 'www' ? `www.${detail.host}` : detail.host;
+  const siteUrl = `https://${mainHost}`;
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: 'Overview', icon: <Eye size={13} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={13} /> },
@@ -358,6 +377,12 @@ export default function DomainDetail() {
               </p>
             </div>
             {!isRedirectDomain && (
+              <div className="rounded-lg bg-card border border-border px-4 py-3">
+                <p className="text-[10px] text-muted-foreground">Main Host</p>
+                <p className="text-xs font-mono text-foreground truncate">{mainHost}</p>
+              </div>
+            )}
+            {!isRedirectDomain && (
             <div className="rounded-lg bg-card border border-border px-4 py-3">
               <p className="text-[10px] text-muted-foreground">Root</p>
               <p className="text-xs font-mono text-foreground truncate">{detail.root}</p>
@@ -438,6 +463,31 @@ export default function DomainDetail() {
               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? 'left-[22px]' : 'left-0.5'}`} />
             </button>
           </div>
+          {!isRedirectDomain && (
+            <div className="mb-3 rounded bg-background px-4 py-3">
+              <div className="mb-2">
+                <p className="text-sm font-medium text-foreground">Main Host</p>
+                <p className="text-[10px] text-muted-foreground">Both apex and www are served by this domain; this selects the primary URL stored in config.</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[
+                  { value: 'apex' as const, label: detail.host },
+                  { value: 'www' as const, label: `www.${detail.host}` },
+                ].map(item => (
+                  <button
+                    key={item.value}
+                    onClick={() => setCanonicalHost(item.value)}
+                    disabled={saving}
+                    className={`rounded-md border px-3 py-2 text-left text-xs transition disabled:opacity-60 ${
+                      (detail.canonical_host ?? 'apex') === item.value ? 'border-blue-500/50 bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/30' : 'border-border bg-card text-card-foreground hover:border-foreground/20'
+                    }`}
+                  >
+                    <span className="font-mono">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {Object.entries(isRedirectDomain ? {
               'Type': detail.type,
@@ -448,6 +498,7 @@ export default function DomainDetail() {
               'SSL Min Version': detail.ssl?.min_version || 'default',
             } : {
               'Type': detail.type,
+              'Main Host': mainHost,
               'Root': detail.root,
               'SSL Mode': detail.ssl?.mode,
               'Force SSL': detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? '301 to HTTPS' : 'disabled',
@@ -498,7 +549,7 @@ export default function DomainDetail() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-card-foreground">Basic Auth (Root)</p>
-                <p className="text-[10px] text-muted-foreground">Site genelinde kullanıcı/şifre koruması (çok kullanıcı destekli)</p>
+                <p className="text-[10px] text-muted-foreground">Site-wide username/password protection with multiple users.</p>
               </div>
               <button
                 onClick={() => setBasicAuthEnabled(!basicAuthEnabled)}
@@ -511,7 +562,7 @@ export default function DomainDetail() {
             {basicAuthEnabled && (
               <div className="mt-3 space-y-3">
                 <div>
-                  <label className="text-[10px] text-muted-foreground">Realm (opsiyonel)</label>
+                  <label className="text-[10px] text-muted-foreground">Realm (optional)</label>
                   <input
                     value={basicAuthRealm}
                     onChange={e => setBasicAuthRealm(e.target.value)}
@@ -1048,7 +1099,7 @@ function RoutesEditor({ detail, onSave, saving }: {
 
                 <div className="rounded-md border border-border/60 bg-background/60 p-2 space-y-2">
                   <label className="flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span>Basic Auth (Bu Route)</span>
+                    <span>Basic Auth (This Route)</span>
                     <input
                       type="checkbox"
                       checked={r.basicAuthEnabled}
@@ -1061,7 +1112,7 @@ function RoutesEditor({ detail, onSave, saving }: {
                       <input
                         value={r.basicAuthRealm}
                         onChange={e => updateRoute(i, { basicAuthRealm: e.target.value })}
-                        placeholder="Realm (opsiyonel)"
+                        placeholder="Realm (optional)"
                         className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none"
                       />
                       <textarea
@@ -1071,7 +1122,7 @@ function RoutesEditor({ detail, onSave, saving }: {
                         rows={3}
                         className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs font-mono text-foreground outline-none"
                       />
-                      <p className="text-[10px] text-muted-foreground">Format: her satır `kullanıcı:şifre`</p>
+                      <p className="text-[10px] text-muted-foreground">Format: one `username:password` pair per line</p>
                     </div>
                   )}
                 </div>

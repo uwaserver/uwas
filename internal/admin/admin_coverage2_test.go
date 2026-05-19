@@ -939,15 +939,8 @@ func TestUnknownDomainsAliasSuccess(t *testing.T) {
 	if got := s.config.Domains[0].Aliases; len(got) != 0 {
 		t.Fatalf("aliases = %#v, want none", got)
 	}
-	if len(s.config.Domains) != 3 {
-		t.Fatalf("domains len = %d, want redirect domain appended", len(s.config.Domains))
-	}
-	redirectDomain := s.config.Domains[2]
-	if redirectDomain.Host != "www.example.com" || redirectDomain.Type != "redirect" {
-		t.Fatalf("redirect domain = %#v", redirectDomain)
-	}
-	if redirectDomain.Redirect.Target != "https://example.com" || redirectDomain.Redirect.Status != http.StatusMovedPermanently {
-		t.Fatalf("redirect config = %#v", redirectDomain.Redirect)
+	if len(s.config.Domains) != 2 {
+		t.Fatalf("domains len = %d, want no separate www redirect domain", len(s.config.Domains))
 	}
 	if tracker.IsBlocked("www.example.com") {
 		t.Fatal("redirected unknown host should be unblocked")
@@ -957,7 +950,7 @@ func TestUnknownDomainsAliasSuccess(t *testing.T) {
 	}
 }
 
-func TestUnknownDomainsAliasRejectsExistingHostname(t *testing.T) {
+func TestUnknownDomainsAliasTreatsSameSiteWWWAsPrimary(t *testing.T) {
 	s := testServer()
 	s.config.Domains[1].Aliases = []string{"www.example.com"}
 	s.SetUnknownHostTracker(router.NewUnknownHostTracker())
@@ -966,11 +959,11 @@ func TestUnknownDomainsAliasRejectsExistingHostname(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/unknown-domains/www.example.com/alias", strings.NewReader(`{"domain":"example.com"}`))
 	req.SetPathValue("host", "www.example.com")
 	s.handleUnknownDomainsAlias(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409, body: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
 	}
 	if len(s.config.Domains[0].Aliases) != 0 {
-		t.Fatalf("target aliases changed unexpectedly: %#v", s.config.Domains[0].Aliases)
+		t.Fatalf("target aliases = %#v, want none", s.config.Domains[0].Aliases)
 	}
 }
 

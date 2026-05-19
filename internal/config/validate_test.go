@@ -454,31 +454,45 @@ func TestValidateRateLimit_Valid(t *testing.T) {
 	expectNoValidationError(t, cfg)
 }
 
-func TestValidateRateLimit_ZeroRequestsWithWindow(t *testing.T) {
+func TestValidateRateLimit_ZeroRequestsWithWindowIsNoop(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Domains[0].Security.RateLimit.Requests = 0
 	cfg.Domains[0].Security.RateLimit.Window = Duration{Duration: 60 * time.Second}
-	expectValidationError(t, cfg, "rate_limit.requests must be > 0")
+	expectNoValidationError(t, cfg)
 }
 
 func TestValidateRateLimit_NegativeRequests(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Domains[0].Security.RateLimit.Requests = -5
 	cfg.Domains[0].Security.RateLimit.Window = Duration{Duration: 60 * time.Second}
-	expectValidationError(t, cfg, "rate_limit.requests must be > 0")
+	expectValidationError(t, cfg, "rate_limit.requests must be >= 0")
 }
 
-func TestValidateRateLimit_ZeroWindowWithRequests(t *testing.T) {
+func TestValidateRateLimit_ZeroWindowWithRequestsUsesDefault(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Domains[0].Security.RateLimit.Requests = 100
 	cfg.Domains[0].Security.RateLimit.Window = Duration{Duration: 0}
-	expectValidationError(t, cfg, "rate_limit.window must be > 0")
+	expectNoValidationError(t, cfg)
+}
+
+func TestValidateRateLimit_NegativeWindow(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Domains[0].Security.RateLimit.Requests = 100
+	cfg.Domains[0].Security.RateLimit.Window = Duration{Duration: -1 * time.Second}
+	expectValidationError(t, cfg, "rate_limit.window must be >= 0")
 }
 
 func TestValidateRateLimit_BothZeroIsOk(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Domains[0].Security.RateLimit.Requests = 0
 	cfg.Domains[0].Security.RateLimit.Window = Duration{Duration: 0}
+	expectNoValidationError(t, cfg)
+}
+
+func TestValidateGlobalRateLimit_YAMLWindowOnlyIsNoop(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Global.RateLimit.Requests = 0
+	cfg.Global.RateLimit.Window = Duration{Duration: 10 * time.Second}
 	expectNoValidationError(t, cfg)
 }
 

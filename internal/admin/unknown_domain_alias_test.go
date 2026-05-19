@@ -11,7 +11,7 @@ import (
 	"github.com/uwaserver/uwas/internal/router"
 )
 
-func TestUnknownDomainAliasCanCreateCanonicalRedirect(t *testing.T) {
+func TestUnknownDomainSameSiteWWWIsDismissedWithoutSeparateRedirect(t *testing.T) {
 	s := testServer()
 	s.config.Domains = []config.Domain{
 		{
@@ -34,23 +34,11 @@ func TestUnknownDomainAliasCanCreateCanonicalRedirect(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
 	}
-	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want 2", len(s.config.Domains))
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want one canonical domain", len(s.config.Domains))
 	}
 	if len(s.config.Domains[0].Aliases) != 0 {
-		t.Fatalf("redirect alias should be removed from same-site aliases: %#v", s.config.Domains[0].Aliases)
-	}
-	redirectDomain := s.config.Domains[1]
-	if redirectDomain.Host != "www.dgnteknoloji.com" || redirectDomain.Type != "redirect" {
-		t.Fatalf("unexpected redirect domain: %#v", redirectDomain)
-	}
-	if redirectDomain.SSL.Mode != "auto" {
-		t.Fatalf("redirect alias ssl mode = %q, want auto", redirectDomain.SSL.Mode)
-	}
-	if redirectDomain.Redirect.Target != "https://dgnteknoloji.com" ||
-		redirectDomain.Redirect.Status != http.StatusFound ||
-		!redirectDomain.Redirect.PreservePath {
-		t.Fatalf("unexpected redirect config: %#v", redirectDomain.Redirect)
+		t.Fatalf("same-site www should be removed from aliases: %#v", s.config.Domains[0].Aliases)
 	}
 	if tracker.IsBlocked("www.dgnteknoloji.com") {
 		t.Fatal("redirected unknown host should be unblocked")
@@ -60,12 +48,12 @@ func TestUnknownDomainAliasCanCreateCanonicalRedirect(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["status"] != "redirect" || body["domain"] != "dgnteknoloji.com" {
+	if body["status"] != "already_primary" || body["domain"] != "dgnteknoloji.com" {
 		t.Fatalf("unexpected response body: %#v", body)
 	}
 }
 
-func TestUnknownDomainRedirectEndpointUpdatesExistingRedirect(t *testing.T) {
+func TestUnknownDomainRedirectEndpointTreatsExistingWWWRedirectAsSamePrimary(t *testing.T) {
 	s := testServer()
 	s.config.Domains = []config.Domain{
 		{Host: "example.com", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
@@ -91,12 +79,13 @@ func TestUnknownDomainRedirectEndpointUpdatesExistingRedirect(t *testing.T) {
 		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
 	}
 	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want 2", len(s.config.Domains))
+		t.Fatalf("domains len = %d, want unchanged existing records", len(s.config.Domains))
 	}
-	redirectDomain := s.config.Domains[1]
-	if redirectDomain.Redirect.Target != "https://example.com" ||
-		redirectDomain.Redirect.Status != http.StatusFound ||
-		redirectDomain.Redirect.PreservePath {
-		t.Fatalf("unexpected redirect config: %#v", redirectDomain.Redirect)
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "already_primary" || body["domain"] != "example.com" {
+		t.Fatalf("unexpected response body: %#v", body)
 	}
 }

@@ -38,6 +38,9 @@ type bucket struct {
 // Call Stop() to release the cleanup goroutine early (e.g. on config reload)
 // when the parent ctx outlives the limiter.
 func NewRateLimiter(ctx context.Context, limit int, window time.Duration) *RateLimiter {
+	if window <= 0 {
+		window = time.Minute
+	}
 	rlCtx, cancel := context.WithCancel(ctx)
 	rl := &RateLimiter{
 		limit:  limit,
@@ -102,7 +105,7 @@ func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientIP(rl, r)
 			if !rl.Allow(ip) {
-				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(rl.window.Seconds())))
 				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
 				return
 			}
