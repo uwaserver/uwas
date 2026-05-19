@@ -968,13 +968,15 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// Only redirect to HTTPS when a usable certificate is actually loaded.
+	// Only redirect to HTTPS automatically when a usable certificate is loaded.
 	// For auto-SSL domains whose ACME issuance is still pending (new domain,
 	// DNS not yet pointed, rate-limited, etc.), redirecting blindly produces
 	// an unrecoverable TLS handshake error. Falling through to plain HTTP
 	// keeps the site reachable until the cert is obtained, after which the
-	// redirect path kicks in automatically on the next request.
-	if (domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual") && s.tlsMgr.HasCert(r.Host) {
+	// redirect path kicks in automatically on the next request. Force SSL is
+	// the operator's explicit override for domains that must always redirect.
+	sslEnabled := domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual"
+	if sslEnabled && (domain.SSL.ForceSSL || s.tlsMgr.HasCert(r.Host)) {
 		target := "https://" + r.Host + r.URL.RequestURI()
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		http.Redirect(w, r, target, http.StatusMovedPermanently)

@@ -71,6 +71,9 @@ export default function DomainDetail() {
         fetchDomainAnalytics(host).catch(() => null),
       ]);
       setDetail(d);
+      if (d.type === 'redirect') {
+        setTab(prev => (prev === 'overview' || prev === 'settings' || prev === 'analytics') ? prev : 'overview');
+      }
       setStats((statsMap as Record<string, typeof stats>)[host] ?? null);
       setAnalytics(an);
 
@@ -91,6 +94,15 @@ export default function DomainDetail() {
       setBasicAuthUsers(Object.entries(d.basic_auth?.users || {}).map(([username, password]) => ({ username, password })));
       setNewBasicAuthUser('');
       setNewBasicAuthPass('');
+
+      if (d.type === 'redirect') {
+        setDiskUsage(null);
+        setWpSite(null);
+        setWpSecurity(null);
+        setWpUsers([]);
+        setWpUsersError('');
+        return;
+      }
 
       // Disk usage
       fetchDiskUsage(host).then(setDiskUsage).catch(() => {});
@@ -186,6 +198,31 @@ export default function DomainDetail() {
     finally { setSaving(false); }
   };
 
+  const setForceSSL = async (force: boolean) => {
+    if (!host || !detail) return;
+    if ((detail.ssl?.mode ?? 'off') === 'off') {
+      setMsg({ ok: false, text: 'Force SSL needs SSL mode auto or manual.' });
+      return;
+    }
+    setSaving(true);
+    setMsg(null);
+    try {
+      await updateDomain(host, {
+        ssl: {
+          mode: detail.ssl?.mode ?? 'auto',
+          force_ssl: force,
+        },
+      });
+      setDetail({ ...detail, ssl: { ...detail.ssl, force_ssl: force } });
+      setMsg({ ok: true, text: force ? 'Force SSL enabled' : 'Force SSL disabled' });
+      load();
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const Badge = ({ ok, label }: { ok: boolean; label: string }) => (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${ok ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />{label}
@@ -219,14 +256,17 @@ export default function DomainDetail() {
   );
 
   const siteUrl = `https://${host}`;
+  const isRedirectDomain = detail.type === 'redirect';
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: 'Overview', icon: <Eye size={13} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={13} /> },
-    { id: 'security', label: 'Security', icon: <Shield size={13} /> },
-    { id: 'routes', label: 'Routes', icon: <ArrowRight size={13} /> },
-    ...(wpSite ? [{ id: 'wordpress' as Tab, label: 'WordPress', icon: <Plug size={13} /> }] : []),
+    ...(!isRedirectDomain ? [
+      { id: 'security' as Tab, label: 'Security', icon: <Shield size={13} /> },
+      { id: 'routes' as Tab, label: 'Routes', icon: <ArrowRight size={13} /> },
+    ] : []),
+    ...(!isRedirectDomain && wpSite ? [{ id: 'wordpress' as Tab, label: 'WordPress', icon: <Plug size={13} /> }] : []),
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={13} /> },
-    { id: 'files', label: 'Files', icon: <FileText size={13} /> },
+    ...(!isRedirectDomain ? [{ id: 'files' as Tab, label: 'Files', icon: <FileText size={13} /> }] : []),
   ];
 
   return (
@@ -245,7 +285,10 @@ export default function DomainDetail() {
             <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
               <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium">{detail.type}</span>
               <span>{detail.ssl?.mode === 'auto' ? 'Auto SSL' : detail.ssl?.mode}</span>
-              {detail.root && <span className="font-mono text-[10px]">{detail.root}</span>}
+              {detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' && (
+                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">Force SSL</span>
+              )}
+              {!isRedirectDomain && detail.root && <span className="font-mono text-[10px]">{detail.root}</span>}
             </div>
           </div>
         </div>
@@ -282,8 +325,9 @@ export default function DomainDetail() {
         <Stat label="Bandwidth" value={formatBytes(stats?.bytes_out ?? 0)} sub="total sent" />
         <Stat label="Success" value={stats?.status_2xx?.toLocaleString() ?? '0'} sub="2xx responses" />
         <Stat label="Errors" value={((stats?.status_4xx ?? 0) + (stats?.status_5xx ?? 0)).toLocaleString()} sub="4xx + 5xx" />
-        <Stat label="Disk Usage" value={diskUsage?.human ?? '—'} sub={detail.root} />
-        {wpSite && <Stat label="WordPress" value={wpSite.version} sub={`${wpSite.plugins?.length ?? 0} plugins`} />}
+        {!isRedirectDomain && <Stat label="Disk Usage" value={diskUsage?.human ?? '—'} sub={detail.root} />}
+        {isRedirectDomain && <Stat label="Redirect" value={String(detail.redirect?.status ?? '301')} sub={detail.redirect?.target ?? 'not configured'} />}
+        {!isRedirectDomain && wpSite && <Stat label="WordPress" value={wpSite.version} sub={`${wpSite.plugins?.length ?? 0} plugins`} />}
       </div>
 
       {msg && <div className={`rounded-md px-4 py-2.5 text-sm ${msg.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>{msg.text}</div>}
@@ -309,12 +353,22 @@ export default function DomainDetail() {
             </div>
             <div className="rounded-lg bg-card border border-border px-4 py-3">
               <p className="text-[10px] text-muted-foreground">SSL</p>
-              <p className="text-sm font-medium text-foreground">{detail.ssl?.mode}</p>
+              <p className="text-sm font-medium text-foreground">
+                {detail.ssl?.mode}{detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? ' + force' : ''}
+              </p>
             </div>
+            {!isRedirectDomain && (
             <div className="rounded-lg bg-card border border-border px-4 py-3">
               <p className="text-[10px] text-muted-foreground">Root</p>
               <p className="text-xs font-mono text-foreground truncate">{detail.root}</p>
             </div>
+            )}
+            {isRedirectDomain && detail.redirect && (
+              <div className="rounded-lg bg-card border border-border px-4 py-3 sm:col-span-2">
+                <p className="text-[10px] text-muted-foreground">Redirect Target</p>
+                <p className="text-xs font-mono text-foreground truncate">{detail.redirect.target}</p>
+              </div>
+            )}
             {detail.php && (
               <div className="rounded-lg bg-card border border-border px-4 py-3">
                 <p className="text-[10px] text-muted-foreground">PHP FPM</p>
@@ -336,12 +390,14 @@ export default function DomainDetail() {
           </div>
 
           {/* Status badges */}
+          {!isRedirectDomain && (
           <div className="flex flex-wrap gap-2">
             <Badge ok={detail.security?.waf?.enabled ?? false} label={detail.security?.waf?.enabled ? 'WAF Active' : 'No WAF'} />
             <Badge ok={(detail.security?.rate_limit?.requests ?? 0) > 0} label={(detail.security?.rate_limit?.requests ?? 0) > 0 ? `Rate: ${detail.security!.rate_limit!.requests}/min` : 'No Rate Limit'} />
             <Badge ok={detail.cache?.enabled ?? false} label={detail.cache?.enabled ? 'Cache On' : 'No Cache'} />
             {wpSite && <Badge ok={true} label={`WP ${wpSite.version}`} />}
           </div>
+          )}
 
           {/* Traffic chart placeholder */}
           {analytics && analytics.hourly_views && (
@@ -367,11 +423,34 @@ export default function DomainDetail() {
           <p className="text-sm text-muted-foreground mb-3">
             Edit domain settings in the <Link to="/domains" className="text-blue-400 hover:underline">Domains</Link> page or use the <Link to="/config-editor" className="text-blue-400 hover:underline">Config Editor</Link>.
           </p>
+          <div className={`mb-3 flex items-center justify-between rounded bg-background px-4 py-3 ${(detail.ssl?.mode ?? 'off') === 'off' ? 'opacity-70' : ''}`}>
+            <div>
+              <p className="text-sm font-medium text-foreground">Force SSL</p>
+              <p className="text-[10px] text-muted-foreground">Redirect HTTP traffic to HTTPS with 301 for this domain.</p>
+            </div>
+            <button
+              onClick={() => setForceSSL(!(detail.ssl?.force_ssl ?? false))}
+              disabled={saving || (detail.ssl?.mode ?? 'off') === 'off'}
+              className={`relative h-6 w-11 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? 'bg-emerald-500' : 'bg-slate-600'}`}
+              aria-pressed={detail.ssl?.force_ssl && detail.ssl?.mode !== 'off'}
+              title={(detail.ssl?.mode ?? 'off') === 'off' ? 'Enable SSL mode first' : 'Force HTTP to HTTPS'}
+            >
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? 'left-[22px]' : 'left-0.5'}`} />
+            </button>
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {Object.entries({
+            {Object.entries(isRedirectDomain ? {
+              'Type': detail.type,
+              'Target': detail.redirect?.target || 'not configured',
+              'Status Code': detail.redirect?.status || 301,
+              'SSL Mode': detail.ssl?.mode,
+              'Force SSL': detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? '301 to HTTPS' : 'disabled',
+              'SSL Min Version': detail.ssl?.min_version || 'default',
+            } : {
               'Type': detail.type,
               'Root': detail.root,
               'SSL Mode': detail.ssl?.mode,
+              'Force SSL': detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? '301 to HTTPS' : 'disabled',
               'SSL Min Version': detail.ssl?.min_version || 'default',
               'Cache': detail.cache?.enabled ? `Enabled (TTL: ${detail.cache.ttl}s)` : 'Disabled',
               'PHP FPM': detail.php?.fpm_address || '—',
@@ -778,20 +857,16 @@ export default function DomainDetail() {
         </div>
       )}
 
-      {/* ═══ Routes (Location Blocks) + Aliases ═══ */}
+      {/* Routes */}
       {tab === 'routes' && (
         <RoutesEditor
-          key={`${JSON.stringify(detail.locations || [])}|${JSON.stringify(detail.aliases || [])}`}
-          host={host}
+          key={JSON.stringify(detail.locations || [])}
           detail={detail}
-          onSave={async (locs, aliases, aliasMode, aliasRedirectCode) => {
+          onSave={async (locs) => {
           setSaving(true);
           try {
             await updateDomain(host, {
               locations: locs,
-              aliases,
-              alias_mode: aliasMode,
-              ...(aliasMode === 'redirect' ? { alias_redirect_code: aliasRedirectCode, alias_preserve_path: true } : {}),
             });
             setMsg({ ok: true, text: 'Routes saved. Reload applied.' });
             load();
@@ -825,7 +900,7 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-/* ═══ Routes + Aliases Editor ═══ */
+/* Routes Editor */
 
 interface RouteRow {
   match: string;
@@ -838,10 +913,9 @@ interface RouteRow {
   basicAuthUsers: string;
 }
 
-function RoutesEditor({ host, detail, onSave, saving }: {
-  host: string;
+function RoutesEditor({ detail, onSave, saving }: {
   detail: DDType;
-  onSave: (locations: DomainLocationRule[], aliases: string[], aliasMode: 'redirect' | 'alias', aliasRedirectCode: number) => Promise<void>;
+  onSave: (locations: DomainLocationRule[]) => Promise<void>;
   saving: boolean;
 }) {
   const [routes, setRoutes] = useState<RouteRow[]>(() => {
@@ -857,19 +931,6 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       basicAuthUsers: Object.entries(l.basic_auth?.users || {}).map(([u, p]) => `${u}:${String(p)}`).join('\n'),
     }));
   });
-  const [aliases, setAliases] = useState<string[]>(() => detail.aliases || []);
-  const [aliasMode, setAliasMode] = useState<'redirect' | 'alias'>(() => (detail.aliases?.length ?? 0) > 0 ? 'alias' : 'redirect');
-  const [aliasRedirectCode, setAliasRedirectCode] = useState(301);
-  const [newAlias, setNewAlias] = useState('');
-  const addAlias = (value: string) => {
-    const hostKey = (host || '').trim().toLowerCase().replace(/\.$/, '');
-    const nextAlias = value.trim().toLowerCase().replace(/\.$/, '');
-    if (!nextAlias || nextAlias === hostKey) return;
-    if (aliases.some(a => a.trim().toLowerCase().replace(/\.$/, '') === nextAlias)) return;
-    setAliases([...aliases, nextAlias]);
-    setNewAlias('');
-  };
-
   const addRoute = () => setRoutes([...routes, {
     match: '/',
     type: 'proxy',
@@ -915,7 +976,7 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       }
       return loc;
     });
-    onSave(locs, aliases, aliasMode, aliasRedirectCode);
+    onSave(locs);
   };
 
   const typeColors: Record<string, string> = {
@@ -927,55 +988,6 @@ function RoutesEditor({ host, detail, onSave, saving }: {
 
   return (
     <div className="space-y-5">
-      {/* Aliases */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <h3 className="text-sm font-semibold text-card-foreground mb-1">Domain Aliases</h3>
-        <p className="text-xs text-muted-foreground mb-3">
-          Redirect aliases become separate auto-SSL domains and point only to this domain's main hostname.
-        </p>
-        <div className="mb-3 grid grid-cols-[minmax(0,1fr)_120px] gap-2">
-          <select
-            value={aliasMode === 'redirect' ? String(aliasRedirectCode) : 'alias'}
-            onChange={e => {
-              if (e.target.value === 'alias') {
-                setAliasMode('alias');
-              } else {
-                setAliasMode('redirect');
-                setAliasRedirectCode(Number(e.target.value));
-              }
-            }}
-            className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-blue-500/50"
-          >
-            <option value="301">301 Redirect to main domain</option>
-            <option value="302">302 Redirect to main domain</option>
-            <option value="alias">Serve same site</option>
-          </select>
-          <span className="flex items-center justify-center rounded-md border border-border bg-background px-2 py-1.5 text-[10px] text-muted-foreground">
-            Target: main
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2 mb-3">
-          {aliases.map((a, i) => (
-            <span key={i} className="flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs text-foreground">
-              {a}
-              <button onClick={() => setAliases(aliases.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-red-400 ml-1">
-                <Trash2 size={10} />
-              </button>
-            </span>
-          ))}
-          {aliases.length === 0 && <span className="text-xs text-muted-foreground">No aliases</span>}
-        </div>
-        <div className="flex gap-2">
-          <input value={newAlias} onChange={e => setNewAlias(e.target.value)} placeholder={`www.${host}`}
-            onKeyDown={e => { if (['Enter', ',', ';', 'Tab'].includes(e.key)) { e.preventDefault(); addAlias(newAlias); } }}
-            className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono text-foreground outline-none focus:border-blue-500/50" />
-          <button type="button" onClick={() => addAlias(newAlias)}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-card-foreground hover:bg-accent/80">
-            <Plus size={12} />
-          </button>
-        </div>
-      </div>
-
       {/* Routes */}
       <div className="rounded-lg border border-border bg-card p-5">
         <div className="flex items-center justify-between mb-3">
@@ -1074,7 +1086,7 @@ function RoutesEditor({ host, detail, onSave, saving }: {
         <button onClick={handleSave} disabled={saving}
           className="flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
           {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-          Save Routes & Aliases
+          Save Routes
         </button>
       </div>
     </div>

@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,8 +51,9 @@ func TestSoftwareInstallWritesComposeAndRunsUp(t *testing.T) {
 	softwareLibraryRoot = root
 	t.Cleanup(func() { softwareLibraryRoot = origRoot })
 	calls := stubSoftwareCompose(t, "container-id\n", 0)
+	hostPort := freeTCPPort(t)
 
-	body := strings.NewReader(`{"template_id":"uptime-kuma","name":"My Kuma","host_port":3311,"domain":"status.example.com"}`)
+	body := strings.NewReader(fmt.Sprintf(`{"template_id":"uptime-kuma","name":"My Kuma","host_port":%d,"domain":"status.example.com"}`, hostPort))
 	rec := httptest.NewRecorder()
 	s.handleSoftwareInstall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/software/install", body)))
 	if rec.Code != http.StatusOK {
@@ -61,7 +63,7 @@ func TestSoftwareInstallWritesComposeAndRunsUp(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &inst); err != nil {
 		t.Fatal(err)
 	}
-	if inst.Name != "my-kuma" || inst.HostPort != 3311 || !inst.HasWeb || inst.Domain != "status.example.com" {
+	if inst.Name != "my-kuma" || inst.HostPort != hostPort || !inst.HasWeb || inst.Domain != "status.example.com" {
 		t.Fatalf("unexpected instance: %#v", inst)
 	}
 	s.configMu.RLock()
@@ -81,7 +83,7 @@ func TestSoftwareInstallWritesComposeAndRunsUp(t *testing.T) {
 	if domain.Host != "status.example.com" || domain.Type != "proxy" || domain.SSL.Mode != "auto" {
 		t.Fatalf("unexpected attached domain: %#v", domain)
 	}
-	if !domain.Proxy.AllowPrivateUpstreams || len(domain.Proxy.Upstreams) != 1 || domain.Proxy.Upstreams[0].Address != "http://127.0.0.1:3311" {
+	if !domain.Proxy.AllowPrivateUpstreams || len(domain.Proxy.Upstreams) != 1 || domain.Proxy.Upstreams[0].Address != fmt.Sprintf("http://127.0.0.1:%d", hostPort) {
 		t.Fatalf("unexpected attached proxy config: %#v", domain.Proxy)
 	}
 	composePath := filepath.Join(root, "my-kuma", "docker-compose.yml")
@@ -89,12 +91,22 @@ func TestSoftwareInstallWritesComposeAndRunsUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "127.0.0.1:3311:3001") {
+	if !strings.Contains(string(data), fmt.Sprintf("127.0.0.1:%d:3001", hostPort)) {
 		t.Fatalf("compose did not bind expected web port:\n%s", string(data))
 	}
 	if !softwareCallsContain(calls, "compose -p uwas-my-kuma", "up -d") {
 		t.Fatalf("compose up was not called: %#v", *calls)
 	}
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for free TCP port: %v", err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
 }
 
 func TestSoftwareInstallInternalTemplateIgnoresDomainAndPort(t *testing.T) {
@@ -291,8 +303,9 @@ func TestSoftwareDeleteRunsDownRemovesMetadataAndAttachedDomain(t *testing.T) {
 	softwareLibraryRoot = root
 	t.Cleanup(func() { softwareLibraryRoot = origRoot })
 	calls := stubSoftwareCompose(t, "ok\n", 0)
+	hostPort := freeTCPPort(t)
 
-	body := strings.NewReader(`{"template_id":"uptime-kuma","name":"delete-me","host_port":3322,"domain":"delete.example.com"}`)
+	body := strings.NewReader(fmt.Sprintf(`{"template_id":"uptime-kuma","name":"delete-me","host_port":%d,"domain":"delete.example.com"}`, hostPort))
 	rec := httptest.NewRecorder()
 	s.handleSoftwareInstall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/software/install", body)))
 	if rec.Code != http.StatusOK {

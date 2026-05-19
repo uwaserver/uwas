@@ -831,12 +831,13 @@ func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	type domainInfo struct {
-		Host    string   `json:"host"`
-		IP      string   `json:"ip,omitempty"`
-		Aliases []string `json:"aliases"`
-		Type    string   `json:"type"`
-		SSL     string   `json:"ssl"`
-		Root    string   `json:"root,omitempty"`
+		Host     string   `json:"host"`
+		IP       string   `json:"ip,omitempty"`
+		Aliases  []string `json:"aliases"`
+		Type     string   `json:"type"`
+		SSL      string   `json:"ssl"`
+		ForceSSL bool     `json:"force_ssl"`
+		Root     string   `json:"root,omitempty"`
 	}
 
 	// Get current user for domain filtering
@@ -861,12 +862,13 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		domains = append(domains, domainInfo{
-			Host:    d.Host,
-			IP:      d.IP,
-			Aliases: d.Aliases,
-			Type:    d.Type,
-			SSL:     d.SSL.Mode,
-			Root:    d.Root,
+			Host:     d.Host,
+			IP:       d.IP,
+			Aliases:  d.Aliases,
+			Type:     d.Type,
+			SSL:      d.SSL.Mode,
+			ForceSSL: d.SSL.ForceSSL,
+			Root:     d.Root,
 		})
 	}
 	s.configMu.RUnlock()
@@ -2160,11 +2162,16 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeDomainHostnames(&d)
+	if d.Type == string(config.DomainTypeRedirect) && len(d.Aliases) > 0 {
+		jsonError(w, "redirect domains cannot have aliases; create separate redirect domains instead", http.StatusBadRequest)
+		return
+	}
 	redirectAliases := []string(nil)
 	if aliasOptions.redirect {
 		redirectAliases = append(redirectAliases, d.Aliases...)
 		d.Aliases = nil
 	}
+	autoRedirectAlias := autoWWWRedirectHost(d)
 
 	// Check domain permissions for resellers
 	if s.authMgr != nil {
@@ -2233,6 +2240,11 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate redirect alias)", false)
 			jsonError(w, fmt.Sprintf("alias %q is already configured on %s", alias, conflict), http.StatusConflict)
 			return
+		}
+	}
+	if autoRedirectAlias != "" && !containsNormalizedHostname(redirectAliases, autoRedirectAlias) {
+		if conflict := findDomainHostnameConflict(s.config.Domains, -1, autoRedirectAlias); conflict == "" {
+			redirectAliases = append(redirectAliases, autoRedirectAlias)
 		}
 	}
 
@@ -2615,6 +2627,13 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	_, hasSecurity := raw["security"]
 	_, hasCache := raw["cache"]
 	_, hasSSL := raw["ssl"]
+	hasSSLForce := false
+	if rawSSL, ok := raw["ssl"]; ok {
+		var sslRaw map[string]json.RawMessage
+		if err := json.Unmarshal(rawSSL, &sslRaw); err == nil {
+			_, hasSSLForce = sslRaw["force_ssl"]
+		}
+	}
 	_, hasCompression := raw["compression"]
 	_, hasResources := raw["resources"]
 	_, hasHtaccess := raw["htaccess"]
@@ -2677,6 +2696,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		HasCompression: hasCompression,
 		HasHtaccess:    hasHtaccess,
 		HasSSL:         hasSSL,
+		HasSSLForce:    hasSSLForce,
 		HasResources:   hasResources,
 	}
 
@@ -2686,6 +2706,15 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		if existing.Host == host {
 			merged := config.MergeDomain(existing, d, patchFields, replaceMode)
 			normalizeDomainHostnames(&merged)
+			if merged.Type == string(config.DomainTypeRedirect) {
+				if len(redirectAliases) > 0 {
+					s.configMu.Unlock()
+					s.recordAuditR(r, "domain.update", "domain: "+host+" (redirect aliases rejected)", false)
+					jsonError(w, "redirect domains cannot have aliases; create separate redirect domains instead", http.StatusBadRequest)
+					return
+				}
+				merged.Aliases = nil
+			}
 
 			if !isValidHostname(merged.Host) {
 				s.configMu.Unlock()
@@ -2991,8 +3020,13 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
-	if mode == "" {
-		mode = "alias"
+	switch mode {
+	case "", "alias":
+		mode = "redirect"
+	case "redirect":
+	default:
+		jsonError(w, "mode must be redirect", http.StatusBadRequest)
+		return
 	}
 	redirectCode := req.RedirectCode
 	if mode == "redirect" && redirectCode == 0 {
@@ -3000,10 +3034,6 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 	}
 	if redirectCode != 0 {
 		mode = "redirect"
-	}
-	if mode != "alias" && mode != "redirect" {
-		jsonError(w, "mode must be alias or redirect", http.StatusBadRequest)
-		return
 	}
 	if mode == "redirect" {
 		switch redirectCode {
@@ -3038,7 +3068,28 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 		jsonResponse(w, map[string]string{"status": "already_primary", "host": host, "domain": target})
 		return
 	}
-	if conflict := findDomainHostnameConflict(s.config.Domains, targetIndex, host); conflict != "" {
+
+	hostIndex := -1
+	for i, d := range s.config.Domains {
+		if i == targetIndex {
+			continue
+		}
+		if normalizeDomainHostname(d.Host) == host {
+			hostIndex = i
+			break
+		}
+		for _, alias := range d.Aliases {
+			if normalizeDomainHostname(alias) == host {
+				hostIndex = i
+				break
+			}
+		}
+		if hostIndex != -1 {
+			break
+		}
+	}
+	if hostIndex != -1 && !(mode == "redirect" && strings.EqualFold(s.config.Domains[hostIndex].Type, "redirect") && normalizeDomainHostname(s.config.Domains[hostIndex].Host) == host) {
+		conflict := firstNonEmpty(s.config.Domains[hostIndex].Host, host)
 		s.configMu.Unlock()
 		s.recordAuditR(r, "unknown_domain.alias", "host: "+host+" (duplicate hostname)", false)
 		jsonError(w, fmt.Sprintf("hostname %q is already configured on %s", host, conflict), http.StatusConflict)
@@ -3051,17 +3102,12 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 			preservePath = *req.PreservePath
 		}
 		s.config.Domains[targetIndex].Aliases = removeDomainAlias(s.config.Domains[targetIndex].Aliases, host)
-		redirectDomain := config.Domain{
-			Host: host,
-			Type: "redirect",
-			SSL:  config.SSLConfig{Mode: "auto"},
-			Redirect: config.RedirectConfig{
-				Target:       "https://" + normalizeDomainHostname(s.config.Domains[targetIndex].Host),
-				Status:       redirectCode,
-				PreservePath: preservePath,
-			},
+		redirectDomain := newCanonicalRedirectAliasDomain(host, s.config.Domains[targetIndex].Host, redirectCode, preservePath)
+		if hostIndex != -1 {
+			s.config.Domains[hostIndex] = redirectDomain
+		} else {
+			s.config.Domains = append(s.config.Domains, redirectDomain)
 		}
-		s.config.Domains = append(s.config.Domains, redirectDomain)
 		s.configMu.Unlock()
 
 		if s.unknownHT != nil {
@@ -3070,29 +3116,9 @@ func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Reques
 		}
 		s.recordAuditR(r, "unknown_domain.alias_redirect", fmt.Sprintf("host: %s -> %s (%d)", host, target, redirectCode), true)
 		s.notifyDomainChange()
-		jsonResponse(w, map[string]any{"status": "redirect_alias", "host": host, "domain": target, "redirect_code": redirectCode})
+		jsonResponse(w, map[string]any{"status": "redirect", "host": host, "domain": target, "redirect_code": redirectCode})
 		return
 	}
-
-	alreadyAlias := false
-	for _, alias := range s.config.Domains[targetIndex].Aliases {
-		if normalizeDomainHostname(alias) == host {
-			alreadyAlias = true
-			break
-		}
-	}
-	if !alreadyAlias {
-		s.config.Domains[targetIndex].Aliases = append(s.config.Domains[targetIndex].Aliases, host)
-	}
-	s.configMu.Unlock()
-
-	if s.unknownHT != nil {
-		s.unknownHT.Unblock(host)
-		s.unknownHT.Dismiss(host)
-	}
-	s.recordAuditR(r, "unknown_domain.alias", "host: "+host+" -> "+target, true)
-	s.notifyDomainChange()
-	jsonResponse(w, map[string]string{"status": "aliased", "host": host, "domain": target})
 }
 
 func removeDomainAlias(aliases []string, host string) []string {
@@ -3131,13 +3157,9 @@ func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
 		opts.preservePath = *raw.AliasPreservePath
 	}
 	switch mode {
-	case "", "alias":
-		if raw.AliasRedirectCode == 0 {
-			return opts, nil
-		}
-	case "redirect":
+	case "", "alias", "redirect":
 	default:
-		return domainAliasOptions{}, fmt.Errorf("alias_mode must be alias or redirect")
+		return domainAliasOptions{}, fmt.Errorf("alias_mode must be redirect")
 	}
 	opts.redirect = true
 	opts.redirectCode = raw.AliasRedirectCode
@@ -3172,6 +3194,9 @@ func validateRequestedDomainAliases(host string, aliases []string) error {
 func newCanonicalRedirectAliasDomain(alias, targetHost string, status int, preservePath bool) config.Domain {
 	alias = normalizeDomainHostname(alias)
 	targetHost = normalizeDomainHostname(targetHost)
+	if status == 0 {
+		status = http.StatusMovedPermanently
+	}
 	return config.Domain{
 		Host: alias,
 		Type: string(config.DomainTypeRedirect),
@@ -3182,6 +3207,30 @@ func newCanonicalRedirectAliasDomain(alias, targetHost string, status int, prese
 			PreservePath: preservePath,
 		},
 	}
+}
+
+func autoWWWRedirectHost(d config.Domain) string {
+	host := normalizeDomainHostname(d.Host)
+	if host == "" || d.Type == string(config.DomainTypeRedirect) {
+		return ""
+	}
+	if strings.HasPrefix(host, "www.") || strings.Contains(host, ":") || strings.HasPrefix(host, "*.") {
+		return ""
+	}
+	if !strings.Contains(host, ".") {
+		return ""
+	}
+	return "www." + host
+}
+
+func containsNormalizedHostname(hosts []string, host string) bool {
+	host = normalizeDomainHostname(host)
+	for _, h := range hosts {
+		if normalizeDomainHostname(h) == host {
+			return true
+		}
+	}
+	return false
 }
 
 func upsertCanonicalRedirectAliasDomains(domains *[]config.Domain, skipIndex int, aliases []string, targetHost string, status int, preservePath bool) {

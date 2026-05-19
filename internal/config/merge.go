@@ -17,6 +17,7 @@ type DomainPatchFields struct {
 	HasCompression bool
 	HasHtaccess    bool
 	HasSSL         bool
+	HasSSLForce    bool
 	HasResources   bool
 }
 
@@ -60,6 +61,9 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 		if patch.SSL.Mode != "" {
 			merged.SSL.Mode = patch.SSL.Mode
 		}
+		if fields.HasSSLForce {
+			merged.SSL.ForceSSL = patch.SSL.ForceSSL
+		}
 		if patch.SSL.Cert != "" {
 			merged.SSL.Cert = patch.SSL.Cert
 		}
@@ -73,6 +77,7 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 		// Legacy admin path (no raw inspection): fall back to zero-check on Mode.
 		if patch.SSL.Mode != "" {
 			merged.SSL.Mode = patch.SSL.Mode
+			merged.SSL.ForceSSL = patch.SSL.ForceSSL
 			if patch.SSL.Cert != "" {
 				merged.SSL.Cert = patch.SSL.Cert
 			}

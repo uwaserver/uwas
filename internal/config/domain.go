@@ -114,6 +114,7 @@ type SecurityHeadersConfig struct {
 // SSLConfig is the per-domain TLS configuration.
 type SSLConfig struct {
 	Mode       string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	ForceSSL   bool   `yaml:"force_ssl,omitempty" json:"force_ssl,omitempty"`
 	Cert       string `yaml:"cert,omitempty" json:"cert,omitempty"`
 	Key        string `yaml:"key,omitempty" json:"key,omitempty"`
 	MinVersion string `yaml:"min_version,omitempty" json:"min_version,omitempty"`

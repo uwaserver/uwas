@@ -500,8 +500,8 @@ func TestAddDomain(t *testing.T) {
 	if rec.Code != 201 {
 		t.Errorf("status = %d, want 201", rec.Code)
 	}
-	if len(s.config.Domains) != initialCount+1 {
-		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount+1)
+	if len(s.config.Domains) != initialCount+2 {
+		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount+2)
 	}
 	// Verify the response body contains the new host.
 	var created map[string]any

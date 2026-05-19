@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ClipboardEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import PinModal from '@/components/PinModal';
 import { setPinCode, clearPinCode } from '@/lib/api';
@@ -23,12 +23,10 @@ import { useConfirm } from '@/components/ConfirmModal';
 interface DomainFormState {
   host: string;
   ip: string;
-  aliases: string[];
-  aliasMode: 'redirect' | 'alias';
-  aliasRedirectCode: string;
   type: string;
   root: string;
   ssl: string;
+  forceSSL: boolean;
   cacheEnabled: boolean;
   cacheTTL: string;
   phpFpmAddress: string;
@@ -45,30 +43,31 @@ interface DomainFormState {
   htaccessEnabled: boolean;
 }
 
-type TemplateName = 'wordpress' | 'laravel' | 'nodejs' | 'python' | 'static' | 'proxy' | 'redirect' | null;
+type TemplateName = 'wordpress' | 'laravel' | 'nodejs' | 'python' | 'static' | 'proxy' | null;
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-// type=app is intentionally OMITTED from the create UI. App lifecycle
+// type=app and type=redirect are intentionally omitted from the generic
+// create UI. App lifecycle lives on Apps; redirects have their own Add
+// Redirect flow so they never inherit site-only controls.
 // (deploy / start / stop / logs / port allocation) is managed on the Apps
 // page now; Domains only routes. To expose a running app on a hostname,
 // add a type=proxy domain pointing to the app's apps://<name> endpoint
 // (the Reverse Proxy template offers a dropdown of registered apps).
-const domainTypes = ['static', 'php', 'proxy', 'redirect'] as const;
+const domainTypes = ['static', 'php', 'proxy'] as const;
+const editRedirectDomainTypes = ['redirect'] as const;
 const sslModes = ['auto', 'manual', 'off'] as const;
 // proxyAlgorithms and redirectCodes are now rendered as visual cards inline
 
 const emptyForm: DomainFormState = {
   host: '',
   ip: '',
-  aliases: [],
-  aliasMode: 'redirect',
-  aliasRedirectCode: '301',
   type: 'static',
   root: '',
   ssl: 'auto',
+  forceSSL: false,
   cacheEnabled: false,
   cacheTTL: '3600',
   phpFpmAddress: '',
@@ -84,22 +83,6 @@ const emptyForm: DomainFormState = {
 
 function normalizeAlias(value: string) {
   return value.trim().toLowerCase().replace(/\.$/, '');
-}
-
-function splitAliasInput(value: string) {
-  return value.split(/[\s,;]+/).map(normalizeAlias).filter(Boolean);
-}
-
-function addAliases(current: string[], input: string, host?: string) {
-  const hostKey = normalizeAlias(host ?? '');
-  const seen = new Set(current.map(normalizeAlias));
-  const next = [...current];
-  for (const alias of splitAliasInput(input)) {
-    if (alias === hostKey || seen.has(alias)) continue;
-    seen.add(alias);
-    next.push(alias);
-  }
-  return next;
 }
 
 interface TemplateConfig {
@@ -190,19 +173,9 @@ const templates: Record<string, TemplateConfig> = {
       proxyAlgorithm: 'round-robin',
     },
   },
-  redirect: {
-    label: 'Redirect',
-    description: 'Redirect all traffic to another URL',
-    icon: <ArrowRight size={20} />,
-    color: 'text-card-foreground bg-slate-500/15 border-slate-500/30',
-    form: {
-      type: 'redirect',
-      ssl: 'auto',
-      redirectTarget: '',
-      redirectCode: '301',
-    },
-  },
 };
+
+const createTemplates = Object.entries(templates) as [string, TemplateConfig][];
 
 /* ------------------------------------------------------------------ */
 /*  Badge helpers                                                      */
@@ -244,96 +217,6 @@ function StatusDot({ active }: { active: boolean }) {
       <span className={`inline-block h-2 w-2 rounded-full ${active ? 'bg-emerald-400' : 'bg-red-400'}`} />
       <span className={`text-xs ${active ? 'text-emerald-400' : 'text-red-400'}`}>{active ? 'Active' : 'Inactive'}</span>
     </span>
-  );
-}
-
-function AliasChipsInput({
-  aliases,
-  host,
-  mode,
-  redirectCode,
-  onChange,
-  onModeChange,
-  onRedirectCodeChange,
-  placeholder,
-}: {
-  aliases: string[];
-  host?: string;
-  mode: 'redirect' | 'alias';
-  redirectCode: string;
-  onChange: (aliases: string[]) => void;
-  onModeChange: (mode: 'redirect' | 'alias') => void;
-  onRedirectCodeChange: (code: string) => void;
-  placeholder: string;
-}) {
-  const [draft, setDraft] = useState('');
-
-  const commit = (value = draft) => {
-    const next = addAliases(aliases, value, host);
-    onChange(next);
-    setDraft('');
-  };
-  const remove = (alias: string) => onChange(aliases.filter(a => normalizeAlias(a) !== normalizeAlias(alias)));
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (['Enter', 'Tab', ',', ';'].includes(e.key)) {
-      e.preventDefault();
-      commit();
-    }
-  };
-  const onPaste = (e: ClipboardEvent<HTMLInputElement>) => {
-    const text = e.clipboardData.getData('text');
-    if (/[\s,;]/.test(text)) {
-      e.preventDefault();
-      commit(text);
-    }
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2">
-        <select
-          value={mode === 'redirect' ? redirectCode : 'alias'}
-          onChange={e => {
-            if (e.target.value === 'alias') {
-              onModeChange('alias');
-            } else {
-              onModeChange('redirect');
-              onRedirectCodeChange(e.target.value);
-            }
-          }}
-          className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-blue-500/60"
-        >
-          <option value="301">301 Redirect to main domain</option>
-          <option value="302">302 Redirect to main domain</option>
-          <option value="alias">Serve same site</option>
-        </select>
-        <span className="flex items-center justify-center rounded-md border border-border bg-background px-2 py-1.5 text-[10px] text-muted-foreground">
-          Target: main
-        </span>
-      </div>
-      <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5 focus-within:border-blue-500/60">
-        {aliases.map(alias => (
-          <span key={alias} className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-2 py-1 font-mono text-xs text-blue-300">
-            {alias}
-            <button type="button" onClick={() => remove(alias)} className="text-blue-300/70 hover:text-red-300" title="Remove alias">
-              <X size={12} />
-            </button>
-          </span>
-        ))}
-        <input
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={() => draft.trim() && commit()}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          placeholder={aliases.length === 0 ? placeholder : ''}
-          className="min-w-[180px] flex-1 bg-transparent px-1 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-        />
-      </div>
-      <p className="text-[10px] leading-4 text-muted-foreground">
-        Redirect aliases become separate auto-SSL redirect domains that point only to this domain's main hostname. Same-site aliases cannot duplicate another domain or the main hostname.
-      </p>
-    </div>
   );
 }
 
@@ -405,6 +288,8 @@ export default function Domains() {
   const [form, setForm] = useState<DomainFormState>({ ...emptyForm });
   const [submitting, setSubmitting] = useState(false);
   const [editingHost, setEditingHost] = useState<string | null>(null);
+  const [showRedirect, setShowRedirect] = useState(false);
+  const [redirectForm, setRedirectForm] = useState({ baseHost: '', targetHost: '', code: '301' });
 
   /* PHP installs for FPM dropdown */
   const [phpInstalls, setPhpInstalls] = useState<PHPInstall[]>([]);
@@ -412,6 +297,7 @@ export default function Domains() {
 
   /* purge state */
   const [purgingHost, setPurgingHost] = useState<string | null>(null);
+  const [forceUpdatingHost, setForceUpdatingHost] = useState<string | null>(null);
 
   /* server IPs for IP dropdown */
   const [serverIPs, setServerIPs] = useState<ServerIPInfo[]>([]);
@@ -552,6 +438,76 @@ export default function Domains() {
     }
   };
 
+  const handleToggleForceSSL = async (domain: DomainData) => {
+    if (domain.ssl === 'off') {
+      setStatus({ ok: false, message: 'Force SSL requires SSL mode auto or manual.' });
+      return;
+    }
+    const next = !(domain.force_ssl ?? false);
+    setForceUpdatingHost(domain.host);
+    setStatus(null);
+    try {
+      await updateDomain(domain.host, { ssl: { mode: domain.ssl, force_ssl: next } });
+      setDomains(prev => prev.map(d => d.host === domain.host ? { ...d, force_ssl: next } : d));
+      if (detail?.host === domain.host) {
+        setDetail({ ...detail, ssl: { ...detail.ssl, force_ssl: next } });
+      }
+      setStatus({ ok: true, message: `Force SSL ${next ? 'enabled' : 'disabled'} for ${domain.host}` });
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setForceUpdatingHost(null);
+    }
+  };
+
+  const openRedirectModal = (targetHost?: string) => {
+    const target = targetHost || domains.find(d => d.type !== 'redirect')?.host || '';
+    setRedirectForm({
+      baseHost: target ? normalizeAlias(target).replace(/^www\./, '') : '',
+      targetHost: target,
+      code: '301',
+    });
+    setShowRedirect(true);
+  };
+
+  const handleAddRedirectDomain = async (e: FormEvent) => {
+    e.preventDefault();
+    const baseHost = normalizeAlias(redirectForm.baseHost).replace(/^www\./, '');
+    const targetHost = normalizeAlias(redirectForm.targetHost);
+    if (!baseHost || !targetHost) return;
+    const redirectHost = `www.${baseHost}`;
+    const existingRedirect = domains.find(d => normalizeAlias(d.host) === redirectHost);
+    if (existingRedirect && existingRedirect.type !== 'redirect') {
+      setStatus({ ok: false, message: `"${redirectHost}" is already configured as a ${existingRedirect.type} domain.` });
+      return;
+    }
+    const redirectPayload = {
+      type: 'redirect',
+      ssl: { mode: 'auto' },
+      redirect: {
+        target: `https://${targetHost}`,
+        status: parseInt(redirectForm.code, 10) || 301,
+        preserve_path: true,
+      },
+    };
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      if (existingRedirect) {
+        await updateDomain(redirectHost, redirectPayload);
+      } else {
+        await addDomain({ host: redirectHost, ...redirectPayload });
+      }
+      setStatus({ ok: true, message: `Redirect "${redirectHost}" ${existingRedirect ? 'updated' : 'added'} to ${targetHost}` });
+      setShowRedirect(false);
+      loadDomains();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   /* -------- template selection -------- */
 
   const selectTemplate = (name: TemplateName) => {
@@ -585,12 +541,10 @@ export default function Domains() {
       const editForm: DomainFormState = {
         host: d.host,
         ip: d.ip ?? '',
-        aliases: d.aliases ?? [],
-        aliasMode: (d.aliases?.length ?? 0) > 0 ? 'alias' : 'redirect',
-        aliasRedirectCode: '301',
         type: d.type,
         root: d.root || '',
         ssl: d.ssl?.mode ?? 'off',
+        forceSSL: d.ssl?.force_ssl ?? false,
         cacheEnabled: d.cache?.enabled ?? false,
         cacheTTL: String(d.cache?.ttl ?? 3600),
         phpFpmAddress: d.php?.fpm_address ?? '',
@@ -608,7 +562,7 @@ export default function Domains() {
       setPhpCustomInput(!knownAddr && editForm.phpFpmAddress !== '');
       setForm(editForm);
       setEditingHost(host);
-      setSelectedTemplate(editForm.type === 'php' ? 'wordpress' : editForm.type === 'proxy' ? 'proxy' : editForm.type === 'redirect' ? 'redirect' : 'static');
+      setSelectedTemplate(editForm.type === 'php' ? 'wordpress' : editForm.type === 'proxy' ? 'proxy' : 'static');
       setShowAdd(true);
     } catch (e) {
       setStatus({ ok: false, message: `Failed to load domain details: ${(e as Error).message}` });
@@ -621,6 +575,20 @@ export default function Domains() {
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
+  const patchDomainType = (value: string) => {
+    setForm(prev => {
+      if (value !== 'redirect') return { ...prev, type: value };
+      return {
+        ...prev,
+        type: value,
+        cacheEnabled: false,
+        wafEnabled: false,
+        htaccessEnabled: false,
+        blockedPaths: '',
+      };
+    });
+  };
+
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault();
     if (!form.host.trim()) return;
@@ -631,19 +599,10 @@ export default function Domains() {
     const payload: Record<string, unknown> = {
       host: form.host.trim(),
       type: form.type,
-      ssl: { mode: form.ssl },
+      ssl: { mode: form.ssl, force_ssl: form.ssl !== 'off' && form.forceSSL },
     };
 
     if (form.ip) payload.ip = form.ip;
-    if (form.aliases.length > 0) {
-      payload.aliases = form.aliases;
-      payload.alias_mode = form.aliasMode;
-      if (form.aliasMode === 'redirect') {
-        payload.alias_redirect_code = parseInt(form.aliasRedirectCode, 10) || 301;
-        payload.alias_preserve_path = true;
-      }
-    }
-
     // Only send type-specific fields
     if (form.type === 'proxy' && form.proxyUpstreams.trim()) {
       payload.proxy = {
@@ -673,7 +632,7 @@ export default function Domains() {
     // page's job now.
 
     // Cache settings
-    if (form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0) {
+    if (form.type !== 'redirect' && (form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0)) {
       payload.cache = {
         enabled: form.cacheEnabled,
         ttl: parseInt(form.cacheTTL, 10) || 3600,
@@ -682,7 +641,7 @@ export default function Domains() {
 
     // Security settings
     const blocked = form.blockedPaths.split(',').map(s => s.trim()).filter(Boolean);
-    if (form.wafEnabled || blocked.length > 0) {
+    if (form.type !== 'redirect' && (form.wafEnabled || blocked.length > 0)) {
       payload.security = {
         waf: { enabled: form.wafEnabled },
         blocked_paths: blocked.length > 0 ? blocked : undefined,
@@ -746,6 +705,10 @@ export default function Domains() {
             });
           }} className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent">
             <Upload size={14} /> Bulk Import
+          </button>
+          <button onClick={() => openRedirectModal()}
+            className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent">
+            <ArrowRight size={14} /> Add Redirect
           </button>
           <button onClick={openAddModal}
             className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700">
@@ -840,11 +803,14 @@ export default function Domains() {
                     confirmDelete={confirmDelete}
                     purgingHost={purgingHost}
                     cleanupOnDelete={cleanupOnDelete}
+                    forceUpdating={forceUpdatingHost === d.host}
                     onToggle={() => toggleExpand(d.host)}
                     onEdit={startEdit}
                     onDelete={handleDelete}
                     onConfirmDelete={setConfirmDelete}
                     onPurge={handlePurgeDomain}
+                    onToggleForceSSL={handleToggleForceSSL}
+                    onAddRedirect={openRedirectModal}
                     onCleanupChange={setCleanupOnDelete}
                   />
                 );
@@ -872,7 +838,7 @@ export default function Domains() {
               <>
                 <p className="mb-4 text-sm text-muted-foreground">Quick Add &mdash; choose a template or start from scratch</p>
                 <div className="mb-6 grid grid-cols-2 gap-3">
-                  {(Object.entries(templates) as [string, TemplateConfig][]).map(([key, tpl]) => {
+                  {createTemplates.map(([key, tpl]) => {
                     const needsPHP = tpl.form.type === 'php';
                     const phpMissing = needsPHP && phpInstalls.filter(p => p.sapi !== 'cli').length === 0;
                     return (
@@ -925,32 +891,20 @@ export default function Domains() {
                   )}
                 </div>
 
-                {/* Host + Aliases */}
-                <div className="grid grid-cols-[1fr_1fr] gap-4">
+                {/* Host */}
+                <div className="grid grid-cols-1 gap-4">
                   <FormField label="Host" htmlFor="add-host">
                     <input id="add-host" type="text" value={form.host} onChange={e => patchField('host', e.target.value)}
                       placeholder="example.com" required autoFocus disabled={!!editingHost}
                       className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
-                  </FormField>
-                  <FormField label="Aliases" htmlFor="add-aliases">
-                    <AliasChipsInput
-                      aliases={form.aliases}
-                      host={form.host}
-                      mode={form.aliasMode}
-                      redirectCode={form.aliasRedirectCode}
-                      onChange={aliases => patchField('aliases', aliases)}
-                      onModeChange={mode => patchField('aliasMode', mode)}
-                      onRedirectCodeChange={code => patchField('aliasRedirectCode', code)}
-                      placeholder="www.example.com"
-                    />
                   </FormField>
                 </div>
 
                 {/* Type + SSL + IP row */}
                 <div className="grid grid-cols-3 gap-4">
                   <FormField label="Type" htmlFor="add-type">
-                    <select id="add-type" value={form.type} onChange={e => patchField('type', e.target.value)} className={selectCls}>
-                      {domainTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                    <select id="add-type" value={form.type} onChange={e => patchDomainType(e.target.value)} disabled={editingHost !== null && form.type === 'redirect'} className={`${selectCls}${editingHost !== null && form.type === 'redirect' ? ' opacity-70 cursor-not-allowed' : ''}`}>
+                      {(editingHost && form.type === 'redirect' ? editRedirectDomainTypes : domainTypes).map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                     {form.type === 'php' && phpInstalls.filter(p => p.sapi !== 'cli').length === 0 && (
                       <p className="mt-1 text-[10px] text-red-400">
@@ -959,7 +913,7 @@ export default function Domains() {
                     )}
                   </FormField>
                   <FormField label="SSL Mode" htmlFor="add-ssl">
-                    <select id="add-ssl" value={form.ssl} onChange={e => patchField('ssl', e.target.value)} className={selectCls}>
+                    <select id="add-ssl" value={form.ssl} onChange={e => setForm(prev => ({ ...prev, ssl: e.target.value, forceSSL: e.target.value === 'off' ? false : prev.forceSSL }))} className={selectCls}>
                       {sslModes.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </FormField>
@@ -975,6 +929,26 @@ export default function Domains() {
                   </FormField>
                 </div>
 
+                <div className={`flex items-center justify-between rounded-lg border px-4 py-3 ${form.ssl === 'off' ? 'border-border bg-card opacity-70' : 'border-emerald-500/20 bg-emerald-500/5'}`}>
+                  <div className="flex items-center gap-2">
+                    <Lock size={14} className={form.ssl === 'off' ? 'text-muted-foreground' : 'text-emerald-400'} />
+                    <div>
+                      <p className="text-sm font-medium text-card-foreground">Force SSL</p>
+                      <p className="text-[10px] text-muted-foreground">HTTP requests redirect to HTTPS with 301 when SSL is enabled.</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => patchField('forceSSL', !form.forceSSL)}
+                    disabled={form.ssl === 'off'}
+                    className={`relative h-6 w-11 rounded-full transition disabled:cursor-not-allowed ${form.forceSSL && form.ssl !== 'off' ? 'bg-emerald-500' : 'bg-slate-600'}`}
+                    aria-pressed={form.forceSSL && form.ssl !== 'off'}
+                    title={form.ssl === 'off' ? 'Enable SSL mode first' : 'Force HTTP to HTTPS'}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${form.forceSSL && form.ssl !== 'off' ? 'left-[22px]' : 'left-0.5'}`} />
+                  </button>
+                </div>
+
                 {/* Root — auto-generated, shown as info */}
                 {form.host.trim() && form.type !== 'proxy' && form.type !== 'redirect' && (
                   <div className="rounded-md bg-card border border-border px-3 py-2.5 text-sm">
@@ -984,6 +958,7 @@ export default function Domains() {
                 )}
 
                 {/* Cache */}
+                {form.type !== 'redirect' && (
                 <div className="rounded-lg border border-border bg-card p-4">
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-sm font-medium text-card-foreground"><Database size={14} /> Cache</span>
@@ -1000,6 +975,7 @@ export default function Domains() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* PHP section */}
                 {form.type === 'php' && (
@@ -1215,6 +1191,7 @@ export default function Domains() {
                 )}
 
                 {/* Security section */}
+                {form.type !== 'redirect' && (
                 <div className="rounded-lg border border-border bg-card p-4 space-y-3">
                   <h3 className="flex items-center gap-2 text-sm font-semibold text-card-foreground"><Shield size={14} /> Security</h3>
                   <div className="grid grid-cols-2 gap-3">
@@ -1245,6 +1222,7 @@ export default function Domains() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Submit */}
                 <div className="flex justify-end gap-3 pt-2">
@@ -1254,11 +1232,84 @@ export default function Domains() {
                   </button>
                   <button type="submit" disabled={submitting || !form.host.trim() || (form.type === 'php' && phpInstalls.filter(p => p.sapi !== 'cli').length === 0)}
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
-                    {submitting ? (editingHost ? 'Updating...' : 'Adding...') : (editingHost ? 'Update Domain' : 'Add Domain')}
+                    {submitting ? (editingHost ? 'Updating...' : 'Adding...') : (editingHost ? 'Update Domain' : form.type === 'redirect' ? 'Add Redirect' : 'Add Domain')}
                   </button>
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {showRedirect && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-10">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowRedirect(false)} />
+          <div className="relative z-10 w-full max-w-lg rounded-xl border border-border bg-background p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-foreground">Add Redirect</h2>
+              <button onClick={() => setShowRedirect(false)} className="rounded-md p-1 text-muted-foreground hover:text-foreground">
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleAddRedirectDomain} className="space-y-4">
+              <FormField label="Domain" htmlFor="redirect-base-host">
+                <div className="flex rounded-md border border-border bg-card focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+                  <span className="flex items-center border-r border-border px-3 text-sm font-mono text-muted-foreground">www.</span>
+                  <input
+                    id="redirect-base-host"
+                    value={redirectForm.baseHost}
+                    onChange={e => setRedirectForm(prev => ({ ...prev, baseHost: e.target.value.replace(/^www\./i, '') }))}
+                    placeholder="example.com"
+                    required
+                    autoFocus
+                    className="min-w-0 flex-1 rounded-r-md bg-transparent px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+              </FormField>
+              <FormField label="Redirect To" htmlFor="redirect-target-host">
+                <select
+                  id="redirect-target-host"
+                  value={redirectForm.targetHost}
+                  onChange={e => setRedirectForm(prev => ({ ...prev, targetHost: e.target.value }))}
+                  required
+                  className={selectCls}
+                >
+                  <option value="" disabled>Select main domain</option>
+                  {domains.filter(d => d.type !== 'redirect').map(d => (
+                    <option key={d.host} value={d.host}>{d.host}</option>
+                  ))}
+                </select>
+              </FormField>
+              <div>
+                <label className="mb-2 block text-xs font-medium text-muted-foreground">Status Code</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { code: '301', label: 'Permanent' },
+                    { code: '302', label: 'Temporary' },
+                  ].map(item => (
+                    <button
+                      key={item.code}
+                      type="button"
+                      onClick={() => setRedirectForm(prev => ({ ...prev, code: item.code }))}
+                      className={`rounded-lg border p-3 text-center transition ${redirectForm.code === item.code ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/30' : 'border-border hover:border-foreground/20'}`}
+                    >
+                      <p className={`text-sm font-bold ${redirectForm.code === item.code ? 'text-blue-400' : 'text-foreground'}`}>{item.code}</p>
+                      <p className="text-[10px] text-muted-foreground">{item.label}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setShowRedirect(false)}
+                  className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-card-foreground transition hover:bg-[#475569]">
+                  Cancel
+                </button>
+                <button type="submit" disabled={submitting || !redirectForm.baseHost.trim() || !redirectForm.targetHost}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  {submitting ? 'Adding...' : 'Add Redirect'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1293,11 +1344,14 @@ interface DomainRowProps {
   confirmDelete: string | null;
   purgingHost: string | null;
   cleanupOnDelete: boolean;
+  forceUpdating: boolean;
   onToggle: () => void;
   onEdit: (host: string) => void;
   onDelete: (host: string) => void | Promise<void>;
   onConfirmDelete: (host: string | null) => void;
   onPurge: (host: string) => void | Promise<void>;
+  onToggleForceSSL: (domain: DomainData) => void | Promise<void>;
+  onAddRedirect: (targetHost?: string) => void;
   onCleanupChange: (value: boolean) => void;
 }
 
@@ -1312,11 +1366,14 @@ function DomainRow({
   confirmDelete,
   purgingHost,
   cleanupOnDelete,
+  forceUpdating,
   onToggle,
   onEdit,
   onDelete,
   onConfirmDelete,
   onPurge,
+  onToggleForceSSL,
+  onAddRedirect,
   onCleanupChange,
 }: DomainRowProps) {
   const isHealthy = health?.status === 'up';
@@ -1356,7 +1413,21 @@ function DomainRow({
           </div>
         </td>
         <td className="px-5 py-3"><TypeBadge type={d.type} /></td>
-        <td className="px-5 py-3"><SslBadge ssl={d.ssl} /></td>
+        <td className="px-5 py-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <SslBadge ssl={d.ssl} />
+            <button
+              onClick={e => { e.stopPropagation(); onToggleForceSSL(d); }}
+              disabled={d.ssl === 'off' || forceUpdating}
+              className={`relative h-5 w-9 rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${d.force_ssl && d.ssl !== 'off' ? 'bg-emerald-500' : 'bg-slate-600'}`}
+              title={d.ssl === 'off' ? 'Enable SSL mode first' : 'Force SSL'}
+              aria-pressed={d.force_ssl && d.ssl !== 'off'}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${d.force_ssl && d.ssl !== 'off' ? 'left-[18px]' : 'left-0.5'}`} />
+            </button>
+            <span className={`text-[10px] ${d.force_ssl && d.ssl !== 'off' ? 'text-emerald-400' : 'text-muted-foreground'}`}>Force</span>
+          </div>
+        </td>
         <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{d.ip || 'shared'}</td>
         <td className="px-5 py-3">
           {health ? (
@@ -1383,6 +1454,15 @@ function DomainRow({
             </div>
           ) : (
             <div className="flex items-center gap-1">
+              {d.type !== 'redirect' && (
+                <button
+                  onClick={e => { e.stopPropagation(); onAddRedirect(d.host); }}
+                  className="rounded p-1.5 text-muted-foreground transition hover:bg-blue-500/10 hover:text-blue-400"
+                  title="Add www redirect"
+                >
+                  <ArrowRight size={14} />
+                </button>
+              )}
               <button
                 onClick={e => { e.stopPropagation(); onEdit(d.host); }}
                 className="rounded p-1.5 text-muted-foreground transition hover:bg-blue-500/10 hover:text-blue-400"
@@ -1447,18 +1527,20 @@ function DomainDetailPanel({ detail, aliasHealth, certInfo, purgingHost, onPurge
     <div className="space-y-4">
       {/* Quick actions bar */}
       <div className="flex items-center gap-3">
-        <button
-          onClick={() => onPurge(detail.host)}
-          disabled={purgingHost === detail.host}
-          className="flex items-center gap-1.5 rounded-md bg-amber-600/15 px-3 py-1.5 text-xs font-medium text-amber-400 transition hover:bg-amber-600/25 disabled:opacity-50"
-        >
-          <Zap size={12} />
-          {purgingHost === detail.host ? 'Purging...' : 'Purge Cache'}
-        </button>
+        {detail.type !== 'redirect' && (
+          <button
+            onClick={() => onPurge(detail.host)}
+            disabled={purgingHost === detail.host}
+            className="flex items-center gap-1.5 rounded-md bg-amber-600/15 px-3 py-1.5 text-xs font-medium text-amber-400 transition hover:bg-amber-600/25 disabled:opacity-50"
+          >
+            <Zap size={12} />
+            {purgingHost === detail.host ? 'Purging...' : 'Purge Cache'}
+          </button>
+        )}
         <span className="text-xs text-muted-foreground">Host: <span className="font-mono text-card-foreground">{detail.host}</span></span>
-        {detail.aliases && detail.aliases.length > 0 && (
+        {detail.type !== 'redirect' && detail.aliases && detail.aliases.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span>Aliases:</span>
+            <span>Extra hosts:</span>
             {detail.aliases.map(alias => {
               const h = aliasHealth[normalizeAlias(alias)];
               const up = h?.status === 'up';
@@ -1484,6 +1566,11 @@ function DomainDetailPanel({ detail, aliasHealth, certInfo, purgingHost, onPurge
         {/* SSL card */}
         <InfoCard icon={<Lock size={16} />} title="SSL / TLS">
           <DetailRow label="Mode" value={<SslBadge ssl={detail.ssl?.mode ?? 'off'} />} />
+          <DetailRow label="Force SSL" value={
+            detail.ssl?.force_ssl && detail.ssl?.mode !== 'off'
+              ? <span className="text-emerald-400">301 to HTTPS</span>
+              : <span className="text-muted-foreground">Off</span>
+          } />
           {certInfo ? (
             <>
               <DetailRow label="Status" value={
@@ -1499,66 +1586,70 @@ function DomainDetailPanel({ detail, aliasHealth, certInfo, purgingHost, onPurge
           )}
         </InfoCard>
 
-        {/* Cache card */}
-        <InfoCard icon={<Database size={16} />} title="Cache">
-          {detail.cache ? (
-            <>
-              <DetailRow label="Enabled" value={
-                <span className={`inline-flex items-center gap-1 text-xs ${detail.cache.enabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                  {detail.cache.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
-                  {detail.cache.enabled ? 'Yes' : 'No'}
-                </span>
-              } />
-              <DetailRow label="TTL" value={detail.cache.ttl > 0 ? `${detail.cache.ttl}s` : '--'} />
-              {detail.cache.rules && detail.cache.rules.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  <span className="text-xs font-medium uppercase text-muted-foreground">Rules</span>
-                  {detail.cache.rules.map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <span className="font-mono text-muted-foreground">{r.match}</span>
-                      {r.bypass ? (
-                        <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-red-400">bypass</span>
-                      ) : (
-                        <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-400">TTL:{r.ttl}s</span>
-                      )}
+        {detail.type !== 'redirect' && (
+          <>
+            {/* Cache card */}
+            <InfoCard icon={<Database size={16} />} title="Cache">
+              {detail.cache ? (
+                <>
+                  <DetailRow label="Enabled" value={
+                    <span className={`inline-flex items-center gap-1 text-xs ${detail.cache.enabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                      {detail.cache.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                      {detail.cache.enabled ? 'Yes' : 'No'}
+                    </span>
+                  } />
+                  <DetailRow label="TTL" value={detail.cache.ttl > 0 ? `${detail.cache.ttl}s` : '--'} />
+                  {detail.cache.rules && detail.cache.rules.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <span className="text-xs font-medium uppercase text-muted-foreground">Rules</span>
+                      {detail.cache.rules.map((r, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <span className="font-mono text-muted-foreground">{r.match}</span>
+                          {r.bypass ? (
+                            <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-red-400">bypass</span>
+                          ) : (
+                            <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-400">TTL:{r.ttl}s</span>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">Not configured</p>
               )}
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground">Not configured</p>
-          )}
-        </InfoCard>
+            </InfoCard>
 
-        {/* Security card */}
-        <InfoCard icon={<Shield size={16} />} title="Security">
-          {detail.security ? (
-            <>
-              <DetailRow label="WAF" value={
-                <span className={`inline-flex items-center gap-1 text-xs ${detail.security.waf?.enabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                  {detail.security.waf?.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
-                  {detail.security.waf?.enabled ? 'Enabled' : 'Disabled'}
-                </span>
-              } />
-              {detail.security.rate_limit && (
-                <DetailRow label="Rate Limit" value={`${detail.security.rate_limit.requests}/${detail.security.rate_limit.window}`} />
+            {/* Security card */}
+            <InfoCard icon={<Shield size={16} />} title="Security">
+              {detail.security ? (
+                <>
+                  <DetailRow label="WAF" value={
+                    <span className={`inline-flex items-center gap-1 text-xs ${detail.security.waf?.enabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                      {detail.security.waf?.enabled ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                      {detail.security.waf?.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  } />
+                  {detail.security.rate_limit && (
+                    <DetailRow label="Rate Limit" value={`${detail.security.rate_limit.requests}/${detail.security.rate_limit.window}`} />
+                  )}
+                  {detail.security.blocked_paths && detail.security.blocked_paths.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <span className="text-xs font-medium uppercase text-muted-foreground">Blocked Paths</span>
+                      <div className="flex flex-wrap gap-1">
+                        {detail.security.blocked_paths.map(p => (
+                          <span key={p} className="rounded bg-red-500/15 px-1.5 py-0.5 font-mono text-xs text-red-400">{p}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">Not configured</p>
               )}
-              {detail.security.blocked_paths && detail.security.blocked_paths.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  <span className="text-xs font-medium uppercase text-muted-foreground">Blocked Paths</span>
-                  <div className="flex flex-wrap gap-1">
-                    {detail.security.blocked_paths.map(p => (
-                      <span key={p} className="rounded bg-red-500/15 px-1.5 py-0.5 font-mono text-xs text-red-400">{p}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground">Not configured</p>
-          )}
-        </InfoCard>
+            </InfoCard>
+          </>
+        )}
 
         {/* PHP card (only for php type) */}
         {detail.type === 'php' && detail.php && (

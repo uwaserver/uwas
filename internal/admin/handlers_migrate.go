@@ -377,7 +377,7 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 	s.configMu.Lock()
 	existing := map[string]bool{}
 	for _, d := range s.config.Domains {
-		existing[d.Host] = true
+		existing[normalizeDomainHostname(d.Host)] = true
 	}
 
 	var added, skipped []string
@@ -386,8 +386,9 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 		webRoot = "/var/www"
 	}
 	for _, d := range req.Domains {
-		if d.Host == "" || existing[d.Host] {
-			skipped = append(skipped, d.Host)
+		host := normalizeDomainHostname(d.Host)
+		if host == "" || existing[host] {
+			skipped = append(skipped, host)
 			continue
 		}
 		dtype := d.Type
@@ -400,14 +401,19 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 		}
 		root := d.Root
 		if root == "" {
-			root = filepath.Join(webRoot, d.Host, "public_html")
+			root = filepath.Join(webRoot, host, "public_html")
 		}
-		s.config.Domains = append(s.config.Domains, config.Domain{
-			Host: d.Host, Type: dtype, Root: root,
+		domain := config.Domain{
+			Host: host, Type: dtype, Root: root,
 			SSL: config.SSLConfig{Mode: sslMode},
-		})
-		added = append(added, d.Host)
-		existing[d.Host] = true
+		}
+		s.config.Domains = append(s.config.Domains, domain)
+		added = append(added, host)
+		existing[host] = true
+		if autoHost := autoWWWRedirectHost(domain); autoHost != "" && !existing[autoHost] {
+			s.config.Domains = append(s.config.Domains, newCanonicalRedirectAliasDomain(autoHost, host, http.StatusMovedPermanently, true))
+			existing[autoHost] = true
+		}
 	}
 	s.configMu.Unlock()
 
