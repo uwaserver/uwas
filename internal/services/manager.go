@@ -37,6 +37,8 @@ var KnownServices = []struct {
 	{"php8.2-fpm", "PHP 8.2 FPM", nil},
 	{"php8.1-fpm", "PHP 8.1 FPM", nil},
 	{"docker", "Docker", []string{"containerd"}},
+	{"redis-server", "Redis", []string{"redis"}},
+	{"memcached", "Memcached", nil},
 	{"cron", "Cron", []string{"crond"}},
 	{"ufw", "Firewall (UFW)", nil},
 	{"fail2ban", "Fail2ban", nil},

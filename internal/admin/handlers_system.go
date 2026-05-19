@@ -18,6 +18,8 @@ import (
 	"github.com/uwaserver/uwas/internal/services"
 )
 
+var systemExecCommand = exec.Command
+
 // ============ Self-Update ============
 
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +259,14 @@ var knownPackages = []knownPkg{
 		false, "Image Optimization (per-domain)", "", true,
 		[]string{"avifenc"}, []string{"libavif-bin"}, []string{"libavif-bin"}},
 
+	// ── Cache backends ──
+	{"redis", "Redis", "In-memory cache and queue backend for apps and UWAS cache", "Performance",
+		false, "Apps, cache layer", "Apps using Redis queues/cache will fail until reinstalled.", true,
+		[]string{"redis-server", "redis-cli"}, []string{"redis-server", "redis-tools"}, []string{"redis-server", "redis-tools"}},
+	{"memcached", "Memcached", "Lightweight in-memory object cache for PHP and web apps", "Performance",
+		false, "WordPress object cache, PHP apps", "Apps using Memcached object cache will fail until reinstalled.", true,
+		[]string{"memcached"}, []string{"memcached", "libmemcached-tools"}, []string{"memcached", "libmemcached-tools"}},
+
 	// ── Security ──
 	{"ufw", "UFW Firewall", "Manage firewall rules from dashboard", "Security",
 		true, "Firewall page", "All firewall rules will be removed!", true,
@@ -314,7 +324,7 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 		for _, bin := range kp.binaries {
 			if p, err := exec.LookPath(bin); err == nil {
 				pi.Installed = true
-				if out, err := exec.Command(p, "--version").CombinedOutput(); err == nil {
+				if out, err := systemExecCommand(p, "--version").CombinedOutput(); err == nil {
 					lines := strings.SplitN(string(out), "\n", 2)
 					if len(lines) > 0 {
 						v := strings.TrimSpace(lines[0])
@@ -399,22 +409,22 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 
 		if action == "remove" {
 			if pkgID == "wp-cli" {
-				cmd = exec.Command("rm", "-f", "/usr/local/bin/wp")
+				cmd = systemExecCommand("rm", "-f", "/usr/local/bin/wp")
 			} else {
-				exec.Command("systemctl", "stop", pkgID).Run()
+				systemExecCommand("systemctl", "stop", pkgID).Run()
 				args := append([]string{"remove", "-y", "--purge"}, aptRemove...)
-				cmd = exec.Command("apt", args...)
+				cmd = systemExecCommand("apt", args...)
 			}
 		} else {
 			if pkgID == "wp-cli" {
-				cmd = exec.Command("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
+				cmd = systemExecCommand("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
 			} else if pkgID == "nodejs" {
 				// Distro nodejs is typically too old to run modern apps.
 				// Use NodeSource LTS setup so Apps page Node.js sites work out of the box.
-				cmd = exec.Command("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
+				cmd = systemExecCommand("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
 			} else if len(aptPkgs) > 0 {
 				args := append([]string{"install", "-y"}, aptPkgs...)
-				cmd = exec.Command("apt", args...)
+				cmd = systemExecCommand("apt", args...)
 			} else {
 				return fmt.Errorf("no install method for %s", pkgName)
 			}

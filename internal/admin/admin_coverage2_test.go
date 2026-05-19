@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1519,6 +1521,37 @@ func TestPackageList(t *testing.T) {
 	}
 }
 
+func TestPackageListIncludesCacheBackends(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.handlePackageList(rec, httptest.NewRequest("GET", "/api/v1/packages", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var result struct {
+		Items []PackageInfo `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]PackageInfo{}
+	for _, item := range result.Items {
+		seen[item.ID] = item
+	}
+	for _, id := range []string{"redis", "memcached"} {
+		item, ok := seen[id]
+		if !ok {
+			t.Fatalf("package %q not listed", id)
+		}
+		if item.Category != "Performance" {
+			t.Fatalf("package %q category = %q, want Performance", id, item.Category)
+		}
+		if !item.CanRemove {
+			t.Fatalf("package %q should be removable", id)
+		}
+	}
+}
+
 func TestPackageInstallBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
@@ -1544,9 +1577,269 @@ func TestPackageInstallCannotRemoveRequired(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/packages/install", strings.NewReader(`{"id":"curl","action":"remove"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handlePackageInstall(rec, req)
+	s.handlePackageInstall(rec, withAdminContext(req))
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestPackageInstallRequiresAdmin(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/packages/install", strings.NewReader(`{"id":"redis"}`))
+	s.handlePackageInstall(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+}
+
+type packageExecCall struct {
+	Name string
+	Args []string
+}
+
+func TestPackageExecHelperProcess(t *testing.T) {
+	helperIdx := -1
+	for i, arg := range os.Args {
+		if arg == "--package-exec-helper" {
+			helperIdx = i
+			break
+		}
+	}
+	if helperIdx < 0 {
+		return
+	}
+	if helperIdx+1 < len(os.Args) && os.Args[helperIdx+1] == "fail" {
+		fmt.Fprintln(os.Stderr, "forced package command failure")
+		os.Exit(42)
+	}
+	if len(os.Args) > 0 {
+		fmt.Fprintln(os.Stdout, "package helper ok")
+	}
+	os.Exit(0)
+}
+
+func stubPackageExec(t *testing.T, failNames ...string) *[]packageExecCall {
+	t.Helper()
+	fail := map[string]bool{}
+	for _, name := range failNames {
+		fail[name] = true
+	}
+	var mu sync.Mutex
+	calls := []packageExecCall{}
+	orig := systemExecCommand
+	systemExecCommand = func(name string, args ...string) *exec.Cmd {
+		mu.Lock()
+		calls = append(calls, packageExecCall{Name: name, Args: append([]string(nil), args...)})
+		mu.Unlock()
+		mode := "ok"
+		if fail[name] {
+			mode = "fail"
+		}
+		cmdArgs := []string{"-test.run=TestPackageExecHelperProcess", "--", "--package-exec-helper", mode, name}
+		cmdArgs = append(cmdArgs, args...)
+		cmd := exec.Command(os.Args[0], cmdArgs...)
+		cmd.Env = os.Environ()
+		return cmd
+	}
+	t.Cleanup(func() { systemExecCommand = orig })
+	return &calls
+}
+
+func waitPackageTask(t *testing.T, s *Server, id string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		task := s.taskMgr.Get(id)
+		if task != nil && task.Status != "queued" && task.Status != "running" {
+			return string(task.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	task := s.taskMgr.Get(id)
+	if task == nil {
+		t.Fatalf("task %q not found", id)
+	}
+	t.Fatalf("task %q still %s", id, task.Status)
+	return ""
+}
+
+func packageInstallRequest(t *testing.T, s *Server, body string) (int, map[string]string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/packages/install", strings.NewReader(body)))
+	s.handlePackageInstall(rec, req)
+	var result map[string]string
+	if rec.Body.Len() > 0 {
+		_ = json.Unmarshal(rec.Body.Bytes(), &result)
+	}
+	return rec.Code, result
+}
+
+func packageCallsContain(calls *[]packageExecCall, name string, argParts ...string) bool {
+	for _, call := range *calls {
+		if call.Name != name {
+			continue
+		}
+		joined := strings.Join(call.Args, " ")
+		matches := true
+		for _, part := range argParts {
+			if !strings.Contains(joined, part) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPackageInstallRedisUsesAptPackages(t *testing.T) {
+	s := testServer()
+	calls := stubPackageExec(t)
+	code, body := packageInstallRequest(t, s, `{"id":"redis"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", code, body)
+	}
+	if body["status"] != "installing" || body["package"] != "Redis" {
+		t.Fatalf("unexpected response: %#v", body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "done" {
+		t.Fatalf("task status = %s, want done", status)
+	}
+	if !packageCallsContain(calls, "apt", "install -y redis-server redis-tools") {
+		t.Fatalf("redis install did not use apt package set: %#v", *calls)
+	}
+}
+
+func TestPackageRemoveMemcachedStopsAndPurges(t *testing.T) {
+	s := testServer()
+	calls := stubPackageExec(t)
+	code, body := packageInstallRequest(t, s, `{"id":"memcached","action":"remove"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "done" {
+		t.Fatalf("task status = %s, want done", status)
+	}
+	if !packageCallsContain(calls, "systemctl", "stop memcached") {
+		t.Fatalf("memcached remove did not stop service: %#v", *calls)
+	}
+	if !packageCallsContain(calls, "apt", "remove -y --purge memcached libmemcached-tools") {
+		t.Fatalf("memcached remove did not purge apt packages: %#v", *calls)
+	}
+}
+
+func TestPackageInstallNodeUsesNodeSourceScript(t *testing.T) {
+	s := testServer()
+	calls := stubPackageExec(t)
+	code, body := packageInstallRequest(t, s, `{"id":"nodejs"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "done" {
+		t.Fatalf("task status = %s, want done", status)
+	}
+	if !packageCallsContain(calls, "bash", "deb.nodesource.com/setup_lts.x") {
+		t.Fatalf("node install did not use NodeSource script: %#v", *calls)
+	}
+}
+
+func TestPackageInstallAndRemoveWPCLIUseSpecialCommands(t *testing.T) {
+	s := testServer()
+	calls := stubPackageExec(t)
+	code, body := packageInstallRequest(t, s, `{"id":"wp-cli"}`)
+	if code != http.StatusOK {
+		t.Fatalf("install status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "done" {
+		t.Fatalf("install task status = %s, want done", status)
+	}
+	if !packageCallsContain(calls, "bash", "wp-cli.phar") {
+		t.Fatalf("wp-cli install did not use phar download: %#v", *calls)
+	}
+
+	code, body = packageInstallRequest(t, s, `{"id":"wp-cli","action":"remove"}`)
+	if code != http.StatusOK {
+		t.Fatalf("remove status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "done" {
+		t.Fatalf("remove task status = %s, want done", status)
+	}
+	if !packageCallsContain(calls, "rm", "-f /usr/local/bin/wp") {
+		t.Fatalf("wp-cli remove did not unlink binary: %#v", *calls)
+	}
+}
+
+func TestPackageInstallAlreadyRunning(t *testing.T) {
+	s := testServer()
+	s.taskMgr.Submit("package", "Long package", "install", func(appendOutput func(string)) error {
+		time.Sleep(300 * time.Millisecond)
+		return nil
+	})
+	time.Sleep(20 * time.Millisecond)
+	code, _ := packageInstallRequest(t, s, `{"id":"redis"}`)
+	if code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", code)
+	}
+}
+
+func TestPackageRemoveNoRemovalMethod(t *testing.T) {
+	orig := knownPackages
+	knownPackages = append(knownPackages, knownPkg{
+		id:        "test-no-remove",
+		name:      "No Remove",
+		category:  "Runtime",
+		canRemove: true,
+	})
+	t.Cleanup(func() { knownPackages = orig })
+
+	s := testServer()
+	code, _ := packageInstallRequest(t, s, `{"id":"test-no-remove","action":"remove"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", code)
+	}
+}
+
+func TestPackageInstallNoInstallMethodMarksTaskError(t *testing.T) {
+	orig := knownPackages
+	knownPackages = append(knownPackages, knownPkg{
+		id:        "test-no-install",
+		name:      "No Install",
+		category:  "Runtime",
+		canRemove: true,
+	})
+	t.Cleanup(func() { knownPackages = orig })
+
+	s := testServer()
+	code, body := packageInstallRequest(t, s, `{"id":"test-no-install"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "error" {
+		t.Fatalf("task status = %s, want error", status)
+	}
+	task := s.taskMgr.Get(body["task_id"])
+	if task == nil || !strings.Contains(task.Error, "no install method") {
+		t.Fatalf("task error = %#v", task)
+	}
+}
+
+func TestPackageInstallCommandFailureMarksTaskError(t *testing.T) {
+	s := testServer()
+	stubPackageExec(t, "apt")
+	code, body := packageInstallRequest(t, s, `{"id":"redis"}`)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", code, body)
+	}
+	if status := waitPackageTask(t, s, body["task_id"]); status != "error" {
+		t.Fatalf("task status = %s, want error", status)
+	}
+	task := s.taskMgr.Get(body["task_id"])
+	if task == nil || !strings.Contains(task.Error, "exit status") {
+		t.Fatalf("task error = %#v", task)
 	}
 }
 
