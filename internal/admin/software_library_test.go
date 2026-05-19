@@ -994,6 +994,162 @@ func TestRunSoftwareComposeReportsMissingComposeInstall(t *testing.T) {
 	}
 }
 
+func TestRunSoftwareComposeEnsuringInstalledInstallsAndRetries(t *testing.T) {
+	dir := t.TempDir()
+	inst := softwareInstance{
+		Name:        "auto-compose",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-auto-compose",
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	installed := false
+	calls := []softwareExecCall{}
+	origCmd := softwareComposeCommand
+	origLookPath := softwareLookPath
+	softwareLookPath = func(name string) (string, error) {
+		if name == "apt-get" {
+			return "/usr/bin/apt-get", nil
+		}
+		return "", fmt.Errorf("missing %s", name)
+	}
+	softwareComposeCommand = func(name string, args ...string) *exec.Cmd {
+		mu.Lock()
+		calls = append(calls, softwareExecCall{Name: name, Args: append([]string(nil), args...)})
+		if name == "sh" {
+			installed = true
+		}
+		isInstalled := installed
+		mu.Unlock()
+
+		if name == "docker-compose" {
+			return exec.Command("uwas-missing-docker-compose-test-command")
+		}
+		mode := "ok"
+		output := "ok\n"
+		if name == "docker" && !isInstalled {
+			mode = "fail"
+			output = "unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n"
+		}
+		if name == "sh" {
+			output = "installed compose\n"
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestSoftwareComposeHelperProcess", "--", "--software-compose-helper", mode)
+		cmd.Env = append(os.Environ(), "UWAS_SOFTWARE_HELPER_OUTPUT="+output)
+		return cmd
+	}
+	t.Cleanup(func() {
+		softwareComposeCommand = origCmd
+		softwareLookPath = origLookPath
+	})
+
+	out, err := runSoftwareComposeEnsuringInstalled(inst, "up", "-d")
+	if err != nil {
+		t.Fatalf("runSoftwareComposeEnsuringInstalled error = %v, output: %s", err, out)
+	}
+	if !softwareCallsContain(&calls, "sh -c", "apt-get update") {
+		t.Fatalf("automatic install was not attempted: %#v", calls)
+	}
+	if !softwareCallsContain(&calls, "docker compose -p uwas-auto-compose", "up -d") {
+		t.Fatalf("compose up was not retried: %#v", calls)
+	}
+}
+
+func TestSoftwareInstallCleansMetadataWhenComposeMissing(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	origLookPath := softwareLookPath
+	softwareLibraryRoot = root
+	softwareLookPath = func(name string) (string, error) { return "", fmt.Errorf("missing %s", name) }
+	t.Cleanup(func() {
+		softwareLibraryRoot = origRoot
+		softwareLookPath = origLookPath
+	})
+	stubSoftwareComposeFunc(t, func(name string, args ...string) string {
+		return "unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n"
+	}, 1)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/software/install", strings.NewReader(`{"template_id":"redis","name":"broken-cache"}`))
+	s.handleSoftwareInstall(rec, withAdminContext(req))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "broken-cache", "uwas-software.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("failed install metadata should be removed, stat err=%v", err)
+	}
+}
+
+func TestSoftwareDeleteRemovesStuckMetadataWhenComposeMissing(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	origLookPath := softwareLookPath
+	softwareLibraryRoot = root
+	softwareLookPath = func(name string) (string, error) { return "", fmt.Errorf("missing %s", name) }
+	t.Cleanup(func() {
+		softwareLibraryRoot = origRoot
+		softwareLookPath = origLookPath
+	})
+	dir := filepath.Join(root, "stuck")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inst := softwareInstance{
+		Name:        "stuck",
+		TemplateID:  "redis",
+		Template:    "Redis",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-stuck",
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSoftwareInstance(inst); err != nil {
+		t.Fatal(err)
+	}
+	stubSoftwareComposeFunc(t, func(name string, args ...string) string {
+		return "unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n"
+	}, 1)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/software/stuck", nil)
+	req.SetPathValue("name", "stuck")
+	s.handleSoftwareDelete(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "stuck")); !os.IsNotExist(err) {
+		t.Fatalf("stuck software directory should be removed, stat err=%v", err)
+	}
+}
+
+func TestSoftwareComposeStatusReportsNeedsCompose(t *testing.T) {
+	dir := t.TempDir()
+	inst := softwareInstance{
+		Name:        "needs-compose",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-needs-compose",
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stubSoftwareComposeFunc(t, func(name string, args ...string) string {
+		return "unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n"
+	}, 1)
+
+	if got := softwareComposeStatus(inst); got != "needs-compose" {
+		t.Fatalf("status = %q, want needs-compose", got)
+	}
+}
+
 func TestSoftwareComposeTemplatesAndSecrets(t *testing.T) {
 	cases := []struct {
 		id       string

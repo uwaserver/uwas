@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-05-19
+
+### Fixed
+
+- Fixed Dockerized Software Library recovery when Docker Compose is missing or
+  miswired. Mutating actions now attempt to install Docker + Compose
+  automatically on Debian/Ubuntu, retry the compose command, and report a clean
+  setup error instead of surfacing raw `unknown shorthand flag: 'p'` output.
+- Fixed failed one-click software installs leaving stale `installed` cards. UWAS
+  now removes the generated metadata when `docker compose up` cannot complete.
+- Fixed stuck software cards so normal Remove can clear failed records even
+  when Compose is unavailable; volume removal still requires Docker/Compose so
+  real Docker resources are not silently lost.
+- Added a `needs Docker Compose` status badge for software records whose
+  containers cannot be inspected because Compose is missing.
+
 ## [0.6.18] - 2026-05-19
 
 ### Added

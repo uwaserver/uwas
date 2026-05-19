@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.18)
+## Current Snapshot (v0.6.19)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 220 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
@@ -39,6 +39,9 @@ One binary. Zero hassle.
 - Domains use a dedicated Add Redirect flow for `www.<domain>` redirects,
   with per-host SSL, 301/302 selection, and no alias/cache/security noise on
   redirect records
+- Dockerized Software Library actions self-repair missing Docker Compose on
+  Debian/Ubuntu, clean up failed installs, and show `needs Docker Compose`
+  instead of leaving broken cards as vague unknown states
 - File Manager, built-in SFTP, dashboard SFTP users, and SSH keys open app
   domains at the app `work_dir`
 - Creating an empty Node.js, Python, Ruby, or Go app seeds a tiny runnable demo

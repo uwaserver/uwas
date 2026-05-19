@@ -27,7 +27,9 @@ var (
 	softwareLibraryRoot    = "/var/lib/uwas/software"
 	softwareBackupRoot     = "/var/backups/uwas/software"
 	softwareComposeCommand = exec.Command
+	softwareLookPath       = exec.LookPath
 	softwareInstallMu      sync.Mutex
+	softwareComposeSetupMu sync.Mutex
 	softwarePortAvailable  = func(port int) bool {
 		if port <= 0 || port > 65535 {
 			return false
@@ -456,8 +458,9 @@ func (s *Server) handleSoftwareInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := runSoftwareCompose(inst, "up", "-d")
+	out, err := runSoftwareComposeEnsuringInstalled(inst, "up", "-d")
 	if err != nil {
+		_ = removeSoftwareInstanceDir(inst)
 		jsonError(w, "docker compose up failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	}
@@ -696,13 +699,13 @@ func updateSoftwareInstance(inst softwareInstance) (softwareUpdateResponse, erro
 		BackupFiles:  backup.Files,
 		Output:       backup.Output,
 	}
-	pullOut, err := runSoftwareCompose(inst, "pull")
+	pullOut, err := runSoftwareComposeEnsuringInstalled(inst, "pull")
 	resp.PullOutput = pullOut
 	resp.Output += pullOut
 	if err != nil {
 		return resp, fmt.Errorf("docker compose pull failed: %w\n%s", err, pullOut)
 	}
-	upOut, err := runSoftwareCompose(inst, "up", "-d", "--remove-orphans")
+	upOut, err := runSoftwareComposeEnsuringInstalled(inst, "up", "-d", "--remove-orphans")
 	resp.UpOutput = upOut
 	resp.Output += upOut
 	if err != nil {
@@ -780,7 +783,7 @@ func (s *Server) handleSoftwareRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	volume := softwareVolumeName(inst, volumeKey)
 	var output strings.Builder
-	if out, err := runSoftwareCompose(inst, "stop"); err != nil {
+	if out, err := runSoftwareComposeEnsuringInstalled(inst, "stop"); err != nil {
 		jsonError(w, "docker compose stop failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	} else {
@@ -798,7 +801,7 @@ func (s *Server) handleSoftwareRestore(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "restore volume "+volume+" failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	}
-	if out, err := runSoftwareCompose(inst, "up", "-d"); err != nil {
+	if out, err := runSoftwareComposeEnsuringInstalled(inst, "up", "-d"); err != nil {
 		jsonError(w, "docker compose up failed after restore: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	} else {
@@ -830,8 +833,24 @@ func (s *Server) handleSoftwareDelete(w http.ResponseWriter, r *http.Request) {
 	if removeVolumes {
 		args = append(args, "-v")
 	}
-	out, err := runSoftwareCompose(inst, args...)
+	out, err := runSoftwareComposeEnsuringInstalled(inst, args...)
 	if err != nil {
+		if !removeVolumes && isSoftwareComposeMissing(err) {
+			if rmErr := removeSoftwareInstanceDir(inst); rmErr != nil {
+				jsonError(w, "remove software metadata: "+rmErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			if inst.Domain != "" {
+				s.detachSoftwareDomain(inst.Domain, inst.HostPort)
+			}
+			s.recordAuditR(r, "software.delete", inst.Name, true)
+			jsonResponse(w, map[string]any{
+				"status": "deleted",
+				"name":   inst.Name,
+				"output": strings.TrimSpace("Compose was not available, so UWAS removed the failed software record and left any Docker resources untouched.\n" + out),
+			})
+			return
+		}
 		jsonError(w, "docker compose down failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	}
@@ -860,7 +879,7 @@ func (s *Server) handleSoftwareComposeAction(w http.ResponseWriter, r *http.Requ
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	out, err := runSoftwareCompose(inst, args...)
+	out, err := runSoftwareComposeEnsuringInstalled(inst, args...)
 	if err != nil {
 		jsonError(w, "docker compose "+action+" failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
@@ -1156,15 +1175,105 @@ func runSoftwareCompose(inst softwareInstance, args ...string) (string, error) {
 	composeArgs = append(composeArgs, args...)
 
 	out, err := runSoftwareCommand(inst.Dir, "docker", append([]string{"compose"}, composeArgs...)...)
-	if err == nil || !shouldFallbackDockerCompose(out) {
+	if err == nil || (!isCommandNotFound(err) && !shouldFallbackDockerCompose(out)) {
 		return out, err
 	}
 	fallbackOut, fallbackErr := runSoftwareCommand(inst.Dir, "docker-compose", composeArgs...)
 	if fallbackErr == nil {
 		return fallbackOut, nil
 	}
-	if isCommandNotFound(fallbackErr) {
-		return strings.TrimSpace(out + fallbackOut), fmt.Errorf("Docker Compose is not installed or not available in PATH; install the Docker Compose plugin (`docker compose`) or legacy `docker-compose`. On Debian/Ubuntu: apt-get update && apt-get install -y docker-compose-plugin")
+	if isCommandNotFound(err) && isCommandNotFound(fallbackErr) {
+		return "", softwareComposeMissingError{Reason: "Docker and Docker Compose are not installed or not available in PATH"}
+	}
+	if isCommandNotFound(fallbackErr) || shouldFallbackDockerCompose(fallbackOut) {
+		return strings.TrimSpace(out + fallbackOut), softwareComposeMissingError{Reason: "Docker Compose is not installed or not available in PATH"}
+	}
+	return out + fallbackOut, fallbackErr
+}
+
+func runSoftwareComposeEnsuringInstalled(inst softwareInstance, args ...string) (string, error) {
+	out, err := runSoftwareCompose(inst, args...)
+	if err == nil || !isSoftwareComposeMissing(err) {
+		return out, err
+	}
+	installOut, installErr := ensureSoftwareComposeAvailable()
+	combined := strings.TrimSpace(installOut + "\n" + out)
+	if installErr != nil {
+		return combined, installErr
+	}
+	retryOut, retryErr := runSoftwareCompose(inst, args...)
+	if combined != "" && retryOut != "" {
+		retryOut = combined + "\n" + retryOut
+	} else if combined != "" {
+		retryOut = combined
+	}
+	return retryOut, retryErr
+}
+
+type softwareComposeMissingError struct {
+	Reason string
+}
+
+func (e softwareComposeMissingError) Error() string {
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		reason = "Docker Compose is not installed or not available in PATH"
+	}
+	return reason + "; UWAS tried to use `docker compose` and legacy `docker-compose`. Install Docker + Compose, or let UWAS install them automatically on Debian/Ubuntu with: apt-get update && apt-get install -y docker.io docker-compose-plugin"
+}
+
+func isSoftwareComposeMissing(err error) bool {
+	var missing softwareComposeMissingError
+	return errors.As(err, &missing)
+}
+
+func ensureSoftwareComposeAvailable() (string, error) {
+	softwareComposeSetupMu.Lock()
+	defer softwareComposeSetupMu.Unlock()
+
+	if out, err := probeSoftwareCompose(); err == nil {
+		return out, nil
+	}
+	if _, err := softwareLookPath("apt-get"); err != nil {
+		return "", softwareComposeMissingError{Reason: "Docker Compose is missing and apt-get is not available for automatic install"}
+	}
+
+	cmd := softwareComposeCommand("sh", "-c", strings.Join([]string{
+		"apt-get update",
+		"(apt-get install -y docker.io docker-compose-plugin || apt-get install -y docker.io docker-compose)",
+		"(systemctl enable --now docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true)",
+	}, " && "))
+	cmd.Env = append(os.Environ(),
+		"DEBIAN_FRONTEND=noninteractive",
+		"NEEDRESTART_MODE=a",
+		"APT_LISTCHANGES_FRONTEND=none",
+		"DEBIAN_PRIORITY=critical",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("automatic Docker Compose install failed: %w", err)
+	}
+	probeOut, probeErr := probeSoftwareCompose()
+	if probeErr != nil {
+		return string(out) + probeOut, fmt.Errorf("Docker Compose install finished but Compose is still unavailable: %w", probeErr)
+	}
+	return string(out) + probeOut, nil
+}
+
+func probeSoftwareCompose() (string, error) {
+	out, err := runSoftwareCommand("", "docker", "compose", "version")
+	if err == nil {
+		return out, nil
+	}
+	fallbackOut, fallbackErr := runSoftwareCommand("", "docker-compose", "version")
+	if fallbackErr == nil {
+		return fallbackOut, nil
+	}
+	if isCommandNotFound(err) && isCommandNotFound(fallbackErr) {
+		return "", softwareComposeMissingError{Reason: "Docker and Docker Compose are not installed or not available in PATH"}
+	}
+	if isCommandNotFound(fallbackErr) || shouldFallbackDockerCompose(out) || shouldFallbackDockerCompose(fallbackOut) {
+		return strings.TrimSpace(out + fallbackOut), softwareComposeMissingError{Reason: "Docker Compose is not installed or not available in PATH"}
 	}
 	return out + fallbackOut, fallbackErr
 }
@@ -1568,6 +1677,9 @@ func parseDockerBytes(raw string) int64 {
 func softwareComposeStatus(inst softwareInstance) string {
 	out, err := runSoftwareCompose(inst, "ps", "-q")
 	if err != nil {
+		if isSoftwareComposeMissing(err) {
+			return "needs-compose"
+		}
 		return "unknown"
 	}
 	if strings.TrimSpace(out) == "" {
