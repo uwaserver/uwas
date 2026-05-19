@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link2, ShieldAlert, ShieldOff, ShieldCheck, Trash2, RefreshCw } from 'lucide-react';
+import { ArrowRight, Link2, ShieldAlert, ShieldOff, ShieldCheck, Trash2, RefreshCw } from 'lucide-react';
 import {
   fetchUnknownDomains, blockUnknownDomain, unblockUnknownDomain, dismissUnknownDomain,
   fetchFeatures, fetchDomains, aliasUnknownDomain,
@@ -31,6 +31,8 @@ export default function UnknownDomains() {
   const [domains, setDomains] = useState<DomainData[]>([]);
   const [aliasHost, setAliasHost] = useState('');
   const [aliasTarget, setAliasTarget] = useState('');
+  const [aliasMode, setAliasMode] = useState<'redirect' | 'alias'>('redirect');
+  const [aliasRedirectCode, setAliasRedirectCode] = useState<'301' | '302'>('301');
 
   const load = useCallback(() => {
     fetchUnknownDomains()
@@ -72,7 +74,9 @@ export default function UnknownDomains() {
     setActing(aliasHost);
     setError('');
     try {
-      await aliasUnknownDomain(aliasHost, aliasTarget);
+      await aliasUnknownDomain(aliasHost, aliasTarget, aliasMode === 'redirect'
+        ? { mode: 'redirect', redirect_code: parseInt(aliasRedirectCode, 10), preserve_path: true }
+        : { mode: 'alias' });
       setAliasHost('');
       load();
       fetchDomains().then(d => setDomains(d ?? [])).catch(() => {});
@@ -116,10 +120,10 @@ export default function UnknownDomains() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-blue-200">
-                Attach <span className="font-mono">{aliasHost}</span> as an alias
+                Attach <span className="font-mono">{aliasHost}</span>
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                The alias will share the selected site and auto SSL will request a separate certificate for it.
+                Redirect mode creates an auto-SSL redirect domain to the selected main domain. Serve mode shares the same site without redirecting.
               </p>
             </div>
             <select
@@ -129,6 +133,21 @@ export default function UnknownDomains() {
             >
               {domains.map(d => <option key={d.host} value={d.host}>{d.host}</option>)}
             </select>
+            <select
+              value={aliasMode === 'redirect' ? aliasRedirectCode : 'alias'}
+              onChange={e => {
+                if (e.target.value === 'alias') setAliasMode('alias');
+                else {
+                  setAliasMode('redirect');
+                  setAliasRedirectCode(e.target.value as '301' | '302');
+                }
+              }}
+              className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+            >
+              <option value="301">301 Redirect</option>
+              <option value="302">302 Redirect</option>
+              <option value="alias">Serve Same Site</option>
+            </select>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -136,7 +155,7 @@ export default function UnknownDomains() {
                 disabled={!aliasTarget || acting === aliasHost}
                 className="rounded-md bg-blue-500 px-3 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
               >
-                Attach
+                {aliasMode === 'redirect' ? 'Redirect' : 'Attach'}
               </button>
               <button type="button" onClick={() => setAliasHost('')} className="rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-card">
                 Cancel
@@ -197,7 +216,7 @@ export default function UnknownDomains() {
                           className="flex items-center gap-1 rounded-md bg-blue-500/15 px-2.5 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/25 disabled:opacity-50"
                           title="Attach as alias to an existing domain"
                         >
-                          <Link2 size={13} />
+                          {aliasMode === 'redirect' ? <ArrowRight size={13} /> : <Link2 size={13} />}
                           Alias
                         </button>
                         <button

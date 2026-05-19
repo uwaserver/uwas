@@ -455,10 +455,14 @@ export const unblockUnknownDomain = (host: string) =>
   api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/unblock`, { method: 'POST' });
 export const dismissUnknownDomain = (host: string) =>
   api<{ status: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}`, { method: 'DELETE' });
-export const aliasUnknownDomain = (host: string, domain: string) =>
-  api<{ status: string; host: string; domain: string }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/alias`, {
+export const aliasUnknownDomain = (
+  host: string,
+  domain: string,
+  options?: { mode?: 'alias' | 'redirect'; redirect_code?: number; preserve_path?: boolean },
+) =>
+  api<{ status: string; host: string; domain: string; redirect_code?: number }>(`/api/v1/unknown-domains/${encodeURIComponent(host)}/alias`, {
     method: 'POST',
-    body: JSON.stringify({ domain }),
+    body: JSON.stringify({ domain, ...(options ?? {}) }),
   });
 
 export interface SiteUser {
