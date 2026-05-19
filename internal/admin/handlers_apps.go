@@ -169,10 +169,14 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	scaffolded, err := apps.ScaffoldDemo(&a)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
+	scaffolded := false
+	if a.Deploy.GitURL == "" {
+		var err error
+		scaffolded, err = apps.ScaffoldDemo(&a)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if err := s.appsMgr.Register(&a); err != nil {
