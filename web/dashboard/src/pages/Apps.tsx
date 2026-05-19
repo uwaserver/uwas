@@ -49,6 +49,7 @@ const runtimeColor: Record<AppRuntime, string> = {
 const runtimeOptions: AppRuntime[] = ['node', 'python', 'ruby', 'go', 'docker', 'custom'];
 
 interface CreateForm {
+  sourceMode: 'blank' | 'git';
   name: string;
   description: string;
   runtime: AppRuntime;
@@ -56,6 +57,9 @@ interface CreateForm {
   work_dir: string;
   port: string;
   envText: string;
+  git_url: string;
+  git_branch: string;
+  build_cmd: string;
   // docker
   docker_image: string;
   docker_container_port: string;
@@ -64,6 +68,7 @@ interface CreateForm {
 }
 
 const blankForm: CreateForm = {
+  sourceMode: 'blank',
   name: '',
   description: '',
   runtime: 'node',
@@ -71,6 +76,9 @@ const blankForm: CreateForm = {
   work_dir: '',
   port: '',
   envText: '',
+  git_url: '',
+  git_branch: '',
+  build_cmd: '',
   docker_image: '',
   docker_container_port: '',
   docker_build_context: '',
@@ -184,6 +192,7 @@ export default function Apps() {
   }, [status]);
 
   const isDocker = form.runtime === 'docker';
+  const createFromGit = editing?.mode === 'create' && form.sourceMode === 'git' && !isDocker;
 
   const sortedApps = useMemo(
     () => [...apps].sort((a, b) => a.name.localeCompare(b.name)),
@@ -215,6 +224,17 @@ export default function Apps() {
       port: portNum || undefined,
       env,
     };
+    if (createFromGit) {
+      if (!form.git_url.trim()) {
+        setStatus({ ok: false, message: 'Git URL is required' });
+        return null;
+      }
+      body.deploy = {
+        git_url: form.git_url.trim(),
+        git_branch: form.git_branch.trim() || undefined,
+        build_cmd: form.build_cmd.trim() || undefined,
+      };
+    }
 
     if (isDocker) {
       const cport = parseInt(form.docker_container_port, 10);
@@ -237,7 +257,7 @@ export default function Apps() {
         return null;
       }
     } else {
-      body.command = form.command.trim() || undefined;
+      body.command = createFromGit ? undefined : form.command.trim() || undefined;
     }
     return body;
   };
@@ -256,6 +276,7 @@ export default function Apps() {
     try {
       const { app } = await fetchApp(name);
       setForm({
+        sourceMode: 'blank',
         name: app.name,
         description: app.description ?? '',
         runtime: app.runtime,
@@ -263,6 +284,9 @@ export default function Apps() {
         work_dir: app.work_dir ?? '',
         port: app.port ? String(app.port) : '',
         envText: envMapToText(app.env),
+        git_url: app.deploy?.git_url ?? '',
+        git_branch: app.deploy?.git_branch ?? '',
+        build_cmd: app.deploy?.build_cmd ?? '',
         docker_image: app.docker?.image ?? '',
         docker_container_port: app.docker?.container_port ? String(app.docker.container_port) : '',
         docker_build_context: app.docker?.build?.context ?? '',
@@ -311,10 +335,33 @@ export default function Apps() {
         setEditing(null);
       } else {
         // Create attempts auto-start AND a port-readiness probe.
-        const res = await createApp(body);
+        const res = await createApp(body, createFromGit ? { start: false } : undefined);
         const createdName = res.app.name || body.name!;
         const demoNote = res.scaffolded ? ' with demo files' : '';
-        if (!res.started) {
+        if (createFromGit) {
+          const deploy = await deployApp(createdName, {
+            git_url: form.git_url.trim(),
+            git_branch: form.git_branch.trim() || undefined,
+            build_cmd: form.build_cmd.trim() || undefined,
+          });
+          if (deploy.ok) {
+            setStatus({
+              ok: true,
+              message: `Created "${createdName}" from Git${deploy.commit_sha ? ` @ ${deploy.commit_sha.slice(0, 7)}` : ''}`,
+            });
+            setCreateOutcome({ name: createdName, started: true });
+          } else {
+            setStatus({
+              ok: false,
+              message: `Created "${createdName}" but Git deploy failed`,
+            });
+            setCreateOutcome({
+              name: createdName,
+              started: false,
+              error: deploy.error || deploy.log,
+            });
+          }
+        } else if (!res.started) {
           setStatus({
             ok: false,
             message: `Created "${createdName}"${demoNote} but the start failed — check logs`,
@@ -577,6 +624,41 @@ export default function Apps() {
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
             <div className="space-y-4">
+              {editing.mode === 'create' && (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, sourceMode: 'blank' }))}
+                    className={`flex items-start gap-3 rounded-md border p-3 text-left transition ${
+                      form.sourceMode === 'blank'
+                        ? 'border-primary/50 bg-primary/10 text-foreground'
+                        : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                  >
+                    <Plus size={16} className="mt-0.5" />
+                    <span>
+                      <span className="block text-sm font-medium">Blank app</span>
+                      <span className="block text-xs">Create workdir and demo files</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, sourceMode: 'git', runtime: f.runtime === 'docker' ? 'node' : f.runtime }))}
+                    className={`flex items-start gap-3 rounded-md border p-3 text-left transition ${
+                      form.sourceMode === 'git'
+                        ? 'border-blue-500/50 bg-blue-500/10 text-blue-200'
+                        : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                  >
+                    <GitBranch size={16} className="mt-0.5" />
+                    <span>
+                      <span className="block text-sm font-medium">Git source</span>
+                      <span className="block text-xs">Create app and deploy repo</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 {runtimeOptions.map(rt => (
                   <button
@@ -585,6 +667,7 @@ export default function Apps() {
                     onClick={() => setForm(f => ({
                       ...f,
                       runtime: rt,
+                      sourceMode: rt === 'docker' ? 'blank' : f.sourceMode,
                       docker_container_port: rt === 'docker' && !f.docker_container_port ? '80' : f.docker_container_port,
                     }))}
                     className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-md border px-2 py-2 text-xs transition ${
@@ -630,13 +713,48 @@ export default function Apps() {
                 </label>
               </div>
 
+              {createFromGit && (
+                <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-xs text-blue-200">Git URL</span>
+                      <input
+                        value={form.git_url}
+                        onChange={e => setForm(f => ({ ...f, git_url: e.target.value }))}
+                        placeholder="https://github.com/user/repo.git"
+                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs text-blue-200">Branch</span>
+                      <input
+                        value={form.git_branch}
+                        onChange={e => setForm(f => ({ ...f, git_branch: e.target.value }))}
+                        placeholder="main"
+                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs text-blue-200">Build command</span>
+                      <input
+                        value={form.build_cmd}
+                        onChange={e => setForm(f => ({ ...f, build_cmd: e.target.value }))}
+                        placeholder="npm ci && npm run build"
+                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {!isDocker && (
                 <div className="grid gap-3 md:grid-cols-2">
-                  <label className="space-y-1">
+                  <label className={`space-y-1 ${createFromGit ? 'opacity-50' : ''}`}>
                     <span className="text-xs text-muted-foreground">Start command</span>
                     <input
                       value={form.command}
                       onChange={e => setForm(f => ({ ...f, command: e.target.value }))}
+                      disabled={createFromGit}
                       placeholder={form.runtime === 'node' ? 'node index.js' : ''}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
                     />
@@ -718,7 +836,7 @@ export default function Apps() {
                   disabled={submitting}
                   className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
-                  {submitting ? 'Saving...' : editing.mode === 'edit' ? 'Save' : 'Create'}
+                  {submitting ? 'Saving...' : editing.mode === 'edit' ? 'Save' : createFromGit ? 'Create & deploy' : 'Create'}
                   <ArrowRight size={14} />
                 </button>
               </div>
