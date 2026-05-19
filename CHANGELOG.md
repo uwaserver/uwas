@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-05-19
+
+### Fixed
+
+- Fixed Dockerized Software Library compose execution on hosts that do not
+  support the `docker compose` plugin form. UWAS now automatically falls back
+  to legacy `docker-compose` when Docker reports Compose plugin flag/command
+  errors.
+
 ## [0.6.9] - 2026-05-19
 
 ### Added
