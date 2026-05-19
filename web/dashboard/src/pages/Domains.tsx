@@ -35,6 +35,7 @@ interface DomainFormState {
   proxyAlgorithm: string;
   redirectTarget: string;
   redirectCode: string;
+  canonicalHost: 'apex' | 'www' | 'both';
   // App fields removed from create UI in v0.5.8 — Apps page owns app
   // lifecycle now. The interface stays narrow on purpose so a future
   // accidental "set form.appPort" stops compiling.
@@ -76,6 +77,7 @@ const emptyForm: DomainFormState = {
   proxyAlgorithm: 'round-robin',
   redirectTarget: '',
   redirectCode: '301',
+  canonicalHost: 'apex',
   blockedPaths: '',
   wafEnabled: false,
   htaccessEnabled: false,
@@ -553,6 +555,7 @@ export default function Domains() {
         proxyAlgorithm: d.proxy?.algorithm ?? 'round-robin',
         redirectTarget: d.redirect?.target ?? '',
         redirectCode: String(d.redirect?.status ?? 301),
+        canonicalHost: 'apex',
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
         htaccessEnabled: !!d.htaccess?.mode,
@@ -601,6 +604,7 @@ export default function Domains() {
       type: form.type,
       ssl: { mode: form.ssl, force_ssl: form.ssl !== 'off' && form.forceSSL },
     };
+    if (!editingHost && form.type !== 'redirect') payload.canonical_host = form.canonicalHost;
 
     if (form.ip) payload.ip = form.ip;
     // Only send type-specific fields
@@ -899,6 +903,28 @@ export default function Domains() {
                       className={`${inputCls}${editingHost ? ' opacity-60 cursor-not-allowed' : ''}`} />
                   </FormField>
                 </div>
+
+                {!editingHost && form.type !== 'redirect' && (
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {[
+                      { value: 'apex', title: 'domain.com', desc: 'www redirects here' },
+                      { value: 'www', title: 'www.domain.com', desc: 'domain.com redirects here' },
+                      { value: 'both', title: 'Both', desc: 'no redirect' },
+                    ].map(item => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => patchField('canonicalHost', item.value as DomainFormState['canonicalHost'])}
+                        className={`rounded-md border px-3 py-2 text-left transition ${
+                          form.canonicalHost === item.value ? 'border-blue-500/50 bg-blue-500/10 ring-1 ring-blue-500/30' : 'border-border bg-card hover:border-foreground/20'
+                        }`}
+                      >
+                        <p className={`text-sm font-semibold ${form.canonicalHost === item.value ? 'text-blue-400' : 'text-foreground'}`}>{item.title}</p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">{item.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Type + SSL + IP row */}
                 <div className="grid grid-cols-3 gap-4">

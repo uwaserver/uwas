@@ -63,6 +63,53 @@ func TestAddDomainAutomaticallyCreatesWWWRedirect(t *testing.T) {
 	}
 }
 
+func TestAddDomainCanUseWWWAsCanonicalHost(t *testing.T) {
+	s := testServer()
+	s.config.Global.WebRoot = t.TempDir()
+	s.config.Domains = nil
+
+	body := strings.NewReader(`{"host":"example.test","type":"static","ssl":{"mode":"auto"},"canonical_host":"www"}`)
+	rec := httptest.NewRecorder()
+	s.handleAddDomain(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+	if len(s.config.Domains) != 2 {
+		t.Fatalf("domains len = %d, want primary www + apex redirect", len(s.config.Domains))
+	}
+	primary := s.config.Domains[0]
+	if primary.Host != "www.example.test" || primary.Type != "static" {
+		t.Fatalf("primary domain = %#v", primary)
+	}
+	redirect := s.config.Domains[1]
+	if redirect.Host != "example.test" || redirect.Type != "redirect" {
+		t.Fatalf("redirect domain = %#v", redirect)
+	}
+	if redirect.Redirect.Target != "https://www.example.test" || redirect.Redirect.Status != http.StatusMovedPermanently || !redirect.Redirect.PreservePath {
+		t.Fatalf("redirect config = %#v", redirect.Redirect)
+	}
+}
+
+func TestAddDomainCanServeApexAndWWWWithoutRedirect(t *testing.T) {
+	s := testServer()
+	s.config.Global.WebRoot = t.TempDir()
+	s.config.Domains = nil
+
+	body := strings.NewReader(`{"host":"example.test","type":"static","ssl":{"mode":"auto"},"canonical_host":"both"}`)
+	rec := httptest.NewRecorder()
+	s.handleAddDomain(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want one redirectless domain", len(s.config.Domains))
+	}
+	primary := s.config.Domains[0]
+	if primary.Host != "example.test" || len(primary.Aliases) != 1 || primary.Aliases[0] != "www.example.test" {
+		t.Fatalf("primary domain = %#v", primary)
+	}
+}
+
 func TestAddDomainSkipsAutomaticWWWRedirectWhenAlreadyConfigured(t *testing.T) {
 	s := testServer()
 	s.config.Global.WebRoot = t.TempDir()
