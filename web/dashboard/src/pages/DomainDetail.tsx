@@ -784,10 +784,15 @@ export default function DomainDetail() {
           key={`${JSON.stringify(detail.locations || [])}|${JSON.stringify(detail.aliases || [])}`}
           host={host}
           detail={detail}
-          onSave={async (locs, aliases) => {
+          onSave={async (locs, aliases, aliasMode, aliasRedirectCode) => {
           setSaving(true);
           try {
-            await updateDomain(host, { locations: locs, aliases });
+            await updateDomain(host, {
+              locations: locs,
+              aliases,
+              alias_mode: aliasMode,
+              ...(aliasMode === 'redirect' ? { alias_redirect_code: aliasRedirectCode, alias_preserve_path: true } : {}),
+            });
             setMsg({ ok: true, text: 'Routes saved. Reload applied.' });
             load();
           } catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
@@ -836,7 +841,7 @@ interface RouteRow {
 function RoutesEditor({ host, detail, onSave, saving }: {
   host: string;
   detail: DDType;
-  onSave: (locations: DomainLocationRule[], aliases: string[]) => Promise<void>;
+  onSave: (locations: DomainLocationRule[], aliases: string[], aliasMode: 'redirect' | 'alias', aliasRedirectCode: number) => Promise<void>;
   saving: boolean;
 }) {
   const [routes, setRoutes] = useState<RouteRow[]>(() => {
@@ -853,6 +858,8 @@ function RoutesEditor({ host, detail, onSave, saving }: {
     }));
   });
   const [aliases, setAliases] = useState<string[]>(() => detail.aliases || []);
+  const [aliasMode, setAliasMode] = useState<'redirect' | 'alias'>(() => (detail.aliases?.length ?? 0) > 0 ? 'alias' : 'redirect');
+  const [aliasRedirectCode, setAliasRedirectCode] = useState(301);
   const [newAlias, setNewAlias] = useState('');
   const addAlias = (value: string) => {
     const hostKey = (host || '').trim().toLowerCase().replace(/\.$/, '');
@@ -908,7 +915,7 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       }
       return loc;
     });
-    onSave(locs, aliases);
+    onSave(locs, aliases, aliasMode, aliasRedirectCode);
   };
 
   const typeColors: Record<string, string> = {
@@ -924,8 +931,29 @@ function RoutesEditor({ host, detail, onSave, saving }: {
       <div className="rounded-lg border border-border bg-card p-5">
         <h3 className="text-sm font-semibold text-card-foreground mb-1">Domain Aliases</h3>
         <p className="text-xs text-muted-foreground mb-3">
-          Aliases serve this same site and get their own auto SSL certificate. Prefer a 301 redirect domain when you want one canonical hostname.
+          Redirect aliases become separate auto-SSL domains and point only to this domain's main hostname.
         </p>
+        <div className="mb-3 grid grid-cols-[minmax(0,1fr)_120px] gap-2">
+          <select
+            value={aliasMode === 'redirect' ? String(aliasRedirectCode) : 'alias'}
+            onChange={e => {
+              if (e.target.value === 'alias') {
+                setAliasMode('alias');
+              } else {
+                setAliasMode('redirect');
+                setAliasRedirectCode(Number(e.target.value));
+              }
+            }}
+            className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-blue-500/50"
+          >
+            <option value="301">301 Redirect to main domain</option>
+            <option value="302">302 Redirect to main domain</option>
+            <option value="alias">Serve same site</option>
+          </select>
+          <span className="flex items-center justify-center rounded-md border border-border bg-background px-2 py-1.5 text-[10px] text-muted-foreground">
+            Target: main
+          </span>
+        </div>
         <div className="flex flex-wrap gap-2 mb-3">
           {aliases.map((a, i) => (
             <span key={i} className="flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs text-foreground">
