@@ -874,6 +874,52 @@ func TestSoftwareBackupAllReportsSkippedAndFailedItems(t *testing.T) {
 	}
 }
 
+func TestRunSoftwareComposeFallsBackToLegacyDockerCompose(t *testing.T) {
+	dir := t.TempDir()
+	inst := softwareInstance{
+		Name:        "legacy",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-legacy",
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	calls := []softwareExecCall{}
+	orig := softwareComposeCommand
+	softwareComposeCommand = func(name string, args ...string) *exec.Cmd {
+		mu.Lock()
+		calls = append(calls, softwareExecCall{Name: name, Args: append([]string(nil), args...)})
+		mu.Unlock()
+		mode := "ok"
+		output := "legacy ok\n"
+		if name == "docker" {
+			mode = "fail"
+			output = "unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n"
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestSoftwareComposeHelperProcess", "--", "--software-compose-helper", mode)
+		cmd.Env = append(os.Environ(), "UWAS_SOFTWARE_HELPER_OUTPUT="+output)
+		return cmd
+	}
+	t.Cleanup(func() { softwareComposeCommand = orig })
+
+	out, err := runSoftwareCompose(inst, "up", "-d")
+	if err != nil {
+		t.Fatalf("runSoftwareCompose error = %v, output: %s", err, out)
+	}
+	if out != "legacy ok\n" {
+		t.Fatalf("output = %q, want legacy ok", out)
+	}
+	if !softwareCallsContain(&calls, "docker compose -p uwas-legacy", "up -d") {
+		t.Fatalf("docker compose should be attempted first: %#v", calls)
+	}
+	if !softwareCallsContain(&calls, "docker-compose -p uwas-legacy", "up -d") {
+		t.Fatalf("docker-compose fallback should be used: %#v", calls)
+	}
+}
+
 func TestSoftwareComposeTemplatesAndSecrets(t *testing.T) {
 	cases := []struct {
 		id       string

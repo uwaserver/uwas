@@ -1120,18 +1120,40 @@ func removeSoftwareInstanceDir(inst softwareInstance) error {
 }
 
 func runSoftwareCompose(inst softwareInstance, args ...string) (string, error) {
-	all := []string{"compose", "-p", inst.Project, "-f", inst.ComposeFile}
-	all = append(all, args...)
-	cmd := softwareComposeCommand("docker", all...)
-	cmd.Dir = inst.Dir
+	composeArgs := []string{"-p", inst.Project, "-f", inst.ComposeFile}
+	composeArgs = append(composeArgs, args...)
+
+	out, err := runSoftwareCommand(inst.Dir, "docker", append([]string{"compose"}, composeArgs...)...)
+	if err == nil || !shouldFallbackDockerCompose(out) {
+		return out, err
+	}
+	fallbackOut, fallbackErr := runSoftwareCommand(inst.Dir, "docker-compose", composeArgs...)
+	if fallbackErr == nil {
+		return fallbackOut, nil
+	}
+	return out + fallbackOut, fallbackErr
+}
+
+func runSoftwareDocker(args ...string) (string, error) {
+	return runSoftwareCommand("", "docker", args...)
+}
+
+func runSoftwareCommand(dir, name string, args ...string) (string, error) {
+	cmd := softwareComposeCommand(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-func runSoftwareDocker(args ...string) (string, error) {
-	cmd := softwareComposeCommand("docker", args...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+func shouldFallbackDockerCompose(output string) bool {
+	output = strings.ToLower(output)
+	return strings.Contains(output, "unknown shorthand flag: 'p'") ||
+		strings.Contains(output, "unknown shorthand flag: \"p\"") ||
+		strings.Contains(output, "docker: 'compose' is not a docker command") ||
+		strings.Contains(output, "docker: \"compose\" is not a docker command") ||
+		strings.Contains(output, "is not a docker command")
 }
 
 func collectSoftwareContainerStats(inst softwareInstance) ([]softwareContainerStat, error) {
