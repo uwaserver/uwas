@@ -767,9 +767,9 @@ export default function Cloudflare() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                <strong>Manage DNS</strong> = bu zone'un DNS kayıtlarını UWAS DNS sayfasında düzenle.
-                <strong className="ml-3">Import to UWAS</strong> = bu zone'daki A / AAAA / CNAME kayıtlarını
-                tarayıp her bir hostname için UWAS'ta otomatik bir site oluştur (önizleme gösterilir, sen seçersin).
+                <strong>Manage DNS</strong> opens this zone's DNS records in the UWAS DNS page.
+                <strong className="ml-3">Import to UWAS</strong> scans A / AAAA / CNAME records and creates
+                UWAS sites for the hostnames you select after preview.
               </p>
             </div>
             <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
@@ -819,18 +819,17 @@ export default function Cloudflare() {
                     {importZoneId === zone.id && (
                       <div className="mt-3 rounded-md border border-border bg-muted/40 p-3 space-y-3">
                         <div className="text-xs text-muted-foreground">
-                          <strong>Ne yapılır?</strong> <em>{zone.name}</em> zone'undaki tüm A / AAAA / CNAME
-                          kayıtlarındaki hostname'ler okunur. Aşağıda işaretlediğin her hostname için UWAS'ta
-                          yeni bir site (domain) oluşturulur — web root klasörü yaratılır, otomatik HTTPS
-                          (ACME) etkinleştirilir, seçtiğin tipe göre (Static/PHP/Proxy/Redirect) varsayılan
-                          ayarlar uygulanır. Cloudflare zone'una hiç dokunulmaz, hiçbir DNS değişikliği
-                          yapılmaz — sadece UWAS tarafında site kayıtları eklenir.
+                          <strong>What happens?</strong> UWAS reads all A / AAAA / CNAME hostnames in the
+                          <em> {zone.name}</em> zone. For each hostname you select below, UWAS creates a new
+                          site, creates the web root, enables automatic HTTPS (ACME), and applies defaults for
+                          the selected type (Static/PHP/Proxy/Redirect). Cloudflare DNS is not changed; only
+                          UWAS site records are added.
                         </div>
 
                         {importLoading && !importPreview && (
                           <div className="text-sm text-muted-foreground py-4 text-center">
                             <RefreshCw className="h-4 w-4 inline animate-spin mr-2" />
-                            Cloudflare'den DNS kayıtları okunuyor…
+                            Reading DNS records from Cloudflare...
                           </div>
                         )}
 
@@ -846,15 +845,15 @@ export default function Cloudflare() {
                                   onChange={(e) => setImportType(e.target.value as 'static' | 'php' | 'proxy' | 'redirect')}
                                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                                 >
-                                  <option value="static">Static — Düz HTML/JS/CSS dosyaları (varsayılan)</option>
-                                  <option value="php">PHP — WordPress, Laravel vb. PHP siteleri</option>
-                                  <option value="proxy">Proxy — Başka bir backend'e yönlendir</option>
-                                  <option value="redirect">Redirect — Başka bir URL'e 301 yönlendirme</option>
+                                  <option value="static">Static - plain HTML/JS/CSS files (default)</option>
+                                  <option value="php">PHP - WordPress, Laravel, and other PHP sites</option>
+                                  <option value="proxy">Proxy - forward to another backend</option>
+                                  <option value="redirect">Redirect - send 301 redirects to another URL</option>
                                 </select>
                               </div>
                               <div>
                                 <label className="block text-xs font-medium text-foreground mb-1">
-                                  Web root klasörü
+                                  Web root directory
                                 </label>
                                 <input
                                   type="text"
@@ -864,8 +863,8 @@ export default function Cloudflare() {
                                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                                 />
                                 <p className="text-[10px] text-muted-foreground mt-1">
-                                  <code>{'{host}'}</code> her hostname için yerine konur. Boş bırakırsan
-                                  varsayılan: <code>/var/www/&lt;hostname&gt;/public_html</code>
+                                  <code>{'{host}'}</code> is replaced for each hostname. Leave empty to use
+                                  the default: <code>/var/www/&lt;hostname&gt;/public_html</code>
                                 </p>
                               </div>
                             </div>
@@ -873,9 +872,9 @@ export default function Cloudflare() {
                             <div>
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-medium text-foreground">
-                                  Eklenecek hostname'ler
+                                  Hostnames to add
                                   <span className="ml-1 text-muted-foreground font-normal">
-                                    ({importPreview.selected.size} / {importPreview.addable.length} seçili)
+                                    ({importPreview.selected.size} / {importPreview.addable.length} selected)
                                   </span>
                                 </span>
                                 {importPreview.addable.length > 1 && (
@@ -883,13 +882,13 @@ export default function Cloudflare() {
                                     onClick={togglePreviewAll}
                                     className="text-xs text-primary hover:underline"
                                   >
-                                    {importPreview.selected.size === importPreview.addable.length ? 'Hiçbirini seçme' : 'Hepsini seç'}
+                                    {importPreview.selected.size === importPreview.addable.length ? 'Select none' : 'Select all'}
                                   </button>
                                 )}
                               </div>
                               {importPreview.addable.length === 0 ? (
                                 <div className="text-xs text-muted-foreground italic py-2">
-                                  Bu zone'daki tüm hostname'ler zaten UWAS'ta tanımlı.
+                                  All hostnames in this zone already exist in UWAS.
                                 </div>
                               ) : (
                                 <div className="max-h-48 overflow-y-auto rounded border border-border bg-background">
@@ -914,10 +913,10 @@ export default function Cloudflare() {
                             {importPreview.existing.length > 0 && (
                               <details className="text-xs">
                                 <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                                  {importPreview.existing.length} hostname zaten UWAS'ta tanımlı (atlanacak)
+                                  {importPreview.existing.length} hostnames already exist in UWAS and will be skipped
                                 </summary>
                                 <div className="mt-1 space-y-0.5 pl-3 font-mono text-muted-foreground">
-                                  {importPreview.existing.map((h) => <div key={h}>· {h}</div>)}
+                                  {importPreview.existing.map((h) => <div key={h}>- {h}</div>)}
                                 </div>
                               </details>
                             )}
@@ -927,7 +926,7 @@ export default function Cloudflare() {
                                 onClick={() => { setImportZoneId(null); setImportPreview(null); }}
                                 className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent"
                               >
-                                İptal
+                                Cancel
                               </button>
                               <button
                                 onClick={handleCommitImport}
@@ -936,8 +935,8 @@ export default function Cloudflare() {
                               >
                                 <Download className={`h-4 w-4 ${importLoading ? 'animate-pulse' : ''}`} />
                                 {importLoading
-                                  ? 'Ekleniyor…'
-                                  : `${importPreview.selected.size} site ekle`}
+                                  ? 'Adding...'
+                                  : `Add ${importPreview.selected.size} site${importPreview.selected.size === 1 ? '' : 's'}`}
                               </button>
                             </div>
                           </>

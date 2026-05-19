@@ -192,14 +192,21 @@ func buildDomainAllowlist(domains []config.Domain) *domainAllowlist {
 			a.wildcards = append(a.wildcards, "."+suffix)
 			a.apex[suffix] = struct{}{}
 		} else {
-			a.exact[h] = struct{}{}
+			for _, host := range []string{canonicalTLSHostname(h), implicitTLSWWWHostname(h)} {
+				if host != "" {
+					a.exact[host] = struct{}{}
+				}
+			}
 		}
 		for _, alias := range d.Aliases {
-			alias = strings.ToLower(strings.TrimSpace(alias))
+			alias = canonicalTLSHostname(alias)
 			if alias == "" {
 				continue
 			}
 			a.exact[alias] = struct{}{}
+			if www := implicitTLSWWWHostname(alias); www != "" {
+				a.exact[www] = struct{}{}
+			}
 		}
 	}
 	return a
@@ -399,20 +406,57 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 }
 
 func tlsHostsForDomain(d config.Domain) []string {
-	seen := make(map[string]struct{}, 1+len(d.Aliases))
-	hosts := make([]string, 0, 1+len(d.Aliases))
+	seen := make(map[string]struct{}, 2+len(d.Aliases)*2)
+	hosts := make([]string, 0, 2+len(d.Aliases)*2)
 	for _, host := range append([]string{d.Host}, d.Aliases...) {
-		host = strings.ToLower(strings.TrimSpace(host))
+		host = canonicalTLSHostname(host)
 		if host == "" {
 			continue
 		}
-		if _, ok := seen[host]; ok {
-			continue
+		candidates := []string{host, implicitTLSWWWHostname(host)}
+		if normalizeTLSCanonicalHost(d.CanonicalHost) == "www" && implicitTLSWWWHostname(host) != "" {
+			candidates = []string{implicitTLSWWWHostname(host), host}
 		}
-		seen[host] = struct{}{}
-		hosts = append(hosts, host)
+		for _, candidate := range candidates {
+			if candidate == "" {
+				continue
+			}
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			hosts = append(hosts, candidate)
+		}
 	}
 	return hosts
+}
+
+func normalizeTLSCanonicalHost(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "www":
+		return "www"
+	default:
+		return "apex"
+	}
+}
+
+func canonicalTLSHostname(host string) string {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if strings.HasPrefix(host, "www.") && !strings.Contains(host, ":") && !strings.HasPrefix(host, "*.") {
+		apex := strings.TrimPrefix(host, "www.")
+		if apex != "" && strings.Contains(apex, ".") {
+			return apex
+		}
+	}
+	return host
+}
+
+func implicitTLSWWWHostname(host string) string {
+	host = canonicalTLSHostname(host)
+	if host == "" || strings.Contains(host, ":") || strings.HasPrefix(host, "*.") || !strings.Contains(host, ".") {
+		return ""
+	}
+	return "www." + host
 }
 
 // SetOnCertRenewed sets a callback that fires after a certificate is renewed.

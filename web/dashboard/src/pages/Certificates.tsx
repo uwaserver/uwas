@@ -86,9 +86,61 @@ function formatExpiry(expiry?: string): string {
   }
 }
 
-function CertCard({ cert, onViewDetails, onRenew, renewing }: { cert: CertInfo; onViewDetails: () => void; onRenew: () => void; renewing: boolean }) {
-  const progressPercent = cert.days_left !== undefined
-    ? Math.min(100, Math.max(0, (cert.days_left / 90) * 100))
+function canonicalDomain(host: string) {
+  return host.trim().toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+}
+
+function certNeedsAttention(cert: CertInfo) {
+  if (cert.ssl_mode === 'off') return false;
+  if (cert.status !== 'active') return true;
+  return cert.days_left !== undefined && cert.days_left <= 7;
+}
+
+type CertGroup = {
+  domain: string;
+  mainHost: string;
+  canonicalHost: 'apex' | 'www';
+  certs: CertInfo[];
+};
+
+function groupCerts(certs: CertInfo[]): CertGroup[] {
+  const groups = new Map<string, CertGroup>();
+  for (const cert of certs) {
+    const domain = cert.domain || canonicalDomain(cert.host);
+    const canonicalHost = cert.canonical_host === 'www' ? 'www' : 'apex';
+    const mainHost = cert.main_host || (canonicalHost === 'www' ? `www.${domain}` : domain);
+    const group = groups.get(domain) || { domain, mainHost, canonicalHost, certs: [] };
+    group.certs.push(cert);
+    group.mainHost = mainHost;
+    group.canonicalHost = canonicalHost;
+    groups.set(domain, group);
+  }
+  return Array.from(groups.values()).sort((a, b) => a.domain.localeCompare(b.domain));
+}
+
+function groupSummary(group: CertGroup) {
+  const actionable = group.certs.filter(certNeedsAttention);
+  if (group.certs.every(c => c.ssl_mode === 'off')) return { status: 'none', label: 'SSL off' };
+  if (actionable.some(c => c.status === 'expired')) return { status: 'expired', label: 'Expired hostname' };
+  if (actionable.length > 0) return { status: 'pending', label: `${actionable.length} hostname needs attention` };
+  return { status: 'active', label: 'Apex + www healthy' };
+}
+
+function CertGroupCard({
+  group,
+  onViewDetails,
+  onRenew,
+  renewingHost,
+}: {
+  group: CertGroup;
+  onViewDetails: (host: string) => void;
+  onRenew: (host: string) => void;
+  renewingHost: string | null;
+}) {
+  const summary = groupSummary(group);
+  const primary = group.certs.find(c => c.host === group.mainHost) || group.certs[0];
+  const progressPercent = primary?.days_left !== undefined
+    ? Math.min(100, Math.max(0, (primary.days_left / 90) * 100))
     : 0;
 
   return (
@@ -96,61 +148,88 @@ function CertCard({ cert, onViewDetails, onRenew, renewing }: { cert: CertInfo; 
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-2">
           <Lock size={16} className="text-muted-foreground" />
-          <h3 className="font-mono text-sm font-medium text-foreground">{cert.host}</h3>
+          <div>
+            <h3 className="font-mono text-sm font-medium text-foreground">{group.domain}</h3>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Main: <span className="font-mono">{group.mainHost}</span>
+            </p>
+          </div>
         </div>
-        {sslModeBadge(cert.ssl_mode)}
+        {sslModeBadge(primary?.ssl_mode || 'off')}
       </div>
 
       <div className="mb-4 space-y-2.5">
         <div className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">Status</span>
-          {statusBadge(cert.status)}
+          {statusBadge(summary.status)}
         </div>
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Issuer</span>
+          <span className="text-muted-foreground">Summary</span>
           <span className="text-card-foreground">
-            {cert.issuer || '--'}
+            {summary.label}
           </span>
         </div>
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Expires</span>
-          <span className={expiryTextColor(cert.days_left)}>
-            {formatExpiry(cert.expiry)}
+          <span className="text-muted-foreground">Primary Expires</span>
+          <span className={expiryTextColor(primary?.days_left)}>
+            {formatExpiry(primary?.expiry)}
           </span>
         </div>
-        {cert.days_left !== undefined && (
+        {primary?.days_left !== undefined && (
           <div>
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Days Remaining</span>
-              <span className={`font-medium ${expiryTextColor(cert.days_left)}`}>
-                {cert.days_left}d
+              <span className={`font-medium ${expiryTextColor(primary.days_left)}`}>
+                {primary.days_left}d
               </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-accent">
               <div
-                className={`h-full rounded-full transition-all ${expiryColor(cert.days_left)}`}
+                className={`h-full rounded-full transition-all ${expiryColor(primary.days_left)}`}
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
           </div>
         )}
+        <div className="space-y-1.5 pt-1">
+          {group.certs.map(cert => {
+            const attention = certNeedsAttention(cert);
+            const renewing = renewingHost === cert.host;
+            return (
+              <div key={cert.host} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs ${attention ? 'border-amber-500/30 bg-amber-500/5' : 'border-border/60 bg-background/50'}`}>
+                <span className="min-w-0 flex-1 truncate font-mono text-card-foreground">{cert.host}</span>
+                {statusBadge(cert.status)}
+                {cert.ssl_mode === 'auto' && attention && (
+                  <button
+                    onClick={() => onRenew(cert.host)}
+                    disabled={renewing}
+                    className="flex shrink-0 items-center gap-1 rounded bg-blue-600/15 px-2 py-1 text-[10px] text-blue-400 hover:bg-blue-600/25 disabled:opacity-50"
+                  >
+                    <RefreshCw size={10} className={renewing ? 'animate-spin' : ''} />
+                    Force Renew
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="flex gap-2 border-t border-border pt-3">
         <button
-          onClick={onViewDetails}
+          onClick={() => onViewDetails(primary?.host || group.domain)}
           className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs text-card-foreground hover:bg-[#475569]"
         >
           <Eye size={12} /> View Details
         </button>
-        {cert.ssl_mode === 'auto' && (
+        {primary?.ssl_mode === 'auto' && (
           <button
-            onClick={onRenew}
-            disabled={renewing}
+            onClick={() => onRenew(primary.host)}
+            disabled={renewingHost === primary.host}
             className="flex items-center gap-1.5 rounded-md bg-blue-600/15 px-3 py-1.5 text-xs text-blue-400 hover:bg-blue-600/25 disabled:opacity-50"
           >
-            <RefreshCw size={12} className={renewing ? 'animate-spin' : ''} />
-            {renewing ? 'Renewing...' : 'Force Renew'}
+            <RefreshCw size={12} className={renewingHost === primary.host ? 'animate-spin' : ''} />
+            {renewingHost === primary.host ? 'Renewing...' : 'Renew Primary'}
           </button>
         )}
       </div>
@@ -225,6 +304,7 @@ export default function Certificates() {
   usePolling(load, hasPending ? 5000 : null);
 
   const detailCert = detailHost ? certs.find((c) => c.host === detailHost) : null;
+  const certGroups = groupCerts(certs);
 
   // Upcoming renewals: certs with days_left, sorted ascending
   const upcomingRenewals = certs
@@ -238,7 +318,7 @@ export default function Certificates() {
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Certificates</h1>
           <p className="text-sm text-muted-foreground">
-            SSL/TLS certificate management ({certs.length} domains)
+            SSL/TLS certificate management ({certGroups.length} domains, {certs.length} hostnames)
           </p>
         </div>
         <div className="flex gap-2">
@@ -313,18 +393,16 @@ export default function Certificates() {
         <>
           {/* Certificate cards grid */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {certs.map((cert) => (
-              <CertCard
-                key={cert.host}
-                cert={cert}
-                onViewDetails={() =>
-                  setDetailHost(detailHost === cert.host ? null : cert.host)
-                }
-                onRenew={() => handleRenew(cert.host)}
-                renewing={renewingHost === cert.host}
+            {certGroups.map((group) => (
+              <CertGroupCard
+                key={group.domain}
+                group={group}
+                onViewDetails={(host) => setDetailHost(detailHost === host ? null : host)}
+                onRenew={handleRenew}
+                renewingHost={renewingHost}
               />
             ))}
-            {certs.length === 0 && (
+            {certGroups.length === 0 && (
               <div className="col-span-full rounded-lg border border-dashed border-border bg-card p-10 text-center">
                 <Lock size={32} className="mx-auto mb-3 text-muted-foreground opacity-40" />
                 <p className="text-sm font-medium text-card-foreground">No certificates configured</p>

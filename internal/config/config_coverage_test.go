@@ -299,6 +299,146 @@ func TestDomainMarshalYAML_WithAliases(t *testing.T) {
 	}
 }
 
+func TestDomainMarshalYAML_ForceSSL(t *testing.T) {
+	d := Domain{
+		Host: "example.com",
+		Type: "static",
+		SSL: SSLConfig{
+			Mode:       "manual",
+			ForceSSL:   true,
+			Cert:       "/etc/ssl/example.crt",
+			Key:        "/etc/ssl/example.key",
+			MinVersion: "1.3",
+			ClientCA:   "/etc/ssl/ca.crt",
+			ClientAuth: "require",
+		},
+	}
+	val, err := d.MarshalYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := val.(map[string]any)
+	ssl := m["ssl"].(map[string]any)
+	if ssl["mode"] != "manual" {
+		t.Errorf("ssl.mode = %v, want manual", ssl["mode"])
+	}
+	if ssl["force_ssl"] != true {
+		t.Errorf("ssl.force_ssl = %v, want true", ssl["force_ssl"])
+	}
+	if ssl["cert"] != "/etc/ssl/example.crt" || ssl["key"] != "/etc/ssl/example.key" {
+		t.Errorf("manual cert/key not preserved: %#v", ssl)
+	}
+	if ssl["min_version"] != "1.3" || ssl["client_ca"] != "/etc/ssl/ca.crt" || ssl["client_auth"] != "require" {
+		t.Errorf("advanced ssl fields not preserved: %#v", ssl)
+	}
+}
+
+func TestDomainMarshalYAML_PreservesAdvancedConfigFields(t *testing.T) {
+	d := Domain{
+		Host: "advanced.com",
+		Type: "proxy",
+		SSL:  SSLConfig{Mode: "auto", ForceSSL: true},
+		PHP: PHPConfig{
+			FPMAddress:      "unix:/run/php.sock",
+			Env:             map[string]string{"APP_ENV": "prod"},
+			ConfigOverrides: map[string]string{"memory_limit": "256M"},
+		},
+		App: AppConfig{
+			Command:     "npm start",
+			Port:        3100,
+			Env:         map[string]string{"NODE_ENV": "production"},
+			WorkDir:     "/srv/app",
+			Runtime:     "node",
+			AutoRestart: true,
+		},
+		Resources: ResourceLimits{CPUPercent: 50, MemoryMB: 512, PIDMax: 128},
+		Headers: HeadersConfig{
+			ResponseAdd:    map[string]string{"X-Test": "1"},
+			ResponseRemove: []string{"Server"},
+		},
+		AccessLog: AccessLogConfig{
+			Path:       "/var/log/uwas/advanced.log",
+			Format:     "json",
+			BufferSize: 4096,
+			Rotate:     RotateConfig{MaxSize: 10 * MB, MaxAge: Duration{Duration: 24 * time.Hour}, MaxBackups: 7},
+		},
+		ImageOptimization: ImageOptimizationConfig{Enabled: true, Formats: []string{"webp", "avif"}},
+		Maintenance:       MaintenanceConfig{Enabled: true, Message: "maintenance", RetryAfter: 120, AllowedIPs: []string{"127.0.0.1"}},
+		Locations: []LocationConfig{{
+			Match:          "/api/",
+			ProxyPass:      "http://127.0.0.1:4000",
+			StripPrefix:    true,
+			RequestTimeout: Duration{Duration: 5 * time.Second},
+			RateLimit:      &RateLimitConfig{Requests: 10, Window: Duration{Duration: 10 * time.Second}, By: "ip"},
+			BasicAuth:      &BasicAuthConfig{Enabled: true, Users: map[string]string{"admin": "hash"}},
+		}},
+		SecurityHeaders: SecurityHeadersConfig{
+			ContentSecurityPolicy: "default-src 'self'",
+			XContentTypeOptions:   "nosniff",
+		},
+		InternalAliases: []string{"/protected/"},
+		WebhookSecret:   "domain-secret",
+		Security: SecurityConfig{
+			HotlinkProtection: HotlinkConfig{Enabled: true, AllowedReferers: []string{"https://advanced.com"}, Extensions: []string{"jpg"}},
+			WAF:               WAFConfig{Enabled: true, BypassPaths: []string{"/health"}, Rules: []string{"xss"}},
+			GeoBlockCountries: []string{"RU"},
+			GeoAllowCountries: []string{"US"},
+		},
+		Proxy: ProxyConfig{
+			Upstreams:             []Upstream{{Address: "http://127.0.0.1:3000", Weight: 2}},
+			Algorithm:             "round_robin",
+			HealthCheck:           HealthCheckConfig{Path: "/health", Interval: Duration{Duration: 30 * time.Second}, Timeout: Duration{Duration: 2 * time.Second}, Threshold: 3, Rise: 2},
+			Sticky:                StickyConfig{Type: "cookie", CookieName: "uwas", TTL: 3600},
+			CircuitBreaker:        CircuitConfig{Threshold: 5, Timeout: Duration{Duration: 10 * time.Second}},
+			WebSocket:             true,
+			GRPC:                  true,
+			Timeouts:              ProxyTimeouts{Connect: Duration{Duration: time.Second}, Read: Duration{Duration: 15 * time.Second}, Write: Duration{Duration: 15 * time.Second}},
+			MaxRetries:            3,
+			Canary:                CanaryConfig{Enabled: true, Weight: 10, Upstreams: []Upstream{{Address: "http://127.0.0.1:3001"}}, Cookie: "canary"},
+			Mirror:                MirrorConfig{Enabled: true, Backend: "http://127.0.0.1:5000", Percent: 5, MaxBodyBytes: 2048},
+			BufferResponse:        true,
+			AllowPrivateUpstreams: true,
+			InsecureSkipVerify:    true,
+		},
+		CORS:        CORSConfig{AllowedOrigins: []string{"https://app.advanced.com"}},
+		BasicAuth:   BasicAuthConfig{Users: map[string]string{"root": "hash"}},
+		Compression: CompressionConfig{Algorithms: []string{"br"}},
+		Bandwidth:   BandwidthConfig{MonthlyLimit: 10 * GB, Action: "alert"},
+	}
+
+	data, err := yaml.Marshal(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out Domain
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal persisted domain: %v\n%s", err, string(data))
+	}
+	if out.App.Command != d.App.Command || out.App.AutoRestart != d.App.AutoRestart {
+		t.Fatalf("app config was not preserved: %#v", out.App)
+	}
+	if out.Resources.MemoryMB != 512 || out.Headers.ResponseAdd["X-Test"] != "1" || out.AccessLog.Rotate.MaxBackups != 7 {
+		t.Fatalf("resource/header/access_log config was not preserved: %#v %#v %#v", out.Resources, out.Headers, out.AccessLog)
+	}
+	if !out.ImageOptimization.Enabled || !out.Maintenance.Enabled || len(out.Locations) != 1 {
+		t.Fatalf("image/maintenance/location config was not preserved: %#v %#v %#v", out.ImageOptimization, out.Maintenance, out.Locations)
+	}
+	if out.SecurityHeaders.XContentTypeOptions != "nosniff" || out.WebhookSecret != "domain-secret" || len(out.InternalAliases) != 1 {
+		t.Fatalf("security header/webhook/internal alias config was not preserved: %#v", out)
+	}
+	if !out.Security.HotlinkProtection.Enabled || len(out.Security.WAF.BypassPaths) != 1 || len(out.Security.GeoBlockCountries) != 1 {
+		t.Fatalf("advanced security config was not preserved: %#v", out.Security)
+	}
+	if !out.Proxy.GRPC || !out.Proxy.AllowPrivateUpstreams || out.Proxy.HealthCheck.Path != "/health" || !out.Proxy.Canary.Enabled || !out.Proxy.Mirror.Enabled {
+		t.Fatalf("advanced proxy config was not preserved: %#v", out.Proxy)
+	}
+	if len(out.CORS.AllowedOrigins) != 1 || out.BasicAuth.Users["root"] != "hash" || len(out.Compression.Algorithms) != 1 || out.Bandwidth.Action != "alert" {
+		t.Fatalf("disabled-but-configured blocks were not preserved: cors=%#v auth=%#v compression=%#v bandwidth=%#v",
+			out.CORS, out.BasicAuth, out.Compression, out.Bandwidth)
+	}
+}
+
 func TestDomainMarshalYAML_PHP(t *testing.T) {
 	d := Domain{
 		Host: "php.com",

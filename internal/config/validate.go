@@ -42,15 +42,7 @@ func Validate(cfg *Config) error {
 		validateListenAddr(cfg.Global.MCP.Listen, "global.mcp.listen", &errs)
 	}
 
-	// Rate limit validation (global fallback)
-	if cfg.Global.RateLimit.Requests != 0 || cfg.Global.RateLimit.Window.Duration != 0 {
-		if cfg.Global.RateLimit.Requests <= 0 {
-			errs = append(errs, "global.rate_limit.requests must be > 0 when rate limiting is configured")
-		}
-		if cfg.Global.RateLimit.Window.Duration <= 0 {
-			errs = append(errs, "global.rate_limit.window must be > 0 when rate limiting is configured")
-		}
-	}
+	validateRateLimitConfig("global.rate_limit", cfg.Global.RateLimit, &errs)
 
 	// Trusted proxies validation (CIDR notation)
 	for i, cidr := range cfg.Global.TrustedProxies {
@@ -122,14 +114,14 @@ func Validate(cfg *Config) error {
 			continue
 		}
 
-		hostKey := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d.Host), "."))
+		hostKey := canonicalValidateHostname(d.Host)
 		if owner, ok := hosts[hostKey]; ok && owner != i {
 			errs = append(errs, fmt.Sprintf("%s: duplicate host %q", prefix, d.Host))
 		}
 		hosts[hostKey] = i
 
 		for _, alias := range d.Aliases {
-			aliasKey := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(alias), "."))
+			aliasKey := canonicalValidateHostname(alias)
 			if aliasKey == "" {
 				continue
 			}
@@ -144,6 +136,13 @@ func Validate(cfg *Config) error {
 
 		if !DomainType(d.Type).IsValid() {
 			errs = append(errs, fmt.Sprintf("%s: invalid type %q (must be static, php, proxy, app, redirect)", prefix, d.Type))
+		}
+		if d.CanonicalHost != "" {
+			switch strings.ToLower(strings.TrimSpace(d.CanonicalHost)) {
+			case "apex", "root", "naked", "domain", "www":
+			default:
+				errs = append(errs, fmt.Sprintf("%s: invalid canonical_host %q (must be apex or www)", prefix, d.CanonicalHost))
+			}
 		}
 
 		switch d.SSL.Mode {
@@ -264,15 +263,7 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		// Rate limit validation
-		if d.Security.RateLimit.Requests != 0 || d.Security.RateLimit.Window.Duration != 0 {
-			if d.Security.RateLimit.Requests <= 0 {
-				errs = append(errs, fmt.Sprintf("%s: security.rate_limit.requests must be > 0 when rate limiting is configured, got %d", prefix, d.Security.RateLimit.Requests))
-			}
-			if d.Security.RateLimit.Window.Duration <= 0 {
-				errs = append(errs, fmt.Sprintf("%s: security.rate_limit.window must be > 0 when rate limiting is configured", prefix))
-			}
-		}
+		validateRateLimitConfig(prefix+": security.rate_limit", d.Security.RateLimit, &errs)
 
 		// Rewrite rules validation (regex must compile)
 		for j, rw := range d.Rewrites {
@@ -322,6 +313,26 @@ func Validate(cfg *Config) error {
 	return nil
 }
 
+func canonicalValidateHostname(host string) string {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if strings.HasPrefix(host, "www.") && !strings.Contains(host, ":") && !strings.HasPrefix(host, "*.") {
+		apex := strings.TrimPrefix(host, "www.")
+		if apex != "" && strings.Contains(apex, ".") {
+			return apex
+		}
+	}
+	return host
+}
+
+func validateRateLimitConfig(path string, rl RateLimitConfig, errs *[]string) {
+	if rl.Requests < 0 {
+		*errs = append(*errs, fmt.Sprintf("%s.requests must be >= 0, got %d", path, rl.Requests))
+	}
+	if rl.Window.Duration < 0 {
+		*errs = append(*errs, fmt.Sprintf("%s.window must be >= 0", path))
+	}
+}
+
 // ValidateDomain runs strict single-domain static validation. Returns the
 // first error encountered (admin-style fail-fast), unlike Validate(*Config)
 // which accumulates all errors across the whole config.
@@ -351,6 +362,14 @@ func validateDomain(d *Domain, partial bool) error {
 
 	if !DomainType(d.Type).IsValid() {
 		return fmt.Errorf("invalid type %q — must be static, php, proxy, app, or redirect", d.Type)
+	}
+
+	if d.CanonicalHost != "" {
+		switch strings.ToLower(strings.TrimSpace(d.CanonicalHost)) {
+		case "apex", "root", "naked", "domain", "www":
+		default:
+			return fmt.Errorf("invalid canonical_host %q - must be apex or www", d.CanonicalHost)
+		}
 	}
 
 	switch d.SSL.Mode {

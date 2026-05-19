@@ -500,8 +500,8 @@ func TestAddDomain(t *testing.T) {
 	if rec.Code != 201 {
 		t.Errorf("status = %d, want 201", rec.Code)
 	}
-	if len(s.config.Domains) != initialCount+2 {
-		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount+2)
+	if len(s.config.Domains) != initialCount+1 {
+		t.Errorf("domain count = %d, want %d", len(s.config.Domains), initialCount+1)
 	}
 	// Verify the response body contains the new host.
 	var created map[string]any
@@ -609,6 +609,63 @@ func TestFileManagerDirectAppTargetUsesAppWorkDir(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "console.log('direct')") {
 		t.Fatalf("response did not read direct app target work_dir file: %s", rec.Body.String())
+	}
+}
+
+func TestFileManagerWorkspacesIncludeDomainsAndApps(t *testing.T) {
+	s := testServer()
+	webRoot := t.TempDir()
+	appRoot := t.TempDir()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	if err := mgr.Register(&apps.App{
+		Name:    "test-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: appRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAppsManager(mgr)
+	s.config.Global.WebRoot = webRoot
+	s.config.Domains = []config.Domain{
+		{Host: "site.example.com", Type: "static", Root: filepath.Join(webRoot, "site.example.com", "public_html")},
+		{
+			Host: "app.example.com",
+			Type: "proxy",
+			Proxy: config.ProxyConfig{Upstreams: []config.Upstream{
+				{Address: "apps://test-app"},
+			}},
+		},
+		{Host: "old.example.com", Type: "redirect", Redirect: config.RedirectConfig{Target: "https://site.example.com"}},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/files/workspaces", nil)
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Items []fileWorkspace `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("workspace count = %d, want 2: %#v", len(body.Items), body.Items)
+	}
+	if body.Items[0].ID != "site.example.com" || body.Items[0].Kind != "domain" {
+		t.Fatalf("first workspace = %#v, want site domain", body.Items[0])
+	}
+	if body.Items[1].ID != "app:test-app" || body.Items[1].Kind != "application" {
+		t.Fatalf("second workspace = %#v, want app workspace", body.Items[1])
+	}
+	if body.Items[1].Root != appRoot {
+		t.Fatalf("app workspace root = %q, want %q", body.Items[1].Root, appRoot)
+	}
+	if len(body.Items[1].Domains) != 1 || body.Items[1].Domains[0] != "app.example.com" {
+		t.Fatalf("app workspace domains = %#v, want app.example.com", body.Items[1].Domains)
 	}
 }
 
@@ -1101,8 +1158,8 @@ func TestCertsEndpoint(t *testing.T) {
 
 	var certs []map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &certs)
-	if len(certs) != 3 {
-		t.Fatalf("certs count = %d, want 3", len(certs))
+	if len(certs) != 6 {
+		t.Fatalf("certs count = %d, want 6", len(certs))
 	}
 
 	// auto → pending + Let's Encrypt
@@ -1117,16 +1174,43 @@ func TestCertsEndpoint(t *testing.T) {
 	}
 
 	// manual → active + Manual
-	if certs[1]["status"] != "active" {
-		t.Errorf("cert[1] status = %v, want active", certs[1]["status"])
+	if certs[1]["host"] != "www.auto.com" {
+		t.Errorf("cert[1] host = %v, want www.auto.com", certs[1]["host"])
 	}
-	if certs[1]["issuer"] != "Manual" {
-		t.Errorf("cert[1] issuer = %v, want Manual", certs[1]["issuer"])
+	if certs[1]["status"] != "pending" {
+		t.Errorf("cert[1] status = %v, want pending", certs[1]["status"])
+	}
+	if certs[1]["issuer"] != "Let's Encrypt" {
+		t.Errorf("cert[1] issuer = %v, want Let's Encrypt", certs[1]["issuer"])
 	}
 
 	// off → none
-	if certs[2]["status"] != "none" {
-		t.Errorf("cert[2] status = %v, want none", certs[2]["status"])
+	if certs[2]["host"] != "manual.com" {
+		t.Errorf("cert[2] host = %v, want manual.com", certs[2]["host"])
+	}
+	if certs[2]["status"] != "active" {
+		t.Errorf("cert[2] status = %v, want active", certs[2]["status"])
+	}
+	if certs[2]["issuer"] != "Manual" {
+		t.Errorf("cert[2] issuer = %v, want Manual", certs[2]["issuer"])
+	}
+	if certs[3]["host"] != "www.manual.com" {
+		t.Errorf("cert[3] host = %v, want www.manual.com", certs[3]["host"])
+	}
+	if certs[3]["status"] != "active" {
+		t.Errorf("cert[3] status = %v, want active", certs[3]["status"])
+	}
+	if certs[4]["host"] != "plain.com" {
+		t.Errorf("cert[4] host = %v, want plain.com", certs[4]["host"])
+	}
+	if certs[4]["status"] != "none" {
+		t.Errorf("cert[4] status = %v, want none", certs[4]["status"])
+	}
+	if certs[5]["host"] != "www.plain.com" {
+		t.Errorf("cert[5] host = %v, want www.plain.com", certs[5]["host"])
+	}
+	if certs[5]["status"] != "none" {
+		t.Errorf("cert[5] status = %v, want none", certs[5]["status"])
 	}
 }
 

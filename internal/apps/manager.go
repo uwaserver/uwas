@@ -495,6 +495,9 @@ func (m *Manager) StartAll() {
 		if p.app != nil && p.app.Disabled {
 			continue
 		}
+		if m.isRunning(p) {
+			continue
+		}
 		names = append(names, n)
 	}
 	m.mu.RUnlock()

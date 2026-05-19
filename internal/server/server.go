@@ -2214,13 +2214,15 @@ func (s *Server) reload() error {
 		s.monitor.UpdateDomains(newCfg.Domains)
 	}
 
-	// Apps refresh — pick up any new YAML files in
-	// /etc/uwas/apps.d/ and re-register them. Existing apps are
-	// left running; their command/port changes only take effect on
-	// an explicit Restart (the LoadAll contract).
+	// Apps refresh — pick up any new YAML files in /etc/uwas/apps.d/
+	// and start every enabled app that is not already running. Existing
+	// running apps are left untouched; command/port changes still take
+	// effect on an explicit Restart (the LoadAll contract).
 	if s.appsMgr != nil {
 		if _, _, err := s.appsMgr.LoadAll(); err != nil {
 			s.logger.Warn("apps: reload failed", "error", err)
+		} else {
+			s.appsMgr.StartAll()
 		}
 	}
 

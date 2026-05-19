@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/uwaserver/uwas/internal/config"
 )
 
-func TestAddDomainRedirectAliasesCreateCanonicalRedirectDomains(t *testing.T) {
+func TestAddDomainDropsSameSiteWWWAlias(t *testing.T) {
 	s := testServer()
 	s.config.Global.WebRoot = t.TempDir()
 	s.config.Domains = nil
@@ -22,25 +24,15 @@ func TestAddDomainRedirectAliasesCreateCanonicalRedirectDomains(t *testing.T) {
 		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
 	}
 
-	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want 2", len(s.config.Domains))
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want 1", len(s.config.Domains))
 	}
 	if len(s.config.Domains[0].Aliases) != 0 {
-		t.Fatalf("primary aliases = %#v, want none for redirect aliases", s.config.Domains[0].Aliases)
-	}
-	redirect := s.config.Domains[1]
-	if redirect.Host != "www.example.test" || redirect.Type != "redirect" {
-		t.Fatalf("redirect domain = %#v", redirect)
-	}
-	if redirect.SSL.Mode != "auto" {
-		t.Fatalf("redirect SSL mode = %q, want auto", redirect.SSL.Mode)
-	}
-	if redirect.Redirect.Target != "https://example.test" || redirect.Redirect.Status != 302 || !redirect.Redirect.PreservePath {
-		t.Fatalf("redirect config = %#v", redirect.Redirect)
+		t.Fatalf("primary aliases = %#v, want none for implicit www", s.config.Domains[0].Aliases)
 	}
 }
 
-func TestAddDomainAutomaticallyCreatesWWWRedirect(t *testing.T) {
+func TestAddDomainImplicitlyServesWWWWithoutSeparateRecord(t *testing.T) {
 	s := testServer()
 	s.config.Global.WebRoot = t.TempDir()
 	s.config.Domains = nil
@@ -51,42 +43,37 @@ func TestAddDomainAutomaticallyCreatesWWWRedirect(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
 	}
-	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want primary + www redirect", len(s.config.Domains))
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want one primary record", len(s.config.Domains))
 	}
-	redirect := s.config.Domains[1]
-	if redirect.Host != "www.example.test" || redirect.Type != "redirect" {
-		t.Fatalf("redirect domain = %#v", redirect)
+	if s.config.Domains[0].Host != "example.test" || len(s.config.Domains[0].Aliases) != 0 {
+		t.Fatalf("primary domain = %#v, want apex without explicit www alias", s.config.Domains[0])
 	}
-	if redirect.Redirect.Target != "https://example.test" || redirect.Redirect.Status != http.StatusMovedPermanently || !redirect.Redirect.PreservePath {
-		t.Fatalf("redirect config = %#v", redirect.Redirect)
+	if got := domainHostnames(s.config.Domains[0]); len(got) != 2 || got[0] != "example.test" || got[1] != "www.example.test" {
+		t.Fatalf("domainHostnames = %#v, want apex + implicit www", got)
 	}
 }
 
-func TestAddDomainCanUseWWWAsCanonicalHost(t *testing.T) {
+func TestAddDomainCanonicalizesWWWHostToApex(t *testing.T) {
 	s := testServer()
 	s.config.Global.WebRoot = t.TempDir()
 	s.config.Domains = nil
 
-	body := strings.NewReader(`{"host":"example.test","type":"static","ssl":{"mode":"auto"},"canonical_host":"www"}`)
+	body := strings.NewReader(`{"host":"www.example.test","type":"static","ssl":{"mode":"auto"},"canonical_host":"www"}`)
 	rec := httptest.NewRecorder()
 	s.handleAddDomain(rec, httptest.NewRequest("POST", "/api/v1/domains", body))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
 	}
-	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want primary www + apex redirect", len(s.config.Domains))
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want one apex record", len(s.config.Domains))
 	}
 	primary := s.config.Domains[0]
-	if primary.Host != "www.example.test" || primary.Type != "static" {
+	if primary.Host != "example.test" || primary.Type != "static" || primary.CanonicalHost != "www" || len(primary.Aliases) != 0 {
 		t.Fatalf("primary domain = %#v", primary)
 	}
-	redirect := s.config.Domains[1]
-	if redirect.Host != "example.test" || redirect.Type != "redirect" {
-		t.Fatalf("redirect domain = %#v", redirect)
-	}
-	if redirect.Redirect.Target != "https://www.example.test" || redirect.Redirect.Status != http.StatusMovedPermanently || !redirect.Redirect.PreservePath {
-		t.Fatalf("redirect config = %#v", redirect.Redirect)
+	if got := domainHostnames(primary); len(got) != 2 || got[0] != "www.example.test" || got[1] != "example.test" {
+		t.Fatalf("domainHostnames = %#v, want www first because canonical_host=www", got)
 	}
 }
 
@@ -105,16 +92,16 @@ func TestAddDomainCanServeApexAndWWWWithoutRedirect(t *testing.T) {
 		t.Fatalf("domains len = %d, want one redirectless domain", len(s.config.Domains))
 	}
 	primary := s.config.Domains[0]
-	if primary.Host != "example.test" || len(primary.Aliases) != 1 || primary.Aliases[0] != "www.example.test" {
+	if primary.Host != "example.test" || primary.CanonicalHost != "apex" || len(primary.Aliases) != 0 {
 		t.Fatalf("primary domain = %#v", primary)
 	}
 }
 
-func TestAddDomainSkipsAutomaticWWWRedirectWhenAlreadyConfigured(t *testing.T) {
+func TestAddDomainRemovesLegacyImplicitWWWRedirectWhenAlreadyConfigured(t *testing.T) {
 	s := testServer()
 	s.config.Global.WebRoot = t.TempDir()
 	s.config.Domains = []config.Domain{
-		{Host: "www.example.test", Type: "redirect", SSL: config.SSLConfig{Mode: "auto"}},
+		newCanonicalRedirectAliasDomain("www.example.test", "example.test", http.StatusMovedPermanently, true),
 	}
 
 	body := strings.NewReader(`{"host":"example.test","type":"static","ssl":{"mode":"auto"}}`)
@@ -123,8 +110,11 @@ func TestAddDomainSkipsAutomaticWWWRedirectWhenAlreadyConfigured(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
 	}
-	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want existing www + primary only", len(s.config.Domains))
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want legacy www redirect removed", len(s.config.Domains))
+	}
+	if s.config.Domains[0].Host != "example.test" {
+		t.Fatalf("domain = %#v, want example.test", s.config.Domains[0])
 	}
 }
 
@@ -206,7 +196,7 @@ func TestAddDomainRejectsAliasOwnedByAnotherDomain(t *testing.T) {
 	}
 }
 
-func TestUpdateDomainConvertsAliasesToCanonicalRedirectDomains(t *testing.T) {
+func TestUpdateDomainDropsSameSiteWWWAlias(t *testing.T) {
 	s := testServer()
 	s.config.Domains = []config.Domain{
 		{Host: "example.test", Aliases: []string{"www.example.test"}, Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
@@ -221,18 +211,11 @@ func TestUpdateDomainConvertsAliasesToCanonicalRedirectDomains(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
 	}
 
-	if len(s.config.Domains) != 2 {
-		t.Fatalf("domains len = %d, want 2", len(s.config.Domains))
+	if len(s.config.Domains) != 1 {
+		t.Fatalf("domains len = %d, want 1", len(s.config.Domains))
 	}
 	if len(s.config.Domains[0].Aliases) != 0 {
-		t.Fatalf("primary aliases = %#v, want none after conversion", s.config.Domains[0].Aliases)
-	}
-	redirect := s.config.Domains[1]
-	if redirect.Host != "www.example.test" || redirect.Type != "redirect" {
-		t.Fatalf("redirect domain = %#v", redirect)
-	}
-	if redirect.Redirect.Target != "https://example.test" || redirect.Redirect.Status != 302 {
-		t.Fatalf("redirect config = %#v", redirect.Redirect)
+		t.Fatalf("primary aliases = %#v, want none after same-site www cleanup", s.config.Domains[0].Aliases)
 	}
 }
 
@@ -264,6 +247,57 @@ func TestUpdateDomainForceSSLCanBeEnabledAndDisabled(t *testing.T) {
 	}
 	if s.config.Domains[0].SSL.ForceSSL {
 		t.Fatal("force_ssl should be disabled by explicit false")
+	}
+}
+
+func TestUpdateDomainCanonicalHostPersistsInConfig(t *testing.T) {
+	s := testServer()
+	s.config.Domains = []config.Domain{
+		{Host: "example.test", Type: "proxy", SSL: config.SSLConfig{Mode: "auto"}, Proxy: config.ProxyConfig{Upstreams: []config.Upstream{{Address: "http://127.0.0.1:3000"}}}},
+	}
+
+	body := strings.NewReader(`{"canonical_host":"www"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.test", body)
+	req.SetPathValue("host", "example.test")
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if s.config.Domains[0].Host != "example.test" {
+		t.Fatalf("host = %q, want apex config host", s.config.Domains[0].Host)
+	}
+	if s.config.Domains[0].CanonicalHost != "www" {
+		t.Fatalf("canonical_host = %q, want www", s.config.Domains[0].CanonicalHost)
+	}
+	if got := domainHostnames(s.config.Domains[0]); len(got) != 2 || got[0] != "www.example.test" || got[1] != "example.test" {
+		t.Fatalf("domainHostnames = %#v, want www first", got)
+	}
+}
+
+func TestUpdateDomainForceSSLPersistsToDomainFile(t *testing.T) {
+	dir := t.TempDir()
+	s := testServer()
+	s.SetConfigPath(filepath.Join(dir, "uwas.yaml"))
+	s.config.Domains = []config.Domain{
+		{Host: "example.test", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
+	}
+
+	body := strings.NewReader(`{"ssl":{"mode":"auto","force_ssl":true}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/domains/example.test", body)
+	req.SetPathValue("host", "example.test")
+	s.handleUpdateDomain(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "domains.d", "example.test.yaml"))
+	if err != nil {
+		t.Fatalf("read persisted domain: %v", err)
+	}
+	if !strings.Contains(string(data), "force_ssl: true") {
+		t.Fatalf("persisted domain missing force_ssl: true:\n%s", string(data))
 	}
 }
 

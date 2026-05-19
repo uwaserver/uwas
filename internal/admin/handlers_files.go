@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/apps"
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/domainroot"
@@ -16,6 +18,17 @@ import (
 )
 
 // ============ File Manager ============
+
+type fileWorkspace struct {
+	ID      string   `json:"id"`
+	Label   string   `json:"label"`
+	Kind    string   `json:"kind"`
+	Root    string   `json:"root,omitempty"`
+	Host    string   `json:"host,omitempty"`
+	AppName string   `json:"app_name,omitempty"`
+	Runtime string   `json:"runtime,omitempty"`
+	Domains []string `json:"domains,omitempty"`
+}
 
 func (s *Server) domainRoot(domain string) string {
 	root, _ := s.domainRootForFiles(domain)
@@ -103,6 +116,87 @@ func (s *Server) appRootForFiles(name string) (string, error) {
 		return "", fmt.Errorf("app %q root unavailable: work_dir is empty", name)
 	}
 	return app.WorkDir, nil
+}
+
+func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	domains := append([]config.Domain(nil), s.config.Domains...)
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+
+	var instances []apps.Instance
+	if s.appsMgr != nil {
+		instances = s.appsMgr.Instances()
+	}
+
+	appLinks := make(map[string][]string)
+	items := make([]fileWorkspace, 0, len(domains)+len(instances))
+	for _, d := range domains {
+		if !s.canAccessDomain(r, d.Host) {
+			continue
+		}
+		if appName, ok := domainroot.AppName(d); ok {
+			appLinks[appName] = append(appLinks[appName], d.Host)
+			continue
+		}
+		if appName, ok := domainroot.LocalAppName(d, instances); ok {
+			appLinks[appName] = append(appLinks[appName], d.Host)
+			continue
+		}
+		if config.DomainType(d.Type) == config.DomainTypeRedirect {
+			continue
+		}
+		root := strings.TrimSpace(d.Root)
+		if root == "" {
+			root = domainroot.Fallback(webRoot, d.Host)
+		}
+		if root == "" {
+			continue
+		}
+		items = append(items, fileWorkspace{
+			ID:    d.Host,
+			Label: d.Host,
+			Kind:  "domain",
+			Root:  root,
+			Host:  d.Host,
+		})
+	}
+
+	user, hasUser := auth.UserFromContext(r.Context())
+	canSeeApps := s.authMgr == nil || (hasUser && user.Role == auth.RoleAdmin)
+	if canSeeApps {
+		for _, inst := range instances {
+			if strings.TrimSpace(inst.WorkDir) == "" {
+				continue
+			}
+			domains := append([]string(nil), appLinks[inst.Name]...)
+			sort.Strings(domains)
+			items = append(items, fileWorkspace{
+				ID:      "app:" + inst.Name,
+				Label:   inst.Name,
+				Kind:    "application",
+				Root:    inst.WorkDir,
+				AppName: inst.Name,
+				Runtime: string(inst.Runtime),
+				Domains: domains,
+			})
+		}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Kind != items[j].Kind {
+			return items[i].Kind == "domain"
+		}
+		return strings.ToLower(items[i].Label) < strings.ToLower(items[j].Label)
+	})
+	limit, offset := parsePagination(r)
+	paged, total := paginateSlice(items, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  paged,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) siteUserRoot(domain string) (string, error) {

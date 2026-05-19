@@ -122,14 +122,17 @@ export default function Security() {
     setSaving(true);
     setStatus(null);
     try {
+      const currentSecurity: Partial<NonNullable<DomainDetail['security']>> = detail.security ?? {};
       await updateDomain(host, {
         security: {
-          waf: { enabled: wafEnabled, bypass_paths: wafBypassPaths.length > 0 ? wafBypassPaths : undefined },
-          rate_limit: rateLimitReqs > 0 ? { requests: rateLimitReqs, window: rateLimitWindow } : undefined,
-          blocked_paths: blockedPaths.length > 0 ? blockedPaths : undefined,
-          ip_whitelist: ipWhitelist.length > 0 ? ipWhitelist : undefined,
-          ip_blacklist: ipBlacklist.length > 0 ? ipBlacklist : undefined,
-          hotlink_protection: { enabled: hotlinkEnabled },
+          waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled, bypass_paths: wafBypassPaths },
+          rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow },
+          blocked_paths: blockedPaths,
+          ip_whitelist: ipWhitelist,
+          ip_blacklist: ipBlacklist,
+          hotlink_protection: { ...(currentSecurity.hotlink_protection ?? {}), enabled: hotlinkEnabled },
+          geo_block_countries: currentSecurity.geo_block_countries ?? [],
+          geo_allow_countries: currentSecurity.geo_allow_countries ?? [],
         },
       });
       setStatus({ ok: true, msg: 'Security settings saved. Reload applied.' });

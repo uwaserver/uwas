@@ -303,6 +303,48 @@ func TestMonitorNativeUsesStartStopChannelSnapshot(t *testing.T) {
 	}
 }
 
+func TestStartAllStartsEnabledLoadedAppsOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if err := store.Save(&App{
+		Name:    "enabled",
+		Runtime: RuntimeCustom,
+		Command: "sleep 2",
+		WorkDir: dir,
+	}); err != nil {
+		t.Fatalf("save enabled app: %v", err)
+	}
+	if err := store.Save(&App{
+		Name:     "disabled",
+		Runtime:  RuntimeCustom,
+		Command:  "sleep 2",
+		WorkDir:  dir,
+		Disabled: true,
+	}); err != nil {
+		t.Fatalf("save disabled app: %v", err)
+	}
+
+	mgr := NewManager(store, nil)
+	if _, _, err := mgr.LoadAll(); err != nil {
+		t.Fatalf("load all: %v", err)
+	}
+	mgr.StartAll()
+	defer mgr.StopAll()
+
+	enabled := mgr.Get("enabled")
+	if enabled == nil || !enabled.Running {
+		t.Fatalf("enabled app should be running after StartAll, got %#v", enabled)
+	}
+	disabled := mgr.Get("disabled")
+	if disabled == nil || disabled.Running {
+		t.Fatalf("disabled app should not be running after StartAll, got %#v", disabled)
+	}
+}
+
 // silence the unused import linter for fmt when not all branches use it.
 var _ = fmt.Sprintf
 

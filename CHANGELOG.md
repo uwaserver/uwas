@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.24] - 2026-05-20
+
+### Added
+
+- Added config-level canonical host selection for normal domains. Domain
+  records stay normalized to the apex hostname, while `canonical_host: apex`
+  or `canonical_host: www` decides the primary public URL for static, PHP,
+  proxy, and app-backed domains.
+- Added grouped certificate management for apex/www hostnames. The dashboard
+  now shows one SSL card per domain, keeps apex and www visible inside the
+  group, and exposes hostname-level Force Renew when either side needs
+  attention.
+- Added File Manager workspace discovery across domain web roots and managed
+  application work directories, so app-proxy domains open the same disk area
+  used by their SFTP users.
+
+### Changed
+
+- Simplified domain management so `www.domain.com` and `domain.com` can never
+  become separate domain records or explicit aliases. `www` is handled
+  implicitly by router, TLS, health checks, and certificate status.
+- Normalized add/edit flows to strip `www.` from stored hosts while preserving
+  the selected main host in config.
+- Certificate status now includes `domain`, `main_host`, and `canonical_host`
+  metadata so dashboards can collapse healthy apex/www pairs without losing
+  per-host recovery actions.
+
+### Fixed
+
+- Fixed domain config persistence so fields such as `ssl.force_ssl` and the
+  new `canonical_host` survive panel restart and config saves.
+- Fixed application auto-start after panel restart.
+- Fixed domain rate-limit validation so disabled/zero values remain valid when
+  unrelated config fields are edited.
+- Fixed legacy implicit `www` redirect records being shown or recreated after
+  domain updates.
+
 ## [0.6.23] - 2026-05-19
 
 ### Added

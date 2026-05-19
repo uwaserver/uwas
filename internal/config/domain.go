@@ -1,5 +1,10 @@
 package config
 
+import (
+	"reflect"
+	"strings"
+)
+
 // DomainType is the central dispatch axis: which handler family processes
 // requests for this domain. Kept as an underlying string so YAML/JSON
 // serialization is unchanged; Domain.Type stays a bare string for the same
@@ -28,7 +33,8 @@ func (t DomainType) IsValid() bool {
 // block(s) are honored (php / proxy / app / static / redirect).
 type Domain struct {
 	Host              string                  `yaml:"host" json:"host"`
-	IP                string                  `yaml:"ip,omitempty" json:"ip,omitempty"` // dedicated IP for this domain
+	CanonicalHost     string                  `yaml:"canonical_host,omitempty" json:"canonical_host,omitempty"` // "apex" or "www"; host stays apex, this selects the primary URL
+	IP                string                  `yaml:"ip,omitempty" json:"ip,omitempty"`                         // dedicated IP for this domain
 	Aliases           []string                `yaml:"aliases,omitempty" json:"aliases,omitempty"`
 	Root              string                  `yaml:"root,omitempty" json:"root,omitempty"`
 	Type              string                  `yaml:"type" json:"type"`
@@ -230,111 +236,146 @@ type BandwidthConfig struct {
 
 // MarshalYAML produces clean YAML by omitting zero-value nested structs.
 func (d Domain) MarshalYAML() (any, error) {
-	m := map[string]any{
-		"host": d.Host,
-		"type": d.Type,
-		"ssl":  map[string]string{"mode": d.SSL.Mode},
-	}
-	if d.IP != "" {
-		m["ip"] = d.IP
-	}
-	if d.Root != "" {
-		m["root"] = d.Root
-	}
-	if len(d.Aliases) > 0 {
-		m["aliases"] = d.Aliases
-	}
-	if d.PHP.FPMAddress != "" {
-		php := map[string]any{"fpm_address": d.PHP.FPMAddress}
-		if len(d.PHP.IndexFiles) > 0 {
-			php["index_files"] = d.PHP.IndexFiles
+	return yamlMapFromStruct(reflect.ValueOf(d), map[string]bool{
+		"host": true,
+		"type": true,
+		"ssl":  true,
+	})
+}
+
+type yamlMarshaler interface {
+	MarshalYAML() (any, error)
+}
+
+func yamlMapFromStruct(v reflect.Value, force map[string]bool) (map[string]any, error) {
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil, nil
 		}
-		if d.PHP.Timeout.Duration > 0 {
-			php["timeout"] = d.PHP.Timeout.Duration.String()
+		v = v.Elem()
+	}
+
+	t := v.Type()
+	out := make(map[string]any)
+	for i := 0; i < v.NumField(); i++ {
+		sf := t.Field(i)
+		if sf.PkgPath != "" {
+			continue
 		}
-		if d.PHP.MaxUpload > 0 {
-			php["max_upload"] = int64(d.PHP.MaxUpload)
+		name, omitEmpty := yamlFieldName(sf)
+		if name == "-" {
+			continue
 		}
-		m["php"] = php
-	}
-	if d.Cache.Enabled {
-		cache := map[string]any{"enabled": true, "ttl": d.Cache.TTL}
-		if len(d.Cache.Rules) > 0 {
-			cache["rules"] = d.Cache.Rules
+		fv := v.Field(i)
+		if omitEmpty && !force[name] && yamlEmpty(fv) {
+			continue
 		}
-		m["cache"] = cache
-	}
-	if d.Htaccess.Mode != "" {
-		m["htaccess"] = map[string]string{"mode": d.Htaccess.Mode}
-	}
-	if len(d.Security.BlockedPaths) > 0 || d.Security.WAF.Enabled || d.Security.RateLimit.Requests > 0 {
-		sec := map[string]any{}
-		if len(d.Security.BlockedPaths) > 0 {
-			sec["blocked_paths"] = d.Security.BlockedPaths
+		value, err := yamlValue(fv)
+		if err != nil {
+			return nil, err
 		}
-		if d.Security.WAF.Enabled {
-			sec["waf"] = map[string]any{"enabled": true}
+		out[name] = value
+	}
+	return out, nil
+}
+
+func yamlFieldName(sf reflect.StructField) (string, bool) {
+	tag := sf.Tag.Get("yaml")
+	if tag == "" {
+		return strings.ToLower(sf.Name), false
+	}
+	parts := strings.Split(tag, ",")
+	name := parts[0]
+	omitEmpty := false
+	for _, opt := range parts[1:] {
+		if opt == "omitempty" {
+			omitEmpty = true
+			break
 		}
-		if d.Security.RateLimit.Requests > 0 {
-			sec["rate_limit"] = d.Security.RateLimit
+	}
+	if name == "" {
+		name = strings.ToLower(sf.Name)
+	}
+	return name, omitEmpty
+}
+
+func yamlValue(v reflect.Value) (any, error) {
+	if !v.IsValid() {
+		return nil, nil
+	}
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil, nil
 		}
-		if len(d.Security.IPWhitelist) > 0 {
-			sec["ip_whitelist"] = d.Security.IPWhitelist
+		if v.CanInterface() {
+			if m, ok := v.Interface().(yamlMarshaler); ok {
+				return m.MarshalYAML()
+			}
 		}
-		if len(d.Security.IPBlacklist) > 0 {
-			sec["ip_blacklist"] = d.Security.IPBlacklist
+		return yamlValue(v.Elem())
+	}
+	if v.CanInterface() {
+		if m, ok := v.Interface().(yamlMarshaler); ok {
+			return m.MarshalYAML()
 		}
-		m["security"] = sec
 	}
-	if d.Compression.Enabled {
-		m["compression"] = d.Compression
-	}
-	if len(d.Proxy.Upstreams) > 0 {
-		proxy := map[string]any{"upstreams": d.Proxy.Upstreams}
-		if d.Proxy.Algorithm != "" {
-			proxy["algorithm"] = d.Proxy.Algorithm
+	if v.CanAddr() {
+		if m, ok := v.Addr().Interface().(yamlMarshaler); ok {
+			return m.MarshalYAML()
 		}
-		if d.Proxy.WebSocket {
-			proxy["websocket"] = true
+	}
+
+	switch v.Kind() {
+	case reflect.Struct:
+		return yamlMapFromStruct(v, nil)
+	case reflect.Slice, reflect.Array:
+		items := make([]any, 0, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			item, err := yamlValue(v.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
 		}
-		m["proxy"] = proxy
-	}
-	if d.Redirect.Target != "" {
-		redir := map[string]any{"target": d.Redirect.Target}
-		if d.Redirect.Status > 0 {
-			redir["status"] = d.Redirect.Status
+		return items, nil
+	case reflect.Map:
+		if v.IsNil() {
+			return nil, nil
 		}
-		if d.Redirect.PreservePath {
-			redir["preserve_path"] = true
+		out := make(map[any]any, v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			val, err := yamlValue(iter.Value())
+			if err != nil {
+				return nil, err
+			}
+			out[iter.Key().Interface()] = val
 		}
-		m["redirect"] = redir
+		return out, nil
+	default:
+		return v.Interface(), nil
 	}
-	if len(d.Rewrites) > 0 {
-		m["rewrites"] = d.Rewrites
+}
+
+func yamlEmpty(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true
 	}
-	if len(d.TryFiles) > 0 {
-		m["try_files"] = d.TryFiles
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		return v.IsNil()
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+		return v.Len() == 0
+	case reflect.Bool:
+		return !v.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return v.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return v.Float() == 0
+	case reflect.Struct:
+		return v.IsZero()
 	}
-	if d.SPAMode {
-		m["spa_mode"] = true
-	}
-	if len(d.IndexFiles) > 0 {
-		m["index_files"] = d.IndexFiles
-	}
-	if d.DirectoryListing {
-		m["directory_listing"] = true
-	}
-	if d.CORS.Enabled {
-		m["cors"] = d.CORS
-	}
-	if d.BasicAuth.Enabled {
-		m["basic_auth"] = d.BasicAuth
-	}
-	if len(d.ErrorPages) > 0 {
-		m["error_pages"] = d.ErrorPages
-	}
-	if d.Bandwidth.Enabled {
-		m["bandwidth"] = d.Bandwidth
-	}
-	return m, nil
+	return false
 }

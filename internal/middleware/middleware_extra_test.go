@@ -173,6 +173,28 @@ func TestRateLimitZeroLimit(t *testing.T) {
 	}
 }
 
+func TestRateLimitZeroWindowUsesDefault(t *testing.T) {
+	handler := RateLimit(context.Background(), 1, 0)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	rec := httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Fatalf("Retry-After = %q, want 60", got)
+	}
+}
+
 // --- SecurityGuard: custom blocked paths ---
 
 func TestSecurityGuardCustomPaths(t *testing.T) {
