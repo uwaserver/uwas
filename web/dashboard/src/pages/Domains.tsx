@@ -424,7 +424,7 @@ export default function Domains() {
     fetchDomainHealth()
       .then(results => {
         const map: Record<string, DomainHealth> = {};
-        for (const h of (results ?? [])) map[h.host] = h;
+        for (const h of (results ?? [])) map[normalizeAlias(h.host)] = h;
         setHealthMap(map);
       })
       .catch(() => {});
@@ -795,7 +795,8 @@ export default function Domains() {
                     detail={isExpanded ? detail : null}
                     detailLoading={isExpanded && detailLoading}
                     certInfo={certMap[d.host] ?? null}
-                    health={healthMap[d.host] ?? null}
+                    health={healthMap[normalizeAlias(d.host)] ?? null}
+                    aliasHealth={Object.fromEntries((d.aliases ?? []).map(alias => [normalizeAlias(alias), healthMap[normalizeAlias(alias)] ?? null]))}
                     confirmDelete={confirmDelete}
                     purgingHost={purgingHost}
                     cleanupOnDelete={cleanupOnDelete}
@@ -1244,6 +1245,7 @@ interface DomainRowProps {
   detailLoading: boolean;
   certInfo: CertInfo | null;
   health: DomainHealth | null;
+  aliasHealth: Record<string, DomainHealth | null>;
   confirmDelete: string | null;
   purgingHost: string | null;
   cleanupOnDelete: boolean;
@@ -1262,6 +1264,7 @@ function DomainRow({
   detailLoading,
   certInfo,
   health,
+  aliasHealth,
   confirmDelete,
   purgingHost,
   cleanupOnDelete,
@@ -1368,7 +1371,7 @@ function DomainRow({
                   Loading domain details...
                 </div>
               ) : detail ? (
-                <DomainDetailPanel detail={detail} certInfo={certInfo} purgingHost={purgingHost} onPurge={onPurge} onDelete={onDelete} onConfirmDelete={onConfirmDelete} confirmDelete={confirmDelete} />
+                <DomainDetailPanel detail={detail} aliasHealth={aliasHealth} certInfo={certInfo} purgingHost={purgingHost} onPurge={onPurge} onDelete={onDelete} onConfirmDelete={onConfirmDelete} confirmDelete={confirmDelete} />
               ) : (
                 <p className="py-4 text-sm text-muted-foreground">Could not load domain details.</p>
               )}
@@ -1386,6 +1389,7 @@ function DomainRow({
 
 interface DomainDetailPanelProps {
   detail: DomainDetail;
+  aliasHealth: Record<string, DomainHealth | null>;
   certInfo: CertInfo | null;
   purgingHost: string | null;
   onPurge: (host: string) => void;
@@ -1394,7 +1398,7 @@ interface DomainDetailPanelProps {
   confirmDelete: string | null;
 }
 
-function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDetailPanelProps) {
+function DomainDetailPanel({ detail, aliasHealth, certInfo, purgingHost, onPurge }: DomainDetailPanelProps) {
   return (
     <div className="space-y-4">
       {/* Quick actions bar */}
@@ -1409,7 +1413,24 @@ function DomainDetailPanel({ detail, certInfo, purgingHost, onPurge }: DomainDet
         </button>
         <span className="text-xs text-muted-foreground">Host: <span className="font-mono text-card-foreground">{detail.host}</span></span>
         {detail.aliases && detail.aliases.length > 0 && (
-          <span className="text-xs text-muted-foreground">Aliases: <span className="font-mono text-muted-foreground">{detail.aliases.join(', ')}</span></span>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <span>Aliases:</span>
+            {detail.aliases.map(alias => {
+              const h = aliasHealth[normalizeAlias(alias)];
+              const up = h?.status === 'up';
+              return (
+                <span
+                  key={alias}
+                  className="inline-flex items-center gap-1 rounded bg-accent px-1.5 py-0.5 font-mono text-[10px] text-card-foreground"
+                  title={h ? (up ? `Up (${h.ms}ms)` : `Down: ${h.error || h.status}`) : 'Health pending'}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${h ? (up ? 'bg-emerald-400' : 'bg-red-400') : 'bg-slate-500'}`} />
+                  {alias}
+                  {h && <span className="text-muted-foreground">{h.ms}ms</span>}
+                </span>
+              );
+            })}
+          </div>
         )}
       </div>
 

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/serverip"
 )
@@ -105,31 +106,85 @@ func (s *Server) handleDomainDebug(w http.ResponseWriter, r *http.Request) {
 // ============ Domain Health ============
 
 func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
+	type healthTarget struct {
+		Host       string
+		ParentHost string
+		Kind       string
+		Domain     config.Domain
+	}
+
 	s.configMu.RLock()
-	domains := make([]config.Domain, len(s.config.Domains))
-	copy(domains, s.config.Domains)
+	var allowedDomains map[string]bool
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			allowedDomains = make(map[string]bool, len(user.Domains))
+			for _, d := range user.Domains {
+				allowedDomains[normalizeDomainHostname(d)] = true
+			}
+		}
+	}
+
+	targets := make([]healthTarget, 0, len(s.config.Domains))
+	seen := make(map[string]struct{})
+	for _, d := range s.config.Domains {
+		parentHost := normalizeDomainHostname(d.Host)
+		if parentHost == "" {
+			continue
+		}
+		if allowedDomains != nil && !allowedDomains[parentHost] {
+			continue
+		}
+		for _, host := range domainHostnames(d) {
+			if _, ok := seen[host]; ok {
+				continue
+			}
+			kind := "primary"
+			if host != parentHost {
+				kind = "alias"
+			}
+			seen[host] = struct{}{}
+			target := d
+			target.Host = host
+			targets = append(targets, healthTarget{
+				Host:       host,
+				ParentHost: parentHost,
+				Kind:       kind,
+				Domain:     target,
+			})
+		}
+	}
 	s.configMu.RUnlock()
 
 	type healthResult struct {
-		Host   string `json:"host"`
-		Status string `json:"status"` // "up", "down", "error"
-		Code   int    `json:"code"`
-		Ms     int64  `json:"ms"`
-		Error  string `json:"error,omitempty"`
+		Host       string `json:"host"`
+		ParentHost string `json:"parent_host,omitempty"`
+		Kind       string `json:"kind,omitempty"` // "primary" or "alias"
+		Status     string `json:"status"`         // "up", "down", "error"
+		Code       int    `json:"code"`
+		Ms         int64  `json:"ms"`
+		Error      string `json:"error,omitempty"`
 	}
 
-	results := make([]healthResult, len(domains))
+	results := make([]healthResult, len(targets))
 	client := &http.Client{
-		Timeout:   5 * time.Second,
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
 
 	var wg sync.WaitGroup
-	for i, d := range domains {
+	for i, target := range targets {
 		wg.Add(1)
-		go func(idx int, dom config.Domain) {
+		go func(idx int, target healthTarget) {
 			defer wg.Done()
-			hr := healthResult{Host: dom.Host}
+			dom := target.Domain
+			hr := healthResult{
+				Host:       target.Host,
+				ParentHost: target.ParentHost,
+				Kind:       target.Kind,
+			}
 			scheme := "http"
 			if dom.SSL.Mode == "auto" || dom.SSL.Mode == "manual" {
 				scheme = "https"
@@ -153,11 +208,24 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			results[idx] = hr
-		}(i, d)
+		}(i, target)
 	}
 	wg.Wait()
 
-	jsonResponse(w, results)
+	q := r.URL.Query()
+	limit, offset := len(results), 0
+	if _, hasLimit := q["limit"]; hasLimit {
+		limit, offset = parsePagination(r)
+	} else if _, hasOffset := q["offset"]; hasOffset {
+		limit, offset = parsePagination(r)
+	}
+	items, total := paginateSlice(results, limit, offset)
+	jsonResponse(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }
 
 func (s *Server) handleServerIPs(w http.ResponseWriter, r *http.Request) {
