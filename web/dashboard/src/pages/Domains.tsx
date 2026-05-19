@@ -24,6 +24,8 @@ interface DomainFormState {
   host: string;
   ip: string;
   aliases: string[];
+  aliasMode: 'redirect' | 'alias';
+  aliasRedirectCode: string;
   type: string;
   root: string;
   ssl: string;
@@ -62,6 +64,8 @@ const emptyForm: DomainFormState = {
   host: '',
   ip: '',
   aliases: [],
+  aliasMode: 'redirect',
+  aliasRedirectCode: '301',
   type: 'static',
   root: '',
   ssl: 'auto',
@@ -246,12 +250,20 @@ function StatusDot({ active }: { active: boolean }) {
 function AliasChipsInput({
   aliases,
   host,
+  mode,
+  redirectCode,
   onChange,
+  onModeChange,
+  onRedirectCodeChange,
   placeholder,
 }: {
   aliases: string[];
   host?: string;
+  mode: 'redirect' | 'alias';
+  redirectCode: string;
   onChange: (aliases: string[]) => void;
+  onModeChange: (mode: 'redirect' | 'alias') => void;
+  onRedirectCodeChange: (code: string) => void;
   placeholder: string;
 }) {
   const [draft, setDraft] = useState('');
@@ -278,6 +290,27 @@ function AliasChipsInput({
 
   return (
     <div className="space-y-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2">
+        <select
+          value={mode === 'redirect' ? redirectCode : 'alias'}
+          onChange={e => {
+            if (e.target.value === 'alias') {
+              onModeChange('alias');
+            } else {
+              onModeChange('redirect');
+              onRedirectCodeChange(e.target.value);
+            }
+          }}
+          className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-blue-500/60"
+        >
+          <option value="301">301 Redirect to main domain</option>
+          <option value="302">302 Redirect to main domain</option>
+          <option value="alias">Serve same site</option>
+        </select>
+        <span className="flex items-center justify-center rounded-md border border-border bg-background px-2 py-1.5 text-[10px] text-muted-foreground">
+          Target: main
+        </span>
+      </div>
       <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5 focus-within:border-blue-500/60">
         {aliases.map(alias => (
           <span key={alias} className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-2 py-1 font-mono text-xs text-blue-300">
@@ -298,7 +331,7 @@ function AliasChipsInput({
         />
       </div>
       <p className="text-[10px] leading-4 text-muted-foreground">
-        Aliases serve the same site and auto SSL issues a certificate for each one. For a canonical hostname, create a redirect domain with 301 instead.
+        Redirect aliases become separate auto-SSL redirect domains that point only to this domain's main hostname. Same-site aliases cannot duplicate another domain or the main hostname.
       </p>
     </div>
   );
@@ -553,6 +586,8 @@ export default function Domains() {
         host: d.host,
         ip: d.ip ?? '',
         aliases: d.aliases ?? [],
+        aliasMode: (d.aliases?.length ?? 0) > 0 ? 'alias' : 'redirect',
+        aliasRedirectCode: '301',
         type: d.type,
         root: d.root || '',
         ssl: d.ssl?.mode ?? 'off',
@@ -602,6 +637,11 @@ export default function Domains() {
     if (form.ip) payload.ip = form.ip;
     if (form.aliases.length > 0) {
       payload.aliases = form.aliases;
+      payload.alias_mode = form.aliasMode;
+      if (form.aliasMode === 'redirect') {
+        payload.alias_redirect_code = parseInt(form.aliasRedirectCode, 10) || 301;
+        payload.alias_preserve_path = true;
+      }
     }
 
     // Only send type-specific fields
@@ -896,7 +936,11 @@ export default function Domains() {
                     <AliasChipsInput
                       aliases={form.aliases}
                       host={form.host}
+                      mode={form.aliasMode}
+                      redirectCode={form.aliasRedirectCode}
                       onChange={aliases => patchField('aliases', aliases)}
+                      onModeChange={mode => patchField('aliasMode', mode)}
+                      onRedirectCodeChange={code => patchField('aliasRedirectCode', code)}
                       placeholder="www.example.com"
                     />
                   </FormField>

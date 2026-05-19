@@ -2135,9 +2135,19 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 	var d config.Domain
-	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+	if err := json.Unmarshal(body, &d); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	aliasOptions, err := parseDomainAliasOptions(body)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -2145,7 +2155,16 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "host is required", http.StatusBadRequest)
 		return
 	}
+	if err := validateRequestedDomainAliases(d.Host, d.Aliases); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	normalizeDomainHostnames(&d)
+	redirectAliases := []string(nil)
+	if aliasOptions.redirect {
+		redirectAliases = append(redirectAliases, d.Aliases...)
+		d.Aliases = nil
+	}
 
 	// Check domain permissions for resellers
 	if s.authMgr != nil {
@@ -2205,6 +2224,14 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 			s.configMu.Unlock()
 			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate hostname)", false)
 			jsonError(w, fmt.Sprintf("hostname %q is already configured on %s", host, conflict), http.StatusConflict)
+			return
+		}
+	}
+	for _, alias := range redirectAliases {
+		if conflict := findDomainHostnameConflict(s.config.Domains, -1, alias); conflict != "" {
+			s.configMu.Unlock()
+			s.recordAuditR(r, "domain.create", "domain: "+d.Host+" (duplicate redirect alias)", false)
+			jsonError(w, fmt.Sprintf("alias %q is already configured on %s", alias, conflict), http.StatusConflict)
 			return
 		}
 	}
@@ -2360,6 +2387,11 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.config.Domains = append(s.config.Domains, d)
+	if len(redirectAliases) > 0 {
+		for _, alias := range redirectAliases {
+			s.config.Domains = append(s.config.Domains, newCanonicalRedirectAliasDomain(alias, d.Host, aliasOptions.redirectCode, aliasOptions.preservePath))
+		}
+	}
 	s.configMu.Unlock()
 
 	s.recordAuditR(r, "domain.create", "domain: "+d.Host, true)
@@ -2547,7 +2579,21 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	aliasOptions, err := parseDomainAliasOptions(body)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateRequestedDomainAliases(firstNonEmpty(d.Host, host), d.Aliases); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	normalizeDomainHostnames(&d)
+	redirectAliases := []string(nil)
+	if aliasOptions.redirect {
+		redirectAliases = append(redirectAliases, d.Aliases...)
+		d.Aliases = nil
+	}
 	if d.Host != "" && !isValidHostname(d.Host) {
 		s.recordAuditR(r, "domain.update", "domain: "+host+" (invalid hostname)", false)
 		jsonError(w, "invalid hostname: must be a valid domain name", http.StatusBadRequest)
@@ -2665,6 +2711,14 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
+			for _, alias := range redirectAliases {
+				if conflict := findDomainHostnameConflictAllowingRedirect(s.config.Domains, i, alias, merged.Host); conflict != "" {
+					s.configMu.Unlock()
+					s.recordAuditR(r, "domain.update", "domain: "+host+" (duplicate redirect alias)", false)
+					jsonError(w, fmt.Sprintf("alias %q is already configured on %s", alias, conflict), http.StatusConflict)
+					return
+				}
+			}
 			if err := validateDomainUpdateConfig(&merged); err != nil {
 				s.configMu.Unlock()
 				s.recordAuditR(r, "domain.update", "domain: "+host+" (validation failed)", false)
@@ -2673,6 +2727,9 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 
 			s.config.Domains[i] = merged
+			if len(redirectAliases) > 0 {
+				upsertCanonicalRedirectAliasDomains(&s.config.Domains, i, redirectAliases, merged.Host, aliasOptions.redirectCode, aliasOptions.preservePath)
+			}
 			d = merged // use merged for subsequent operations
 			found = true
 			break
@@ -3051,6 +3108,149 @@ func removeDomainAlias(aliases []string, host string) []string {
 		out = append(out, alias)
 	}
 	return out
+}
+
+type domainAliasOptions struct {
+	redirect     bool
+	redirectCode int
+	preservePath bool
+}
+
+func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
+	var raw struct {
+		AliasMode         string `json:"alias_mode,omitempty"`
+		AliasRedirectCode int    `json:"alias_redirect_code,omitempty"`
+		AliasPreservePath *bool  `json:"alias_preserve_path,omitempty"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return domainAliasOptions{}, fmt.Errorf("invalid JSON")
+	}
+	mode := strings.ToLower(strings.TrimSpace(raw.AliasMode))
+	opts := domainAliasOptions{preservePath: true}
+	if raw.AliasPreservePath != nil {
+		opts.preservePath = *raw.AliasPreservePath
+	}
+	switch mode {
+	case "", "alias":
+		if raw.AliasRedirectCode == 0 {
+			return opts, nil
+		}
+	case "redirect":
+	default:
+		return domainAliasOptions{}, fmt.Errorf("alias_mode must be alias or redirect")
+	}
+	opts.redirect = true
+	opts.redirectCode = raw.AliasRedirectCode
+	if opts.redirectCode == 0 {
+		opts.redirectCode = http.StatusMovedPermanently
+	}
+	if opts.redirectCode != http.StatusMovedPermanently && opts.redirectCode != http.StatusFound {
+		return domainAliasOptions{}, fmt.Errorf("alias_redirect_code must be 301 or 302")
+	}
+	return opts, nil
+}
+
+func validateRequestedDomainAliases(host string, aliases []string) error {
+	host = normalizeDomainHostname(host)
+	seen := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		alias = normalizeDomainHostname(alias)
+		if alias == "" {
+			continue
+		}
+		if alias == host {
+			return fmt.Errorf("alias %q cannot be the same as the domain host", alias)
+		}
+		if _, ok := seen[alias]; ok {
+			return fmt.Errorf("duplicate alias %q", alias)
+		}
+		seen[alias] = struct{}{}
+	}
+	return nil
+}
+
+func newCanonicalRedirectAliasDomain(alias, targetHost string, status int, preservePath bool) config.Domain {
+	alias = normalizeDomainHostname(alias)
+	targetHost = normalizeDomainHostname(targetHost)
+	return config.Domain{
+		Host: alias,
+		Type: string(config.DomainTypeRedirect),
+		SSL:  config.SSLConfig{Mode: "auto"},
+		Redirect: config.RedirectConfig{
+			Target:       "https://" + targetHost,
+			Status:       status,
+			PreservePath: preservePath,
+		},
+	}
+}
+
+func upsertCanonicalRedirectAliasDomains(domains *[]config.Domain, skipIndex int, aliases []string, targetHost string, status int, preservePath bool) {
+	for _, alias := range aliases {
+		alias = normalizeDomainHostname(alias)
+		if alias == "" {
+			continue
+		}
+		redirectDomain := newCanonicalRedirectAliasDomain(alias, targetHost, status, preservePath)
+		updated := false
+		for i := range *domains {
+			if i == skipIndex {
+				continue
+			}
+			if normalizeDomainHostname((*domains)[i].Host) == alias {
+				(*domains)[i] = redirectDomain
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			*domains = append(*domains, redirectDomain)
+		}
+	}
+}
+
+func findDomainHostnameConflictAllowingRedirect(domains []config.Domain, skipIndex int, host, targetHost string) string {
+	host = normalizeDomainHostname(host)
+	targetHost = normalizeDomainHostname(targetHost)
+	if host == "" {
+		return ""
+	}
+	for i, d := range domains {
+		if i == skipIndex {
+			continue
+		}
+		if normalizeDomainHostname(d.Host) == host {
+			if isCanonicalRedirectAliasDomain(d, host, targetHost) {
+				return ""
+			}
+			return d.Host
+		}
+		for _, alias := range d.Aliases {
+			if normalizeDomainHostname(alias) == host {
+				return d.Host
+			}
+		}
+	}
+	return ""
+}
+
+func isCanonicalRedirectAliasDomain(d config.Domain, host, targetHost string) bool {
+	if normalizeDomainHostname(d.Host) != normalizeDomainHostname(host) {
+		return false
+	}
+	if d.Type != string(config.DomainTypeRedirect) {
+		return false
+	}
+	target := strings.TrimRight(strings.ToLower(strings.TrimSpace(d.Redirect.Target)), "/")
+	return target == "https://"+normalizeDomainHostname(targetHost)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Request) {
