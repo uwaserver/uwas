@@ -8,6 +8,7 @@ import {
   fetchSoftwareLogs,
   fetchSoftwareMonitor,
   fetchSoftwareMonitorSummary,
+  fetchSoftwareProcesses,
   fetchSoftwareBackups,
   deleteSoftware,
   deleteSoftwareBackup,
@@ -21,6 +22,7 @@ import {
   type SoftwarePortCheck,
   type SoftwareMonitor,
   type SoftwareMonitorSummary,
+  type SoftwareProcessInfo,
   type SoftwareBackupInfo,
   type SoftwareInstance,
   type SoftwareTemplate,
@@ -61,6 +63,7 @@ export default function SoftwareLibrary() {
   const [logs, setLogs] = useState('');
   const [monitorFor, setMonitorFor] = useState('');
   const [monitor, setMonitor] = useState<SoftwareMonitor | null>(null);
+  const [processes, setProcesses] = useState<SoftwareProcessInfo[]>([]);
   const [backups, setBackups] = useState<SoftwareBackupInfo[]>([]);
 
   const load = useCallback(async () => {
@@ -194,10 +197,12 @@ export default function SoftwareLibrary() {
   const openMonitor = async (inst: SoftwareInstance) => {
     setMonitorFor(inst.name);
     setMonitor(null);
+    setProcesses([]);
     setBackups([]);
     try {
-      const [mon, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareBackups(inst.name)]);
+      const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareProcesses(inst.name), fetchSoftwareBackups(inst.name)]);
       setMonitor(mon);
+      setProcesses(processList);
       setBackups(backupList);
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
@@ -211,8 +216,9 @@ export default function SoftwareLibrary() {
       const result = await backupSoftware(inst.name);
       setStatus({ ok: true, message: result.files.length ? `${inst.name} backup created (${result.files.length} volume)` : `${inst.name} has no persistent volumes` });
       if (monitorFor === inst.name) {
-        const [mon, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareBackups(inst.name)]);
+        const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareProcesses(inst.name), fetchSoftwareBackups(inst.name)]);
         setMonitor(mon);
+        setProcesses(processList);
         setBackups(backupList);
       }
     } catch (e) {
@@ -230,8 +236,9 @@ export default function SoftwareLibrary() {
       setStatus({ ok: true, message: `${inst.name} updated, ${backupText}` });
       await load();
       if (monitorFor === inst.name) {
-        const [mon, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareBackups(inst.name)]);
+        const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareProcesses(inst.name), fetchSoftwareBackups(inst.name)]);
         setMonitor(mon);
+        setProcesses(processList);
         setBackups(backupList);
       }
     } catch (e) {
@@ -252,8 +259,9 @@ export default function SoftwareLibrary() {
       });
       await load();
       if (monitorFor) {
-        const [mon, backupList] = await Promise.all([fetchSoftwareMonitor(monitorFor), fetchSoftwareBackups(monitorFor)]);
+        const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(monitorFor), fetchSoftwareProcesses(monitorFor), fetchSoftwareBackups(monitorFor)]);
         setMonitor(mon);
+        setProcesses(processList);
         setBackups(backupList);
       }
     } catch (e) {
@@ -274,8 +282,9 @@ export default function SoftwareLibrary() {
       });
       await load();
       if (monitorFor) {
-        const [mon, backupList] = await Promise.all([fetchSoftwareMonitor(monitorFor), fetchSoftwareBackups(monitorFor)]);
+        const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(monitorFor), fetchSoftwareProcesses(monitorFor), fetchSoftwareBackups(monitorFor)]);
         setMonitor(mon);
+        setProcesses(processList);
         setBackups(backupList);
       }
     } catch (e) {
@@ -290,8 +299,9 @@ export default function SoftwareLibrary() {
     setBusy(`${monitorFor}:restore`);
     try {
       await restoreSoftwareBackup(monitorFor, backup.name);
-      const [mon, backupList] = await Promise.all([fetchSoftwareMonitor(monitorFor), fetchSoftwareBackups(monitorFor)]);
+      const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(monitorFor), fetchSoftwareProcesses(monitorFor), fetchSoftwareBackups(monitorFor)]);
       setMonitor(mon);
+      setProcesses(processList);
       setBackups(backupList);
       setStatus({ ok: true, message: `${monitorFor} restored from ${backup.name}` });
     } catch (e) {
@@ -589,6 +599,41 @@ export default function SoftwareLibrary() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Processes</h3>
+                    {processes.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">No container processes reported.</div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-md border border-border">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="bg-muted/60 text-[10px] uppercase text-muted-foreground">
+                            <tr>
+                              <th className="px-3 py-2 font-medium">Service</th>
+                              <th className="px-3 py-2 font-medium">PID</th>
+                              <th className="px-3 py-2 font-medium">User</th>
+                              <th className="px-3 py-2 font-medium">CPU</th>
+                              <th className="px-3 py-2 font-medium">Time</th>
+                              <th className="px-3 py-2 font-medium">Command</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {processes.map((p, idx) => (
+                              <tr key={`${p.container_id}-${p.pid}-${idx}`} className="border-t border-border">
+                                <td className="px-3 py-2 text-foreground">{p.service || p.container_name || p.container_id.slice(0, 12)}</td>
+                                <td className="px-3 py-2 font-mono text-muted-foreground">{p.pid}</td>
+                                <td className="px-3 py-2 font-mono text-muted-foreground">{p.user || '-'}</td>
+                                <td className="px-3 py-2 font-mono text-muted-foreground">{p.cpu || '-'}</td>
+                                <td className="px-3 py-2 font-mono text-muted-foreground">{p.time || '-'}</td>
+                                <td className="max-w-xl px-3 py-2 font-mono text-muted-foreground">
+                                  <span className="block truncate" title={p.command}>{p.command || '-'}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Persistent Volumes</h3>

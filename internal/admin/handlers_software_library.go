@@ -101,6 +101,20 @@ type softwareContainerStat struct {
 	PIDs          int     `json:"pids"`
 }
 
+type softwareProcessInfo struct {
+	ContainerID   string `json:"container_id"`
+	ContainerName string `json:"container_name,omitempty"`
+	Service       string `json:"service,omitempty"`
+	User          string `json:"user,omitempty"`
+	PID           string `json:"pid"`
+	PPID          string `json:"ppid,omitempty"`
+	CPU           string `json:"cpu,omitempty"`
+	STime         string `json:"stime,omitempty"`
+	TTY           string `json:"tty,omitempty"`
+	Time          string `json:"time,omitempty"`
+	Command       string `json:"command"`
+}
+
 type softwareVolumeInfo struct {
 	Name       string `json:"name"`
 	Key        string `json:"key,omitempty"`
@@ -571,6 +585,23 @@ func (s *Server) handleSoftwareMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, collectSoftwareMonitor(inst))
+}
+
+func (s *Server) handleSoftwareProcesses(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	inst, err := loadSoftwareInstance(r.PathValue("name"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	items, err := collectSoftwareProcesses(inst)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"items": items, "total": len(items)})
 }
 
 func (s *Server) handleSoftwareBackup(w http.ResponseWriter, r *http.Request) {
@@ -1223,7 +1254,74 @@ func collectSoftwareMonitor(inst softwareInstance) softwareMonitorResponse {
 	return resp
 }
 
+func collectSoftwareProcesses(inst softwareInstance) ([]softwareProcessInfo, error) {
+	idsOut, err := runSoftwareCompose(inst, "ps", "-q")
+	if err != nil {
+		return nil, err
+	}
+	ids := strings.Fields(idsOut)
+	if len(ids) == 0 {
+		return []softwareProcessInfo{}, nil
+	}
+	meta := collectSoftwareContainerMeta(inst)
+	out := []softwareProcessInfo{}
+	for _, id := range ids {
+		topOut, err := runSoftwareDocker("top", id)
+		if err != nil {
+			return out, fmt.Errorf("docker top %s failed: %w\n%s", id, err, topOut)
+		}
+		out = append(out, parseSoftwareTopOutput(id, meta[id], topOut)...)
+	}
+	return out, nil
+}
+
+func parseSoftwareTopOutput(containerID string, meta softwareContainerMeta, raw string) []softwareProcessInfo {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	out := []softwareProcessInfo{}
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || i == 0 {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		p := softwareProcessInfo{
+			ContainerID:   containerID,
+			ContainerName: meta.Name,
+			Service:       meta.Service,
+			User:          fields[0],
+			PID:           fields[1],
+		}
+		if len(fields) > 2 {
+			p.PPID = fields[2]
+		}
+		if len(fields) > 3 {
+			p.CPU = fields[3]
+		}
+		if len(fields) > 4 {
+			p.STime = fields[4]
+		}
+		if len(fields) > 5 {
+			p.TTY = fields[5]
+		}
+		if len(fields) > 6 {
+			p.Time = fields[6]
+		}
+		if len(fields) > 7 {
+			p.Command = strings.Join(fields[7:], " ")
+		} else if len(fields) > 2 {
+			p.Command = strings.Join(fields[2:], " ")
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 type softwareContainerMeta struct {
+	ID      string
+	Name    string
 	Service string
 	State   string
 }
@@ -1240,10 +1338,18 @@ func collectSoftwareContainerMeta(inst softwareInstance) map[string]softwareCont
 		if name == "" {
 			name, _ = rec["Names"].(string)
 		}
+		id, _ := rec["ID"].(string)
+		if id == "" {
+			id, _ = rec["Id"].(string)
+		}
 		service, _ := rec["Service"].(string)
 		state, _ := rec["State"].(string)
+		meta := softwareContainerMeta{ID: id, Name: name, Service: service, State: state}
 		if name != "" {
-			out[name] = softwareContainerMeta{Service: service, State: state}
+			out[name] = meta
+		}
+		if id != "" {
+			out[id] = meta
 		}
 	}
 	return out
