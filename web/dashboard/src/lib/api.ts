@@ -1223,7 +1223,7 @@ export const checkSoftwarePort = (port?: number, defaultPort?: number) => {
 export const installSoftware = (body: SoftwareInstallRequest) =>
   api<SoftwareInstance>('/api/v1/software/install', { method: 'POST', body: JSON.stringify(body) });
 export const deleteSoftware = (name: string, volumes = false) =>
-  api<{ status: string; name: string; output?: string }>(
+  api<{ status: string; name: string; output?: string; backup_status?: string; backup_files?: string[] }>(
     `/api/v1/software/${encodeURIComponent(name)}${volumes ? '?volumes=true' : ''}`,
     { method: 'DELETE' },
   );
