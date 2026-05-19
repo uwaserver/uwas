@@ -684,6 +684,21 @@ domains:
 	}
 }
 
+func TestValidationIgnoresSelfAliasAndSameDomainAliasRepeats(t *testing.T) {
+	yaml := `
+domains:
+  - host: "dgnteknoloji.com"
+    aliases: ["www.dgnteknoloji.com", "dgnteknoloji.com", "www.dgnteknoloji.com"]
+    root: /var/www/dgn
+    type: static
+    ssl:
+      mode: off
+`
+	if _, err := loadStringConfig(yaml); err != nil {
+		t.Fatalf("self aliases and same-domain repeats must not prevent startup: %v", err)
+	}
+}
+
 func TestValidationSSLManualMissingCert(t *testing.T) {
 	yaml := `
 domains:

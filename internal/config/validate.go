@@ -109,7 +109,11 @@ func Validate(cfg *Config) error {
 	}
 
 	// Domain validation
-	hosts := make(map[string]bool)
+	// Track exact host ownership globally, but do not reject duplicate aliases
+	// inside the same domain. Dashboard/API normalization drops self-aliases;
+	// config validation should be equally forgiving so an apex + www alias list
+	// cannot prevent UWAS from starting.
+	hosts := make(map[string]int)
 	for i, d := range cfg.Domains {
 		prefix := fmt.Sprintf("domains[%d]", i)
 
@@ -119,20 +123,23 @@ func Validate(cfg *Config) error {
 		}
 
 		hostKey := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d.Host), "."))
-		if hosts[hostKey] {
+		if owner, ok := hosts[hostKey]; ok && owner != i {
 			errs = append(errs, fmt.Sprintf("%s: duplicate host %q", prefix, d.Host))
 		}
-		hosts[hostKey] = true
+		hosts[hostKey] = i
 
 		for _, alias := range d.Aliases {
 			aliasKey := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(alias), "."))
 			if aliasKey == "" {
 				continue
 			}
-			if hosts[aliasKey] {
+			if owner, ok := hosts[aliasKey]; ok {
+				if owner == i {
+					continue
+				}
 				errs = append(errs, fmt.Sprintf("%s: duplicate alias %q", prefix, alias))
 			}
-			hosts[aliasKey] = true
+			hosts[aliasKey] = i
 		}
 
 		if !DomainType(d.Type).IsValid() {
