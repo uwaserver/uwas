@@ -81,6 +81,10 @@ type softwareInstallRequest struct {
 	Env        map[string]string `json:"env,omitempty"`
 }
 
+type softwareDomainRequest struct {
+	Domain string `json:"domain"`
+}
+
 type softwarePortCheckResponse struct {
 	Port          int    `json:"port"`
 	Available     bool   `json:"available"`
@@ -535,6 +539,92 @@ func (s *Server) handleSoftwareUpdateAll(w http.ResponseWriter, r *http.Request)
 	}
 	s.recordAuditR(r, "software.update_all", fmt.Sprintf("%d updated, %d skipped, %d failed", resp.Updated, resp.Skipped, resp.Failed), resp.Failed == 0)
 	jsonResponse(w, resp)
+}
+
+func (s *Server) handleSoftwareDomainConnect(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	inst, err := loadSoftwareInstance(r.PathValue("name"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if !inst.HasWeb || inst.HostPort == 0 {
+		jsonError(w, "software instance has no web service to expose", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req softwareDomainRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	host := normalizeDomainHostname(req.Domain)
+	if host == "" || !isValidHostname(host) {
+		jsonError(w, "invalid domain", http.StatusBadRequest)
+		return
+	}
+	if strings.EqualFold(inst.Domain, host) {
+		inst.Domain = host
+		jsonResponse(w, inst)
+		return
+	}
+	oldDomain := inst.Domain
+	if err := s.attachSoftwareDomain(host, inst.HostPort); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	inst.Domain = host
+	if err := updateSoftwareComposeDomain(inst); err != nil {
+		s.detachSoftwareDomain(host, inst.HostPort)
+		inst.Domain = oldDomain
+		jsonError(w, "update compose domain: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := saveSoftwareInstance(inst); err != nil {
+		s.detachSoftwareDomain(host, inst.HostPort)
+		inst.Domain = oldDomain
+		_ = updateSoftwareComposeDomain(inst)
+		jsonError(w, "write metadata: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if oldDomain != "" {
+		s.detachSoftwareDomain(oldDomain, inst.HostPort)
+	}
+	s.recordAuditR(r, "software.domain.connect", inst.Name+" -> "+host, true)
+	jsonResponse(w, inst)
+}
+
+func (s *Server) handleSoftwareDomainDisconnect(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	inst, err := loadSoftwareInstance(r.PathValue("name"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	oldDomain := inst.Domain
+	if oldDomain == "" {
+		jsonResponse(w, inst)
+		return
+	}
+	inst.Domain = ""
+	if err := updateSoftwareComposeDomain(inst); err != nil {
+		inst.Domain = oldDomain
+		jsonError(w, "update compose domain: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := saveSoftwareInstance(inst); err != nil {
+		inst.Domain = oldDomain
+		_ = updateSoftwareComposeDomain(inst)
+		jsonError(w, "write metadata: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.detachSoftwareDomain(oldDomain, inst.HostPort)
+	s.recordAuditR(r, "software.domain.disconnect", inst.Name+" -> "+oldDomain, true)
+	jsonResponse(w, inst)
 }
 
 func (s *Server) handleSoftwareLogs(w http.ResponseWriter, r *http.Request) {
@@ -1149,6 +1239,54 @@ func saveSoftwareInstance(inst softwareInstance) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(inst.Dir, "uwas-software.yaml"), data, 0600)
+}
+
+func updateSoftwareComposeDomain(inst softwareInstance) error {
+	if inst.TemplateID != "n8n" || strings.TrimSpace(inst.ComposeFile) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(inst.ComposeFile)
+	if err != nil {
+		return err
+	}
+	webhook := ""
+	if inst.Domain != "" {
+		webhook = "https://" + inst.Domain + "/"
+	}
+	updated, changed := replaceComposeEnvironmentLine(string(data), "N8N_HOST", inst.Domain)
+	updated, changedWebhook := replaceComposeEnvironmentLine(updated, "WEBHOOK_URL", webhook)
+	if !changed && !changedWebhook {
+		return nil
+	}
+	return os.WriteFile(inst.ComposeFile, []byte(updated), 0600)
+}
+
+func replaceComposeEnvironmentLine(data, key, value string) (string, bool) {
+	lines := strings.SplitAfter(data, "\n")
+	changed := false
+	prefix := "- " + key + "="
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		indent := line[:len(line)-len(trimmed)]
+		newline := ""
+		if strings.HasSuffix(trimmed, "\n") {
+			newline = "\n"
+			trimmed = strings.TrimSuffix(trimmed, "\n")
+			if strings.HasSuffix(trimmed, "\r") {
+				newline = "\r\n"
+				trimmed = strings.TrimSuffix(trimmed, "\r")
+			}
+		}
+		replacement := indent + prefix + value + newline
+		if line != replacement {
+			lines[i] = replacement
+			changed = true
+		}
+	}
+	return strings.Join(lines, ""), changed
 }
 
 func removeSoftwareInstanceDir(inst softwareInstance) error {

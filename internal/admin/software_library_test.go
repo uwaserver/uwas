@@ -135,6 +135,101 @@ func TestSoftwareInstallInternalTemplateIgnoresDomainAndPort(t *testing.T) {
 	}
 }
 
+func TestSoftwareDomainConnectAndDisconnect(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	dir := filepath.Join(root, "flow")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inst := softwareInstance{
+		Name:        "flow",
+		TemplateID:  "n8n",
+		Template:    "n8n",
+		Category:    "Automation",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-flow",
+		HasWeb:      true,
+		WebService:  "n8n",
+		WebPort:     5678,
+		HostPort:    5678,
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte(composeN8N(softwareInstallRequest{Name: inst.Name, HostPort: inst.HostPort}, softwareTemplate{WebPort: inst.WebPort})), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSoftwareInstance(inst); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/software/flow/domain", strings.NewReader(`{"domain":"flow.example.com"}`))
+	req.SetPathValue("name", "flow")
+	rec := httptest.NewRecorder()
+	s.handleSoftwareDomainConnect(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("connect status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := loadSoftwareInstance("flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Domain != "flow.example.com" {
+		t.Fatalf("domain = %q, want flow.example.com", updated.Domain)
+	}
+	data, err := os.ReadFile(inst.ComposeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "- N8N_HOST=flow.example.com") || !strings.Contains(string(data), "- WEBHOOK_URL=https://flow.example.com/") {
+		t.Fatalf("compose domain env was not updated:\n%s", string(data))
+	}
+	s.configMu.RLock()
+	var attached bool
+	for _, d := range s.config.Domains {
+		if d.Host == "flow.example.com" && d.Type == "proxy" && len(d.Proxy.Upstreams) == 1 && d.Proxy.Upstreams[0].Address == "http://127.0.0.1:5678" {
+			attached = true
+			break
+		}
+	}
+	s.configMu.RUnlock()
+	if !attached {
+		t.Fatalf("proxy domain was not attached: %#v", s.config.Domains)
+	}
+
+	req = httptest.NewRequest("DELETE", "/api/v1/software/flow/domain", nil)
+	req.SetPathValue("name", "flow")
+	rec = httptest.NewRecorder()
+	s.handleSoftwareDomainDisconnect(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disconnect status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	updated, err = loadSoftwareInstance("flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Domain != "" {
+		t.Fatalf("domain after disconnect = %q, want empty", updated.Domain)
+	}
+	data, err = os.ReadFile(inst.ComposeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "- N8N_HOST=\n") || !strings.Contains(string(data), "- WEBHOOK_URL=\n") {
+		t.Fatalf("compose domain env was not cleared:\n%s", string(data))
+	}
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	for _, d := range s.config.Domains {
+		if d.Host == "flow.example.com" {
+			t.Fatalf("proxy domain should be detached: %#v", d)
+		}
+	}
+}
+
 func TestSoftwareInstallAutoAllocatesAvailablePort(t *testing.T) {
 	s := testServer()
 	root := t.TempDir()
