@@ -23,6 +23,10 @@ func (s *Server) domainRoot(domain string) string {
 }
 
 func (s *Server) domainRootForFiles(domain string) (string, error) {
+	if appName, ok := appFileTargetName(domain); ok {
+		return s.appRootForFiles(appName)
+	}
+
 	s.configMu.RLock()
 	var found *config.Domain
 	for _, d := range s.config.Domains {
@@ -48,7 +52,14 @@ func (s *Server) domainRootForFiles(domain string) (string, error) {
 }
 
 func (s *Server) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, domain, action string) (string, bool) {
-	if !s.requireDomainAccess(w, r, domain, action) {
+	if _, isApp := appFileTargetName(domain); isApp {
+		if s.authMgr != nil && !s.requireAdmin(w, r) {
+			if action != "" {
+				s.recordAuditR(r, action, "app: "+domain+" (forbidden)", false)
+			}
+			return "", false
+		}
+	} else if !s.requireDomainAccess(w, r, domain, action) {
 		return "", false
 	}
 	root, err := s.domainRootForFiles(domain)
@@ -61,6 +72,37 @@ func (s *Server) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, do
 		return "", false
 	}
 	return root, true
+}
+
+func appFileTargetName(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	for _, prefix := range []string{"app:", "apps://"} {
+		if strings.HasPrefix(strings.ToLower(target), prefix) {
+			name := strings.TrimSpace(target[len(prefix):])
+			if idx := strings.IndexAny(name, "/?#"); idx >= 0 {
+				name = name[:idx]
+			}
+			return name, name != ""
+		}
+	}
+	return "", false
+}
+
+func (s *Server) appRootForFiles(name string) (string, error) {
+	if s.appsMgr == nil {
+		return "", fmt.Errorf("app %q root unavailable: apps manager is not initialized", name)
+	}
+	app, err := s.appsMgr.Store().Get(name)
+	if err != nil {
+		return "", fmt.Errorf("app %q root unavailable: %w", name, err)
+	}
+	if app == nil {
+		return "", fmt.Errorf("app %q root unavailable: app not found", name)
+	}
+	if strings.TrimSpace(app.WorkDir) == "" {
+		return "", fmt.Errorf("app %q root unavailable: work_dir is empty", name)
+	}
+	return app.WorkDir, nil
 }
 
 func (s *Server) siteUserRoot(domain string) (string, error) {

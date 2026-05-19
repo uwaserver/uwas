@@ -583,6 +583,35 @@ func TestFileManagerAppProxyDomainUsesAppWorkDir(t *testing.T) {
 	}
 }
 
+func TestFileManagerDirectAppTargetUsesAppWorkDir(t *testing.T) {
+	s := testServer()
+	appRoot := t.TempDir()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	if err := mgr.Register(&apps.App{
+		Name:    "test-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: appRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAppsManager(mgr)
+	if err := os.WriteFile(filepath.Join(appRoot, "server.js"), []byte("console.log('direct')"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/files/app:test-app/read?path=server.js", nil)
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "console.log('direct')") {
+		t.Fatalf("response did not read direct app target work_dir file: %s", rec.Body.String())
+	}
+}
+
 func TestAppCreateWithGitSourceDoesNotScaffoldDemo(t *testing.T) {
 	s := testServer()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))

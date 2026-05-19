@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   fetchDomains,
+  fetchApps,
   fetchFiles,
   readFile,
   writeFile,
@@ -26,6 +27,7 @@ import {
   fetchDiskUsage,
   getToken,
   type DomainData,
+  type AppInstance,
   type FileEntry,
 } from '@/lib/api';
 import { useConfirm } from '@/components/ConfirmModal';
@@ -55,6 +57,7 @@ function formatDate(dateStr: string): string {
 export default function FileManager() {
   const { confirmAction } = useConfirm();
   const [domains, setDomains] = useState<DomainData[]>([]);
+  const [apps, setApps] = useState<AppInstance[]>([]);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [fileFilter, setFileFilter] = useState('');
@@ -83,13 +86,22 @@ export default function FileManager() {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    fetchDomains()
-      .then(d => {
+    Promise.allSettled([fetchDomains(), fetchApps()])
+      .then(([domainsRes, appsRes]) => {
+        const d = domainsRes.status === 'fulfilled' ? domainsRes.value : [];
+        const a = appsRes.status === 'fulfilled' ? appsRes.value : [];
         setDomains(d ?? []);
+        setApps(a ?? []);
         if (d && d.length > 0) setSelectedDomain(d[0].host);
+        else if (a && a.length > 0) setSelectedDomain(`app:${a[0].name}`);
       })
       .catch(() => {});
   }, []);
+
+  const fileTargets = useMemo(() => [
+    ...domains.map(d => ({ value: d.host, label: d.host, kind: 'Domain' })),
+    ...apps.map(app => ({ value: `app:${app.name}`, label: app.name, kind: 'Application' })),
+  ], [apps, domains]);
 
   const loadFiles = useCallback(async () => {
     if (!selectedDomain) return;
@@ -322,7 +334,7 @@ export default function FileManager() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">File Manager</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Browse and edit domain files.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Browse and edit domain or application files.</p>
         </div>
         <button
           onClick={loadFiles}
@@ -339,7 +351,7 @@ export default function FileManager() {
       {/* Domain selector + disk usage */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
         <div className="flex-1">
-          <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Domain</label>
+          <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Target</label>
           <select
             value={selectedDomain}
             onChange={async e => {
@@ -358,8 +370,8 @@ export default function FileManager() {
             }}
             className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
           >
-            {domains.map(d => (
-              <option key={d.host} value={d.host}>{d.host}</option>
+            {fileTargets.map(target => (
+              <option key={target.value} value={target.value}>{target.kind}: {target.label}</option>
             ))}
           </select>
         </div>
