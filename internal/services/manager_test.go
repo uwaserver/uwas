@@ -256,6 +256,18 @@ func TestKnownServicesNotEmpty(t *testing.T) {
 
 // ── checkService tests ──────────────────────────────────────────────────
 
+func TestKnownServicesIncludesCacheBackends(t *testing.T) {
+	seen := map[string]bool{}
+	for _, ks := range KnownServices {
+		seen[ks.Name] = true
+	}
+	for _, name := range []string{"redis-server", "memcached"} {
+		if !seen[name] {
+			t.Fatalf("known service %q not listed", name)
+		}
+	}
+}
+
 func TestCheckService_Active(t *testing.T) {
 	withMock(t, fakeExecCommand)
 
