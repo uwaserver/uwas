@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -1162,6 +1163,9 @@ func runSoftwareCompose(inst softwareInstance, args ...string) (string, error) {
 	if fallbackErr == nil {
 		return fallbackOut, nil
 	}
+	if isCommandNotFound(fallbackErr) {
+		return strings.TrimSpace(out + fallbackOut), fmt.Errorf("Docker Compose is not installed or not available in PATH; install the Docker Compose plugin (`docker compose`) or legacy `docker-compose`. On Debian/Ubuntu: apt-get update && apt-get install -y docker-compose-plugin")
+	}
 	return out + fallbackOut, fallbackErr
 }
 
@@ -1176,6 +1180,11 @@ func runSoftwareCommand(dir, name string, args ...string) (string, error) {
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func isCommandNotFound(err error) bool {
+	var execErr *exec.Error
+	return errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound)
 }
 
 func shouldFallbackDockerCompose(output string) bool {

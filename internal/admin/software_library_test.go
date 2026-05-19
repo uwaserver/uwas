@@ -939,6 +939,48 @@ func TestRunSoftwareComposeFallsBackToLegacyDockerCompose(t *testing.T) {
 	}
 }
 
+func TestRunSoftwareComposeReportsMissingComposeInstall(t *testing.T) {
+	dir := t.TempDir()
+	inst := softwareInstance{
+		Name:        "missing-compose",
+		Dir:         dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project:     "uwas-missing-compose",
+	}
+	if err := os.WriteFile(inst.ComposeFile, []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	calls := []softwareExecCall{}
+	orig := softwareComposeCommand
+	softwareComposeCommand = func(name string, args ...string) *exec.Cmd {
+		mu.Lock()
+		calls = append(calls, softwareExecCall{Name: name, Args: append([]string(nil), args...)})
+		mu.Unlock()
+		if name == "docker-compose" {
+			return exec.Command("uwas-missing-docker-compose-test-command")
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestSoftwareComposeHelperProcess", "--", "--software-compose-helper", "fail")
+		cmd.Env = append(os.Environ(), "UWAS_SOFTWARE_HELPER_OUTPUT=unknown shorthand flag: 'p' in -p\nUsage: docker [OPTIONS] COMMAND [ARG...]\n")
+		return cmd
+	}
+	t.Cleanup(func() { softwareComposeCommand = orig })
+
+	out, err := runSoftwareCompose(inst, "down", "--remove-orphans")
+	if err == nil {
+		t.Fatalf("expected missing compose error, output: %s", out)
+	}
+	if !strings.Contains(err.Error(), "Docker Compose is not installed") ||
+		!strings.Contains(err.Error(), "docker-compose-plugin") {
+		t.Fatalf("error should explain how to install Compose, got: %v", err)
+	}
+	if !softwareCallsContain(&calls, "docker compose -p uwas-missing-compose", "down --remove-orphans") ||
+		!softwareCallsContain(&calls, "docker-compose -p uwas-missing-compose", "down --remove-orphans") {
+		t.Fatalf("expected both compose attempts, got: %#v", calls)
+	}
+}
+
 func TestSoftwareComposeTemplatesAndSecrets(t *testing.T) {
 	cases := []struct {
 		id       string
