@@ -640,6 +640,79 @@ func TestAppCreateWithGitSourceDoesNotScaffoldDemo(t *testing.T) {
 	}
 }
 
+func TestAppCreateDockerGitSourcePersistsBuildKitContext(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "docker-git")
+	body := strings.NewReader(fmt.Sprintf(
+		`{"name":"docker-git","runtime":"docker","work_dir":%q,"docker":{"container_port":8080,"build":{"context":".","dockerfile":"Dockerfile"}},"deploy":{"git_url":"https://github.com/example/docker.git","git_branch":"main"}}`,
+		workDir,
+	))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/apps?start=false", body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "Dockerfile")); !os.IsNotExist(err) {
+		t.Fatalf("git-source docker create should not scaffold demo Dockerfile, stat err=%v", err)
+	}
+	def, err := mgr.Store().Get("docker-git")
+	if err != nil || def == nil {
+		t.Fatalf("created app not persisted: def=%v err=%v", def, err)
+	}
+	if def.Docker.Build.Context != "." || def.Docker.Build.Dockerfile != "Dockerfile" {
+		t.Fatalf("docker build context not persisted: %#v", def.Docker.Build)
+	}
+	if def.Deploy.GitURL != "https://github.com/example/docker.git" || def.Deploy.GitBranch != "main" {
+		t.Fatalf("deploy config not persisted: %#v", def.Deploy)
+	}
+}
+
+func TestAppDeployDockerGitRequiresBuildContext(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	if err := mgr.Register(&apps.App{
+		Name:    "docker-image-only",
+		Runtime: apps.RuntimeDocker,
+		WorkDir: filepath.Join(t.TempDir(), "docker-image-only"),
+		Docker: apps.DockerSpec{
+			Image:         "nginx:latest",
+			ContainerPort: 80,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAppsManager(mgr)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"git_url":"https://github.com/example/repo.git"}`)
+	req := httptest.NewRequest("POST", "/api/v1/apps/docker-image-only/deploy", body)
+	req.SetPathValue("name", "docker-image-only")
+	s.handleAppDeploy(rec, withAdminContext(req))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "docker.build.context") {
+		t.Fatalf("error should mention docker.build.context, body: %s", rec.Body.String())
+	}
+}
+
+func TestValidateDockerGitDeployAllowsNativeAndBuildContext(t *testing.T) {
+	if err := validateDockerGitDeploy(&apps.App{Runtime: apps.RuntimeNode}); err != nil {
+		t.Fatalf("native app should not require docker build context: %v", err)
+	}
+	if err := validateDockerGitDeploy(&apps.App{
+		Runtime: apps.RuntimeDocker,
+		Docker:  apps.DockerSpec{Build: apps.DockerBuild{Context: "."}},
+	}); err != nil {
+		t.Fatalf("docker app with build context should pass: %v", err)
+	}
+}
+
 func TestFileManagerLegacyPortAppProxyDomainUsesAppWorkDir(t *testing.T) {
 	s := testServer()
 	webRoot := t.TempDir()

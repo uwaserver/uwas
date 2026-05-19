@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -572,7 +573,7 @@ func TestCopyFile(t *testing.T) {
 }
 
 func TestCopyFileNotFound(t *testing.T) {
-	err := copyFile("/nonexistent/file.txt", "/tmp/dst.txt")
+	err := copyFile(filepath.Join(t.TempDir(), "missing.txt"), filepath.Join(t.TempDir(), "dst.txt"))
 	if err == nil {
 		t.Error("expected error for non-existent source")
 	}

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-05-19
+
+### Added
+
+- Added Dockerized Software Library management with one-click Compose templates,
+  web/internal-only installs, port conflict checks, domain binding, lifecycle
+  controls, logs, container resource monitoring, persistent volume visibility,
+  backup/restore, backup-all, and safe update/update-all flows.
+- Added Applications support for more visible Git-source deployments and Docker
+  BuildKit Git packaging.
+- Added Redis and Memcached package/service installation support.
+
+### Fixed
+
+- Fixed domain alias handling to recommend 301 redirects, avoid duplicate
+  `www`/apex false positives, and provision SSL per alias.
+- Fixed Unknown Domains alias attachment so an unknown host can be linked to an
+  existing domain.
+- Fixed File Manager root resolution for application-backed domains so it uses
+  the same app work directory as SFTP users.
+- Fixed Windows-sensitive tests that used absolute nonexistent paths.
+
 ## [0.6.8] - 2026-05-17
 
 ### Fixed

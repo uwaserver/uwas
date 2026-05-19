@@ -44,6 +44,7 @@ const AdminUsers = lazy(() => import('@/pages/AdminUsers'));
 const DomainDetail = lazy(() => import('@/pages/DomainDetail'));
 const About = lazy(() => import('@/pages/About'));
 const Apps = lazy(() => import('@/pages/Apps'));
+const SoftwareLibrary = lazy(() => import('@/pages/SoftwareLibrary'));
 const TerminalPage = lazy(() => import('@/pages/Terminal'));
 const Cloudflare = lazy(() => import('@/pages/Cloudflare'));
 
@@ -166,6 +167,7 @@ export default function App() {
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/apps" element={<Apps />} />
+        <Route path="/software" element={<SoftwareLibrary />} />
         <Route path="/terminal" element={<TerminalPage />} />
         <Route path="/cloudflare" element={<Cloudflare />} />
         <Route path="/about" element={<About />} />
