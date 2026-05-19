@@ -170,12 +170,20 @@ export default function SoftwareLibrary() {
     }
   };
 
-  const remove = async (inst: SoftwareInstance) => {
-    if (!window.confirm(`Remove ${inst.name}? Docker volumes are preserved.`)) return;
-    setBusy(`${inst.name}:delete`);
+  const remove = async (inst: SoftwareInstance, volumes = false) => {
+    const prompt = volumes
+      ? `Remove ${inst.name} and its Docker volumes? UWAS will create a volume backup first.`
+      : `Remove ${inst.name}? Docker volumes are preserved.`;
+    if (!window.confirm(prompt)) return;
+    setBusy(`${inst.name}:${volumes ? 'delete-volumes' : 'delete'}`);
     try {
-      await deleteSoftware(inst.name);
-      setStatus({ ok: true, message: `${inst.name} removed` });
+      const result = await deleteSoftware(inst.name, volumes);
+      const backupText = volumes
+        ? result.backup_files?.length
+          ? ` Backup created (${result.backup_files.length} volume).`
+          : ` Backup ${result.backup_status || 'skipped'}.`
+        : '';
+      setStatus({ ok: true, message: `${inst.name} removed.${backupText}` });
       await load();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
@@ -430,6 +438,9 @@ export default function SoftwareLibrary() {
                   </button>
                   <button onClick={() => remove(inst)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300 hover:bg-red-500/15 disabled:opacity-50">
                     <Trash2 size={12} /> Remove
+                  </button>
+                  <button onClick={() => remove(inst, true)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-md border border-red-500/40 bg-red-500/15 px-2 py-1 text-xs text-red-200 hover:bg-red-500/20 disabled:opacity-50">
+                    <HardDrive size={12} /> Remove Volumes
                   </button>
                 </div>
               </div>
