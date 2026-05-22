@@ -3,6 +3,7 @@ package middleware
 import (
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -305,6 +306,27 @@ func TestSecurityHeaders(t *testing.T) {
 		if got := rec.Header().Get(k); got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
 		}
+	}
+
+	// HSTS must NOT be emitted on plaintext HTTP.
+	if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("Strict-Transport-Security on plain HTTP = %q, want empty", got)
+	}
+}
+
+func TestSecurityHeadersEmitsHSTSOnTLS(t *testing.T) {
+	handler := SecurityHeaders()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	// Mark the request as TLS so the middleware treats it as HTTPS.
+	req.TLS = &tls.ConnectionState{}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Errorf("Strict-Transport-Security on TLS = empty, want non-empty")
 	}
 }
 
