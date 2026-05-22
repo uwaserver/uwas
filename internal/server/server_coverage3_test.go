@@ -64,7 +64,7 @@ func newMinimalServer(cfg *config.Config) *Server {
 		securityStats:      middleware.NewSecurityStats(),
 		htaccessCache:      make(map[string][]*rewrite.Rule),
 		rewriteCache:       make(map[string]*rewrite.Engine),
-		domainLogs:         newDomainLogManager(),
+		domainLogs:         newDomainLogManager(nil),
 		domainChains:       make(map[string]middleware.Middleware),
 		domainRateLimiters: make(map[string]*middleware.RateLimiter),
 		imageOptChains:     make(map[string]middleware.Middleware),
@@ -1084,7 +1084,7 @@ func TestHandleHTTPACMEChallenge(t *testing.T) {
 // =============================================================================
 
 func TestDomainLogWriteMkdirError(t *testing.T) {
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Write with an invalid path that can't have directories created
@@ -1094,7 +1094,7 @@ func TestDomainLogWriteMkdirError(t *testing.T) {
 }
 
 func TestDomainLogWriteOpenFileError(t *testing.T) {
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// On Windows, NUL path should cause an error
@@ -1110,7 +1110,7 @@ func TestDomainLogRotateReopenFail(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Write to create the file
@@ -1127,7 +1127,7 @@ func TestDomainLogRotateReopenFail(t *testing.T) {
 }
 
 func TestDomainLogCleanupLoopStops(t *testing.T) {
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 
 	// Start cleanup then immediately close
 	m.StartCleanup()
@@ -1139,7 +1139,7 @@ func TestDomainLogCleanupOldRemovesExpired(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Write to create the domain entry

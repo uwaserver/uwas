@@ -251,7 +251,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		securityStats:   middleware.NewSecurityStats(),
 		htaccessCache:   make(map[string][]*rewrite.Rule),
 		rewriteCache:    make(map[string]*rewrite.Engine),
-		domainLogs:      newDomainLogManager(),
+		domainLogs:      newDomainLogManager(log),
 	}
 
 	// Pre-compile rewrite rules for each domain.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/logger"
 )
 
 const (
@@ -30,9 +31,10 @@ const (
 // writes remain serialized — file-line ordering depends on it.
 // Refs: refactor.md P15.
 type domainLogManager struct {
-	mu    sync.RWMutex
-	files map[string]*domainLogFile
-	stop  chan struct{}
+	mu     sync.RWMutex
+	files  map[string]*domainLogFile
+	stop   chan struct{}
+	logger *logger.Logger
 }
 
 type domainLogFile struct {
@@ -43,10 +45,11 @@ type domainLogFile struct {
 	rotate  config.RotateConfig
 }
 
-func newDomainLogManager() *domainLogManager {
+func newDomainLogManager(log *logger.Logger) *domainLogManager {
 	return &domainLogManager{
-		files: make(map[string]*domainLogFile),
-		stop:  make(chan struct{}),
+		files:  make(map[string]*domainLogFile),
+		stop:   make(chan struct{}),
+		logger: log,
 	}
 }
 
@@ -103,8 +106,20 @@ func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfi
 	// Per-host lock: writes for different domains run in parallel; only
 	// the same domain's writes serialize (needed for correct line order).
 	dlf.mu.Lock()
-	_, _ = dlf.f.WriteString(line)
-	dlf.written += int64(len(line))
+	n, err := dlf.f.WriteString(line)
+	if err != nil {
+		// Log the error so disk-full / permission-changed / closed-fd
+		// problems are not silent. We still account for whatever bytes
+		// did make it onto disk so the rotation watermark stays
+		// approximately accurate.
+		if m.logger != nil {
+			m.logger.Error("domain log write failed",
+				"host", host,
+				"path", dlf.path,
+				"error", err)
+		}
+	}
+	dlf.written += int64(n)
 
 	maxSize := int64(dlf.rotate.MaxSize)
 	if maxSize <= 0 {

@@ -1705,7 +1705,7 @@ func TestDomainLogCleanupOld(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Write a log entry to populate the manager's files map
@@ -1737,7 +1737,7 @@ func TestDomainLogCleanupOldKeepsRecent(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Write a log entry
@@ -1797,7 +1797,7 @@ func TestDomainLogCompressFileBadDest(t *testing.T) {
 }
 
 func TestDomainLogStartCleanupAndClose(t *testing.T) {
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 
 	// Start cleanup goroutine
 	m.StartCleanup()
@@ -1817,7 +1817,7 @@ func TestDomainLogWriteNewDomainTwice(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Two concurrent-like writes for same domain
@@ -1844,7 +1844,7 @@ func TestDomainLogRotateDefaultMaxSize(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Write with MaxSize = 0 (uses defaultMaxLogSize of 50MB)
@@ -2734,7 +2734,7 @@ func TestNewWithBackupOnBackupCallback(t *testing.T) {
 // =============================================================================
 
 func TestDomainLogWriteInvalidPath(t *testing.T) {
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Try to write to an impossible path — should not panic
@@ -2750,7 +2750,7 @@ func TestDomainLogRotateAndReopen(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Use tiny max size to trigger rotation

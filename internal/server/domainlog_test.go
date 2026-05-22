@@ -14,7 +14,7 @@ func TestDomainLogWrite(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	m.Write("example.com", logPath, config.RotateConfig{},
@@ -45,7 +45,7 @@ func TestDomainLogRotation(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "access.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Use tiny max size to trigger rotation
@@ -91,7 +91,7 @@ func TestDomainLogMultipleDomains(t *testing.T) {
 	pathA := filepath.Join(dir, "a.log")
 	pathB := filepath.Join(dir, "b.log")
 
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	m.Write("a.com", pathA, config.RotateConfig{},
@@ -111,7 +111,7 @@ func TestDomainLogMultipleDomains(t *testing.T) {
 }
 
 func TestDomainLogEmptyPath(t *testing.T) {
-	m := newDomainLogManager()
+	m := newDomainLogManager(nil)
 	defer m.Close()
 
 	// Should not panic with empty path
