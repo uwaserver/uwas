@@ -85,13 +85,22 @@ type Server struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 
-	alerter         *alerting.Alerter
-	backupMgr       *backup.BackupManager
-	bwMgr           *bandwidth.Manager
-	cronMonitor     *cronjob.Monitor
-	webhookMgr      *webhook.Manager
-	authMgr         *auth.Manager
-	sftpSrv         *sftpserver.Server
+	alerter     *alerting.Alerter
+	backupMgr   *backup.BackupManager
+	bwMgr       *bandwidth.Manager
+	cronMonitor *cronjob.Monitor
+	webhookMgr  *webhook.Manager
+	authMgr     *auth.Manager
+	sftpSrv     *sftpserver.Server
+
+	// handlersMu protects every per-domain handler map below that may
+	// be replaced wholesale by reload() or rebuildProxyPools while the
+	// request hot path is reading it. Concurrent map read+write panics
+	// the Go runtime, so every read site must take the read lock and
+	// every replacement must take the write lock. The lock window on
+	// the read side is intentionally narrow — copy the map entry to a
+	// local then release before doing any non-trivial work.
+	handlersMu      sync.RWMutex
 	proxyPools      map[string]*proxyhandler.UpstreamPool
 	proxyBalancers  map[string]proxyhandler.Balancer
 	proxyHealthChks map[string]*proxyhandler.HealthChecker
@@ -1148,7 +1157,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain WAF (Content-Type aware, with bypass path support).
 	// Predicate-form guard precompiled at config load (refactor.md P2/P3);
 	// no per-request closure allocation, no one-shot handler wrap.
-	if guard := s.wafGuards[domain.Host]; guard != nil {
+	s.handlersMu.RLock()
+	wafGuard := s.wafGuards[domain.Host]
+	s.handlersMu.RUnlock()
+	if guard := wafGuard; guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
@@ -1352,21 +1364,30 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-domain IP ACL (whitelist/blacklist) — predicate form (P2/P3).
-	if guard := s.ipACLGuards[domain.Host]; guard != nil {
+	s.handlersMu.RLock()
+	ipACLGuard := s.ipACLGuards[domain.Host]
+	s.handlersMu.RUnlock()
+	if guard := ipACLGuard; guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
 	}
 
 	// Per-domain GeoIP blocking — predicate form (P2/P3).
-	if guard := s.geoGuards[domain.Host]; guard != nil {
+	s.handlersMu.RLock()
+	geoGuard := s.geoGuards[domain.Host]
+	s.handlersMu.RUnlock()
+	if guard := geoGuard; guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
 	}
 
 	// Per-domain rate limiting
-	if rl := s.domainRateLimiters[domain.Host]; rl != nil {
+	s.handlersMu.RLock()
+	rlSnap := s.domainRateLimiters[domain.Host]
+	s.handlersMu.RUnlock()
+	if rl := rlSnap; rl != nil {
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || ip == "" {
 			ip = r.RemoteAddr
@@ -1388,7 +1409,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain CORS — predicate form (P2/P3). Guard handles preflight
 	// inline and returns false when the response was terminated there.
-	if guard := s.corsGuards[domain.Host]; guard != nil {
+	s.handlersMu.RLock()
+	corsGuard := s.corsGuards[domain.Host]
+	s.handlersMu.RUnlock()
+	if guard := corsGuard; guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
@@ -1665,7 +1689,10 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		return
 	}
 	// Image optimization: serve pre-converted WebP/AVIF if available
-	if _, ok := s.imageOptChains[domain.Host]; ok {
+	s.handlersMu.RLock()
+	_, hasImageOpt := s.imageOptChains[domain.Host]
+	s.handlersMu.RUnlock()
+	if hasImageOpt {
 		accept := ctx.Request.Header.Get("Accept")
 		ext := filepath.Ext(resolved)
 		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" {
@@ -1687,26 +1714,37 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 }
 
 func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) {
+	// Snapshot all per-domain proxy state under one read lock so a
+	// concurrent reload() / rebuildProxyPools cannot race with us. The
+	// pointers we copy out are themselves immutable post-replacement
+	// (each reload allocates fresh instances), so dropping the lock
+	// here is safe — we just need to avoid reading the maps directly
+	// after this point.
+	s.handlersMu.RLock()
 	pool := s.proxyPools[domain.Host]
+	balancer := s.proxyBalancers[domain.Host]
+	cb := s.proxyBreakers[domain.Host]
+	mirror := s.proxyMirrors[domain.Host]
+	canary := s.proxyCanaries[domain.Host]
+	s.handlersMu.RUnlock()
+
 	if pool == nil {
 		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
 		return
 	}
 
-	balancer := s.proxyBalancers[domain.Host]
 	if balancer == nil {
 		balancer = proxyhandler.NewBalancer("round_robin")
 	}
 
 	// Circuit breaker: reject if circuit is open
-	cb := s.proxyBreakers[domain.Host]
 	if cb != nil && !cb.Allow() {
 		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
 		return
 	}
 
 	// Request mirroring: fire-and-forget copy to mirror backend
-	if mirror := s.proxyMirrors[domain.Host]; mirror != nil && mirror.ShouldMirror() {
+	if mirror != nil && mirror.ShouldMirror() {
 		var bodyBytes []byte
 		shouldMirror := true
 		maxBytes := int64(mirror.MaxBodyBytes())
@@ -1741,8 +1779,10 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 		}
 	}
 
-	// Canary routing: route a percentage of traffic to canary upstreams
-	if cr := s.proxyCanaries[domain.Host]; cr != nil && cr.IsCanary(ctx.Request, domain.Proxy.Canary) {
+	// Canary routing: route a percentage of traffic to canary upstreams.
+	// Use the snapshot taken at the top of this function rather than
+	// re-reading the map.
+	if cr := canary; cr != nil && cr.IsCanary(ctx.Request, domain.Proxy.Canary) {
 		cr.Serve(ctx, domain, s.proxy)
 	} else {
 		s.proxy.Serve(ctx, domain, pool, balancer)
@@ -1797,7 +1837,9 @@ func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domai
 }
 
 func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain) bool {
+	s.handlersMu.RLock()
 	engine := s.rewriteCache[domain.Host]
+	s.handlersMu.RUnlock()
 	if engine == nil {
 		return false
 	}
@@ -2090,7 +2132,9 @@ func (s *Server) reload() error {
 	s.htaccessCacheV2 = make(map[string]*htaccessCacheEntry)
 	s.htaccessCacheMu.Unlock()
 
-	// Rebuild rewrite cache for new domains
+	// BUILD PHASE — assemble all new per-domain maps in locals without
+	// touching shared state. None of the rewrite/middleware constructors
+	// below mutate s, so they are safe to run outside handlersMu.
 	newRewriteCache := make(map[string]*rewrite.Engine)
 	for _, d := range newCfg.Domains {
 		if len(d.Rewrites) == 0 {
@@ -2108,11 +2152,10 @@ func (s *Server) reload() error {
 			newRewriteCache[d.Host] = rewrite.NewEngine(rules)
 		}
 	}
-	s.rewriteCache = newRewriteCache
 
-	// Rebuild per-domain middleware chains + predicate guards
-	// (refactor.md P2/P3). Two parallel forms so any composed middleware
-	// path retains the chain-style entry while the hot path uses guards.
+	// Per-domain middleware chains + predicate guards (refactor.md
+	// P2/P3). Two parallel forms so any composed middleware path
+	// retains the chain-style entry while the hot path uses guards.
 	newDomainChains := make(map[string]middleware.Middleware)
 	newIPACLGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	for _, d := range newCfg.Domains {
@@ -2125,8 +2168,6 @@ func (s *Server) reload() error {
 			newIPACLGuards[d.Host] = middleware.IPACLGuard(cfg)
 		}
 	}
-	s.domainChains = newDomainChains
-	s.ipACLGuards = newIPACLGuards
 
 	newGeoChains := make(map[string]middleware.Middleware)
 	newGeoGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
@@ -2140,8 +2181,6 @@ func (s *Server) reload() error {
 			newGeoGuards[d.Host] = middleware.GeoIPGuard(cfg)
 		}
 	}
-	s.geoChains = newGeoChains
-	s.geoGuards = newGeoGuards
 
 	newCORSGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	newWAFGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
@@ -2159,12 +2198,10 @@ func (s *Server) reload() error {
 			newWAFGuards[d.Host] = middleware.DomainWAFGuard(s.logger, d.Security.WAF.BypassPaths, s.securityStats)
 		}
 	}
-	s.corsGuards = newCORSGuards
-	s.wafGuards = newWAFGuards
 
-	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
-	// before swapping the map; otherwise each reload leaks N goroutines bound
-	// to s.ctx (server lifetime).
+	// Per-domain rate limiters. The old ones' cleanup goroutines must
+	// be stopped after the swap; otherwise each reload leaks N
+	// goroutines bound to s.ctx (server lifetime).
 	newRateLimiters := make(map[string]*middleware.RateLimiter)
 	for _, d := range newCfg.Domains {
 		if d.Security.RateLimit.Requests > 0 {
@@ -2175,13 +2212,8 @@ func (s *Server) reload() error {
 			newRateLimiters[d.Host] = middleware.NewRateLimiter(s.ctx, d.Security.RateLimit.Requests, window)
 		}
 	}
-	oldRateLimiters := s.domainRateLimiters
-	s.domainRateLimiters = newRateLimiters
-	for _, rl := range oldRateLimiters {
-		rl.Stop()
-	}
 
-	// Rebuild image optimization chains
+	// Image optimization chains.
 	newImageOpt := make(map[string]middleware.Middleware)
 	for _, d := range newCfg.Domains {
 		if d.ImageOptimization.Enabled && d.Root != "" {
@@ -2191,13 +2223,40 @@ func (s *Server) reload() error {
 			}, d.Root)
 		}
 	}
-	s.imageOptChains = newImageOpt
 
-	// Rebuild proxy pools + balancers + health checkers against the new
-	// config. Factored into rebuildProxyPools so onDomainChange (which
-	// doesn't go through reload — it operates on in-memory state) can
-	// reuse the same logic.
-	s.rebuildProxyPools(newCfg.Domains)
+	// Proxy pools + balancers + health checkers against the new config.
+	// buildProxyPools is the pure builder; the swap happens below.
+	newProxyPools, newProxyBalancers, newProxyHealthChks := s.buildProxyPools(newCfg.Domains)
+
+	// SWAP PHASE — replace every per-domain handler map atomically
+	// against the request hot path. Capture the old rate limiters and
+	// health checkers under the lock and stop them outside it, since
+	// Stop() blocks on goroutine joins.
+	s.handlersMu.Lock()
+	oldRateLimiters := s.domainRateLimiters
+	oldHealthChks := s.proxyHealthChks
+	s.rewriteCache = newRewriteCache
+	s.domainChains = newDomainChains
+	s.ipACLGuards = newIPACLGuards
+	s.geoChains = newGeoChains
+	s.geoGuards = newGeoGuards
+	s.corsGuards = newCORSGuards
+	s.wafGuards = newWAFGuards
+	s.domainRateLimiters = newRateLimiters
+	s.imageOptChains = newImageOpt
+	s.proxyPools = newProxyPools
+	s.proxyBalancers = newProxyBalancers
+	s.proxyHealthChks = newProxyHealthChks
+	s.handlersMu.Unlock()
+
+	// CLEANUP PHASE — outside the lock so request readers don't queue
+	// behind goroutine joins.
+	for _, rl := range oldRateLimiters {
+		rl.Stop()
+	}
+	for _, hc := range oldHealthChks {
+		hc.Stop()
+	}
 
 	// Update bandwidth manager with new domain configs
 	if s.bwMgr != nil {
@@ -2254,12 +2313,36 @@ func (s *Server) reload() error {
 // calling this method again — typically via onDomainChange or reload
 // when an app state changes.
 func (s *Server) rebuildProxyPools(domains []config.Domain) {
-	// Stop old proxy health checkers before rebuilding so we don't
-	// leak goroutines on every reload.
-	for _, hc := range s.proxyHealthChks {
+	// BUILD PHASE — no shared state mutation, no lock needed. The new
+	// maps live in locals until we're ready to swap them in.
+	newPools, newBalancers, newHealthChks := s.buildProxyPools(domains)
+
+	// SWAP PHASE — replace the maps atomically against the request hot
+	// path. We capture the old health checkers under the lock and stop
+	// them outside it; calling hc.Stop() blocks on a goroutine join,
+	// which we do not want to hold the write lock for.
+	s.handlersMu.Lock()
+	oldHealthChks := s.proxyHealthChks
+	s.proxyPools = newPools
+	s.proxyBalancers = newBalancers
+	s.proxyHealthChks = newHealthChks
+	s.handlersMu.Unlock()
+
+	for _, hc := range oldHealthChks {
 		hc.Stop()
 	}
+}
 
+// buildProxyPools constructs the per-host proxy maps from the given
+// domain slice. It is pure with respect to Server state — it reads
+// only immutable references like s.ctx, s.logger, and the resolver —
+// so callers can invoke it outside the handlers lock and then swap the
+// results in under a write lock.
+func (s *Server) buildProxyPools(domains []config.Domain) (
+	map[string]*proxyhandler.UpstreamPool,
+	map[string]proxyhandler.Balancer,
+	map[string]*proxyhandler.HealthChecker,
+) {
 	newPools := make(map[string]*proxyhandler.UpstreamPool)
 	newBalancers := make(map[string]proxyhandler.Balancer)
 	newHealthChks := make(map[string]*proxyhandler.HealthChecker)
@@ -2290,10 +2373,7 @@ func (s *Server) rebuildProxyPools(domains []config.Domain) {
 			newHealthChks[d.Host] = hc
 		}
 	}
-
-	s.proxyPools = newPools
-	s.proxyBalancers = newBalancers
-	s.proxyHealthChks = newHealthChks
+	return newPools, newBalancers, newHealthChks
 }
 
 func (s *Server) handleSignals() {
