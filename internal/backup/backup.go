@@ -540,6 +540,17 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 	}
 
 	go func() {
+		// Reuse one timer across loop iterations so canceling via
+		// ctx.Done() does not leak an unfired timer per iteration.
+		// time.After() inside the loop would create a fresh underlying
+		// runtime timer each pass and only release it on fire — under a
+		// long-lived cron schedule those add up.
+		timer := time.NewTimer(0)
+		if !timer.Stop() {
+			<-timer.C
+		}
+		defer timer.Stop()
+
 		for {
 			next := nextCronRun(cronExpr)
 			if next.IsZero() {
@@ -549,9 +560,10 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 			if wait <= 0 {
 				wait = time.Minute // safety: if we're already past, wait 1 min
 			}
+			timer.Reset(wait)
 
 			select {
-			case <-time.After(wait):
+			case <-timer.C:
 				info, err := m.CreateBackup(provider)
 				if err != nil {
 					m.logger.Error("scheduled backup failed", "error", err)

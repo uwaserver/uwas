@@ -422,13 +422,20 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 }
 
 func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttempts int) (*Order, error) {
+	// One timer reused across attempts; defer Stop covers both the
+	// ctx.Done() exit path and a successful poll return.
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
+
 	for i := 0; i < maxAttempts; i++ {
-		wait := time.NewTimer(time.Duration(i+1) * time.Second)
+		timer.Reset(time.Duration(i+1) * time.Second)
 		select {
 		case <-ctx.Done():
-			wait.Stop()
 			return nil, ctx.Err()
-		case <-wait.C:
+		case <-timer.C:
 		}
 
 		resp, err := c.signedRequest(ctx, url, nil) // POST-as-GET
