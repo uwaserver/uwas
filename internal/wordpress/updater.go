@@ -56,16 +56,13 @@ func UpdateCore(webRoot string) (string, error) {
 	}
 	log.WriteString("Downloaded latest WordPress\n")
 
-	// Verify SHA1 checksum (wordpress.org publishes .sha1 and .md5; not .sha256)
-	if expected := fetchWPChecksum(tarURL + ".sha1"); expected != "" {
-		if actual := hashFileSHA1(tarPath); actual != "" {
-			if expected != actual {
-				return log.String(), fmt.Errorf("WordPress checksum mismatch: expected %s, got %s", expected, actual)
-			}
-			log.WriteString("  Checksum verified OK\n")
-		}
+	// Verify the strongest checksum available (SHA384 → SHA256 → SHA1).
+	// Mismatch aborts; missing checksum file is treated as best-effort.
+	if algo, verified, err := verifyWPChecksum(tarURL, tarPath); err != nil {
+		return log.String(), err
+	} else if verified {
+		log.WriteString(fmt.Sprintf("  Checksum verified OK (%s)\n", algo))
 	}
-	// If checksum file unavailable, continue (best-effort)
 
 	// Extract to temp dir
 	tmpDir, _ := os.MkdirTemp("", "wp-update-*")

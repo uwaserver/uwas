@@ -6,9 +6,12 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -229,12 +232,16 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	return err
 }
 
-// fetchWPChecksum returns the lowercased SHA1 hex from a wordpress.org
-// checksum file (e.g. https://wordpress.org/latest.tar.gz.sha1), or "" if the
-// response is missing, non-200, or not a 40-char hex string. Returning ""
-// instead of an error keeps checksum verification best-effort: callers skip
-// the check rather than block the install when the upstream file is broken.
-func fetchWPChecksum(url string) string {
+// fetchWPChecksum returns the lowercased hex checksum from a
+// wordpress.org checksum file (e.g.
+// https://wordpress.org/latest.tar.gz.sha256), or "" if the response
+// is missing, non-200, or not a hex string of the expected length.
+// expectedLen is the number of hex characters for the underlying
+// algorithm (40 = SHA1, 64 = SHA256, 96 = SHA384, 128 = SHA512).
+// Returning "" instead of an error keeps checksum verification
+// best-effort: callers skip the check rather than block the install
+// when the upstream file is broken.
+func fetchWPChecksum(url string, expectedLen int) string {
 	resp, err := httpGetFn(url)
 	if err != nil {
 		return ""
@@ -243,13 +250,13 @@ func fetchWPChecksum(url string) string {
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	fields := strings.Fields(string(body))
 	if len(fields) == 0 {
 		return ""
 	}
 	sum := strings.ToLower(strings.TrimSpace(fields[0]))
-	if len(sum) != 40 {
+	if len(sum) != expectedLen {
 		return ""
 	}
 	if _, err := hex.DecodeString(sum); err != nil {
@@ -258,18 +265,55 @@ func fetchWPChecksum(url string) string {
 	return sum
 }
 
-// hashFileSHA1 returns the lowercase SHA1 hex of the file at path, or "" on error.
-func hashFileSHA1(path string) string {
+// hashFile returns the lowercase hex digest of the file at path using
+// the supplied hash constructor (e.g. sha256.New), or "" on read error.
+func hashFile(path string, newHash func() hash.Hash) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	h := sha1.New()
+	h := newHash()
 	if _, err := io.Copy(h, f); err != nil {
 		return ""
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// verifyWPChecksum attempts to verify the downloaded WordPress tarball
+// against wordpress.org's published checksums, preferring the strongest
+// algorithm available. Returns the algorithm name actually used and
+// whether verification ran; if no checksum file is reachable the
+// install proceeds without a verified hash. Mismatch returns
+// (algo, false, error).
+func verifyWPChecksum(baseURL, tarPath string) (algo string, verified bool, err error) {
+	type candidate struct {
+		name    string
+		hexLen  int
+		newHash func() hash.Hash
+	}
+	// Preference order: strongest first. If wordpress.org doesn't
+	// publish a .sha256 / .sha384 sibling, fetchWPChecksum returns ""
+	// and we fall through to the next.
+	for _, c := range []candidate{
+		{"sha384", 96, sha512.New384},
+		{"sha256", 64, sha256.New},
+		{"sha1", 40, sha1.New},
+	} {
+		expected := fetchWPChecksum(baseURL+"."+c.name, c.hexLen)
+		if expected == "" {
+			continue
+		}
+		actual := hashFile(tarPath, c.newHash)
+		if actual == "" {
+			return c.name, false, fmt.Errorf("hash %s of %s failed", c.name, tarPath)
+		}
+		if expected != actual {
+			return c.name, false, fmt.Errorf("WordPress %s mismatch: expected %s, got %s", c.name, expected, actual)
+		}
+		return c.name, true, nil
+	}
+	return "", false, nil
 }
 
 func downloadAndExtract(webRoot string, log *strings.Builder) error {
@@ -294,14 +338,14 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	f.Close()
 	log.WriteString(fmt.Sprintf("Downloaded %.1f MB\n", float64(written)/1024/1024))
 
-	// Verify SHA1 checksum (wordpress.org publishes .sha1 and .md5; not .sha256)
-	if expected := fetchWPChecksum(wpDownloadURL + ".sha1"); expected != "" {
-		if actual := hashFileSHA1(tarPath); actual != "" {
-			if expected != actual {
-				return fmt.Errorf("WordPress checksum mismatch: expected %s, got %s", expected, actual)
-			}
-			log.WriteString("  Checksum verified OK\n")
-		}
+	// Verify the strongest checksum wordpress.org publishes for this
+	// release. Preference order is SHA384 → SHA256 → SHA1; falling back
+	// to weaker algorithms keeps the install working against legacy
+	// .sha1-only mirrors. If verification finds a mismatch we abort.
+	if algo, verified, err := verifyWPChecksum(wpDownloadURL, tarPath); err != nil {
+		return err
+	} else if verified {
+		log.WriteString(fmt.Sprintf("  Checksum verified OK (%s)\n", algo))
 	}
 	// If checksum file unavailable, continue (best-effort)
 
