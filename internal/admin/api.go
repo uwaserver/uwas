@@ -469,6 +469,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Skip for multi-user auth (TOTP handled separately) and 2FA management endpoints.
 		s.configMu.RLock()
 		totpSecret := s.config.Global.Admin.TOTPSecret
+		totpLastStep := s.config.Global.Admin.TOTPLastStep
 		s.configMu.RUnlock()
 		if totpSecret != "" && user.Role == auth.RoleAdmin &&
 			!strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") {
@@ -478,12 +479,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				jsonError(w, "2fa_required", http.StatusForbidden)
 				return
 			}
-			valid, _ := ValidateTOTP(totpSecret, totpCode)
+			valid, newStep := ValidateTOTP(totpSecret, totpCode, totpLastStep)
 			if !valid {
 				s.recordAuthFailure(ip, "")
 				jsonError(w, "invalid 2FA code", http.StatusForbidden)
 				return
 			}
+			// Persist the matched step so the same code (or any earlier
+			// one inside the ±window) cannot be replayed.
+			s.configMu.Lock()
+			if newStep > s.config.Global.Admin.TOTPLastStep {
+				s.config.Global.Admin.TOTPLastStep = newStep
+			}
+			s.configMu.Unlock()
+			s.persistConfig()
 		}
 
 		// CSRF protection: state-changing methods must send X-Requested-With
@@ -4889,7 +4898,9 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, _ := ValidateTOTP(secret, req.Code)
+	// Replay guard does not apply to setup verification: the secret has
+	// not yet been activated, so there is no prior step to honor.
+	valid, newStep := ValidateTOTP(secret, req.Code, 0)
 	if !valid {
 		jsonError(w, "invalid code", http.StatusUnauthorized)
 		return
@@ -4907,6 +4918,9 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	if pending != "" {
 		s.configMu.Lock()
 		s.config.Global.Admin.TOTPSecret = pending
+		// Seed the replay watermark with the step that just verified so
+		// the same code cannot be replayed against the active secret.
+		s.config.Global.Admin.TOTPLastStep = newStep
 		s.configMu.Unlock()
 	}
 
@@ -4935,7 +4949,10 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, _ := ValidateTOTP(secret, req.Code)
+	s.configMu.RLock()
+	lastStep := s.config.Global.Admin.TOTPLastStep
+	s.configMu.RUnlock()
+	valid, _ := ValidateTOTP(secret, req.Code, lastStep)
 	if !valid {
 		jsonError(w, "invalid code", http.StatusUnauthorized)
 		return
@@ -4943,6 +4960,7 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 
 	s.configMu.Lock()
 	s.config.Global.Admin.TOTPSecret = ""
+	s.config.Global.Admin.TOTPLastStep = 0
 	s.configMu.Unlock()
 
 	s.persistConfig()

@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
@@ -29,23 +30,49 @@ func GenerateTOTPSecret() (string, error) {
 }
 
 // ValidateTOTP checks if the given code matches the TOTP for the secret,
-// allowing ±1 time step for clock skew. Returns the matched step (Unix
-// seconds / 30) on success, or -1 on failure.
-func ValidateTOTP(secret, code string) (bool, int64) {
+// allowing ±1 time step for clock skew, and prevents replay of codes
+// at or before lastStep. Pass lastStep = 0 to disable the replay check
+// (e.g. during setup/verify flows where no prior step has been recorded).
+//
+// All candidate steps in the ±window are evaluated and combined with
+// constant-time primitives so that neither the match outcome nor the
+// matched step leaks via response timing. Returns the matched step
+// (Unix seconds / totpPeriod) on success, or -1 on failure or replay.
+func ValidateTOTP(secret, code string, lastStep int64) (bool, int64) {
 	secret = strings.TrimSpace(strings.ToUpper(secret))
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
 	if err != nil {
 		return false, -1
 	}
 
-	now := time.Now().Unix()
-	for i := -totpWindow; i <= totpWindow; i++ {
-		counter := uint64((now / totpPeriod) + int64(i))
-		if generateCode(key, counter) == code {
-			return true, int64(now / totpPeriod)
-		}
+	// Reject obviously wrong code lengths before HMAC work; the length
+	// itself is not secret.
+	if len(code) != totpDigits {
+		return false, -1
 	}
-	return false, -1
+
+	currentStep := time.Now().Unix() / totpPeriod
+	var matched int
+	var matchedStep int64 = -1
+	codeBytes := []byte(code)
+	for i := -totpWindow; i <= totpWindow; i++ {
+		step := currentStep + int64(i)
+		candidate := generateCode(key, uint64(step))
+		eq := subtle.ConstantTimeCompare([]byte(candidate), codeBytes)
+		// On match, overwrite matchedStep; otherwise keep prior value.
+		// Within ±totpWindow each step's HMAC is unique, so at most one
+		// iteration sets eq=1.
+		matchedStep = int64(subtle.ConstantTimeSelect(eq, int(step), int(matchedStep)))
+		matched |= eq
+	}
+	if matched == 0 {
+		return false, -1
+	}
+	// Replay guard: refuse codes from the previously used step or earlier.
+	if lastStep > 0 && matchedStep <= lastStep {
+		return false, -1
+	}
+	return true, matchedStep
 }
 
 // generateCode computes a single TOTP code for the given key and counter.

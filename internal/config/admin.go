@@ -7,6 +7,7 @@ type AdminConfig struct {
 	APIKey        string         `yaml:"api_key"`
 	PinCode       string         `yaml:"pin_code,omitempty"`
 	TOTPSecret    string         `yaml:"totp_secret,omitempty"`
+	TOTPLastStep  int64          `yaml:"totp_last_step,omitempty"` // last successfully used TOTP step (Unix/period) — replay guard
 	TLSCert       string         `yaml:"tls_cert,omitempty"`
 	TLSKey        string         `yaml:"tls_key,omitempty"`
 	RecoveryCodes []string       `yaml:"recovery_codes,omitempty"` // 2FA recovery codes

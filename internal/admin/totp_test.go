@@ -47,24 +47,42 @@ func TestValidateTOTP(t *testing.T) {
 	truncated := binary.BigEndian.Uint32(h[offset:offset+4]) & 0x7fffffff
 	code := fmt.Sprintf("%06d", truncated%uint32(math.Pow10(6)))
 
-	// Must accept correct code
-	valid, _ := ValidateTOTP(secret, code)
+	// Must accept correct code (lastStep=0 disables the replay guard).
+	valid, matchedStep := ValidateTOTP(secret, code, 0)
 	if !valid {
 		t.Fatalf("valid code %s was rejected", code)
 	}
+	if matchedStep != int64(counter) {
+		t.Fatalf("matchedStep = %d, want %d", matchedStep, counter)
+	}
 
-	// Must reject wrong code
-	if ok, _ := ValidateTOTP(secret, "000000"); ok && code != "000000" {
+	// Replay guard: same code with lastStep == matchedStep must be
+	// rejected.
+	if ok, _ := ValidateTOTP(secret, code, matchedStep); ok {
+		t.Fatal("replay accepted: lastStep == matchedStep should reject")
+	}
+	// Higher lastStep also rejects.
+	if ok, _ := ValidateTOTP(secret, code, matchedStep+5); ok {
+		t.Fatal("replay accepted: lastStep > matchedStep should reject")
+	}
+
+	// Must reject wrong code (random 6-digit string).
+	if ok, _ := ValidateTOTP(secret, "000000", 0); ok && code != "000000" {
 		t.Fatal("accepted invalid code 000000")
 	}
 
-	// Must reject empty
-	if ok, _ := ValidateTOTP(secret, ""); ok {
+	// Must reject empty (length mismatch path).
+	if ok, _ := ValidateTOTP(secret, "", 0); ok {
 		t.Fatal("accepted empty code")
 	}
 
-	// Must reject bad secret
-	if ok, _ := ValidateTOTP("INVALIDSECRET!!!", code); ok {
+	// Must reject wrong length even if it would otherwise hash-match.
+	if ok, _ := ValidateTOTP(secret, code+"0", 0); ok {
+		t.Fatal("accepted code of wrong length")
+	}
+
+	// Must reject bad secret.
+	if ok, _ := ValidateTOTP("INVALIDSECRET!!!", code, 0); ok {
 		t.Fatal("accepted code with bad secret")
 	}
 }
