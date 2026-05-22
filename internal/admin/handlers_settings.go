@@ -6,10 +6,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/notify"
 )
+
+// recoveryCodeBcryptCost is below bcrypt.DefaultCost to keep recovery
+// verification responsive (DefaultCost = 10 → ~70ms × up to 8 codes
+// per attempt = ~560ms worst case). The codes themselves carry 32 bits
+// of entropy, so the goal of the hash is to defeat offline cracking of
+// a leaked config file, not to slow an online brute force (which is
+// already infeasible at 4.3B possibilities per code and rate-limited
+// by the admin middleware). Cost 8 keeps online verify under ~150ms
+// total while still requiring ~256 bcrypt operations per code per
+// guess offline.
+const recoveryCodeBcryptCost = 8
+
+// recoveryCodeLooksHashed reports whether s appears to be a bcrypt
+// hash (starts with $2a$ / $2b$ / $2y$ and is at least 60 chars).
+// Used so we can transparently migrate from older plaintext storage.
+func recoveryCodeLooksHashed(s string) bool {
+	if len(s) < 60 {
+		return false
+	}
+	return strings.HasPrefix(s, "$2a$") ||
+		strings.HasPrefix(s, "$2b$") ||
+		strings.HasPrefix(s, "$2y$")
+}
 
 // ============ Notifications ============
 
@@ -38,6 +64,7 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	codes := make([]string, 8)
+	hashes := make([]string, 8)
 	for i := range codes {
 		b := make([]byte, 4)
 		if _, err := crand.Read(b); err != nil {
@@ -45,13 +72,25 @@ func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		codes[i] = fmt.Sprintf("%x", b)
+		hashed, err := bcrypt.GenerateFromPassword([]byte(codes[i]), recoveryCodeBcryptCost)
+		if err != nil {
+			jsonError(w, "hash failure", http.StatusInternalServerError)
+			return
+		}
+		hashes[i] = string(hashed)
 	}
-	// Store hashed codes in config
+	// Persist only the hashes; the cleartext codes are shown to the
+	// user once in the response and then discarded.
 	s.configMu.Lock()
-	s.config.Global.Admin.RecoveryCodes = codes
+	s.config.Global.Admin.RecoveryCodes = hashes
 	s.configMu.Unlock()
 	s.persistConfig()
 	s.recordAuditR(r, "2fa.recovery_codes.generated", "", true)
+	// Discourage caching of the cleartext code list. The response is
+	// already auth-gated, but defense-in-depth against intermediate
+	// proxies and disk caches.
+	w.Header().Set("Cache-Control", "no-store, no-cache, max-age=0, private")
+	w.Header().Set("Pragma", "no-cache")
 	jsonResponse(w, map[string]any{"codes": codes, "count": len(codes)})
 }
 
@@ -64,21 +103,48 @@ func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Length-validate the supplied code before doing any hash work.
+	// Generated codes are 8 hex chars; accept 4–64 to cover any future
+	// length change without re-tuning. Rejecting obviously malformed
+	// input early avoids exposing bcrypt's timing surface to
+	// unauthenticated junk.
+	if l := len(req.Code); l < 4 || l > 64 {
+		jsonError(w, "invalid recovery code", http.StatusUnauthorized)
+		return
+	}
+
+	// Iterate stored codes under the lock. We always compare against
+	// every entry — never short-circuit on first match — so the verify
+	// time does not depend on which code matched (or whether any
+	// matched at all).
 	s.configMu.Lock()
-	found := false
-	for i, c := range s.config.Global.Admin.RecoveryCodes {
-		if subtle.ConstantTimeCompare([]byte(c), []byte(req.Code)) == 1 {
-			// Remove used code
-			s.config.Global.Admin.RecoveryCodes = append(
-				s.config.Global.Admin.RecoveryCodes[:i],
-				s.config.Global.Admin.RecoveryCodes[i+1:]...,
-			)
-			found = true
-			break
+	stored := s.config.Global.Admin.RecoveryCodes
+	matchIdx := -1
+	for i, c := range stored {
+		var eq int
+		if recoveryCodeLooksHashed(c) {
+			if err := bcrypt.CompareHashAndPassword([]byte(c), []byte(req.Code)); err == nil {
+				eq = 1
+			}
+		} else {
+			// Legacy plaintext code from pre-hash deployments. Compare
+			// constant-time and treat as a successful single-use entry
+			// if it matches.
+			eq = subtle.ConstantTimeCompare([]byte(c), []byte(req.Code))
+		}
+		if eq == 1 && matchIdx == -1 {
+			matchIdx = i
 		}
 	}
+	if matchIdx >= 0 {
+		// Remove the used code so it cannot be replayed.
+		s.config.Global.Admin.RecoveryCodes = append(
+			stored[:matchIdx],
+			stored[matchIdx+1:]...,
+		)
+	}
 	s.configMu.Unlock()
-	if !found {
+	if matchIdx < 0 {
 		jsonError(w, "invalid recovery code", http.StatusUnauthorized)
 		return
 	}
