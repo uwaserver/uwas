@@ -12,15 +12,18 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/httpx"
 )
 
 var (
 	telegramAPIBase      = "https://api.telegram.org"
 	smtpSendMailFn       = smtp.SendMail
 	notifyURLSafetyCheck = config.IsWebhookURLSafe
-	notifyHTTPClient     = &http.Client{
-		Timeout: 10 * time.Second,
-	}
+	// 10s covers webhook/Slack/Telegram p99 latencies with margin.
+	// httpx.NewClient adds dial/handshake/response-header deadlines
+	// on top of the Client.Timeout so a half-dead destination cannot
+	// hold a goroutine open by stalling mid-handshake.
+	notifyHTTPClient = httpx.NewClient(10 * time.Second)
 )
 
 // Channel is a notification destination.
@@ -153,7 +156,7 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	httpx.DrainAndClose(resp.Body)
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("telegram API returned %d", resp.StatusCode)
 	}
