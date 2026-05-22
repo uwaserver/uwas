@@ -72,9 +72,15 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 
 // startFPMDaemon starts php-fpm as a proper daemon with worker pool.
 func (m *Manager) startFPMDaemon(version, binary, listenAddr string) error {
-	// Generate a minimal php-fpm config for this listen address
-	confDir := filepath.Join(os.TempDir(), "uwas-fpm")
-	osMkdirAllHook(confDir, 0755)
+	// Generate a minimal php-fpm config for this listen address.
+	// Use os.MkdirTemp so a co-tenant on shared /tmp cannot pre-create
+	// /tmp/uwas-fpm as a symlink and redirect our config writes (or
+	// drop a hostile config that php-fpm would then execute). The
+	// directory gets a random suffix and 0700 perms by default.
+	confDir, err := os.MkdirTemp("", "uwas-fpm-*")
+	if err != nil {
+		return fmt.Errorf("create fpm conf dir: %w", err)
+	}
 	confPath := filepath.Join(confDir, fmt.Sprintf("php%s-fpm.conf", strings.ReplaceAll(version, ".", "")))
 
 	conf := fmt.Sprintf(`[global]

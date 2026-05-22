@@ -29,23 +29,31 @@ func UpdateCore(webRoot string) (string, error) {
 	var log strings.Builder
 	log.WriteString("WP-CLI not found — using direct download method\n")
 
-	// Download latest WordPress
+	// Download latest WordPress. Use os.CreateTemp so a co-tenant on
+	// shared /tmp cannot pre-stage a symlink or hostile file at a
+	// fixed path. The file is created mode 0600.
 	tarURL := "https://wordpress.org/latest.tar.gz"
-	tarPath := filepath.Join(os.TempDir(), "wordpress-update.tar.gz")
+	f, err := os.CreateTemp("", "uwas-wordpress-update-*.tar.gz")
+	if err != nil {
+		return log.String(), fmt.Errorf("create temp file: %w", err)
+	}
+	tarPath := f.Name()
 	defer os.Remove(tarPath)
 
 	resp, err := httpGetFn(tarURL)
 	if err != nil {
+		f.Close()
 		return log.String(), fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	f, err := os.Create(tarPath)
-	if err != nil {
-		return log.String(), err
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		return log.String(), fmt.Errorf("write download: %w", err)
 	}
-	io.Copy(f, resp.Body)
-	f.Close()
+	if err := f.Close(); err != nil {
+		return log.String(), fmt.Errorf("close download: %w", err)
+	}
 	log.WriteString("Downloaded latest WordPress\n")
 
 	// Verify SHA1 checksum (wordpress.org publishes .sha1 and .md5; not .sha256)
