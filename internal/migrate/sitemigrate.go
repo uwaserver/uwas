@@ -289,7 +289,10 @@ func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder)
 		content = content[:idx] + newLine + content[idx+end+2:]
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	// wp-config.php holds DB credentials. Owner + web-server-group read
+	// only; never world-readable. The downstream chown sets owner/group
+	// to www-data so the PHP worker can still read it.
+	if err := os.WriteFile(path, []byte(content), 0640); err != nil {
 		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
 		return
 	}

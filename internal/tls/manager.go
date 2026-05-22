@@ -90,6 +90,12 @@ func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logg
 		logger:  log,
 		domains: append([]config.Domain(nil), domains...),
 	}
+	// Migration: older builds wrote cert.pem / meta.json as 0644.
+	// Tighten any leftovers on startup so co-tenants on shared hosts
+	// cannot read certificate or ACME-account metadata.
+	if fixed := m.storage.TightenExistingPerms(); fixed > 0 && log != nil {
+		log.Info("tls: tightened permissions on existing cert files", "count", fixed)
+	}
 	m.allowlist.Store(buildDomainAllowlist(domains))
 
 	// Initialize ACME client if email is configured

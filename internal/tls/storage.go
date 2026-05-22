@@ -30,6 +30,40 @@ func NewCertStorage(baseDir string) *CertStorage {
 	return &CertStorage{baseDir: baseDir}
 }
 
+// TightenExistingPerms walks the storage directory and downgrades any
+// world- or group-readable cert.pem / meta.json files written by older
+// builds (which used 0644) to 0600. Best-effort: any error per file is
+// ignored so a single bad permission does not stop startup. Returns
+// the number of files updated, or 0 if the base directory does not
+// exist.
+func (s *CertStorage) TightenExistingPerms() int {
+	entries, err := os.ReadDir(s.baseDir)
+	if err != nil {
+		return 0
+	}
+	const targetMode os.FileMode = 0600
+	var fixed int
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		for _, name := range []string{"cert.pem", "meta.json"} {
+			p := filepath.Join(s.baseDir, e.Name(), name)
+			info, err := os.Stat(p)
+			if err != nil {
+				continue
+			}
+			if info.Mode().Perm() == targetMode {
+				continue
+			}
+			if err := os.Chmod(p, targetMode); err == nil {
+				fixed++
+			}
+		}
+	}
+	return fixed
+}
+
 func (s *CertStorage) domainDir(domain string) string {
 	return filepath.Join(s.baseDir, domain)
 }
@@ -41,9 +75,12 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 
-	// Write cert
+	// Write cert. The certificate body itself is public, but it lives in
+	// the same per-domain directory as the private key and the ACME meta
+	// blob, so we keep its mode aligned with the surrounding secret
+	// material (0600) rather than world-readable.
 	certPath := filepath.Join(dir, "cert.pem")
-	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+	if err := os.WriteFile(certPath, certPEM, 0600); err != nil {
 		return fmt.Errorf("write cert: %w", err)
 	}
 
@@ -72,7 +109,7 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 
 	metaJSON, _ := json.MarshalIndent(meta, "", "  ")
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
+	if err := os.WriteFile(metaPath, metaJSON, 0600); err != nil {
 		return fmt.Errorf("write meta: %w", err)
 	}
 
