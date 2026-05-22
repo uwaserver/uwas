@@ -115,14 +115,17 @@ func (sb *StickyBalancer) Select(backends []*Backend, r *http.Request) *Backend 
 	return sb.fallback.Select(backends, r)
 }
 
-// SetStickyCookie sets the sticky session cookie on the response after backend selection.
-func SetStickyCookie(w http.ResponseWriter, cookieName, backendHost string, ttl int) {
+// SetStickyCookie sets the sticky session cookie on the response after
+// backend selection. Pass secure=true when the originating request is
+// HTTPS so the cookie cannot leak to a downgraded HTTP connection.
+func SetStickyCookie(w http.ResponseWriter, cookieName, backendHost string, ttl int, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    backendHost,
 		Path:     "/",
 		MaxAge:   ttl,
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }

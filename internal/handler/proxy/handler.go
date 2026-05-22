@@ -288,9 +288,9 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		}
 		removeHopByHop(ctx.Response.Header())
 
-		// Set sticky session cookie if the balancer is sticky
+		// Set sticky session cookie if the balancer is sticky.
 		if sb, ok := balancer.(*StickyBalancer); ok {
-			SetStickyCookie(ctx.Response, sb.CookieName, backend.URL.Host, sb.TTL)
+			SetStickyCookie(ctx.Response, sb.CookieName, backend.URL.Host, sb.TTL, ctx.IsHTTPS)
 		}
 
 		// Write status + body

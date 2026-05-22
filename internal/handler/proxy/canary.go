@@ -79,12 +79,15 @@ func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain,
 		return
 	}
 
-	// Set stickiness cookie
+	// Set stickiness cookie. Mark it Secure on HTTPS so a forced
+	// downgrade cannot leak the canary assignment in cleartext;
+	// SameSite=Lax is conservative for a server-side router cookie.
 	http.SetCookie(ctx.Response, &http.Cookie{
 		Name:     cookieName,
 		Value:    "true",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   ctx.IsHTTPS,
 		SameSite: http.SameSiteLaxMode,
 	})
 
