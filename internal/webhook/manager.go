@@ -4,6 +4,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/httpx"
 )
 
 // EventType represents a webhook event type.
@@ -238,7 +240,12 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		timeout = 30 * time.Second
 	}
 
-	client := &http.Client{Timeout: timeout}
+	// Use httpx so the Transport carries proper dial / TLS / response-
+	// header deadlines in addition to the per-call Client.Timeout. We
+	// allocate one client per delivery rather than per-attempt — the
+	// retry loop reuses it across attempts so the connection pool can
+	// kick in for hosts that respond with transient 5xx.
+	client := httpx.NewClient(timeout)
 
 	payload, err := json.Marshal(qe.event)
 	if err != nil {
@@ -252,8 +259,12 @@ func (m *Manager) deliver(qe *queuedEvent) {
 			time.Sleep(time.Duration(1<<uint(attempt-1)) * time.Second)
 		}
 
-		req, err := http.NewRequest("POST", qe.webhook.URL, bytes.NewReader(payload))
+		// Per-attempt context so a stuck connection cannot live past
+		// the configured timeout even if the Transport misbehaves.
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		req, err := http.NewRequestWithContext(ctx, "POST", qe.webhook.URL, bytes.NewReader(payload))
 		if err != nil {
+			cancel()
 			m.logger.Error("failed to create webhook request", "error", err)
 			continue
 		}
@@ -276,6 +287,7 @@ func (m *Manager) deliver(qe *queuedEvent) {
 
 		resp, err := client.Do(req)
 		if err != nil {
+			cancel()
 			m.logger.Warn("webhook delivery failed",
 				"event", qe.event.Type,
 				"url", qe.webhook.URL,
@@ -284,7 +296,8 @@ func (m *Manager) deliver(qe *queuedEvent) {
 			)
 			continue
 		}
-		resp.Body.Close()
+		httpx.DrainAndClose(resp.Body)
+		cancel()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			m.logger.Debug("webhook delivered",

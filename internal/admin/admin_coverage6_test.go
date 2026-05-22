@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -28,7 +29,7 @@ func TestFetchCloudflareZones(t *testing.T) {
 	srv := testServer()
 
 	// Test with invalid token (will fail HTTP request)
-	zones, err := srv.fetchCloudflareZones("invalid-token")
+	zones, err := srv.fetchCloudflareZones(context.Background(), "invalid-token")
 	if err == nil {
 		t.Error("fetchCloudflareZones with invalid token should return error")
 	}
@@ -41,7 +42,7 @@ func TestFetchCloudflareDNSRecords(t *testing.T) {
 	srv := testServer()
 
 	// Test with invalid token (will fail HTTP request)
-	records, err := srv.fetchCloudflareDNSRecords("invalid-token", "zone-id")
+	records, err := srv.fetchCloudflareDNSRecords(context.Background(), "invalid-token", "zone-id")
 	if err == nil {
 		t.Error("fetchCloudflareDNSRecords with invalid token should return error")
 	}
@@ -54,13 +55,13 @@ func TestPurgeCloudflareCache(t *testing.T) {
 	srv := testServer()
 
 	// Test with invalid token (will fail HTTP request)
-	err := srv.purgeCloudflareCache("invalid-token", "https://example.com", false)
+	err := srv.purgeCloudflareCache(context.Background(), "invalid-token", "https://example.com", false)
 	if err == nil {
 		t.Error("purgeCloudflareCache with invalid token should return error")
 	}
 
 	// Test purge everything with invalid token
-	err = srv.purgeCloudflareCache("invalid-token", "", true)
+	err = srv.purgeCloudflareCache(context.Background(), "invalid-token", "", true)
 	if err == nil {
 		t.Error("purgeCloudflareCache everything with invalid token should return error")
 	}

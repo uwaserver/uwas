@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -35,6 +36,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/deploy"
 	"github.com/uwaserver/uwas/internal/filemanager"
+	"github.com/uwaserver/uwas/internal/httpx"
 	"github.com/uwaserver/uwas/internal/install"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/mcp"
@@ -5587,6 +5589,15 @@ type cloudflareState struct {
 var (
 	cloudflareMu     sync.RWMutex
 	cloudflareConfig *cloudflareState
+
+	// cloudflareAPIClient is the shared *http.Client used for outbound
+	// calls to api.cloudflare.com. Sharing one client lets the
+	// connection pool amortize TLS handshakes across the verify /
+	// account-fetch / zone-list / cache-purge / DNS-records-list
+	// sequence that the dashboard typically issues back-to-back.
+	// 30s total timeout covers Cloudflare's typical p99 (~3s) with
+	// generous slack.
+	cloudflareAPIClient = httpx.NewClient(30 * time.Second)
 )
 
 func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) {
@@ -5636,7 +5647,7 @@ func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Validate token by fetching zones
-	email, err := s.validateCloudflareToken(req.Token, req.AccountID)
+	email, err := s.validateCloudflareToken(r.Context(), req.Token, req.AccountID)
 	if err != nil {
 		jsonError(w, "invalid token: "+err.Error(), http.StatusBadRequest)
 		return
@@ -5661,20 +5672,20 @@ func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, map[string]string{"status": "connected"})
 }
 
-func (s *Server) validateCloudflareToken(token, accountID string) (string, error) {
-	// Call Cloudflare API to validate token and get user info
-	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", nil)
+func (s *Server) validateCloudflareToken(ctx context.Context, token, accountID string) (string, error) {
+	// Call Cloudflare API to validate token and get user info.
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cloudflareAPIClient.Do(req)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer httpx.DrainAndClose(resp.Body)
 
 	var result struct {
 		Success bool `json:"success"`
@@ -5698,18 +5709,18 @@ func (s *Server) validateCloudflareToken(token, accountID string) (string, error
 	}
 
 	// Get account info
-	req2, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/accounts/"+accountID, nil)
+	req2, err := http.NewRequestWithContext(ctx, "GET", "https://api.cloudflare.com/client/v4/accounts/"+accountID, nil)
 	if err != nil {
 		return "", err
 	}
 	req2.Header.Set("Authorization", "Bearer "+token)
 	req2.Header.Set("Content-Type", "application/json")
 
-	resp2, err := http.DefaultClient.Do(req2)
+	resp2, err := cloudflareAPIClient.Do(req2)
 	if err != nil {
 		return "", err
 	}
-	defer resp2.Body.Close()
+	defer httpx.DrainAndClose(resp2.Body)
 
 	var accResult struct {
 		Success bool `json:"success"`
@@ -6146,7 +6157,7 @@ func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Call Cloudflare API to purge cache
-	err := s.purgeCloudflareCache(cfg.Token, req.URL, req.Everything)
+	err := s.purgeCloudflareCache(r.Context(), cfg.Token, req.URL, req.Everything)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -6156,9 +6167,9 @@ func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, map[string]string{"status": "purged"})
 }
 
-func (s *Server) purgeCloudflareCache(token, url string, everything bool) error {
+func (s *Server) purgeCloudflareCache(ctx context.Context, token, url string, everything bool) error {
 	// Get zones first
-	zones, err := s.fetchCloudflareZones(token)
+	zones, err := s.fetchCloudflareZones(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -6173,21 +6184,18 @@ func (s *Server) purgeCloudflareCache(token, url string, everything bool) error 
 			continue
 		}
 
-		req, err := http.NewRequest("POST", "https://api.cloudflare.com/client/v4/zones/"+zone.ID+"/purge_cache", bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.cloudflare.com/client/v4/zones/"+zone.ID+"/purge_cache", bytes.NewReader(payload))
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := cloudflareAPIClient.Do(req)
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
-
-		// Read and discard response body to ensure connection reuse
-		io.Copy(io.Discard, resp.Body)
+		httpx.DrainAndClose(resp.Body)
 	}
 
 	return nil
@@ -6203,7 +6211,7 @@ func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	zones, err := s.fetchCloudflareZones(cfg.Token)
+	zones, err := s.fetchCloudflareZones(r.Context(), cfg.Token)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -6215,21 +6223,21 @@ func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request) {
 // fetchCloudflareZones iterates all pages of /zones (50 per page) so accounts
 // with hundreds of zones get the full list. Hard-capped at 50 pages (2500
 // zones) to bound memory and avoid runaway loops on a misbehaving API.
-func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
+func (s *Server) fetchCloudflareZones(ctx context.Context, token string) ([]cloudflareZone, error) {
 	const perPage = 50
 	const maxPages = 50
 
 	all := make([]cloudflareZone, 0, perPage)
 	for page := 1; page <= maxPages; page++ {
 		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones?per_page=%d&page=%d", perPage, page)
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := cloudflareAPIClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -6256,10 +6264,10 @@ func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
 			} `json:"errors"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
+			httpx.DrainAndClose(resp.Body)
 			return nil, err
 		}
-		resp.Body.Close()
+		httpx.DrainAndClose(resp.Body)
 
 		if !result.Success {
 			if len(result.Errors) > 0 {
@@ -6296,19 +6304,19 @@ type cloudflareZone struct {
 	Plan   string `json:"plan,omitempty"`
 }
 
-func (s *Server) fetchCloudflareDNSRecords(token, zoneID string) ([]cloudflareDNSRecord, error) {
-	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones/"+zoneID+"/dns_records", nil)
+func (s *Server) fetchCloudflareDNSRecords(ctx context.Context, token, zoneID string) ([]cloudflareDNSRecord, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.cloudflare.com/client/v4/zones/"+zoneID+"/dns_records", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cloudflareAPIClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer httpx.DrainAndClose(resp.Body)
 
 	var result struct {
 		Success bool `json:"success"`
@@ -6408,7 +6416,7 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	records, err := s.fetchCloudflareDNSRecords(cfg.Token, zoneID)
+	records, err := s.fetchCloudflareDNSRecords(r.Context(), cfg.Token, zoneID)
 	if err != nil {
 		jsonError(w, "fetch records failed: "+err.Error(), http.StatusInternalServerError)
 		return
