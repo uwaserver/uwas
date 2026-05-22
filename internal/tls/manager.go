@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/httpx"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/tls/acme"
 )
@@ -82,6 +83,14 @@ const (
 	maxOnDemandAskBodyBytes = 8 << 10 // 8KB
 	ocspFetchTimeout        = 10 * time.Second
 )
+
+// outboundHTTPClient is the shared *http.Client used for on-demand ASK
+// callouts and OCSP staple fetches. http.DefaultClient has no timeout
+// and would park a goroutine forever on a slow upstream even though
+// the request itself carries a context with deadline (the Transport
+// can block during dial/handshake before the context deadline
+// applies).
+var outboundHTTPClient = httpx.NewClient(30 * time.Second)
 
 func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logger) *Manager {
 	m := &Manager{
@@ -275,7 +284,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 				return nil, fmt.Errorf("on-demand ask request failed for %s: %w", name, err)
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := outboundHTTPClient.Do(req)
 			if err != nil {
 				m.logger.Error("on-demand ask failed", "domain", name, "error", err)
 				return nil, fmt.Errorf("on-demand ask error for %s: %w", name, err)
@@ -801,12 +810,12 @@ func (m *Manager) stapleOCSP(cert *tls.Certificate, host string) {
 	}
 	req.Header.Set("Content-Type", "application/ocsp-request")
 
-	httpResp, err := http.DefaultClient.Do(req)
+	httpResp, err := outboundHTTPClient.Do(req)
 	if err != nil {
 		m.logger.Debug("OCSP fetch failed", "domain", host, "error", err)
 		return
 	}
-	defer httpResp.Body.Close()
+	defer httpx.DrainAndClose(httpResp.Body)
 	if httpResp.StatusCode != http.StatusOK {
 		return
 	}
