@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Database,
   Table2,
@@ -38,8 +38,12 @@ interface DBColumn {
 
 interface QueryResult {
   columns: string[];
-  rows: any[][];
+  rows: unknown[][];
   count: number;
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
 }
 
 // Simple card component with header and content
@@ -68,10 +72,46 @@ export default function DBExplorer() {
   const [success, setSuccess] = useState<string>('');
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
+  const loadDatabases = useCallback(async () => {
+    try {
+      setLoading(true);
+      const dbs = (await fetchDatabases()) ?? [];
+      setDatabases(dbs);
+      if (dbs.length > 0 && !selectedDB) {
+        setSelectedDB(dbs[0].name);
+      }
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to load databases'));
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedDB]);
+
+  const loadTables = useCallback(async (db: string) => {
+    try {
+      setLoading(true);
+      const tbls = (await fetchDBTables(db)) ?? [];
+      setTables(tbls);
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to load tables'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadColumns = useCallback(async (db: string, table: string) => {
+    try {
+      const cols = (await fetchDBColumns(db, table)) ?? [];
+      setColumns(cols);
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to load columns'));
+    }
+  }, []);
+
   // Load databases on mount
   useEffect(() => {
     loadDatabases();
-  }, []);
+  }, [loadDatabases]);
 
   // Load tables when database is selected. Also clear stale per-DB
   // state so the user does not see results / column structure / status
@@ -85,50 +125,14 @@ export default function DBExplorer() {
       setSuccess('');
       setError('');
     }
-  }, [selectedDB]);
+  }, [loadTables, selectedDB]);
 
   // Load columns when table is selected
   useEffect(() => {
     if (selectedDB && selectedTable) {
       loadColumns(selectedDB, selectedTable);
     }
-  }, [selectedDB, selectedTable]);
-
-  const loadDatabases = async () => {
-    try {
-      setLoading(true);
-      const dbs = (await fetchDatabases()) ?? [];
-      setDatabases(dbs);
-      if (dbs.length > 0 && !selectedDB) {
-        setSelectedDB(dbs[0].name);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load databases');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadTables = async (db: string) => {
-    try {
-      setLoading(true);
-      const tbls = (await fetchDBTables(db)) ?? [];
-      setTables(tbls);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load tables');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadColumns = async (db: string, table: string) => {
-    try {
-      const cols = (await fetchDBColumns(db, table)) ?? [];
-      setColumns(cols);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load columns');
-    }
-  };
+  }, [loadColumns, selectedDB, selectedTable]);
 
   const executeQuery = async () => {
     if (!selectedDB || !query.trim()) return;
@@ -143,8 +147,8 @@ export default function DBExplorer() {
       // Auto-dismiss the green toast — without this it stayed forever and
       // could end up displayed alongside an error from a later failed query.
       window.setTimeout(() => setSuccess(s => s.startsWith('Query executed') ? '' : s), 4000);
-    } catch (err: any) {
-      setError(err.message || 'Query execution failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Query execution failed'));
       setQueryResult(null);
     } finally {
       setLoading(false);
@@ -319,7 +323,7 @@ export default function DBExplorer() {
                         key={rowIdx}
                         className="border-b hover:bg-accent/50 transition-colors"
                       >
-                        {row.map((cell: any, cellIdx: number) => (
+                        {row.map((cell, cellIdx) => (
                           <td
                             key={cellIdx}
                             className="px-3 py-2 font-mono text-xs truncate max-w-xs"

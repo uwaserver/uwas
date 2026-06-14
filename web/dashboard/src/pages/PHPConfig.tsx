@@ -4,7 +4,7 @@ import {
   fetchPHP, fetchPHPConfig, updatePHPConfigKey, fetchPHPConfigRaw, savePHPConfigRaw,
   restartPHP,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 const popularSettings = [
   { key: 'memory_limit', label: 'Memory Limit', placeholder: '256M', hint: 'Max memory per PHP process', validate: /^\d+[KMG]$/i },

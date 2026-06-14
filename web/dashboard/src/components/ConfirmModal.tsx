@@ -1,32 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertTriangle, Info, X } from 'lucide-react';
+import { ConfirmContext, type BaseDialogOptions, type PromptOptions } from './useConfirm';
 
 type DialogVariant = 'danger' | 'warning' | 'info';
-
-interface BaseDialogOptions {
-  title: string;
-  message?: ReactNode;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  variant?: DialogVariant;
-}
-
-interface PromptOptions extends BaseDialogOptions {
-  placeholder?: string;
-  defaultValue?: string;
-  multiline?: boolean;
-}
 
 type DialogState =
   | { kind: 'confirm'; options: BaseDialogOptions; resolve: (value: boolean) => void }
   | { kind: 'prompt'; options: PromptOptions; value: string; resolve: (value: string | null) => void };
-
-interface ConfirmContextValue {
-  confirmAction: (options: BaseDialogOptions) => Promise<boolean>;
-  promptText: (options: PromptOptions) => Promise<string | null>;
-}
-
-const ConfirmContext = createContext<ConfirmContextValue | null>(null);
 
 const variantClasses: Record<DialogVariant, { icon: string; button: string }> = {
   danger: {
@@ -148,12 +128,4 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       )}
     </ConfirmContext.Provider>
   );
-}
-
-export function useConfirm() {
-  const ctx = useContext(ConfirmContext);
-  if (!ctx) {
-    throw new Error('useConfirm must be used inside ConfirmProvider');
-  }
-  return ctx;
 }

@@ -25,6 +25,41 @@ func TestScaffoldDemoNodeCreatesDetectableEntrypoint(t *testing.T) {
 	}
 }
 
+func TestDetectCommandNodePackageScripts(t *testing.T) {
+	cases := []struct {
+		name        string
+		packageJSON string
+		want        string
+	}{
+		{
+			name:        "start script",
+			packageJSON: `{"scripts":{"start":"next start"}}`,
+			want:        "npm start",
+		},
+		{
+			name:        "preview script",
+			packageJSON: `{"scripts":{"build":"vite build","preview":"vite preview"}}`,
+			want:        "npm run preview -- --host 0.0.0.0 --port ${PORT}",
+		},
+		{
+			name:        "no runnable script",
+			packageJSON: `{"scripts":{"build":"vite build"}}`,
+			want:        "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(tc.packageJSON), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if got := detectCommand(string(RuntimeNode), dir); got != tc.want {
+				t.Fatalf("detectCommand = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestScaffoldDemoDoesNotOverwriteExistingWorkdir(t *testing.T) {
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "index.js")

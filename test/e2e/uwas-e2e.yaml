@@ -43,7 +43,7 @@ domains:
   - host: "127.0.0.1:19080"
     aliases:
       - "localhost:19080"
-    root: ./demo/www/static
+    root: ./test/docker/www/static
     type: static
     ssl:
       mode: "off"

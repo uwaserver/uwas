@@ -41,7 +41,11 @@ import {
   type CloudflareTunnel,
 } from '@/lib/api';
 import Card from '@/components/Card';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
 
 export default function Cloudflare() {
   const { confirmAction } = useConfirm();
@@ -113,8 +117,8 @@ export default function Cloudflare() {
         setTunnels([]);
       }
       setError('');
-    } catch (err: any) {
-      setError(err.message || 'Failed to load Cloudflare data');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to load Cloudflare data'));
     } finally {
       setLoading(false);
     }
@@ -132,8 +136,8 @@ export default function Cloudflare() {
         setError('install completed but binary not detected');
       }
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'install failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'install failed'));
     } finally {
       setInstallBusy(false);
     }
@@ -153,8 +157,8 @@ export default function Cloudflare() {
       setShowTunnelForm(false);
       setNewTunnel({ name: '', hostname: '', local_target: 'http://localhost:8080' });
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'create failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'create failed'));
     } finally {
       setTunnelBusy('');
     }
@@ -168,8 +172,8 @@ export default function Cloudflare() {
       await startCloudflareTunnel(id);
       setSuccess('Tunnel starting…');
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'start failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'start failed'));
     } finally {
       setTunnelBusy('');
     }
@@ -183,8 +187,8 @@ export default function Cloudflare() {
       await stopCloudflareTunnel(id);
       setSuccess('Tunnel stopped');
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'stop failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'stop failed'));
     } finally {
       setTunnelBusy('');
     }
@@ -205,8 +209,8 @@ export default function Cloudflare() {
       await deleteCloudflareTunnel(id);
       setSuccess(`Tunnel "${name}" deleted`);
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'delete failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'delete failed'));
     } finally {
       setTunnelBusy('');
     }
@@ -216,8 +220,8 @@ export default function Cloudflare() {
     try {
       const r = await fetchCloudflareTunnelLogs(id);
       setTunnelLogs({ id, text: r.logs || '(no log output yet)' });
-    } catch (err: any) {
-      setError(err.message || 'log fetch failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'log fetch failed'));
     }
   };
 
@@ -238,8 +242,8 @@ export default function Cloudflare() {
         existing: preview.skipped ?? [],
         selected: new Set(addable), // pre-select everything addable
       });
-    } catch (err: any) {
-      setError(err.message || 'Failed to preview zone hostnames');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to preview zone hostnames'));
     } finally {
       setImportLoading(false);
     }
@@ -269,8 +273,8 @@ export default function Cloudflare() {
       setSuccess(parts.join(', ') || 'Nothing to import');
       setImportZoneId(null);
       setImportPreview(null);
-    } catch (err: any) {
-      setError(err.message || 'Import failed');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Import failed'));
     } finally {
       setImportLoading(false);
     }
@@ -304,8 +308,8 @@ export default function Cloudflare() {
       setApiToken('');
       setAccountId('');
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to connect');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to connect'));
     } finally {
       setLoading(false);
     }
@@ -326,8 +330,8 @@ export default function Cloudflare() {
       await disconnectCloudflare();
       setSuccess('Disconnected from Cloudflare');
       await loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to disconnect');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to disconnect'));
     } finally {
       setLoading(false);
     }
@@ -340,8 +344,8 @@ export default function Cloudflare() {
       setSuccess(purgeEverything ? 'Entire cache purged' : `Cache purged for ${purgeUrl}`);
       setPurgeUrl('');
       setPurgeEverything(false);
-    } catch (err: any) {
-      setError(err.message || 'Failed to purge cache');
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to purge cache'));
     } finally {
       setLoading(false);
     }

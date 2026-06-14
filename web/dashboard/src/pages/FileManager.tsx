@@ -28,7 +28,7 @@ import {
   type FileEntry,
   type FileWorkspace,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';

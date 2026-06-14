@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.24)
+## Current Snapshot (v0.6.25)
 
 - **Dashboard pages:** 40 (`web/dashboard/src/pages`)
 - **Admin API routes:** 220 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
@@ -234,6 +234,57 @@ domains:
 Native runtimes with an empty workdir get a small demo file on create
 (`index.js`, `app.py`, `app.rb`, or `main.go`) so the app has something
 runnable immediately. Existing files are never overwritten.
+
+### Git Deploy + Private Repos + Webhooks
+
+Applications can be deployed from a Git repo from the dashboard or by
+persisting deploy settings in the app YAML. Private repositories can use
+either a HTTPS token or an SSH deploy key. If `build_cmd` is empty, UWAS
+auto-detects the build step from `package.json`, `requirements.txt`,
+`Gemfile`, or `go.mod`; set `build_cmd: none` to skip builds. Set
+`health_path` when deploys should require a 2xx/3xx HTTP response after
+the process starts.
+
+```yaml
+# /etc/uwas/apps.d/my-api.yaml
+name: my-api
+runtime: node
+work_dir: /var/lib/uwas/apps/my-api
+port: 0
+env:
+  NODE_ENV: production
+deploy:
+  git_url: https://github.com/acme/private-api.git
+  git_branch: main
+  health_path: /health
+  git_token: ghp_xxx
+  webhook_secret: a-long-random-secret
+  branch_filter: main
+```
+
+For SSH repositories:
+
+```yaml
+deploy:
+  git_url: git@github.com:acme/private-api.git
+  git_branch: main
+  ssh_key_path: /home/uwas/.ssh/private-api-deploy-key
+  webhook_secret: a-long-random-secret
+```
+
+Add a GitHub webhook pointing at:
+
+```text
+https://your-admin-host/api/v1/apps/my-api/webhook
+```
+
+Use `application/json` and the same webhook secret. GitLab can use the
+same URL with `X-Gitlab-Token`. Accepted webhook pushes run clone/fetch,
+auto build if needed, restart the app, verify that it is listening, and
+check `health_path` when configured. If build, restart, or health
+verification fails after an existing repo moved to a new commit, UWAS
+resets the workdir to the previous commit and restarts the previous
+version.
 
 ### Reverse Proxy with WebSocket
 

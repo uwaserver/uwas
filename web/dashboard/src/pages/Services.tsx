@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { RefreshCw, Play, Square, RotateCw, CheckCircle, XCircle } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 import {
   fetchServices,
   startService,

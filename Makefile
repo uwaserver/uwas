@@ -2,6 +2,7 @@ VERSION ?= $(shell git describe --tags 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BINARY  := uwas
+GO_PACKAGES := $(shell go list ./... | grep -v '/node_modules/')
 
 LDFLAGS := -s -w \
 	-X 'github.com/uwaserver/uwas/internal/build.Version=$(VERSION)' \
@@ -39,20 +40,20 @@ release: check dashboard linux linux-arm
 # ── Quality ─────────────────────────────────────────────────
 
 test:
-	go test -count=1 -timeout 600s ./...
+	go test -count=1 -timeout 600s $(GO_PACKAGES)
 
 test-coverage:
 	go test ./internal/... ./pkg/... -coverprofile=coverage.out -timeout 600s
 	@go tool cover -func=coverage.out | grep "^total:" | awk '{print "Total coverage:", $$3}'
 
 lint:
-	go vet ./...
-	@which staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "staticcheck not installed, skipping"
+	go vet $(GO_PACKAGES)
+	@which staticcheck >/dev/null 2>&1 && staticcheck $(GO_PACKAGES) || echo "staticcheck not installed, skipping"
 
 check: lint
-	@echo "=== Go vet ===" && go vet ./...
+	@echo "=== Go vet ===" && go vet $(GO_PACKAGES)
 	@echo "=== TypeScript ===" && cd web/dashboard && npx tsc -b
-	@echo "=== Tests ===" && go test -count=1 -timeout 600s ./...
+	@echo "=== Tests ===" && go test -count=1 -timeout 600s $(GO_PACKAGES)
 	@echo "All checks passed."
 
 # ── Dashboard ───────────────────────────────────────────────

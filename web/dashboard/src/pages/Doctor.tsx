@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Stethoscope, Wrench, CheckCircle, AlertTriangle, XCircle, Sparkles } from 'lucide-react';
 import { fetchDoctorReport, fetchDoctorFix, type DoctorReport } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 const statusIcon = (s: string) => {
   switch (s) {

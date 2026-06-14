@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.25] - 2026-06-14
+
+### Added
+
+- Added release-grade CI gates for Go vulnerability scanning, dashboard audit
+  and lint checks, and docs audit/lint/build validation.
+- Added Docker build hygiene with a `.dockerignore` and pinned Alpine base
+  images for reproducible production image builds.
+- Added filtered Go package discovery in local and CI checks so installed
+  frontend `node_modules` directories cannot accidentally enter Go test,
+  vet, or vulnerability scans.
+
+### Changed
+
+- Updated the project toolchain target to Go 1.26.4 and refreshed compatible
+  Go and frontend dependency lockfiles.
+- Rebuilt the embedded dashboard bundle with the current frontend sources.
+- Aligned the example and e2e configurations with supported compression
+  algorithm names and existing static fixture paths.
+
+### Fixed
+
+- Fixed data races in the admin server startup path, standalone app process
+  supervision, DNS checker test hooks, install queue snapshots, and webhook
+  delivery tests.
+- Fixed admin package installer command stubbing so async package tasks are
+  race-clean under `go test -race`.
+- Fixed systemd unit defaults to match the installer/runtime model used by
+  current UWAS deployments.
+- Fixed Software Library parsing and dashboard lint issues that blocked strict
+  production validation.
+
 ## [0.6.24] - 2026-05-20
 
 ### Added

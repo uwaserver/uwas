@@ -126,10 +126,10 @@ func TestFireDisabledWebhook(t *testing.T) {
 
 func TestHMACSignature(t *testing.T) {
 	secret := "my-secret-key"
-	var receivedSig string
+	receivedSig := make(chan string, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedSig = r.Header.Get("X-UWAS-Signature")
+		receivedSig <- r.Header.Get("X-UWAS-Signature")
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -142,15 +142,20 @@ func TestHMACSignature(t *testing.T) {
 	})
 
 	m.Fire(EventTest, map[string]any{"msg": "hello"})
-	time.Sleep(500 * time.Millisecond)
+	var sig string
+	select {
+	case sig = <-receivedSig:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for webhook delivery")
+	}
 
-	if receivedSig == "" {
+	if sig == "" {
 		t.Fatal("expected X-UWAS-Signature header, got empty")
 	}
 
 	// Verify it starts with sha256=
-	if len(receivedSig) < 8 || receivedSig[:7] != "sha256=" {
-		t.Fatalf("signature should start with 'sha256=', got %q", receivedSig)
+	if len(sig) < 8 || sig[:7] != "sha256=" {
+		t.Fatalf("signature should start with 'sha256=', got %q", sig)
 	}
 }
 
@@ -205,10 +210,10 @@ func TestRetryOnFailure(t *testing.T) {
 }
 
 func TestFireTo(t *testing.T) {
-	var received bool
+	received := make(chan struct{}, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received = true
+		received <- struct{}{}
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -218,10 +223,10 @@ func TestFireTo(t *testing.T) {
 
 	// No webhooks configured — FireTo should still deliver
 	m.FireTo(srv.URL, EventTest, map[string]any{"msg": "direct"})
-	time.Sleep(500 * time.Millisecond)
-
-	if !received {
-		t.Error("expected FireTo to deliver to URL even without configured webhooks")
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected FireTo to deliver to URL even without configured webhooks")
 	}
 }
 
@@ -248,10 +253,10 @@ func TestMatchesEvent(t *testing.T) {
 }
 
 func TestHeaders(t *testing.T) {
-	var receivedHeaders http.Header
+	receivedHeaders := make(chan http.Header, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
+		receivedHeaders <- r.Header.Clone()
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -270,12 +275,17 @@ func TestHeaders(t *testing.T) {
 	})
 
 	m.Fire(EventTest, nil)
-	time.Sleep(500 * time.Millisecond)
-
-	if receivedHeaders.Get("X-Custom") != "hello" {
-		t.Errorf("expected X-Custom header 'hello', got %q", receivedHeaders.Get("X-Custom"))
+	var headers http.Header
+	select {
+	case headers = <-receivedHeaders:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for webhook delivery")
 	}
-	if receivedHeaders.Get("X-UWAS-Event") != "test" {
-		t.Errorf("expected X-UWAS-Event header 'test', got %q", receivedHeaders.Get("X-UWAS-Event"))
+
+	if headers.Get("X-Custom") != "hello" {
+		t.Errorf("expected X-Custom header 'hello', got %q", headers.Get("X-Custom"))
+	}
+	if headers.Get("X-UWAS-Event") != "test" {
+		t.Errorf("expected X-UWAS-Event header 'test', got %q", headers.Get("X-UWAS-Event"))
 	}
 }

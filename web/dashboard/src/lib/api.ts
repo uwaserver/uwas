@@ -1016,6 +1016,9 @@ export interface AppDeployConfig {
   git_url?: string;
   git_branch?: string;
   build_cmd?: string;
+  health_path?: string;
+  ssh_key_path?: string;
+  git_token?: string;
   webhook_secret?: string;
   branch_filter?: string;
 }
@@ -1098,9 +1101,12 @@ export const createApp = (
 };
 
 export interface AppDeployRequest {
-  git_url: string;
+  git_url?: string;
   git_branch?: string;
   build_cmd?: string;
+  health_path?: string;
+  ssh_key_path?: string;
+  git_token?: string;
   env?: Record<string, string>;
   skip_restart?: boolean;
 }
@@ -1109,6 +1115,9 @@ export interface AppDeployResult {
   ok: boolean;
   mode: 'clone' | 'pull';
   commit_sha?: string;
+  rolled_back?: boolean;
+  rollback_sha?: string;
+  rollback_note?: string;
   log: string;
   error?: string;
 }
@@ -1118,6 +1127,41 @@ export const deployApp = (name: string, body: AppDeployRequest) =>
     method: 'POST',
     body: JSON.stringify(body),
   });
+
+export interface AppPreflightCheck {
+  name: string;
+  ok: boolean;
+  required: boolean;
+  message?: string;
+}
+
+export interface AppDeployPreflight {
+  ok: boolean;
+  checks: AppPreflightCheck[];
+  app?: App;
+}
+
+export interface AppDeployHistoryEntry {
+  source: string;
+  started_at: string;
+  finished?: string;
+  ok: boolean;
+  mode?: 'clone' | 'pull';
+  commit_sha?: string;
+  ref?: string;
+  rolled_back?: boolean;
+  rollback_sha?: string;
+  rollback_note?: string;
+  error?: string;
+  log_tail?: string;
+}
+
+export const fetchAppDeployPreflight = (name: string) =>
+  api<AppDeployPreflight>(`/api/v1/apps/${encodeURIComponent(name)}/deploy-preflight`);
+
+export const fetchAppDeployHistory = (name: string) =>
+  api<{ name: string; items: AppDeployHistoryEntry[] }>(
+    `/api/v1/apps/${encodeURIComponent(name)}/deploy-history`);
 
 export interface SoftwareTemplate {
   id: string;

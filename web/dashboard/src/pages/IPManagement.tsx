@@ -13,7 +13,7 @@ import {
   type ServerIPInfo,
   type DomainData,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 export default function IPManagement() {
   const { confirmAction } = useConfirm();

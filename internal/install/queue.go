@@ -22,9 +22,9 @@ const (
 // Task represents a single installation/uninstallation operation.
 type Task struct {
 	ID        string     `json:"id"`
-	Type      string     `json:"type"`    // "php", "database", "package"
-	Name      string     `json:"name"`    // "PHP 8.5", "MariaDB", "certbot"
-	Action    string     `json:"action"`  // "install", "uninstall", "repair"
+	Type      string     `json:"type"`   // "php", "database", "package"
+	Name      string     `json:"name"`   // "PHP 8.5", "MariaDB", "certbot"
+	Action    string     `json:"action"` // "install", "uninstall", "repair"
 	Status    TaskStatus `json:"status"`
 	Output    string     `json:"output"`
 	Error     string     `json:"error,omitempty"`
@@ -84,6 +84,7 @@ func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
 		CreatedAt: time.Now(),
 	}
 	q.tasks[id] = task
+	cp := *task
 	q.mu.Unlock()
 
 	select {
@@ -92,9 +93,10 @@ func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
 		q.mu.Lock()
 		task.Status = StatusError
 		task.Error = "manager stopped"
+		cp = *task
 		q.mu.Unlock()
 	}
-	return task
+	return &cp
 }
 
 // Get returns a task by ID.

@@ -32,7 +32,7 @@ type Config struct {
 
 // User represents an SFTP user with chroot jail.
 type User struct {
-	Password string // bcrypt hash (preferred) or legacy plaintext
+	Password string // bcrypt hash
 	Root     string // chroot directory (e.g. /var/www/example.com/public_html)
 	ReadOnly bool
 }

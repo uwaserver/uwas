@@ -92,7 +92,7 @@ domains:
     compression:
       enabled: true
       algorithms:
-        - brotli
+        - br
         - gzip
       min_size: 1024
       types:

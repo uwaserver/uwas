@@ -69,7 +69,7 @@ func (s *StopCommand) Run(args []string) error {
 	// Wait for exit (up to 15 seconds)
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
-		if !isProcessAlive(process) {
+		if !isProcessAliveFn(process) {
 			fmt.Println("UWAS stopped.")
 			return nil
 		}

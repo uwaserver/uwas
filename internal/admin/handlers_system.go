@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/build"
@@ -18,7 +19,29 @@ import (
 	"github.com/uwaserver/uwas/internal/services"
 )
 
-var systemExecCommand = exec.Command
+var (
+	systemExecCommandMu sync.RWMutex
+	systemExecCommand   = exec.Command
+)
+
+func newSystemExecCommand(name string, args ...string) *exec.Cmd {
+	systemExecCommandMu.RLock()
+	fn := systemExecCommand
+	systemExecCommandMu.RUnlock()
+	return fn(name, args...)
+}
+
+func setSystemExecCommand(fn func(string, ...string) *exec.Cmd) func() {
+	systemExecCommandMu.Lock()
+	orig := systemExecCommand
+	systemExecCommand = fn
+	systemExecCommandMu.Unlock()
+	return func() {
+		systemExecCommandMu.Lock()
+		systemExecCommand = orig
+		systemExecCommandMu.Unlock()
+	}
+}
 
 // ============ Self-Update ============
 
@@ -330,7 +353,7 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 			for _, bin := range kp.binaries {
 				if p, err := exec.LookPath(bin); err == nil {
 					pi.Installed = true
-					if out, err := systemExecCommand(p, "--version").CombinedOutput(); err == nil {
+					if out, err := newSystemExecCommand(p, "--version").CombinedOutput(); err == nil {
 						pi.Version = packageVersionLine(out)
 					}
 					break
@@ -345,10 +368,10 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 }
 
 func detectDockerComposePackage() (bool, string) {
-	if out, err := systemExecCommand("docker", "compose", "version").CombinedOutput(); err == nil {
+	if out, err := newSystemExecCommand("docker", "compose", "version").CombinedOutput(); err == nil {
 		return true, packageVersionLine(out)
 	}
-	if out, err := systemExecCommand("docker-compose", "--version").CombinedOutput(); err == nil {
+	if out, err := newSystemExecCommand("docker-compose", "--version").CombinedOutput(); err == nil {
 		return true, packageVersionLine(out)
 	}
 	return false, ""
@@ -431,28 +454,28 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 
 		if action == "remove" {
 			if pkgID == "wp-cli" {
-				cmd = systemExecCommand("rm", "-f", "/usr/local/bin/wp")
+				cmd = newSystemExecCommand("rm", "-f", "/usr/local/bin/wp")
 			} else {
-				systemExecCommand("systemctl", "stop", pkgID).Run()
+				newSystemExecCommand("systemctl", "stop", pkgID).Run()
 				args := append([]string{"remove", "-y", "--purge"}, aptRemove...)
-				cmd = systemExecCommand("apt", args...)
+				cmd = newSystemExecCommand("apt", args...)
 			}
 		} else {
 			if pkgID == "wp-cli" {
-				cmd = systemExecCommand("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
+				cmd = newSystemExecCommand("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
 			} else if pkgID == "nodejs" {
 				// Distro nodejs is typically too old to run modern apps.
 				// Use NodeSource LTS setup so Apps page Node.js sites work out of the box.
-				cmd = systemExecCommand("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
+				cmd = newSystemExecCommand("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
 			} else if pkgID == "docker-compose" {
-				cmd = systemExecCommand("bash", "-c", strings.Join([]string{
+				cmd = newSystemExecCommand("bash", "-c", strings.Join([]string{
 					"apt-get update",
 					"(apt-get install -y docker.io docker-compose-plugin || apt-get install -y docker.io docker-compose)",
 					"(systemctl enable --now docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true)",
 				}, " && "))
 			} else if len(aptPkgs) > 0 {
 				args := append([]string{"install", "-y"}, aptPkgs...)
-				cmd = systemExecCommand("apt", args...)
+				cmd = newSystemExecCommand("apt", args...)
 			} else {
 				return fmt.Errorf("no install method for %s", pkgName)
 			}

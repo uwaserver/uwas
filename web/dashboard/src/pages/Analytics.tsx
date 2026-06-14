@@ -10,7 +10,7 @@ import { fetchAnalytics, fetchBandwidth, resetBandwidth, fetchFeatures, type Dom
 import Card from '@/components/Card';
 import FeatureBanner from '@/components/FeatureBanner';
 import { usePolling } from '@/hooks/usePolling';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 function formatBytes(b: number): string {
   if (b >= 1 << 30) return `${(b / (1 << 30)).toFixed(1)} GB`;

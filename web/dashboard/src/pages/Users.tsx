@@ -5,7 +5,7 @@ import {
   fetchSSHKeys, addSSHKey, deleteSSHKey,
   type SiteUser, type SiteUserCreated, type DomainData,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 function SSHKeyPanel({ domain }: { domain: string }) {
   const { confirmAction } = useConfirm();

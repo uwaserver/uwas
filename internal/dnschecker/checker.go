@@ -94,15 +94,17 @@ func Check(domain string) Result {
 	}
 
 	// TXT (with timeout)
+	lookupTXTFn := lookupTXT
+	timeout := txtTimeout
 	txtCh := make(chan []string, 1)
 	go func() {
-		txt, _ := lookupTXT(domain)
+		txt, _ := lookupTXTFn(domain)
 		txtCh <- txt
 	}()
 	select {
 	case txt := <-txtCh:
 		r.TXT = txt
-	case <-time.After(txtTimeout):
+	case <-time.After(timeout):
 	}
 
 	return r
