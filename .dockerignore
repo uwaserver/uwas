@@ -1,0 +1,19 @@
+.git
+.gitignore
+
+# Local build outputs
+bin/
+coverage.out
+dist/
+
+# Frontend dependency/install artifacts are rebuilt outside the Docker image;
+# the embedded dashboard dist is intentionally kept under internal/admin.
+node_modules/
+docs/site/node_modules/
+web/dashboard/node_modules/
+docs/site/dist/
+
+# Local reports and transient test data
+security-report/
+tmp/
+*.log

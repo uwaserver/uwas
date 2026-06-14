@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -677,7 +678,7 @@ func TestAppCreateWithGitSourceDoesNotScaffoldDemo(t *testing.T) {
 
 	workDir := filepath.Join(t.TempDir(), "from-git")
 	body := strings.NewReader(fmt.Sprintf(
-		`{"name":"from-git","runtime":"node","work_dir":%q,"deploy":{"git_url":"https://github.com/example/repo.git","git_branch":"main","build_cmd":"npm ci"}}`,
+		`{"name":"from-git","runtime":"node","work_dir":%q,"deploy":{"git_url":"https://github.com/example/repo.git","git_branch":"main","build_cmd":"npm ci","ssh_key_path":"/home/uwas/.ssh/deploy_key","git_token":"ghp_private"}}`,
 		workDir,
 	))
 	rec := httptest.NewRecorder()
@@ -692,8 +693,854 @@ func TestAppCreateWithGitSourceDoesNotScaffoldDemo(t *testing.T) {
 	if err != nil || def == nil {
 		t.Fatalf("created app not persisted: def=%v err=%v", def, err)
 	}
-	if def.Deploy.GitURL != "https://github.com/example/repo.git" || def.Deploy.GitBranch != "main" || def.Deploy.BuildCmd != "npm ci" {
+	if def.Deploy.GitURL != "https://github.com/example/repo.git" ||
+		def.Deploy.GitBranch != "main" ||
+		def.Deploy.BuildCmd != "npm ci" ||
+		def.Deploy.SSHKeyPath != "/home/uwas/.ssh/deploy_key" ||
+		def.Deploy.GitToken != "ghp_private" {
 		t.Fatalf("deploy config not persisted: %#v", def.Deploy)
+	}
+}
+
+func TestAppUpdateDeployConfigDoesNotRestartRunningApp(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := t.TempDir()
+	if err := mgr.Register(&apps.App{
+		Name:    "deploy-config-only",
+		Runtime: apps.RuntimeCustom,
+		Command: "sleep 5",
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Start("deploy-config-only"); err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Stop("deploy-config-only")
+	before := mgr.Get("deploy-config-only")
+	if before == nil || !before.Running || before.PID == 0 {
+		t.Fatalf("app should be running before update: %#v", before)
+	}
+
+	body := strings.NewReader(`{"deploy":{"git_url":"https://github.com/example/private.git","git_branch":"main","build_cmd":"npm ci && npm run build","ssh_key_path":"/home/uwas/.ssh/deploy_key","git_token":"ghp_private","webhook_secret":"hook-secret","branch_filter":"main"}}`)
+	req := httptest.NewRequest("PUT", "/api/v1/apps/deploy-config-only", body)
+	req.SetPathValue("name", "deploy-config-only")
+	rec := httptest.NewRecorder()
+	s.handleAppUpdate(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	after := mgr.Get("deploy-config-only")
+	if after == nil || !after.Running {
+		t.Fatalf("app should still be running after deploy-only update: %#v", after)
+	}
+	if after.PID != before.PID {
+		t.Fatalf("deploy-only update restarted app: before pid=%d after pid=%d", before.PID, after.PID)
+	}
+	def, err := mgr.Store().Get("deploy-config-only")
+	if err != nil || def == nil {
+		t.Fatalf("updated app not persisted: def=%v err=%v", def, err)
+	}
+	if def.Deploy.GitURL != "https://github.com/example/private.git" ||
+		def.Deploy.GitBranch != "main" ||
+		def.Deploy.BuildCmd != "npm ci && npm run build" ||
+		def.Deploy.SSHKeyPath != "/home/uwas/.ssh/deploy_key" ||
+		def.Deploy.GitToken != "ghp_private" ||
+		def.Deploy.WebhookSecret != "hook-secret" ||
+		def.Deploy.BranchFilter != "main" {
+		t.Fatalf("deploy config not persisted: %#v", def.Deploy)
+	}
+}
+
+func TestAppUpdateRejectsInvalidDeployConfig(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "bad url",
+			body: `{"deploy":{"git_url":"file:///tmp/repo.git"}}`,
+			want: "file:// protocol not allowed",
+		},
+		{
+			name: "bad branch",
+			body: `{"deploy":{"git_url":"https://github.com/example/private.git","git_branch":"main;rm -rf /"}}`,
+			want: "invalid git branch name",
+		},
+		{
+			name: "bad build",
+			body: `{"deploy":{"git_url":"https://github.com/example/private.git","build_cmd":"npm ci; rm -rf /"}}`,
+			want: "invalid build command",
+		},
+		{
+			name: "token with ssh url",
+			body: `{"deploy":{"git_url":"git@github.com:example/private.git","git_token":"ghp_private"}}`,
+			want: "git_token can only be used with https:// git URLs",
+		},
+		{
+			name: "relative ssh key",
+			body: `{"deploy":{"git_url":"git@github.com:example/private.git","ssh_key_path":"id_ed25519"}}`,
+			want: "invalid SSH key path",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testServer()
+			store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+			mgr := apps.NewManager(store, nil)
+			s.SetAppsManager(mgr)
+			if err := mgr.Register(&apps.App{
+				Name:    "bad-deploy-config",
+				Runtime: apps.RuntimeNode,
+				WorkDir: filepath.Join(t.TempDir(), "bad-deploy-config"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest("PUT", "/api/v1/apps/bad-deploy-config", strings.NewReader(tc.body))
+			req.SetPathValue("name", "bad-deploy-config")
+			rec := httptest.NewRecorder()
+			s.handleAppUpdate(rec, withAdminContext(req))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400, body: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("body = %s, want %q", rec.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestAppGetRedactsGitToken(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	if err := mgr.Register(&apps.App{
+		Name:    "private-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: filepath.Join(t.TempDir(), "private-app"),
+		Deploy: apps.DeployConfig{
+			GitURL:   "https://github.com/example/private.git",
+			GitToken: "ghp_private",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/apps/private-app", nil)
+	req.SetPathValue("name", "private-app")
+	rec := httptest.NewRecorder()
+	s.handleAppGet(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "ghp_private") {
+		t.Fatalf("git token leaked in response: %s", rec.Body.String())
+	}
+	def, err := mgr.Store().Get("private-app")
+	if err != nil || def == nil {
+		t.Fatalf("stored app missing: def=%v err=%v", def, err)
+	}
+	if def.Deploy.GitToken != "ghp_private" {
+		t.Fatalf("git token should remain persisted for webhook deploys: %#v", def.Deploy)
+	}
+}
+
+func TestAppDeployPrivateRepoRefreshesCommandAndStartsClonedNodeApp(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-private")
+	if err := mgr.Register(&apps.App{
+		Name:    "node-private",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := mgr.Get("node-private")
+	if before == nil {
+		t.Fatal("registered app not found")
+	}
+	if before.Command != "" {
+		t.Fatalf("pre-deploy command = %q, want empty before source exists", before.Command)
+	}
+
+	fakeBin := t.TempDir()
+	gitLog := filepath.Join(t.TempDir(), "git.log")
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+set -eu
+cmd="$1"
+shift || true
+case "$cmd" in
+  clone)
+    last=""
+    for arg in "$@"; do
+      echo "$arg" >> "$FAKE_GIT_LOG"
+      last="$arg"
+    done
+    if [ -n "${GIT_ASKPASS:-}" ]; then
+      "$GIT_ASKPASS" "Username for github.com" >> "$FAKE_GIT_LOG"
+      "$GIT_ASKPASS" "Password for github.com" >> "$FAKE_GIT_LOG"
+    fi
+    dest="$last"
+    mkdir -p "$dest/.git"
+    cat > "$dest/index.js" <<'JS'
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => {
+  res.statusCode = 200;
+  res.end('ok');
+}).listen(port, '127.0.0.1');
+JS
+    ;;
+  rev-parse)
+    echo abc123
+    ;;
+  fetch|reset|remote)
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_GIT_LOG", gitLog)
+
+	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-node.git","git_token":"ghp_private","git_branch":"main"}`)
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-private/deploy", body)
+	req.SetPathValue("name", "node-private")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+	defer mgr.Stop("node-private")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "ghp_private") {
+		t.Fatalf("deploy response leaked git token: %s", rec.Body.String())
+	}
+	var resp AppDeployResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("deploy should be OK, error=%q log=%s", resp.Error, resp.Log)
+	}
+	if resp.CommitSHA != "abc123" {
+		t.Fatalf("commit sha = %q, want abc123", resp.CommitSHA)
+	}
+	after := mgr.Get("node-private")
+	if after == nil || !after.Running {
+		t.Fatalf("app should be running after deploy: %#v", after)
+	}
+	if after.Command != "node index.js" {
+		t.Fatalf("post-deploy command = %q, want node index.js", after.Command)
+	}
+	logBytes, err := os.ReadFile(gitLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(logBytes), "ghp_private@github.com") {
+		t.Fatalf("git token leaked into clone URL args, log=%s", string(logBytes))
+	}
+	if !strings.Contains(string(logBytes), "ghp_private") {
+		t.Fatalf("fake git did not receive token via askpass helper, log=%s", string(logBytes))
+	}
+}
+
+func TestAppDeployRestartsAlreadyRunningAppWithNewSource(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-redeploy")
+	if err := os.MkdirAll(filepath.Join(workDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "index.js"), []byte(`
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => res.end('old')).listen(port, '127.0.0.1');
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Register(&apps.App{
+		Name:    "node-redeploy",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+		Deploy: apps.DeployConfig{
+			GitURL:    "https://github.com/acme/private-node.git",
+			GitBranch: "main",
+			GitToken:  "ghp_private",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Start("node-redeploy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.WaitListening("node-redeploy", 3*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Stop("node-redeploy")
+	before := mgr.Get("node-redeploy")
+	if before == nil || !before.Running || before.PID == 0 {
+		t.Fatalf("app should be running before redeploy: %#v", before)
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d", before.Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(oldBody) != "old" {
+		t.Fatalf("pre-deploy body = %q, want old", string(oldBody))
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+set -eu
+case "$1" in
+  fetch)
+    exit 0
+    ;;
+  reset)
+    cat > index.js <<'JS'
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => res.end('new')).listen(port, '127.0.0.1');
+JS
+    ;;
+  rev-parse)
+    echo redeploy123
+    ;;
+  remote)
+    if [ "$2" = "get-url" ]; then
+      echo https://github.com/acme/private-node.git
+    fi
+    ;;
+  symbolic-ref)
+    echo origin/main
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-redeploy/deploy", strings.NewReader(`{}`))
+	req.SetPathValue("name", "node-redeploy")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var deployResp AppDeployResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &deployResp); err != nil {
+		t.Fatal(err)
+	}
+	if !deployResp.OK {
+		t.Fatalf("redeploy should be OK, error=%q log=%s", deployResp.Error, deployResp.Log)
+	}
+	after := mgr.Get("node-redeploy")
+	if after == nil || !after.Running || after.PID == 0 {
+		t.Fatalf("app should be running after redeploy: %#v", after)
+	}
+	if after.PID == before.PID {
+		t.Fatalf("redeploy reused old process pid=%d", before.PID)
+	}
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:%d", after.Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(newBody) != "new" {
+		t.Fatalf("post-deploy body = %q, want new", string(newBody))
+	}
+}
+
+func TestAppDeployHealthFailureRollsBackToPreviousCommit(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-rollback")
+	if err := os.MkdirAll(filepath.Join(workDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldJS := `
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+  res.end('old');
+}).listen(port, '127.0.0.1');
+`
+	if err := os.WriteFile(filepath.Join(workDir, "index.js"), []byte(oldJS), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".commit"), []byte("oldsha\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Register(&apps.App{
+		Name:    "node-rollback",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+		Env:     map[string]string{"OLD_FLAG": "1"},
+		Deploy: apps.DeployConfig{
+			GitURL:     "https://github.com/acme/private-node.git",
+			GitBranch:  "main",
+			BuildCmd:   "none",
+			HealthPath: "/health",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Start("node-rollback"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.WaitListening("node-rollback", 3*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Stop("node-rollback")
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+set -eu
+case "$1" in
+  rev-parse)
+    cat .commit
+    ;;
+  fetch)
+    exit 0
+    ;;
+  reset)
+    ref="$3"
+    if [ "$ref" = "origin/main" ]; then
+      cat > index.js <<'JS'
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/new-health') {
+    res.statusCode = 500;
+    res.end('bad');
+    return;
+  }
+  res.end('new-bad');
+}).listen(port, '127.0.0.1');
+JS
+      echo newsha > .commit
+    elif [ "$ref" = "oldsha" ]; then
+      cat > index.js <<'JS'
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+  res.end('old');
+}).listen(port, '127.0.0.1');
+JS
+      echo oldsha > .commit
+    fi
+    ;;
+  remote)
+    if [ "$2" = "get-url" ]; then
+      echo https://github.com/acme/private-node.git
+    fi
+    ;;
+  symbolic-ref)
+    echo origin/main
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-rollback/deploy", strings.NewReader(`{"health_path":"/new-health","env":{"NEW_FLAG":"1"}}`))
+	req.SetPathValue("name", "node-rollback")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var deployResp AppDeployResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &deployResp); err != nil {
+		t.Fatal(err)
+	}
+	if deployResp.OK {
+		t.Fatalf("deploy should fail health check before rollback, response=%#v", deployResp)
+	}
+	if !deployResp.RolledBack || deployResp.RollbackSHA != "oldsha" {
+		t.Fatalf("expected rollback to oldsha, response=%#v", deployResp)
+	}
+	after := mgr.Get("node-rollback")
+	if after == nil || !after.Running || after.PID == 0 {
+		t.Fatalf("app should be running after rollback: %#v", after)
+	}
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d", after.Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "old" {
+		t.Fatalf("post-rollback body = %q, want old", string(body))
+	}
+	if data, err := os.ReadFile(filepath.Join(workDir, ".commit")); err != nil || strings.TrimSpace(string(data)) != "oldsha" {
+		t.Fatalf("workdir commit = %q err=%v, want oldsha", string(data), err)
+	}
+	stored, err := mgr.Store().Get("node-rollback")
+	if err != nil || stored == nil {
+		t.Fatalf("stored app missing after rollback: app=%#v err=%v", stored, err)
+	}
+	if stored.Deploy.HealthPath != "/health" {
+		t.Fatalf("stored health path = %q, want previous /health", stored.Deploy.HealthPath)
+	}
+	if stored.Env["NEW_FLAG"] != "" || stored.Env["OLD_FLAG"] != "1" {
+		t.Fatalf("stored env after rollback = %#v, want only previous env", stored.Env)
+	}
+}
+
+func TestWebhookDeployRefreshesCommandAndStartsClonedNodeApp(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-webhook")
+	if err := mgr.Register(&apps.App{
+		Name:    "node-webhook",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+		Deploy: apps.DeployConfig{
+			GitURL:        "https://github.com/acme/private-node.git",
+			GitBranch:     "main",
+			GitToken:      "ghp_private",
+			WebhookSecret: "hook-secret",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+set -eu
+cmd="$1"
+shift || true
+case "$cmd" in
+  clone)
+    last=""
+    for arg in "$@"; do
+      last="$arg"
+    done
+    dest="$last"
+    mkdir -p "$dest/.git"
+    cat > "$dest/index.js" <<'JS'
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => res.end('webhook-ok')).listen(port, '127.0.0.1');
+JS
+    ;;
+  rev-parse)
+    echo def456
+    ;;
+  fetch|reset|remote)
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s.runWebhookDeploy("node-webhook", "refs/heads/main")
+	defer mgr.Stop("node-webhook")
+
+	lastWebhookMu.Lock()
+	status := lastWebhookByName["node-webhook"]
+	lastWebhookMu.Unlock()
+	if status == nil {
+		t.Fatal("webhook status was not recorded")
+	}
+	if !status.OK {
+		t.Fatalf("webhook deploy should be OK: %#v", status)
+	}
+	if status.CommitSHA != "def456" {
+		t.Fatalf("commit sha = %q, want def456", status.CommitSHA)
+	}
+	after := mgr.Get("node-webhook")
+	if after == nil || !after.Running {
+		t.Fatalf("app should be running after webhook deploy: %#v", after)
+	}
+	if after.Command != "node index.js" {
+		t.Fatalf("post-webhook command = %q, want node index.js", after.Command)
+	}
+}
+
+func TestAppDeployPrivateRepoAutoBuildThenStartsNPMApp(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-build-private")
+	if err := mgr.Register(&apps.App{
+		Name:    "node-build-private",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	gitScript := `#!/bin/sh
+set -eu
+cmd="$1"
+shift || true
+case "$cmd" in
+  clone)
+    last=""
+    for arg in "$@"; do last="$arg"; done
+    dest="$last"
+    mkdir -p "$dest/.git"
+    cat > "$dest/package.json" <<'JSON'
+{"scripts":{"build":"node build.js","start":"node index.js"}}
+JSON
+    cat > "$dest/package-lock.json" <<'JSON'
+{"lockfileVersion":3}
+JSON
+    cat > "$dest/build.js" <<'JS'
+require('fs').writeFileSync('build.marker', 'built');
+JS
+    cat > "$dest/index.js" <<'JS'
+const http = require('http');
+const fs = require('fs');
+if (!fs.existsSync('build.marker')) {
+  console.error('missing build.marker');
+  process.exit(42);
+}
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => res.end('built-ok')).listen(port, '127.0.0.1');
+JS
+    ;;
+  rev-parse)
+    echo build123
+    ;;
+  fetch|reset|remote)
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(gitScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	fakeNPM := filepath.Join(fakeBin, "npm")
+	npmScript := `#!/bin/sh
+set -eu
+case "$1" in
+  ci|install)
+    exit 0
+    ;;
+  run)
+    if [ "$2" = "build" ]; then
+      node build.js
+      exit 0
+    fi
+    ;;
+  start)
+    exec node index.js
+    ;;
+esac
+echo "unexpected npm args: $*" >&2
+exit 2
+`
+	if err := os.WriteFile(fakeNPM, []byte(npmScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-build-node.git","git_token":"ghp_private","git_branch":"main"}`)
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-build-private/deploy", body)
+	req.SetPathValue("name", "node-build-private")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+	defer mgr.Stop("node-build-private")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var resp AppDeployResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("deploy should be OK, error=%q log=%s", resp.Error, resp.Log)
+	}
+	if !strings.Contains(resp.Log, "$ npm ci && npm run build") {
+		t.Fatalf("auto build command not logged/executed, log=%s", resp.Log)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "build.marker")); err != nil {
+		t.Fatalf("build marker missing: %v", err)
+	}
+	after := mgr.Get("node-build-private")
+	if after == nil || !after.Running {
+		t.Fatalf("app should be running after build deploy: %#v", after)
+	}
+	if after.Command != "npm start" {
+		t.Fatalf("post-deploy command = %q, want npm start", after.Command)
+	}
+}
+
+func TestAppDeployBuildFailureDoesNotStartAppOrReturnOK(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-build-fail")
+	if err := mgr.Register(&apps.App{
+		Name:    "node-build-fail",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	gitScript := `#!/bin/sh
+set -eu
+cmd="$1"
+shift || true
+case "$cmd" in
+  clone)
+    last=""
+    for arg in "$@"; do last="$arg"; done
+    dest="$last"
+    mkdir -p "$dest/.git"
+    cat > "$dest/package.json" <<'JSON'
+{"scripts":{"build":"exit 7","start":"node index.js"}}
+JSON
+    cat > "$dest/package-lock.json" <<'JSON'
+{"lockfileVersion":3}
+JSON
+    cat > "$dest/index.js" <<'JS'
+const http = require('http');
+http.createServer((req, res) => res.end('should-not-start')).listen(Number(process.env.PORT), '127.0.0.1');
+JS
+    ;;
+  rev-parse)
+    echo fail123
+    ;;
+  fetch|reset|remote)
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(gitScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	fakeNPM := filepath.Join(fakeBin, "npm")
+	npmScript := `#!/bin/sh
+set -eu
+case "$1" in
+  ci|install)
+    exit 0
+    ;;
+  run)
+    if [ "$2" = "build" ]; then
+      echo "build failed deliberately" >&2
+      exit 7
+    fi
+    ;;
+  start)
+    exec node index.js
+    ;;
+esac
+exit 2
+`
+	if err := os.WriteFile(fakeNPM, []byte(npmScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-build-fail.git","git_token":"ghp_private","git_branch":"main"}`)
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-build-fail/deploy", body)
+	req.SetPathValue("name", "node-build-fail")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+	defer mgr.Stop("node-build-fail")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var resp AppDeployResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK {
+		t.Fatalf("deploy should not be OK when build fails: %#v", resp)
+	}
+	if !strings.Contains(resp.Error, "build failed") {
+		t.Fatalf("error should mention build failure, got %q", resp.Error)
+	}
+	if inst := mgr.Get("node-build-fail"); inst == nil || inst.Running {
+		t.Fatalf("app must not be running after failed build: %#v", inst)
+	}
+}
+
+func TestAppDeployRejectsReservedEnv(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-env")
+	if err := mgr.Register(&apps.App{
+		Name:    "node-env",
+		Runtime: apps.RuntimeNode,
+		WorkDir: workDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-node.git","env":{"PATH":"/tmp/bin"}}`)
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-env/deploy", body)
+	req.SetPathValue("name", "node-env")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "env var PATH is reserved") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 

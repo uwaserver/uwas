@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,18 +57,38 @@ func (d *deployLockMap) get(name string) *sync.Mutex {
 // Bounded to the latest entry — ops can scroll runtime logs for older
 // history.
 type webhookDeployStatus struct {
-	StartedAt time.Time `json:"started_at"`
-	Finished  time.Time `json:"finished_at,omitempty"`
-	OK        bool      `json:"ok"`
-	CommitSHA string    `json:"commit_sha,omitempty"`
-	Ref       string    `json:"ref,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	LogTail   string    `json:"log_tail,omitempty"`
+	StartedAt    time.Time `json:"started_at"`
+	Finished     time.Time `json:"finished_at,omitempty"`
+	OK           bool      `json:"ok"`
+	CommitSHA    string    `json:"commit_sha,omitempty"`
+	Ref          string    `json:"ref,omitempty"`
+	RolledBack   bool      `json:"rolled_back,omitempty"`
+	RollbackSHA  string    `json:"rollback_sha,omitempty"`
+	RollbackNote string    `json:"rollback_note,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	LogTail      string    `json:"log_tail,omitempty"`
+}
+
+type appDeployHistoryEntry struct {
+	Source       string    `json:"source"`
+	StartedAt    time.Time `json:"started_at"`
+	Finished     time.Time `json:"finished_at,omitempty"`
+	OK           bool      `json:"ok"`
+	Mode         string    `json:"mode,omitempty"`
+	CommitSHA    string    `json:"commit_sha,omitempty"`
+	Ref          string    `json:"ref,omitempty"`
+	RolledBack   bool      `json:"rolled_back,omitempty"`
+	RollbackSHA  string    `json:"rollback_sha,omitempty"`
+	RollbackNote string    `json:"rollback_note,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	LogTail      string    `json:"log_tail,omitempty"`
 }
 
 var (
 	lastWebhookMu     sync.Mutex
 	lastWebhookByName = make(map[string]*webhookDeployStatus)
+	deployHistoryMu   sync.Mutex
+	deployHistory     = make(map[string][]appDeployHistoryEntry)
 )
 
 // handleAppWebhook is the public push-event receiver.
@@ -178,6 +200,28 @@ func (s *Server) handleAppWebhookStatus(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, st)
 }
 
+func (s *Server) handleAppDeployHistory(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	name := r.PathValue("name")
+	deployHistoryMu.Lock()
+	history := append([]appDeployHistoryEntry(nil), deployHistory[name]...)
+	deployHistoryMu.Unlock()
+	if len(history) == 0 && s.appsMgr != nil {
+		history = loadAppDeployHistory(s.appsMgr.Store().Dir, name)
+		if len(history) > 0 {
+			deployHistoryMu.Lock()
+			deployHistory[name] = append([]appDeployHistoryEntry(nil), history...)
+			deployHistoryMu.Unlock()
+		}
+	}
+	jsonResponse(w, map[string]any{
+		"name":  name,
+		"items": history,
+	})
+}
+
 // runWebhookDeploy is the goroutine entrypoint for webhook-triggered
 // deploys. Serializes per-app via deployLocks, runs the same flow as
 // the manual /deploy handler, then records the outcome in
@@ -204,6 +248,10 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		status.Error = "app disappeared between webhook and deploy"
 		status.Finished = time.Now()
 		s.recordLastWebhook(name, status)
+		s.recordAppDeployHistory(name, appDeployHistoryEntry{
+			Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
+			OK: false, Ref: ref, Error: status.Error,
+		})
 		return
 	}
 
@@ -212,6 +260,10 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		status.Error = "app has no work_dir resolved"
 		status.Finished = time.Now()
 		s.recordLastWebhook(name, status)
+		s.recordAppDeployHistory(name, appDeployHistoryEntry{
+			Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
+			OK: false, Ref: ref, Error: status.Error,
+		})
 		return
 	}
 	if err := validateDockerGitDeploy(def); err != nil {
@@ -219,19 +271,33 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		status.Error = err.Error()
 		status.Finished = time.Now()
 		s.recordLastWebhook(name, status)
+		s.recordAppDeployHistory(name, appDeployHistoryEntry{
+			Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
+			OK: false, Ref: ref, Error: status.Error,
+		})
 		return
 	}
 
 	logBuf := &strings.Builder{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
 
-	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Env, logBuf); err != nil {
+	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, def.Env, logBuf); err != nil {
 		status.OK = false
 		status.Error = err.Error()
+		if rollbackSHA != "" {
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env), false, logBuf)
+		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()
 		s.recordLastWebhook(name, status)
+		s.recordAppDeployHistory(name, appDeployHistoryEntry{
+			Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
+			OK: false, Ref: ref, Error: status.Error,
+			RolledBack: status.RolledBack, RollbackSHA: status.RollbackSHA, RollbackNote: status.RollbackNote,
+			LogTail: status.LogTail,
+		})
 		if s.logger != nil {
 			s.logger.Warn("webhook deploy failed", "app", name, "error", err)
 		}
@@ -243,21 +309,21 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		status.CommitSHA = strings.TrimSpace(sha)
 	}
 
-	// Restart + verify listening.
-	if err := s.appsMgr.Restart(name); err != nil {
+	if err := s.completeDeployedApp(name, def, false); err != nil {
 		status.OK = false
-		status.Error = "deploy succeeded but restart failed: " + err.Error()
+		status.Error = err.Error()
+		if rollbackSHA != "" {
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env), true, logBuf)
+		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()
 		s.recordLastWebhook(name, status)
-		return
-	}
-	if err := s.appsMgr.WaitListening(name, listeningProbeTimeout); err != nil {
-		status.OK = false
-		status.Error = "deploy + restart ok but app is not listening: " + err.Error()
-		status.LogTail = tailString(logBuf.String(), 4096)
-		status.Finished = time.Now()
-		s.recordLastWebhook(name, status)
+		s.recordAppDeployHistory(name, appDeployHistoryEntry{
+			Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
+			OK: false, CommitSHA: status.CommitSHA, Ref: ref, Error: status.Error,
+			RolledBack: status.RolledBack, RollbackSHA: status.RollbackSHA, RollbackNote: status.RollbackNote,
+			LogTail: status.LogTail,
+		})
 		return
 	}
 
@@ -265,6 +331,10 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 	status.LogTail = tailString(logBuf.String(), 2048)
 	status.Finished = time.Now()
 	s.recordLastWebhook(name, status)
+	s.recordAppDeployHistory(name, appDeployHistoryEntry{
+		Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
+		OK: true, CommitSHA: status.CommitSHA, Ref: ref, LogTail: status.LogTail,
+	})
 
 	s.maybeReloadForApps()
 	if s.logger != nil {
@@ -279,6 +349,98 @@ func (s *Server) recordLastWebhook(name string, status *webhookDeployStatus) {
 	lastWebhookMu.Lock()
 	lastWebhookByName[name] = status
 	lastWebhookMu.Unlock()
+}
+
+func (s *Server) recordAppDeployHistory(name string, entry appDeployHistoryEntry) {
+	items := recordAppDeployHistory(name, entry)
+	if s.appsMgr != nil {
+		_ = persistAppDeployHistory(s.appsMgr.Store().Dir, name, items)
+	}
+}
+
+func recordAppDeployHistory(name string, entry appDeployHistoryEntry) []appDeployHistoryEntry {
+	deployHistoryMu.Lock()
+	defer deployHistoryMu.Unlock()
+	items := append([]appDeployHistoryEntry{entry}, deployHistory[name]...)
+	if len(items) > 20 {
+		items = items[:20]
+	}
+	deployHistory[name] = items
+	return append([]appDeployHistoryEntry(nil), items...)
+}
+
+func deployHistoryPath(root, name string) string {
+	if name == "" || name != filepath.Base(name) {
+		return ""
+	}
+	return filepath.Join(root, ".deploy-history", name+".json")
+}
+
+func persistAppDeployHistory(root, name string, items []appDeployHistoryEntry) error {
+	if root == "" || name == "" {
+		return nil
+	}
+	if len(items) > 20 {
+		items = items[:20]
+	}
+	dir := filepath.Join(root, ".deploy-history")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := deployHistoryPath(root, name)
+	if path == "" {
+		return nil
+	}
+	tmp, err := os.CreateTemp(dir, name+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if _, err := tmp.WriteString("\n"); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func loadAppDeployHistory(root, name string) []appDeployHistoryEntry {
+	if root == "" || name == "" {
+		return nil
+	}
+	path := deployHistoryPath(root, name)
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var items []appDeployHistoryEntry
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil
+	}
+	if len(items) > 20 {
+		items = items[:20]
+	}
+	return items
 }
 
 // verifyWebhookSignature validates either GitHub-style HMAC-SHA256

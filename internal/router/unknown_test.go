@@ -140,6 +140,54 @@ func TestRecordStripsPort(t *testing.T) {
 	}
 }
 
+func TestRecordIgnoresIPAndLocalhostHosts(t *testing.T) {
+	tracker := NewUnknownHostTracker()
+	for _, host := range []string{
+		"127.0.0.1",
+		"127.0.0.1:8080",
+		"10.0.0.5",
+		"192.168.1.10:443",
+		"[::1]:8080",
+		"::1",
+		"localhost",
+		"localhost:8080",
+		"localhost.localdomain",
+	} {
+		if tracker.Record(host) {
+			t.Fatalf("Record(%q) should not report blocked", host)
+		}
+	}
+	if entries := tracker.List(); len(entries) != 0 {
+		t.Fatalf("expected no entries for IP/local hosts, got %#v", entries)
+	}
+}
+
+func TestBlockIgnoresIPAndLocalhostHosts(t *testing.T) {
+	tracker := NewUnknownHostTracker()
+	tracker.Block("127.0.0.1")
+	tracker.Block("localhost")
+	if tracker.IsBlocked("127.0.0.1") || tracker.IsBlocked("localhost") {
+		t.Fatal("IP/local hosts should not be blockable as unknown domains")
+	}
+	if hosts := tracker.BlockedHosts(); len(hosts) != 0 {
+		t.Fatalf("expected no blocked hosts, got %#v", hosts)
+	}
+}
+
+func TestRecordTrimsTrailingDot(t *testing.T) {
+	tracker := NewUnknownHostTracker()
+	tracker.Record("Example.COM.:443")
+	tracker.Record("example.com")
+
+	entries := tracker.List()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Host != "example.com" || entries[0].Hits != 2 {
+		t.Fatalf("entry = %#v, want example.com with 2 hits", entries[0])
+	}
+}
+
 func TestRecordCaseInsensitive(t *testing.T) {
 	tracker := NewUnknownHostTracker()
 	tracker.Record("Example.COM")
@@ -429,10 +477,10 @@ func TestListSortedByHitsDescending(t *testing.T) {
 	tracker := NewUnknownHostTracker()
 
 	// Record different hit counts
-	tracker.Record("low.com")    // 1 hit
-	tracker.Record("mid.com")    // 2 hits
+	tracker.Record("low.com") // 1 hit
+	tracker.Record("mid.com") // 2 hits
 	tracker.Record("mid.com")
-	tracker.Record("high.com")   // 3 hits
+	tracker.Record("high.com") // 3 hits
 	tracker.Record("high.com")
 	tracker.Record("high.com")
 

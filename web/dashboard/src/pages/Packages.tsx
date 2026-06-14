@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Package, Download, Check, RefreshCw, Trash2, Shield } from 'lucide-react';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 import { fetchPackages, installPackage, removePackage, fetchTasks, type PackageInfo } from '@/lib/api';
 
 const categoryOrder = ['Required', 'Infrastructure', 'Database', 'Runtime', 'Performance', 'Security', 'WordPress', 'Email'];

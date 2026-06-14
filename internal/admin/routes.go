@@ -164,6 +164,8 @@ func (s *Server) registerAppRoutes() {
 	s.mux.HandleFunc("POST /api/v1/apps/{name}/restart", s.handleAppRestart)
 	s.mux.HandleFunc("GET /api/v1/apps/{name}/logs", s.handleAppLogs)
 	s.mux.HandleFunc("GET /api/v1/apps/{name}/stats", s.handleAppStats)
+	s.mux.HandleFunc("GET /api/v1/apps/{name}/deploy-preflight", s.handleAppDeployPreflight)
+	s.mux.HandleFunc("GET /api/v1/apps/{name}/deploy-history", s.handleAppDeployHistory)
 	s.mux.HandleFunc("POST /api/v1/apps/{name}/deploy", s.handleAppDeploy)
 	s.mux.HandleFunc("POST /api/v1/apps/{name}/webhook", s.handleAppWebhook)
 	s.mux.HandleFunc("GET /api/v1/apps/{name}/webhook-status", s.handleAppWebhookStatus)

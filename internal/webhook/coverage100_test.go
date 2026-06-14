@@ -58,13 +58,10 @@ func TestFireQueueFull(t *testing.T) {
 // --- FireTo: with existing webhook config ---
 
 func TestFireToWithExistingConfig(t *testing.T) {
-	var mu sync.Mutex
-	var receivedSig string
+	receivedSig := make(chan string, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		receivedSig = r.Header.Get("X-UWAS-Signature")
-		mu.Unlock()
+		receivedSig <- r.Header.Get("X-UWAS-Signature")
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -79,11 +76,12 @@ func TestFireToWithExistingConfig(t *testing.T) {
 
 	// FireTo should find the existing config and use its secret
 	m.FireTo(srv.URL, EventTest, map[string]any{"msg": "hello"})
-	time.Sleep(500 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if receivedSig == "" {
+	select {
+	case sig := <-receivedSig:
+		if sig == "" {
+			t.Error("FireTo with existing config should use the secret for HMAC signing")
+		}
+	case <-time.After(2 * time.Second):
 		t.Error("FireTo with existing config should use the secret for HMAC signing")
 	}
 }
@@ -193,12 +191,17 @@ func TestDeliverConnectionRefused(t *testing.T) {
 // --- deliver: verify all standard headers ---
 
 func TestDeliverStandardHeaders(t *testing.T) {
-	var receivedHeaders http.Header
-	var receivedBody []byte
+	received := make(chan struct {
+		headers http.Header
+		body    []byte
+	}, 1)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedHeaders = r.Header.Clone()
-		receivedBody, _ = io.ReadAll(r.Body)
+		body, _ := io.ReadAll(r.Body)
+		received <- struct {
+			headers http.Header
+			body    []byte
+		}{headers: r.Header.Clone(), body: body}
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -211,24 +214,32 @@ func TestDeliverStandardHeaders(t *testing.T) {
 	})
 
 	m.Fire(EventDomainAdd, map[string]any{"host": "example.com"})
-	time.Sleep(500 * time.Millisecond)
+	var got struct {
+		headers http.Header
+		body    []byte
+	}
+	select {
+	case got = <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for webhook delivery")
+	}
 
-	if receivedHeaders.Get("Content-Type") != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", receivedHeaders.Get("Content-Type"))
+	if got.headers.Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", got.headers.Get("Content-Type"))
 	}
-	if receivedHeaders.Get("X-UWAS-Event") != string(EventDomainAdd) {
-		t.Errorf("X-UWAS-Event = %q, want %q", receivedHeaders.Get("X-UWAS-Event"), EventDomainAdd)
+	if got.headers.Get("X-UWAS-Event") != string(EventDomainAdd) {
+		t.Errorf("X-UWAS-Event = %q, want %q", got.headers.Get("X-UWAS-Event"), EventDomainAdd)
 	}
-	if receivedHeaders.Get("X-UWAS-Event-ID") == "" {
+	if got.headers.Get("X-UWAS-Event-ID") == "" {
 		t.Error("X-UWAS-Event-ID should be set")
 	}
-	if receivedHeaders.Get("X-UWAS-Attempt") != "1" {
-		t.Errorf("X-UWAS-Attempt = %q, want 1", receivedHeaders.Get("X-UWAS-Attempt"))
+	if got.headers.Get("X-UWAS-Attempt") != "1" {
+		t.Errorf("X-UWAS-Attempt = %q, want 1", got.headers.Get("X-UWAS-Attempt"))
 	}
 
 	// Verify the body is valid JSON with the correct event type
 	var ev Event
-	if err := json.Unmarshal(receivedBody, &ev); err != nil {
+	if err := json.Unmarshal(got.body, &ev); err != nil {
 		t.Fatalf("failed to unmarshal webhook body: %v", err)
 	}
 	if ev.Type != EventDomainAdd {
@@ -427,15 +438,15 @@ func TestDeliverMarshalError(t *testing.T) {
 // --- Fire with nil data ---
 
 func TestFireNilData(t *testing.T) {
-	var received bool
+	received := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received = true
 		body, _ := io.ReadAll(r.Body)
 		var ev Event
 		json.Unmarshal(body, &ev)
 		if ev.Data != nil {
 			// data was null in JSON
 		}
+		received <- struct{}{}
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -448,9 +459,9 @@ func TestFireNilData(t *testing.T) {
 	})
 
 	m.Fire(EventTest, nil)
-	time.Sleep(500 * time.Millisecond)
-
-	if !received {
-		t.Error("webhook should be delivered even with nil data")
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("webhook should be delivered even with nil data")
 	}
 }

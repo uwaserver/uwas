@@ -89,6 +89,7 @@ type Server struct {
 	reloadFn       ReloadFunc
 	onDomainChange func()
 	mux            muxer
+	httpSrvMu      sync.RWMutex
 	httpSrv        *http.Server
 
 	monitor       *monitor.Monitor
@@ -261,11 +262,14 @@ func (s *Server) Start() error {
 			"fix", "set global.admin.api_key or enable global.users.enabled")
 	}
 
-	s.httpSrv = &http.Server{
+	httpSrv := &http.Server{
 		Handler:      middleware.RequestID()(s.authMiddleware(requireJSONMiddleware(s.mux))),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Minute, // SSE, DB export, backup can take minutes
 	}
+	s.httpSrvMu.Lock()
+	s.httpSrv = httpSrv
+	s.httpSrvMu.Unlock()
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -280,11 +284,11 @@ func (s *Server) Start() error {
 
 	if tlsCert != "" && tlsKey != "" {
 		s.logger.Info("admin API listening (TLS)", "address", addr)
-		return s.httpSrv.ServeTLS(ln, tlsCert, tlsKey)
+		return httpSrv.ServeTLS(ln, tlsCert, tlsKey)
 	}
 
 	s.logger.Info("admin API listening", "address", addr)
-	return s.httpSrv.Serve(ln)
+	return httpSrv.Serve(ln)
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
@@ -1492,7 +1496,11 @@ func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request
 }
 
 // HTTPServer returns the underlying http.Server for shutdown during upgrades.
-func (s *Server) HTTPServer() *http.Server { return s.httpSrv }
+func (s *Server) HTTPServer() *http.Server {
+	s.httpSrvMu.RLock()
+	defer s.httpSrvMu.RUnlock()
+	return s.httpSrv
+}
 
 // persistDomainPHPOverrides saves the current in-memory PHP config overrides
 // for a domain into its domains.d/*.yaml file so they survive server restarts.
@@ -3341,16 +3349,6 @@ func apexAndWWWHost(host string) (string, string, bool) {
 	return host, "www." + host, true
 }
 
-func containsNormalizedHostname(hosts []string, host string) bool {
-	host = normalizeDomainHostname(host)
-	for _, h := range hosts {
-		if normalizeDomainHostname(h) == host {
-			return true
-		}
-	}
-	return false
-}
-
 func uniqueNormalizedHostnames(hosts []string) []string {
 	seen := make(map[string]struct{}, len(hosts))
 	out := make([]string, 0, len(hosts))
@@ -3364,18 +3362,6 @@ func uniqueNormalizedHostnames(hosts []string) []string {
 		}
 		seen[host] = struct{}{}
 		out = append(out, host)
-	}
-	return out
-}
-
-func removeNormalizedHost(hosts []string, host string) []string {
-	host = normalizeDomainHostname(host)
-	out := hosts[:0]
-	for _, h := range hosts {
-		if normalizeDomainHostname(h) == host {
-			continue
-		}
-		out = append(out, h)
 	}
 	return out
 }

@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26-alpine3.24 AS builder
 
 RUN apk add --no-cache git
 
@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 go build \
     -o /uwas ./cmd/uwas
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata
 

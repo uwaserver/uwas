@@ -14,7 +14,7 @@ import {
   type AppInstance,
 } from '@/lib/api';
 import { usePolling } from '@/hooks/usePolling';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

@@ -1,6 +1,7 @@
 package apps
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -350,16 +351,18 @@ func (m *Manager) Unregister(name string) error {
 // failures, so the supervisor should give the app a fresh budget of
 // retry slots instead of inheriting the "we gave up" state.
 func (m *Manager) Start(name string) error {
-	m.mu.RLock()
+	m.mu.Lock()
 	p, ok := m.procs[name]
-	m.mu.RUnlock()
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("apps: %s not registered", name)
 	}
 	if p.app != nil && p.app.Disabled {
+		m.mu.Unlock()
 		return fmt.Errorf("apps: %s is disabled — clear the disabled flag first", name)
 	}
 	if m.isRunning(p) {
+		m.mu.Unlock()
 		return fmt.Errorf("apps: %s already running", name)
 	}
 
@@ -368,6 +371,7 @@ func (m *Manager) Start(name string) error {
 	// will climb again from zero.
 	p.restartCount = 0
 	p.crashloopGave = false
+	m.mu.Unlock()
 
 	if p.runtimeKind != RuntimeCustom {
 		if err := m.ensureStartPortAvailable(p); err != nil {
@@ -542,8 +546,8 @@ func (m *Manager) Instances() []Instance {
 // Get returns the runtime view of a single app, or nil if unregistered.
 func (m *Manager) Get(name string) *Instance {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	p, ok := m.procs[name]
-	m.mu.RUnlock()
 	if !ok {
 		return nil
 	}
@@ -587,10 +591,7 @@ func (m *Manager) instanceFromProcess(p *process) Instance {
 	return inst
 }
 
-// isRunning is the locked-or-unlocked-safe quick check. The fields it
-// reads are only mutated under m.mu, but for caller convenience this
-// works either way — the worst case is a stale-by-microseconds answer
-// that will be re-checked atomically downstream.
+// isRunning reports whether the process is live. Caller must hold m.mu.
 func (m *Manager) isRunning(p *process) bool {
 	if p.runtimeKind == RuntimeDocker {
 		return p.dockerID != ""
@@ -636,28 +637,34 @@ type Stats struct {
 func (m *Manager) Stats(name string) *Stats {
 	m.mu.RLock()
 	p, ok := m.procs[name]
-	m.mu.RUnlock()
 	if !ok {
+		m.mu.RUnlock()
 		return nil
 	}
 
 	s := &Stats{Name: name}
 	if !m.isRunning(p) {
+		m.mu.RUnlock()
 		return s
 	}
 	s.Running = true
 	s.Uptime = time.Since(p.startedAt).Truncate(time.Second).String()
 
 	if p.runtimeKind == RuntimeDocker {
-		if p.dockerID != "" {
-			s.CPUPct, s.MemoryRSS = readDockerStats(p.dockerID)
-		}
+		dockerID := p.dockerID
+		m.mu.RUnlock()
+		s.CPUPct, s.MemoryRSS = readDockerStats(dockerID)
 		return s
 	}
 
+	pid := 0
 	if p.cmd != nil && p.cmd.Process != nil {
-		s.PID = p.cmd.Process.Pid
-		s.CPUPct, s.MemoryRSS, s.MemoryVMS = readProcStats(s.PID)
+		pid = p.cmd.Process.Pid
+	}
+	m.mu.RUnlock()
+	if pid != 0 {
+		s.PID = pid
+		s.CPUPct, s.MemoryRSS, s.MemoryVMS = readProcStats(pid)
 	}
 	return s
 }
@@ -796,8 +803,11 @@ func (m *Manager) startNative(p *process) error {
 		return fmt.Errorf("apps: %s: start: %w", p.name, err)
 	}
 
+	m.mu.Lock()
 	p.cmd = cmd
 	p.startedAt = time.Now()
+	stopCh := p.stopCh
+	m.mu.Unlock()
 
 	if m.logger != nil {
 		m.logger.Info("apps: started", "app", p.name, "pid", cmd.Process.Pid, "port", p.port)
@@ -815,12 +825,11 @@ func (m *Manager) startNative(p *process) error {
 	}
 
 	if m.logger != nil {
-		stopCh := p.stopCh
 		m.logger.SafeGo("apps.monitor."+p.name, func() {
 			m.monitorNative(p, origCmd, logFile, stopCh)
 		})
 	} else {
-		go m.monitorNative(p, origCmd, logFile, p.stopCh)
+		go m.monitorNative(p, origCmd, logFile, stopCh)
 	}
 
 	// 500ms post-launch probe. Long enough for the shell to exec the
@@ -829,7 +838,10 @@ func (m *Manager) startNative(p *process) error {
 	// the original cmd pointer is gone, the monitor observed an early
 	// exit — surface it as a failed start with the log tail attached.
 	time.Sleep(500 * time.Millisecond)
-	if p.cmd != origCmd {
+	m.mu.RLock()
+	exited := p.cmd != origCmd
+	m.mu.RUnlock()
+	if exited {
 		tail := tailLogFile(logPath, 4096)
 		if tail == "" {
 			tail = "(no log output)"
@@ -877,22 +889,28 @@ func (m *Manager) monitorNative(p *process, cmd *exec.Cmd, logFile *os.File, sto
 
 	select {
 	case <-stopCh:
+		m.mu.Lock()
 		if p.cmd == cmd {
 			p.cmd = nil
 		}
+		m.mu.Unlock()
 		return
 	default:
 	}
 
+	m.mu.Lock()
 	if p.cmd == cmd {
 		p.cmd = nil
 	}
+	autoRestart := p.autoRestart
+	crashloopGave := p.crashloopGave
 
 	if waitErr != nil && m.logger != nil {
 		m.logger.Warn("apps: process exited", "app", p.name, "error", waitErr)
 	}
 
-	if !p.autoRestart || p.crashloopGave {
+	if !autoRestart || crashloopGave {
+		m.mu.Unlock()
 		return
 	}
 
@@ -911,18 +929,22 @@ func (m *Manager) monitorNative(p *process, cmd *exec.Cmd, logFile *os.File, sto
 
 	if p.restartCount >= crashloopMaxRestarts {
 		p.crashloopGave = true
+		restartCount := p.restartCount
+		m.mu.Unlock()
 		if m.logger != nil {
 			m.logger.Error("apps: giving up auto-restart after crashloop",
-				"app", p.name, "consecutive_crashes", p.restartCount,
+				"app", p.name, "consecutive_crashes", restartCount,
 				"hint", "fix the underlying issue and click Start in the dashboard")
 		}
 		return
 	}
 
 	delay := computeBackoff(p.restartCount)
-	if m.logger != nil && p.restartCount > 1 {
+	restartCount := p.restartCount
+	m.mu.Unlock()
+	if m.logger != nil && restartCount > 1 {
 		m.logger.Warn("apps: backing off auto-restart",
-			"app", p.name, "consecutive_crashes", p.restartCount, "delay", delay)
+			"app", p.name, "consecutive_crashes", restartCount, "delay", delay)
 	}
 
 	backoff := time.NewTimer(delay)
@@ -970,13 +992,15 @@ func detectHint(runtimeName string) string {
 func detectCommand(runtimeName, workDir string) string {
 	switch runtimeName {
 	case "node":
+		if _, err := osStatFn(filepath.Join(workDir, "package.json")); err == nil {
+			if cmd := detectNodePackageCommand(workDir); cmd != "" {
+				return cmd
+			}
+		}
 		for _, f := range []string{"server.js", "index.js", "app.js"} {
 			if _, err := osStatFn(filepath.Join(workDir, f)); err == nil {
 				return "node " + f
 			}
-		}
-		if _, err := osStatFn(filepath.Join(workDir, "package.json")); err == nil {
-			return "npm start"
 		}
 	case "python":
 		if _, err := osStatFn(filepath.Join(workDir, "manage.py")); err == nil {
@@ -996,6 +1020,26 @@ func detectCommand(runtimeName, workDir string) string {
 		}
 	case "go":
 		return "./main"
+	}
+	return ""
+}
+
+func detectNodePackageCommand(workDir string) string {
+	data, err := os.ReadFile(filepath.Join(workDir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	if _, ok := pkg.Scripts["start"]; ok {
+		return "npm start"
+	}
+	if _, ok := pkg.Scripts["preview"]; ok {
+		return "npm run preview -- --host 0.0.0.0 --port ${PORT}"
 	}
 	return ""
 }

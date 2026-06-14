@@ -25,7 +25,7 @@ import {
   type FeatureStatus,
 } from '@/lib/api';
 import FeatureBanner from '@/components/FeatureBanner';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 const SCHEDULE_PRESETS = [
   { label: 'Every 5 minutes', value: '*/5 * * * *' },

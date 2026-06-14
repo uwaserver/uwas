@@ -2,6 +2,8 @@ package router
 
 import (
 	"bufio"
+	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
@@ -43,12 +45,8 @@ func (t *UnknownHostTracker) SetPersistPath(path string) {
 
 // Record increments the hit count for an unknown host. Returns true if the host is blocked.
 func (t *UnknownHostTracker) Record(host string) bool {
-	// Strip port
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
-	}
-	host = strings.ToLower(host)
-	if host == "" {
+	host, ok := normalizeUnknownHost(host)
+	if !ok {
 		return false
 	}
 
@@ -76,10 +74,10 @@ func (t *UnknownHostTracker) Record(host string) bool {
 
 // IsBlocked returns true if the host is on the block list.
 func (t *UnknownHostTracker) IsBlocked(host string) bool {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
+	host, ok := normalizeUnknownHost(host)
+	if !ok {
+		return false
 	}
-	host = strings.ToLower(host)
 
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -88,7 +86,10 @@ func (t *UnknownHostTracker) IsBlocked(host string) bool {
 
 // Block adds a host to the block list and persists to disk.
 func (t *UnknownHostTracker) Block(host string) {
-	host = strings.ToLower(host)
+	host, ok := normalizeUnknownHost(host)
+	if !ok {
+		return
+	}
 
 	t.mu.Lock()
 	t.blocked[host] = true
@@ -101,7 +102,10 @@ func (t *UnknownHostTracker) Block(host string) {
 
 // Unblock removes a host from the block list and persists to disk.
 func (t *UnknownHostTracker) Unblock(host string) {
-	host = strings.ToLower(host)
+	host, ok := normalizeUnknownHost(host)
+	if !ok {
+		return
+	}
 
 	t.mu.Lock()
 	delete(t.blocked, host)
@@ -114,7 +118,10 @@ func (t *UnknownHostTracker) Unblock(host string) {
 
 // Dismiss removes a host from tracking entirely.
 func (t *UnknownHostTracker) Dismiss(host string) {
-	host = strings.ToLower(host)
+	host, ok := normalizeUnknownHost(host)
+	if !ok {
+		return
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -128,7 +135,10 @@ func (t *UnknownHostTracker) List() []UnknownHostEntry {
 	defer t.mu.RUnlock()
 
 	entries := make([]UnknownHostEntry, 0, len(t.hosts))
-	for _, e := range t.hosts {
+	for host, e := range t.hosts {
+		if _, ok := normalizeUnknownHost(host); !ok {
+			continue
+		}
 		entries = append(entries, *e)
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -144,7 +154,9 @@ func (t *UnknownHostTracker) BlockedHosts() []string {
 
 	hosts := make([]string, 0, len(t.blocked))
 	for h := range t.blocked {
-		hosts = append(hosts, h)
+		if host, ok := normalizeUnknownHost(h); ok {
+			hosts = append(hosts, host)
+		}
 	}
 	sort.Strings(hosts)
 	return hosts
@@ -189,9 +201,37 @@ func (t *UnknownHostTracker) loadBlocked() {
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		host := strings.TrimSpace(scanner.Text())
-		if host != "" && !strings.HasPrefix(host, "#") {
+		raw := strings.TrimSpace(scanner.Text())
+		if raw == "" || strings.HasPrefix(raw, "#") {
+			continue
+		}
+		if host, ok := normalizeUnknownHost(raw); ok {
 			t.blocked[host] = true
 		}
 	}
+}
+
+func normalizeUnknownHost(raw string) (string, bool) {
+	host := strings.TrimSpace(strings.ToLower(raw))
+	if host == "" {
+		return "", false
+	}
+
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	} else if idx := strings.LastIndex(host, ":"); idx > 0 && strings.Count(host, ":") == 1 {
+		host = host[:idx]
+	}
+
+	host = strings.Trim(host, "[]")
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || host == "localhost" || host == "localhost.localdomain" {
+		return "", false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return "", false
+	}
+	return host, true
 }

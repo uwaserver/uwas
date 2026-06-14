@@ -65,6 +65,7 @@ type Manager struct {
 	closed   atomic.Bool
 	dataDir  string
 	logger   Logger
+	urlSafe  func(string) error
 }
 
 // Logger interface for logging.
@@ -93,6 +94,7 @@ func NewManager(dataDir string, logger Logger) *Manager {
 		queue:   make(chan *queuedEvent, 1000),
 		dataDir: dataDir,
 		logger:  logger,
+		urlSafe: webhookURLSafetyCheck,
 	}
 
 	// Start worker goroutine
@@ -180,7 +182,7 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 	}
 
 	// SSRF check
-	if err := webhookURLSafetyCheck(url); err != nil {
+	if err := m.checkURLSafe(url); err != nil {
 		m.logger.Warn("webhook SSRF blocked", "url", url, "error", err)
 		return
 	}
@@ -223,7 +225,7 @@ func (m *Manager) worker() {
 // deliver sends a webhook with retry logic.
 func (m *Manager) deliver(qe *queuedEvent) {
 	// SSRF check before attempting delivery
-	if err := webhookURLSafetyCheck(qe.webhook.URL); err != nil {
+	if err := m.checkURLSafe(qe.webhook.URL); err != nil {
 		m.logger.Warn("webhook SSRF blocked", "url", qe.webhook.URL, "error", err)
 		return
 	}
@@ -308,6 +310,13 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		"url", qe.webhook.URL,
 		"retries", maxRetries,
 	)
+}
+
+func (m *Manager) checkURLSafe(url string) error {
+	if m.urlSafe != nil {
+		return m.urlSafe(url)
+	}
+	return webhookURLSafetyCheck(url)
 }
 
 // matchesEvent checks if an event type matches the configured events.

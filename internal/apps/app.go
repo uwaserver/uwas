@@ -102,6 +102,21 @@ type DeployConfig struct {
 	// Typical: "npm ci && npm run build". Empty = no build step.
 	BuildCmd string `yaml:"build_cmd,omitempty" json:"build_cmd,omitempty"`
 
+	// HealthPath is an optional HTTP path probed after the process is
+	// listening. Empty means TCP listen is enough; set "/health" to
+	// require a 2xx/3xx response before a deploy is considered good.
+	HealthPath string `yaml:"health_path,omitempty" json:"health_path,omitempty"`
+
+	// SSHKeyPath is an absolute path to a private key used for git SSH
+	// access to private repositories. The deploy runner validates that
+	// the file exists before handing it to git via GIT_SSH_COMMAND.
+	SSHKeyPath string `yaml:"ssh_key_path,omitempty" json:"ssh_key_path,omitempty"`
+
+	// GitToken is a personal/deploy token for private HTTPS repos.
+	// It is persisted only when the operator supplies it so webhook
+	// deploys can reuse the credential. App YAML files are written 0600.
+	GitToken string `yaml:"git_token,omitempty" json:"git_token,omitempty"`
+
 	// WebhookSecret is the shared secret used to verify push-event
 	// signatures from GitHub (X-Hub-Signature-256) or GitLab
 	// (X-Gitlab-Token). Empty = webhooks are disabled for this app.

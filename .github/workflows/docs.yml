@@ -32,6 +32,8 @@ jobs:
         working-directory: docs/site
         run: |
           npm ci
+          npm audit --audit-level=moderate
+          npm run lint
           npm run build
 
       - name: Package pages artifact

@@ -18,13 +18,22 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
 
       - name: Vet
-        run: go vet ./...
+        run: |
+          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
+          go vet $GO_PACKAGES
+
+      - name: Vulnerability scan
+        run: |
+          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
+          go run golang.org/x/vuln/cmd/govulncheck@latest $GO_PACKAGES
 
       - name: Test
-        run: go test -v -count=1 -timeout 600s -p 1 ./... 2>&1 | tee /tmp/test-output.log
+        run: |
+          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
+          go test -v -count=1 -timeout 600s -p 1 $GO_PACKAGES 2>&1 | tee /tmp/test-output.log
 
       - name: Upload test output
         if: always()
@@ -41,7 +50,11 @@ jobs:
 
       - name: Build dashboard
         working-directory: web/dashboard
-        run: npm ci && npm run build
+        run: |
+          npm ci
+          npm audit --audit-level=moderate
+          npm run lint
+          npm run build
 
   release:
     needs: validate
@@ -79,7 +92,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version-file: go.mod
 
       - name: Build
         env:

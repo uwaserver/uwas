@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { UserPlus, Trash2, RefreshCw, Copy, Check, Key, Shield, Lock } from 'lucide-react';
 import { fetchAdminUsers, createAdminUser, deleteAdminUser, changeAdminPassword, regenAdminApiKey, type AdminUser } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 export default function AdminUsers() {
   const { confirmAction } = useConfirm();

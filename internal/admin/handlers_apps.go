@@ -49,6 +49,18 @@ func validEnvName(name string) bool {
 	return true
 }
 
+func validateAppEnvMap(env map[string]string) error {
+	for k := range env {
+		if blockedEnvVars[k] {
+			return fmt.Errorf("env var %s is reserved", k)
+		}
+		if !validEnvName(k) {
+			return fmt.Errorf("invalid env name: %s", k)
+		}
+	}
+	return nil
+}
+
 // v0.6.0 apps API. Apps are first-class objects keyed by name (not by
 // domain) and persisted under /etc/uwas/apps.d/<name>.yaml. A domain
 // that wants to expose an app uses `type: proxy` targeting the app's
@@ -106,9 +118,18 @@ func (s *Server) handleAppGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]any{
-		"app":      def,
+		"app":      appDefinitionForResponse(def),
 		"instance": s.appsMgr.Get(name),
 	})
+}
+
+func appDefinitionForResponse(a *apps.App) *apps.App {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	out.Deploy.GitToken = ""
+	return &out
 }
 
 // handleAppCreate registers a new app and — by default —
@@ -194,7 +215,7 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 	wantStart := startMode != "false" && !a.Disabled
 
 	result := map[string]any{
-		"app":        def,
+		"app":        appDefinitionForResponse(def),
 		"started":    false,
 		"scaffolded": scaffolded,
 	}
@@ -278,6 +299,24 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	hasDeployPatch := patch.Deploy.GitURL != "" ||
+		patch.Deploy.GitBranch != "" ||
+		patch.Deploy.BuildCmd != "" ||
+		patch.Deploy.SSHKeyPath != "" ||
+		patch.Deploy.GitToken != "" ||
+		patch.Deploy.WebhookSecret != "" ||
+		patch.Deploy.BranchFilter != ""
+	hasOperationalPatch := patch.Description != "" ||
+		patch.Runtime != "" ||
+		patch.Command != "" ||
+		patch.WorkDir != "" ||
+		patch.Port > 0 ||
+		patch.Env != nil ||
+		patch.Docker.Image != "" ||
+		patch.Docker.ContainerPort > 0 ||
+		patch.Docker.Volumes != nil ||
+		patch.Docker.ExtraArgs != nil ||
+		patch.Docker.Build.Context != ""
 
 	// Field-by-field merge. Name CANNOT change (rename = delete+create).
 	if patch.Name != "" && patch.Name != name {
@@ -303,24 +342,39 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 		// env is a wholesale-replace within update — operator sends
 		// the full desired map, same semantics as Kubernetes envFrom.
 		// Validate keys aren't system-critical (PATH/LD_PRELOAD/etc).
-		for k := range patch.Env {
-			if blockedEnvVars[k] {
-				jsonError(w, "env var "+k+" is reserved", http.StatusBadRequest)
-				return
-			}
-			if !validEnvName(k) {
-				jsonError(w, "invalid env name: "+k, http.StatusBadRequest)
-				return
-			}
+		if err := validateAppEnvMap(patch.Env); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		existing.Env = patch.Env
 	}
-	// Bool fields: we can't distinguish "unset" from "false" in JSON
-	// without pointer types, so we accept the patch value directly.
-	// Callers that want to leave them alone should omit them and the
-	// client library should clone-and-modify a fetched object.
-	existing.AutoRestart = patch.AutoRestart
-	existing.Disabled = patch.Disabled
+	if patch.Deploy.GitURL != "" {
+		existing.Deploy.GitURL = patch.Deploy.GitURL
+	}
+	if patch.Deploy.GitBranch != "" {
+		existing.Deploy.GitBranch = patch.Deploy.GitBranch
+	}
+	if patch.Deploy.BuildCmd != "" {
+		existing.Deploy.BuildCmd = patch.Deploy.BuildCmd
+	}
+	if patch.Deploy.SSHKeyPath != "" {
+		existing.Deploy.SSHKeyPath = patch.Deploy.SSHKeyPath
+	}
+	if patch.Deploy.GitToken != "" {
+		existing.Deploy.GitToken = patch.Deploy.GitToken
+	}
+	if patch.Deploy.WebhookSecret != "" {
+		existing.Deploy.WebhookSecret = patch.Deploy.WebhookSecret
+	}
+	if patch.Deploy.BranchFilter != "" {
+		existing.Deploy.BranchFilter = patch.Deploy.BranchFilter
+	}
+	if hasDeployPatch {
+		if err := validateDeployConfig(existing); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	// Docker subblock: replace wholesale when Runtime == docker and
 	// the patch carries any docker fields. Partial merge of nested
@@ -342,6 +396,31 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 			existing.Docker.Build = patch.Docker.Build
 		}
 	}
+	if hasDeployPatch && !hasOperationalPatch {
+		if err := s.appsMgr.Store().Save(existing); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.recordAuditR(r, "app.deploy_config", name, true)
+		def, _ := s.appsMgr.Store().Get(name)
+		running := false
+		if inst := s.appsMgr.Get(name); inst != nil {
+			running = inst.Running
+		}
+		jsonResponse(w, map[string]any{
+			"app":       appDefinitionForResponse(def),
+			"started":   running,
+			"listening": running,
+		})
+		return
+	}
+
+	// Bool fields: we can't distinguish "unset" from "false" in JSON
+	// without pointer types, so we accept the patch value directly.
+	// Callers that want to leave them alone should omit them and the
+	// client library should clone-and-modify a fetched object.
+	existing.AutoRestart = patch.AutoRestart
+	existing.Disabled = patch.Disabled
 
 	// Stop any running instance before swapping the definition so the
 	// in-memory port/command can't desync from the live process.
@@ -381,7 +460,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 	s.recordAuditR(r, "app.update", name, true)
 	s.maybeReloadForApps()
 	def, _ := s.appsMgr.Store().Get(name)
-	result["app"] = def
+	result["app"] = appDefinitionForResponse(def)
 	jsonResponse(w, result)
 }
 

@@ -7,7 +7,7 @@ import {
   fetchDomainConfigRaw, saveDomainConfigRaw,
   fetchDomains, type DomainData,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 interface ConfigFile {
   id: string;

@@ -2210,7 +2210,7 @@ domains:
 // ==========================================================================
 
 func TestRestartCommand_WithHealthAndValidPID(t *testing.T) {
-	// Test when API health succeeds but PID is for current process.
+	// Test when API health succeeds and PID points at a disposable child.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "uptime": "1h"})
 	}))
@@ -2218,9 +2218,15 @@ func TestRestartCommand_WithHealthAndValidPID(t *testing.T) {
 
 	tmp := t.TempDir()
 	pidFile := filepath.Join(tmp, "uwas.pid")
-	// Use current PID so FindProcess succeeds. Signal will fail since it's our own process
-	// and we don't want to kill ourselves, but restart just sends SIGTERM and returns.
-	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644)
 
 	r := &RestartCommand{}
 
@@ -2253,7 +2259,15 @@ func TestRestartCommand_HealthFails(t *testing.T) {
 	// When health API is unreachable but PID file exists with valid PID.
 	tmp := t.TempDir()
 	pidFile := filepath.Join(tmp, "uwas.pid")
-	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644)
 
 	r := &RestartCommand{}
 
@@ -2971,7 +2985,7 @@ func TestCheckCLI_MySQL_Running(t *testing.T) {
 
 	doctorExecCommand = func(name string, arg ...string) *exec.Cmd {
 		if name == "systemctl" && len(arg) > 0 && arg[0] == "is-active" {
-			return exec.Command("cmd", "/c", "echo active")
+			return exec.Command("sh", "-c", "echo active")
 		}
 		return exec.Command("echo", "ok")
 	}
@@ -3027,7 +3041,7 @@ func TestCheckCLI_PHPModules_AllPresent(t *testing.T) {
 	origCmd := doctorExecCommand
 	doctorExecCommand = func(name string, arg ...string) *exec.Cmd {
 		if name == "php" {
-			return exec.Command("cmd", "/c", "echo mysqli curl gd mbstring xml")
+			return exec.Command("sh", "-c", "echo mysqli curl gd mbstring xml")
 		}
 		return exec.Command("echo", "ok")
 	}
@@ -3044,7 +3058,7 @@ func TestCheckCLI_PHPModules_MissingSome(t *testing.T) {
 	doctorExecCommand = func(name string, arg ...string) *exec.Cmd {
 		if name == "php" {
 			// Output that includes only some modules.
-			return exec.Command("cmd", "/c", "echo curl mbstring")
+			return exec.Command("sh", "-c", "echo curl mbstring")
 		}
 		return exec.Command("echo", "ok")
 	}
@@ -3067,7 +3081,7 @@ func TestCheckCLI_Disk_WithOutput(t *testing.T) {
 	origCmd := doctorExecCommand
 	doctorExecCommand = func(name string, arg ...string) *exec.Cmd {
 		if name == "df" {
-			return exec.Command("cmd", "/c", "echo Filesystem Size Used Avail Use%& echo /dev/sda1 100G 50G 50G 50%")
+			return exec.Command("sh", "-c", "printf 'Filesystem Size Used Avail Use%\\n/dev/sda1 100G 50G 50G 50%\\n'")
 		}
 		return exec.Command("echo", "ok")
 	}
@@ -3183,7 +3197,7 @@ func TestCheckCLI_DNS_Success(t *testing.T) {
 	origCmd := doctorExecCommand
 	doctorExecCommand = func(name string, arg ...string) *exec.Cmd {
 		if name == "dig" {
-			return exec.Command("cmd", "/c", "echo 1.2.3.4")
+			return exec.Command("sh", "-c", "echo 1.2.3.4")
 		}
 		return exec.Command("echo", "ok")
 	}
@@ -3240,10 +3254,21 @@ func TestUserListOnWindows_NoUsers(t *testing.T) {
 // ==========================================================================
 
 func TestStopCommand_SuccessPath(t *testing.T) {
-	// Write a PID file with our own PID.
+	// Write a PID file with a disposable child process.
 	tmp := t.TempDir()
 	pidFile := filepath.Join(tmp, "uwas.pid")
-	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644)
+	origAlive := isProcessAliveFn
+	isProcessAliveFn = func(proc *os.Process) bool { return false }
+	defer func() { isProcessAliveFn = origAlive }()
 
 	s := &StopCommand{}
 
@@ -4511,6 +4536,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 	origRead := installOsReadFile
 	origWrite := installOsWriteFile
 	origStat := installOsStat
+	origMkdirAll := installOsMkdirAll
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
 	origIsTTY := installIsTTY
@@ -4530,6 +4556,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 		return nil
 	}
 	installOsStat = func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	installOsMkdirAll = func(path string, perm os.FileMode) error { return nil }
 	installOsSymlink = func(old, new string) error { return nil }
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("echo", "ok")
@@ -4542,6 +4569,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 		installOsReadFile = origRead
 		installOsWriteFile = origWrite
 		installOsStat = origStat
+		installOsMkdirAll = origMkdirAll
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
 		installIsTTY = origIsTTY

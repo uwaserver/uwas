@@ -15,7 +15,7 @@ import {
   performUpdate,
   type UpdateInfo,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return '--';

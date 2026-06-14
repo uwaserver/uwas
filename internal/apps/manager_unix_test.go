@@ -15,11 +15,16 @@ import (
 func TestStopKillsNativeProcessGroupChildren(t *testing.T) {
 	dir := t.TempDir()
 	childPIDFile := filepath.Join(dir, "child.pid")
+	scriptPath := filepath.Join(dir, "run.sh")
+	script := "#!/bin/sh\nsleep 30 &\necho $! > child.pid\nwait\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
 	mgr := NewManager(NewStore(dir), nil)
 	app := &App{
 		Name:    "tree-stop",
 		Runtime: RuntimeCustom,
-		Command: "sleep 30 & echo $! > child.pid; wait",
+		Command: "sh run.sh",
 		WorkDir: dir,
 	}
 	if err := mgr.Register(app); err != nil {

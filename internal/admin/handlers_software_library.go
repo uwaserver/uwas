@@ -1138,9 +1138,7 @@ func portFromListenAddr(addr string) int {
 	if addr == "" {
 		return 0
 	}
-	if strings.HasPrefix(addr, "tcp:") {
-		addr = strings.TrimPrefix(addr, "tcp:")
-	}
+	addr = strings.TrimPrefix(addr, "tcp:")
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		return 0
@@ -1272,13 +1270,10 @@ func replaceComposeEnvironmentLine(data, key, value string) (string, bool) {
 		}
 		indent := line[:len(line)-len(trimmed)]
 		newline := ""
-		if strings.HasSuffix(trimmed, "\n") {
+		if strings.HasSuffix(trimmed, "\r\n") {
+			newline = "\r\n"
+		} else if strings.HasSuffix(trimmed, "\n") {
 			newline = "\n"
-			trimmed = strings.TrimSuffix(trimmed, "\n")
-			if strings.HasSuffix(trimmed, "\r") {
-				newline = "\r\n"
-				trimmed = strings.TrimSuffix(trimmed, "\r")
-			}
 		}
 		replacement := indent + prefix + value + newline
 		if line != replacement {
@@ -1439,7 +1434,7 @@ func ensureSoftwareComposeAvailable() (string, error) {
 	}
 	probeOut, probeErr := probeSoftwareCompose()
 	if probeErr != nil {
-		return string(out) + probeOut, fmt.Errorf("Docker Compose install finished but Compose is still unavailable: %w", probeErr)
+		return string(out) + probeOut, fmt.Errorf("docker Compose install finished but Compose is still unavailable: %w", probeErr)
 	}
 	return string(out) + probeOut, nil
 }

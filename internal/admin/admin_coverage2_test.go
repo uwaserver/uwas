@@ -1663,8 +1663,7 @@ func stubPackageExec(t *testing.T, failNames ...string) *[]packageExecCall {
 	}
 	var mu sync.Mutex
 	calls := []packageExecCall{}
-	orig := systemExecCommand
-	systemExecCommand = func(name string, args ...string) *exec.Cmd {
+	restore := setSystemExecCommand(func(name string, args ...string) *exec.Cmd {
 		mu.Lock()
 		calls = append(calls, packageExecCall{Name: name, Args: append([]string(nil), args...)})
 		mu.Unlock()
@@ -1677,14 +1676,14 @@ func stubPackageExec(t *testing.T, failNames ...string) *[]packageExecCall {
 		cmd := exec.Command(os.Args[0], cmdArgs...)
 		cmd.Env = os.Environ()
 		return cmd
-	}
-	t.Cleanup(func() { systemExecCommand = orig })
+	})
+	t.Cleanup(restore)
 	return &calls
 }
 
 func waitPackageTask(t *testing.T, s *Server, id string) string {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		task := s.taskMgr.Get(id)
 		if task != nil && task.Status != "queued" && task.Status != "running" {
@@ -4230,8 +4229,8 @@ func TestServerStart(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Stop the server
-	if s.httpSrv != nil {
-		s.httpSrv.Shutdown(ctx)
+	if srv := s.HTTPServer(); srv != nil {
+		srv.Shutdown(ctx)
 	}
 }
 

@@ -17,7 +17,6 @@ export function usePolling(fn: () => void | Promise<void>, intervalMs: number | 
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (intervalMs == null) return;
     let id: ReturnType<typeof setInterval> | null = null;
@@ -56,5 +55,6 @@ export function usePolling(fn: () => void | Promise<void>, intervalMs: number | 
       stop();
       document.removeEventListener('visibilitychange', onVisibility);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intervalMs, ...deps]);
 }

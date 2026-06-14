@@ -5,7 +5,7 @@ import {
   GitBranch, Activity,
 } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 import {
   fetchApps,
   fetchApp,
@@ -18,10 +18,14 @@ import {
   fetchAppLogs,
   deployApp,
   fetchAppStats,
+  fetchAppDeployPreflight,
+  fetchAppDeployHistory,
   type App,
   type AppInstance,
   type AppRuntime,
   type AppDeployResult,
+  type AppDeployPreflight,
+  type AppDeployHistoryEntry,
   type AppStats,
 } from '@/lib/api';
 
@@ -60,6 +64,9 @@ interface CreateForm {
   git_url: string;
   git_branch: string;
   build_cmd: string;
+  health_path: string;
+  ssh_key_path: string;
+  git_token: string;
   // docker
   docker_image: string;
   docker_container_port: string;
@@ -79,6 +86,9 @@ const blankForm: CreateForm = {
   git_url: '',
   git_branch: '',
   build_cmd: '',
+  health_path: '',
+  ssh_key_path: '',
+  git_token: '',
   docker_image: '',
   docker_container_port: '',
   docker_build_context: '',
@@ -147,11 +157,17 @@ export default function Apps() {
     git_url: '',
     git_branch: '',
     build_cmd: '',
+    health_path: '',
+    ssh_key_path: '',
+    git_token: '',
     webhook_secret: '',
     branch_filter: '',
   });
   const [deployRunning, setDeployRunning] = useState(false);
   const [deployResult, setDeployResult] = useState<AppDeployResult | null>(null);
+  const [deployPreflight, setDeployPreflight] = useState<AppDeployPreflight | null>(null);
+  const [deployHistory, setDeployHistory] = useState<AppDeployHistoryEntry[]>([]);
+  const [deployMetaLoading, setDeployMetaLoading] = useState(false);
 
   // Per-app stats cache. Keyed by name; only running apps with the
   // stats panel toggled open are kept in here. Polling each running
@@ -238,6 +254,9 @@ export default function Apps() {
         git_url: form.git_url.trim(),
         git_branch: form.git_branch.trim() || undefined,
         build_cmd: form.build_cmd.trim() || undefined,
+        health_path: form.health_path.trim() || undefined,
+        ssh_key_path: form.ssh_key_path.trim() || undefined,
+        git_token: form.git_token.trim() || undefined,
       };
     }
 
@@ -293,6 +312,9 @@ export default function Apps() {
         git_url: app.deploy?.git_url ?? '',
         git_branch: app.deploy?.git_branch ?? '',
         build_cmd: app.deploy?.build_cmd ?? '',
+        health_path: app.deploy?.health_path ?? '',
+        ssh_key_path: app.deploy?.ssh_key_path ?? '',
+        git_token: '',
         docker_image: app.docker?.image ?? '',
         docker_container_port: app.docker?.container_port ? String(app.docker.container_port) : '',
         docker_build_context: app.docker?.build?.context ?? '',
@@ -349,6 +371,9 @@ export default function Apps() {
             git_url: form.git_url.trim(),
             git_branch: form.git_branch.trim() || undefined,
             build_cmd: isDocker ? undefined : form.build_cmd.trim() || undefined,
+            health_path: form.health_path.trim() || undefined,
+            ssh_key_path: form.ssh_key_path.trim() || undefined,
+            git_token: form.git_token.trim() || undefined,
           });
           if (deploy.ok) {
             setStatus({
@@ -411,18 +436,33 @@ export default function Apps() {
     // it (and rotate by typing a new value).
     setDeployFor(name);
     setDeployResult(null);
+    setDeployPreflight(null);
+    setDeployHistory([]);
+    setDeployMetaLoading(true);
     try {
-      const { app } = await fetchApp(name);
+      const [{ app }, preflight, history] = await Promise.all([
+        fetchApp(name),
+        fetchAppDeployPreflight(name).catch(() => null),
+        fetchAppDeployHistory(name).catch(() => ({ name, items: [] })),
+      ]);
       setDeployForm({
         git_url: app.deploy?.git_url ?? '',
         git_branch: app.deploy?.git_branch ?? '',
         build_cmd: app.deploy?.build_cmd ?? '',
+        health_path: app.deploy?.health_path ?? '',
+        ssh_key_path: app.deploy?.ssh_key_path ?? '',
+        git_token: '',
         webhook_secret: app.deploy?.webhook_secret ?? '',
         branch_filter: app.deploy?.branch_filter ?? '',
       });
+      setDeployPreflight(preflight);
+      setDeployHistory(history.items ?? []);
     } catch {
       // Fall back to empty form on fetch error.
-      setDeployForm({ git_url: '', git_branch: '', build_cmd: '', webhook_secret: '', branch_filter: '' });
+      setDeployForm({ git_url: '', git_branch: '', build_cmd: '', health_path: '', ssh_key_path: '', git_token: '', webhook_secret: '', branch_filter: '' });
+      setDeployHistory([]);
+    } finally {
+      setDeployMetaLoading(false);
     }
   };
 
@@ -439,6 +479,9 @@ export default function Apps() {
           git_url: deployForm.git_url.trim() || undefined,
           git_branch: deployForm.git_branch.trim() || undefined,
           build_cmd: deployForm.build_cmd.trim() || undefined,
+          health_path: deployForm.health_path.trim() || undefined,
+          ssh_key_path: deployForm.ssh_key_path.trim() || undefined,
+          git_token: deployForm.git_token.trim() || undefined,
           webhook_secret: deployForm.webhook_secret.trim() || undefined,
           branch_filter: deployForm.branch_filter.trim() || undefined,
         },
@@ -462,6 +505,9 @@ export default function Apps() {
         git_url: deployForm.git_url.trim(),
         git_branch: deployForm.git_branch.trim() || undefined,
         build_cmd: deployTargetIsDocker ? undefined : deployForm.build_cmd.trim() || undefined,
+        health_path: deployForm.health_path.trim() || undefined,
+        ssh_key_path: deployForm.ssh_key_path.trim() || undefined,
+        git_token: deployForm.git_token.trim() || undefined,
       });
       setDeployResult(r);
       if (r.ok) {
@@ -469,6 +515,12 @@ export default function Apps() {
           ok: true,
           message: `Deployed ${deployFor}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ''}`,
         });
+        try {
+          const history = await fetchAppDeployHistory(deployFor);
+          setDeployHistory(history.items ?? []);
+        } catch {
+          // Non-critical; deploy result already carries the authoritative outcome.
+        }
         await load();
       } else {
         setStatus({
@@ -751,12 +803,43 @@ export default function Apps() {
                         <input
                           value={form.build_cmd}
                           onChange={e => setForm(f => ({ ...f, build_cmd: e.target.value }))}
-                          placeholder="npm ci && npm run build"
+                          placeholder="auto"
                           className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
                         />
                       </label>
                     )}
+                    <label className="space-y-1">
+                      <span className="text-xs text-blue-200">Health path</span>
+                      <input
+                        value={form.health_path}
+                        onChange={e => setForm(f => ({ ...f, health_path: e.target.value }))}
+                        placeholder="/health"
+                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs text-blue-200">SSH key path</span>
+                      <input
+                        value={form.ssh_key_path}
+                        onChange={e => setForm(f => ({ ...f, ssh_key_path: e.target.value }))}
+                        placeholder="/home/uwas/.ssh/deploy_key"
+                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs text-blue-200">HTTPS token</span>
+                      <input
+                        type="password"
+                        value={form.git_token}
+                        onChange={e => setForm(f => ({ ...f, git_token: e.target.value }))}
+                        placeholder="token for private HTTPS repos"
+                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                      />
+                    </label>
                   </div>
+                  <p className="mt-2 text-[10px] text-blue-200/80">
+                    Leave build empty for auto-detect. Health path is optional; when set, deploy requires a 2xx/3xx response after restart.
+                  </p>
                 </div>
               )}
 
@@ -1109,11 +1192,44 @@ export default function Apps() {
                   <input
                     value={deployForm.build_cmd}
                     onChange={e => setDeployForm(f => ({ ...f, build_cmd: e.target.value }))}
-                    placeholder="npm ci && npm run build"
+                    placeholder="auto"
                     className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
                   />
                 </label>
               )}
+              <label className="space-y-1 block">
+                <span className="text-xs text-muted-foreground">Health path (optional)</span>
+                <input
+                  value={deployForm.health_path}
+                  onChange={e => setDeployForm(f => ({ ...f, health_path: e.target.value }))}
+                  placeholder="/health"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                />
+              </label>
+              <div className="grid gap-2 md:grid-cols-2">
+                <label className="space-y-1 block">
+                  <span className="text-xs text-muted-foreground">SSH key path for private SSH repos</span>
+                  <input
+                    value={deployForm.ssh_key_path}
+                    onChange={e => setDeployForm(f => ({ ...f, ssh_key_path: e.target.value }))}
+                    placeholder="/home/uwas/.ssh/deploy_key"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                  />
+                </label>
+                <label className="space-y-1 block">
+                  <span className="text-xs text-muted-foreground">HTTPS token for private repos</span>
+                  <input
+                    type="password"
+                    value={deployForm.git_token}
+                    onChange={e => setDeployForm(f => ({ ...f, git_token: e.target.value }))}
+                    placeholder="leave blank to keep saved token"
+                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                  />
+                </label>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Empty build command uses auto-detect. Health path is checked over HTTP on 127.0.0.1 after the process is listening.
+              </p>
             </div>
 
             <details className="rounded-md border border-border p-3 text-xs">
@@ -1165,6 +1281,69 @@ export default function Apps() {
               </div>
             </details>
 
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-md border border-border p-3 text-xs">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="font-medium">Preflight</span>
+                  {deployMetaLoading ? (
+                    <span className="text-muted-foreground">Loading…</span>
+                  ) : deployPreflight ? (
+                    <span className={deployPreflight.ok ? 'text-green-400' : 'text-red-400'}>
+                      {deployPreflight.ok ? 'ready' : 'needs attention'}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">unavailable</span>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {deployPreflight?.checks.length ? deployPreflight.checks.map(check => (
+                    <div key={`${check.name}-${check.message}`} className="flex items-start gap-2">
+                      {check.ok ? (
+                        <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-400" />
+                      ) : (
+                        <AlertCircle size={12} className={`mt-0.5 shrink-0 ${check.required ? 'text-red-400' : 'text-amber-400'}`} />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="font-mono">{check.name}</span>
+                        {check.message ? <span className="text-muted-foreground"> · {check.message}</span> : null}
+                      </span>
+                    </div>
+                  )) : (
+                    <div className="text-muted-foreground">No preflight data yet.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-md border border-border p-3 text-xs">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="font-medium">Recent deploys</span>
+                  <span className="text-muted-foreground">{deployHistory.length}</span>
+                </div>
+                <div className="space-y-1">
+                  {deployHistory.length ? deployHistory.slice(0, 5).map(item => (
+                    <div key={`${item.started_at}-${item.commit_sha ?? item.error ?? item.source}`} className="flex items-start gap-2">
+                      {item.ok ? (
+                        <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-400" />
+                      ) : (
+                        <AlertCircle size={12} className="mt-0.5 shrink-0 text-red-400" />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{item.source}</span>
+                        {item.mode ? <span className="text-muted-foreground"> · {item.mode}</span> : null}
+                        {item.commit_sha ? <span className="font-mono text-muted-foreground"> · {item.commit_sha.slice(0, 7)}</span> : null}
+                        {item.rolled_back ? <span className="font-mono text-amber-400"> · rollback{item.rollback_sha ? ` ${item.rollback_sha.slice(0, 7)}` : ''}</span> : null}
+                        <span className="text-muted-foreground"> · {new Date(item.started_at).toLocaleString()}</span>
+                        {item.rollback_note ? <span className="block truncate text-amber-400" title={item.rollback_note}>{item.rollback_note}</span> : null}
+                        {item.error ? <span className="block truncate text-red-400" title={item.error}>{item.error}</span> : null}
+                      </span>
+                    </div>
+                  )) : (
+                    <div className="text-muted-foreground">No deploys recorded in this process.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {deployResult && (
               <div className={`rounded-md border p-2 text-xs space-y-1 ${
                 deployResult.ok
@@ -1186,6 +1365,12 @@ export default function Apps() {
                 </div>
                 {deployResult.error && (
                   <div className="text-red-400">{deployResult.error}</div>
+                )}
+                {deployResult.rollback_note && (
+                  <div className={deployResult.rolled_back ? 'text-amber-400' : 'text-red-400'}>
+                    {deployResult.rollback_note}
+                    {deployResult.rollback_sha ? ` (${deployResult.rollback_sha.slice(0, 7)})` : ''}
+                  </div>
                 )}
                 <pre className="text-[10px] font-mono whitespace-pre-wrap bg-background/50 rounded p-2 max-h-60 overflow-auto">
                   {deployResult.log || '(no output)'}

@@ -19,7 +19,7 @@ import {
   type FirewallStatus,
   type FirewallRule,
 } from '@/lib/api';
-import { useConfirm } from '@/components/ConfirmModal';
+import { useConfirm } from '@/components/useConfirm';
 
 export default function Firewall() {
   const { confirmAction } = useConfirm();
