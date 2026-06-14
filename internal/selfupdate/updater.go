@@ -29,15 +29,19 @@ var (
 		return strings.HasPrefix(u, "https://github.com/") ||
 			strings.HasPrefix(u, "https://objects.githubusercontent.com/")
 	}
-	httpClientFn   = func(timeout time.Duration) *http.Client { return &http.Client{Timeout: timeout} }
-	osExecutableFn = os.Executable
-	osRenameFn     = os.Rename
-	osRemoveFn     = os.Remove
-	osChmodFn      = os.Chmod
-	evalSymlinksFn = filepath.EvalSymlinks
-	osCreateTempFn = os.CreateTemp
-	runtimeGOOS    = runtime.GOOS
-	runtimeGOARCH  = runtime.GOARCH
+	httpClientFn       = func(timeout time.Duration) *http.Client { return &http.Client{Timeout: timeout} }
+	osExecutableFn     = os.Executable
+	osRenameFn         = os.Rename
+	osRemoveFn         = os.Remove
+	osChmodFn          = os.Chmod
+	evalSymlinksFn     = filepath.EvalSymlinks
+	osCreateTempFn     = os.CreateTemp
+	runtimeGOOS        = runtime.GOOS
+	runtimeGOARCH      = runtime.GOARCH
+	systemctlRestartFn = func() ([]byte, error) {
+		return exec.Command("systemctl", "--no-block", "restart", "uwas").CombinedOutput()
+	}
+	syscallExecFn = syscall.Exec
 )
 
 // ReleaseInfo contains version information.
@@ -213,7 +217,7 @@ func Update(downloadURL string) error {
 }
 
 // RestartSelf replaces the current process with a fresh exec of the same binary.
-// On systemd this triggers a clean restart. On bare metal it re-execs.
+// On systemd it asks the manager to restart asynchronously. On bare metal it re-execs.
 func RestartSelf() error {
 	exe, err := osExecutableFn()
 	if err != nil {
@@ -221,14 +225,22 @@ func RestartSelf() error {
 	}
 	exe, _ = evalSymlinksFn(exe)
 
-	// Try systemctl restart first (if running as service)
+	var systemctlErr error
 	if runtimeGOOS == "linux" {
-		if out, err := exec.Command("systemctl", "restart", "uwas").CombinedOutput(); err == nil {
+		if out, err := systemctlRestartFn(); err == nil {
 			_ = out
 			return nil
+		} else {
+			systemctlErr = fmt.Errorf("systemctl --no-block restart uwas: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
 
 	// Fallback: re-exec self with same args
-	return syscall.Exec(exe, os.Args, os.Environ())
+	if err := syscallExecFn(exe, os.Args, os.Environ()); err != nil {
+		if systemctlErr != nil {
+			return fmt.Errorf("%v; fallback exec: %w", systemctlErr, err)
+		}
+		return err
+	}
+	return nil
 }
