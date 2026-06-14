@@ -43,6 +43,8 @@ func saveHooks(t *testing.T) {
 	origRuntimeGOOS := runtimeGOOS
 	origRuntimeGOARCH := runtimeGOARCH
 	origIsTrustedDownloadURL := isTrustedDownloadURL
+	origSystemctlRestartFn := systemctlRestartFn
+	origSyscallExecFn := syscallExecFn
 	// Allow any URL in tests (test servers use localhost).
 	isTrustedDownloadURL = func(string) bool { return true }
 	t.Cleanup(func() {
@@ -57,6 +59,8 @@ func saveHooks(t *testing.T) {
 		runtimeGOOS = origRuntimeGOOS
 		runtimeGOARCH = origRuntimeGOARCH
 		isTrustedDownloadURL = origIsTrustedDownloadURL
+		systemctlRestartFn = origSystemctlRestartFn
+		syscallExecFn = origSyscallExecFn
 	})
 }
 
@@ -752,12 +756,74 @@ func TestRestartSelf_NonLinux(t *testing.T) {
 
 	osExecutableFn = func() (string, error) { return "/path/to/uwas", nil }
 	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+	var gotExe string
+	syscallExecFn = func(exe string, args []string, env []string) error {
+		gotExe = exe
+		return fmt.Errorf("injected exec error")
+	}
 
-	// On non-Linux, it should skip systemctl and try syscall.Exec
-	// which will fail because we're not in a real exec scenario
 	err := RestartSelf()
-	// Expected to fail on syscall.Exec since we're in test
 	if err == nil {
-		t.Skip("syscall.Exec behavior varies by platform")
+		t.Fatal("expected fallback exec error")
+	}
+	if gotExe != "/path/to/uwas" {
+		t.Errorf("fallback exe = %q, want /path/to/uwas", gotExe)
+	}
+	if !strings.Contains(err.Error(), "injected exec error") {
+		t.Errorf("error = %q, want injected exec error", err.Error())
+	}
+}
+
+func TestRestartSelf_LinuxUsesNonBlockingSystemctl(t *testing.T) {
+	saveHooks(t)
+	runtimeGOOS = "linux"
+
+	osExecutableFn = func() (string, error) { return "/path/to/uwas", nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	calledSystemctl := false
+	systemctlRestartFn = func() ([]byte, error) {
+		calledSystemctl = true
+		return nil, nil
+	}
+	syscallExecFn = func(exe string, args []string, env []string) error {
+		t.Fatalf("fallback exec should not be called after systemctl success")
+		return nil
+	}
+
+	if err := RestartSelf(); err != nil {
+		t.Fatalf("RestartSelf() error = %v", err)
+	}
+	if !calledSystemctl {
+		t.Fatal("expected systemctl restart to be called")
+	}
+}
+
+func TestRestartSelf_LinuxFallsBackAfterSystemctlError(t *testing.T) {
+	saveHooks(t)
+	runtimeGOOS = "linux"
+
+	osExecutableFn = func() (string, error) { return "/path/to/uwas", nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+	systemctlRestartFn = func() ([]byte, error) {
+		return []byte("access denied"), fmt.Errorf("injected systemctl error")
+	}
+	syscallExecFn = func(exe string, args []string, env []string) error {
+		return fmt.Errorf("injected exec error")
+	}
+
+	err := RestartSelf()
+	if err == nil {
+		t.Fatal("expected fallback exec error")
+	}
+	for _, want := range []string{
+		"systemctl --no-block restart uwas",
+		"access denied",
+		"fallback exec",
+		"injected exec error",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want %q", err.Error(), want)
+		}
 	}
 }

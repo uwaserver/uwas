@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.26] - 2026-06-14
+
+### Fixed
+
+- Fixed Web UI self-update restarts under systemd by switching the service
+  restart request to non-blocking mode before falling back to process re-exec.
+
 ## [0.6.25] - 2026-06-14
 
 ### Added
