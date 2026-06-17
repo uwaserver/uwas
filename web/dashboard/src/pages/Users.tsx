@@ -141,6 +141,7 @@ export default function Users() {
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState('');
 
   const load = useCallback(() => {
     Promise.all([fetchUsers(), fetchDomains()])
@@ -186,10 +187,36 @@ export default function Users() {
     }
   };
 
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(label);
-    setTimeout(() => setCopied(''), 2000);
+  const copyToClipboard = async (text: string, label: string) => {
+    setCopyError('');
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(''), 2000);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } finally {
+        document.body.removeChild(ta);
+      }
+      if (ok) {
+        setCopied(label);
+        setTimeout(() => setCopied(''), 2000);
+      } else {
+        setCopyError('Copy failed. Select the visible value and copy it manually.');
+      }
+    }
   };
 
   // Domains that don't have a user yet
@@ -214,6 +241,9 @@ export default function Users() {
       {error && (
         <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
       )}
+      {copyError && (
+        <div className="rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{copyError}</div>
+      )}
 
       {/* Created user credentials */}
       {created && (
@@ -221,16 +251,21 @@ export default function Users() {
           <h3 className="text-sm font-semibold text-emerald-400 mb-3">SFTP User Created</h3>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {([
-              { label: 'Host', value: created.server_ip || 'your-server-ip', secret: false },
-              { label: 'Port', value: created.port || '22', secret: false },
-              { label: 'Username', value: created.username, secret: false },
-              { label: 'Password', value: created.password, secret: true },
-              { label: 'Web Root', value: created.web_dir, secret: false },
-            ] as const).map(({ label, value, secret }) => (
+              { label: 'Host', value: created.server_ip || 'your-server-ip' },
+              { label: 'Port', value: created.port || '22' },
+              { label: 'Username', value: created.username },
+              { label: 'Password', value: created.password },
+              { label: 'Web Root', value: created.web_dir },
+            ] as const).map(({ label, value }) => (
               <div key={label} className="flex items-center justify-between rounded bg-background px-3 py-2">
-                <div>
+                <div className="min-w-0">
                   <span className="text-xs text-muted-foreground">{label}</span>
-                  <p className="font-mono text-sm text-foreground">{secret ? '•'.repeat(Math.min(value.length, 12)) : value}</p>
+                  <p
+                    className={`font-mono text-sm text-foreground ${label === 'Password' ? 'select-all break-all' : 'truncate'}`}
+                    title={value}
+                  >
+                    {value}
+                  </p>
                 </div>
                 <button
                   onClick={() => copyToClipboard(value, label)}
