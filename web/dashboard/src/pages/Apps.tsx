@@ -224,6 +224,10 @@ export default function Apps() {
     [apps, deployFor],
   );
   const deployTargetIsDocker = deployTargetApp?.runtime === 'docker';
+  const deployUsesSSHKeyWithHTTPS =
+    Boolean(deployForm.ssh_key_path.trim()) &&
+    !deployForm.git_token.trim() &&
+    deployForm.git_url.trim().toLowerCase().startsWith('https://');
 
   const setStatusErr = (e: unknown) =>
     setStatus({ ok: false, message: e instanceof Error ? e.message : String(e) });
@@ -1197,6 +1201,11 @@ export default function Apps() {
                 ? "Clones (or fast-forwards) a git repo into the app's workdir, then restarts the Docker app. The restart packages the repo with BuildKit via docker buildx build --load."
                 : "Clones (or fast-forwards) a git repo into the app's workdir, runs the optional build command, then restarts the supervisor. Times out after 5 minutes."}
             </p>
+            {deployUsesSSHKeyWithHTTPS && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                SSH key path is set with an HTTPS repo URL. UWAS will use the key by cloning through SSH for GitHub/GitLab/Bitbucket. If this is another Git host, use a <code className="font-mono">git@host:owner/repo.git</code> or <code className="font-mono">ssh://</code> URL.
+              </div>
+            )}
 
             <div className="space-y-2">
               <label className="space-y-1 block">
@@ -1454,7 +1463,7 @@ export default function Apps() {
                 disabled={deployRunning || !deployForm.git_url.trim()}
                 className="text-sm rounded-md bg-primary text-primary-foreground px-3 py-1.5 hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-1.5"
               >
-                {deployRunning ? 'Deploying…' : 'Deploy'}
+                {deployRunning ? 'Deploying…' : 'Deploy now'}
                 <ArrowRight size={14} />
               </button>
             </div>
