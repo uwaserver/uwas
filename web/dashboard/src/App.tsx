@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import SystemStatsBar from '@/components/SystemStatsBar';
 import PinModal from '@/components/PinModal';
 import { ConfirmProvider } from '@/components/ConfirmModal';
+import DebugLogDrawer from '@/components/DebugLogDrawer';
 import Login from '@/pages/Login';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -71,6 +72,7 @@ function RequireAuth() {
           </Suspense>
         </main>
       </div>
+      <DebugLogDrawer />
     </div>
   );
 }
