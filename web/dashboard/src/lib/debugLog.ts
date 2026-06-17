@@ -16,11 +16,21 @@ const maxEntries = 500;
 const storageKey = 'uwas_debug_log_enabled';
 
 let entries: DebugLogEntry[] = [];
-let enabled = localStorage.getItem(storageKey) === 'true';
+let enabled = readInitialEnabled();
 let nextID = 1;
+let snapshot = { enabled, entries };
 const listeners = new Set<Listener>();
 
+function readInitialEnabled() {
+  try {
+    return localStorage.getItem(storageKey) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 function emitChange() {
+  snapshot = { enabled, entries };
   for (const listener of listeners) listener();
 }
 
@@ -30,12 +40,16 @@ export function subscribeDebugLog(listener: Listener) {
 }
 
 export function getDebugLogSnapshot() {
-  return { enabled, entries };
+  return snapshot;
 }
 
 export function setDebugLogEnabled(value: boolean) {
   enabled = value;
-  localStorage.setItem(storageKey, value ? 'true' : 'false');
+  try {
+    localStorage.setItem(storageKey, value ? 'true' : 'false');
+  } catch {
+    // Debug logging remains usable for the current page even if storage is blocked.
+  }
   emitChange();
 }
 
