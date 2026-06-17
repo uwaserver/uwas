@@ -22,6 +22,7 @@ func saveHooks(t *testing.T) {
 	origMySQL := runMySQLFn
 	origStat := osStatFn
 	origRead := osReadFileFn
+	origWrite := osWriteFileFn
 	origMkdir := osMkdirAllFn
 	origRmAll := osRemoveAllFn
 
@@ -32,6 +33,7 @@ func saveHooks(t *testing.T) {
 		runMySQLFn = origMySQL
 		osStatFn = origStat
 		osReadFileFn = origRead
+		osWriteFileFn = origWrite
 		osMkdirAllFn = origMkdir
 		osRemoveAllFn = origRmAll
 	})
@@ -823,6 +825,64 @@ func TestChangePassword_DefaultHost(t *testing.T) {
 	}
 	if !strings.Contains(capturedSQL, "'admin'@'localhost'") {
 		t.Errorf("expected default host=localhost, got %q", capturedSQL)
+	}
+}
+
+func TestRewriteBindAddress_UpdatesMysqldSection(t *testing.T) {
+	in := "[client]\nport = 3306\n[mysqld]\nbind-address = 127.0.0.1\nskip-networking\nmax_connections = 100\n"
+	got := rewriteBindAddress(in)
+	if !strings.Contains(got, "bind-address = 0.0.0.0") {
+		t.Fatalf("expected bind-address update, got %q", got)
+	}
+	if strings.Contains(got, "bind-address = 127.0.0.1") {
+		t.Fatalf("old bind-address still present: %q", got)
+	}
+	if !strings.Contains(got, "# skip-networking") {
+		t.Fatalf("expected skip-networking to be commented, got %q", got)
+	}
+}
+
+func TestConfigureRemoteAccess_Success(t *testing.T) {
+	saveHooks(t)
+	runtimeGOOS = "linux"
+	execLookPathFn = lookPathFound("mariadb")
+	execCommandFn = fakeCmdRouter(map[string]cmdRoute{
+		"systemctl restart": {stdout: "", exitCode: 0},
+	}, cmdRoute{stdout: "", exitCode: 0})
+	osStatFn = func(path string) (fs.FileInfo, error) {
+		if path == "/etc/mysql/mariadb.conf.d/50-server.cnf" {
+			return fakeFileInfo{}, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	osReadFileFn = func(path string) ([]byte, error) {
+		return []byte("[mysqld]\nbind-address = 127.0.0.1\n"), nil
+	}
+	var writtenPath, writtenConfig, capturedSQL string
+	osWriteFileFn = func(path string, data []byte, perm fs.FileMode) error {
+		writtenPath = path
+		writtenConfig = string(data)
+		return nil
+	}
+	osMkdirAllFn = noopMkdirAll
+	runMySQLFn = func(sql string) (string, error) {
+		capturedSQL = sql
+		return "", nil
+	}
+
+	res, err := ConfigureRemoteAccess("remote_user", "%", "secret", "appdb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.User != "remote_user" || res.Host != "%" || res.Database != "appdb" || !res.Restarted {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if writtenPath != "/etc/mysql/mariadb.conf.d/50-server.cnf" || !strings.Contains(writtenConfig, "bind-address = 0.0.0.0") {
+		t.Fatalf("unexpected config write %q: %q", writtenPath, writtenConfig)
+	}
+	if !strings.Contains(capturedSQL, "CREATE USER IF NOT EXISTS 'remote_user'@'%'") ||
+		!strings.Contains(capturedSQL, "GRANT ALL PRIVILEGES ON `appdb`.* TO 'remote_user'@'%'") {
+		t.Fatalf("unexpected SQL: %q", capturedSQL)
 	}
 }
 

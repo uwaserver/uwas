@@ -61,6 +61,43 @@ func TestHandleDBChangePassword_MissingFields(t *testing.T) {
 	}
 }
 
+func TestHandleDBRemoteAccess_InvalidJSON(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/database/remote-access", strings.NewReader("invalid json"))
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleDBRemoteAccess_MissingUser(t *testing.T) {
+	s := testServer()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/database/remote-access", strings.NewReader(`{"host":"%"}`))
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != 400 {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleDBRemoteAccess_PinRequired(t *testing.T) {
+	s := testServer()
+	s.config.Global.Admin.PinCode = "1234"
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/database/remote-access", strings.NewReader(`{"user":"remote"}`))
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+}
+
 func TestHandleDBExport_MethodNotAllowed(t *testing.T) {
 	s, _ := testServerWithRoot(t)
 

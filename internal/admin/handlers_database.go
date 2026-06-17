@@ -10,6 +10,12 @@ import (
 	"github.com/uwaserver/uwas/internal/database"
 )
 
+var (
+	databaseStartService   = database.StartService
+	databaseStopService    = database.StopService
+	databaseRestartService = database.RestartService
+)
+
 // ============ Database ============
 
 func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +162,35 @@ func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) 
 	}
 	s.recordAuditR(r, "database.password_change", "user: "+req.User, true)
 	jsonResponse(w, map[string]string{"status": "changed"})
+}
+
+func (s *Server) handleDBRemoteAccess(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		User     string `json:"user"`
+		Host     string `json:"host"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.User == "" {
+		jsonError(w, "user is required", http.StatusBadRequest)
+		return
+	}
+	result, err := database.ConfigureRemoteAccess(req.User, req.Host, req.Password, req.Database)
+	if err != nil {
+		s.recordAuditR(r, "database.remote_access", "error: "+err.Error(), false)
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.recordAuditR(r, "database.remote_access", "user: "+result.User+" host: "+result.Host, true)
+	jsonResponse(w, result)
 }
 
 func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) {
@@ -460,7 +495,7 @@ func (s *Server) handleDBStart(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	if err := database.StartService(); err != nil {
+	if err := databaseStartService(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -472,7 +507,7 @@ func (s *Server) handleDBStop(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	if err := database.StopService(); err != nil {
+	if err := databaseStopService(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -484,7 +519,7 @@ func (s *Server) handleDBRestart(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	if err := database.RestartService(); err != nil {
+	if err := databaseRestartService(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

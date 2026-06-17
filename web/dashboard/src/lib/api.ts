@@ -615,8 +615,8 @@ export const fetchDatabases = () =>
   api<{ items: DBInfo[]; total: number; limit: number; offset: number }>('/api/v1/database/list')
     .then(r => r.items);
 export interface DBCreateResult { name: string; user: string; password: string; host: string; }
-export const createDatabase = (name: string, user?: string, password?: string) =>
-  api<DBCreateResult>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password }) });
+export const createDatabase = (name: string, user?: string, password?: string, host?: string) =>
+  api<DBCreateResult>('/api/v1/database/create', { method: 'POST', body: JSON.stringify({ name, user, password, host }) });
 export const dropDatabase = (name: string) =>
   api<{ status: string }>(`/api/v1/database/${encodeURIComponent(name)}`, { method: 'DELETE' });
 export const installDatabase = () => api<{ status: string; task_id?: string }>('/api/v1/database/install', { method: 'POST' });
@@ -626,6 +626,9 @@ export interface DBUser { user: string; host: string; }
 export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users').then(r => r ?? []);
 export const changeDBPassword = (user: string, host: string, password: string) =>
   api<{ status: string }>('/api/v1/database/users/password', { method: 'POST', body: JSON.stringify({ user, host, password }) });
+export interface DBRemoteAccessResult { user: string; host: string; database?: string; password?: string; config_path: string; restarted: boolean; }
+export const configureDBRemoteAccess = (body: { user: string; host?: string; password?: string; database?: string }) =>
+  api<DBRemoteAccessResult>('/api/v1/database/remote-access', { method: 'POST', body: JSON.stringify(body) });
 export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
 export const importDatabase = async (name: string, file: File) => {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
@@ -1162,6 +1165,14 @@ export const fetchAppDeployPreflight = (name: string) =>
 export const fetchAppDeployHistory = (name: string) =>
   api<{ name: string; items: AppDeployHistoryEntry[] }>(
     `/api/v1/apps/${encodeURIComponent(name)}/deploy-history`);
+
+export interface AppDeployKeyResult {
+  private_key_path: string;
+  public_key: string;
+}
+
+export const generateAppDeployKey = (name: string) =>
+  api<AppDeployKeyResult>(`/api/v1/apps/${encodeURIComponent(name)}/deploy-key`, { method: 'POST' });
 
 export interface SoftwareTemplate {
   id: string;

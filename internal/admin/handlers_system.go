@@ -22,6 +22,7 @@ import (
 var (
 	systemExecCommandMu sync.RWMutex
 	systemExecCommand   = exec.Command
+	doctorRun           = doctor.Run
 )
 
 func newSystemExecCommand(name string, args ...string) *exec.Cmd {
@@ -205,7 +206,7 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	webRoot := s.config.Global.WebRoot
 	s.configMu.RUnlock()
 
-	report := doctor.Run(doctor.Options{
+	report := doctorRun(doctor.Options{
 		ConfigPath: s.configPath,
 		WebRoot:    webRoot,
 		AutoFix:    false,
@@ -218,7 +219,7 @@ func (s *Server) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
 	webRoot := s.config.Global.WebRoot
 	s.configMu.RUnlock()
 
-	report := doctor.Run(doctor.Options{
+	report := doctorRun(doctor.Options{
 		ConfigPath: s.configPath,
 		WebRoot:    webRoot,
 		AutoFix:    true,

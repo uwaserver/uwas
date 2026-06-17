@@ -815,6 +815,51 @@ func TestAppUpdateRejectsInvalidDeployConfig(t *testing.T) {
 	}
 }
 
+func TestAppGenerateDeployKeyPersistsSSHKeyPath(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	if err := mgr.Register(&apps.App{
+		Name:    "private-key-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/apps/private-key-app/deploy-key", nil)
+	req.SetPathValue("name", "private-key-app")
+	rec := httptest.NewRecorder()
+	s.handleAppGenerateDeployKey(rec, withAdminContext(req))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var body AppDeployKeyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.PrivateKeyPath == "" || !strings.HasPrefix(body.PublicKey, "ssh-ed25519 ") {
+		t.Fatalf("unexpected key response: %#v", body)
+	}
+	info, err := os.Stat(body.PrivateKeyPath)
+	if err != nil {
+		t.Fatalf("stat private key: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("private key mode = %v, want 0600", got)
+	}
+	def, err := mgr.Store().Get("private-key-app")
+	if err != nil || def == nil {
+		t.Fatalf("app missing after key generation: def=%v err=%v", def, err)
+	}
+	if def.Deploy.SSHKeyPath != body.PrivateKeyPath {
+		t.Fatalf("stored ssh key path = %q, want %q", def.Deploy.SSHKeyPath, body.PrivateKeyPath)
+	}
+}
+
 func TestAppGetRedactsGitToken(t *testing.T) {
 	s := testServer()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
