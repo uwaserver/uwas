@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/doctor"
 )
 
 // Simple endpoint tests for quick coverage gains
@@ -254,6 +256,12 @@ func TestDomainHealthNotFound(t *testing.T) {
 }
 
 func TestDoctorFixInvalidJSON(t *testing.T) {
+	oldDoctorRun := doctorRun
+	doctorRun = func(doctor.Options) *doctor.Report {
+		return &doctor.Report{Summary: "test", Checks: []doctor.Check{{Name: "test", Status: doctor.StatusOK}}}
+	}
+	t.Cleanup(func() { doctorRun = oldDoctorRun })
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/doctor/fix", strings.NewReader(`{invalid`)))
@@ -369,6 +377,12 @@ func TestFirewallDeny(t *testing.T) {
 }
 
 func TestDoctorReport(t *testing.T) {
+	oldDoctorRun := doctorRun
+	doctorRun = func(doctor.Options) *doctor.Report {
+		return &doctor.Report{Summary: "test", Checks: []doctor.Check{{Name: "test", Status: doctor.StatusOK}}}
+	}
+	t.Cleanup(func() { doctorRun = oldDoctorRun })
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/doctor", nil))
@@ -378,6 +392,12 @@ func TestDoctorReport(t *testing.T) {
 }
 
 func TestDoctorFix(t *testing.T) {
+	oldDoctorRun := doctorRun
+	doctorRun = func(doctor.Options) *doctor.Report {
+		return &doctor.Report{Summary: "test", Checks: []doctor.Check{{Name: "test", Status: doctor.StatusFixed}}}
+	}
+	t.Cleanup(func() { doctorRun = oldDoctorRun })
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/doctor/fix", nil))

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -19,6 +20,7 @@ var (
 	runMySQLFn     = runMySQL
 	osStatFn       = os.Stat
 	osReadFileFn   = os.ReadFile
+	osWriteFileFn  = os.WriteFile
 	osMkdirAllFn   = os.MkdirAll
 	osRemoveAllFn  = os.RemoveAll
 )
@@ -451,6 +453,16 @@ type CreateResult struct {
 	Host     string `json:"host"`
 }
 
+// RemoteAccessResult contains the effective settings applied for remote DB access.
+type RemoteAccessResult struct {
+	User       string `json:"user"`
+	Host       string `json:"host"`
+	Database   string `json:"database,omitempty"`
+	Password   string `json:"password,omitempty"`
+	ConfigPath string `json:"config_path"`
+	Restarted  bool   `json:"restarted"`
+}
+
 // CreateDatabase creates a new MySQL database and user. Returns credentials.
 func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	if name == "" {
@@ -522,6 +534,61 @@ func ChangePassword(user, host, newPassword string) error {
 	return nil
 }
 
+// ConfigureRemoteAccess makes the native MySQL/MariaDB service listen on all
+// interfaces and creates a remote-capable user. If databaseName is set, the
+// user is granted full privileges on that database only.
+func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAccessResult, error) {
+	if runtimeGOOS == "windows" {
+		return nil, fmt.Errorf("not supported on Windows")
+	}
+	user = strings.TrimSpace(user)
+	host = strings.TrimSpace(host)
+	databaseName = strings.TrimSpace(databaseName)
+	if user == "" {
+		return nil, fmt.Errorf("user is required")
+	}
+	if !validDBIdentifier(user) {
+		return nil, fmt.Errorf("invalid username: only letters, digits, underscore, hyphen allowed (max 64 chars)")
+	}
+	if host == "" {
+		host = "%"
+	}
+	if strings.ContainsAny(host, "\x00\n\r'") {
+		return nil, fmt.Errorf("invalid host")
+	}
+	if databaseName != "" && !validDBIdentifier(databaseName) {
+		return nil, fmt.Errorf("invalid database name")
+	}
+	if password == "" {
+		password = generateDBPassword()
+	}
+
+	configPath, err := setBindAddressAllInterfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	sql := fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n", escapeSQL(user), escapeSQL(host), escapeSQL(password))
+	if databaseName != "" {
+		sql += fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';\n", backtick(databaseName), escapeSQL(user), escapeSQL(host))
+	}
+	sql += "FLUSH PRIVILEGES;"
+	if _, err := runMySQLFn(sql); err != nil {
+		return nil, fmt.Errorf("create remote user %q@%q: %w", user, host, err)
+	}
+	if err := RestartService(); err != nil {
+		return nil, fmt.Errorf("remote user created but database restart failed: %w", err)
+	}
+	return &RemoteAccessResult{
+		User:       user,
+		Host:       host,
+		Database:   databaseName,
+		Password:   password,
+		ConfigPath: configPath,
+		Restarted:  true,
+	}, nil
+}
+
 // ListUsers returns all non-system database users.
 func ListUsers() ([]DBUser, error) {
 	sql := `SELECT User, Host FROM mysql.user WHERE User NOT IN ('root', 'mysql', 'mariadb.sys', 'debian-sys-maint', '') ORDER BY User`
@@ -537,6 +604,89 @@ func ListUsers() ([]DBUser, error) {
 		}
 	}
 	return users, nil
+}
+
+func setBindAddressAllInterfaces() (string, error) {
+	candidates := []string{
+		"/etc/mysql/mariadb.conf.d/50-server.cnf",
+		"/etc/mysql/mysql.conf.d/mysqld.cnf",
+		"/etc/my.cnf.d/server.cnf",
+		"/etc/mysql/my.cnf",
+		"/etc/my.cnf",
+	}
+	path := candidates[0]
+	for _, candidate := range candidates {
+		if _, err := osStatFn(candidate); err == nil {
+			path = candidate
+			break
+		}
+	}
+
+	data, err := osReadFileFn(path)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read mysql config %s: %w", path, err)
+	}
+	updated := rewriteBindAddress(string(data))
+	if strings.TrimSpace(updated) == "" {
+		updated = "[mysqld]\nbind-address = 0.0.0.0\n"
+	}
+	if err := osMkdirAllFn(filepath.Dir(path), 0755); err != nil {
+		return "", fmt.Errorf("create mysql config dir: %w", err)
+	}
+	if err := osWriteFileFn(path, []byte(updated), 0644); err != nil {
+		return "", fmt.Errorf("write mysql config %s: %w", path, err)
+	}
+	return path, nil
+}
+
+func rewriteBindAddress(in string) string {
+	lines := strings.Split(in, "\n")
+	var out []string
+	inMysqld := false
+	seenMysqld := false
+	wroteBind := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inMysqld && !wroteBind {
+				out = append(out, "bind-address = 0.0.0.0")
+				wroteBind = true
+			}
+			section := strings.ToLower(strings.Trim(trimmed, "[]"))
+			inMysqld = section == "mysqld" || section == "server"
+			if inMysqld {
+				seenMysqld = true
+			}
+			out = append(out, line)
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if inMysqld && (strings.HasPrefix(lower, "bind-address") || strings.HasPrefix(lower, "bind_address")) {
+			if !wroteBind {
+				out = append(out, "bind-address = 0.0.0.0")
+				wroteBind = true
+			}
+			continue
+		}
+		if inMysqld && strings.HasPrefix(lower, "skip-networking") {
+			out = append(out, "# "+line)
+			continue
+		}
+		out = append(out, line)
+	}
+	if seenMysqld {
+		if !wroteBind {
+			out = append(out, "bind-address = 0.0.0.0")
+		}
+		return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	}
+	if strings.TrimSpace(in) != "" {
+		out = append(out, "", "[mysqld]", "bind-address = 0.0.0.0")
+	} else {
+		out = []string{"[mysqld]", "bind-address = 0.0.0.0"}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
 }
 
 // DBUser represents a MySQL/MariaDB user.

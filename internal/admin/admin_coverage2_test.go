@@ -18,6 +18,7 @@ import (
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
+	"github.com/uwaserver/uwas/internal/doctor"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/mcp"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -1484,6 +1485,12 @@ func TestStatsDomains(t *testing.T) {
 // =============================================================================
 
 func TestDoctorHandler(t *testing.T) {
+	oldDoctorRun := doctorRun
+	doctorRun = func(doctor.Options) *doctor.Report {
+		return &doctor.Report{Summary: "test", Checks: []doctor.Check{{Name: "test", Status: doctor.StatusOK}}}
+	}
+	t.Cleanup(func() { doctorRun = oldDoctorRun })
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.handleDoctor(rec, httptest.NewRequest("GET", "/api/v1/doctor", nil))
@@ -1493,6 +1500,12 @@ func TestDoctorHandler(t *testing.T) {
 }
 
 func TestDoctorFixHandler(t *testing.T) {
+	oldDoctorRun := doctorRun
+	doctorRun = func(doctor.Options) *doctor.Report {
+		return &doctor.Report{Summary: "test", Checks: []doctor.Check{{Name: "test", Status: doctor.StatusFixed}}}
+	}
+	t.Cleanup(func() { doctorRun = oldDoctorRun })
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/doctor/fix", nil)
@@ -4164,6 +4177,10 @@ func TestSetPHPManagerSetsManager(t *testing.T) {
 // =============================================================================
 
 func TestHandleDBStartNoManager(t *testing.T) {
+	oldStartService := databaseStartService
+	databaseStartService = func() error { return fmt.Errorf("start unavailable") }
+	t.Cleanup(func() { databaseStartService = oldStartService })
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/database/start", nil)

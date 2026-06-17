@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.27] - 2026-06-17
+
+### Added
+
+- Added app-specific SSH deploy key generation for private Git repositories.
+  Operators can generate a read-only deploy key from the Applications deploy
+  modal, copy the public key into GitHub/GitLab, and reuse the stored private
+  key for manual and webhook-triggered deploys.
+- Added Git source settings to the Applications edit flow, including Git URL,
+  branch, build command, health path, SSH key path, and private HTTPS token
+  persistence.
+- Added MySQL/MariaDB remote access management from the Database page,
+  including `bind-address = 0.0.0.0`, remote user creation, database grants,
+  and service restart.
+
+### Fixed
+
+- Fixed Applications deploy config updates so `health_path` is persisted with
+  the other Git deploy settings.
+- Fixed private repository webhook deploys by making the UI persist SSH key
+  paths and tokens needed by the stored deploy config.
+
 ## [0.6.26] - 2026-06-14
 
 ### Fixed

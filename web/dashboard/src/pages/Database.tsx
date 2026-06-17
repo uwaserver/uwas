@@ -31,6 +31,7 @@ import {
   diagnoseDatabase,
   fetchDBUsers,
   changeDBPassword,
+  configureDBRemoteAccess,
   exportDatabase,
   importDatabase,
   getToken,
@@ -117,11 +118,13 @@ function ConfirmModal({
 function CredentialsPanel({
   name,
   user,
+  host,
   password,
   onDismiss,
 }: {
   name: string;
   user: string;
+  host?: string;
   password: string;
   onDismiss: () => void;
 }) {
@@ -146,6 +149,7 @@ function CredentialsPanel({
         {[
           { label: 'Database', value: name },
           { label: 'User', value: user },
+          ...(host ? [{ label: 'Host', value: host }] : []),
           { label: 'Password', value: password },
         ].map((item) => (
           <div
@@ -182,12 +186,14 @@ export default function Database() {
 
   // Create form
   const [newDbName, setNewDbName] = useState('');
+  const [newDbHost, setNewDbHost] = useState('localhost');
   const [creating, setCreating] = useState(false);
 
   // Created credentials
   const [credentials, setCredentials] = useState<{
     name: string;
     user: string;
+    host?: string;
     password: string;
   } | null>(null);
 
@@ -206,6 +212,8 @@ export default function Database() {
   const [pwUser, setPwUser] = useState<DBUser | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [changingPw, setChangingPw] = useState(false);
+  const [remoteForm, setRemoteForm] = useState({ database: '', user: '', host: '%', password: '' });
+  const [configuringRemote, setConfiguringRemote] = useState(false);
 
   // Docker
   const [dockerAvailable, setDockerAvailable] = useState(false);
@@ -367,19 +375,49 @@ export default function Database() {
     setStatus(null);
     setCredentials(null);
     try {
-      const result = await createDatabase(newDbName.trim());
+      const result = await createDatabase(newDbName.trim(), undefined, undefined, newDbHost.trim() || undefined);
       setCredentials({
         name: result.name,
         user: result.user,
+        host: result.host,
         password: result.password,
       });
       setNewDbName('');
+      setNewDbHost('localhost');
       setStatus({ ok: true, message: `Database "${result.name}" created successfully` });
       await load();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleConfigureRemote = async () => {
+    if (!remoteForm.user.trim()) return;
+    setConfiguringRemote(true);
+    setStatus(null);
+    setCredentials(null);
+    try {
+      const result = await configureDBRemoteAccess({
+        database: remoteForm.database || undefined,
+        user: remoteForm.user.trim(),
+        host: remoteForm.host.trim() || '%',
+        password: remoteForm.password || undefined,
+      });
+      setCredentials({
+        name: result.database || '(no database grant)',
+        user: result.user,
+        host: result.host,
+        password: result.password || remoteForm.password,
+      });
+      setRemoteForm({ database: '', user: '', host: '%', password: '' });
+      setStatus({ ok: true, message: `Remote MySQL enabled via ${result.config_path}; service restarted` });
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setConfiguringRemote(false);
     }
   };
 
@@ -580,6 +618,7 @@ export default function Database() {
         <CredentialsPanel
           name={credentials.name}
           user={credentials.user}
+          host={credentials.host}
           password={credentials.password}
           onDismiss={() => setCredentials(null)}
         />
@@ -592,7 +631,7 @@ export default function Database() {
             <Plus size={18} className="text-blue-400" />
             <h2 className="text-sm font-semibold text-card-foreground">Create Database</h2>
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px_auto] sm:items-end">
             <div className="flex-1">
               <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
                 Database Name
@@ -611,6 +650,22 @@ export default function Database() {
                 A user with the same name will be created automatically.
               </p>
             </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">
+                User Host
+              </label>
+              <select
+                value={newDbHost}
+                onChange={(e) => setNewDbHost(e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+              >
+                <option value="localhost">localhost</option>
+                <option value="%">remote (%)</option>
+              </select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Use remote after enabling bind below.
+              </p>
+            </div>
             <button
               onClick={handleCreate}
               disabled={creating || !newDbName.trim()}
@@ -622,6 +677,70 @@ export default function Database() {
                 <Plus size={16} />
               )}
               {creating ? 'Creating...' : 'Create Database'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Remote Access */}
+      {dbStatus?.installed && (
+        <div className="rounded-lg border border-border bg-card p-5 shadow-md">
+          <div className="mb-4 flex items-center gap-2">
+            <Key size={18} className="text-blue-400" />
+            <h2 className="text-sm font-semibold text-card-foreground">Remote MySQL Access</h2>
+          </div>
+          <div className="grid gap-3 md:grid-cols-4">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Database grant</label>
+              <select
+                value={remoteForm.database}
+                onChange={e => setRemoteForm(f => ({ ...f, database: e.target.value, user: f.user || e.target.value }))}
+                className="w-full rounded border border-border bg-background px-2 py-2 text-sm text-foreground outline-none"
+              >
+                <option value="">No database grant</option>
+                {databases.map(db => <option key={db.name} value={db.name}>{db.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">User</label>
+              <input
+                value={remoteForm.user}
+                onChange={e => setRemoteForm(f => ({ ...f, user: e.target.value }))}
+                placeholder="remote_user"
+                className="w-full rounded border border-border bg-background px-2 py-2 text-sm text-foreground outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Host</label>
+              <input
+                value={remoteForm.host}
+                onChange={e => setRemoteForm(f => ({ ...f, host: e.target.value }))}
+                placeholder="%"
+                className="w-full rounded border border-border bg-background px-2 py-2 text-sm text-foreground outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Password</label>
+              <input
+                type="password"
+                value={remoteForm.password}
+                onChange={e => setRemoteForm(f => ({ ...f, password: e.target.value }))}
+                placeholder="auto-generate"
+                className="w-full rounded border border-border bg-background px-2 py-2 text-sm text-foreground outline-none"
+              />
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              Sets MySQL/MariaDB <code className="font-mono">bind-address = 0.0.0.0</code>, creates <code className="font-mono">user@host</code>, grants the selected database, then restarts the service.
+            </p>
+            <button
+              onClick={handleConfigureRemote}
+              disabled={configuringRemote || !remoteForm.user.trim()}
+              className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+            >
+              {configuringRemote ? <RefreshCw size={14} className="animate-spin" /> : <Key size={14} />}
+              Enable Remote Access
             </button>
           </div>
         </div>

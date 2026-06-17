@@ -302,6 +302,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 	hasDeployPatch := patch.Deploy.GitURL != "" ||
 		patch.Deploy.GitBranch != "" ||
 		patch.Deploy.BuildCmd != "" ||
+		patch.Deploy.HealthPath != "" ||
 		patch.Deploy.SSHKeyPath != "" ||
 		patch.Deploy.GitToken != "" ||
 		patch.Deploy.WebhookSecret != "" ||
@@ -356,6 +357,9 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if patch.Deploy.BuildCmd != "" {
 		existing.Deploy.BuildCmd = patch.Deploy.BuildCmd
+	}
+	if patch.Deploy.HealthPath != "" {
+		existing.Deploy.HealthPath = patch.Deploy.HealthPath
 	}
 	if patch.Deploy.SSHKeyPath != "" {
 		existing.Deploy.SSHKeyPath = patch.Deploy.SSHKeyPath

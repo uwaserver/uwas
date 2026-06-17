@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Play, Square, RefreshCw, Plus, Trash2, FileText, Edit2, X,
   Container, Cpu, AlertCircle, CheckCircle, Circle, ArrowRight,
-  GitBranch, Activity,
+  GitBranch, Activity, Key, Copy,
 } from 'lucide-react';
 import { usePolling } from '@/hooks/usePolling';
 import { useConfirm } from '@/components/useConfirm';
@@ -20,12 +20,14 @@ import {
   fetchAppStats,
   fetchAppDeployPreflight,
   fetchAppDeployHistory,
+  generateAppDeployKey,
   type App,
   type AppInstance,
   type AppRuntime,
   type AppDeployResult,
   type AppDeployPreflight,
   type AppDeployHistoryEntry,
+  type AppDeployKeyResult,
   type AppStats,
 } from '@/lib/api';
 
@@ -167,6 +169,8 @@ export default function Apps() {
   const [deployResult, setDeployResult] = useState<AppDeployResult | null>(null);
   const [deployPreflight, setDeployPreflight] = useState<AppDeployPreflight | null>(null);
   const [deployHistory, setDeployHistory] = useState<AppDeployHistoryEntry[]>([]);
+  const [deployKeyResult, setDeployKeyResult] = useState<AppDeployKeyResult | null>(null);
+  const [deployKeyGenerating, setDeployKeyGenerating] = useState(false);
   const [deployMetaLoading, setDeployMetaLoading] = useState(false);
 
   // Per-app stats cache. Keyed by name; only running apps with the
@@ -209,6 +213,7 @@ export default function Apps() {
 
   const isDocker = form.runtime === 'docker';
   const createFromGit = editing?.mode === 'create' && form.sourceMode === 'git';
+  const showGitSettings = createFromGit || editing?.mode === 'edit';
 
   const sortedApps = useMemo(
     () => [...apps].sort((a, b) => a.name.localeCompare(b.name)),
@@ -245,19 +250,22 @@ export default function Apps() {
       port: portNum || undefined,
       env,
     };
-    if (createFromGit) {
+    if (showGitSettings) {
       if (!form.git_url.trim()) {
-        setStatus({ ok: false, message: 'Git URL is required' });
-        return null;
+        if (createFromGit) {
+          setStatus({ ok: false, message: 'Git URL is required' });
+          return null;
+        }
+      } else {
+        body.deploy = {
+          git_url: form.git_url.trim(),
+          git_branch: form.git_branch.trim() || undefined,
+          build_cmd: form.build_cmd.trim() || undefined,
+          health_path: form.health_path.trim() || undefined,
+          ssh_key_path: form.ssh_key_path.trim() || undefined,
+          git_token: form.git_token.trim() || undefined,
+        };
       }
-      body.deploy = {
-        git_url: form.git_url.trim(),
-        git_branch: form.git_branch.trim() || undefined,
-        build_cmd: form.build_cmd.trim() || undefined,
-        health_path: form.health_path.trim() || undefined,
-        ssh_key_path: form.ssh_key_path.trim() || undefined,
-        git_token: form.git_token.trim() || undefined,
-      };
     }
 
     if (isDocker) {
@@ -438,6 +446,7 @@ export default function Apps() {
     setDeployResult(null);
     setDeployPreflight(null);
     setDeployHistory([]);
+    setDeployKeyResult(null);
     setDeployMetaLoading(true);
     try {
       const [{ app }, preflight, history] = await Promise.all([
@@ -463,6 +472,28 @@ export default function Apps() {
       setDeployHistory([]);
     } finally {
       setDeployMetaLoading(false);
+    }
+  };
+
+  const generateDeployKey = async () => {
+    if (!deployFor) return;
+    setDeployKeyGenerating(true);
+    setDeployKeyResult(null);
+    try {
+      const result = await generateAppDeployKey(deployFor);
+      setDeployKeyResult(result);
+      setDeployForm(f => ({ ...f, ssh_key_path: result.private_key_path }));
+      setStatus({ ok: true, message: `Generated deploy key for ${deployFor}` });
+      try {
+        const preflight = await fetchAppDeployPreflight(deployFor);
+        setDeployPreflight(preflight);
+      } catch {
+        // Key generation succeeded; preflight refresh is only informational.
+      }
+    } catch (e) {
+      setStatusErr(e);
+    } finally {
+      setDeployKeyGenerating(false);
     }
   };
 
@@ -776,7 +807,7 @@ export default function Apps() {
                 </label>
               </div>
 
-              {createFromGit && (
+              {showGitSettings && (
                 <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3">
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="space-y-1 md:col-span-2">
@@ -832,13 +863,13 @@ export default function Apps() {
                         type="password"
                         value={form.git_token}
                         onChange={e => setForm(f => ({ ...f, git_token: e.target.value }))}
-                        placeholder="token for private HTTPS repos"
+                        placeholder={editing?.mode === 'edit' ? 'leave blank to keep stored token' : 'token for private HTTPS repos'}
                         className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
                       />
                     </label>
                   </div>
                   <p className="mt-2 text-[10px] text-blue-200/80">
-                    Leave build empty for auto-detect. Health path is optional; when set, deploy requires a 2xx/3xx response after restart.
+                    Use an HTTPS token for private HTTPS repos, or an absolute SSH key path for git@ / ssh:// repos. Leave token empty while editing to keep the stored credential.
                   </p>
                 </div>
               )}
@@ -1154,7 +1185,7 @@ export default function Apps() {
                 <GitBranch size={16} /> Deploy {deployFor}
               </h2>
               <button
-                onClick={() => { setDeployFor(null); setDeployResult(null); }}
+                onClick={() => { setDeployFor(null); setDeployResult(null); setDeployKeyResult(null); }}
                 className="opacity-60 hover:opacity-100"
               >
                 <X size={18} />
@@ -1209,12 +1240,24 @@ export default function Apps() {
               <div className="grid gap-2 md:grid-cols-2">
                 <label className="space-y-1 block">
                   <span className="text-xs text-muted-foreground">SSH key path for private SSH repos</span>
-                  <input
-                    value={deployForm.ssh_key_path}
-                    onChange={e => setDeployForm(f => ({ ...f, ssh_key_path: e.target.value }))}
-                    placeholder="/home/uwas/.ssh/deploy_key"
-                    className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      value={deployForm.ssh_key_path}
+                      onChange={e => setDeployForm(f => ({ ...f, ssh_key_path: e.target.value }))}
+                      placeholder="/etc/uwas/apps.d/deploy-keys/app/id_ed25519"
+                      className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={generateDeployKey}
+                      disabled={deployKeyGenerating}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                      title="Generate an app-specific SSH deploy key"
+                    >
+                      {deployKeyGenerating ? <RefreshCw size={12} className="animate-spin" /> : <Key size={12} />}
+                      Generate
+                    </button>
+                  </div>
                 </label>
                 <label className="space-y-1 block">
                   <span className="text-xs text-muted-foreground">HTTPS token for private repos</span>
@@ -1230,6 +1273,26 @@ export default function Apps() {
               <p className="text-[10px] text-muted-foreground">
                 Empty build command uses auto-detect. Health path is checked over HTTP on 127.0.0.1 after the process is listening.
               </p>
+              {deployKeyResult && (
+                <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="font-medium text-emerald-300">Deploy key generated</span>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(deployKeyResult.public_key)}
+                      className="inline-flex items-center gap-1 rounded border border-emerald-500/30 px-2 py-1 text-emerald-200 hover:bg-emerald-500/10"
+                    >
+                      <Copy size={12} /> Copy public key
+                    </button>
+                  </div>
+                  <code className="block max-h-24 overflow-auto break-all rounded bg-background/70 p-2 font-mono text-[11px] text-foreground">
+                    {deployKeyResult.public_key}
+                  </code>
+                  <p className="mt-2 text-[10px] text-emerald-100/80">
+                    Add this public key to the private repository as a read-only deploy key, then use a git@ or ssh:// Git URL.
+                  </p>
+                </div>
+              )}
             </div>
 
             <details className="rounded-md border border-border p-3 text-xs">
