@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.34] - 2026-06-17
+
+### Fixed
+
+- Fixed a race in the Applications listen probe so deploy/start/restart checks
+  stop as soon as the probed process exits instead of reading process state
+  without the supervisor lock.
+- Fixed dashboard Playwright E2E runs so they start the UWAS test server
+  automatically instead of assuming `127.0.0.1:19443` is already running.
+
+## [0.6.33] - 2026-06-17
+
+### Fixed
+
+- Fixed dashboard login branding requests so unauthenticated branding reads no
+  longer consume the login rate limit.
+- Fixed WordPress install/update downloads to use unique temporary tar files
+  instead of shared `/tmp` paths.
+
 ## [0.6.32] - 2026-06-17
 
 ### Fixed
