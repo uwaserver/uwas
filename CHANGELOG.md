@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.28] - 2026-06-17
+
+### Security
+
+- Updated dashboard build dependencies to resolve Dependabot alerts for Vite
+  (`GHSA-fx2h-pf6j-xcff`, `GHSA-v6wh-96g9-6wx3`) and refreshed transitive
+  audit fixes for `@babel/core` and `js-yaml`.
+
 ## [0.6.27] - 2026-06-17
 
 ### Added
