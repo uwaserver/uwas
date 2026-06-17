@@ -1,6 +1,7 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense, Component, type ReactNode } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { getToken, onPinRequired } from '@/lib/api';
+import { addDebugLog } from '@/lib/debugLog';
 import Sidebar from '@/components/Sidebar';
 import SystemStatsBar from '@/components/SystemStatsBar';
 import PinModal from '@/components/PinModal';
@@ -55,6 +56,44 @@ function PageLoader() {
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
     </div>
   );
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: { componentStack?: string }) {
+    addDebugLog({
+      level: 'error',
+      scope: 'react',
+      message: error.message || 'React render error',
+      detail: `${error.stack || error.message}\n${info.componentStack || ''}`,
+    });
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-screen items-center justify-center bg-background p-6">
+          <div className="max-w-xl rounded-md border border-red-500/30 bg-card p-5 text-sm text-foreground shadow-xl">
+            <h1 className="mb-2 text-base font-semibold text-red-300">Dashboard render error</h1>
+            <p className="text-muted-foreground">{this.state.error.message}</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function RequireAuth() {
@@ -112,72 +151,74 @@ export default function App() {
 
   return (
     <ConfirmProvider>
-    <PinModal
-      open={pinOpen}
-      onConfirm={(pin) => {
-        setPinOpen(false);
-        pinResolver?.resolve(pin);
-        setPinResolver(null);
-      }}
-      onCancel={() => {
-        setPinOpen(false);
-        pinResolver?.reject();
-        setPinResolver(null);
-      }}
-    />
-    <Routes>
-      {/* Public routes */}
-      <Route element={<PublicOnly />}>
-        <Route path="/login" element={<Login />} />
-      </Route>
+      <AppErrorBoundary>
+        <PinModal
+          open={pinOpen}
+          onConfirm={(pin) => {
+            setPinOpen(false);
+            pinResolver?.resolve(pin);
+            setPinResolver(null);
+          }}
+          onCancel={() => {
+            setPinOpen(false);
+            pinResolver?.reject();
+            setPinResolver(null);
+          }}
+        />
+        <Routes>
+          {/* Public routes */}
+          <Route element={<PublicOnly />}>
+            <Route path="/login" element={<Login />} />
+          </Route>
 
-      {/* Authenticated routes */}
-      <Route element={<RequireAuth />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/domains" element={<Domains />} />
-        <Route path="/domains/:host" element={<DomainDetail />} />
-        <Route path="/topology" element={<Topology />} />
-        <Route path="/cache" element={<Cache />} />
-        <Route path="/metrics" element={<Metrics />} />
-        <Route path="/logs" element={<Logs />} />
-        <Route path="/analytics" element={<Analytics />} />
-        <Route path="/config-editor" element={<ConfigEditor />} />
-        <Route path="/certificates" element={<Certificates />} />
-        <Route path="/php" element={<PHP />} />
-        <Route path="/php-config" element={<PHPConfig />} />
-        <Route path="/backups" element={<Backups />} />
-        <Route path="/database" element={<Database />} />
-        <Route path="/db-explorer" element={<DBExplorer />} />
-        <Route path="/wordpress" element={<WordPress />} />
-        <Route path="/clone" element={<CloneStaging />} />
-        <Route path="/migrate" element={<Migration />} />
-        <Route path="/webhooks" element={<Webhooks />} />
-        <Route path="/admin-users" element={<AdminUsers />} />
-        <Route path="/dns" element={<DNS />} />
-        <Route path="/ip-management" element={<IPManagement />} />
-        <Route path="/audit" element={<AuditLog />} />
-        <Route path="/unknown-domains" element={<UnknownDomains />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/file-manager" element={<FileManager />} />
-        <Route path="/cron" element={<CronJobs />} />
-        <Route path="/firewall" element={<Firewall />} />
-        <Route path="/security" element={<Security />} />
-        <Route path="/email" element={<EmailGuide />} />
-        <Route path="/updates" element={<Updates />} />
-        <Route path="/services" element={<Services />} />
-        <Route path="/packages" element={<Packages />} />
-        <Route path="/doctor" element={<Doctor />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/apps" element={<Apps />} />
-        <Route path="/software" element={<SoftwareLibrary />} />
-        <Route path="/terminal" element={<TerminalPage />} />
-        <Route path="/cloudflare" element={<Cloudflare />} />
-        <Route path="/about" element={<About />} />
-      </Route>
+          {/* Authenticated routes */}
+          <Route element={<RequireAuth />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/domains" element={<Domains />} />
+            <Route path="/domains/:host" element={<DomainDetail />} />
+            <Route path="/topology" element={<Topology />} />
+            <Route path="/cache" element={<Cache />} />
+            <Route path="/metrics" element={<Metrics />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/config-editor" element={<ConfigEditor />} />
+            <Route path="/certificates" element={<Certificates />} />
+            <Route path="/php" element={<PHP />} />
+            <Route path="/php-config" element={<PHPConfig />} />
+            <Route path="/backups" element={<Backups />} />
+            <Route path="/database" element={<Database />} />
+            <Route path="/db-explorer" element={<DBExplorer />} />
+            <Route path="/wordpress" element={<WordPress />} />
+            <Route path="/clone" element={<CloneStaging />} />
+            <Route path="/migrate" element={<Migration />} />
+            <Route path="/webhooks" element={<Webhooks />} />
+            <Route path="/admin-users" element={<AdminUsers />} />
+            <Route path="/dns" element={<DNS />} />
+            <Route path="/ip-management" element={<IPManagement />} />
+            <Route path="/audit" element={<AuditLog />} />
+            <Route path="/unknown-domains" element={<UnknownDomains />} />
+            <Route path="/users" element={<Users />} />
+            <Route path="/file-manager" element={<FileManager />} />
+            <Route path="/cron" element={<CronJobs />} />
+            <Route path="/firewall" element={<Firewall />} />
+            <Route path="/security" element={<Security />} />
+            <Route path="/email" element={<EmailGuide />} />
+            <Route path="/updates" element={<Updates />} />
+            <Route path="/services" element={<Services />} />
+            <Route path="/packages" element={<Packages />} />
+            <Route path="/doctor" element={<Doctor />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/apps" element={<Apps />} />
+            <Route path="/software" element={<SoftwareLibrary />} />
+            <Route path="/terminal" element={<TerminalPage />} />
+            <Route path="/cloudflare" element={<Cloudflare />} />
+            <Route path="/about" element={<About />} />
+          </Route>
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AppErrorBoundary>
     </ConfirmProvider>
   );
 }

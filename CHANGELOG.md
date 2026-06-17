@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.32] - 2026-06-17
+
+### Fixed
+
+- Fixed a production React render loop in the dashboard debug log store by
+  returning a stable `useSyncExternalStore` snapshot.
+- Added a dashboard error boundary so render failures show a readable fallback
+  instead of only a minified React production error.
+
 ## [0.6.31] - 2026-06-17
 
 ### Added
