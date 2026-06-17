@@ -271,6 +271,20 @@ func TestAuthMiddleware(t *testing.T) {
 		t.Errorf("no auth: status = %d, want 401", rec.Code)
 	}
 
+	// Login page chrome can be fetched before credentials are entered.
+	brandingRec := httptest.NewRecorder()
+	s.authMiddleware(s.mux).ServeHTTP(brandingRec, httptest.NewRequest("GET", "/api/v1/settings/branding", nil))
+	if brandingRec.Code != 200 {
+		t.Errorf("public branding get: status = %d, want 200", brandingRec.Code)
+	}
+
+	// Branding writes remain protected.
+	brandingPutRec := httptest.NewRecorder()
+	s.authMiddleware(s.mux).ServeHTTP(brandingPutRec, httptest.NewRequest("PUT", "/api/v1/settings/branding", strings.NewReader(`{}`)))
+	if brandingPutRec.Code != 401 {
+		t.Errorf("unauth branding put: status = %d, want 401", brandingPutRec.Code)
+	}
+
 	// Wrong auth → 401
 	rec2 := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/stats", nil)

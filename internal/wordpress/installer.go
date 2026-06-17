@@ -275,8 +275,6 @@ func hashFileSHA1(path string) string {
 func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	osMkdirAllFn(webRoot, 0755)
 
-	// Download
-	tarPath := filepath.Join(os.TempDir(), "wordpress-latest.tar.gz")
 	log.WriteString(fmt.Sprintf("Downloading %s\n", wpDownloadURL))
 
 	resp, err := httpGetFn(wpDownloadURL)
@@ -285,10 +283,12 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	}
 	defer resp.Body.Close()
 
-	f, err := os.Create(tarPath)
+	f, err := os.CreateTemp("", "wordpress-latest-*.tar.gz")
 	if err != nil {
 		return err
 	}
+	tarPath := f.Name()
+	defer os.Remove(tarPath)
 	const maxWPDownload = 100 << 20 // 100MB safety cap
 	written, _ := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
 	f.Close()
@@ -327,8 +327,6 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	}
 	log.WriteString(fmt.Sprintf("Extracted to %s\n", webRoot))
 
-	// Cleanup
-	os.Remove(tarPath)
 	return nil
 }
 
@@ -928,4 +926,3 @@ func countUpdates2(themes []ThemeInfo) int {
 	}
 	return n
 }
-
