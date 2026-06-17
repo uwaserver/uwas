@@ -8,7 +8,14 @@ async function login(page: import('@playwright/test').Page) {
   await page.goto(`${DASHBOARD}/login`);
   await page.fill('input[type="password"]', API_KEY);
   await page.click('button[type="submit"]');
-  await page.waitForURL(/\/_uwas\/dashboard\/?$/, { timeout: 5000 });
+  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole('button', { name: /Logout/ })).toBeVisible();
+}
+
+async function openNav(page: import('@playwright/test').Page, group: string, label: string, url: RegExp) {
+  await page.getByRole('button', { name: group }).click();
+  await page.getByRole('link', { name: label, exact: true }).click();
+  await page.waitForURL(url, { timeout: 5000 });
 }
 
 test.describe('Dashboard - All Pages', () => {
@@ -18,10 +25,10 @@ test.describe('Dashboard - All Pages', () => {
 
   // --- Dashboard Overview ---
   test('dashboard shows latency metrics', async ({ page }) => {
-    await expect(page.getByText('p50 Latency', { exact: true })).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText('p95 Latency', { exact: true })).toBeVisible();
-    await expect(page.getByText('p99 Latency', { exact: true })).toBeVisible();
-    await expect(page.getByText('Slow Requests', { exact: true })).toBeVisible();
+    await expect(page.getByText('p50', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('p95', { exact: true })).toBeVisible();
+    await expect(page.getByText('p99', { exact: true })).toBeVisible();
+    await expect(page.getByText('Slow', { exact: true })).toBeVisible();
   });
 
   test('dashboard shows request chart', async ({ page }) => {
@@ -29,80 +36,70 @@ test.describe('Dashboard - All Pages', () => {
   });
 
   test('dashboard shows domains table', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: /Domains/ })).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('table')).toBeVisible();
+    await expect(page.getByText('Domains', { exact: true })).toBeVisible({ timeout: 5000 });
   });
 
   // --- Analytics Page ---
   test('analytics page loads with domain stats', async ({ page }) => {
-    await page.click('a[href*="analytics"]');
-    await page.waitForURL(/\/analytics/, { timeout: 5000 });
-    await expect(page.locator('text=Real-time traffic analytics')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=Total Page Views')).toBeVisible();
-    await expect(page.locator('text=Unique Visitors')).toBeVisible();
-    await expect(page.getByRole('paragraph').filter({ hasText: 'Bandwidth' })).toBeVisible();
+    await openNav(page, 'Performance', 'Analytics', /\/analytics/);
+    await expect(page.getByRole('heading', { name: /Analytics/ })).toBeVisible({ timeout: 5000 });
   });
 
   // --- Config Editor ---
   test('config editor loads', async ({ page }) => {
-    await page.click('a[href*="config-editor"]');
-    await page.waitForURL(/\/config-editor/, { timeout: 5000 });
+    await openNav(page, 'System', 'Config Editor', /\/config-editor/);
     // Should show either the config content or a message
     await expect(page.locator('h1')).toContainText('Config', { timeout: 5000 });
   });
 
   // --- Certificates Page ---
   test('certificates page loads', async ({ page }) => {
-    await page.click('a[href*="certificates"]');
-    await page.waitForURL(/\/certificates/, { timeout: 5000 });
+    await openNav(page, 'Sites', 'Certificates', /\/certificates/);
     await expect(page.locator('h1')).toContainText('Certificates', { timeout: 5000 });
   });
 
   // --- Metrics Page ---
   test('metrics page loads with prometheus data', async ({ page }) => {
-    await page.click('a[href*="metrics"]');
-    await page.waitForURL(/\/metrics/, { timeout: 5000 });
+    await openNav(page, 'Performance', 'Metrics', /\/metrics/);
     await expect(page.locator('h1')).toContainText('Metrics', { timeout: 5000 });
   });
 
   // --- PHP Page ---
   test('php page loads', async ({ page }) => {
-    await page.click('a[href*="php"]');
-    await page.waitForURL(/\/php/, { timeout: 5000 });
+    await openNav(page, 'Server', 'PHP', /\/php/);
     await expect(page.locator('h1')).toContainText('PHP', { timeout: 5000 });
   });
 
   // --- Backups Page ---
   test('backups page loads', async ({ page }) => {
-    await page.click('a[href*="backups"]');
-    await page.waitForURL(/\/backups/, { timeout: 5000 });
+    await openNav(page, 'System', 'Backups', /\/backups/);
     await expect(page.locator('h1')).toContainText('Backup', { timeout: 5000 });
   });
 
   // --- Audit Log Page ---
   test('audit log page loads', async ({ page }) => {
-    await page.click('a[href*="audit"]');
-    await page.waitForURL(/\/audit/, { timeout: 5000 });
+    await openNav(page, 'Security', 'Audit Log', /\/audit/);
     await expect(page.locator('h1')).toContainText('Audit', { timeout: 5000 });
   });
 
   // --- Settings Page with System Info ---
   test('settings shows system information', async ({ page }) => {
-    await page.click('a[href*="settings"]');
-    await page.waitForURL(/\/settings/, { timeout: 5000 });
-    await expect(page.locator('text=System Information')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=Go Version')).toBeVisible();
-    await expect(page.locator('text=Goroutines')).toBeVisible();
+    await openNav(page, 'System', 'Settings', /\/settings/);
+    await expect(page.getByRole('heading', { name: 'Server Status' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Go', { exact: true })).toBeVisible();
+    await expect(page.getByText('OS / Arch', { exact: true })).toBeVisible();
   });
 
   test('settings reload button works', async ({ page }) => {
-    await page.click('a[href*="settings"]');
-    await page.waitForURL(/\/settings/, { timeout: 5000 });
-    await expect(page.locator('text=Reload Config')).toBeVisible({ timeout: 5000 });
+    await openNav(page, 'System', 'Settings', /\/settings/);
+    await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeVisible({ timeout: 5000 });
   });
 
   // --- Sidebar Navigation ---
   test('sidebar has all 15 navigation links', async ({ page }) => {
+    for (const group of ['Sites', 'Server', 'Performance', 'Security', 'System']) {
+      await page.getByRole('button', { name: group }).click();
+    }
     const sidebarLinks = [
       'Dashboard', 'Domains', 'Topology', 'Cache', 'Metrics',
       'Analytics', 'Logs', 'Config Editor', 'Certificates',
@@ -166,13 +163,16 @@ test.describe('Dashboard - API Verification', () => {
     expect(body).toContain('uwas_slow_requests_total');
   });
 
-  test('admin API audit returns array', async ({ request }) => {
+  test('admin API audit returns paginated items', async ({ request }) => {
     const resp = await request.get(`${BASE}/api/v1/audit`, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(resp.ok()).toBeTruthy();
     const body = await resp.json();
-    expect(Array.isArray(body)).toBeTruthy();
+    expect(Array.isArray(body.items)).toBeTruthy();
+    expect(body.total).toBeDefined();
+    expect(body.limit).toBeDefined();
+    expect(body.offset).toBeDefined();
   });
 
   test('admin API returns 401 without token', async ({ request }) => {

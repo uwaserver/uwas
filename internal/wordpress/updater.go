@@ -31,8 +31,6 @@ func UpdateCore(webRoot string) (string, error) {
 
 	// Download latest WordPress
 	tarURL := "https://wordpress.org/latest.tar.gz"
-	tarPath := filepath.Join(os.TempDir(), "wordpress-update.tar.gz")
-	defer os.Remove(tarPath)
 
 	resp, err := httpGetFn(tarURL)
 	if err != nil {
@@ -40,10 +38,12 @@ func UpdateCore(webRoot string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	f, err := os.Create(tarPath)
+	f, err := os.CreateTemp("", "wordpress-update-*.tar.gz")
 	if err != nil {
 		return log.String(), err
 	}
+	tarPath := f.Name()
+	defer os.Remove(tarPath)
 	io.Copy(f, resp.Body)
 	f.Close()
 	log.WriteString("Downloaded latest WordPress\n")

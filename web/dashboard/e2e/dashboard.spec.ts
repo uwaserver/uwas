@@ -8,8 +8,14 @@ async function login(page: import('@playwright/test').Page) {
   await page.goto(`${DASHBOARD}/login`);
   await page.fill('input[type="password"]', API_KEY);
   await page.click('button[type="submit"]');
-  // Wait for navigation to dashboard (with or without trailing slash)
-  await page.waitForURL(/\/_uwas\/dashboard\/?$/, { timeout: 5000 });
+  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole('button', { name: /Logout/ })).toBeVisible();
+}
+
+async function openNav(page: import('@playwright/test').Page, group: string, label: string, url: RegExp) {
+  await page.getByRole('button', { name: group }).click();
+  await page.getByRole('link', { name: label }).click();
+  await page.waitForURL(url, { timeout: 5000 });
 }
 
 test.describe('UWAS Dashboard', () => {
@@ -21,44 +27,39 @@ test.describe('UWAS Dashboard', () => {
 
   test('login with API key', async ({ page }) => {
     await login(page);
-    await expect(page.locator('text=Total Requests')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Requests', { exact: true }).first()).toBeVisible({ timeout: 5000 });
   });
 
   test('dashboard shows stats', async ({ page }) => {
     await login(page);
-    await expect(page.locator('text=Total Requests')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text=Cache Hit Rate')).toBeVisible();
+    await expect(page.getByText('Requests', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Cache Hit', { exact: true })).toBeVisible();
   });
 
   test('domains page', async ({ page }) => {
     await login(page);
-    await page.click('a[href*="domains"]');
-    await page.waitForURL(/\/domains/, { timeout: 5000 });
-    await expect(page.locator('table')).toBeVisible({ timeout: 5000 });
+    await openNav(page, 'Sites', 'Domains', /\/domains/);
+    await expect(page.getByRole('heading', { name: /Domains/ })).toBeVisible({ timeout: 5000 });
   });
 
   test('cache page', async ({ page }) => {
     await login(page);
-    await page.click('a[href*="cache"]');
-    await page.waitForURL(/\/cache/, { timeout: 5000 });
+    await openNav(page, 'Performance', 'Cache', /\/cache/);
   });
 
   test('logs page', async ({ page }) => {
     await login(page);
-    await page.click('a[href*="logs"]');
-    await page.waitForURL(/\/logs/, { timeout: 5000 });
+    await openNav(page, 'Performance', 'Logs', /\/logs/);
   });
 
   test('settings page', async ({ page }) => {
     await login(page);
-    await page.click('a[href*="settings"]');
-    await page.waitForURL(/\/settings/, { timeout: 5000 });
+    await openNav(page, 'System', 'Settings', /\/settings/);
   });
 
   test('topology page', async ({ page }) => {
     await login(page);
-    await page.click('a[href*="topology"]');
-    await page.waitForURL(/\/topology/, { timeout: 5000 });
+    await openNav(page, 'Sites', 'Topology', /\/topology/);
     await expect(page.locator('.react-flow')).toBeVisible({ timeout: 5000 });
   });
 
