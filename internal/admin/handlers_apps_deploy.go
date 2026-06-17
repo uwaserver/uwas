@@ -817,6 +817,7 @@ func runDeployCore(
 		return err
 	}
 	defer cleanupAuth()
+	remoteURL := cloneURL
 
 	gitDir := filepath.Join(def.WorkDir, ".git")
 	if _, statErr := os.Stat(gitDir); os.IsNotExist(statErr) {
@@ -832,7 +833,7 @@ func runDeployCore(
 			return fmt.Errorf("git clone failed: %w", err)
 		}
 	} else {
-		if err := ensureGitOrigin(ctx, def.WorkDir, gitURL, logBuf, gitEnv); err != nil {
+		if err := ensureGitOrigin(ctx, def.WorkDir, remoteURL, logBuf, gitEnv); err != nil {
 			return err
 		}
 		if err := runStep(ctx, def.WorkDir, "git", []string{"fetch", "origin", "--depth", "50"}, logBuf, gitEnv); err != nil {
@@ -918,6 +919,7 @@ func defaultGitEnv() []string {
 func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), error) {
 	env := defaultGitEnv()
 	cleanup := func() {}
+	cloneURL := strings.TrimSpace(gitURL)
 	if sshKeyPath != "" {
 		cleanKey := filepath.Clean(sshKeyPath)
 		if !filepath.IsAbs(cleanKey) || strings.ContainsAny(cleanKey, "\x00\n\r") {
@@ -927,8 +929,12 @@ func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), 
 			return nil, "", cleanup, fmt.Errorf("SSH key not found: %s", cleanKey)
 		}
 		env = append(env, "GIT_SSH_COMMAND=ssh -i "+shellQuote(cleanKey)+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
+		if gitToken == "" {
+			if converted, ok := httpsGitURLToSSH(cloneURL); ok {
+				cloneURL = converted
+			}
+		}
 	}
-	cloneURL := gitURL
 	if gitToken != "" {
 		if strings.ContainsAny(gitToken, "\x00\n\r") {
 			return nil, "", cleanup, fmt.Errorf("git_token contains control characters")
@@ -947,6 +953,27 @@ func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), 
 		env = append(env, "GIT_ASKPASS="+path)
 	}
 	return env, cloneURL, cleanup, nil
+}
+
+func httpsGitURLToSSH(gitURL string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(gitURL))
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" {
+		return "", false
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	path := strings.TrimPrefix(u.EscapedPath(), "/")
+	if path == "" || strings.Contains(path, "%2f") || strings.Contains(path, "%2F") {
+		return "", false
+	}
+	host := strings.ToLower(u.Host)
+	switch host {
+	case "github.com", "gitlab.com", "bitbucket.org":
+	default:
+		return "", false
+	}
+	return "git@" + host + ":" + path, true
 }
 
 func writeGitAskpass(token string) (string, error) {

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.30] - 2026-06-17
+
+### Fixed
+
+- Fixed private Git deploys when an app has an SSH key path but the operator
+  entered a GitHub/GitLab/Bitbucket HTTPS repo URL. UWAS now uses the deploy
+  key by converting those clone/pull operations to SSH, and the deploy modal
+  makes that behavior visible.
+
 ## [0.6.29] - 2026-06-17
 
 ### Security

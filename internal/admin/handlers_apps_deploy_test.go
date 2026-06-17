@@ -194,6 +194,32 @@ func TestGitAuthEnvTokenAndRedaction(t *testing.T) {
 	}
 }
 
+func TestGitAuthEnvSSHKeyConvertsKnownHTTPSURL(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(keyPath, []byte("test-key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	env, cloneURL, cleanup, err := gitAuthEnv("https://github.com/acme/private.git", keyPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	if cloneURL != "git@github.com:acme/private.git" {
+		t.Fatalf("clone URL = %q, want SSH URL", cloneURL)
+	}
+	foundSSHCommand := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_SSH_COMMAND=") && strings.Contains(kv, keyPath) {
+			foundSSHCommand = true
+		}
+	}
+	if !foundSSHCommand {
+		t.Fatalf("GIT_SSH_COMMAND with key not configured: %#v", env)
+	}
+}
+
 func TestRunDeployCoreExistingRepoDefaultBranchResetsOriginHead(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".git"), 0755); err != nil {
