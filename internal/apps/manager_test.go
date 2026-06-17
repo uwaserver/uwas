@@ -193,6 +193,53 @@ func TestWaitListeningTimeout(t *testing.T) {
 	}
 }
 
+func TestWaitListeningReturnsWhenProcessStops(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(NewStore(dir), nil)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	freePort := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	app := &App{
+		Name:    "stops-before-listen",
+		Runtime: RuntimeDocker,
+		Port:    freePort,
+		WorkDir: dir,
+	}
+	mgr.mu.Lock()
+	mgr.procs[app.Name] = &process{
+		name:        app.Name,
+		app:         app,
+		runtimeKind: RuntimeDocker,
+		dockerID:    "fake-id",
+		port:        freePort,
+		workDir:     dir,
+		stopCh:      make(chan struct{}),
+	}
+	mgr.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.WaitListening(app.Name, 5*time.Second)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	mgr.mu.Lock()
+	mgr.procs[app.Name].dockerID = ""
+	mgr.mu.Unlock()
+
+	err = <-done
+	if err == nil {
+		t.Fatal("WaitListening should fail when the process stops")
+	}
+	if !strings.Contains(err.Error(), "process exited before binding") {
+		t.Errorf("error should mention process exit; got: %v", err)
+	}
+}
+
 func TestWaitListeningSkipsCustomRuntime(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(NewStore(dir), nil)

@@ -599,6 +599,18 @@ func (m *Manager) isRunning(p *process) bool {
 	return p.cmd != nil && p.cmd.Process != nil
 }
 
+// isSameProcessRunning reports whether the registered process pointer is
+// still the same app start that the caller is probing, and whether it is live.
+func (m *Manager) isSameProcessRunning(name string, expected *process) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.procs[name]
+	if !ok || p != expected {
+		return false
+	}
+	return m.isRunning(p)
+}
+
 // ListenAddr returns the 127.0.0.1:port a domain's reverse proxy
 // should target when forwarding to the named app. Empty when the app
 // is unregistered OR registered-but-stopped — the proxy uses the
@@ -683,19 +695,24 @@ func (m *Manager) Stats(name string) *Stats {
 func (m *Manager) WaitListening(name string, timeout time.Duration) error {
 	m.mu.RLock()
 	p, ok := m.procs[name]
-	m.mu.RUnlock()
 	if !ok {
+		m.mu.RUnlock()
 		return fmt.Errorf("apps: %s not registered", name)
 	}
-	if p.runtimeKind == RuntimeCustom {
+	runtimeKind := p.runtimeKind
+	port := p.port
+	workDir := p.workDir
+	appName := p.name
+	m.mu.RUnlock()
+	if runtimeKind == RuntimeCustom {
 		// Don't gate "deploy ok" on a port for custom runtimes.
 		return nil
 	}
-	if p.port <= 0 {
+	if port <= 0 {
 		return fmt.Errorf("apps: %s has no port assigned", name)
 	}
 
-	addr := fmt.Sprintf("127.0.0.1:%d", p.port)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
@@ -703,17 +720,17 @@ func (m *Manager) WaitListening(name string, timeout time.Duration) error {
 		// useful error rather than burning the full timeout. The
 		// monitor goroutine sets p.cmd = nil (native) or p.dockerID
 		// = "" (docker) on exit.
-		if !m.isRunning(p) {
+		if !m.isSameProcessRunning(name, p) {
 			tail := ""
-			if p.runtimeKind != RuntimeDocker {
-				logPath := filepath.Join(filepath.Dir(p.workDir), "logs", p.name+".log")
+			if runtimeKind != RuntimeDocker {
+				logPath := filepath.Join(filepath.Dir(workDir), "logs", appName+".log")
 				tail = tailLogFile(logPath, 2048)
 			}
 			if tail == "" {
 				tail = "(no log output captured)"
 			}
 			return fmt.Errorf("apps: %s: process exited before binding to port %d. Log tail:\n%s",
-				p.name, p.port, tail)
+				appName, port, tail)
 		}
 
 		conn, err := net.DialTimeout("tcp", addr, 250*time.Millisecond)
