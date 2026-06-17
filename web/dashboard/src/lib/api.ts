@@ -1,3 +1,5 @@
+import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
+
 const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
 let token = sessionStorage.getItem('uwas_token') || '';
@@ -34,6 +36,15 @@ let pinPromptCallback: ((resolve: (pin: string) => void, reject: () => void) => 
 export function onPinRequired(cb: typeof pinPromptCallback) { pinPromptCallback = cb; }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const started = performance.now();
+  const method = options?.method || 'GET';
+  addDebugLog({
+    level: 'info',
+    scope: 'api',
+    message: `${method} ${path}`,
+    detail: formatDebugDetail(options?.body),
+  });
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
@@ -48,9 +59,32 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     headers['X-TOTP-Code'] = totpCode;
   }
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { ...options, headers });
+  } catch (e) {
+    addDebugLog({
+      level: 'error',
+      scope: 'api',
+      message: `${method} ${path} network error`,
+      detail: e instanceof Error ? e.message : String(e),
+      duration_ms: Math.round(performance.now() - started),
+    });
+    throw e;
+  }
+
+  const logResponse = (level: 'success' | 'warn' | 'error', message: string, detail?: unknown) => {
+    addDebugLog({
+      level,
+      scope: 'api',
+      message,
+      detail: formatDebugDetail(detail),
+      duration_ms: Math.round(performance.now() - started),
+    });
+  };
 
   if (res.status === 401) {
+    logResponse('error', `${method} ${path} -> 401 Unauthorized`);
     clearToken();
     // Avoid redirect loop if already on login page
     const currentPath = window.location.pathname;
@@ -63,6 +97,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   // 2FA required — redirect to login with 2FA prompt
   if (res.status === 403) {
     const body = await res.json().catch(() => ({ error: '' }));
+    logResponse('warn', `${method} ${path} -> 403 ${body.error || 'Forbidden'}`, body);
     if (body.error === '2fa_required') {
       sessionStorage.removeItem('uwas_totp_verified');
       totpCode = '';
@@ -75,15 +110,19 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
         pinPromptCallback!(resolve, reject);
       });
       pinCode = pin;
+      addDebugLog({ level: 'info', scope: 'api', message: `${method} ${path} retrying with PIN` });
       // Retry the same request with pin
       const retryHeaders: Record<string, string> = { ...headers, 'X-Pin-Code': pin };
       const retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders });
       pinCode = '';
       if (!retryRes.ok) {
         const retryBody = await retryRes.json().catch(() => ({ error: retryRes.statusText }));
+        logResponse('error', `${method} ${path} retry -> ${retryRes.status}`, retryBody);
         throw new Error(retryBody.error || retryRes.statusText);
       }
-      return retryRes.json();
+      const retryBody = await retryRes.json();
+      logResponse('success', `${method} ${path} retry -> ${retryRes.status}`, retryBody);
+      return retryBody;
     }
     if (body.error === 'pin_required' || body.error === 'invalid_pin') {
       throw new Error(body.error);
@@ -93,10 +132,13 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
+    logResponse('error', `${method} ${path} -> ${res.status}`, body);
     throw new Error(body.error || res.statusText);
   }
 
-  return res.json();
+  const body = await res.json();
+  logResponse('success', `${method} ${path} -> ${res.status}`, body);
+  return body;
 }
 
 export interface HealthData {

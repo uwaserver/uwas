@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.31] - 2026-06-17
+
+### Added
+
+- Added an operator debug log drawer to the dashboard. A top-right switch
+  enables live capture, and the bottom drawer shows API/fetch calls, deploy
+  checkpoints, durations, errors, and redacted details with copy/clear actions.
+
 ## [0.6.30] - 2026-06-17
 
 ### Fixed

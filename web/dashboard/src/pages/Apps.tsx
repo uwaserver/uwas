@@ -30,6 +30,7 @@ import {
   type AppDeployKeyResult,
   type AppStats,
 } from '@/lib/api';
+import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
 
 // Apps dashboard: list apps, create runnable workdirs, manage lifecycle,
 // tail logs, deploy from git, and show lightweight runtime stats.
@@ -535,6 +536,19 @@ export default function Apps() {
     }
     setDeployRunning(true);
     setDeployResult(null);
+    addDebugLog({
+      level: 'info',
+      scope: 'deploy',
+      message: `Deploy requested for ${deployFor}`,
+      detail: formatDebugDetail({
+        git_url: deployForm.git_url.trim(),
+        git_branch: deployForm.git_branch.trim() || undefined,
+        build_cmd: deployTargetIsDocker ? undefined : deployForm.build_cmd.trim() || undefined,
+        health_path: deployForm.health_path.trim() || undefined,
+        ssh_key_path: deployForm.ssh_key_path.trim() || undefined,
+        has_git_token: Boolean(deployForm.git_token.trim()),
+      }),
+    });
     try {
       const r = await deployApp(deployFor, {
         git_url: deployForm.git_url.trim(),
@@ -546,6 +560,12 @@ export default function Apps() {
       });
       setDeployResult(r);
       if (r.ok) {
+        addDebugLog({
+          level: 'success',
+          scope: 'deploy',
+          message: `Deploy completed for ${deployFor}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ''}`,
+          detail: r.log || undefined,
+        });
         setStatus({
           ok: true,
           message: `Deployed ${deployFor}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ''}`,
@@ -558,12 +578,24 @@ export default function Apps() {
         }
         await load();
       } else {
+        addDebugLog({
+          level: 'error',
+          scope: 'deploy',
+          message: `Deploy failed for ${deployFor}: ${r.error || 'unknown error'}`,
+          detail: r.log || undefined,
+        });
         setStatus({
           ok: false,
           message: r.error || 'Deploy failed (see log in modal)',
         });
       }
     } catch (e) {
+      addDebugLog({
+        level: 'error',
+        scope: 'deploy',
+        message: `Deploy request crashed for ${deployFor}`,
+        detail: e instanceof Error ? e.message : String(e),
+      });
       setStatusErr(e);
     } finally {
       setDeployRunning(false);
