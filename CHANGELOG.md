@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.29] - 2026-06-17
+
+### Security
+
+- Updated docs site build dependencies to resolve Dependabot alerts for
+  `@babel/core` (`GHSA-4x5r-pxfx-6jf8`) and `js-yaml`
+  (`GHSA-h67p-54hq-rp68`).
+
 ## [0.6.28] - 2026-06-17
 
 ### Security
