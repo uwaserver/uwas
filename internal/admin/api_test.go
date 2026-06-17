@@ -631,12 +631,20 @@ func TestFileManagerWorkspacesIncludeDomainsAndApps(t *testing.T) {
 	s := testServer()
 	webRoot := t.TempDir()
 	appRoot := t.TempDir()
+	stoppedAppRoot := t.TempDir()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
 	mgr := apps.NewManager(store, nil)
 	if err := mgr.Register(&apps.App{
 		Name:    "test-app",
 		Runtime: apps.RuntimeNode,
 		WorkDir: appRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(&apps.App{
+		Name:    "stopped-app",
+		Runtime: apps.RuntimeNode,
+		WorkDir: stoppedAppRoot,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -667,20 +675,30 @@ func TestFileManagerWorkspacesIncludeDomainsAndApps(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(body.Items) != 2 {
-		t.Fatalf("workspace count = %d, want 2: %#v", len(body.Items), body.Items)
+	if len(body.Items) != 3 {
+		t.Fatalf("workspace count = %d, want 3: %#v", len(body.Items), body.Items)
 	}
 	if body.Items[0].ID != "site.example.com" || body.Items[0].Kind != "domain" {
 		t.Fatalf("first workspace = %#v, want site domain", body.Items[0])
 	}
-	if body.Items[1].ID != "app:test-app" || body.Items[1].Kind != "application" {
-		t.Fatalf("second workspace = %#v, want app workspace", body.Items[1])
+
+	byID := make(map[string]fileWorkspace, len(body.Items))
+	for _, item := range body.Items {
+		byID[item.ID] = item
 	}
-	if body.Items[1].Root != appRoot {
-		t.Fatalf("app workspace root = %q, want %q", body.Items[1].Root, appRoot)
+	appItem := byID["app:test-app"]
+	if appItem.Kind != "application" {
+		t.Fatalf("test-app workspace = %#v, want app workspace", appItem)
 	}
-	if len(body.Items[1].Domains) != 1 || body.Items[1].Domains[0] != "app.example.com" {
-		t.Fatalf("app workspace domains = %#v, want app.example.com", body.Items[1].Domains)
+	if appItem.Root != appRoot {
+		t.Fatalf("app workspace root = %q, want %q", appItem.Root, appRoot)
+	}
+	if len(appItem.Domains) != 1 || appItem.Domains[0] != "app.example.com" {
+		t.Fatalf("app workspace domains = %#v, want app.example.com", appItem.Domains)
+	}
+	stoppedItem := byID["app:stopped-app"]
+	if stoppedItem.Kind != "application" || stoppedItem.Root != stoppedAppRoot {
+		t.Fatalf("stopped app workspace = %#v, want application root %q", stoppedItem, stoppedAppRoot)
 	}
 }
 

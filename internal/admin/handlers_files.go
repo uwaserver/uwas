@@ -125,12 +125,16 @@ func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) {
 	s.configMu.RUnlock()
 
 	var instances []apps.Instance
+	var storedApps []*apps.App
 	if s.appsMgr != nil {
 		instances = s.appsMgr.Instances()
+		if loaded, _, err := s.appsMgr.Store().Load(); err == nil {
+			storedApps = loaded
+		}
 	}
 
 	appLinks := make(map[string][]string)
-	items := make([]fileWorkspace, 0, len(domains)+len(instances))
+	items := make([]fileWorkspace, 0, len(domains)+len(storedApps)+len(instances))
 	for _, d := range domains {
 		if !s.canAccessDomain(r, d.Host) {
 			continue
@@ -165,21 +169,38 @@ func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) {
 	user, hasUser := auth.UserFromContext(r.Context())
 	canSeeApps := s.authMgr == nil || (hasUser && user.Role == auth.RoleAdmin)
 	if canSeeApps {
+		appWorkspaces := make(map[string]fileWorkspace, len(storedApps)+len(instances))
+		for _, app := range storedApps {
+			if app == nil || strings.TrimSpace(app.WorkDir) == "" {
+				continue
+			}
+			appWorkspaces[app.Name] = fileWorkspace{
+				ID:      "app:" + app.Name,
+				Label:   app.Name,
+				Kind:    "application",
+				Root:    app.WorkDir,
+				AppName: app.Name,
+				Runtime: string(app.Runtime),
+			}
+		}
 		for _, inst := range instances {
 			if strings.TrimSpace(inst.WorkDir) == "" {
 				continue
 			}
-			domains := append([]string(nil), appLinks[inst.Name]...)
-			sort.Strings(domains)
-			items = append(items, fileWorkspace{
+			appWorkspaces[inst.Name] = fileWorkspace{
 				ID:      "app:" + inst.Name,
 				Label:   inst.Name,
 				Kind:    "application",
 				Root:    inst.WorkDir,
 				AppName: inst.Name,
 				Runtime: string(inst.Runtime),
-				Domains: domains,
-			})
+			}
+		}
+		for name, item := range appWorkspaces {
+			domains := append([]string(nil), appLinks[name]...)
+			sort.Strings(domains)
+			item.Domains = domains
+			items = append(items, item)
 		}
 	}
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.35] - 2026-06-18
+
+### Fixed
+
+- Fixed File Manager workspace selection so application work directories are
+  listed alongside domain roots, including applications that are saved but not
+  currently running.
+- Improved the File Manager selector by grouping domain and application
+  workspaces separately.
+- Fixed SFTP user creation UX so the generated one-time password is visible,
+  selectable, and copyable with a fallback for browsers where the Clipboard API
+  is unavailable.
+
 ## [0.6.34] - 2026-06-17
 
 ### Fixed

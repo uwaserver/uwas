@@ -55,7 +55,7 @@ function formatDate(dateStr: string): string {
 export default function FileManager() {
   const { confirmAction } = useConfirm();
   const [workspaces, setWorkspaces] = useState<FileWorkspace[]>([]);
-  const [selectedDomain, setSelectedDomain] = useState('');
+  const [selectedWorkspaceID, setSelectedWorkspaceID] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [fileFilter, setFileFilter] = useState('');
   const [currentPath, setCurrentPath] = useState('.');
@@ -87,18 +87,20 @@ export default function FileManager() {
       .then(items => {
         const next = items ?? [];
         setWorkspaces(next);
-        setSelectedDomain(current => current || next[0]?.id || '');
+        setSelectedWorkspaceID(current => current || next[0]?.id || '');
       })
       .catch(() => {});
   }, []);
 
   const selectedWorkspace = useMemo(
-    () => workspaces.find(w => w.id === selectedDomain) ?? null,
-    [selectedDomain, workspaces],
+    () => workspaces.find(w => w.id === selectedWorkspaceID) ?? null,
+    [selectedWorkspaceID, workspaces],
   );
+  const domainWorkspaces = useMemo(() => workspaces.filter(w => w.kind === 'domain'), [workspaces]);
+  const applicationWorkspaces = useMemo(() => workspaces.filter(w => w.kind === 'application'), [workspaces]);
 
   const loadFiles = useCallback(async () => {
-    if (!selectedDomain) return;
+    if (!selectedWorkspaceID) return;
     setLoading(true);
     setError('');
     // Disk usage is a sidebar metric — when its endpoint fails (e.g.
@@ -106,8 +108,8 @@ export default function FileManager() {
     // render the file list. Use allSettled so one failure doesn't blank
     // the whole page.
     const [filesRes, duRes] = await Promise.allSettled([
-      fetchFiles(selectedDomain, currentPath),
-      fetchDiskUsage(selectedDomain),
+      fetchFiles(selectedWorkspaceID, currentPath),
+      fetchDiskUsage(selectedWorkspaceID),
     ]);
     if (filesRes.status === 'fulfilled') {
       const sorted = (filesRes.value ?? []).sort((a, b) => {
@@ -122,7 +124,7 @@ export default function FileManager() {
     }
     setDiskUsage(duRes.status === 'fulfilled' ? duRes.value : null);
     setLoading(false);
-  }, [selectedDomain, currentPath]);
+  }, [selectedWorkspaceID, currentPath]);
 
   // Helper: confirm before discarding unsaved edits.
   const confirmDiscardEdits = async (): Promise<boolean> => {
@@ -187,7 +189,7 @@ export default function FileManager() {
       try {
         const tok = getToken();
         const res = await fetch(
-          `/api/v1/files/${encodeURIComponent(selectedDomain)}/read?path=${encodeURIComponent(entry.path)}`,
+          `/api/v1/files/${encodeURIComponent(selectedWorkspaceID)}/read?path=${encodeURIComponent(entry.path)}`,
           { headers: tok ? { Authorization: `Bearer ${tok}` } : {} },
         );
         if (!res.ok) {
@@ -211,7 +213,7 @@ export default function FileManager() {
     if (!await confirmDiscardEdits()) return;
     setError('');
     try {
-      const result = await readFile(selectedDomain, entry.path);
+      const result = await readFile(selectedWorkspaceID, entry.path);
       setEditingFile(entry.path);
       setEditContent(result.content);
       setEditDirty(false);
@@ -227,7 +229,7 @@ export default function FileManager() {
     setError('');
     setSaveState('idle');
     try {
-      await writeFile(selectedDomain, editingFile, editContent);
+      await writeFile(selectedWorkspaceID, editingFile, editContent);
       setEditDirty(false);
       setSaveState('saved');
     } catch (e) {
@@ -236,7 +238,7 @@ export default function FileManager() {
     } finally {
       setSaving(false);
     }
-  }, [editContent, editingFile, saving, selectedDomain]);
+  }, [editContent, editingFile, saving, selectedWorkspaceID]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -262,7 +264,7 @@ export default function FileManager() {
     setDeleting(true);
     setError('');
     try {
-      await deleteFile(selectedDomain, path);
+      await deleteFile(selectedWorkspaceID, path);
       setConfirmDelete(null);
       if (editingFile === path) {
         setEditingFile(null);
@@ -283,7 +285,7 @@ export default function FileManager() {
     setError('');
     const path = currentPath === '.' ? newFolderName.trim() : `${currentPath}/${newFolderName.trim()}`;
     try {
-      await createDir(selectedDomain, path);
+      await createDir(selectedWorkspaceID, path);
       setShowNewFolder(false);
       setNewFolderName('');
       await loadFiles();
@@ -312,7 +314,7 @@ export default function FileManager() {
     setError('');
     try {
       const path = currentPath === '.' ? file.name : `${currentPath}/${file.name}`;
-      await uploadFile(selectedDomain, path, file);
+      await uploadFile(selectedWorkspaceID, path, file);
       await loadFiles();
     } catch (err) {
       setError((err as Error).message);
@@ -347,15 +349,15 @@ export default function FileManager() {
         <div className="flex-1">
           <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Workspace</label>
           <select
-            value={selectedDomain}
+            value={selectedWorkspaceID}
             onChange={async e => {
               if (!await confirmDiscardEdits()) {
                 // Snap the select element back to the previously selected
-                // domain so the UI matches state after the user cancels.
-                e.target.value = selectedDomain;
+                // workspace so the UI matches state after the user cancels.
+                e.target.value = selectedWorkspaceID;
                 return;
               }
-              setSelectedDomain(e.target.value);
+              setSelectedWorkspaceID(e.target.value);
               setCurrentPath('.');
               setFileFilter('');
               setEditingFile(null);
@@ -364,13 +366,27 @@ export default function FileManager() {
             }}
             className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
           >
-            {workspaces.map(target => (
-              <option key={target.id} value={target.id}>
-                {target.kind === 'application' ? 'App' : 'Domain'}: {target.label}
-                {target.kind === 'application' && target.domains?.length ? ` (${target.domains.join(', ')})` : ''}
-              </option>
-            ))}
+            {domainWorkspaces.length > 0 && (
+              <optgroup label="Domains">
+                {domainWorkspaces.map(target => (
+                  <option key={target.id} value={target.id}>{target.label}</option>
+                ))}
+              </optgroup>
+            )}
+            {applicationWorkspaces.length > 0 && (
+              <optgroup label="Applications">
+                {applicationWorkspaces.map(target => (
+                  <option key={target.id} value={target.id}>
+                    {target.label}
+                    {target.domains?.length ? ` (${target.domains.join(', ')})` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
+          {workspaces.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">No domain or application workspaces are available.</p>
+          )}
           {selectedWorkspace?.root && (
             <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={selectedWorkspace.root}>
               {selectedWorkspace.root}
