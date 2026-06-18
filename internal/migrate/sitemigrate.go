@@ -6,9 +6,42 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// migrateHostRe matches an optional "user@" prefix followed by a hostname or IP.
+// It deliberately excludes whitespace and leading dashes so a value can never be
+// parsed by ssh/rsync as a flag.
+var migrateHostRe = regexp.MustCompile(`^([a-zA-Z0-9._-]+@)?[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+// validateSSHInput rejects migration parameters that could inject additional
+// ssh/rsync options. The classic vector is a value like source_port="22
+// -oProxyCommand=touch${IFS}/tmp/pwn" which, once interpolated into the rsync
+// "-e ssh ..." string, is split on whitespace and reaches ssh as a flag,
+// yielding local command execution.
+func validateSSHInput(req MigrateRequest) error {
+	if p, err := strconv.Atoi(req.SourcePort); err != nil || p < 1 || p > 65535 {
+		return fmt.Errorf("invalid source_port")
+	}
+	if !migrateHostRe.MatchString(req.SourceHost) {
+		return fmt.Errorf("invalid source_host")
+	}
+	if req.SSHKey != "" {
+		if !filepath.IsAbs(req.SSHKey) ||
+			strings.ContainsAny(req.SSHKey, " \t\r\n") ||
+			strings.HasPrefix(filepath.Base(req.SSHKey), "-") {
+			return fmt.Errorf("invalid ssh_key")
+		}
+	}
+	if strings.HasPrefix(req.SourcePath, "-") ||
+		strings.ContainsAny(req.SourcePath, "\r\n\x00") {
+		return fmt.Errorf("invalid source_path")
+	}
+	return nil
+}
 
 // MigrateRequest contains migration parameters.
 type MigrateRequest struct {
@@ -73,6 +106,11 @@ func Migrate(req MigrateRequest) *MigrateResult {
 	}
 	if req.SourcePort == "" {
 		req.SourcePort = "22"
+	}
+	if err := validateSSHInput(req); err != nil {
+		result.Status = "error"
+		result.Error = err.Error()
+		return result
 	}
 
 	// Ensure local directory exists
