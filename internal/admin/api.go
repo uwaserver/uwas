@@ -4032,9 +4032,35 @@ func (s *Server) handleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	s.configMu.Unlock()
 
+	s.ensureAuthManagerFromConfig()
 	s.persistConfig()
 	s.recordAuditR(r, "settings.update", fmt.Sprintf("%d fields", len(updates)), true)
 	jsonResponse(w, map[string]any{"status": "saved", "updated": len(updates)})
+}
+
+func (s *Server) ensureAuthManagerFromConfig() {
+	s.configMu.RLock()
+	enabled := s.config.Global.Users.Enabled
+	webRoot := s.config.Global.WebRoot
+	apiKey := s.config.Global.Admin.APIKey
+	allowLegacyPlaintext := s.config.Global.Users.AllowLegacyPlaintextAPIKey
+	s.configMu.RUnlock()
+
+	if !enabled {
+		return
+	}
+	if s.authMgr == nil {
+		mgr := auth.NewManager(webRoot, apiKey)
+		mgr.SetAllowLegacyPlaintextKey(allowLegacyPlaintext)
+		s.authMgr = mgr
+		if s.logger != nil {
+			s.logger.Info("multi-user auth enabled from settings")
+		}
+		return
+	}
+	if mgr, ok := s.authMgr.(*auth.Manager); ok {
+		mgr.SetAllowLegacyPlaintextKey(allowLegacyPlaintext)
+	}
 }
 
 func toInt(v any) int {
@@ -5136,7 +5162,7 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	role := auth.Role(req.Role)
-	if role != auth.RoleUser && role != auth.RoleReseller {
+	if role != auth.RoleAdmin && role != auth.RoleUser && role != auth.RoleReseller {
 		jsonError(w, "invalid role", http.StatusBadRequest)
 		return
 	}

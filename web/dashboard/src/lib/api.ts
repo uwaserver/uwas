@@ -3,21 +3,40 @@ import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
 const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
 let token = sessionStorage.getItem('uwas_token') || '';
+let authMode = sessionStorage.getItem('uwas_auth_mode') || 'api_key';
 let totpCode = '';
 
-export function setToken(t: string) {
+export function setToken(t: string, mode: 'api_key' | 'session' = 'api_key') {
   token = t;
+  authMode = mode;
+  if (!t) {
+    clearToken();
+    return;
+  }
   sessionStorage.setItem('uwas_token', t);
+  sessionStorage.setItem('uwas_auth_mode', mode);
 }
 
 export function getToken() {
   return token;
 }
 
+export function getAuthMode() {
+  return authMode;
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  if (!token) return {};
+  if (authMode === 'session') return { 'X-Session-Token': token };
+  return { Authorization: `Bearer ${token}` };
+}
+
 export function clearToken() {
   token = '';
+  authMode = 'api_key';
   totpCode = '';
   sessionStorage.removeItem('uwas_token');
+  sessionStorage.removeItem('uwas_auth_mode');
   sessionStorage.removeItem('uwas_totp_verified');
 }
 
@@ -49,9 +68,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     'Content-Type': 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
   };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  Object.assign(headers, getAuthHeaders());
   if (pinCode) {
     headers['X-Pin-Code'] = pinCode;
   }
@@ -238,8 +255,7 @@ export const fetchDomains = () =>
   api<{ items: DomainData[]; total: number; limit: number; offset: number }>('/api/v1/domains')
     .then(r => r.items);
 export const fetchMetrics = async () => {
-  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
   if (totpCode) headers['X-TOTP-Code'] = totpCode;
   if (pinCode) headers['X-Pin-Code'] = pinCode;
   const res = await fetch(`${BASE}/api/v1/metrics`, { headers });
@@ -577,8 +593,7 @@ export async function uploadFile(domain: string, path: string, file: File): Prom
   const form = new FormData();
   form.append('path', path);
   form.append('file', file);
-  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
   if (totpCode) headers['X-TOTP-Code'] = totpCode;
   if (pinCode) headers['X-Pin-Code'] = pinCode;
   const url = `${BASE}/api/v1/files/${encodeURIComponent(domain)}/upload`;
@@ -673,8 +688,7 @@ export const configureDBRemoteAccess = (body: { user: string; host?: string; pas
   api<DBRemoteAccessResult>('/api/v1/database/remote-access', { method: 'POST', body: JSON.stringify(body) });
 export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
 export const importDatabase = async (name: string, file: File) => {
-  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
   const res = await fetch(`${BASE}/api/v1/database/${encodeURIComponent(name)}/import`, { method: 'POST', headers, body: await file.text() });
   if (!res.ok) { const b = await res.json().catch(() => ({ error: res.statusText })); throw new Error(b.error || res.statusText); }
   return res.json();
@@ -717,7 +731,7 @@ export const createAdminUser = (user: { username: string; password: string; role
   api<AdminUserCreated>('/api/v1/auth/users', { method: 'POST', body: JSON.stringify(user) });
 export const deleteAdminUser = (username: string) => api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
 export const changeAdminPassword = (username: string, password: string) =>
-  api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ password }) });
+  api<{ status: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/password`, { method: 'POST', body: JSON.stringify({ new_password: password }) });
 export const regenAdminApiKey = (username: string) =>
   api<{ api_key: string }>(`/api/v1/auth/users/${encodeURIComponent(username)}/apikey`, { method: 'POST' });
 
@@ -785,10 +799,7 @@ export async function sseStatsURL(): Promise<string> {
 
 /** Download the current server config as a YAML file. */
 export async function fetchConfigExport(): Promise<void> {
-  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
 
   const res = await fetch(`${BASE}/api/v1/config/export`, { headers });
 
@@ -1001,9 +1012,7 @@ export async function migrateCPanel(file: File, importDB: boolean): Promise<CPan
   const form = new FormData();
   form.append('backup', file);
   if (importDB) form.append('import_db', 'true');
-  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
-  const t = getToken();
-  if (t) headers['Authorization'] = `Bearer ${t}`;
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
   const resp = await fetch('/api/v1/migrate/cpanel', { method: 'POST', headers, body: form });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: resp.statusText }));

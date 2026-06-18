@@ -42,7 +42,7 @@ export default function Login() {
     if (!key.trim()) return;
     setLoading(true);
     setError('');
-    setToken(key.trim());
+    setToken(key.trim(), 'api_key');
     try {
       await fetchStats();
       navigate('/');
@@ -67,7 +67,7 @@ export default function Login() {
     setError('');
     try {
       const result = await loginUser(username.trim(), password);
-      setToken(result.token);
+      setToken(result.token, 'session');
       navigate('/');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed';
