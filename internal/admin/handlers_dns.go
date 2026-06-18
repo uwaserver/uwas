@@ -92,6 +92,9 @@ func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "dns.create") {
+		return
+	}
 	cf := s.getDNSProvider()
 	if cf == nil {
 		jsonError(w, "DNS provider not configured", http.StatusNotImplemented)
@@ -122,6 +125,9 @@ func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "dns.delete") {
+		return
+	}
 	recordID := r.PathValue("id")
 	cf := s.getDNSProvider()
 	if cf == nil {
@@ -143,6 +149,9 @@ func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDNSRecordUpdate(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "dns.update") {
+		return
+	}
 	recordID := r.PathValue("id")
 	prov := s.getDNSProvider()
 	if prov == nil {
@@ -171,6 +180,9 @@ func (s *Server) handleDNSRecordUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDNSSync(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "dns.sync") {
+		return
+	}
 	cf := s.getDNSProvider()
 	if cf == nil {
 		jsonError(w, "DNS provider not configured", http.StatusNotImplemented)

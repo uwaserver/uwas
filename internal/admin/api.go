@@ -81,6 +81,7 @@ type muxer interface {
 type Server struct {
 	config         *config.Config
 	configMu       sync.RWMutex
+	persistMu      sync.Mutex // serializes persistConfig so concurrent writes can't interleave temp+rename
 	configPath     string
 	logger         *logger.Logger
 	metrics        *metrics.Collector
@@ -1016,6 +1017,9 @@ func (s *Server) handlePHPInstallInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Version string `json:"version"`
@@ -1131,6 +1135,9 @@ func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1178,6 +1185,9 @@ func (s *Server) handlePHPExtensions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPStart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1203,6 +1213,9 @@ func (s *Server) handlePHPStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1217,6 +1230,9 @@ func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPRestart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1245,6 +1261,9 @@ func (s *Server) handlePHPConfigRawGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1274,6 +1293,9 @@ func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1286,6 +1308,9 @@ func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePHPDisable(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.phpMgr == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -1332,6 +1357,9 @@ func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Version == "" {
 		jsonError(w, "version is required", http.StatusBadRequest)
+		return
+	}
+	if !s.requireDomainAccess(w, r, req.Domain, "php.assign") {
 		return
 	}
 
@@ -1381,6 +1409,9 @@ func (s *Server) handlePHPDomainUnassign(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	domain := r.PathValue("domain")
+	if !s.requireDomainAccess(w, r, domain, "php.unassign") {
+		return
+	}
 	s.phpMgr.UnassignDomain(domain)
 	jsonResponse(w, map[string]string{"status": "unassigned", "domain": domain})
 }
@@ -1547,29 +1578,9 @@ func (s *Server) persistDomainPHPOverrides(domain string) {
 		return
 	}
 
-	// Atomic write: temp + rename
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".uwas-php-cfg-*.yaml")
-	if err != nil {
-		s.logger.Warn("cannot persist PHP overrides: temp file failed", "domain", domain, "error", err)
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(out); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return
-	}
-	tmp.Close()
-
-	// On Windows, Rename fails if target exists - remove target first then rename
-	if runtime.GOOS == "windows" {
-		_ = os.Remove(path) // ignore error if file doesn't exist
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		s.logger.Warn("cannot persist PHP overrides: rename failed", "domain", domain, "error", err)
+	// Crash-safe write: unique temp file + fsync + rename.
+	if err := atomicWriteFile(path, out, 0600); err != nil {
+		s.logger.Warn("cannot persist PHP overrides: write failed", "domain", domain, "error", err)
 		return
 	}
 
@@ -1654,6 +1665,9 @@ func (s *Server) redeemTicket(ticket string) string {
 func (s *Server) SetReloadFunc(fn ReloadFunc) { s.reloadFn = fn }
 
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.reloadFn == nil {
 		s.recordAuditR(r, "config.reload", "reload not supported", false)
 		jsonError(w, "reload not supported", http.StatusNotImplemented)
@@ -1669,6 +1683,9 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if s.cache == nil {
 		s.recordAuditR(r, "cache.purge", "cache not enabled", false)
@@ -1803,6 +1820,9 @@ func (s *Server) writeSSEStats(w http.ResponseWriter, flusher http.Flusher) {
 
 // handleSSELogs streams new log entries as Server-Sent Events.
 func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1865,6 +1885,9 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 
 // handleConfigExport returns the current configuration as a YAML file download.
 func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	// Build a sanitized copy: strip every secret-bearing field. The export
 	// gets shared, committed to git, attached to support tickets, etc., so
 	// it must not contain anything that grants access to the system or to
@@ -2047,15 +2070,23 @@ func (s *Server) notifyDomainChange() {
 		s.onDomainChange()
 	}
 	// Persist config to disk so changes survive restart.
-	s.persistConfig()
+	if err := s.persistConfig(); err != nil {
+		s.logger.Error("failed to persist config after domain change", "error", err)
+	}
 }
 
 // persistConfig writes the global config to the main YAML file and each domain
 // to its own file in domains.d/. Main config never contains domain definitions.
-func (s *Server) persistConfig() {
+func (s *Server) persistConfig() error {
 	if s.configPath == "" {
-		return
+		return nil
 	}
+
+	// Serialize the whole persist operation. Without this, two concurrent
+	// domain writes could interleave their temp-file + rename steps and leave a
+	// corrupt main config or domain file on disk.
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 
 	s.configMu.RLock()
 	cfg := *s.config
@@ -2073,23 +2104,12 @@ func (s *Server) persistConfig() {
 	mainData, err := yaml.Marshal(&mainCfg)
 	if err != nil {
 		s.logger.Error("failed to marshal config", "error", err)
-		return
+		return fmt.Errorf("marshal config: %w", err)
 	}
-	// Atomic write: temp file + rename to prevent corruption on crash
-	tmpMain := s.configPath + ".tmp"
-	if err := os.WriteFile(tmpMain, mainData, 0600); err != nil {
+	// Crash-safe write: unique temp file + fsync + rename.
+	if err := atomicWriteFile(s.configPath, mainData, 0600); err != nil {
 		s.logger.Error("failed to persist config", "path", s.configPath, "error", err)
-		return
-	}
-	if err := os.Rename(tmpMain, s.configPath); err != nil {
-		// On Windows, Rename fails if target exists — remove target first then rename
-		if runtime.GOOS == "windows" {
-			_ = os.Remove(s.configPath)
-		}
-		if err := os.Rename(tmpMain, s.configPath); err != nil {
-			s.logger.Error("failed to rename config", "path", s.configPath, "error", err)
-			return
-		}
+		return fmt.Errorf("persist config: %w", err)
 	}
 
 	// 2. Write each domain to its own file in domains.d/
@@ -2099,11 +2119,12 @@ func (s *Server) persistConfig() {
 	}
 	if err := os.MkdirAll(domainsDir, 0755); err != nil {
 		s.logger.Error("failed to create domains dir", "path", domainsDir, "error", err)
-		return
+		return fmt.Errorf("create domains dir: %w", err)
 	}
 
 	// Track which files should exist
 	activeFiles := make(map[string]bool)
+	var firstErr error
 	for _, d := range domains {
 		clean := strings.ReplaceAll(d.Host, ":", "_")
 		clean = filepath.Base(clean)
@@ -2114,10 +2135,16 @@ func (s *Server) persistConfig() {
 		domData, err := yaml.Marshal(&d)
 		if err != nil {
 			s.logger.Error("failed to marshal domain", "domain", d.Host, "error", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("marshal domain %s: %w", d.Host, err)
+			}
 			continue
 		}
-		if err := os.WriteFile(fpath, domData, 0600); err != nil {
+		if err := atomicWriteFile(fpath, domData, 0600); err != nil {
 			s.logger.Error("failed to write domain file", "path", fpath, "error", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("write domain %s: %w", d.Host, err)
+			}
 		}
 	}
 
@@ -2132,6 +2159,7 @@ func (s *Server) persistConfig() {
 	// explicit delete handler via removeDomainFile(); persistConfig only
 	// WRITES, never destroys.
 	_ = activeFiles // kept above so future "soft cleanup" features can use it
+	return firstErr
 }
 
 // removeDomainFile deletes the YAML file for a host from domains.d/. Called by
@@ -2898,6 +2926,9 @@ func (s *Server) RecordLog(e LogEntry) {
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	const returnLimit = 100
 
 	if s.logBuf == nil {
@@ -3704,6 +3735,9 @@ func (s *Server) SetConfigPath(path string) {
 // handleConfigRawGet returns the raw YAML content of the main config file.
 // Secrets (api_key, pin_code, totp_secret) are masked with asterisks.
 func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.configPath == "" {
 		jsonError(w, "config path not set", http.StatusNotImplemented)
 		return
@@ -3777,37 +3811,13 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 
 	auditDetail := fmt.Sprintf("bytes: %d, domains: %d", len(data), len(probe.Domains))
 
-	// Atomic write: write to temp file, then rename.
-	dir := filepath.Dir(s.configPath)
-	tmp, err := os.CreateTemp(dir, ".uwas-config-*.yaml")
-	if err != nil {
-		s.logger.Error("config raw put: create temp failed", "error", err)
-		s.recordAuditR(r, "config.raw_put", auditDetail+" (temp file failed)", false)
-		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
-		return
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		s.logger.Error("config raw put: write temp failed", "error", err)
+	// Crash-safe write: unique temp file + fsync + rename.
+	s.persistMu.Lock()
+	writeErr := atomicWriteFile(s.configPath, data, 0600)
+	s.persistMu.Unlock()
+	if writeErr != nil {
+		s.logger.Error("config raw put: write failed", "error", writeErr)
 		s.recordAuditR(r, "config.raw_put", auditDetail+" (write failed)", false)
-		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		s.logger.Error("config raw put: close temp failed", "error", err)
-		s.recordAuditR(r, "config.raw_put", auditDetail+" (close failed)", false)
-		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
-		return
-	}
-
-	if err := os.Rename(tmpName, s.configPath); err != nil {
-		os.Remove(tmpName)
-		s.logger.Error("config raw put: rename failed", "error", err)
-		s.recordAuditR(r, "config.raw_put", auditDetail+" (rename failed)", false)
 		jsonError(w, "failed to save configuration", http.StatusInternalServerError)
 		return
 	}
@@ -3827,7 +3837,10 @@ func (s *Server) handleConfigRawPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSettingsGet returns all global config fields as flat key-value pairs.
-func (s *Server) handleSettingsGet(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	g := s.config.Global
 	s.configMu.RUnlock()
@@ -4466,32 +4479,12 @@ func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Atomic write: temp file then rename.
-	tmp, err := os.CreateTemp(dir, ".uwas-domain-*.yaml")
-	if err != nil {
-		s.logger.Error("domain raw put: create temp failed", "error", err)
-		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
-		return
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		s.logger.Error("domain raw put: write temp failed", "error", err)
-		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		s.logger.Error("domain raw put: close temp failed", "error", err)
-		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
-		return
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		s.logger.Error("domain raw put: rename failed", "error", err)
+	// Crash-safe write: unique temp file + fsync + rename.
+	s.persistMu.Lock()
+	writeErr := atomicWriteFile(path, data, 0600)
+	s.persistMu.Unlock()
+	if writeErr != nil {
+		s.logger.Error("domain raw put: write failed", "error", writeErr)
 		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
 		return
 	}
@@ -4549,6 +4542,9 @@ func (s *Server) domainFilePath(host string) (string, error) {
 func (s *Server) SetMCP(m *mcp.Server) { s.mcpSrv = m }
 
 func (s *Server) handleMCPTools(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.mcpSrv == nil {
 		jsonError(w, "MCP not enabled", http.StatusServiceUnavailable)
 		return
@@ -4557,6 +4553,9 @@ func (s *Server) handleMCPTools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.mcpSrv == nil {
 		jsonError(w, "MCP not enabled", http.StatusServiceUnavailable)
 		return
@@ -5470,6 +5469,9 @@ func (s *Server) handleBandwidthGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBandwidthReset(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+	if !s.requireDomainAccess(w, r, host, "bandwidth.reset") {
+		return
+	}
 	if s.bwMgr == nil {
 		jsonError(w, "bandwidth manager not initialized", http.StatusServiceUnavailable)
 		return

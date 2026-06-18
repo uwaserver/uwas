@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
@@ -41,8 +42,13 @@ func ValidateTOTP(secret, code string) (bool, int64) {
 	now := time.Now().Unix()
 	for i := -totpWindow; i <= totpWindow; i++ {
 		counter := uint64((now / totpPeriod) + int64(i))
-		if generateCode(key, counter) == code {
-			return true, int64(now / totpPeriod)
+		expected := generateCode(key, counter)
+		// Constant-time compare so the response timing doesn't leak how many
+		// leading digits matched. Return the step that actually matched (not the
+		// current step) so callers can enforce replay protection across the skew
+		// window.
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
+			return true, int64(counter)
 		}
 	}
 	return false, -1
