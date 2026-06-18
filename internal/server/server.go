@@ -687,7 +687,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	mws := []middleware.Middleware{
 		middleware.Recovery(s.logger),
 		middleware.RequestID(),
-		middleware.RealIP(s.config.Global.TrustedProxies),
+		middleware.RealIP(s.realIPTrustedProxies()),
 		middleware.SecurityHeaders(),
 		middleware.Gzip(1024), // compress responses > 1KB
 	}
@@ -713,6 +713,15 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 
 	chain := middleware.Chain(mws...)
 	return chain(http.HandlerFunc(s.handleRequest))
+}
+
+func (s *Server) realIPTrustedProxies() []string {
+	if s == nil || s.config == nil {
+		return nil
+	}
+	trusted := append([]string(nil), s.config.Global.TrustedProxies...)
+	trusted = append(trusted, s.config.Global.Cloudflare.IPRanges...)
+	return trusted
 }
 
 // Start starts all listeners and blocks until shutdown.
@@ -1091,15 +1100,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		isMonitor := r.UserAgent() == "UWAS-Monitor/1.0"
 		if s.admin != nil && !isMonitor && r.Host != "localhost:80" && r.Host != "localhost" {
 			elapsed := time.Since(start)
-			// Use real client IP from X-Forwarded-For or X-Real-IP
-			remoteIP := r.RemoteAddr
-			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				if parts := strings.SplitN(xff, ",", 2); len(parts) > 0 {
-					remoteIP = strings.TrimSpace(parts[0])
-				}
-			} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
-				remoteIP = xri
-			}
+			remoteIP := normalizedRemoteIP(r)
 			s.admin.RecordLog(admin.LogEntry{
 				Time:       start,
 				Host:       r.Host,
@@ -1656,6 +1657,16 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			time.Since(start),
 		)
 	}
+}
+
+func normalizedRemoteIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Domain) {
