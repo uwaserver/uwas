@@ -86,13 +86,19 @@ type Server struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 
-	alerter         *alerting.Alerter
-	backupMgr       *backup.BackupManager
-	bwMgr           *bandwidth.Manager
-	cronMonitor     *cronjob.Monitor
-	webhookMgr      *webhook.Manager
-	authMgr         *auth.Manager
-	sftpSrv         *sftpserver.Server
+	alerter     *alerting.Alerter
+	backupMgr   *backup.BackupManager
+	bwMgr       *bandwidth.Manager
+	cronMonitor *cronjob.Monitor
+	webhookMgr  *webhook.Manager
+	authMgr     *auth.Manager
+	sftpSrv     *sftpserver.Server
+	// routeMu guards all per-domain routing maps below (proxy pools/balancers/
+	// breakers/mirrors/canaries/health-checkers, rewriteCache, the *Guards, the
+	// rate limiters and image-opt chains). reload()/rebuildProxyPools() swap
+	// these maps while request goroutines read them; without this lock that is a
+	// data race on the map header.
+	routeMu         sync.RWMutex
 	proxyPools      map[string]*proxyhandler.UpstreamPool
 	proxyBalancers  map[string]proxyhandler.Balancer
 	proxyHealthChks map[string]*proxyhandler.HealthChecker
@@ -1203,7 +1209,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain WAF (Content-Type aware, with bypass path support).
 	// Predicate-form guard precompiled at config load (refactor.md P2/P3);
 	// no per-request closure allocation, no one-shot handler wrap.
-	if guard := s.wafGuards[domain.Host]; guard != nil {
+	if guard := s.wafGuardFor(domain.Host); guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
@@ -1407,21 +1413,21 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-domain IP ACL (whitelist/blacklist) — predicate form (P2/P3).
-	if guard := s.ipACLGuards[domain.Host]; guard != nil {
+	if guard := s.ipACLGuardFor(domain.Host); guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
 	}
 
 	// Per-domain GeoIP blocking — predicate form (P2/P3).
-	if guard := s.geoGuards[domain.Host]; guard != nil {
+	if guard := s.geoGuardFor(domain.Host); guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
 	}
 
 	// Per-domain rate limiting
-	if rl := s.domainRateLimiters[domain.Host]; rl != nil {
+	if rl := s.rateLimiterFor(domain.Host); rl != nil {
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || ip == "" {
 			ip = r.RemoteAddr
@@ -1443,7 +1449,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain CORS — predicate form (P2/P3). Guard handles preflight
 	// inline and returns false when the response was terminated there.
-	if guard := s.corsGuards[domain.Host]; guard != nil {
+	if guard := s.corsGuardFor(domain.Host); guard != nil {
 		if !guard(ctx.Response, r) {
 			return
 		}
@@ -1730,7 +1736,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		return
 	}
 	// Image optimization: serve pre-converted WebP/AVIF if available
-	if _, ok := s.imageOptChains[domain.Host]; ok {
+	if _, ok := s.imageOptChainFor(domain.Host); ok {
 		accept := ctx.Request.Header.Get("Accept")
 		ext := filepath.Ext(resolved)
 		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" {
@@ -1752,26 +1758,24 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 }
 
 func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) {
-	pool := s.proxyPools[domain.Host]
+	pool, balancer, cb, mirror, canary := s.proxyRouteFor(domain.Host)
 	if pool == nil {
 		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
 		return
 	}
 
-	balancer := s.proxyBalancers[domain.Host]
 	if balancer == nil {
 		balancer = proxyhandler.NewBalancer("round_robin")
 	}
 
 	// Circuit breaker: reject if circuit is open
-	cb := s.proxyBreakers[domain.Host]
 	if cb != nil && !cb.Allow() {
 		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
 		return
 	}
 
 	// Request mirroring: fire-and-forget copy to mirror backend
-	if mirror := s.proxyMirrors[domain.Host]; mirror != nil && mirror.ShouldMirror() {
+	if mirror != nil && mirror.ShouldMirror() {
 		var bodyBytes []byte
 		shouldMirror := true
 		maxBytes := int64(mirror.MaxBodyBytes())
@@ -1806,10 +1810,14 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 		}
 	}
 
-	// Canary routing: route a percentage of traffic to canary upstreams
-	if cr := s.proxyCanaries[domain.Host]; cr != nil && cr.IsCanary(ctx.Request, domain.Proxy.Canary) {
-		cr.Serve(ctx, domain, s.proxy)
-	} else {
+	// Canary routing: route a percentage of traffic to canary upstreams.
+	// Fall back to the primary pool if the canary couldn't serve (no healthy
+	// canary backend), otherwise the client would get an empty response.
+	served := false
+	if canary != nil && canary.IsCanary(ctx.Request, domain.Proxy.Canary) {
+		served = canary.Serve(ctx, domain, s.proxy)
+	}
+	if !served {
 		s.proxy.Serve(ctx, domain, pool, balancer)
 	}
 
@@ -1862,7 +1870,7 @@ func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domai
 }
 
 func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain) bool {
-	engine := s.rewriteCache[domain.Host]
+	engine := s.rewriteEngineFor(domain.Host)
 	if engine == nil {
 		return false
 	}
@@ -1956,12 +1964,16 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 
 	// 4. Apply ErrorDocument — build a merged map once and atomically assign.
 	// This avoids concurrent map writes from parallel requests.
-	if len(ruleSet.raw.ErrorDocuments) > 0 && domain.ErrorPages == nil {
-		merged := make(map[int]string, len(ruleSet.raw.ErrorDocuments))
-		for code, page := range ruleSet.raw.ErrorDocuments {
-			merged[code] = page
+	if len(ruleSet.raw.ErrorDocuments) > 0 {
+		errorPagesMu.Lock()
+		if domain.ErrorPages == nil {
+			merged := make(map[int]string, len(ruleSet.raw.ErrorDocuments))
+			for code, page := range ruleSet.raw.ErrorDocuments {
+				merged[code] = page
+			}
+			domain.ErrorPages = merged
 		}
-		domain.ErrorPages = merged // single atomic pointer write; subsequent reads are safe
+		errorPagesMu.Unlock()
 	}
 
 	// 5. Apply php_value / php_flag — store per-request override instead of mutating domain.
@@ -2173,6 +2185,10 @@ func (s *Server) reload() error {
 			newRewriteCache[d.Host] = rewrite.NewEngine(rules)
 		}
 	}
+
+	// Swap all per-domain routing maps under routeMu so request goroutines
+	// reading them via the *For accessors never observe a torn map header.
+	s.routeMu.Lock()
 	s.rewriteCache = newRewriteCache
 
 	// Rebuild per-domain middleware chains + predicate guards
@@ -2242,9 +2258,6 @@ func (s *Server) reload() error {
 	}
 	oldRateLimiters := s.domainRateLimiters
 	s.domainRateLimiters = newRateLimiters
-	for _, rl := range oldRateLimiters {
-		rl.Stop()
-	}
 
 	// Rebuild image optimization chains
 	newImageOpt := make(map[string]middleware.Middleware)
@@ -2257,6 +2270,13 @@ func (s *Server) reload() error {
 		}
 	}
 	s.imageOptChains = newImageOpt
+	s.routeMu.Unlock()
+
+	// Stop the old rate limiters' cleanup goroutines after releasing routeMu;
+	// otherwise each reload leaks N goroutines bound to s.ctx (server lifetime).
+	for _, rl := range oldRateLimiters {
+		rl.Stop()
+	}
 
 	// Rebuild proxy pools + balancers + health checkers against the new
 	// config. Factored into rebuildProxyPools so onDomainChange (which
@@ -2306,6 +2326,57 @@ func (s *Server) reload() error {
 	return nil
 }
 
+// --- per-domain route accessors (read the routing maps under routeMu) ---
+
+func (s *Server) wafGuardFor(host string) func(http.ResponseWriter, *http.Request) bool {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.wafGuards[host]
+}
+
+func (s *Server) ipACLGuardFor(host string) func(http.ResponseWriter, *http.Request) bool {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.ipACLGuards[host]
+}
+
+func (s *Server) geoGuardFor(host string) func(http.ResponseWriter, *http.Request) bool {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.geoGuards[host]
+}
+
+func (s *Server) corsGuardFor(host string) func(http.ResponseWriter, *http.Request) bool {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.corsGuards[host]
+}
+
+func (s *Server) rateLimiterFor(host string) *middleware.RateLimiter {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.domainRateLimiters[host]
+}
+
+func (s *Server) imageOptChainFor(host string) (middleware.Middleware, bool) {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	m, ok := s.imageOptChains[host]
+	return m, ok
+}
+
+func (s *Server) rewriteEngineFor(host string) *rewrite.Engine {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.rewriteCache[host]
+}
+
+func (s *Server) proxyRouteFor(host string) (*proxyhandler.UpstreamPool, proxyhandler.Balancer, *proxyhandler.CircuitBreaker, *proxyhandler.Mirror, *proxyhandler.CanaryRouter) {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return s.proxyPools[host], s.proxyBalancers[host], s.proxyBreakers[host], s.proxyMirrors[host], s.proxyCanaries[host]
+}
+
 // rebuildProxyPools regenerates proxy pools, balancers, and health
 // checkers from the given domains slice. Used by both reload() (after
 // reading config from disk) and onDomainChange (after admin API mutates
@@ -2319,15 +2390,12 @@ func (s *Server) reload() error {
 // calling this method again — typically via onDomainChange or reload
 // when an app state changes.
 func (s *Server) rebuildProxyPools(domains []config.Domain) {
-	// Stop old proxy health checkers before rebuilding so we don't
-	// leak goroutines on every reload.
-	for _, hc := range s.proxyHealthChks {
-		hc.Stop()
-	}
-
 	newPools := make(map[string]*proxyhandler.UpstreamPool)
 	newBalancers := make(map[string]proxyhandler.Balancer)
 	newHealthChks := make(map[string]*proxyhandler.HealthChecker)
+	newBreakers := make(map[string]*proxyhandler.CircuitBreaker)
+	newCanaries := make(map[string]*proxyhandler.CanaryRouter)
+	newMirrors := make(map[string]*proxyhandler.Mirror)
 
 	for _, d := range domains {
 		if d.Type != "proxy" || len(d.Proxy.Upstreams) == 0 {
@@ -2354,11 +2422,44 @@ func (s *Server) rebuildProxyPools(domains []config.Domain) {
 			hc.Start(s.ctx)
 			newHealthChks[d.Host] = hc
 		}
+
+		// Rebuild circuit breaker / canary / mirror too, so an admin add/remove
+		// of a proxy domain doesn't leave a new domain without them or keep a
+		// stale breaker after its upstreams changed.
+		if d.Proxy.CircuitBreaker.Threshold > 0 {
+			newBreakers[d.Host] = proxyhandler.NewCircuitBreaker(
+				d.Proxy.CircuitBreaker.Threshold,
+				d.Proxy.CircuitBreaker.Timeout.Duration,
+			)
+		}
+		if d.Proxy.Canary.Enabled && len(d.Proxy.Canary.Upstreams) > 0 {
+			newCanaries[d.Host] = proxyhandler.NewCanaryRouter(d.Proxy.Canary, d.Proxy.Algorithm, s.logger)
+		}
+		if d.Proxy.Mirror.Enabled && d.Proxy.Mirror.Backend != "" {
+			newMirrors[d.Host] = proxyhandler.NewMirror(proxyhandler.MirrorConfig{
+				Enabled:      d.Proxy.Mirror.Enabled,
+				Backend:      d.Proxy.Mirror.Backend,
+				Percent:      d.Proxy.Mirror.Percent,
+				MaxBodyBytes: d.Proxy.Mirror.MaxBodyBytes,
+			}, s.logger)
+		}
 	}
 
+	// Swap under routeMu, then stop the old health checkers outside the lock so
+	// we don't leak goroutines (and don't race two concurrent rebuilds).
+	s.routeMu.Lock()
+	oldHealthChks := s.proxyHealthChks
 	s.proxyPools = newPools
 	s.proxyBalancers = newBalancers
 	s.proxyHealthChks = newHealthChks
+	s.proxyBreakers = newBreakers
+	s.proxyCanaries = newCanaries
+	s.proxyMirrors = newMirrors
+	s.routeMu.Unlock()
+
+	for _, hc := range oldHealthChks {
+		hc.Stop()
+	}
 }
 
 func (s *Server) handleSignals() {

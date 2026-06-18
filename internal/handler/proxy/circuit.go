@@ -52,9 +52,11 @@ func (cb *CircuitBreaker) Allow() bool {
 		if time.Since(time.Unix(0, cb.lastFailure.Load())) >= cb.timeout {
 			// Try to transition to half-open using CAS
 			if cb.state.CompareAndSwap(int32(CircuitOpen), int32(CircuitHalfOpen)) {
-				// Claim the probe slot for this first probe request
-				cb.probeSlot.Store(1)
-				return true
+				// Claim the probe slot via CAS (not Store) so we don't admit a
+				// second probe that a concurrent CircuitHalfOpen caller may have
+				// already claimed between the state CAS and here. probeSlot was
+				// reset to 0 when the breaker opened, so this normally succeeds.
+				return cb.probeSlot.CompareAndSwap(0, 1)
 			}
 			// Another goroutine won the transition; check if it's now half-open
 			if CircuitState(cb.state.Load()) == CircuitHalfOpen {
