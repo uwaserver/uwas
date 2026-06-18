@@ -89,6 +89,13 @@ func DecodeHeader(r io.Reader) (*Header, error) {
 // WriteRecord writes a complete record (header + content + padding).
 func WriteRecord(w io.Writer, recType uint8, requestID uint16, content []byte) error {
 	contentLen := len(content)
+	// A single record's content length is a uint16; a larger payload must be
+	// split across multiple records by the caller. Guard here so an oversized
+	// payload fails loudly instead of silently truncating via uint16 wraparound
+	// and corrupting the stream.
+	if contentLen > maxContentLength {
+		return fmt.Errorf("fastcgi: record content length %d exceeds max %d", contentLen, maxContentLength)
+	}
 	padding := (8 - contentLen%8) % 8
 
 	h := &Header{
