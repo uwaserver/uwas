@@ -81,6 +81,10 @@ type domainInstance struct {
 	configOverrides map[string]string
 	proc            *processInfo
 	tmpINI          string // path to temp ini file, cleaned up on stop
+	// crash-restart tracking: prevent a permanently-broken PHP binary from
+	// looping start→crash→start every 500ms forever.
+	restartCount int
+	lastRestart  time.Time
 }
 
 // Manager detects and manages PHP installations and subprocesses.
@@ -353,14 +357,39 @@ func (m *Manager) StartDomain(domain string) error {
 	// Reap the process in the background and auto-restart on crash.
 	m.logger.SafeGo("php.monitor."+domain, func() {
 		waitErr := cmd.Wait()
+		const (
+			maxRapidRestarts = 5
+			restartWindow    = 60 * time.Second
+			baseBackoff      = 500 * time.Millisecond
+			maxBackoff       = 30 * time.Second
+		)
 		m.domainMu.Lock()
 		di, stillAssigned := m.domainMap[domain]
 		shouldRestart := stillAssigned && di.proc != nil && di.proc.cmd == cmd
+		var backoff time.Duration
+		giveUp := false
 		if shouldRestart {
 			di.proc = nil
 			if di.tmpINI != "" {
 				os.Remove(di.tmpINI)
 				di.tmpINI = ""
+			}
+			// Reset the counter if the last restart was long enough ago, so a
+			// stable process that crashes once weeks later isn't penalized.
+			now := time.Now()
+			if now.Sub(di.lastRestart) > restartWindow {
+				di.restartCount = 0
+			}
+			di.restartCount++
+			di.lastRestart = now
+			if di.restartCount > maxRapidRestarts {
+				giveUp = true
+			} else {
+				// Exponential backoff: 0.5s, 1s, 2s, 4s, 8s (capped).
+				backoff = baseBackoff << (di.restartCount - 1)
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
 			}
 		}
 		m.domainMu.Unlock()
@@ -377,7 +406,12 @@ func (m *Manager) StartDomain(domain string) error {
 			if waitErr != nil && m.onCrash != nil {
 				m.onCrash(domain)
 			}
-			time.Sleep(500 * time.Millisecond) // brief backoff
+			if giveUp {
+				m.logger.Error("PHP-CGI crash-looping, giving up auto-restart",
+					"domain", domain, "restarts", maxRapidRestarts)
+				return
+			}
+			time.Sleep(backoff)
 			if err := m.StartDomain(domain); err != nil {
 				m.logger.Error("PHP-CGI auto-restart failed", "domain", domain, "error", err)
 			} else {
