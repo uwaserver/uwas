@@ -63,8 +63,10 @@ func (cr *CanaryRouter) IsCanary(r *http.Request, cfg config.CanaryConfig) bool 
 }
 
 // Serve routes a canary request to the canary upstream pool and sets
-// appropriate headers and stickiness cookie.
-func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain, handler *Handler) {
+// appropriate headers and stickiness cookie. It returns false (writing nothing)
+// when no canary backend is healthy, so the caller can fall back to the primary
+// pool instead of returning an empty response to the client.
+func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain, handler *Handler) bool {
 	cfg := domain.Proxy.Canary
 
 	cookieName := cfg.Cookie
@@ -74,9 +76,9 @@ func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain,
 
 	backends := cr.canaryPool.Healthy()
 	if len(backends) == 0 {
-		// Fall back to primary pool if no canary backends are healthy.
+		// No healthy canary backend — signal the caller to use the primary pool.
 		cr.logger.Warn("no healthy canary backends, falling back to primary")
-		return
+		return false
 	}
 
 	// Set stickiness cookie
@@ -92,6 +94,7 @@ func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain,
 	ctx.Response.Header().Set("X-Canary", "true")
 
 	handler.serveWithPool(ctx, domain, cr.canaryPool, cr.canaryBalance)
+	return true
 }
 
 // CanaryPool returns the canary upstream pool.
