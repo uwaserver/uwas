@@ -16,6 +16,43 @@ import (
 	"strings"
 )
 
+// wpPluginSlugRe matches valid plugin slugs (directory name, optionally
+// directory/file.php form). Anchored and must not start with "-" so a value
+// can never be parsed by wp-cli as a flag.
+var wpPluginSlugRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)?$`)
+
+// validPluginSlug guards user-supplied plugin identifiers against wp-cli
+// argument injection (e.g. "foo --activate" or a leading-dash flag). wp-cli
+// runs without a shell, so the only vector is flag injection via a value.
+func validPluginSlug(plugin string) error {
+	if plugin == "" {
+		return fmt.Errorf("plugin is required")
+	}
+	if !wpPluginSlugRe.MatchString(plugin) {
+		return fmt.Errorf("invalid plugin name")
+	}
+	return nil
+}
+
+// validWPUsername guards user-supplied wp-cli positional values (usernames)
+// against flag injection. WordPress logins may contain spaces and a range of
+// characters, so we only reject the dangerous shapes: empty, leading dash, and
+// embedded control/quote characters.
+func validWPUsername(username string) error {
+	if username == "" {
+		return fmt.Errorf("username is required")
+	}
+	if strings.HasPrefix(username, "-") {
+		return fmt.Errorf("invalid username")
+	}
+	for _, r := range username {
+		if r < 0x20 || r == '"' || r == '\'' || r == '`' {
+			return fmt.Errorf("invalid username")
+		}
+	}
+	return nil
+}
+
 // --- WP-CLI Actions ---
 
 // UpdateCore updates WordPress core. Uses WP-CLI if available, otherwise
@@ -125,6 +162,9 @@ func ReinstallWordPress(webRoot string) (string, error) {
 
 // UpdatePlugin updates a specific plugin.
 func UpdatePlugin(webRoot, plugin string) (string, error) {
+	if err := validPluginSlug(plugin); err != nil {
+		return "", err
+	}
 	return wpCLI(webRoot, "plugin", "update", plugin)
 }
 
@@ -135,16 +175,25 @@ func UpdateAllPlugins(webRoot string) (string, error) {
 
 // ActivatePlugin activates a plugin.
 func ActivatePlugin(webRoot, plugin string) (string, error) {
+	if err := validPluginSlug(plugin); err != nil {
+		return "", err
+	}
 	return wpCLI(webRoot, "plugin", "activate", plugin)
 }
 
 // DeactivatePlugin deactivates a plugin.
 func DeactivatePlugin(webRoot, plugin string) (string, error) {
+	if err := validPluginSlug(plugin); err != nil {
+		return "", err
+	}
 	return wpCLI(webRoot, "plugin", "deactivate", plugin)
 }
 
 // DeletePlugin deletes a plugin.
 func DeletePlugin(webRoot, plugin string) (string, error) {
+	if err := validPluginSlug(plugin); err != nil {
+		return "", err
+	}
 	return wpCLI(webRoot, "plugin", "delete", plugin)
 }
 
@@ -336,6 +385,9 @@ func ListUsers(webRoot string) ([]WPUser, error) {
 
 // ChangeUserPassword changes a WordPress user's password.
 func ChangeUserPassword(webRoot, username, newPassword string) error {
+	if err := validWPUsername(username); err != nil {
+		return err
+	}
 	_, err := wpCLI(webRoot, "user", "update", username, "--user_pass="+newPassword)
 	return err
 }
