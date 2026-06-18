@@ -54,12 +54,21 @@ func (dc *DiskCache) Get(key string) (*CachedResponse, error) {
 func (dc *DiskCache) Set(key string, resp *CachedResponse) error {
 	data := resp.Serialize()
 
-	// Check disk limit
-	if dc.maxBytes > 0 && dc.usedBytes.Load()+int64(len(data)) > dc.maxBytes {
+	path := dc.path(key)
+
+	// Account for an existing file at this key (TTL refresh re-caches the same
+	// key constantly). Without subtracting the old size, usedBytes inflates on
+	// every overwrite until it crosses maxBytes and silently disables the cache.
+	var oldSize int64
+	if info, err := os.Stat(path); err == nil {
+		oldSize = info.Size()
+	}
+
+	// Check disk limit against the projected total after this write.
+	if dc.maxBytes > 0 && dc.usedBytes.Load()-oldSize+int64(len(data)) > dc.maxBytes {
 		return nil // silently skip if over limit
 	}
 
-	path := dc.path(key)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -69,7 +78,7 @@ func (dc *DiskCache) Set(key string, resp *CachedResponse) error {
 		return err
 	}
 
-	dc.usedBytes.Add(int64(len(data)))
+	dc.usedBytes.Add(int64(len(data)) - oldSize)
 	return nil
 }
 
