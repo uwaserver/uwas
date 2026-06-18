@@ -736,13 +736,16 @@ func IsPrivateProxyUpstreamSafe(rawURL string) error {
 }
 
 // IsHostSafe checks whether a bare hostname or IP (no scheme/port) is safe to
-// dial, applying the default SSRF block-list. Used for non-HTTP egress such as
-// SMTP where there is no URL to parse.
+// dial for non-HTTP egress such as SMTP. Loopback and private addresses are
+// permitted because internal SMTP relays (localhost:25, a mail server on a
+// private LAN) are a legitimate and common configuration; only the cloud
+// metadata endpoint, link-local, documentation and unspecified ranges are
+// rejected. The notify-test endpoint that reaches this is itself admin-gated.
 func IsHostSafe(host string) error {
 	if host == "" {
 		return nil
 	}
-	policy := urlSafetyPolicy{}
+	policy := urlSafetyPolicy{allowLoopback: true, allowPrivate: true}
 	if ip := net.ParseIP(host); ip != nil {
 		if reason := ipBlockedReason(ip, policy); reason != "" {
 			return fmt.Errorf("host %q is a blocked %s (SSRF)", host, reason)
