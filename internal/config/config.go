@@ -13,29 +13,37 @@ type Config struct {
 // GlobalConfig is the server-wide configuration: listeners, log shape, ACME
 // account, cache + backup defaults, admin API, alerting fan-out.
 type GlobalConfig struct {
-	WorkerCount    string          `yaml:"worker_count"`
-	MaxConnections int             `yaml:"max_connections"`
-	HTTPListen     string          `yaml:"http_listen"`
-	HTTPSListen    string          `yaml:"https_listen"`
-	SFTPListen     string          `yaml:"sftp_listen"` // e.g. ":2222", empty = disabled
-	HTTP3Enabled   bool            `yaml:"http3"`
-	PIDFile        string          `yaml:"pid_file"`
-	WebRoot        string          `yaml:"web_root"`
-	LogLevel       string          `yaml:"log_level"`
-	LogFormat      string          `yaml:"log_format"`
-	TrustedProxies []string        `yaml:"trusted_proxies"`
-	Timeouts       TimeoutConfig   `yaml:"timeouts"`
-	RateLimit      RateLimitConfig `yaml:"rate_limit,omitempty"`
-	Admin          AdminConfig     `yaml:"admin"`
-	Audit          AuditConfig     `yaml:"audit"`
-	MCP            MCPConfig       `yaml:"mcp"`
-	ACME           ACMEConfig      `yaml:"acme"`
-	Cache          CacheConfig     `yaml:"cache"`
-	Alerting       AlertingConfig  `yaml:"alerting"`
-	Backup         BackupConfig    `yaml:"backup"`
-	Webhooks       []WebhookConfig `yaml:"webhooks"`
-	Users          UsersConfig     `yaml:"users"`
-	ProxyProtocol  bool            `yaml:"proxy_protocol"` // enable PROXY protocol v1/v2 on listeners
+	WorkerCount    string           `yaml:"worker_count"`
+	MaxConnections int              `yaml:"max_connections"`
+	HTTPListen     string           `yaml:"http_listen"`
+	HTTPSListen    string           `yaml:"https_listen"`
+	SFTPListen     string           `yaml:"sftp_listen"` // e.g. ":2222", empty = disabled
+	HTTP3Enabled   bool             `yaml:"http3"`
+	PIDFile        string           `yaml:"pid_file"`
+	WebRoot        string           `yaml:"web_root"`
+	LogLevel       string           `yaml:"log_level"`
+	LogFormat      string           `yaml:"log_format"`
+	TrustedProxies []string         `yaml:"trusted_proxies"`
+	Timeouts       TimeoutConfig    `yaml:"timeouts"`
+	RateLimit      RateLimitConfig  `yaml:"rate_limit,omitempty"`
+	Admin          AdminConfig      `yaml:"admin"`
+	Audit          AuditConfig      `yaml:"audit"`
+	MCP            MCPConfig        `yaml:"mcp"`
+	ACME           ACMEConfig       `yaml:"acme"`
+	Cache          CacheConfig      `yaml:"cache"`
+	Alerting       AlertingConfig   `yaml:"alerting"`
+	Backup         BackupConfig     `yaml:"backup"`
+	Cloudflare     CloudflareConfig `yaml:"cloudflare,omitempty"`
+	Webhooks       []WebhookConfig  `yaml:"webhooks"`
+	Users          UsersConfig      `yaml:"users"`
+	ProxyProtocol  bool             `yaml:"proxy_protocol"` // enable PROXY protocol v1/v2 on listeners
+}
+
+// CloudflareConfig stores origin-protection settings shared by all domains.
+// Per-domain enforcement is controlled by Domain.Security.CloudflareOnly.
+type CloudflareConfig struct {
+	IPRanges   []string `yaml:"ip_ranges,omitempty" json:"ip_ranges,omitempty"`
+	LastSynced string   `yaml:"last_synced,omitempty" json:"last_synced,omitempty"`
 }
 
 // TimeoutConfig holds HTTP server timeout knobs.

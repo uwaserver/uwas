@@ -5,7 +5,7 @@ import { setPinCode, clearPinCode } from '@/lib/api';
 import {
   X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
-  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Upload,
+  AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Upload, Cloud,
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
@@ -41,6 +41,7 @@ interface DomainFormState {
   // accidental "set form.appPort" stops compiling.
   blockedPaths: string;
   wafEnabled: boolean;
+  cloudflareOnly: boolean;
   htaccessEnabled: boolean;
 }
 
@@ -80,6 +81,7 @@ const emptyForm: DomainFormState = {
   canonicalHost: 'apex',
   blockedPaths: '',
   wafEnabled: false,
+  cloudflareOnly: false,
   htaccessEnabled: false,
 };
 
@@ -573,6 +575,7 @@ export default function Domains() {
         canonicalHost: d.canonical_host === 'www' ? 'www' : 'apex',
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
+        cloudflareOnly: d.security?.cloudflare_only ?? false,
         htaccessEnabled: !!d.htaccess?.mode,
       };
       /* Determine if the PHP address matches a known install */
@@ -601,6 +604,7 @@ export default function Domains() {
         type: value,
         cacheEnabled: false,
         wafEnabled: false,
+        cloudflareOnly: false,
         htaccessEnabled: false,
         blockedPaths: '',
       };
@@ -660,9 +664,10 @@ export default function Domains() {
 
     // Security settings
     const blocked = form.blockedPaths.split(',').map(s => s.trim()).filter(Boolean);
-    if (form.type !== 'redirect' && (form.wafEnabled || blocked.length > 0)) {
+    if (form.type !== 'redirect' && (form.wafEnabled || form.cloudflareOnly || blocked.length > 0)) {
       payload.security = {
         waf: { enabled: form.wafEnabled },
+        cloudflare_only: form.cloudflareOnly,
         blocked_paths: blocked.length > 0 ? blocked : undefined,
       };
     }
@@ -1236,7 +1241,7 @@ export default function Domains() {
                 {form.type !== 'redirect' && (
                 <div className="rounded-lg border border-border bg-card p-4 space-y-3">
                   <h3 className="flex items-center gap-2 text-sm font-semibold text-card-foreground"><Shield size={14} /> Security</h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <button type="button" onClick={() => patchField('wafEnabled', !form.wafEnabled)}
                       className={`flex items-center gap-3 rounded-lg border p-3 text-left transition ${
                         form.wafEnabled ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-border hover:border-foreground/20'
@@ -1245,6 +1250,16 @@ export default function Domains() {
                       <div>
                         <p className={`text-xs font-medium ${form.wafEnabled ? 'text-emerald-400' : 'text-foreground'}`}>WAF Protection</p>
                         <p className="text-[9px] text-muted-foreground">SQL injection, XSS, shell detection</p>
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => patchField('cloudflareOnly', !form.cloudflareOnly)}
+                      className={`flex items-center gap-3 rounded-lg border p-3 text-left transition ${
+                        form.cloudflareOnly ? 'border-orange-500/50 bg-orange-500/10' : 'border-border hover:border-foreground/20'
+                      }`}>
+                      <Cloud size={16} className={form.cloudflareOnly ? 'text-orange-400' : 'text-muted-foreground'} />
+                      <div>
+                        <p className={`text-xs font-medium ${form.cloudflareOnly ? 'text-orange-400' : 'text-foreground'}`}>Cloudflare Only</p>
+                        <p className="text-[9px] text-muted-foreground">Reject direct origin hits with 421</p>
                       </div>
                     </button>
                     <button type="button" onClick={() => patchField('htaccessEnabled', !form.htaccessEnabled)}
@@ -1462,6 +1477,11 @@ function DomainRow({
         <td className="px-5 py-3">
           <div className="flex flex-wrap items-center gap-1.5">
             <SslBadge ssl={d.ssl} />
+            {d.cloudflare_only && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-medium text-orange-400" title="Only Cloudflare IP ranges can reach this origin">
+                <Cloud size={10} /> CF only
+              </span>
+            )}
             <button
               onClick={e => { e.stopPropagation(); onToggleForceSSL(d); }}
               disabled={d.ssl === 'off' || forceUpdating}

@@ -196,6 +196,7 @@ export interface DomainData {
   type: string;
   ssl: string;
   force_ssl?: boolean;
+  cloudflare_only?: boolean;
   root: string;
 }
 
@@ -337,7 +338,7 @@ export interface DomainDetail {
   ssl: { mode: string; force_ssl?: boolean; cert: string; key: string; min_version: string };
   root: string;
   cache?: { enabled: boolean; ttl: number; rules?: { match: string; ttl: number; bypass: boolean }[] };
-  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; bypass_paths?: string[] | null; rules?: string[] | null }; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
+  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; bypass_paths?: string[] | null; rules?: string[] | null }; cloudflare_only?: boolean; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
   resources?: { cpu_percent?: number; memory_mb?: number; pid_max?: number };
   basic_auth?: BasicAuthRule;
   locations?: DomainLocationRule[];
@@ -1625,6 +1626,12 @@ export interface CloudflareZone {
   plan?: string;
 }
 
+export interface CloudflareIPs {
+  ip_ranges: string[];
+  last_synced?: string;
+  count: number;
+}
+
 export const fetchCloudflareStatus = () => api<CloudflareStatus>('/api/v1/cloudflare/status');
 
 export const connectCloudflare = (token: string, accountId: string) =>
@@ -1658,6 +1665,12 @@ export const installCloudflared = () =>
 
 export const purgeCloudflareCache = (url?: string, everything = false) =>
   api<{ status: string }>('/api/v1/cloudflare/cache/purge', { method: 'POST', body: JSON.stringify({ url, everything }) });
+
+export const fetchCloudflareIPs = () => api<CloudflareIPs>('/api/v1/cloudflare/ips');
+export const updateCloudflareIPs = (ipRanges: string[]) =>
+  api<CloudflareIPs & { status: string }>('/api/v1/cloudflare/ips', { method: 'PUT', body: JSON.stringify({ ip_ranges: ipRanges }) });
+export const syncCloudflareIPs = () =>
+  api<CloudflareIPs & { status: string }>('/api/v1/cloudflare/ips/sync', { method: 'POST' });
 
 export const fetchCloudflareZones = () => api<CloudflareZone[]>('/api/v1/cloudflare/zones').then(r => r ?? []);
 
