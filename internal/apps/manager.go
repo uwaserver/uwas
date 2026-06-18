@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -764,9 +765,18 @@ func (m *Manager) WaitListening(name string, timeout time.Duration) error {
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	portFile := runtimePortFile(workDir, appName)
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
+		if discoveredPort, ok := readRuntimePortFile(portFile); ok && discoveredPort != port {
+			if err := m.adoptDiscoveredPort(p, discoveredPort); err != nil {
+				return err
+			}
+			port = discoveredPort
+			addr = fmt.Sprintf("127.0.0.1:%d", port)
+		}
+
 		// If the process died while we were waiting, bail with a
 		// useful error rather than burning the full timeout. The
 		// monitor goroutine sets p.cmd = nil (native) or p.dockerID
@@ -791,8 +801,66 @@ func (m *Manager) WaitListening(name string, timeout time.Duration) error {
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	return fmt.Errorf("apps: %s: still not listening on %s after %s — app may be binding to a different interface (use 127.0.0.1 or 0.0.0.0), or startup is slower than the probe window",
+	return fmt.Errorf("apps: %s: still not listening on %s after %s — app may be binding to a different interface (use 127.0.0.1 or 0.0.0.0), startup may be slower than the probe window, or a random-port app did not write its port to UWAS_PORT_FILE",
 		name, addr, timeout)
+}
+
+func runtimePortFile(workDir, appName string) string {
+	if workDir == "" || appName == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(workDir), "run", appName+".port")
+}
+
+func readRuntimePortFile(path string) (int, bool) {
+	if path == "" {
+		return 0, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return 0, false
+	}
+	port, err := strconv.Atoi(value)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, false
+	}
+	return port, true
+}
+
+func (m *Manager) adoptDiscoveredPort(p *process, port int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if p == nil {
+		return fmt.Errorf("apps: discovered port %d but process is gone", port)
+	}
+	if p.port == port {
+		return nil
+	}
+	for _, other := range m.procs {
+		if other != p && processExposesPort(other, port) {
+			return fmt.Errorf("apps: %s discovered port %d but it is already owned by app %s", p.name, port, other.name)
+		}
+	}
+
+	oldPort := p.port
+	p.port = port
+	if p.app != nil {
+		p.app.Port = port
+		if err := m.store.Save(p.app); err != nil {
+			p.port = oldPort
+			p.app.Port = oldPort
+			return fmt.Errorf("apps: %s discovered port %d but saving app config failed: %w", p.name, port, err)
+		}
+	}
+	if m.logger != nil {
+		m.logger.Info("apps: adopted discovered runtime port", "app", p.name, "old_port", oldPort, "new_port", port)
+	}
+	return nil
 }
 
 // State reports the lifecycle phase. Mirrors appmanager.State to keep
@@ -846,8 +914,11 @@ func (m *Manager) startNative(p *process) error {
 	cmd.Dir = p.workDir
 
 	cmd.Env = os.Environ()
+	portFile := runtimePortFile(p.workDir, p.name)
 	cmd.Env = append(cmd.Env,
 		fmt.Sprintf("PORT=%d", p.port),
+		fmt.Sprintf("UWAS_ASSIGNED_PORT=%d", p.port),
+		fmt.Sprintf("UWAS_PORT_FILE=%s", portFile),
 		"HOST=0.0.0.0",
 		"NODE_ENV=production",
 	)
@@ -857,6 +928,10 @@ func (m *Manager) startNative(p *process) error {
 
 	logDir := filepath.Join(filepath.Dir(p.workDir), "logs")
 	_ = osMkdirAllFn(logDir, 0755)
+	if portFile != "" {
+		_ = osMkdirAllFn(filepath.Dir(portFile), 0755)
+		_ = os.Remove(portFile)
+	}
 	logFile, _ := osOpenFileFn(filepath.Join(logDir, p.name+".log"),
 		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if logFile != nil {

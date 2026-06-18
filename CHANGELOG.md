@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.38] - 2026-06-18
+
+### Added
+
+- Added a random-port application contract for native runtimes. UWAS now passes
+  `UWAS_PORT_FILE` and adopts the port written there during the listening probe,
+  persisting the discovered port for domain routing and health checks.
+
+### Fixed
+
+- Updated CI and release test artifact uploads to `actions/upload-artifact@v7`
+  to avoid the Node 20 action compatibility warning seen during release.
+
 ## [0.6.37] - 2026-06-18
 
 ### Added

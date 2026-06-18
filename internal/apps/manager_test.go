@@ -3,6 +3,8 @@ package apps
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -152,6 +154,64 @@ func TestWaitListeningSuccess(t *testing.T) {
 
 	if err := mgr.WaitListening("listening", 2*time.Second); err != nil {
 		t.Errorf("WaitListening should have succeeded against an open listener: %v", err)
+	}
+}
+
+func TestWaitListeningAdoptsRuntimePortFile(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	discoveredPort := ln.Addr().(*net.TCPAddr).Port
+
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "apps.d"))
+	store.DataRoot = filepath.Join(dir, "apps")
+	workDir := filepath.Join(store.DataRoot, "random")
+	app := &App{
+		Name:    "random",
+		Runtime: RuntimeNode,
+		Command: "node server.js",
+		Port:    41000,
+		WorkDir: workDir,
+	}
+	if err := store.Save(app); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	mgr := NewManager(store, nil)
+	mgr.mu.Lock()
+	mgr.procs[app.Name] = &process{
+		name:        app.Name,
+		app:         app,
+		runtimeKind: RuntimeDocker, // test hook: dockerID marks it running without a real process
+		dockerID:    "fake-id",
+		port:        app.Port,
+		workDir:     workDir,
+		stopCh:      make(chan struct{}),
+	}
+	mgr.mu.Unlock()
+
+	portFile := runtimePortFile(workDir, app.Name)
+	if err := os.MkdirAll(filepath.Dir(portFile), 0755); err != nil {
+		t.Fatalf("mkdir port dir: %v", err)
+	}
+	if err := os.WriteFile(portFile, []byte(fmt.Sprintf("%d\n", discoveredPort)), 0644); err != nil {
+		t.Fatalf("write port file: %v", err)
+	}
+
+	if err := mgr.WaitListening(app.Name, 2*time.Second); err != nil {
+		t.Fatalf("WaitListening: %v", err)
+	}
+	if got := mgr.ListenAddr(app.Name); got != fmt.Sprintf("127.0.0.1:%d", discoveredPort) {
+		t.Fatalf("ListenAddr = %q, want discovered port", got)
+	}
+	saved, err := store.Get(app.Name)
+	if err != nil {
+		t.Fatalf("get saved app: %v", err)
+	}
+	if saved == nil || saved.Port != discoveredPort {
+		t.Fatalf("saved port = %#v, want %d", saved, discoveredPort)
 	}
 }
 
