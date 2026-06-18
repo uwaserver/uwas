@@ -1,7 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound, AlertCircle, ShieldCheck, User } from 'lucide-react';
-import { setToken, setTOTPCode, fetchStats, loginUser, fetchBranding, type BrandingConfig } from '@/lib/api';
+import { setToken, setTOTPCode, fetchStats, loginUser, bootstrapFirstAdmin, fetchBranding, type BrandingConfig } from '@/lib/api';
 
 type Tab = 'apikey' | 'user';
 type Step = 'login' | 'totp';
@@ -21,6 +21,8 @@ export default function Login() {
   // Username/password auth
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [bootstrapMode, setBootstrapMode] = useState(false);
 
   // TOTP
   const [totp, setTotp] = useState('');
@@ -66,7 +68,9 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      const result = await loginUser(username.trim(), password);
+      const result = bootstrapMode
+        ? await bootstrapFirstAdmin(username.trim(), password, email.trim() || undefined)
+        : await loginUser(username.trim(), password);
       setToken(result.token, 'session');
       navigate('/');
     } catch (err: unknown) {
@@ -180,6 +184,16 @@ export default function Login() {
               ) : (
                 <form onSubmit={handleUserSubmit}>
                   <div className="space-y-3">
+                    <div className="flex rounded-lg bg-muted p-1">
+                      <button type="button" onClick={() => { setBootstrapMode(false); setError(''); }}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${!bootstrapMode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                        Sign In
+                      </button>
+                      <button type="button" onClick={() => { setBootstrapMode(true); setError(''); }}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${bootstrapMode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                        First Admin
+                      </button>
+                    </div>
                     <div>
                       <label htmlFor="username" className="mb-1.5 block text-sm font-medium text-card-foreground">Username</label>
                       <div className="relative">
@@ -189,6 +203,14 @@ export default function Login() {
                           className="w-full rounded-md border border-border bg-background py-2.5 pr-3 pl-10 text-sm text-foreground outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                       </div>
                     </div>
+                    {bootstrapMode && (
+                      <div>
+                        <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-card-foreground">Email</label>
+                        <input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+                          placeholder="admin@example.com"
+                          className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                      </div>
+                    )}
                     <div>
                       <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-card-foreground">Password</label>
                       <div className="relative">
@@ -201,7 +223,7 @@ export default function Login() {
                   </div>
                   <button type="submit" disabled={loading || !username.trim() || !password}
                     className="mt-4 w-full rounded-md bg-blue-600 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50">
-                    {loading ? 'Signing in...' : 'Sign In'}
+                    {loading ? (bootstrapMode ? 'Creating...' : 'Signing in...') : (bootstrapMode ? 'Create Admin' : 'Sign In')}
                   </button>
                 </form>
               )}

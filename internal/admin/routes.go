@@ -86,6 +86,7 @@ func (s *Server) registerCertRoutes() {
 func (s *Server) registerAuthRoutes() {
 	// Session auth
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/v1/auth/bootstrap", s.handleAuthBootstrap)
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.handleAuthMe)
 	s.mux.HandleFunc("POST /api/v1/auth/ticket", s.handleAuthTicket)

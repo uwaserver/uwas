@@ -713,6 +713,9 @@ export const dropDockerDBDatabase = (containerName: string, dbName: string) =>
 export interface LoginResult { status: string; token: string; user_id: string; username: string; role: string; domains: string[]; expires_at: string; }
 export const loginUser = (username: string, password: string) =>
   api<LoginResult>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+export interface BootstrapResult extends LoginResult { api_key: string; }
+export const bootstrapFirstAdmin = (username: string, password: string, email?: string) =>
+  api<BootstrapResult>('/api/v1/auth/bootstrap', { method: 'POST', body: JSON.stringify({ username, password, email }) });
 
 // Webhooks
 export interface WebhookEntry { url: string; events: string[]; headers: Record<string, string>; secret: string; retry: number; timeout: number; enabled: boolean; }
