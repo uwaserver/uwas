@@ -894,7 +894,13 @@ func (m *Manager) startNative(p *process) error {
 		return fmt.Errorf("apps: %s: no start command set for runtime %q and nothing recognizable in workdir %s — %s",
 			p.name, p.runtimeKind, p.workDir, detectHint(string(p.runtimeKind)))
 	}
-	cmdStr := strings.ReplaceAll(p.command, "${PORT}", fmt.Sprintf("%d", p.port))
+	// p.port is reassigned under m.mu by the port-allocation paths, so snapshot
+	// it once under the lock and use the local copy throughout to avoid a data
+	// race with a concurrent (re)start.
+	m.mu.RLock()
+	port := p.port
+	m.mu.RUnlock()
+	cmdStr := strings.ReplaceAll(p.command, "${PORT}", fmt.Sprintf("%d", port))
 	if err := validateShellCommand(cmdStr); err != nil {
 		return fmt.Errorf("apps: %s: invalid command: %w", p.name, err)
 	}
@@ -916,8 +922,8 @@ func (m *Manager) startNative(p *process) error {
 	cmd.Env = os.Environ()
 	portFile := runtimePortFile(p.workDir, p.name)
 	cmd.Env = append(cmd.Env,
-		fmt.Sprintf("PORT=%d", p.port),
-		fmt.Sprintf("UWAS_ASSIGNED_PORT=%d", p.port),
+		fmt.Sprintf("PORT=%d", port),
+		fmt.Sprintf("UWAS_ASSIGNED_PORT=%d", port),
 		fmt.Sprintf("UWAS_PORT_FILE=%s", portFile),
 		"HOST=0.0.0.0",
 		"NODE_ENV=production",
@@ -953,7 +959,7 @@ func (m *Manager) startNative(p *process) error {
 	m.mu.Unlock()
 
 	if m.logger != nil {
-		m.logger.Info("apps: started", "app", p.name, "pid", cmd.Process.Pid, "port", p.port)
+		m.logger.Info("apps: started", "app", p.name, "pid", cmd.Process.Pid, "port", port)
 	}
 
 	// Snapshot the cmd pointer for the post-launch liveness probe
