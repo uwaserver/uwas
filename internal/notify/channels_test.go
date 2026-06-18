@@ -18,6 +18,9 @@ import (
 
 func TestMain(m *testing.M) {
 	notifyURLSafetyCheck = func(string) error { return nil }
+	// Tests target loopback httptest servers; disable the dial-time SSRF
+	// control which would otherwise block 127.0.0.1.
+	notifyDialControl = nil
 	os.Exit(m.Run())
 }
 

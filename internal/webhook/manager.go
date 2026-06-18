@@ -9,10 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -58,14 +60,15 @@ type WebhookConfig struct {
 
 // Manager handles webhook event delivery.
 type Manager struct {
-	mu       sync.RWMutex
-	webhooks []WebhookConfig
-	client   *http.Client
-	queue    chan *queuedEvent
-	closed   atomic.Bool
-	dataDir  string
-	logger   Logger
-	urlSafe  func(string) error
+	mu          sync.RWMutex
+	webhooks    []WebhookConfig
+	client      *http.Client
+	queue       chan *queuedEvent
+	closed      atomic.Bool
+	dataDir     string
+	logger      Logger
+	urlSafe     func(string) error
+	dialControl func(network, address string, c syscall.RawConn) error
 }
 
 // Logger interface for logging.
@@ -84,6 +87,10 @@ type queuedEvent struct {
 
 var webhookURLSafetyCheck = config.IsWebhookURLSafe
 
+// webhookDialControl validates the IP at dial time (DNS-rebinding protection).
+// Tests that target loopback servers set this to nil.
+var webhookDialControl = config.SafeDialControl
+
 // NewManager creates a new webhook manager.
 func NewManager(dataDir string, logger Logger) *Manager {
 	m := &Manager{
@@ -91,10 +98,11 @@ func NewManager(dataDir string, logger Logger) *Manager {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		queue:   make(chan *queuedEvent, 1000),
-		dataDir: dataDir,
-		logger:  logger,
-		urlSafe: webhookURLSafetyCheck,
+		queue:       make(chan *queuedEvent, 1000),
+		dataDir:     dataDir,
+		logger:      logger,
+		urlSafe:     webhookURLSafetyCheck,
+		dialControl: webhookDialControl,
 	}
 
 	// Start worker goroutine
@@ -240,7 +248,23 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		timeout = 30 * time.Second
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{
+		Timeout: timeout,
+		// Re-validate redirect targets so a redirect can't smuggle the delivery
+		// to an internal address after the initial URL passed the SSRF check.
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return m.checkURLSafe(req.URL.String())
+		},
+	}
+	// Validate the IP at dial time to close the DNS-rebinding window.
+	if m.dialControl != nil {
+		client.Transport = &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: timeout,
+				Control: m.dialControl,
+			}).DialContext,
+		}
+	}
 
 	payload, err := json.Marshal(qe.event)
 	if err != nil {

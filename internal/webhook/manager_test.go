@@ -22,6 +22,9 @@ func (l *testLogger) Error(msg string, args ...any) {}
 
 func newTestManager() *Manager {
 	webhookURLSafetyCheck = func(string) error { return nil }
+	// Tests target loopback httptest servers, so disable the dial-time SSRF
+	// control (which would otherwise block 127.0.0.1).
+	webhookDialControl = nil
 	return NewManager("", &testLogger{})
 }
 
