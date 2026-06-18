@@ -34,8 +34,9 @@ type Alerter struct {
 	client     *http.Client
 
 	// Rate limit tracking for error_spike detection.
-	errorWindow   []errorEntry
-	errorWindowMu sync.Mutex
+	errorWindow    []errorEntry
+	errorWindowErr int // running count of error entries in errorWindow
+	errorWindowMu  sync.Mutex
 }
 
 type errorEntry struct {
@@ -97,12 +98,19 @@ func (a *Alerter) RecordRequest(isError bool) {
 	cutoff := now.Add(-5 * time.Minute)
 
 	a.errorWindowMu.Lock()
-	// Append new entry
+	// Append new entry, keeping the running error count in sync (so we don't
+	// re-sum the whole window — up to maxWindowSize entries — on every request).
 	a.errorWindow = append(a.errorWindow, errorEntry{time: now, isErr: isError})
+	if isError {
+		a.errorWindowErr++
+	}
 
 	// Prune old entries
 	start := 0
 	for start < len(a.errorWindow) && a.errorWindow[start].time.Before(cutoff) {
+		if a.errorWindow[start].isErr {
+			a.errorWindowErr--
+		}
 		start++
 	}
 	if start > 0 {
@@ -111,17 +119,17 @@ func (a *Alerter) RecordRequest(isError bool) {
 	// Cap the window size to prevent unbounded growth under high load.
 	const maxWindowSize = 100000
 	if len(a.errorWindow) > maxWindowSize {
-		a.errorWindow = append([]errorEntry(nil), a.errorWindow[len(a.errorWindow)-maxWindowSize:]...)
+		drop := len(a.errorWindow) - maxWindowSize
+		for _, e := range a.errorWindow[:drop] {
+			if e.isErr {
+				a.errorWindowErr--
+			}
+		}
+		a.errorWindow = append([]errorEntry(nil), a.errorWindow[drop:]...)
 	}
 
-	// Calculate error rate
-	var total, errors int
-	for _, e := range a.errorWindow {
-		total++
-		if e.isErr {
-			errors++
-		}
-	}
+	total := len(a.errorWindow)
+	errors := a.errorWindowErr
 	a.errorWindowMu.Unlock()
 
 	// Fire alert if error rate > 10% and we have a meaningful sample
