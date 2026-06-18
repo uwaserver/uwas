@@ -10,10 +10,18 @@ import (
 	"github.com/uwaserver/uwas/internal/database"
 )
 
+// Test seams for cross-package calls that shell out to privileged system
+// commands (systemctl, apt, mysql). Tests (see TestMain) point these at safe
+// no-ops so `go test` never invokes real service-control / package commands.
 var (
 	databaseStartService   = database.StartService
 	databaseStopService    = database.StopService
 	databaseRestartService = database.RestartService
+	databaseRepairService  = database.RepairService
+	databaseUninstall      = database.UninstallService
+	databaseForceUninstall = database.ForceUninstall
+	databaseCreateDatabase = database.CreateDatabase
+	databaseDropDatabase   = database.DropDatabase
 )
 
 // ============ Database ============
@@ -69,7 +77,7 @@ func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	result, err := database.CreateDatabase(req.Name, req.User, req.Password, req.Host)
+	result, err := databaseCreateDatabase(req.Name, req.User, req.Password, req.Host)
 	if err != nil {
 		s.logger.Error("database create failed", "name", req.Name, "error", err)
 		jsonError(w, "database creation failed", http.StatusInternalServerError)
@@ -84,7 +92,7 @@ func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if err := database.DropDatabase(name, name, "localhost"); err != nil {
+	if err := databaseDropDatabase(name, name, "localhost"); err != nil {
 		s.logger.Error("database drop failed", "name", name, "error", err)
 		jsonError(w, "database drop failed", http.StatusInternalServerError)
 		return
@@ -239,7 +247,7 @@ func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	out, err := database.UninstallService()
+	out, err := databaseUninstall()
 	if err != nil {
 		s.recordAuditR(r, "database.uninstall", "error: "+err.Error(), false)
 		s.logger.Error("database uninstall failed", "error", err)
@@ -255,7 +263,7 @@ func (s *Server) handleDBRepair(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	out, err := database.RepairService()
+	out, err := databaseRepairService()
 	if err != nil {
 		s.recordAuditR(r, "database.repair", "error: "+err.Error(), false)
 		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)
@@ -270,7 +278,7 @@ func (s *Server) handleDBForceUninstall(w http.ResponseWriter, r *http.Request) 
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	out, err := database.ForceUninstall()
+	out, err := databaseForceUninstall()
 	if err != nil {
 		s.recordAuditR(r, "database.force_uninstall", "error: "+err.Error(), false)
 		jsonError(w, err.Error()+"\n"+out, http.StatusInternalServerError)

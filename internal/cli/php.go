@@ -12,6 +12,10 @@ import (
 	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
+// phpRunInstall is a test seam for the PHP install path, which shells out to
+// apt / add-apt-repository. TestMain points it at a no-op.
+var phpRunInstall = phpmanager.RunInstall
+
 // PHPCommand manages PHP installations via the admin API.
 type PHPCommand struct{}
 
@@ -293,7 +297,7 @@ func (p *PHPCommand) install(args []string) error {
 	}
 
 	fmt.Println("  Running install...")
-	output, err := phpmanager.RunInstall(version)
+	output, err := phpRunInstall(version)
 	if output != "" {
 		fmt.Print(output)
 	}
