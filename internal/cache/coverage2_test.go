@@ -124,6 +124,26 @@ func newRedisStubEngine(t *testing.T, dir string) (*Engine, *syncRedisStub) {
 	return e, stub
 }
 
+// settleDiskPromote waits for the async disk-promote goroutine that engine.Get/
+// GetByKey starts on a redis hit to finish writing the file. Without this, that
+// goroutine can still be creating a file in the test's t.TempDir() when the
+// deferred TempDir cleanup runs RemoveAll, which then fails with "directory not
+// empty" and flakes the test.
+func settleDiskPromote(t *testing.T, e *Engine, key string) {
+	t.Helper()
+	if e.disk == nil {
+		return
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if r, err := e.disk.Get(key); err == nil && r != nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("disk promote did not settle for key %q", key)
+}
+
 func freshResp(body string, ttl time.Duration) *CachedResponse {
 	return &CachedResponse{
 		StatusCode: 200,
@@ -204,6 +224,7 @@ func TestEngineGetRedisPromotionStale(t *testing.T) {
 	if got == nil || status != StatusStale {
 		t.Fatalf("expected STALE from redis, got status=%q", status)
 	}
+	settleDiskPromote(t, e, key)
 }
 
 // TestEngineGetRedisExpiredBeyondGrace covers engine.Get when redis returns an
