@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { Mail, Copy, Check, ExternalLink } from 'lucide-react';
 import { fetchDomains, fetchServerIPs, type DomainData } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 
 export default function EmailGuide() {
   const [domains, setDomains] = useState<DomainData[]>([]);
@@ -14,8 +15,8 @@ export default function EmailGuide() {
     fetchServerIPs().then(data => setServerIP(data?.public_ip || '')).catch(() => {});
   }, []);
 
-  const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+  const copy = async (text: string, label: string) => {
+    await copyText(text);
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };

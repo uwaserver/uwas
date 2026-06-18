@@ -40,6 +40,7 @@ import {
   type HealthData,
   type SystemInfo,
 } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 
 // ---------------------------------------------------------------------------
 // YAML helpers — lightweight line-level get/set (no library needed)
@@ -584,7 +585,7 @@ export default function Settings() {
   };
 
   const copyToClipboard = (value: string) => {
-    navigator.clipboard.writeText(value).then(() => {
+    copyText(value).then(() => {
       showStatus(true, 'Copied to clipboard');
     });
   };
@@ -811,7 +812,7 @@ export default function Settings() {
                         {twoFASetup.secret}
                       </code>
                       <button
-                        onClick={() => navigator.clipboard.writeText(twoFASetup.secret)}
+                        onClick={() => void copyText(twoFASetup.secret)}
                         className="rounded bg-accent p-2 text-muted-foreground hover:text-white"
                         title="Copy secret"
                       >

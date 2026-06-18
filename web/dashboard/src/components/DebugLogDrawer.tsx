@@ -9,6 +9,7 @@ import {
   subscribeDebugLog,
   type DebugLogEntry,
 } from '@/lib/debugLog';
+import { copyText } from '@/lib/clipboard';
 
 function levelClass(level: DebugLogEntry['level']) {
   switch (level) {
@@ -78,7 +79,7 @@ export default function DebugLogDrawer() {
         return e.detail ? `${base}\n${e.detail}` : base;
       })
       .join('\n\n');
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
   };
 
   return (

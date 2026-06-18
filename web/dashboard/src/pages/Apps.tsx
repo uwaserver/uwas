@@ -31,6 +31,7 @@ import {
   type AppStats,
 } from '@/lib/api';
 import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
+import { copyText } from '@/lib/clipboard';
 
 // Apps dashboard: list apps, create runnable workdirs, manage lifecycle,
 // tail logs, deploy from git, and show lightweight runtime stats.
@@ -530,6 +531,20 @@ export default function Apps() {
     } finally {
       setDeployKeyGenerating(false);
     }
+  };
+
+  const copyDeployKey = async () => {
+    if (!deployKeyResult) return;
+    const ok = await copyText(deployKeyResult.public_key);
+    addDebugLog({
+      level: ok ? 'success' : 'warn',
+      scope: 'clipboard',
+      message: ok ? `Copied deploy public key for ${deployFor}` : `Copy failed for deploy public key ${deployFor}`,
+    });
+    setStatus({
+      ok,
+      message: ok ? 'Deploy public key copied' : 'Copy failed. Select the public key and copy it manually.',
+    });
   };
 
   // saveWebhookConfig persists the webhook_secret + branch_filter
@@ -1361,7 +1376,7 @@ export default function Apps() {
                     <span className="font-medium text-emerald-300">Deploy key generated</span>
                     <button
                       type="button"
-                      onClick={() => navigator.clipboard.writeText(deployKeyResult.public_key)}
+                      onClick={copyDeployKey}
                       className="inline-flex items-center gap-1 rounded border border-emerald-500/30 px-2 py-1 text-emerald-200 hover:bg-emerald-500/10"
                     >
                       <Copy size={12} /> Copy public key

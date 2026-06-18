@@ -1035,6 +1035,76 @@ esac
 	}
 }
 
+func TestAppDeployClearsDisabledAndStartsApp(t *testing.T) {
+	s := testServer()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	mgr := apps.NewManager(store, nil)
+	s.SetAppsManager(mgr)
+
+	workDir := filepath.Join(t.TempDir(), "node-disabled")
+	if err := mgr.Register(&apps.App{
+		Name:     "node-disabled",
+		Runtime:  apps.RuntimeNode,
+		WorkDir:  workDir,
+		Disabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+set -eu
+case "$1" in
+  clone)
+    dest=""
+    for arg in "$@"; do dest="$arg"; done
+    mkdir -p "$dest/.git"
+    cat > "$dest/index.js" <<'JS'
+const http = require('http');
+const port = Number(process.env.PORT || 3000);
+http.createServer((req, res) => res.end('running')).listen(port, '127.0.0.1');
+JS
+    ;;
+  rev-parse)
+    echo disabled123
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	req := httptest.NewRequest("POST", "/api/v1/apps/node-disabled/deploy", strings.NewReader(`{"git_url":"https://github.com/acme/node-disabled.git"}`))
+	req.SetPathValue("name", "node-disabled")
+	rec := httptest.NewRecorder()
+	s.handleAppDeploy(rec, withAdminContext(req))
+	defer mgr.Stop("node-disabled")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var deployResp AppDeployResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &deployResp); err != nil {
+		t.Fatal(err)
+	}
+	if !deployResp.OK {
+		t.Fatalf("deploy should be OK for disabled app, error=%q log=%s", deployResp.Error, deployResp.Log)
+	}
+	after := mgr.Get("node-disabled")
+	if after == nil || !after.Running {
+		t.Fatalf("disabled app should be running after deploy: %#v", after)
+	}
+	stored, err := mgr.Store().Get("node-disabled")
+	if err != nil || stored == nil {
+		t.Fatalf("stored app missing: app=%#v err=%v", stored, err)
+	}
+	if stored.Disabled {
+		t.Fatal("deploy should clear disabled so app recovers after daemon restart")
+	}
+}
+
 func TestAppDeployRestartsAlreadyRunningAppWithNewSource(t *testing.T) {
 	s := testServer()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
