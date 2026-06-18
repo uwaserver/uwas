@@ -492,6 +492,81 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+func TestAuthBootstrapSuccessThroughMiddleware(t *testing.T) {
+	s := testServer()
+	s.config.Global.WebRoot = t.TempDir()
+	s.config.Global.Users.Enabled = true
+	s.config.Global.Admin.APIKey = ""
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/auth/bootstrap", strings.NewReader(`{"username":"admin","email":"admin@example.com","password":"secret123"}`))
+	req.RemoteAddr = "10.0.0.1:1234"
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	defer func() {
+		if mgr, ok := s.authMgr.(*auth.Manager); ok {
+			mgr.Stop()
+		}
+	}()
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "authenticated" {
+		t.Errorf("status = %v", body["status"])
+	}
+	if body["token"] == "" || body["api_key"] == "" {
+		t.Fatalf("expected token and api_key, got %#v", body)
+	}
+	if body["role"] != string(auth.RoleAdmin) {
+		t.Errorf("role = %v, want admin", body["role"])
+	}
+	if _, ok := s.authMgr.GetUser("admin"); !ok {
+		t.Fatal("expected admin user to be created")
+	}
+}
+
+func TestAuthBootstrapForbiddenWithGlobalAPIKey(t *testing.T) {
+	s := testServer()
+	s.config.Global.WebRoot = t.TempDir()
+	s.config.Global.Users.Enabled = true
+	s.config.Global.Admin.APIKey = "existing-global-key"
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/auth/bootstrap", strings.NewReader(`{"username":"admin","password":"secret123"}`))
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("status = %d, want 403, body: %s", rec.Code, rec.Body.String())
+	}
+	if mgr, ok := s.authMgr.(*auth.Manager); ok {
+		mgr.Stop()
+	}
+}
+
+func TestAuthBootstrapConflictAfterUserExists(t *testing.T) {
+	s := testServer()
+	s.config.Global.WebRoot = t.TempDir()
+	s.config.Global.Users.Enabled = true
+	s.config.Global.Admin.APIKey = ""
+
+	mgr := auth.NewManager(s.config.Global.WebRoot, "")
+	defer mgr.Stop()
+	if _, err := mgr.CreateUser("admin", "admin@example.com", "secret123", auth.RoleAdmin, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAuthManager(mgr)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/auth/bootstrap", strings.NewReader(`{"username":"other","password":"secret123"}`))
+	s.authMiddleware(s.mux).ServeHTTP(rec, req)
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestLogoutNoAuthMgr(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()

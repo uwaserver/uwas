@@ -340,6 +340,16 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == "/api/v1/auth/bootstrap" && r.Method == "POST" {
+			ip := requestIP(r)
+			if s.checkRateLimit(ip, "") {
+				w.Header().Set("Retry-After", "300")
+				jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// Rate limiting: check if IP is blocked before auth check.
 		ip := requestIP(r)
@@ -5034,6 +5044,68 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"role":       session.Role,
 		"domains":    session.Domains,
 		"expires_at": session.ExpiresAt,
+	})
+}
+
+func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
+	s.ensureAuthManagerFromConfig()
+	if s.authMgr == nil {
+		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
+		return
+	}
+
+	s.configMu.RLock()
+	apiKey := s.config.Global.Admin.APIKey
+	usersEnabled := s.config.Global.Users.Enabled
+	s.configMu.RUnlock()
+	if !usersEnabled || apiKey != "" {
+		jsonError(w, "bootstrap is not available", http.StatusForbidden)
+		return
+	}
+	if len(s.authMgr.ListUsers()) != 0 {
+		jsonError(w, "bootstrap is already complete", http.StatusConflict)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		jsonError(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := s.authMgr.CreateUser(req.Username, req.Email, req.Password, auth.RoleAdmin, nil)
+	if err != nil {
+		ip := requestIP(r)
+		s.recordAuthFailure(ip, req.Username)
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	session, err := s.authMgr.Authenticate(req.Username, req.Password)
+	if err != nil {
+		jsonError(w, "bootstrap login failed", http.StatusInternalServerError)
+		return
+	}
+
+	ip := requestIP(r)
+	s.RecordAuditUser("auth.bootstrap", req.Username, ip, req.Username, true)
+	jsonResponse(w, map[string]any{
+		"status":     "authenticated",
+		"token":      session.Token,
+		"user_id":    session.UserID,
+		"username":   session.Username,
+		"role":       session.Role,
+		"domains":    session.Domains,
+		"expires_at": session.ExpiresAt,
+		"api_key":    user.FullAPIKey,
 	})
 }
 
