@@ -6,20 +6,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/smtp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 )
 
 var (
-	telegramAPIBase      = "https://api.telegram.org"
-	smtpSendMailFn       = smtp.SendMail
-	notifyURLSafetyCheck = config.IsWebhookURLSafe
-	notifyHTTPClient     = &http.Client{
+	telegramAPIBase       = "https://api.telegram.org"
+	smtpSendMailFn        = smtp.SendMail
+	notifyURLSafetyCheck  = config.IsWebhookURLSafe
+	notifyHostSafetyCheck = config.IsHostSafe
+	// notifyDialControl validates the IP at dial time (DNS-rebinding protection).
+	// Tests that target loopback servers set this to nil.
+	notifyDialControl = config.SafeDialControl
+	notifyHTTPClient  = &http.Client{
 		Timeout: 10 * time.Second,
+		// Re-validate every redirect hop against the SSRF policy so a
+		// 302 Location: http://169.254.169.254/ can't smuggle the request to an
+		// internal target after the initial URL passed the check.
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return notifyURLSafetyCheck(req.URL.String())
+		},
+		// Validate the IP at dial time too — closes the DNS-rebinding window
+		// where the hostname re-resolves to an internal address between the
+		// pre-flight check and the actual connection. The indirection is
+		// evaluated per-dial so notifyDialControl can be overridden in tests.
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: 10 * time.Second,
+				Control: func(network, address string, c syscall.RawConn) error {
+					if notifyDialControl == nil {
+						return nil
+					}
+					return notifyDialControl(network, address, c)
+				},
+			}).DialContext,
+		},
 	}
 )
 
@@ -170,6 +197,9 @@ func sendEmail(cfg map[string]string, msg Message) error {
 
 	if host == "" || to == "" {
 		return fmt.Errorf("email: smtp_host and to are required")
+	}
+	if err := notifyHostSafetyCheck(host); err != nil {
+		return fmt.Errorf("email: %w", err)
 	}
 	if port == "" {
 		port = "587"
