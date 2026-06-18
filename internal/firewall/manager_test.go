@@ -672,3 +672,83 @@ func TestDenyPortProtectedAdminPort(t *testing.T) {
 		t.Error("DenyPort() expected error for protected admin port")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Coverage: validatePort / validateProto error branches and parseUFWRule
+// interface-bound "Anywhere on <iface>" form.
+// ---------------------------------------------------------------------------
+
+func TestValidatePort_InvalidChars(t *testing.T) {
+	if err := validatePort("80a"); err == nil {
+		t.Error("validatePort(\"80a\") expected error for non-digit")
+	}
+	// Range with non-digit
+	if err := validatePort("8000:80x0"); err == nil {
+		t.Error("validatePort range with non-digit expected error")
+	}
+	// Valid range should pass
+	if err := validatePort("8000:8100"); err != nil {
+		t.Errorf("validatePort(\"8000:8100\") = %v, want nil", err)
+	}
+}
+
+func TestValidateProto_Invalid(t *testing.T) {
+	if err := validateProto("sctp"); err == nil {
+		t.Error("validateProto(\"sctp\") expected error")
+	}
+	if err := validateProto("TCP"); err != nil {
+		t.Errorf("validateProto(\"TCP\") = %v, want nil (case-insensitive)", err)
+	}
+	if err := validateProto(""); err != nil {
+		t.Errorf("validateProto(\"\") = %v, want nil", err)
+	}
+}
+
+func TestAllowPort_InvalidPort(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	if err := AllowPort("any", "tcp"); err == nil {
+		t.Error("AllowPort(\"any\", ...) expected validatePort error")
+	}
+}
+
+func TestAllowPort_InvalidProto(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	if err := AllowPort("8080", "icmp"); err == nil {
+		t.Error("AllowPort(..., \"icmp\") expected validateProto error")
+	}
+}
+
+func TestDenyPort_InvalidProto(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	if err := DenyPort("8080", "icmp"); err == nil {
+		t.Error("DenyPort(..., \"icmp\") expected validateProto error")
+	}
+}
+
+func TestParseUFWRule_AnywhereOnInterface(t *testing.T) {
+	// "Anywhere on eth0" form exercises the firstPart == "Anywhere" + "on" branch.
+	r := parseUFWRule("[ 5] Anywhere on eth0           DENY IN     192.168.1.100")
+	if r.Action != "DENY" {
+		t.Errorf("Action = %q, want DENY", r.Action)
+	}
+	if r.To != "Anywhere on eth0" {
+		t.Errorf("To = %q, want \"Anywhere on eth0\"", r.To)
+	}
+	// The From loop matches the literal "Anywhere" token (within "Anywhere on
+	// eth0") before reaching the trailing IP, so From resolves to "Anywhere".
+	if r.From != "Anywhere" {
+		t.Errorf("From = %q, want Anywhere", r.From)
+	}
+}

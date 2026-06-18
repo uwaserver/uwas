@@ -517,3 +517,57 @@ func TestWebhookErrorStatus(t *testing.T) {
 		t.Fatalf("expected 1 alert, got %d", len(alerts))
 	}
 }
+
+// TestRecordRequestWindowCap exercises the maxWindowSize (100000) cap branch in
+// RecordRequest. All entries are recorded within the 5-minute window so pruning
+// does not remove them; only the size cap should trim the oldest.
+func TestRecordRequestWindowCap(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	const maxWindowSize = 100000
+	// Record one more than the cap. Use non-error requests so no spike fires.
+	for i := 0; i < maxWindowSize+5; i++ {
+		a.RecordRequest(false)
+	}
+
+	a.errorWindowMu.Lock()
+	got := len(a.errorWindow)
+	a.errorWindowMu.Unlock()
+
+	if got > maxWindowSize {
+		t.Errorf("errorWindow length = %d, want <= %d (cap not applied)", got, maxWindowSize)
+	}
+	if got != maxWindowSize {
+		t.Errorf("errorWindow length = %d, want exactly %d after cap", got, maxWindowSize)
+	}
+}
+
+// TestRecordRequestWindowCapDecrementsErrCount verifies the running error count
+// is decremented when error entries are dropped by the size cap.
+func TestRecordRequestWindowCapDecrementsErrCount(t *testing.T) {
+	a := New(true, "", testLogger())
+
+	const maxWindowSize = 100000
+	// First entries are errors so the cap will drop some error entries; keep the
+	// overall ratio low enough not to fire a spike alert via dedup noise.
+	for i := 0; i < 50; i++ {
+		a.RecordRequest(true)
+	}
+	for i := 0; i < maxWindowSize+50; i++ {
+		a.RecordRequest(false)
+	}
+
+	a.errorWindowMu.Lock()
+	total := len(a.errorWindow)
+	errs := a.errorWindowErr
+	a.errorWindowMu.Unlock()
+
+	if total != maxWindowSize {
+		t.Errorf("window size = %d, want %d", total, maxWindowSize)
+	}
+	// The leading 50 error entries should have been dropped by the cap, so the
+	// running error count must be 0 and never negative.
+	if errs != 0 {
+		t.Errorf("errorWindowErr = %d, want 0 after old error entries dropped", errs)
+	}
+}
