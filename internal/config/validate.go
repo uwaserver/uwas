@@ -9,7 +9,30 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
+
+// SafeDialControl is a net.Dialer.Control hook that rejects connections to
+// SSRF-blocked addresses at the moment of dial. Because it inspects the IP the
+// OS is actually about to connect to, it closes the DNS-rebinding TOCTOU window
+// that a pre-flight URL check (which resolves the name separately) cannot. Wire
+// it into the Transport of any client that dials user-supplied external URLs
+// (webhooks, notifications); do NOT use it for clients that legitimately reach
+// loopback/private upstreams (reverse proxy, uptime monitor).
+func SafeDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+	if reason := ipBlockedReason(ip, urlSafetyPolicy{}); reason != "" {
+		return fmt.Errorf("blocked %s %q (SSRF)", reason, host)
+	}
+	return nil
+}
 
 // Validate performs structural and semantic validation on a Config.
 func Validate(cfg *Config) error {
@@ -521,7 +544,15 @@ var privateIPBlocks = []*net.IPNet{
 	mustParseCIDR("10.0.0.0/8"),
 	mustParseCIDR("172.16.0.0/12"),
 	mustParseCIDR("192.168.0.0/16"),
+	mustParseCIDR("100.64.0.0/10"), // CGNAT shared address space (RFC 6598)
 	mustParseCIDR("fc00::/7"),
+}
+
+// unspecifiedIPBlocks covers "this host"/unspecified ranges that must never be
+// a valid egress target regardless of policy.
+var unspecifiedIPBlocks = []*net.IPNet{
+	mustParseCIDR("0.0.0.0/8"),
+	mustParseCIDR("::/128"),
 }
 
 var cloudMetadataIPBlocks = []*net.IPNet{
@@ -537,7 +568,7 @@ var linkLocalIPBlocks = []*net.IPNet{
 var documentationIPBlocks = []*net.IPNet{
 	mustParseCIDR("192.0.2.0/24"),
 	mustParseCIDR("198.51.100.0/24"),
-	mustParseCIDR("203.0.2.0/24"),
+	mustParseCIDR("203.0.113.0/24"),
 }
 
 func mustParseCIDR(s string) *net.IPNet {
@@ -554,6 +585,14 @@ type urlSafetyPolicy struct {
 }
 
 func ipBlockedReason(ip net.IP, policy urlSafetyPolicy) string {
+	// Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) to its 4-byte form so
+	// it can't slip past the IPv4 range checks below.
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if inAnyIPBlock(ip, unspecifiedIPBlocks) {
+		return "unspecified address"
+	}
 	if inAnyIPBlock(ip, cloudMetadataIPBlocks) {
 		return "cloud metadata endpoint"
 	}
@@ -694,6 +733,35 @@ func IsProxyUpstreamSafe(rawURL string) error {
 // documentation ranges.
 func IsPrivateProxyUpstreamSafe(rawURL string) error {
 	return isURLSafe(rawURL, urlSafetyPolicy{allowLoopback: true, allowPrivate: true})
+}
+
+// IsHostSafe checks whether a bare hostname or IP (no scheme/port) is safe to
+// dial for non-HTTP egress such as SMTP. Loopback and private addresses are
+// permitted because internal SMTP relays (localhost:25, a mail server on a
+// private LAN) are a legitimate and common configuration; only the cloud
+// metadata endpoint, link-local, documentation and unspecified ranges are
+// rejected. The notify-test endpoint that reaches this is itself admin-gated.
+func IsHostSafe(host string) error {
+	if host == "" {
+		return nil
+	}
+	policy := urlSafetyPolicy{allowLoopback: true, allowPrivate: true}
+	if ip := net.ParseIP(host); ip != nil {
+		if reason := ipBlockedReason(ip, policy); reason != "" {
+			return fmt.Errorf("host %q is a blocked %s (SSRF)", host, reason)
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil
+	}
+	for _, ip := range ips {
+		if reason := ipBlockedReason(ip, policy); reason != "" {
+			return fmt.Errorf("host %q resolves to blocked %s %q (SSRF)", host, reason, ip.String())
+		}
+	}
+	return nil
 }
 
 func isURLSafe(rawURL string, policy urlSafetyPolicy) error {

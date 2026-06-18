@@ -360,6 +360,9 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 // ── Bulk Domain Import ─────────────────────────────────────────────
 
 func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Domains []struct {

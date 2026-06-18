@@ -270,6 +270,14 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 	if user == "" {
 		user = dbName
 	}
+	// Validate identifiers (defense-in-depth, mirroring the native path) before
+	// interpolating into SQL — backticking alone is not a substitute.
+	if !ValidDBIdentifier(dbName) {
+		return nil, fmt.Errorf("invalid database name %q", dbName)
+	}
+	if !ValidDBIdentifier(user) {
+		return nil, fmt.Errorf("invalid database user %q", user)
+	}
 	sql := fmt.Sprintf(
 		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "+
 			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
@@ -285,6 +293,9 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 
 // DockerDBDropDatabase drops a database from a Docker container.
 func DockerDBDropDatabase(containerName, dbName string) error {
+	if !ValidDBIdentifier(dbName) {
+		return fmt.Errorf("invalid database name %q", dbName)
+	}
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s;", backtick(dbName))
 	if _, err := DockerDBExecSQL(containerName, sql); err != nil {
 		return fmt.Errorf("drop database %q in container %q: %w", dbName, containerName, err)

@@ -59,7 +59,9 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 	if err := unmarshal(&s); err != nil {
 		var secs int
 		if err2 := unmarshal(&secs); err2 != nil {
-			return err
+			// Neither a duration string nor an integer; report the int-path
+			// error since that was the last (and most specific) attempt.
+			return err2
 		}
 		d.Duration = time.Duration(secs) * time.Second
 		return nil

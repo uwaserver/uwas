@@ -25,6 +25,22 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// TestMain isolates SSH host-key verification to a temp known_hosts file so the
+// SFTP tests neither read from nor pollute the developer's real
+// ~/.ssh/known_hosts. Without this, a reused dynamic test port with a freshly
+// generated host key triggers a spurious "key mismatch" failure on later runs.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "uwas-backup-knownhosts-*")
+	if err == nil {
+		knownHostsPathOverride = filepath.Join(dir, "known_hosts")
+	}
+	code := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(code)
+}
+
 // memoryProvider is an in-memory StorageProvider for tests.
 type memoryProvider struct {
 	mu    sync.Mutex

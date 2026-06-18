@@ -621,8 +621,9 @@ func TestImportDatabaseDumpMocked(t *testing.T) {
 	defer func() { importDatabaseDumpFunc = old }()
 
 	var importedData []byte
-	importDatabaseDumpFunc = func(data []byte, l *logger.Logger) {
+	importDatabaseDumpFunc = func(data []byte, l *logger.Logger) error {
 		importedData = data
+		return nil
 	}
 
 	importDatabaseDump([]byte("SELECT 1;"), log)
@@ -873,8 +874,9 @@ func TestRestoreBackupWithDBImport(t *testing.T) {
 	defer func() { importDatabaseDumpFunc = oldImport }()
 
 	var importedData []byte
-	importDatabaseDumpFunc = func(data []byte, l *logger.Logger) {
+	importDatabaseDumpFunc = func(data []byte, l *logger.Logger) error {
 		importedData = data
+		return nil
 	}
 
 	m, _ := testManager(t)

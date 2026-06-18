@@ -31,9 +31,16 @@ func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reade
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, data)
-	return err
+	if _, err := io.Copy(f, data); err != nil {
+		f.Close()
+		return err
+	}
+	// Surface a flush/close failure (e.g. full disk) instead of reporting a
+	// truncated backup as success.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close backup file: %w", err)
+	}
+	return nil
 }
 
 func (p *LocalProvider) Download(_ context.Context, filename string) (io.ReadCloser, error) {

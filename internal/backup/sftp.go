@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -25,13 +24,13 @@ import (
 // dependencies. File operations are performed through the SSH subsystem
 // "sftp" protocol, which is supported by all standard OpenSSH servers.
 type SFTPProvider struct {
-	host                 string
-	port                 int
-	user                 string
-	keyFile              string
-	password             string
-	remotePath           string
-	insecureKnownHosts   bool // Allow unknown hosts (auto-accept TOFU — not recommended)
+	host               string
+	port               int
+	user               string
+	keyFile            string
+	password           string
+	remotePath         string
+	insecureKnownHosts bool // Allow unknown hosts (auto-accept TOFU — not recommended)
 }
 
 // NewSFTPProvider creates an SFTPProvider.
@@ -57,6 +56,13 @@ func NewSFTPProvider(host string, port int, user, keyFile, password, remotePath 
 	}
 }
 
+// knownHostsPathOverride, when non-empty, replaces the default
+// ~/.ssh/known_hosts path used for SSH host-key verification. Tests set it to an
+// isolated temp file so they neither read from nor pollute the real user
+// known_hosts (which previously caused intermittent "key mismatch" failures
+// when a dynamic test port was reused across runs with a fresh host key).
+var knownHostsPathOverride string
+
 func (p *SFTPProvider) Name() string { return "sftp" }
 
 func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Reader) error {
@@ -71,8 +77,11 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	if err != nil {
 		return err
 	}
-	_ = session.Run("mkdir -p -- " + shellQuote(p.remotePath))
+	mkdirErr := session.Run("mkdir -p -- " + shellQuote(p.remotePath))
 	session.Close()
+	if mkdirErr != nil {
+		return fmt.Errorf("sftp mkdir %q: %w", p.remotePath, mkdirErr)
+	}
 
 	if err := safeBackupFilename(filename); err != nil {
 		return err
@@ -106,13 +115,24 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 		errCh <- session.Run("cat > " + shellQuote(remoteDest))
 	}()
 
-	if _, err := stdin.Write(content); err != nil {
-		stdin.Close()
-		return fmt.Errorf("write data: %w", err)
-	}
+	// io.Writer semantics guarantee a short write is reported as an error here.
+	writeErr := func() error {
+		_, err := stdin.Write(content)
+		return err
+	}()
 	stdin.Close()
 
-	return <-errCh
+	// Always wait for the remote `cat` to finish. On a write failure the remote
+	// error (e.g. disk full / permission denied) is usually the real cause, so
+	// prefer it over the local pipe error.
+	runErr := <-errCh
+	if runErr != nil {
+		return fmt.Errorf("sftp upload %q: %w", remoteDest, runErr)
+	}
+	if writeErr != nil {
+		return fmt.Errorf("write data: %w", writeErr)
+	}
+	return nil
 }
 
 func (p *SFTPProvider) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
@@ -252,63 +272,64 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 		return nil, fmt.Errorf("no SSH auth method configured (set key_file or password)")
 	}
 
-	// Use known_hosts for TOFU (Trust On First Use) — validates against ~/.ssh/known_hosts
-	// and auto-accepts new hosts on first connection.
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.Getenv("HOME")
-	}
-	if home == "" {
-		return nil, fmt.Errorf("home directory not found for known_hosts")
-	}
-	knownHostsFile := filepath.Join(home, ".ssh", "known_hosts")
-	if err := os.MkdirAll(filepath.Dir(knownHostsFile), 0700); err != nil {
-		return nil, fmt.Errorf("create known_hosts dir: %w", err)
-	}
-	hostKeyCallback, err := knownhosts.New(knownHostsFile)
-	if err != nil {
-		// File doesn't exist — create it empty so we can write new hosts
-		f, err := os.OpenFile(knownHostsFile, os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			return nil, fmt.Errorf("create known_hosts: %w", err)
-		}
-		f.Close()
-		hostKeyCallback, err = knownhosts.New(knownHostsFile)
-		if err != nil {
-			return nil, fmt.Errorf("init knownhosts: %w", err)
-		}
-	}
-	// Wrap knownhosts.New to validate hosts — reject unknown hosts (secure default)
-	// Known hosts with changed keys are rejected (MITM protection).
-	trustedHostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		err := hostKeyCallback(hostname, remote, key)
-		if err != nil {
-			// Check if it's a known host with key changed (MITM) — reject for security
-			if keyErr, ok := err.(*knownhosts.KeyError); ok && len(keyErr.Want) > 0 {
-				return err // Reject MITM attempts
+	// Determine the host-key verification policy.
+	var hostKeyCallback ssh.HostKeyCallback
+	if p.insecureKnownHosts {
+		// Explicit dev/test opt-out: accept any host key without consulting or
+		// writing known_hosts. (Persisting + re-validating would otherwise
+		// reject a host whose key changed — e.g. a reused dynamic test port —
+		// which contradicts the documented "auto-accept" intent.)
+		hostKeyCallback = ssh.InsecureIgnoreHostKey() //nolint:gosec // gated behind explicit opt-in
+	} else {
+		// Use known_hosts for TOFU (Trust On First Use) — validates against
+		// ~/.ssh/known_hosts and rejects unknown hosts and changed keys.
+		knownHostsFile := knownHostsPathOverride
+		if knownHostsFile == "" {
+			home, err := os.UserHomeDir()
+			if err != nil || home == "" {
+				home = os.Getenv("HOME")
 			}
-			// Unknown host — REJECT by default (security). To allow:
-			// Pre-populate ~/.ssh/known_hosts with the server's host key, or
-			// set InsecureKnownHosts=true in provider config (not recommended for production).
-			if p.insecureKnownHosts {
-				// Only for dev/test — log warning and auto-accept
-				hostEntry := fmt.Sprintf("%s %s %s", hostname, key.Type(), base64.StdEncoding.EncodeToString(key.Marshal()))
-				f, fErr := os.OpenFile(knownHostsFile, os.O_APPEND|os.O_WRONLY, 0600)
-				if fErr == nil {
-					f.WriteString(hostEntry + "\n")
-					f.Close()
+			if home == "" {
+				return nil, fmt.Errorf("home directory not found for known_hosts")
+			}
+			knownHostsFile = filepath.Join(home, ".ssh", "known_hosts")
+		}
+		if err := os.MkdirAll(filepath.Dir(knownHostsFile), 0700); err != nil {
+			return nil, fmt.Errorf("create known_hosts dir: %w", err)
+		}
+		knownCb, err := knownhosts.New(knownHostsFile)
+		if err != nil {
+			// File doesn't exist — create it empty so we can write new hosts
+			f, err := os.OpenFile(knownHostsFile, os.O_CREATE|os.O_WRONLY, 0600)
+			if err != nil {
+				return nil, fmt.Errorf("create known_hosts: %w", err)
+			}
+			f.Close()
+			knownCb, err = knownhosts.New(knownHostsFile)
+			if err != nil {
+				return nil, fmt.Errorf("init knownhosts: %w", err)
+			}
+		}
+		hostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			err := knownCb(hostname, remote, key)
+			if err != nil {
+				// Known host with a changed key (MITM) — reject.
+				if keyErr, ok := err.(*knownhosts.KeyError); ok && len(keyErr.Want) > 0 {
+					return err
 				}
-				return nil
+				// Unknown host — REJECT by default (security). Pre-populate
+				// ~/.ssh/known_hosts with the server's host key, or set
+				// InsecureKnownHosts=true for first-time connections.
+				return fmt.Errorf("unknown SFTP host %q: not in known_hosts. Pre-add the host key to ~/.ssh/known_hosts or set InsecureKnownHosts=true for first-time connections", hostname)
 			}
-			return fmt.Errorf("unknown SFTP host %q: not in known_hosts. Pre-add the host key to ~/.ssh/known_hosts or set InsecureKnownHosts=true for first-time connections", hostname)
+			return nil
 		}
-		return nil
 	}
 
 	config := &ssh.ClientConfig{
 		User:            p.user,
 		Auth:            authMethods,
-		HostKeyCallback: trustedHostKeyCallback,
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
 
