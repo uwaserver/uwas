@@ -147,12 +147,12 @@ type fakeFileInfo struct {
 	isDir bool
 }
 
-func (f fakeFileInfo) Name() string      { return f.name }
-func (f fakeFileInfo) Size() int64       { return 0 }
-func (f fakeFileInfo) Mode() fs.FileMode { return 0755 }
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() fs.FileMode  { return 0755 }
 func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
-func (f fakeFileInfo) IsDir() bool       { return f.isDir }
-func (f fakeFileInfo) Sys() interface{}  { return nil }
+func (f fakeFileInfo) IsDir() bool        { return f.isDir }
+func (f fakeFileInfo) Sys() interface{}   { return nil }
 
 // fakeListener implements net.Listener for testing.
 type fakeListener struct{}
@@ -187,7 +187,7 @@ type fakeDirEntry struct {
 func (f fakeDirEntry) Name() string               { return f.name }
 func (f fakeDirEntry) IsDir() bool                { return f.isDir }
 func (f fakeDirEntry) Type() fs.FileMode          { return 0 }
-func (f fakeDirEntry) Info() (fs.FileInfo, error)  { return fakeFileInfo{name: f.name}, nil }
+func (f fakeDirEntry) Info() (fs.FileInfo, error) { return fakeFileInfo{name: f.name}, nil }
 
 // ── Run() tests ──────────────────────────────────────────
 
@@ -1364,9 +1364,9 @@ func TestExtractPHPVersion(t *testing.T) {
 		{"/var/run/php8.2-fpm.sock", "8.2"},
 		{"/run/php/php8.1-fpm.sock", "8.1"},
 		{"php8.0-fpm.sock", "8.0"},
-		{"fpm.sock", ""},         // no php prefix
-		{"php-fpm.sock", ""},     // no version
-		{"php1-fpm.sock", ""},    // too short
+		{"fpm.sock", ""},      // no php prefix
+		{"php-fpm.sock", ""},  // no version
+		{"php1-fpm.sock", ""}, // too short
 	}
 	for _, tt := range tests {
 		got := extractPHPVersion(tt.input)
@@ -1552,6 +1552,107 @@ func TestCheckPHPFPM_FirstSocket84(t *testing.T) {
 	}
 	if !strings.Contains(c.Message, "8.4") {
 		t.Errorf("should pick 8.4 socket: %s", c.Message)
+	}
+}
+
+// ── checkConflictingServices tests ───────────────────────
+
+func TestCheckConflictingServices_Windows(t *testing.T) {
+	saveAndRestoreHooks(t)
+	runtimeGOOS = "windows"
+
+	c := checkConflictingServices(false)
+	if c.Status != StatusOK {
+		t.Errorf("expected StatusOK on Windows, got %s", c.Status)
+	}
+	if !strings.Contains(c.Message, "Skipped on Windows") {
+		t.Errorf("unexpected message: %s", c.Message)
+	}
+}
+
+func TestCheckConflictingServices_NoneRunning(t *testing.T) {
+	saveAndRestoreHooks(t)
+	runtimeGOOS = "linux"
+	// systemctl is-active returns empty (not "active") for every service.
+	execCommandFn = fakeCmd("")
+
+	c := checkConflictingServices(false)
+	if c.Status != StatusOK {
+		t.Errorf("expected StatusOK, got %s", c.Status)
+	}
+	if !strings.Contains(c.Message, "No Apache/Nginx detected") {
+		t.Errorf("unexpected message: %s", c.Message)
+	}
+}
+
+func TestCheckConflictingServices_IsActiveError(t *testing.T) {
+	saveAndRestoreHooks(t)
+	runtimeGOOS = "linux"
+	// systemctl exits non-zero (err != nil) -> service treated as not running.
+	execCommandFn = fakeCmdFail()
+
+	c := checkConflictingServices(false)
+	if c.Status != StatusOK {
+		t.Errorf("expected StatusOK when is-active errors, got %s", c.Status)
+	}
+	if !strings.Contains(c.Message, "No Apache/Nginx detected") {
+		t.Errorf("unexpected message: %s", c.Message)
+	}
+}
+
+func TestCheckConflictingServices_RunningNoAutoFix(t *testing.T) {
+	saveAndRestoreHooks(t)
+	runtimeGOOS = "linux"
+	// Every systemctl is-active returns "active" -> first conflict (apache2) matches.
+	execCommandFn = fakeCmd("active\n")
+
+	c := checkConflictingServices(false)
+	if c.Status != StatusFail {
+		t.Errorf("expected StatusFail, got %s", c.Status)
+	}
+	if !strings.Contains(c.Message, "Apache is running") {
+		t.Errorf("unexpected message: %s", c.Message)
+	}
+	if !strings.Contains(c.HowTo, "systemctl stop apache2") {
+		t.Errorf("unexpected how-to: %s", c.HowTo)
+	}
+}
+
+func TestCheckConflictingServices_RunningAutoFix(t *testing.T) {
+	saveAndRestoreHooks(t)
+	runtimeGOOS = "linux"
+	// is-active returns "active" for the conflict; stop/disable succeed (fakeCmd exits 0).
+	execCommandFn = fakeCmd("active\n")
+
+	c := checkConflictingServices(true)
+	if c.Status != StatusFixed {
+		t.Errorf("expected StatusFixed, got %s", c.Status)
+	}
+	if !strings.Contains(c.Fix, "Stopped and disabled apache2") {
+		t.Errorf("unexpected fix: %s", c.Fix)
+	}
+}
+
+func TestCheckConflictingServices_NginxRunning(t *testing.T) {
+	saveAndRestoreHooks(t)
+	runtimeGOOS = "linux"
+	// Only nginx is active; apache2 and httpd report inactive.
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		if len(args) >= 2 && args[0] == "is-active" {
+			if args[1] == "nginx" {
+				return fakeCmd("active\n")(name, args...)
+			}
+			return fakeCmd("inactive\n")(name, args...)
+		}
+		return fakeCmd("")(name, args...)
+	}
+
+	c := checkConflictingServices(false)
+	if c.Status != StatusFail {
+		t.Errorf("expected StatusFail, got %s", c.Status)
+	}
+	if !strings.Contains(c.Message, "Nginx is running") {
+		t.Errorf("unexpected message: %s", c.Message)
 	}
 }
 
