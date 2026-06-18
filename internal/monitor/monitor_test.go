@@ -731,6 +731,27 @@ func TestCheckDomainAccumulates(t *testing.T) {
 	}
 }
 
+// TestCheckDomainRequestBuildError covers the http.NewRequestWithContext
+// error branch (reqErr != nil). The suite stubs monitorURLSafetyCheck to
+// always pass, so a host containing a control character slips past the
+// safety gate and reaches NewRequestWithContext, which rejects the
+// malformed URL. The function must return early without recording a
+// result.
+func TestCheckDomainRequestBuildError(t *testing.T) {
+	// A NUL byte in the host produces an invalid-control-character URL,
+	// so http.NewRequestWithContext returns an error before any network I/O.
+	domains := []config.Domain{
+		{Host: "exa\x00mple.com", Type: "static", SSL: config.SSLConfig{Mode: "off"}},
+	}
+
+	m := New(domains, testLogger())
+	m.checkDomain(context.Background(), domains[0])
+
+	if results := m.Results(); len(results) != 0 {
+		t.Errorf("expected no result when request build fails, got %d", len(results))
+	}
+}
+
 // TestStartTickerFires waits for the 30-second ticker in Start to fire once,
 // covering the ticker.C case body. This test takes ~32 seconds to run.
 func TestStartTickerFires(t *testing.T) {
