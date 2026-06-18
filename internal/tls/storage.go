@@ -41,16 +41,18 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 
-	// Write cert
-	certPath := filepath.Join(dir, "cert.pem")
-	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
-		return fmt.Errorf("write cert: %w", err)
+	// Write the key first, then the cert, each atomically (temp + fsync +
+	// rename). Writing the key first guarantees the cert file never references a
+	// key that isn't on disk yet, and the atomic rename means a concurrent
+	// Load/renewal never observes a half-written cert/key pair.
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := atomicWriteCertFile(keyPath, keyPEM, 0600); err != nil {
+		return fmt.Errorf("write key: %w", err)
 	}
 
-	// Write key (restricted permissions)
-	keyPath := filepath.Join(dir, "key.pem")
-	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
-		return fmt.Errorf("write key: %w", err)
+	certPath := filepath.Join(dir, "cert.pem")
+	if err := atomicWriteCertFile(certPath, certPEM, 0644); err != nil {
+		return fmt.Errorf("write cert: %w", err)
 	}
 
 	// Write metadata
@@ -72,10 +74,48 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 
 	metaJSON, _ := json.MarshalIndent(meta, "", "  ")
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
+	if err := atomicWriteCertFile(metaPath, metaJSON, 0644); err != nil {
 		return fmt.Errorf("write meta: %w", err)
 	}
 
+	return nil
+}
+
+// atomicWriteCertFile writes data crash-safely: temp file in the same directory,
+// fsync, then atomic rename over the target. Prevents readers (SNI lookup,
+// renewal) from observing a partially-written cert/key file.
+func atomicWriteCertFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }
 

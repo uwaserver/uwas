@@ -114,6 +114,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	_ = cmd.Wait()
+	// Unblock both pumps before waiting: closing master makes the PTY→WS
+	// reader's Read return, and closing conn makes the WS→PTY reader's
+	// ReadMessage return. Without this, a shell that exits on its own (the user
+	// typing `exit`) leaves the WS→PTY goroutine blocked forever on
+	// ReadMessage, so wg.Wait() never returns and the deferred closes never run
+	// — leaking a goroutine, the PTY master fd and the connection per session.
+	master.Close()
+	conn.Close()
 	if h.Logger != nil {
 		h.Logger.Info("terminal session ended", "pid", cmd.Process.Pid)
 	}

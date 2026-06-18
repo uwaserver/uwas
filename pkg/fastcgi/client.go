@@ -68,11 +68,23 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 		return nil, fmt.Errorf("write begin: %w", err)
 	}
 
-	// 2. FCGI_PARAMS
+	// 2. FCGI_PARAMS — split across records of at most maxContentLength bytes.
+	// The encoded params are a continuous byte stream that the server
+	// reassembles before parsing, so splitting at any byte offset is safe and
+	// avoids the uint16 record-length overflow when headers/cookies are large.
 	params := EncodeParams(env)
-	if err := WriteRecord(bw, TypeParams, requestID, params); err != nil {
-		broken = true
-		return nil, fmt.Errorf("write params: %w", err)
+	for len(params) > maxContentLength {
+		if err := WriteRecord(bw, TypeParams, requestID, params[:maxContentLength]); err != nil {
+			broken = true
+			return nil, fmt.Errorf("write params: %w", err)
+		}
+		params = params[maxContentLength:]
+	}
+	if len(params) > 0 {
+		if err := WriteRecord(bw, TypeParams, requestID, params); err != nil {
+			broken = true
+			return nil, fmt.Errorf("write params: %w", err)
+		}
 	}
 	// Empty params record signals end of params
 	if err := WriteRecord(bw, TypeParams, requestID, nil); err != nil {

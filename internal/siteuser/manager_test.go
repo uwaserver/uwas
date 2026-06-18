@@ -719,6 +719,14 @@ func TestEnsureSFTPConfig_SshdReloadFallback(t *testing.T) {
 	}
 }
 
+// Valid (comment-less, so canonical == literal) ed25519 public keys for the
+// SSH-key tests. AddSSHKeyForWebDir now parses and canonicalizes keys, so the
+// placeholders previously used here are rejected as malformed.
+const (
+	testSSHKey1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIVRylrCxZGKcm7u81VTdpRmwyK0cEUYpH8kQCG9f5Vu"
+	testSSHKey2 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIjjUKUz+03oO5bD88JNkiTusiuX2nWpATEm21Pi5M2P"
+)
+
 // ---------------------------------------------------------------------------
 // Tests: sshkey.go — AddSSHKey
 // ---------------------------------------------------------------------------
@@ -749,7 +757,7 @@ func TestAddSSHKey_Success(t *testing.T) {
 	osOpenFileFn = os.OpenFile
 	execCommandFn = fakeExecCommand // chown no-ops
 
-	key := "ssh-rsa AAAAB3NzaC1yc2EAAA test@host"
+	key := testSSHKey1
 	err := AddSSHKeyForWebDir(filepath.Join(tmp, "example.com", "public_html"), "example.com", key)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -778,7 +786,7 @@ func TestAddSSHKeyForWebDir_AppWorkDir(t *testing.T) {
 	osReadFileFn = os.ReadFile
 	execCommandFn = fakeExecCommand
 
-	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemo app@example"
+	key := testSSHKey2
 	if err := AddSSHKeyForWebDir(appRoot, "app.example.com", key); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -803,7 +811,7 @@ func TestAddSSHKey_Duplicate(t *testing.T) {
 	osOpenFileFn = os.OpenFile
 	execCommandFn = fakeExecCommand
 
-	key := "ssh-rsa AAAAB3NzaC1yc2EAAA test@host"
+	key := testSSHKey1
 
 	// Add key first time
 	webDir := filepath.Join(tmp, "example.com", "public_html")
@@ -884,8 +892,8 @@ func TestAddSSHKey_MultipleKeys(t *testing.T) {
 	osOpenFileFn = os.OpenFile
 	execCommandFn = fakeExecCommand
 
-	key1 := "ssh-rsa AAAAB3NzaC1yc2EAAA user1@host"
-	key2 := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 user2@host"
+	key1 := testSSHKey1
+	key2 := testSSHKey2
 
 	webDir := filepath.Join(tmp, "example.com", "public_html")
 	AddSSHKeyForWebDir(webDir, "example.com", key1)
@@ -916,15 +924,16 @@ func TestRemoveSSHKey_Success(t *testing.T) {
 	os.MkdirAll(sshDir, 0700)
 	authKeys := filepath.Join(sshDir, "authorized_keys")
 
-	key1 := "ssh-rsa AAAAB3NzaC1yc2EAAA user1@host"
-	key2 := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 user2@host"
+	key1 := testSSHKey1
+	key2 := testSSHKey2
 	os.WriteFile(authKeys, []byte(key1+"\n"+key2+"\n"), 0600)
 
 	osReadFileFn = os.ReadFile
 	osWriteFileFn = os.WriteFile
 
-	// Remove key1 by matching a substring (fingerprint-like)
-	err := RemoveSSHKeyForWebDir(filepath.Join(tmp, domain, "public_html"), domain, "AAAAB3NzaC1yc2EAAA")
+	// Remove key1 by exact key match (substring matching is intentionally
+	// no longer supported, to avoid deleting unintended keys).
+	err := RemoveSSHKeyForWebDir(filepath.Join(tmp, domain, "public_html"), domain, key1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1186,7 +1195,7 @@ func TestAddSSHKey_OpenFileFail(t *testing.T) {
 		return nil, fmt.Errorf("open fail")
 	}
 
-	err := AddSSHKeyForWebDir(filepath.Join(tmp, "example.com", "public_html"), "example.com", "ssh-rsa AAAA test@host")
+	err := AddSSHKeyForWebDir(filepath.Join(tmp, "example.com", "public_html"), "example.com", testSSHKey1)
 	if err == nil {
 		t.Fatal("expected error when OpenFile fails")
 	}
