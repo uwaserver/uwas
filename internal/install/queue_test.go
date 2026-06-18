@@ -209,6 +209,140 @@ func TestIsRunning(t *testing.T) {
 	}
 }
 
+func TestLatestByType(t *testing.T) {
+	m := New()
+	defer m.Stop()
+
+	// No tasks of this type yet.
+	if l := m.LatestByType("php"); l != nil {
+		t.Errorf("expected nil for unknown type, got %+v", l)
+	}
+
+	first := m.Submit("php", "PHP 8.3", "install", func(append func(string)) error { return nil })
+	// Ensure a distinct, later CreatedAt for the second task.
+	time.Sleep(10 * time.Millisecond)
+	second := m.Submit("php", "PHP 8.4", "install", func(append func(string)) error { return nil })
+	// A different type should not affect the php result.
+	m.Submit("database", "MariaDB", "install", func(append func(string)) error { return nil })
+
+	// Wait for everything to settle so timestamps are stable.
+	time.Sleep(200 * time.Millisecond)
+
+	latest := m.LatestByType("php")
+	if latest == nil {
+		t.Fatal("expected a latest php task")
+	}
+	if latest.ID != second.ID {
+		t.Errorf("latest php = %s, want %s (first was %s)", latest.ID, second.ID, first.ID)
+	}
+	if latest.Name != "PHP 8.4" {
+		t.Errorf("latest name = %q, want PHP 8.4", latest.Name)
+	}
+
+	// A type with no tasks still returns nil even when other tasks exist.
+	if l := m.LatestByType("package"); l != nil {
+		t.Errorf("expected nil for type with no tasks, got %+v", l)
+	}
+}
+
+func TestSubmitOnStoppedQueue(t *testing.T) {
+	m := New()
+	// Stop the worker so it stops draining the queue and stopCh is closed.
+	m.Stop()
+	// Give the worker a moment to exit so it no longer consumes from q.queue.
+	time.Sleep(20 * time.Millisecond)
+
+	// Submit's select races between sending to the buffered queue channel and
+	// the closed stopCh. To deterministically exercise the stop branch we must
+	// fill the buffer so the send case is not ready, leaving only stopCh.
+	m.mu.Lock()
+	for i := 0; i < cap(m.queue); i++ {
+		m.queue <- &queueEntry{task: &Task{}, fn: func(func(string)) error { return nil }}
+	}
+	m.mu.Unlock()
+
+	task := m.Submit("package", "nginx", "install", func(append func(string)) error {
+		t.Error("task function should not run on a stopped queue")
+		return nil
+	})
+
+	if task.Status != StatusError {
+		t.Errorf("status = %s, want error", task.Status)
+	}
+	if task.Error != "manager stopped" {
+		t.Errorf("error = %q, want 'manager stopped'", task.Error)
+	}
+
+	// The stored task should reflect the error state too.
+	got := m.Get(task.ID)
+	if got == nil {
+		t.Fatal("task not retained")
+	}
+	if got.Status != StatusError {
+		t.Errorf("stored status = %s, want error", got.Status)
+	}
+}
+
+func TestListCleansUpExpiredTasks(t *testing.T) {
+	m := New()
+	defer m.Stop()
+	// Shrink the retention window so completed tasks expire immediately.
+	m.mu.Lock()
+	m.keepTime = 0
+	m.mu.Unlock()
+
+	m.Submit("php", "PHP 8.3", "install", func(append func(string)) error { return nil })
+
+	// Wait for the task to complete (EndedAt set).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !m.IsRunning() {
+			// Confirm it actually ran and has an EndedAt before checking cleanup.
+			done := false
+			m.mu.Lock()
+			for _, tk := range m.tasks {
+				if tk.EndedAt != nil {
+					done = true
+				}
+			}
+			m.mu.Unlock()
+			if done {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// keepTime is 0 so the cutoff is "now"; an already-ended task is before it
+	// and List() should drop it via cleanupLocked.
+	if list := m.List(); len(list) != 0 {
+		t.Errorf("list length = %d, want 0 after cleanup", len(list))
+	}
+}
+
+func TestListRetainsActiveTasks(t *testing.T) {
+	m := New()
+	defer m.Stop()
+	// Even with an aggressive cutoff, running/queued tasks must be kept.
+	m.mu.Lock()
+	m.keepTime = 0
+	m.mu.Unlock()
+
+	done := make(chan struct{})
+	m.Submit("php", "PHP 8.3", "install", func(append func(string)) error {
+		<-done
+		return nil
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	if list := m.List(); len(list) != 1 {
+		t.Errorf("list length = %d, want 1 (running task retained)", len(list))
+	}
+
+	close(done)
+}
+
 func TestTaskTimestamps(t *testing.T) {
 	m := New()
 	defer m.Stop()

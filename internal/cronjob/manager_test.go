@@ -1594,3 +1594,91 @@ func TestRemoveByDomainWindows(t *testing.T) {
 		t.Error("expected error on Windows")
 	}
 }
+
+// ─── Coverage: Add newline rejection ────────────────────────────────────────
+func TestAdd_RejectsNewlines(t *testing.T) {
+	origGOOS := runtimeGOOS
+	origCmd := execCommandFn
+	runtimeGOOS = "linux"
+	defer func() {
+		runtimeGOOS = origGOOS
+		execCommandFn = origCmd
+	}()
+	execCommandFn = fakeExecCommand("", 0)
+
+	cases := []Job{
+		{Schedule: "* * * * *\nrm -rf /", Command: "echo hi"},
+		{Schedule: "* * * * *", Command: "echo hi\nrm -rf /"},
+		{Schedule: "* * * * *", Command: "echo hi", Domain: "a\nb"},
+		{Schedule: "* * * * *", Command: "echo hi", Comment: "c\rd"},
+	}
+	for i, job := range cases {
+		if err := Add(job); err == nil {
+			t.Errorf("case %d: Add() expected newline rejection error", i)
+		}
+	}
+}
+
+// ─── Coverage: validateShellCommand branches ────────────────────────────────
+func TestValidateShellCommand(t *testing.T) {
+	if err := validateShellCommand("echo ok"); err != nil {
+		t.Errorf("valid command rejected: %v", err)
+	}
+	// Control characters
+	for _, c := range []string{"echo\x00x", "echo\nx", "echo\rx"} {
+		if err := validateShellCommand(c); err == nil {
+			t.Errorf("expected control-char rejection for %q", c)
+		}
+	}
+	// Forbidden metacharacters
+	for _, c := range []string{"echo $(whoami)", "echo `id`", "a | b", "a > b", "a < b", "a; b", "a && b", "a || b"} {
+		if err := validateShellCommand(c); err == nil {
+			t.Errorf("expected metachar rejection for %q", c)
+		}
+	}
+}
+
+// ─── Coverage: Execute invalid-command path ─────────────────────────────────
+func TestMonitor_Execute_InvalidCommand(t *testing.T) {
+	m := NewMonitor(t.TempDir())
+	rec := m.Execute("example.com", "* * * * *", "echo a; rm -rf /")
+	if rec.Success {
+		t.Error("expected Execute to fail for command with forbidden metachar")
+	}
+	if !strings.Contains(rec.Error, "invalid command") {
+		t.Errorf("Error = %q, want 'invalid command' prefix", rec.Error)
+	}
+	// Must have been recorded in history.
+	st := m.GetStatus("example.com", "echo a; rm -rf /")
+	if st == nil || st.FailureCount != 1 {
+		t.Errorf("expected 1 recorded failure, got %+v", st)
+	}
+}
+
+// ─── Coverage: Execute overlap guard ────────────────────────────────────────
+func TestMonitor_Execute_OverlapGuard(t *testing.T) {
+	m := NewMonitor(t.TempDir())
+	domain, schedule, command := "ex.com", "* * * * *", "sleep-job"
+	key := m.jobKey(domain, command)
+
+	// Simulate the job already running.
+	m.mu.Lock()
+	m.running[key] = true
+	m.mu.Unlock()
+
+	rec := m.Execute(domain, schedule, command)
+	if rec.Success {
+		t.Error("expected overlap-guarded Execute to report failure")
+	}
+	if rec.Error != "skipped: job already running" {
+		t.Errorf("Error = %q, want 'skipped: job already running'", rec.Error)
+	}
+	if rec.Domain != domain || rec.Command != command || rec.Schedule != schedule {
+		t.Errorf("record fields not propagated: %+v", rec)
+	}
+
+	// Clean up and confirm the job can run afterward (guard released).
+	m.mu.Lock()
+	delete(m.running, key)
+	m.mu.Unlock()
+}

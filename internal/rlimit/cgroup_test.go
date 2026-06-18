@@ -3,6 +3,7 @@ package rlimit
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -111,6 +112,188 @@ func TestAssignPIDAndRemoveLinux(t *testing.T) {
 	}
 	if !strings.Contains(removed, "test.com") {
 		t.Errorf("removed = %q, want test.com path", removed)
+	}
+}
+
+func TestApplyNonLinux(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "darwin" }
+
+	path, err := Apply("test.com", Limits{CPUPercent: 50, MemoryMB: 256, PIDMax: 100})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if path != "" {
+		t.Errorf("expected empty path on non-linux, got %q", path)
+	}
+}
+
+func TestApplyLinuxCPUWriteError(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+	osMkdirAllFn = func(string, os.FileMode) error { return nil }
+	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
+		if strings.HasSuffix(name, "cpu.max") {
+			return fmt.Errorf("write failed")
+		}
+		return nil
+	}
+
+	path, err := Apply("test.com", Limits{CPUPercent: 50})
+	if err == nil {
+		t.Fatal("expected error for cpu.max write failure")
+	}
+	if !strings.Contains(err.Error(), "set cpu.max") {
+		t.Errorf("err = %v, want cpu.max error", err)
+	}
+	if !strings.Contains(path, "test.com") {
+		t.Errorf("expected non-empty path on write error, got %q", path)
+	}
+}
+
+func TestApplyLinuxMemoryWriteError(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+	osMkdirAllFn = func(string, os.FileMode) error { return nil }
+	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
+		if strings.HasSuffix(name, "memory.max") {
+			return fmt.Errorf("write failed")
+		}
+		return nil
+	}
+
+	_, err := Apply("test.com", Limits{MemoryMB: 256})
+	if err == nil {
+		t.Fatal("expected error for memory.max write failure")
+	}
+	if !strings.Contains(err.Error(), "set memory.max") {
+		t.Errorf("err = %v, want memory.max error", err)
+	}
+}
+
+func TestApplyLinuxPIDWriteError(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+	osMkdirAllFn = func(string, os.FileMode) error { return nil }
+	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
+		if strings.HasSuffix(name, "pids.max") {
+			return fmt.Errorf("write failed")
+		}
+		return nil
+	}
+
+	_, err := Apply("test.com", Limits{PIDMax: 100})
+	if err == nil {
+		t.Fatal("expected error for pids.max write failure")
+	}
+	if !strings.Contains(err.Error(), "set pids.max") {
+		t.Errorf("err = %v, want pids.max error", err)
+	}
+}
+
+// TestApplyLinuxRealTempDir exercises the real os.MkdirAll/os.WriteFile code
+// paths (not the injected hooks) by pointing them at a temp directory, so the
+// actual file-writing logic and content formatting is verified end-to-end.
+func TestApplyLinuxRealTempDir(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+
+	base := t.TempDir()
+	// Redirect the real os functions to write under the temp base by
+	// rewriting the absolute cgroup path into the temp dir.
+	rebase := func(name string) string {
+		return filepath.Join(base, strings.TrimPrefix(name, "/"))
+	}
+	osMkdirAllFn = func(path string, perm os.FileMode) error {
+		return os.MkdirAll(rebase(path), perm)
+	}
+	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
+		return os.WriteFile(rebase(name), data, perm)
+	}
+
+	path, err := Apply("Example.COM", Limits{CPUPercent: 25, MemoryMB: 128, PIDMax: 64})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	cpu, err := os.ReadFile(rebase(filepath.Join(path, "cpu.max")))
+	if err != nil {
+		t.Fatalf("read cpu.max: %v", err)
+	}
+	if string(cpu) != "25000 100000" {
+		t.Errorf("cpu.max = %q, want %q", cpu, "25000 100000")
+	}
+	mem, err := os.ReadFile(rebase(filepath.Join(path, "memory.max")))
+	if err != nil {
+		t.Fatalf("read memory.max: %v", err)
+	}
+	if string(mem) != "134217728" {
+		t.Errorf("memory.max = %q, want %q", mem, "134217728")
+	}
+	pids, err := os.ReadFile(rebase(filepath.Join(path, "pids.max")))
+	if err != nil {
+		t.Fatalf("read pids.max: %v", err)
+	}
+	if string(pids) != "64" {
+		t.Errorf("pids.max = %q, want %q", pids, "64")
+	}
+}
+
+func TestAssignPIDNonLinux(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "windows" }
+	osWriteFileFn = func(string, []byte, os.FileMode) error {
+		t.Fatal("write should not be called on non-linux")
+		return nil
+	}
+	if err := AssignPID("/some/path", 123); err != nil {
+		t.Fatalf("AssignPID: %v", err)
+	}
+}
+
+func TestAssignPIDEmptyPath(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+	osWriteFileFn = func(string, []byte, os.FileMode) error {
+		t.Fatal("write should not be called with empty path")
+		return nil
+	}
+	if err := AssignPID("", 123); err != nil {
+		t.Fatalf("AssignPID: %v", err)
+	}
+}
+
+func TestAssignPIDWriteError(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+	osWriteFileFn = func(string, []byte, os.FileMode) error {
+		return fmt.Errorf("write failed")
+	}
+	if err := AssignPID("/sys/fs/cgroup/uwas/test.com", 123); err == nil {
+		t.Fatal("expected error from AssignPID write failure")
+	}
+}
+
+func TestRemoveNonLinux(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "darwin" }
+	osRemoveFn = func(string) error {
+		t.Fatal("remove should not be called on non-linux")
+		return nil
+	}
+	if err := Remove("test.com"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+}
+
+func TestRemoveError(t *testing.T) {
+	defer saveAndRestoreHooks()()
+	runtimeGOOS = func() string { return "linux" }
+	osRemoveFn = func(string) error {
+		return fmt.Errorf("remove failed")
+	}
+	if err := Remove("test.com"); err == nil {
+		t.Fatal("expected error from Remove failure")
 	}
 }
 

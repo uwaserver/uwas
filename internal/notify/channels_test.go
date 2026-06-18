@@ -653,3 +653,154 @@ func TestSendSlackEmptyURL(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// --- SSRF-blocked paths (notifyURLSafetyCheck rejects) ---
+
+func TestSendWebhookSSRFBlocked(t *testing.T) {
+	orig := notifyURLSafetyCheck
+	notifyURLSafetyCheck = func(string) error { return fmt.Errorf("blocked target") }
+	t.Cleanup(func() { notifyURLSafetyCheck = orig })
+
+	err := sendWebhook("http://internal.local/hook", testMsg())
+	if err == nil {
+		t.Fatal("expected SSRF rejection")
+	}
+	if !strings.Contains(err.Error(), "webhook URL not allowed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSendSlackSSRFBlocked(t *testing.T) {
+	orig := notifyURLSafetyCheck
+	notifyURLSafetyCheck = func(string) error { return fmt.Errorf("blocked target") }
+	t.Cleanup(func() { notifyURLSafetyCheck = orig })
+
+	err := sendSlack("http://internal.local/hook", testMsg())
+	if err == nil {
+		t.Fatal("expected SSRF rejection")
+	}
+	if !strings.Contains(err.Error(), "slack webhook URL not allowed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- http.NewRequest construction errors ---
+// A URL containing a control character passes the (test-overridden) SSRF
+// check but fails http.NewRequest's URL parsing, exercising the error branch.
+
+func TestSendWebhookNewRequestError(t *testing.T) {
+	err := sendWebhook("http://example.com/\x7f", testMsg())
+	if err == nil {
+		t.Fatal("expected error from request construction")
+	}
+}
+
+func TestSendSlackNewRequestError(t *testing.T) {
+	err := sendSlack("http://example.com/\x7f", testMsg())
+	if err == nil {
+		t.Fatal("expected error from request construction")
+	}
+}
+
+// --- Telegram non-2xx status ---
+
+func TestSendTelegramHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	origBase := telegramAPIBase
+	telegramAPIBase = srv.URL
+	t.Cleanup(func() { telegramAPIBase = origBase })
+
+	err := sendTelegram("token", "chat", testMsg())
+	if err == nil {
+		t.Fatal("expected error for non-2xx telegram response")
+	}
+	if !strings.Contains(err.Error(), "telegram API returned 400") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- Email host safety check failure ---
+
+func TestSendEmailHostUnsafe(t *testing.T) {
+	orig := notifyHostSafetyCheck
+	notifyHostSafetyCheck = func(string) error { return fmt.Errorf("host not allowed") }
+	t.Cleanup(func() { notifyHostSafetyCheck = orig })
+
+	cfg := map[string]string{
+		"smtp_host": "internal.local",
+		"to":        "admin@example.com",
+	}
+	err := sendEmail(cfg, testMsg())
+	if err == nil {
+		t.Fatal("expected host safety rejection")
+	}
+	if !strings.Contains(err.Error(), "host not allowed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- Redirect re-validation (CheckRedirect closure) ---
+// The HTTP client re-runs the SSRF policy on every redirect hop. We point a
+// webhook at a server that 302-redirects to a "blocked" target; the redirect
+// hook must reject it before the request reaches the final destination.
+
+func TestSendWebhookRedirectRevalidated(t *testing.T) {
+	var redirectURL string
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer final.Close()
+	redirectURL = final.URL
+
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+	}))
+	defer src.Close()
+
+	orig := notifyURLSafetyCheck
+	// Allow the initial URL but reject the redirect target.
+	notifyURLSafetyCheck = func(u string) error {
+		if u == src.URL || strings.HasPrefix(u, src.URL+"/") {
+			return nil
+		}
+		return fmt.Errorf("redirect target blocked")
+	}
+	t.Cleanup(func() { notifyURLSafetyCheck = orig })
+
+	err := sendWebhook(src.URL, testMsg())
+	if err == nil {
+		t.Fatal("expected redirect to be rejected by re-validation")
+	}
+	if !strings.Contains(err.Error(), "redirect target blocked") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// Redirect followed when the target passes re-validation, confirming the
+// CheckRedirect closure returns nil on the allow path.
+func TestSendWebhookRedirectAllowed(t *testing.T) {
+	var finalHit bool
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer final.Close()
+
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final.URL, http.StatusFound)
+	}))
+	defer src.Close()
+
+	// notifyURLSafetyCheck is the TestMain default (always nil) here.
+	err := sendWebhook(src.URL, testMsg())
+	if err != nil {
+		t.Fatalf("expected redirect to be followed, got: %v", err)
+	}
+	if !finalHit {
+		t.Error("expected final redirect target to be reached")
+	}
+}

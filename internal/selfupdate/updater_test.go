@@ -612,6 +612,353 @@ func TestUpdate_RenameFailure_ReplacePhase_BackupRestored(t *testing.T) {
 	}
 }
 
+// ---------- CheckUpdate fallback (/releases) tests ----------
+
+// fallbackHandler serves a non-200 on /releases/latest and delegates /releases
+// to the provided handler. This exercises CheckUpdate's pre-release fallback path.
+func fallbackHandler(latestStatus int, releasesHandler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.WriteHeader(latestStatus)
+			w.Write([]byte(`{"message":"no latest"}`))
+			return
+		}
+		releasesHandler(w, r)
+	}
+}
+
+func TestCheckUpdate_FallbackSuccess(t *testing.T) {
+	saveHooks(t)
+	runtimeGOOS = "linux"
+	runtimeGOARCH = "amd64"
+
+	srv := newGitHubServer(t, fallbackHandler(404, func(w http.ResponseWriter, r *http.Request) {
+		rels := []githubRelease{
+			{
+				TagName:     "v2.3.0-rc1",
+				HTMLURL:     "https://github.com/uwaserver/uwas/releases/tag/v2.3.0-rc1",
+				Body:        "prerelease",
+				PublishedAt: "2024-06-01T00:00:00Z",
+				Assets: []githubAsset{
+					{Name: "uwas-linux-amd64", BrowserDownloadURL: "https://example.com/pre-amd64"},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(rels)
+	}))
+	githubAPIBase = srv.URL
+
+	info, err := CheckUpdate("v1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.LatestVersion != "2.3.0-rc1" {
+		t.Errorf("latest = %q, want 2.3.0-rc1", info.LatestVersion)
+	}
+	if !info.UpdateAvail {
+		t.Error("expected update available from fallback prerelease")
+	}
+	if info.DownloadURL != "https://example.com/pre-amd64" {
+		t.Errorf("download URL = %q", info.DownloadURL)
+	}
+}
+
+func TestCheckUpdate_FallbackNetworkError(t *testing.T) {
+	saveHooks(t)
+	// /releases/latest returns 404 on a live server, then we swap the base to an
+	// unreachable address before the fallback call by using a handler that 404s.
+	// Easiest: a server that always 404s for latest; for the fallback we point at
+	// a dead port. We need both requests to hit the same base, so simulate the
+	// fallback network error by closing the connection on /releases.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.WriteHeader(404)
+			return
+		}
+		// Hijack and close to force a client transport error on the fallback GET.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			w.WriteHeader(500)
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	githubAPIBase = srv.URL
+
+	_, err := CheckUpdate("v1.0.0")
+	if err == nil {
+		t.Fatal("expected error for fallback network failure")
+	}
+	if !strings.Contains(err.Error(), "check update (fallback)") {
+		t.Errorf("error = %q, want 'check update (fallback)' prefix", err.Error())
+	}
+}
+
+func TestCheckUpdate_FallbackNon200(t *testing.T) {
+	saveHooks(t)
+
+	srv := newGitHubServer(t, fallbackHandler(404, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		w.Write([]byte("unavailable"))
+	}))
+	githubAPIBase = srv.URL
+
+	_, err := CheckUpdate("v1.0.0")
+	if err == nil {
+		t.Fatal("expected error for fallback non-200")
+	}
+	if !strings.Contains(err.Error(), "GitHub API returned 503") {
+		t.Errorf("error = %q, want 'GitHub API returned 503'", err.Error())
+	}
+}
+
+func TestCheckUpdate_FallbackInvalidJSON(t *testing.T) {
+	saveHooks(t)
+
+	srv := newGitHubServer(t, fallbackHandler(404, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("not-an-array"))
+	}))
+	githubAPIBase = srv.URL
+
+	_, err := CheckUpdate("v1.0.0")
+	if err == nil {
+		t.Fatal("expected error for fallback invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "parse releases") {
+		t.Errorf("error = %q, want 'parse releases' prefix", err.Error())
+	}
+}
+
+func TestCheckUpdate_FallbackEmptyReleases(t *testing.T) {
+	saveHooks(t)
+
+	srv := newGitHubServer(t, fallbackHandler(404, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("[]"))
+	}))
+	githubAPIBase = srv.URL
+
+	_, err := CheckUpdate("v1.0.0")
+	if err == nil {
+		t.Fatal("expected error for empty releases list")
+	}
+	if !strings.Contains(err.Error(), "no releases found") {
+		t.Errorf("error = %q, want 'no releases found'", err.Error())
+	}
+}
+
+// ---------- Update: trusted-URL, status, checksum tests ----------
+
+func TestUpdate_UntrustedURL(t *testing.T) {
+	saveHooks(t)
+	// saveHooks sets isTrustedDownloadURL to always-true; override to false here.
+	isTrustedDownloadURL = func(string) bool { return false }
+	runtimeGOOS = "linux"
+	runtimeGOARCH = "amd64"
+
+	err := Update("https://evil.example.com/uwas")
+	if err == nil {
+		t.Fatal("expected error for untrusted URL")
+	}
+	if !strings.Contains(err.Error(), "untrusted download URL") {
+		t.Errorf("error = %q, want 'untrusted download URL'", err.Error())
+	}
+}
+
+func TestUpdate_Non200Download(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte("not found"))
+	})
+
+	err := Update(srv.URL + "/download")
+	if err == nil {
+		t.Fatal("expected error for non-200 download")
+	}
+	if !strings.Contains(err.Error(), "download returned HTTP 404") {
+		t.Errorf("error = %q, want 'download returned HTTP 404'", err.Error())
+	}
+	// The running binary must be untouched.
+	got, _ := os.ReadFile(exePath)
+	if string(got) != "old" {
+		t.Errorf("binary was modified on failed download: %q", got)
+	}
+}
+
+func TestUpdate_ChecksumMismatch(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			io.WriteString(w, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+			return
+		}
+		w.Write([]byte("new-binary-content"))
+	})
+
+	err := Update(srv.URL + "/download")
+	if err == nil {
+		t.Fatal("expected checksum mismatch error")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("error = %q, want 'checksum mismatch'", err.Error())
+	}
+	// Binary must remain unreplaced on checksum failure.
+	got, _ := os.ReadFile(exePath)
+	if string(got) != "old" {
+		t.Errorf("binary replaced despite checksum mismatch: %q", got)
+	}
+}
+
+func TestUpdate_ChecksumMatchesExplicit(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	content := []byte("verified-binary")
+	sum := sha256.Sum256(content)
+	hexSum := hex.EncodeToString(sum[:])
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			// Include surrounding whitespace + filename suffix to exercise TrimSpace.
+			io.WriteString(w, "  "+hexSum+"  ")
+			return
+		}
+		w.Write(content)
+	})
+
+	if err := Update(srv.URL + "/download"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := os.ReadFile(exePath)
+	if string(got) != "verified-binary" {
+		t.Errorf("binary = %q, want verified-binary", got)
+	}
+}
+
+func TestUpdate_ChecksumNon200_Skipped(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	// .sha256 returns 404 -> checksum verification is skipped, update succeeds.
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			w.WriteHeader(404)
+			return
+		}
+		w.Write([]byte("no-checksum-binary"))
+	})
+
+	if err := Update(srv.URL + "/download"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := os.ReadFile(exePath)
+	if string(got) != "no-checksum-binary" {
+		t.Errorf("binary = %q, want no-checksum-binary", got)
+	}
+}
+
+func TestUpdate_ChecksumURLUntrusted_Skipped(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	// Trust the download URL but NOT the .sha256 variant -> checksum block skipped.
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("trusted-bin-only"))
+	})
+	dl := srv.URL + "/download"
+	isTrustedDownloadURL = func(u string) bool {
+		return u == dl // exact match: the ".sha256" suffix won't be trusted
+	}
+
+	if err := Update(dl); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := os.ReadFile(exePath)
+	if string(got) != "trusted-bin-only" {
+		t.Errorf("binary = %q, want trusted-bin-only", got)
+	}
+}
+
+func TestUpdate_ChecksumOpenFailure(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	// Serve a valid-looking checksum so the verify block is entered, but make the
+	// temp file unreadable for the os.Open call: remove it before checksum reads.
+	srv := newGitHubServer(t, binaryHandler([]byte("data")))
+
+	// Create the temp file, then unlink its name immediately. On Linux the fd
+	// stays valid for io.Copy writes, but the later os.Open(tmp.Name()) in the
+	// checksum block fails with ENOENT — exercising the open-failure branch.
+	osCreateTempFn = func(dir, pattern string) (*os.File, error) {
+		f, err := os.CreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		_ = os.Remove(f.Name()) // unlink: subsequent os.Open(name) -> ENOENT
+		return f, nil
+	}
+
+	err := Update(srv.URL + "/download")
+	if err == nil {
+		t.Fatal("expected error opening downloaded binary for checksum")
+	}
+	if !strings.Contains(err.Error(), "open downloaded binary for checksum") {
+		t.Errorf("error = %q, want 'open downloaded binary for checksum'", err.Error())
+	}
+}
+
 // ---------- ReleaseInfo struct tests ----------
 
 func TestReleaseInfoStruct(t *testing.T) {
@@ -732,7 +1079,45 @@ func TestCheckUpdate_RequestPath(t *testing.T) {
 	}
 }
 
+// ---------- isTrustedDownloadURL default tests ----------
+
+func TestIsTrustedDownloadURL_Default(t *testing.T) {
+	// Capture the production default before saveHooks would overwrite it; we read
+	// it directly without saveHooks so the real implementation is exercised.
+	fn := isTrustedDownloadURL
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://github.com/uwaserver/uwas/releases/download/v1/uwas-linux-amd64", true},
+		{"https://objects.githubusercontent.com/abc", true},
+		{"https://evil.example.com/uwas", false},
+		{"http://github.com/uwaserver/uwas", false}, // http, not https
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := fn(c.url); got != c.want {
+			t.Errorf("isTrustedDownloadURL(%q) = %v, want %v", c.url, got, c.want)
+		}
+	}
+}
+
 // ---------- RestartSelf tests ----------
+
+func TestRestartSelf_NonLinuxExecSucceeds(t *testing.T) {
+	saveHooks(t)
+	runtimeGOOS = "darwin"
+
+	osExecutableFn = func() (string, error) { return "/path/to/uwas", nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+	// A successful syscall.Exec never actually returns in production, but the hook
+	// lets us exercise the trailing `return nil` branch.
+	syscallExecFn = func(exe string, args []string, env []string) error { return nil }
+
+	if err := RestartSelf(); err != nil {
+		t.Fatalf("RestartSelf() error = %v, want nil", err)
+	}
+}
 
 func TestRestartSelf_ExecutableError(t *testing.T) {
 	saveHooks(t)

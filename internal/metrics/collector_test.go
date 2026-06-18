@@ -374,6 +374,121 @@ func TestRecordCacheUnknownStatus(t *testing.T) {
 	}
 }
 
+func TestRecordHandlerLatency(t *testing.T) {
+	c := New()
+	// Record samples for a known handler type with varying durations and statuses.
+	for i := 1; i <= 100; i++ {
+		c.RecordHandlerLatency("static", 200, time.Duration(i)*time.Millisecond)
+	}
+	c.RecordHandlerLatency("static", 404, 10*time.Millisecond)
+	c.RecordHandlerLatency("static", 500, 20*time.Millisecond)
+	c.RecordHandlerLatency("static", 100, 5*time.Millisecond) // 1xx
+	c.RecordHandlerLatency("static", 301, 5*time.Millisecond) // 3xx
+	c.RecordHandlerLatency("static", 600, 5*time.Millisecond) // other bucket
+	c.RecordHandlerLatency("static", 0, 5*time.Millisecond)   // negative idx -> other
+
+	stats := c.handlerLatency["static"]
+	// 100 in the loop + 6 extra recordings = 106
+	if got := stats.count.Load(); got != 106 {
+		t.Errorf("static count = %d, want 106", got)
+	}
+	if got := stats.byStatus[1].Load(); got != 100 { // 2xx
+		t.Errorf("static 2xx = %d, want 100", got)
+	}
+	if got := stats.byStatus[0].Load(); got != 1 { // 1xx
+		t.Errorf("static 1xx = %d, want 1", got)
+	}
+	if got := stats.byStatus[2].Load(); got != 1 { // 3xx
+		t.Errorf("static 3xx = %d, want 1", got)
+	}
+	if got := stats.byStatus[3].Load(); got != 1 { // 4xx
+		t.Errorf("static 4xx = %d, want 1", got)
+	}
+	if got := stats.byStatus[4].Load(); got != 1 { // 5xx
+		t.Errorf("static 5xx = %d, want 1", got)
+	}
+	if got := stats.byStatus[5].Load(); got != 2 { // other (600 and 0)
+		t.Errorf("static other = %d, want 2", got)
+	}
+
+	p50, p95, p99, max := c.HandlerPercentiles("static")
+	if p50 == 0 || p95 == 0 || p99 == 0 || max == 0 {
+		t.Errorf("expected non-zero percentiles, got p50=%.4f p95=%.4f p99=%.4f max=%.4f", p50, p95, p99, max)
+	}
+	if p50 > p95 || p95 > p99 || p99 > max {
+		t.Errorf("percentiles not monotonic: p50=%.4f p95=%.4f p99=%.4f max=%.4f", p50, p95, p99, max)
+	}
+}
+
+func TestRecordHandlerLatencyUnknownType(t *testing.T) {
+	c := New()
+	// Unknown handler types are dropped silently.
+	c.RecordHandlerLatency("unknown", 200, 10*time.Millisecond)
+	for _, h := range []string{"static", "php", "proxy", "redirect", "app"} {
+		if got := c.handlerLatency[h].count.Load(); got != 0 {
+			t.Errorf("handler %s count = %d, want 0", h, got)
+		}
+	}
+}
+
+func TestHandlerPercentilesUnknownType(t *testing.T) {
+	c := New()
+	p50, p95, p99, max := c.HandlerPercentiles("unknown")
+	if p50 != 0 || p95 != 0 || p99 != 0 || max != 0 {
+		t.Errorf("unknown handler percentiles should be 0, got p50=%.4f p95=%.4f p99=%.4f max=%.4f", p50, p95, p99, max)
+	}
+}
+
+func TestHandlerPercentilesEmpty(t *testing.T) {
+	c := New()
+	// Known handler type but no samples recorded -> n == 0 path.
+	p50, p95, p99, max := c.HandlerPercentiles("php")
+	if p50 != 0 || p95 != 0 || p99 != 0 || max != 0 {
+		t.Errorf("empty handler percentiles should be 0, got p50=%.4f p95=%.4f p99=%.4f max=%.4f", p50, p95, p99, max)
+	}
+}
+
+func TestHandlerLatencyRingBufferWrap(t *testing.T) {
+	c := New()
+	// Fill beyond capacity to exercise the ring wrap and the full=true path.
+	for i := 0; i < handlerLatencyBufSize+50; i++ {
+		c.RecordHandlerLatency("proxy", 200, time.Millisecond)
+	}
+	stats := c.handlerLatency["proxy"]
+	if !stats.full {
+		t.Error("expected ring buffer to be marked full after wrap")
+	}
+	p50, _, _, _ := c.HandlerPercentiles("proxy")
+	if p50 == 0 {
+		t.Error("p50 should be non-zero after filling handler buffer")
+	}
+}
+
+func TestRecordHandlerTypeApp(t *testing.T) {
+	c := New()
+	c.RecordHandlerType("app")
+	c.RecordHandlerType("app")
+	if c.AppRequests.Load() != 2 {
+		t.Errorf("app = %d, want 2", c.AppRequests.Load())
+	}
+}
+
+func TestMetricsHandlerIncludesHandlerLatency(t *testing.T) {
+	c := New()
+	c.RecordHandlerLatency("app", 200, 50*time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	c.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "uwas_handler_duration_seconds") {
+		t.Error("missing handler_duration_seconds")
+	}
+	if !strings.Contains(body, `handler="app"`) {
+		t.Error("missing app handler latency metric")
+	}
+}
+
 func TestRecordRequest1xxAnd3xx(t *testing.T) {
 	c := New()
 	c.RecordRequest(100) // 1xx
