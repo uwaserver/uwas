@@ -213,6 +213,11 @@ func TestGitAuthEnvSSHKeyConvertsKnownHTTPSURL(t *testing.T) {
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "GIT_SSH_COMMAND=") && strings.Contains(kv, keyPath) {
 			foundSSHCommand = true
+			for _, want := range []string{"-o IdentitiesOnly=yes", "-o BatchMode=yes", "-o ConnectTimeout=15", "-o StrictHostKeyChecking=accept-new"} {
+				if !strings.Contains(kv, want) {
+					t.Fatalf("GIT_SSH_COMMAND missing %q: %s", want, kv)
+				}
+			}
 		}
 	}
 	if !foundSSHCommand {
