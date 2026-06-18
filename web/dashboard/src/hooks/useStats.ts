@@ -34,10 +34,16 @@ export function useStats(interval = 3000) {
   }, [pushStats]);
 
   useEffect(() => {
+    // Two independent timers: `pollingId` drives the stats-polling fallback,
+    // `healthId` refreshes health while SSE is active (health isn't in the SSE
+    // stream). They must be separate — conflating them previously left the
+    // onerror fallback unable to start stats polling, freezing the dashboard.
     let pollingId: ReturnType<typeof setInterval> | null = null;
+    let healthId: ReturnType<typeof setInterval> | null = null;
     let es: EventSource | null = null;
 
     function startPolling() {
+      if (pollingId) return;
       usingSSE.current = false;
       refresh();
       pollingId = setInterval(refresh, interval);
@@ -64,21 +70,20 @@ export function useStats(interval = 3000) {
         };
 
         es.onerror = () => {
-          // SSE failed — close and fall back to polling.
+          // SSE failed — close and fall back to stats polling.
           es?.close();
           es = null;
-          if (!pollingId) {
-            startPolling();
-          }
+          startPolling();
         };
       } catch {
         // EventSource constructor failed — fall back to polling.
         startPolling();
+        return;
       }
 
       // Refresh health periodically even when SSE is active (health isn't
       // included in the SSE stream).
-      pollingId = setInterval(() => {
+      healthId = setInterval(() => {
         fetchHealth().then(setHealth).catch(() => {});
       }, interval);
     }
@@ -87,6 +92,7 @@ export function useStats(interval = 3000) {
 
     return () => {
       if (pollingId) clearInterval(pollingId);
+      if (healthId) clearInterval(healthId);
       if (es) es.close();
     };
   }, [interval, refresh, pushStats]);
