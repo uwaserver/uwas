@@ -40,6 +40,23 @@ export function clearToken() {
   sessionStorage.removeItem('uwas_totp_verified');
 }
 
+// logout revokes the session server-side (best-effort) before clearing the
+// local token, so a leaked/cached session token can't keep being used.
+export async function logout() {
+  try {
+    if (token) {
+      await fetch(`${BASE}/api/v1/auth/logout`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+    }
+  } catch {
+    // best-effort — the local token is cleared regardless below
+  } finally {
+    clearToken();
+  }
+}
+
 export function setTOTPCode(code: string) {
   totpCode = code;
   sessionStorage.setItem('uwas_totp_verified', 'true');
