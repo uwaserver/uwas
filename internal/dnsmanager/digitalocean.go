@@ -49,7 +49,7 @@ func (p *DigitalOceanProvider) doRequest(method, path string, body interface{}) 
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("digitalocean: read response: %w", err)
 	}

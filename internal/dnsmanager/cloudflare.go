@@ -77,7 +77,7 @@ func (c *CloudflareProvider) do(method, path string, body any) (json.RawMessage,
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("cloudflare: read response: %w", err)
 	}
