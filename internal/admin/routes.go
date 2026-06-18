@@ -269,6 +269,9 @@ func (s *Server) registerDNSAndCloudflareRoutes() {
 	s.mux.HandleFunc("GET /api/v1/cloudflare/tunnels/{id}/logs", s.handleCloudflareTunnelLogs)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/cloudflared/install", s.handleCloudflaredInstall)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/cache/purge", s.handleCloudflareCachePurge)
+	s.mux.HandleFunc("GET /api/v1/cloudflare/ips", s.handleCloudflareIPs)
+	s.mux.HandleFunc("PUT /api/v1/cloudflare/ips", s.handleCloudflareIPsUpdate)
+	s.mux.HandleFunc("POST /api/v1/cloudflare/ips/sync", s.handleCloudflareIPsSync)
 	s.mux.HandleFunc("GET /api/v1/cloudflare/zones", s.handleCloudflareZones)
 	s.mux.HandleFunc("POST /api/v1/cloudflare/zones/{id}/import", s.handleCloudflareZoneImport)
 }

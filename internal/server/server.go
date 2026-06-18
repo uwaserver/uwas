@@ -35,6 +35,7 @@ import (
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/build"
 	"github.com/uwaserver/uwas/internal/cache"
+	cfintegration "github.com/uwaserver/uwas/internal/cloudflare"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/database"
@@ -101,6 +102,7 @@ type Server struct {
 
 	unknownHosts  *router.UnknownHostTracker
 	securityStats *middleware.SecurityStats
+	cloudflareIPs *cfintegration.IPSet
 
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
 	// Invalidated on config reload.
@@ -240,6 +242,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		proxyCanaries:   make(map[string]*proxyhandler.CanaryRouter),
 		unknownHosts:    router.NewUnknownHostTracker(),
 		securityStats:   middleware.NewSecurityStats(),
+		cloudflareIPs:   cfintegration.NewIPSet(),
 		htaccessCache:   make(map[string][]*rewrite.Rule),
 		rewriteCache:    make(map[string]*rewrite.Engine),
 		domainLogs:      newDomainLogManager(),
@@ -968,6 +971,9 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if s.rejectNonCloudflareOrigin(w, r, domain) {
+		return
+	}
 	// Only redirect to HTTPS automatically when a usable certificate is loaded.
 	// For auto-SSL domains whose ACME issuance is still pending (new domain,
 	// DNS not yet pointed, rate-limited, etc.), redirecting blindly produces
@@ -986,6 +992,50 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Non-SSL configured domain, or SSL configured but cert not yet loaded —
 	// serve over plain HTTP so the upstream/static handler can respond.
 	s.handler.ServeHTTP(w, r)
+}
+
+func (s *Server) rejectNonCloudflareOrigin(w http.ResponseWriter, r *http.Request, domain *config.Domain) bool {
+	if domain == nil || !domain.Security.CloudflareOnly {
+		return false
+	}
+	originIP := directPeerIP(r)
+	allowed := originIP != "" && s.cloudflareIPs.Contains(originIP, s.config.Global.Cloudflare.IPRanges)
+	if allowed {
+		return false
+	}
+	clientIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(clientIP); err == nil {
+		clientIP = host
+	}
+	reason := "cloudflare_only"
+	if len(s.config.Global.Cloudflare.IPRanges) == 0 {
+		reason = "cloudflare_only_no_ranges"
+	}
+	if s.securityStats != nil {
+		s.securityStats.Record(clientIP, r.URL.RequestURI(), reason, r.UserAgent())
+	}
+	s.logger.Warn("blocked non-Cloudflare origin request",
+		"host", r.Host,
+		"domain", domain.Host,
+		"origin_ip", originIP,
+		"client_ip", clientIP,
+		"path", r.URL.RequestURI(),
+		"user_agent", r.UserAgent(),
+	)
+	w.Header().Set("Connection", "close")
+	renderErrorPage(w, 421)
+	return true
+}
+
+func directPeerIP(r *http.Request) string {
+	if ip := strings.TrimSpace(middleware.DirectIP(r)); ip != "" {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 // handleRequest is the core dispatch handler called after the middleware chain.
@@ -1106,6 +1156,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
+
+	if s.rejectNonCloudflareOrigin(ctx.Response, r, domain) {
+		return
+	}
 
 	// Maintenance mode: serve 503 with Retry-After for all non-allowed IPs
 	if domain.Maintenance.Enabled {

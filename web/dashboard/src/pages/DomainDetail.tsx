@@ -33,6 +33,7 @@ export default function DomainDetail() {
 
   // Security
   const [wafEnabled, setWafEnabled] = useState(false);
+  const [cloudflareOnly, setCloudflareOnly] = useState(false);
   const [hotlinkEnabled, setHotlinkEnabled] = useState(false);
   const [rateLimitReqs, setRateLimitReqs] = useState(0);
   const [rateLimitWindow, setRateLimitWindow] = useState('1m');
@@ -79,6 +80,7 @@ export default function DomainDetail() {
 
       // Security state
       setWafEnabled(d.security?.waf?.enabled ?? false);
+      setCloudflareOnly(d.security?.cloudflare_only ?? false);
       setHotlinkEnabled(d.security?.hotlink_protection?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);
       setRateLimitWindow(d.security?.rate_limit?.window ?? '1m');
@@ -181,6 +183,7 @@ export default function DomainDetail() {
           : { enabled: false },
         security: {
           waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled },
+          cloudflare_only: cloudflareOnly,
           rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow },
           blocked_paths: blockedPaths,
           ip_whitelist: currentSecurity.ip_whitelist ?? [],
@@ -217,6 +220,38 @@ export default function DomainDetail() {
       });
       setDetail({ ...detail, ssl: { ...detail.ssl, force_ssl: force } });
       setMsg({ ok: true, text: force ? 'Force SSL enabled' : 'Force SSL disabled' });
+      load();
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const setCloudflareOriginOnly = async (enabled: boolean) => {
+    if (!host || !detail) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      await updateDomain(host, {
+        security: {
+          ...(detail.security ?? {}),
+          waf: detail.security?.waf ?? { enabled: wafEnabled },
+          blocked_paths: detail.security?.blocked_paths ?? blockedPaths,
+          cloudflare_only: enabled,
+        },
+      });
+      setCloudflareOnly(enabled);
+      setDetail({
+        ...detail,
+        security: {
+          ...(detail.security ?? {}),
+          waf: detail.security?.waf ?? { enabled: wafEnabled },
+          blocked_paths: detail.security?.blocked_paths ?? blockedPaths,
+          cloudflare_only: enabled,
+        },
+      });
+      setMsg({ ok: true, text: enabled ? 'Cloudflare Only enabled' : 'Cloudflare Only disabled' });
       load();
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message });
@@ -463,6 +498,23 @@ export default function DomainDetail() {
               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${detail.ssl?.force_ssl && detail.ssl?.mode !== 'off' ? 'left-[22px]' : 'left-0.5'}`} />
             </button>
           </div>
+          {!isRedirectDomain && (
+            <div className="mb-3 flex items-center justify-between rounded bg-background px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">Cloudflare Only</p>
+                <p className="text-[10px] text-muted-foreground">Return 421 for direct origin requests whose peer IP is not in the Cloudflare IP list.</p>
+              </div>
+              <button
+                onClick={() => setCloudflareOriginOnly(!cloudflareOnly)}
+                disabled={saving}
+                className={`relative h-6 w-11 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${cloudflareOnly ? 'bg-orange-500' : 'bg-slate-600'}`}
+                aria-pressed={cloudflareOnly}
+                title="Require Cloudflare origin IPs"
+              >
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${cloudflareOnly ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
+            </div>
+          )}
           {!isRedirectDomain && (
             <div className="mb-3 rounded bg-background px-4 py-3">
               <div className="mb-2">

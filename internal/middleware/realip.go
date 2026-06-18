@@ -1,10 +1,13 @@
 package middleware
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strings"
 )
+
+type directIPContextKey struct{}
 
 // RealIP extracts the real client IP from proxy headers.
 // Checks X-Forwarded-For, X-Real-IP, CF-Connecting-IP.
@@ -14,6 +17,10 @@ func RealIP(trustedProxies []string) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if directIP := extractIP(r.RemoteAddr); directIP != nil {
+				r = r.WithContext(context.WithValue(r.Context(), directIPContextKey{}, directIP.String()))
+			}
+
 			// When no trusted proxies are configured, skip all header
 			// processing to avoid trusting spoofed proxy headers.
 			if len(trusted) == 0 {
@@ -52,6 +59,16 @@ func RealIP(trustedProxies []string) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func DirectIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if ip, ok := r.Context().Value(directIPContextKey{}).(string); ok {
+		return ip
+	}
+	return ""
 }
 
 // extractRealIP returns the rightmost untrusted IP from X-Forwarded-For.

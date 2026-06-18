@@ -7,6 +7,7 @@ type SecurityConfig struct {
 	HotlinkProtection HotlinkConfig   `yaml:"hotlink_protection,omitempty" json:"hotlink_protection,omitempty"`
 	RateLimit         RateLimitConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 	WAF               WAFConfig       `yaml:"waf,omitempty" json:"waf,omitempty"`
+	CloudflareOnly    bool            `yaml:"cloudflare_only,omitempty" json:"cloudflare_only,omitempty"`
 	IPWhitelist       []string        `yaml:"ip_whitelist,omitempty" json:"ip_whitelist,omitempty"`
 	IPBlacklist       []string        `yaml:"ip_blacklist,omitempty" json:"ip_blacklist,omitempty"`
 	GeoBlockCountries []string        `yaml:"geo_block_countries,omitempty" json:"geo_block_countries,omitempty"` // 2-letter ISO codes

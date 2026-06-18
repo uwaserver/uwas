@@ -13,6 +13,7 @@ import {
   ExternalLink,
   AlertTriangle,
   Download,
+  Shield,
   Settings as SettingsIcon,
   Info,
   Plus,
@@ -36,9 +37,13 @@ import {
   stopCloudflareTunnel,
   fetchCloudflareTunnelLogs,
   installCloudflared,
+  fetchCloudflareIPs,
+  updateCloudflareIPs,
+  syncCloudflareIPs,
   type CloudflareStatus,
   type CloudflareZone,
   type CloudflareTunnel,
+  type CloudflareIPs,
 } from '@/lib/api';
 import Card from '@/components/Card';
 import { useConfirm } from '@/components/useConfirm';
@@ -55,6 +60,9 @@ export default function Cloudflare() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [ipList, setIpList] = useState<CloudflareIPs | null>(null);
+  const [ipListText, setIpListText] = useState('');
+  const [ipBusy, setIpBusy] = useState(false);
 
   // Connect form
   const [apiToken, setApiToken] = useState('');
@@ -109,12 +117,17 @@ export default function Cloudflare() {
       const s = await fetchCloudflareStatus();
       setStatus(s);
       if (s?.connected) {
-        const [z, t] = await Promise.all([fetchCloudflareZones(), fetchCloudflareTunnels()]);
+        const [z, t, ips] = await Promise.all([fetchCloudflareZones(), fetchCloudflareTunnels(), fetchCloudflareIPs()]);
         setZones(z);
         setTunnels(t);
+        setIpList(ips);
+        setIpListText((ips?.ip_ranges ?? []).join('\n'));
       } else {
         setZones([]);
         setTunnels([]);
+        const ips = await fetchCloudflareIPs();
+        setIpList(ips);
+        setIpListText((ips?.ip_ranges ?? []).join('\n'));
       }
       setError('');
     } catch (err: unknown) {
@@ -351,6 +364,39 @@ export default function Cloudflare() {
     }
   };
 
+  const handleSaveIPs = async () => {
+    setIpBusy(true);
+    setError('');
+    setSuccess('');
+    try {
+      const ranges = ipListText.split(/\r?\n|,|;/).map(s => s.trim()).filter(Boolean);
+      const next = await updateCloudflareIPs(ranges);
+      setIpList(next);
+      setIpListText((next.ip_ranges ?? []).join('\n'));
+      setSuccess(`Cloudflare IP list saved (${next.count} ranges)`);
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to save Cloudflare IP list'));
+    } finally {
+      setIpBusy(false);
+    }
+  };
+
+  const handleSyncIPs = async () => {
+    setIpBusy(true);
+    setError('');
+    setSuccess('');
+    try {
+      const next = await syncCloudflareIPs();
+      setIpList(next);
+      setIpListText((next.ip_ranges ?? []).join('\n'));
+      setSuccess(`Cloudflare IP list synced (${next.count} ranges)`);
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to sync Cloudflare IP list'));
+    } finally {
+      setIpBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -413,6 +459,53 @@ export default function Cloudflare() {
         value={status?.connected ? 'Connected' : 'Not Connected'}
         sub={status?.email || ''}
       />
+
+      <div className="rounded-lg border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-card-foreground">
+              <Shield className="h-5 w-5 text-orange-400" />
+              Origin Protection IPs
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Domains with Cloudflare Only enabled accept traffic only from these CIDR ranges and return 421 for direct origin hits.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded bg-accent px-2 py-1 text-xs text-muted-foreground">
+              {ipList?.count ?? 0} ranges
+              {ipList?.last_synced ? ` · synced ${new Date(ipList.last_synced).toLocaleString()}` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={handleSyncIPs}
+              disabled={ipBusy}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-card-foreground transition hover:bg-accent disabled:opacity-50"
+            >
+              <Download className={`h-4 w-4 ${ipBusy ? 'animate-pulse' : ''}`} />
+              Sync
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveIPs}
+              disabled={ipBusy}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+            >
+              <CheckCircle className="h-4 w-4" />
+              Save
+            </button>
+          </div>
+        </div>
+        <div className="p-4">
+          <textarea
+            value={ipListText}
+            onChange={(e) => setIpListText(e.target.value)}
+            spellCheck={false}
+            className="h-40 w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none focus:border-orange-500"
+            placeholder="173.245.48.0/20&#10;2400:cb00::/32"
+          />
+        </div>
+      </div>
 
       {!status?.connected ? (
         /* Connect Form */

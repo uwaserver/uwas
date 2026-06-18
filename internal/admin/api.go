@@ -847,15 +847,16 @@ func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 	type domainInfo struct {
-		Host          string   `json:"host"`
-		MainHost      string   `json:"main_host,omitempty"`
-		CanonicalHost string   `json:"canonical_host,omitempty"`
-		IP            string   `json:"ip,omitempty"`
-		Aliases       []string `json:"aliases"`
-		Type          string   `json:"type"`
-		SSL           string   `json:"ssl"`
-		ForceSSL      bool     `json:"force_ssl"`
-		Root          string   `json:"root,omitempty"`
+		Host           string   `json:"host"`
+		MainHost       string   `json:"main_host,omitempty"`
+		CanonicalHost  string   `json:"canonical_host,omitempty"`
+		IP             string   `json:"ip,omitempty"`
+		Aliases        []string `json:"aliases"`
+		Type           string   `json:"type"`
+		SSL            string   `json:"ssl"`
+		ForceSSL       bool     `json:"force_ssl"`
+		Root           string   `json:"root,omitempty"`
+		CloudflareOnly bool     `json:"cloudflare_only"`
 	}
 
 	// Get current user for domain filtering
@@ -892,15 +893,16 @@ func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		domains = append(domains, domainInfo{
-			Host:          displayHost,
-			MainHost:      mainDomainHostname(d),
-			CanonicalHost: normalizeCanonicalHostPreference(d.CanonicalHost),
-			IP:            d.IP,
-			Aliases:       publicDomainAliases(d),
-			Type:          d.Type,
-			SSL:           d.SSL.Mode,
-			ForceSSL:      d.SSL.ForceSSL,
-			Root:          d.Root,
+			Host:           displayHost,
+			MainHost:       mainDomainHostname(d),
+			CanonicalHost:  normalizeCanonicalHostPreference(d.CanonicalHost),
+			IP:             d.IP,
+			Aliases:        publicDomainAliases(d),
+			Type:           d.Type,
+			SSL:            d.SSL.Mode,
+			ForceSSL:       d.SSL.ForceSSL,
+			Root:           d.Root,
+			CloudflareOnly: d.Security.CloudflareOnly,
 		})
 	}
 	s.configMu.RUnlock()
@@ -5695,6 +5697,74 @@ func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) 
 		"tunnel_count":          len(cfg.Tunnels),
 		"cloudflared_installed": cfd.Installed,
 		"cloudflared_version":   cfd.Version,
+	})
+}
+
+func (s *Server) handleCloudflareIPs(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	ranges := append([]string(nil), s.config.Global.Cloudflare.IPRanges...)
+	lastSynced := s.config.Global.Cloudflare.LastSynced
+	s.configMu.RUnlock()
+	jsonResponse(w, map[string]any{
+		"ip_ranges":   ranges,
+		"last_synced": lastSynced,
+		"count":       len(ranges),
+	})
+}
+
+func (s *Server) handleCloudflareIPsUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		IPRanges []string `json:"ip_ranges"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.recordAuditR(r, "cloudflare.ips.update", "invalid JSON body", false)
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	ranges, err := cfintegration.NormalizeCIDRs(req.IPRanges)
+	if err != nil {
+		s.recordAuditR(r, "cloudflare.ips.update", err.Error(), false)
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.configMu.Lock()
+	s.config.Global.Cloudflare.IPRanges = ranges
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.recordAuditR(r, "cloudflare.ips.update", fmt.Sprintf("ranges: %d", len(ranges)), true)
+	jsonResponse(w, map[string]any{
+		"status":    "updated",
+		"ip_ranges": ranges,
+		"count":     len(ranges),
+	})
+}
+
+func (s *Server) handleCloudflareIPsSync(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	ranges, err := cfintegration.FetchIPRanges(r.Context())
+	if err != nil {
+		s.recordAuditR(r, "cloudflare.ips.sync", err.Error(), false)
+		jsonError(w, "sync failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.configMu.Lock()
+	s.config.Global.Cloudflare.IPRanges = ranges
+	s.config.Global.Cloudflare.LastSynced = now
+	s.configMu.Unlock()
+	s.persistConfig()
+	s.recordAuditR(r, "cloudflare.ips.sync", fmt.Sprintf("ranges: %d", len(ranges)), true)
+	jsonResponse(w, map[string]any{
+		"status":      "synced",
+		"ip_ranges":   ranges,
+		"last_synced": now,
+		"count":       len(ranges),
 	})
 }
 
