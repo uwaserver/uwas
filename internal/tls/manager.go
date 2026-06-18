@@ -552,6 +552,11 @@ func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls
 	// Get or create singleflight group for this host.
 	g := &singleflight.Group{}
 	gVal, _ := m.obtainFlight.LoadOrStore(host, g)
+	// Drop the per-host group once this issuance completes so the map doesn't
+	// grow without bound for on-demand TLS (attacker-influenced SNI names).
+	// In-flight coalescing is unaffected: concurrent callers share gVal until
+	// Do returns; only after completion is the entry removed.
+	defer m.obtainFlight.Delete(host)
 
 	// Use singleflight so only one caller does the actual ACME issuance.
 	// Subsequent callers for the same host block until the first completes.
