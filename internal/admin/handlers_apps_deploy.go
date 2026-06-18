@@ -928,7 +928,7 @@ func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), 
 		if _, err := os.Stat(cleanKey); err != nil {
 			return nil, "", cleanup, fmt.Errorf("SSH key not found: %s", cleanKey)
 		}
-		env = append(env, "GIT_SSH_COMMAND=ssh -i "+shellQuote(cleanKey)+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
+		env = append(env, "GIT_SSH_COMMAND=ssh -i "+shellQuote(cleanKey)+" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new")
 		if gitToken == "" {
 			if converted, ok := httpsGitURLToSSH(cloneURL); ok {
 				cloneURL = converted
