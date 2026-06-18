@@ -110,8 +110,17 @@ func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSSHKeyList(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	if !s.requireDomainAccess(w, r, domain, "ssh.keys.list") {
-		return
+	identity := domain
+	if appName, ok := appSFTPTargetName(domain); ok {
+		if !s.requireAdmin(w, r) {
+			s.recordAuditR(r, "ssh.keys.list", "app: "+domain+" (forbidden)", false)
+			return
+		}
+		identity = appSFTPIdentity(appName)
+	} else {
+		if !s.requireDomainAccess(w, r, domain, "ssh.keys.list") {
+			return
+		}
 	}
 	root, err := s.siteUserRoot(domain)
 	if err != nil {
@@ -123,7 +132,7 @@ func (s *Server) handleSSHKeyList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keys := siteuser.ListSSHKeysForWebDir(root, domain)
+	keys := siteuser.ListSSHKeysForWebDir(root, identity)
 	if keys == nil {
 		keys = []string{}
 	}
@@ -132,8 +141,17 @@ func (s *Server) handleSSHKeyList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	if !s.requireDomainAccess(w, r, domain, "ssh.keys.add") {
-		return
+	identity := domain
+	if appName, ok := appSFTPTargetName(domain); ok {
+		if !s.requireAdmin(w, r) {
+			s.recordAuditR(r, "ssh.keys.add", "app: "+domain+" (forbidden)", false)
+			return
+		}
+		identity = appSFTPIdentity(appName)
+	} else {
+		if !s.requireDomainAccess(w, r, domain, "ssh.keys.add") {
+			return
+		}
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
@@ -158,18 +176,27 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := siteuser.AddSSHKeyForWebDir(root, domain, req.PublicKey); err != nil {
+	if err := siteuser.AddSSHKeyForWebDir(root, identity, req.PublicKey); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("SSH key added", "domain", domain)
+	s.logger.Info("SSH key added", "target", domain, "identity", identity)
 	jsonResponse(w, map[string]string{"status": "added"})
 }
 
 func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	if !s.requireDomainAccess(w, r, domain, "ssh.keys.delete") {
-		return
+	identity := domain
+	if appName, ok := appSFTPTargetName(domain); ok {
+		if !s.requireAdmin(w, r) {
+			s.recordAuditR(r, "ssh.keys.delete", "app: "+domain+" (forbidden)", false)
+			return
+		}
+		identity = appSFTPIdentity(appName)
+	} else {
+		if !s.requireDomainAccess(w, r, domain, "ssh.keys.delete") {
+			return
+		}
 	}
 	if !s.requirePin(w, r) {
 		return
@@ -193,7 +220,7 @@ func (s *Server) handleSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := siteuser.RemoveSSHKeyForWebDir(root, domain, req.Fingerprint); err != nil {
+	if err := siteuser.RemoveSSHKeyForWebDir(root, identity, req.Fingerprint); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

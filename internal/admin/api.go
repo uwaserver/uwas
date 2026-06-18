@@ -3598,16 +3598,20 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, password, err := siteuser.CreateUserForWebDir(root, req.Domain)
+	identity := req.Domain
+	if appName, ok := appSFTPTargetName(req.Domain); ok {
+		identity = appSFTPIdentity(appName)
+	}
+	user, password, err := siteuser.CreateUserForWebDir(root, identity)
 	if err != nil {
 		jsonError(w, "create user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	s.logger.Info("SFTP user created", "domain", req.Domain, "username", user.Username)
+	s.logger.Info("SFTP user created", "target", req.Domain, "identity", identity, "username", user.Username)
 	jsonResponse(w, map[string]string{
 		"username":  user.Username,
-		"domain":    user.Domain,
+		"domain":    identity,
 		"password":  password,
 		"home_dir":  user.HomeDir,
 		"web_dir":   user.WebDir,
@@ -3618,18 +3622,27 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	if !s.requireDomainAccess(w, r, domain, "sftp.delete") {
-		return
+	identity := domain
+	if appName, ok := appSFTPTargetName(domain); ok {
+		if !s.requireAdmin(w, r) {
+			s.recordAuditR(r, "sftp.delete", "app: "+domain+" (forbidden)", false)
+			return
+		}
+		identity = appSFTPIdentity(appName)
+	} else {
+		if !s.requireDomainAccess(w, r, domain, "sftp.delete") {
+			return
+		}
 	}
 	if !s.requirePin(w, r) {
 		return
 	}
-	if err := siteuser.DeleteUser(domain); err != nil {
+	if err := siteuser.DeleteUser(identity); err != nil {
 		jsonError(w, "delete user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("SFTP user deleted", "domain", domain)
-	jsonResponse(w, map[string]string{"status": "deleted", "domain": domain})
+	s.logger.Info("SFTP user deleted", "target", domain, "identity", identity)
+	jsonResponse(w, map[string]string{"status": "deleted", "domain": identity})
 }
 
 // --- Domain detail ---

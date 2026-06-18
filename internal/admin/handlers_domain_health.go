@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -159,7 +161,8 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 		Host       string `json:"host"`
 		ParentHost string `json:"parent_host,omitempty"`
 		Kind       string `json:"kind,omitempty"` // "primary" or "alias"
-		Status     string `json:"status"`         // "up", "down", "error"
+		Target     string `json:"target,omitempty"`
+		Status     string `json:"status"` // "up", "down", "error"
 		Code       int    `json:"code"`
 		Ms         int64  `json:"ms"`
 		Error      string `json:"error,omitempty"`
@@ -185,11 +188,14 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 				ParentHost: target.ParentHost,
 				Kind:       target.Kind,
 			}
-			scheme := "http"
-			if dom.SSL.Mode == "auto" || dom.SSL.Mode == "manual" {
-				scheme = "https"
+			url, appErr := s.domainHealthURL(dom)
+			hr.Target = url
+			if appErr != "" {
+				hr.Status = "down"
+				hr.Error = appErr
+				results[idx] = hr
+				return
 			}
-			url := fmt.Sprintf("%s://%s/", scheme, dom.Host)
 
 			start := time.Now()
 			resp, err := client.Get(url)
@@ -226,6 +232,53 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	})
+}
+
+func (s *Server) domainHealthURL(dom config.Domain) (string, string) {
+	if appURL, appErr := s.appDomainHealthURL(dom); appURL != "" || appErr != "" {
+		return appURL, appErr
+	}
+	scheme := "http"
+	if dom.SSL.Mode == "auto" || dom.SSL.Mode == "manual" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/", scheme, dom.Host), ""
+}
+
+func (s *Server) appDomainHealthURL(dom config.Domain) (string, string) {
+	if s.appsMgr == nil || len(dom.Proxy.Upstreams) == 0 {
+		return "", ""
+	}
+	for _, upstream := range dom.Proxy.Upstreams {
+		addr := strings.TrimSpace(upstream.Address)
+		if addr == "" || !strings.HasPrefix(strings.ToLower(addr), "apps://") {
+			continue
+		}
+		ref := strings.TrimPrefix(addr, "apps://")
+		if idx := strings.IndexAny(ref, "/?#"); idx >= 0 {
+			ref = ref[:idx]
+		}
+		if ref == "" {
+			continue
+		}
+		name, port := ref, 0
+		if colon := strings.LastIndex(ref, ":"); colon > 0 {
+			if p, err := strconv.Atoi(ref[colon+1:]); err == nil {
+				name, port = ref[:colon], p
+			}
+		}
+		listen := ""
+		if port > 0 {
+			listen = s.appsMgr.ListenAddrForPort(name, port)
+		} else {
+			listen = s.appsMgr.ListenAddr(name)
+		}
+		if listen != "" {
+			return "http://" + listen + "/", ""
+		}
+		return "", fmt.Sprintf("app upstream %q is not listening", ref)
+	}
+	return "", ""
 }
 
 func (s *Server) handleServerIPs(w http.ResponseWriter, r *http.Request) {

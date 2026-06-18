@@ -221,6 +221,9 @@ func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) siteUserRoot(domain string) (string, error) {
+	if appName, ok := appSFTPTargetName(domain); ok {
+		return s.appRootForFiles(appName)
+	}
 	root, err := s.domainRootForFiles(domain)
 	if err != nil {
 		return "", err
@@ -229,6 +232,28 @@ func (s *Server) siteUserRoot(domain string) (string, error) {
 		return root, nil
 	}
 	return domainroot.Fallback("/var/www", domain), nil
+}
+
+func appSFTPIdentity(appName string) string {
+	appName = strings.TrimSpace(strings.ToLower(appName))
+	appName = strings.ReplaceAll(appName, "_", "--u--")
+	return "app-" + appName + ".uwas.local"
+}
+
+func appSFTPTargetName(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	if appName, ok := appFileTargetName(target); ok {
+		return appName, true
+	}
+	lower := strings.ToLower(target)
+	if strings.HasPrefix(lower, "app-") && strings.HasSuffix(lower, ".uwas.local") {
+		name := strings.TrimSuffix(strings.TrimPrefix(lower, "app-"), ".uwas.local")
+		name = strings.ReplaceAll(name, "--u--", "_")
+		if name != "" {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {

@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { UserPlus, Trash2, RefreshCw, Copy, Check, FolderOpen, Key, ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 import {
-  fetchUsers, createUser, deleteUser, fetchDomains,
+  fetchUsers, createUser, deleteUser, fetchDomains, fetchApps,
   fetchSSHKeys, addSSHKey, deleteSSHKey,
-  type SiteUser, type SiteUserCreated, type DomainData,
+  type SiteUser, type SiteUserCreated, type DomainData, type AppInstance,
 } from '@/lib/api';
 import { useConfirm } from '@/components/useConfirm';
+
+const appSFTPTarget = (name: string) => `app-${name.toLowerCase().replaceAll('_', '--u--')}.uwas.local`;
 
 function SSHKeyPanel({ domain }: { domain: string }) {
   const { confirmAction } = useConfirm();
@@ -133,6 +135,7 @@ function SSHKeyPanel({ domain }: { domain: string }) {
 export default function Users() {
   const [users, setUsers] = useState<SiteUser[]>([]);
   const [domains, setDomains] = useState<DomainData[]>([]);
+  const [apps, setApps] = useState<AppInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newDomain, setNewDomain] = useState('');
@@ -144,10 +147,11 @@ export default function Users() {
   const [copyError, setCopyError] = useState('');
 
   const load = useCallback(() => {
-    Promise.all([fetchUsers(), fetchDomains()])
-      .then(([u, d]) => {
+    Promise.all([fetchUsers(), fetchDomains(), fetchApps()])
+      .then(([u, d, a]) => {
         setUsers(u ?? []);
         setDomains(d ?? []);
+        setApps(a ?? []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -219,10 +223,29 @@ export default function Users() {
     }
   };
 
-  // Domains that don't have a user yet
-  const availableDomains = domains.filter(
-    d => !users.some(u => u.domain === d.host)
-  );
+  const appTargetLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const app of apps) {
+      labels.set(appSFTPTarget(app.name), `App ${app.name}`);
+    }
+    return labels;
+  }, [apps]);
+
+  const targetLabel = useCallback((target: string) => appTargetLabels.get(target) ?? target, [appTargetLabels]);
+
+  const availableTargets = useMemo(() => {
+    const used = new Set(users.map(u => u.domain));
+    const targets = domains
+      .filter(d => !used.has(d.host))
+      .map(d => ({ value: d.host, label: d.host, kind: 'Domain' }));
+    for (const app of apps) {
+      const value = appSFTPTarget(app.name);
+      if (!used.has(value)) {
+        targets.push({ value, label: `App ${app.name}`, kind: 'Application' });
+      }
+    }
+    return targets;
+  }, [apps, domains, users]);
 
   return (
     <div className="space-y-6">
@@ -230,7 +253,7 @@ export default function Users() {
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">SFTP Users</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Manage chroot-jailed SFTP users and SSH keys for domain file uploads.
+            Manage chroot-jailed SFTP users and SSH keys for domain and application file uploads.
           </p>
         </div>
         <button onClick={load} className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent">
@@ -311,15 +334,15 @@ export default function Users() {
         <h2 className="text-sm font-semibold text-card-foreground mb-3">Add SFTP User</h2>
         <div className="flex items-end gap-3">
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs text-muted-foreground">Domain</label>
+            <label className="mb-1.5 block text-xs text-muted-foreground">Target</label>
             <select
               value={newDomain}
               onChange={e => setNewDomain(e.target.value)}
               className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
             >
-              <option value="">Select a domain...</option>
-              {availableDomains.map(d => (
-                <option key={d.host} value={d.host}>{d.host}</option>
+              <option value="">Select a domain or app...</option>
+              {availableTargets.map(t => (
+                <option key={t.value} value={t.value}>{t.kind}: {t.label}</option>
               ))}
             </select>
           </div>
@@ -332,8 +355,8 @@ export default function Users() {
             {creating ? 'Creating...' : 'Create User'}
           </button>
         </div>
-        {availableDomains.length === 0 && domains.length > 0 && (
-          <p className="mt-2 text-xs text-muted-foreground">All domains already have SFTP users.</p>
+        {availableTargets.length === 0 && (domains.length > 0 || apps.length > 0) && (
+          <p className="mt-2 text-xs text-muted-foreground">All domains and applications already have SFTP users.</p>
         )}
       </div>
 
@@ -344,7 +367,7 @@ export default function Users() {
         <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
           <UserPlus size={40} className="mx-auto mb-3 text-muted-foreground" />
           <p className="text-card-foreground font-medium">No SFTP users configured</p>
-          <p className="text-sm text-muted-foreground mt-1">Create a user above to enable SFTP file uploads for a domain.</p>
+          <p className="text-sm text-muted-foreground mt-1">Create a user above to enable SFTP file uploads for a domain or application.</p>
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-border">
@@ -353,7 +376,7 @@ export default function Users() {
               <tr className="border-b border-border bg-card/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <th className="w-8 px-2 py-3"></th>
                 <th className="px-4 py-3">Username</th>
-                <th className="px-4 py-3">Domain</th>
+                <th className="px-4 py-3">Target</th>
                 <th className="px-4 py-3">Web Root</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -372,7 +395,7 @@ export default function Users() {
                       </button>
                     </td>
                     <td className="px-4 py-3 font-mono text-foreground">{u.username}</td>
-                    <td className="px-4 py-3 text-card-foreground">{u.domain}</td>
+                    <td className="px-4 py-3 text-card-foreground">{targetLabel(u.domain)}</td>
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1.5 text-muted-foreground">
                         <FolderOpen size={13} />
