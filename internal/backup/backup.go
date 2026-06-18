@@ -224,10 +224,14 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 				Mode:    0644,
 				ModTime: time.Now(),
 			}
-			if err := tw.WriteHeader(hdr); err == nil {
-				if _, err := tw.Write(dbDump); err != nil {
-					m.logger.Error("backup: failed to write DB dump to tar", "error", err)
-				}
+			// A write failure here corrupts the whole tar stream (every later
+			// entry desyncs), so abort instead of shipping a truncated archive
+			// reported as success.
+			if err := tw.WriteHeader(hdr); err != nil {
+				return fmt.Errorf("write DB dump tar header: %w", err)
+			}
+			if _, err := tw.Write(dbDump); err != nil {
+				return fmt.Errorf("write DB dump to tar: %w", err)
 			}
 		}
 
@@ -243,10 +247,11 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 					Mode:    0644,
 					ModTime: time.Now(),
 				}
-				if err := tw.WriteHeader(hdr); err == nil {
-					if _, err := tw.Write(dump); err != nil {
-						m.logger.Error("backup: failed to write docker DB dump to tar", "container", name, "error", err)
-					}
+				if err := tw.WriteHeader(hdr); err != nil {
+					return fmt.Errorf("write docker DB dump tar header: %w", err)
+				}
+				if _, err := tw.Write(dump); err != nil {
+					return fmt.Errorf("write docker DB dump to tar: %w", err)
 				}
 				m.logger.Info("backup: docker DB dumped", "container", name, "size", len(dump))
 			}
@@ -385,7 +390,9 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				data, _ := io.ReadAll(io.LimitReader(tr, maxDumpSize))
 				totalRead += int64(len(data))
 				if len(data) > 0 {
-					importDatabaseDump(data, m.logger)
+					if err := importDatabaseDump(data, m.logger); err != nil {
+						return fmt.Errorf("restore database: %w", err)
+					}
 				}
 			}
 			continue
@@ -397,6 +404,15 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			if err := os.MkdirAll(outPath, 0755); err != nil {
 				return err
 			}
+			continue
+		}
+
+		// Only regular files are restored. Symlinks/hardlinks/devices from an
+		// untrusted archive are skipped (recreating them would either escape the
+		// restore root or silently produce an empty file).
+		// '\x00' is the legacy regular-file flag (deprecated tar.TypeRegA).
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != '\x00' {
+			m.logger.Warn("backup restore: skipping non-regular entry", "name", hdr.Name, "type", string(rune(hdr.Typeflag)))
 			continue
 		}
 
@@ -747,24 +763,26 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 var importDatabaseDumpFunc = importDatabaseDumpReal
 
 // importDatabaseDump imports a SQL dump via the mysql command.
-func importDatabaseDump(data []byte, log *logger.Logger) {
-	importDatabaseDumpFunc(data, log)
+func importDatabaseDump(data []byte, log *logger.Logger) error {
+	return importDatabaseDumpFunc(data, log)
 }
 
-func importDatabaseDumpReal(data []byte, log *logger.Logger) {
+func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 	mysqlBin, err := exec.LookPath("mysql")
 	if err != nil {
+		// Non-fatal: allow a files-only restore on a host without mysql.
 		log.Warn("backup restore: mysql not found, skipping DB import")
-		return
+		return nil
 	}
 	cmd := exec.Command(mysqlBin)
 	cmd.Stdin = strings.NewReader(string(data))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Error("backup restore: mysql import failed", "error", err, "output", string(out))
-		return
+		return fmt.Errorf("mysql import failed: %w", err)
 	}
 	log.Info("backup restore: database imported", "size", len(data))
+	return nil
 }
 
 // CreateDomainBackup creates a backup of a single domain (web root + domain config + DB).
@@ -790,13 +808,17 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 	size, err := archiveAndUpload(ctx, p, "uwas-domain-backup-*.tar.gz", filename, func(tw *tar.Writer) error {
 		if webRoot != "" {
 			if info, statErr := os.Stat(webRoot); statErr == nil && info.IsDir() {
-				addDirToTar(tw, webRoot, "site")
+				if err := addDirToTar(tw, webRoot, "site"); err != nil {
+					return fmt.Errorf("archive web root: %w", err)
+				}
 			}
 		}
 		if domainsDir != "" {
 			cfgFile := filepath.Join(domainsDir, domain+".yaml")
 			if _, statErr := os.Stat(cfgFile); statErr == nil {
-				addFileToTar(tw, cfgFile, "config/"+domain+".yaml")
+				if err := addFileToTar(tw, cfgFile, "config/"+domain+".yaml"); err != nil {
+					return fmt.Errorf("archive domain config: %w", err)
+				}
 			}
 		}
 		if dbName != "" {
@@ -805,10 +827,11 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 					Name: "database/" + dbName + ".sql", Size: int64(len(dump)),
 					Mode: 0644, ModTime: time.Now(),
 				}
-				if tw.WriteHeader(hdr) == nil {
-					if _, wErr := tw.Write(dump); wErr != nil {
-						return fmt.Errorf("write database dump to tar: %w", wErr)
-					}
+				if err := tw.WriteHeader(hdr); err != nil {
+					return fmt.Errorf("write database tar header: %w", err)
+				}
+				if _, wErr := tw.Write(dump); wErr != nil {
+					return fmt.Errorf("write database dump to tar: %w", wErr)
 				}
 			}
 		}

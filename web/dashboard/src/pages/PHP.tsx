@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Cpu,
   Play,
@@ -137,6 +137,13 @@ export default function PHP() {
   const [showInstall, setShowInstall] = useState(false);
   const [installVer, setInstallVer] = useState('8.4');
   const [installJob, setInstallJob] = useState<PHPInstallStatus | null>(null);
+  const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clear the install poll on unmount so it can't keep firing setState on an
+  // unmounted component or poll the server forever.
+  useEffect(() => () => {
+    if (installPollRef.current) clearInterval(installPollRef.current);
+  }, []);
 
   /* -------- helpers -------- */
 
@@ -600,16 +607,20 @@ export default function PHP() {
                 try {
                   await installPHP(installVer);
                   setInstallJob({ status: 'running', version: installVer });
-                  // Poll for completion
-                  const poll = setInterval(async () => {
+                  // Poll for completion. Store the handle in a ref so the
+                  // unmount cleanup can clear it.
+                  if (installPollRef.current) clearInterval(installPollRef.current);
+                  installPollRef.current = setInterval(async () => {
                     try {
                       const st = await fetchPHPInstallStatus();
                       setInstallJob(st);
                       if (st.status !== 'running') {
-                        clearInterval(poll);
+                        if (installPollRef.current) clearInterval(installPollRef.current);
                         if (st.status === 'done') loadAll();
                       }
-                    } catch { clearInterval(poll); }
+                    } catch {
+                      if (installPollRef.current) clearInterval(installPollRef.current);
+                    }
                   }, 2000);
                 } catch (e) {
                   setInstallJob({ status: 'error', error: (e as Error).message });

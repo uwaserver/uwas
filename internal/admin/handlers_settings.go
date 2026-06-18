@@ -14,6 +14,9 @@ import (
 // ============ Notifications ============
 
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var ch notify.Channel
 	if err := json.NewDecoder(r.Body).Decode(&ch); err != nil {

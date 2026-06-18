@@ -45,7 +45,7 @@ import {
   Box,
   Cloud,
 } from 'lucide-react';
-import { clearToken } from '@/lib/api';
+import { logout } from '@/lib/api';
 import { useTheme } from '@/hooks/useTheme';
 
 interface NavItem {
@@ -220,8 +220,8 @@ export default function Sidebar() {
   }, []);
 
   const handleLogout = () => {
-    clearToken();
-    navigate('/login');
+    // Revoke the session server-side, then redirect regardless of outcome.
+    logout().finally(() => navigate('/login'));
   };
 
   const closeMobile = () => setMobileOpen(false);
