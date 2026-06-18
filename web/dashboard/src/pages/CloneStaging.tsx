@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Copy as CopyIcon, Check, ArrowRight, Loader2 } from 'lucide-react';
 import { fetchDomains, cloneSite, type DomainData, type CloneResult } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 
 export default function CloneStaging() {
   const [domains, setDomains] = useState<DomainData[]>([]);
@@ -53,8 +54,8 @@ export default function CloneStaging() {
   };
 
   const [copied, setCopied] = useState('');
-  const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+  const copy = async (text: string, label: string) => {
+    await copyText(text);
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };

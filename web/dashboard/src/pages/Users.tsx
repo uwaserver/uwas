@@ -6,6 +6,7 @@ import {
   type SiteUser, type SiteUserCreated, type DomainData, type AppInstance,
 } from '@/lib/api';
 import { useConfirm } from '@/components/useConfirm';
+import { copyText } from '@/lib/clipboard';
 
 const appSFTPTarget = (name: string) => `app-${name.toLowerCase().replaceAll('_', '--u--')}.uwas.local`;
 
@@ -193,33 +194,11 @@ export default function Users() {
 
   const copyToClipboard = async (text: string, label: string) => {
     setCopyError('');
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error('Clipboard API unavailable');
-      }
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       setCopied(label);
       setTimeout(() => setCopied(''), 2000);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      let ok = false;
-      try {
-        ok = document.execCommand('copy');
-      } finally {
-        document.body.removeChild(ta);
-      }
-      if (ok) {
-        setCopied(label);
-        setTimeout(() => setCopied(''), 2000);
-      } else {
-        setCopyError('Copy failed. Select the visible value and copy it manually.');
-      }
+    } else {
+      setCopyError('Copy failed. Select the visible value and copy it manually.');
     }
   };
 

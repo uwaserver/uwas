@@ -10,6 +10,7 @@ import {
   type DomainData, type WPInstallStatus, type WPSite, type WPPlugin,
   type WPUserInfo, type WPSecurityStatus,
 } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 
 type Tab = 'sites' | 'install';
 
@@ -113,8 +114,8 @@ export default function WordPress() {
     finally { setActionLoading(''); }
   };
 
-  const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+  const copy = async (text: string, label: string) => {
+    await copyText(text);
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };

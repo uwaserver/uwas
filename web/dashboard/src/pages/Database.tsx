@@ -55,6 +55,7 @@ import {
   fetchDBColumns,
   runDBQuery,
 } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import Card from '@/components/Card';
 
 /* -- Confirmation Modal -------------------------------------------------- */
@@ -129,7 +130,7 @@ function CredentialsPanel({
   onDismiss: () => void;
 }) {
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    void copyText(text);
   };
 
   return (

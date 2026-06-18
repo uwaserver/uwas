@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { UserPlus, Trash2, RefreshCw, Copy, Check, Key, Shield, Lock } from 'lucide-react';
 import { fetchAdminUsers, createAdminUser, deleteAdminUser, changeAdminPassword, regenAdminApiKey, type AdminUser } from '@/lib/api';
 import { useConfirm } from '@/components/useConfirm';
+import { copyText } from '@/lib/clipboard';
 
 export default function AdminUsers() {
   const { confirmAction } = useConfirm();
@@ -31,8 +32,8 @@ export default function AdminUsers() {
 
   useEffect(() => { load(); }, [load]);
 
-  const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+  const copy = async (text: string, label: string) => {
+    await copyText(text);
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };

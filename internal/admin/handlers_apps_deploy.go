@@ -276,6 +276,13 @@ func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool) error {
+	if def != nil {
+		// Deploy intent is explicit desired state:
+		// - normal deploy should ship and run, even if the app had previously
+		//   been stopped (Disabled=true)
+		// - skip_restart should leave it stopped across daemon restarts too
+		def.Disabled = skipStart
+	}
 	_ = s.appsMgr.Stop(name)
 	if err := s.appsMgr.Register(def); err != nil {
 		return fmt.Errorf("deploy succeeded but app refresh failed: %w", err)
