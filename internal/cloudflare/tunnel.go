@@ -13,10 +13,10 @@ import (
 // Runner manages the lifecycle of `cloudflared tunnel run --token <T>` processes.
 // One Runner is shared by the admin server.
 type Runner struct {
-	mu       sync.Mutex
-	procs    map[string]*runningProc // tunnelID → process
-	logger   *logger.Logger
-	binary   string // "" → resolved at run time via PATH
+	mu     sync.Mutex
+	procs  map[string]*runningProc // tunnelID → process
+	logger *logger.Logger
+	binary string // "" → resolved at run time via PATH
 }
 
 type runningProc struct {
@@ -130,6 +130,11 @@ func (r *Runner) spawn(p *runningProc, token string) error {
 	r.mu.Lock()
 	p.cmd = cmd
 	p.startedAt = time.Now()
+	// Snapshot the stop channel under the lock. Stop() closes AND replaces
+	// p.stopCh, so the monitor must watch the exact channel that was live when
+	// this process started — reading p.stopCh live would race with Stop() and
+	// could miss the close (resurrecting a tunnel the operator just stopped).
+	stopCh := p.stopCh
 	r.mu.Unlock()
 
 	if r.logger != nil {
@@ -141,23 +146,23 @@ func (r *Runner) spawn(p *runningProc, token string) error {
 	go drainOutput(stderr, p.logTail)
 
 	// Monitor process — auto-restart on unclean exit unless Stop() was called.
-	go r.monitor(p, token)
+	go r.monitor(p, token, cmd, stopCh)
 	return nil
 }
 
-func (r *Runner) monitor(p *runningProc, token string) {
+func (r *Runner) monitor(p *runningProc, token string, cmd *exec.Cmd, stopCh chan struct{}) {
 	defer func() {
 		if rec := recover(); rec != nil && r.logger != nil {
 			r.logger.Error("cloudflared monitor panic", "tunnel_id", p.tunnelID, "panic", rec)
 		}
 	}()
-	if p.cmd == nil {
+	if cmd == nil {
 		return
 	}
-	waitErr := p.cmd.Wait()
+	waitErr := cmd.Wait()
 
 	select {
-	case <-p.stopCh:
+	case <-stopCh:
 		// Graceful stop requested.
 		r.mu.Lock()
 		p.cmd = nil
@@ -176,7 +181,7 @@ func (r *Runner) monitor(p *runningProc, token string) {
 	// Backoff before restart, allowing Stop() to break out.
 	backoff := time.NewTimer(2 * time.Second)
 	select {
-	case <-p.stopCh:
+	case <-stopCh:
 		backoff.Stop()
 		return
 	case <-backoff.C:
