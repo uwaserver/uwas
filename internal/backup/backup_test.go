@@ -1563,7 +1563,7 @@ func TestScheduleBackupGoroutineFires(t *testing.T) {
 	m.ScheduleBackup(50 * time.Millisecond)
 	// Wait for at least one tick.
 	time.Sleep(200 * time.Millisecond)
-	m.Stop()
+	stopAndSettle(m)
 
 	mp.mu.Lock()
 	count := len(mp.files)

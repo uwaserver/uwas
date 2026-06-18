@@ -561,13 +561,25 @@ func TestScheduleBackupCallsOnBackup(t *testing.T) {
 
 	m.ScheduleBackup(50 * time.Millisecond)
 	time.Sleep(200 * time.Millisecond)
-	m.Stop()
+	stopAndSettle(m)
 
 	mu.Lock()
 	defer mu.Unlock()
 	if !callbackCalled {
 		t.Error("onBackup callback was not called")
 	}
+}
+
+// stopAndSettle stops the scheduler and waits for any in-flight scheduled
+// CreateBackup goroutine to finish. Stop() only cancels the context; an
+// already-running tick may still be inside CreateBackup (which reads the
+// dumpAllDatabasesFunc / dockerDumpFn package globals). Without this drain a
+// later test that swaps those globals races with the leaked goroutine under
+// -race. A short settle is sufficient because the test providers complete
+// CreateBackup near-instantly.
+func stopAndSettle(m *BackupManager) {
+	m.Stop()
+	time.Sleep(150 * time.Millisecond)
 }
 
 func TestScheduleBackupErrorCallsOnBackup(t *testing.T) {
@@ -596,7 +608,7 @@ func TestScheduleBackupErrorCallsOnBackup(t *testing.T) {
 
 	m.ScheduleBackup(50 * time.Millisecond)
 	time.Sleep(200 * time.Millisecond)
-	m.Stop()
+	stopAndSettle(m)
 
 	mu.Lock()
 	defer mu.Unlock()

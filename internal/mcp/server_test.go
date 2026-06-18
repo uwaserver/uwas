@@ -303,6 +303,22 @@ func TestCallToolDomainGetInvalidInput(t *testing.T) {
 	}
 }
 
+// TestCallToolDomainGetMalformedJSON exercises the json.Unmarshal error path
+// in the domain_get handler (server.go:129) by passing syntactically invalid
+// JSON. The earlier "invalid input" test passes valid-but-unexpected JSON,
+// which unmarshals successfully and instead hits the "domain not found" path.
+func TestCallToolDomainGetMalformedJSON(t *testing.T) {
+	s := testMCPServer()
+
+	_, err := s.CallTool("domain_get", json.RawMessage(`{not valid json`))
+	if err == nil {
+		t.Fatal("expected error for malformed JSON input")
+	}
+	if !strings.Contains(err.Error(), "invalid input") {
+		t.Errorf("expected 'invalid input' error, got: %v", err)
+	}
+}
+
 // --- domain_types tool ---
 
 func TestCallToolDomainTypes(t *testing.T) {
@@ -403,8 +419,8 @@ func TestCallToolSecurityOverview(t *testing.T) {
 				Host: "secure.com",
 				Type: "static",
 				Security: config.SecurityConfig{
-					WAF: config.WAFConfig{Enabled: true},
-					RateLimit: config.RateLimitConfig{Requests: 100},
+					WAF:         config.WAFConfig{Enabled: true},
+					RateLimit:   config.RateLimitConfig{Requests: 100},
 					IPWhitelist: []string{"192.168.1.1"},
 					IPBlacklist: []string{"10.0.0.1"},
 				},
