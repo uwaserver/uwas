@@ -10,10 +10,21 @@ import (
 	"github.com/uwaserver/uwas/internal/siteuser"
 )
 
+// Test seams for firewall ops that shell out to ufw (TestMain points these at
+// safe no-ops so `go test` never runs real ufw commands).
+var (
+	firewallGetStatus  = firewall.GetStatus
+	firewallAllowPort  = firewall.AllowPort
+	firewallDenyPort   = firewall.DenyPort
+	firewallDeleteRule = firewall.DeleteRule
+	firewallEnable     = firewall.Enable
+	firewallDisable    = firewall.Disable
+)
+
 // ============ Firewall ============
 
 func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, firewall.GetStatus())
+	jsonResponse(w, firewallGetStatus())
 }
 
 func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +44,7 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "port is required", http.StatusBadRequest)
 		return
 	}
-	if err := firewall.AllowPort(req.Port, req.Proto); err != nil {
+	if err := firewallAllowPort(req.Port, req.Proto); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -58,7 +69,7 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "port is required", http.StatusBadRequest)
 		return
 	}
-	if err := firewall.DenyPort(req.Port, req.Proto); err != nil {
+	if err := firewallDenyPort(req.Port, req.Proto); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -77,7 +88,7 @@ func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid rule number", http.StatusBadRequest)
 		return
 	}
-	if err := firewall.DeleteRule(num); err != nil {
+	if err := firewallDeleteRule(num); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +99,7 @@ func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	if err := firewall.Enable(); err != nil {
+	if err := firewallEnable(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -99,7 +110,7 @@ func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	if err := firewall.Disable(); err != nil {
+	if err := firewallDisable(); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

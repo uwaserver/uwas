@@ -11,6 +11,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Neutralize paths that shell out to privileged system commands so tests
+	// never invoke real apt / systemctl (which prompt for sudo as non-root).
+	phpRunInstall = func(string) (string, error) { return "", nil }
+	conflictsExecCommand = func(name string, args ...string) *exec.Cmd { return exec.Command("true") }
+	installExecCommand = func(name string, args ...string) *exec.Cmd { return exec.Command("true") }
+
 	cleanup := func() {}
 	if runtime.GOOS == "windows" {
 		var err error

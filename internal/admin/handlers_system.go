@@ -23,6 +23,10 @@ var (
 	systemExecCommandMu sync.RWMutex
 	systemExecCommand   = exec.Command
 	doctorRun           = doctor.Run
+	// Test seams for service control (systemctl via the services package).
+	servicesStartService   = services.StartService
+	servicesStopService    = services.StopService
+	servicesRestartService = services.RestartService
 )
 
 func newSystemExecCommand(name string, args ...string) *exec.Cmd {
@@ -112,7 +116,7 @@ func (s *Server) handleServiceStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if err := services.StartService(name); err != nil {
+	if err := servicesStartService(name); err != nil {
 		jsonErrorCause(w, "service start failed", err, http.StatusInternalServerError)
 		return
 	}
@@ -125,7 +129,7 @@ func (s *Server) handleServiceStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if err := services.StopService(name); err != nil {
+	if err := servicesStopService(name); err != nil {
 		jsonErrorCause(w, "service stop failed", err, http.StatusInternalServerError)
 		return
 	}
@@ -138,7 +142,7 @@ func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if err := services.RestartService(name); err != nil {
+	if err := servicesRestartService(name); err != nil {
 		jsonErrorCause(w, "service restart failed", err, http.StatusInternalServerError)
 		return
 	}

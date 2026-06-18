@@ -1052,7 +1052,7 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 	// Task Name carries the bare version (e.g. "8.5") so dashboards rendering
 	// "Installing PHP {version}" don't end up with "PHP PHP 8.5".
 	task := s.taskMgr.Submit("php", req.Version, "install", func(appendOutput func(string)) error {
-		output, err := phpmanager.RunInstall(req.Version)
+		output, err := phpRunInstall(req.Version)
 		appendOutput(output)
 		if err != nil {
 			s.logger.Error("PHP install failed", "version", req.Version, "error", err)
@@ -5601,6 +5601,10 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // requireAdmin checks if the authenticated user has the admin role.
+// phpRunInstall is a test seam for the PHP install path, which shells out to
+// apt / add-apt-repository. TestMain points it at a no-op.
+var phpRunInstall = phpmanager.RunInstall
+
 // validPHPVersion reports whether s is a bare PHP version of the form N.N
 // (e.g. "8.3"). Used to sanitize the version before it reaches package names
 // and install commands.

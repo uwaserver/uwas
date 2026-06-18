@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -231,6 +232,10 @@ func TestHandleDBExploreQuery_InvalidDBName(t *testing.T) {
 // Additional database handler tests for coverage
 
 func TestHandleDBDrop_NoDBManager(t *testing.T) {
+	orig := databaseDropDatabase
+	defer func() { databaseDropDatabase = orig }()
+	databaseDropDatabase = func(name, user, host string) error { return errors.New("db unavailable") }
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/database/testdb", nil))
@@ -259,6 +264,10 @@ func TestHandleDBUninstall_NoDBManager(t *testing.T) {
 }
 
 func TestHandleDBRepair_NoDBManager(t *testing.T) {
+	orig := databaseRepairService
+	defer func() { databaseRepairService = orig }()
+	databaseRepairService = func() (string, error) { return "", errors.New("db unavailable") }
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/repair", nil))
@@ -277,6 +286,10 @@ func TestHandleDBForceUninstall_NoDBManager(t *testing.T) {
 }
 
 func TestHandleDBStop_NoDBManager(t *testing.T) {
+	orig := databaseStopService
+	defer func() { databaseStopService = orig }()
+	databaseStopService = func() error { return errors.New("db unavailable") }
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/stop", nil))
@@ -286,6 +299,10 @@ func TestHandleDBStop_NoDBManager(t *testing.T) {
 }
 
 func TestHandleDBRestart_NoDBManager(t *testing.T) {
+	orig := databaseRestartService
+	defer func() { databaseRestartService = orig }()
+	databaseRestartService = func() error { return errors.New("db unavailable") }
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/restart", nil))

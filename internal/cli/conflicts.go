@@ -272,7 +272,7 @@ func OfferPHPInstall() {
 	}
 
 	fmt.Println("  Running install (this may take a minute)...")
-	output, err := phpmanager.RunInstall(version)
+	output, err := phpRunInstall(version)
 	if output != "" {
 		// Show last few lines only
 		lines := strings.Split(strings.TrimSpace(output), "\n")
