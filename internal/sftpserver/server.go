@@ -6,7 +6,9 @@ package sftpserver
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -780,13 +782,21 @@ func (s *Server) loadOrGenerateHostKey() (ssh.Signer, error) {
 		return nil, err
 	}
 
-	// Save for future use
-	// Use ssh.MarshalAuthorizedKey for public, but we need private key PEM.
-	// For simplicity, use crypto/x509 + pem encoding.
-	os.MkdirAll(filepath.Dir(keyPath), 0700)
-	// Note: proper PEM encoding would use x509.MarshalPKCS8PrivateKey + pem.Encode.
-	// For now we just keep the signer in memory; key regenerates on restart.
-	s.logger.Info("generated SFTP host key (ephemeral)")
+	// Persist the key so the host identity is stable across restarts —
+	// otherwise every restart presents a new host key, producing SSH
+	// host-key-mismatch errors and training users to ignore MITM warnings.
+	if der, mErr := x509.MarshalPKCS8PrivateKey(priv); mErr == nil {
+		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+		if mkErr := os.MkdirAll(filepath.Dir(keyPath), 0700); mkErr != nil {
+			s.logger.Warn("could not create SFTP host key dir; key is ephemeral", "error", mkErr)
+		} else if wErr := os.WriteFile(keyPath, pemBytes, 0600); wErr != nil {
+			s.logger.Warn("could not persist SFTP host key; key is ephemeral", "error", wErr)
+		} else {
+			s.logger.Info("generated and persisted SFTP host key", "path", keyPath)
+			return signer, nil
+		}
+	}
+	s.logger.Warn("SFTP host key is ephemeral (regenerates on restart)")
 
 	return signer, nil
 }
