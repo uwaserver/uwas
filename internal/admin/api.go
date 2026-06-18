@@ -1031,6 +1031,13 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "8.3"
 	}
+	// Constrain the version to N.N before it flows into package names / install
+	// commands. exec runs without a shell so this isn't RCE, but it blocks apt
+	// argument injection and bogus values. (Defense in depth; admin-gated.)
+	if !validPHPVersion(req.Version) {
+		jsonError(w, "invalid PHP version (expected N.N, e.g. 8.3)", http.StatusBadRequest)
+		return
+	}
 
 	// Check if any install task is already running
 	if active := s.taskMgr.Active(); active != nil {
@@ -5594,6 +5601,29 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // requireAdmin checks if the authenticated user has the admin role.
+// validPHPVersion reports whether s is a bare PHP version of the form N.N
+// (e.g. "8.3"). Used to sanitize the version before it reaches package names
+// and install commands.
+func validPHPVersion(s string) bool {
+	dot := false
+	before, after := 0, 0
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+			if dot {
+				after++
+			} else {
+				before++
+			}
+		case c == '.' && !dot:
+			dot = true
+		default:
+			return false
+		}
+	}
+	return dot && before > 0 && after > 0
+}
+
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	user, ok := auth.UserFromContext(r.Context())
 	if !ok || user.Role != auth.RoleAdmin {
