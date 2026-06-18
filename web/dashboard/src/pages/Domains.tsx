@@ -91,6 +91,17 @@ function stripLeadingWWW(value: string) {
   return value.replace(/^www\./i, '');
 }
 
+function appPortOptions(app: AppInstance): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const port of [app.port, ...(app.ports ?? [])]) {
+    if (!port || seen.has(port)) continue;
+    seen.add(port);
+    out.push(port);
+  }
+  return out;
+}
+
 interface TemplateConfig {
   label: string;
   description: string;
@@ -1085,37 +1096,39 @@ export default function Domains() {
                       </span>
                     </div>
 
-                    {/* Pick from registered apps. We write `apps://<name>`
-                        (NOT `http://127.0.0.1:<port>`) so the server
-                        resolves the live port at pool-build time. If the
-                        app restarts and lands on a different port, the
-                        domain's upstream auto-follows — a literal IP:port
-                        would silently 502 after every port reshuffle. */}
+                    {/* Pick from registered apps. We write `apps://<name>` or
+                        `apps://<name>:<port>` so the server resolves the
+                        live app target without hardcoding loopback URLs. */}
                     {apps.length > 0 && (
                       <div>
                         <label className="text-xs font-medium text-muted-foreground mb-2 block">Pick from registered apps</label>
                         <div className="grid grid-cols-1 gap-1.5 max-h-32 overflow-auto rounded border border-border/40 p-1.5 bg-background/40">
                           {apps.map(a => {
-                            const addr = `apps://${a.name}`;
+                            const ports = appPortOptions(a);
                             const current = form.proxyUpstreams.split(',').map(s => s.trim());
-                            const picked = current.includes(addr);
-                            return (
-                              <button key={a.name} type="button" disabled={picked && current.length === 1}
-                                onClick={() => patchField('proxyUpstreams', addr)}
-                                className={`flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-xs transition ${
-                                  picked ? 'bg-green-500/10 border border-green-500/30' : 'hover:bg-foreground/5 border border-transparent'
-                                }`}>
-                                <span className="flex items-center gap-2">
-                                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${a.running ? 'bg-green-500' : 'bg-slate-500'}`} />
-                                  <span className="font-medium text-foreground">{a.name}</span>
-                                  <span className="text-[10px] text-muted-foreground">{a.runtime || 'app'}</span>
-                                </span>
-                                <span className="font-mono text-[10px] text-muted-foreground">apps://{a.name}</span>
-                              </button>
-                            );
+                            return ports.map(port => {
+                              const defaultAddr = `apps://${a.name}`;
+                              const addr = port === a.port ? defaultAddr : `apps://${a.name}:${port}`;
+                              const picked = current.includes(addr) || (port === a.port && current.includes(`apps://${a.name}:${port}`));
+                              return (
+                                <button key={`${a.name}-${port}`} type="button" disabled={picked && current.length === 1}
+                                  onClick={() => patchField('proxyUpstreams', addr)}
+                                  className={`flex items-center justify-between gap-2 rounded px-2.5 py-1.5 text-xs transition ${
+                                    picked ? 'bg-green-500/10 border border-green-500/30' : 'hover:bg-foreground/5 border border-transparent'
+                                  }`}>
+                                  <span className="flex items-center gap-2">
+                                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${a.running ? 'bg-green-500' : 'bg-slate-500'}`} />
+                                    <span className="font-medium text-foreground">{a.name}</span>
+                                    <span className="text-[10px] text-muted-foreground">{a.runtime || 'app'}</span>
+                                    <span className="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">:{port}</span>
+                                  </span>
+                                  <span className="font-mono text-[10px] text-muted-foreground">{addr}</span>
+                                </button>
+                              );
+                            });
                           })}
                         </div>
-                        <p className="mt-1 text-[9px] text-muted-foreground">Deploy and manage apps on the Apps page; they appear here once running. The server resolves apps:// to the live port at request time, so restarts don't break the link.</p>
+                        <p className="mt-1 text-[9px] text-muted-foreground">Deploy and manage apps on the Apps page; each declared app port can be routed by a different domain.</p>
                       </div>
                     )}
 

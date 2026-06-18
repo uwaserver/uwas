@@ -105,6 +105,7 @@ type Instance struct {
 	Runtime   Runtime           `json:"runtime"`
 	Command   string            `json:"command,omitempty"`
 	Port      int               `json:"port"`
+	Ports     []int             `json:"ports,omitempty"`
 	WorkDir   string            `json:"work_dir,omitempty"`
 	PID       int               `json:"pid,omitempty"`
 	Running   bool              `json:"running"`
@@ -561,6 +562,7 @@ func (m *Manager) instanceFromProcess(p *process) Instance {
 		Runtime:         p.runtimeKind,
 		Command:         p.command,
 		Port:            p.port,
+		Ports:           exposedPortsForProcess(p),
 		WorkDir:         p.workDir,
 		Env:             p.env,
 		CrashloopGaveUp: p.crashloopGave,
@@ -616,6 +618,13 @@ func (m *Manager) isSameProcessRunning(name string, expected *process) bool {
 // is unregistered OR registered-but-stopped — the proxy uses the
 // empty return as its "tell the user the app is down" signal.
 func (m *Manager) ListenAddr(name string) string {
+	return m.ListenAddrForPort(name, 0)
+}
+
+// ListenAddrForPort returns the loopback address for either the app's
+// primary port (requestedPort <= 0) or one of its declared additional ports.
+// Empty means the app is not currently routable.
+func (m *Manager) ListenAddrForPort(name string, requestedPort int) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.procs[name]
@@ -625,7 +634,49 @@ func (m *Manager) ListenAddr(name string) string {
 	if !m.isRunning(p) {
 		return ""
 	}
-	return fmt.Sprintf("127.0.0.1:%d", p.port)
+	port := p.port
+	if requestedPort > 0 {
+		if !processExposesPort(p, requestedPort) {
+			return ""
+		}
+		port = requestedPort
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+func exposedPortsForProcess(p *process) []int {
+	if p == nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	extraCount := 0
+	if p.app != nil {
+		extraCount = len(p.app.Ports)
+	}
+	out := make([]int, 0, 1+extraCount)
+	if p.port > 0 {
+		out = append(out, p.port)
+		seen[p.port] = true
+	}
+	if p.app != nil {
+		for _, port := range p.app.Ports {
+			if port <= 0 || seen[port] {
+				continue
+			}
+			out = append(out, port)
+			seen[port] = true
+		}
+	}
+	return out
+}
+
+func processExposesPort(p *process, port int) bool {
+	for _, exposed := range exposedPortsForProcess(p) {
+		if exposed == port {
+			return true
+		}
+	}
+	return false
 }
 
 // Stats describes resource usage for one supervised app. Fields are

@@ -59,6 +59,12 @@ type App struct {
 	// written back to the file.
 	Port int `yaml:"port,omitempty" json:"port,omitempty"`
 
+	// Ports are additional local ports this app may expose. Port remains
+	// the primary managed port for backward compatibility and is always
+	// treated as exposed even when Ports is empty. Operators can route
+	// domains to an additional port with apps://<name>:<port>.
+	Ports []int `yaml:"ports,omitempty" json:"ports,omitempty"`
+
 	// Env are extra environment variables passed to the process.
 	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 
@@ -202,7 +208,34 @@ func (a *App) Validate() error {
 	if a.Port < 0 || a.Port > 65535 {
 		return fmt.Errorf("app %q: port %d out of range", a.Name, a.Port)
 	}
+	for _, port := range a.Ports {
+		if port <= 0 || port > 65535 {
+			return fmt.Errorf("app %q: exposed port %d out of range", a.Name, port)
+		}
+	}
 	return nil
+}
+
+// ExposedPorts returns the de-duplicated list of ports this app may be
+// reverse-proxied to. The primary Port is first for stable UI rendering.
+func (a *App) ExposedPorts() []int {
+	if a == nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	out := make([]int, 0, 1+len(a.Ports))
+	if a.Port > 0 {
+		out = append(out, a.Port)
+		seen[a.Port] = true
+	}
+	for _, port := range a.Ports {
+		if port <= 0 || seen[port] {
+			continue
+		}
+		out = append(out, port)
+		seen[port] = true
+	}
+	return out
 }
 
 // isValidAppName enforces the filename-safe / shell-safe / URL-safe

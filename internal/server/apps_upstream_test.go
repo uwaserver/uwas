@@ -61,3 +61,18 @@ func TestResolveAppsUpstreamStripsPath(t *testing.T) {
 		t.Errorf("apps:// with empty name should yield placeholder, got %q", got)
 	}
 }
+
+func TestSplitAppsTargetSpecificPort(t *testing.T) {
+	name, port := splitAppsTarget("multi:5173")
+	if name != "multi" || port != 5173 {
+		t.Fatalf("split target = %q, %d; want multi, 5173", name, port)
+	}
+	name, port = splitAppsTarget("multi")
+	if name != "multi" || port != 0 {
+		t.Fatalf("split default target = %q, %d; want multi, 0", name, port)
+	}
+	name, port = splitAppsTarget("multi:notaport")
+	if name != "multi:notaport" || port != 0 {
+		t.Fatalf("split non-port suffix = %q, %d; want original name and zero port", name, port)
+	}
+}

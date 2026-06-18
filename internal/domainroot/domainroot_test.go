@@ -31,6 +31,28 @@ func TestForDomainAppProxyUsesAppWorkDir(t *testing.T) {
 	}
 }
 
+func TestForDomainAppProxyWithPortUsesAppWorkDir(t *testing.T) {
+	appRoot := t.TempDir()
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	if err := store.Save(&apps.App{Name: "demo", Runtime: apps.RuntimeNode, WorkDir: appRoot, Port: 3000, Ports: []int{5173}}); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := ForDomain(config.Domain{
+		Host: "www.example.com",
+		Type: "proxy",
+		Proxy: config.ProxyConfig{Upstreams: []config.Upstream{
+			{Address: "apps://demo:5173"},
+		}},
+	}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != appRoot {
+		t.Fatalf("root = %q, want %q", root, appRoot)
+	}
+}
+
 func TestForDomainLegacyLocalAppProxyUsesAppWorkDir(t *testing.T) {
 	appRoot := t.TempDir()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
