@@ -234,7 +234,7 @@ func TestSettingsGet(t *testing.T) {
 	s.config.Global.WebRoot = "/var/www"
 
 	rec := httptest.NewRecorder()
-	s.handleSettingsGet(rec, httptest.NewRequest("GET", "/api/v1/settings", nil))
+	s.handleSettingsGet(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/settings", nil)))
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -1123,7 +1123,7 @@ func TestSecurityBlockedWithTracker(t *testing.T) {
 func TestMCPToolsNoServer(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleMCPTools(rec, httptest.NewRequest("GET", "/api/v1/mcp/tools", nil))
+	s.handleMCPTools(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/mcp/tools", nil)))
 	if rec.Code != 503 {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
@@ -1135,7 +1135,7 @@ func TestMCPToolsWithServer(t *testing.T) {
 	m := mcp.New(s.config, log, s.metrics)
 	s.SetMCP(m)
 	rec := httptest.NewRecorder()
-	s.handleMCPTools(rec, httptest.NewRequest("GET", "/api/v1/mcp/tools", nil))
+	s.handleMCPTools(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/mcp/tools", nil)))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1144,7 +1144,7 @@ func TestMCPToolsWithServer(t *testing.T) {
 func TestMCPCallNoServer(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleMCPCall(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", strings.NewReader(`{"name":"test","input":{}}`)))
+	s.handleMCPCall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/mcp/call", strings.NewReader(`{"name":"test","input":{}}`))))
 	if rec.Code != 503 {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
@@ -1156,7 +1156,7 @@ func TestMCPCallBadJSON(t *testing.T) {
 	m := mcp.New(s.config, log, s.metrics)
 	s.SetMCP(m)
 	rec := httptest.NewRecorder()
-	s.handleMCPCall(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", strings.NewReader("not json")))
+	s.handleMCPCall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/mcp/call", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1168,7 +1168,7 @@ func TestMCPCallUnknownTool(t *testing.T) {
 	m := mcp.New(s.config, log, s.metrics)
 	s.SetMCP(m)
 	rec := httptest.NewRecorder()
-	s.handleMCPCall(rec, httptest.NewRequest("POST", "/api/v1/mcp/call", strings.NewReader(`{"name":"nonexistent","input":{}}`)))
+	s.handleMCPCall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/mcp/call", strings.NewReader(`{"name":"nonexistent","input":{}}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -2078,7 +2078,7 @@ func TestCloneSourceNotFound(t *testing.T) {
 func TestNotifyTestBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleNotifyTest(rec, httptest.NewRequest("POST", "/api/v1/notify/test", strings.NewReader("not json")))
+	s.handleNotifyTest(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/notify/test", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -3194,7 +3194,7 @@ func TestPHPInstallInfoSpecificVersion(t *testing.T) {
 func TestPHPInstallBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handlePHPInstall(rec, httptest.NewRequest("POST", "/api/v1/php/install", strings.NewReader("not json")))
+	s.handlePHPInstall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/php/install", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -3224,7 +3224,7 @@ func TestPHPInstallAlreadyRunning(t *testing.T) {
 	// Give the task time to start
 	time.Sleep(50 * time.Millisecond)
 	rec := httptest.NewRecorder()
-	s.handlePHPInstall(rec, httptest.NewRequest("POST", "/api/v1/php/install", strings.NewReader(`{"version":"8.4"}`)))
+	s.handlePHPInstall(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/php/install", strings.NewReader(`{"version":"8.4"}`))))
 	if rec.Code != 409 {
 		t.Errorf("status = %d, want 409", rec.Code)
 	}
@@ -3250,7 +3250,7 @@ func TestPHPConfigRawPutNoManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/php/8.4/config/raw", strings.NewReader(`{"content":"test"}`))
 	req.SetPathValue("version", "8.4")
-	s.handlePHPConfigRawPut(rec, req)
+	s.handlePHPConfigRawPut(rec, withAdminContext(req))
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
 	}
@@ -3262,7 +3262,7 @@ func TestPHPConfigRawPutBadJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/php/8.4/config/raw", strings.NewReader("not json"))
 	req.SetPathValue("version", "8.4")
-	s.handlePHPConfigRawPut(rec, req)
+	s.handlePHPConfigRawPut(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -3277,7 +3277,7 @@ func TestPHPEnableNoManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/php/8.4/enable", nil)
 	req.SetPathValue("version", "8.4")
-	s.handlePHPEnable(rec, req)
+	s.handlePHPEnable(rec, withAdminContext(req))
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
 	}
@@ -3288,7 +3288,7 @@ func TestPHPDisableNoManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/php/8.4/disable", nil)
 	req.SetPathValue("version", "8.4")
-	s.handlePHPDisable(rec, req)
+	s.handlePHPDisable(rec, withAdminContext(req))
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
 	}
@@ -3973,7 +3973,7 @@ func TestPHPEnableWithManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/php/8.4/enable", nil)
 	req.SetPathValue("version", "8.4")
-	s.handlePHPEnable(rec, req)
+	s.handlePHPEnable(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -3985,7 +3985,7 @@ func TestPHPDisableWithManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/php/8.4/disable", nil)
 	req.SetPathValue("version", "8.4")
-	s.handlePHPDisable(rec, req)
+	s.handlePHPDisable(rec, withAdminContext(req))
 	// May fail with "not found" or succeed depending on manager state
 	if rec.Code != 200 && rec.Code != 409 {
 		t.Errorf("status = %d, want 200 or 409", rec.Code)
@@ -4015,7 +4015,7 @@ func TestPHPConfigRawPutWithManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/php/9.9/config/raw", strings.NewReader(`{"content":"test config"}`))
 	req.SetPathValue("version", "9.9")
-	s.handlePHPConfigRawPut(rec, req)
+	s.handlePHPConfigRawPut(rec, withAdminContext(req))
 	// Will return 500 since version doesn't exist
 	if rec.Code != 500 {
 		t.Errorf("status = %d, want 500", rec.Code)

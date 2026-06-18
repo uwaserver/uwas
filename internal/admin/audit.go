@@ -11,9 +11,9 @@ import (
 // AuditEntry represents a single admin API audit log entry.
 type AuditEntry struct {
 	Time    time.Time `json:"time"`
-	Action  string    `json:"action"` // e.g., "config.reload", "domain.create"
-	Detail  string    `json:"detail"` // e.g., "domain: example.com"
-	IP      string    `json:"ip"`     // requester IP
+	Action  string    `json:"action"`         // e.g., "config.reload", "domain.create"
+	Detail  string    `json:"detail"`         // e.g., "domain: example.com"
+	IP      string    `json:"ip"`             // requester IP
 	User    string    `json:"user,omitempty"` // username if authenticated; empty for unauthenticated calls
 	Success bool      `json:"success"`
 }
@@ -103,6 +103,9 @@ func (s *Server) recordAuditR(r *http.Request, action, detail string, success bo
 
 // handleAudit returns the audit log entries in chronological order (oldest first).
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var result []AuditEntry
 	if s.auditBuf != nil {
 		result = s.auditBuf.Snapshot()
