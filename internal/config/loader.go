@@ -175,12 +175,21 @@ func loadDomainFile(path string) ([]Domain, error) {
 
 	expanded := expandEnvVars(string(data))
 
-	// Try Format 2 first: { domains: [...] }
-	var wrapper struct {
-		Domains []Domain `yaml:"domains"`
-	}
-	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err == nil && len(wrapper.Domains) > 0 {
-		return wrapper.Domains, nil
+	// Detect the format by probing for a top-level "domains:" key. This lets us
+	// surface a parse error in a Format-2 wrapper file instead of silently
+	// falling through to the single-domain path (which would parse to an empty
+	// Host and drop the file with no error).
+	var probe map[string]any
+	if err := yaml.Unmarshal([]byte(expanded), &probe); err == nil {
+		if _, isWrapper := probe["domains"]; isWrapper {
+			var wrapper struct {
+				Domains []Domain `yaml:"domains"`
+			}
+			if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
+				return nil, fmt.Errorf("parse domains list: %w", err)
+			}
+			return wrapper.Domains, nil
+		}
 	}
 
 	// Try Format 1: single domain object
