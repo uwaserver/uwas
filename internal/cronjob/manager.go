@@ -87,24 +87,20 @@ func Remove(schedule, command string) error {
 	existing, _ := execCommandFn("crontab", "-l").Output()
 	lines := strings.Split(string(existing), "\n")
 	var filtered []string
-	skipNext := false
 
-	for _, line := range lines {
-		if skipNext {
-			skipNext = false
-			continue
+	for i := 0; i < len(lines); i++ {
+		// A UWAS job is a marker comment line followed by its job line. Only
+		// remove the pair whose job line actually matches schedule+command —
+		// previously the marker caused the next line to be dropped
+		// unconditionally, deleting EVERY UWAS-managed cron job.
+		if strings.Contains(strings.TrimSpace(lines[i]), uwasMarker) && i+1 < len(lines) {
+			j := parseCronLine(lines[i+1])
+			if j.Schedule == schedule && j.Command == command {
+				i++ // skip both the comment and the matching job line
+				continue
+			}
 		}
-		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, uwasMarker) {
-			// Check if next line matches
-			skipNext = true
-			continue
-		}
-		// Also skip the actual job line if it matches
-		if strings.Contains(trimmed, command) && strings.HasPrefix(trimmed, schedule) {
-			continue
-		}
-		filtered = append(filtered, line)
+		filtered = append(filtered, lines[i])
 	}
 
 	return writeCrontab(strings.Join(filtered, "\n"))
