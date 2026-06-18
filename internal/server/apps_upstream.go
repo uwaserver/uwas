@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -30,17 +31,18 @@ func (s *Server) resolveAppsUpstream(addr string) string {
 	if !strings.HasPrefix(addr, prefix) {
 		return addr
 	}
-	name := strings.TrimPrefix(addr, prefix)
+	target := strings.TrimPrefix(addr, prefix)
 	// Strip any trailing path/query — `apps://name/foo?bar=1` is a
 	// future hook for path-specific routing, but today we only honor
 	// the name part and the proxy preserves the incoming request URI.
-	if i := strings.IndexAny(name, "/?#"); i >= 0 {
-		name = name[:i]
+	if i := strings.IndexAny(target, "/?#"); i >= 0 {
+		target = target[:i]
 	}
+	name, requestedPort := splitAppsTarget(target)
 	if name == "" || s.appsMgr == nil {
 		return "http://127.0.0.1:0"
 	}
-	listen := s.appsMgr.ListenAddr(name)
+	listen := s.appsMgr.ListenAddrForPort(name, requestedPort)
 	if listen == "" {
 		if s.logger != nil {
 			s.logger.Warn("proxy upstream apps:// unresolved (app stopped or unregistered)",
@@ -49,4 +51,21 @@ func (s *Server) resolveAppsUpstream(addr string) string {
 		return "http://127.0.0.1:0"
 	}
 	return "http://" + listen
+}
+
+func splitAppsTarget(target string) (string, int) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", 0
+	}
+	name := target
+	port := 0
+	if i := strings.LastIndex(target, ":"); i > 0 {
+		candidate := strings.TrimSpace(target[i+1:])
+		if parsed, err := strconv.Atoi(candidate); err == nil && parsed > 0 && parsed <= 65535 {
+			name = target[:i]
+			port = parsed
+		}
+	}
+	return strings.TrimSpace(name), port
 }

@@ -312,6 +312,7 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 		patch.Command != "" ||
 		patch.WorkDir != "" ||
 		patch.Port > 0 ||
+		patch.Ports != nil ||
 		patch.Env != nil ||
 		patch.Docker.Image != "" ||
 		patch.Docker.ContainerPort > 0 ||
@@ -338,6 +339,9 @@ func (s *Server) handleAppUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if patch.Port > 0 {
 		existing.Port = patch.Port
+	}
+	if patch.Ports != nil {
+		existing.Ports = patch.Ports
 	}
 	if patch.Env != nil {
 		// env is a wholesale-replace within update — operator sends

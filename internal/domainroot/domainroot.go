@@ -28,6 +28,9 @@ func AppName(d config.Domain) (string, bool) {
 		if idx := strings.IndexAny(name, "/?#"); idx >= 0 {
 			name = name[:idx]
 		}
+		if host, _, ok := strings.Cut(name, ":"); ok {
+			name = host
+		}
 		if name == "" {
 			return "", false
 		}

@@ -63,6 +63,7 @@ interface CreateForm {
   command: string;
   work_dir: string;
   port: string;
+  ports: string;
   envText: string;
   git_url: string;
   git_branch: string;
@@ -85,6 +86,7 @@ const blankForm: CreateForm = {
   command: '',
   work_dir: '',
   port: '',
+  ports: '',
   envText: '',
   git_url: '',
   git_branch: '',
@@ -117,6 +119,27 @@ function envTextToMap(t: string): Record<string, string> {
 function envMapToText(m: Record<string, string> | undefined): string {
   if (!m) return '';
   return Object.entries(m).map(([k, v]) => `${k}=${v}`).join('\n');
+}
+
+function parsePorts(text: string): number[] | null {
+  const raw = text.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const item of raw) {
+    const port = parseInt(item, 10);
+    if (!/^\d+$/.test(item) || Number.isNaN(port) || port <= 0 || port > 65535) {
+      return null;
+    }
+    if (!seen.has(port)) {
+      out.push(port);
+      seen.add(port);
+    }
+  }
+  return out;
+}
+
+function formatPorts(ports: number[] | undefined): string {
+  return (ports ?? []).join(', ');
 }
 
 // formatBytes renders an int byte count as a short human-readable
@@ -246,6 +269,11 @@ export default function Apps() {
       setStatus({ ok: false, message: 'Port must be 0–65535 (0 = auto-assign)' });
       return null;
     }
+    const extraPorts = parsePorts(form.ports);
+    if (extraPorts === null) {
+      setStatus({ ok: false, message: 'Additional ports must be comma-separated numbers from 1–65535' });
+      return null;
+    }
 
     const body: Partial<App> = {
       name: form.name.trim(),
@@ -253,6 +281,7 @@ export default function Apps() {
       runtime: form.runtime,
       work_dir: form.work_dir.trim() || undefined,
       port: portNum || undefined,
+      ports: extraPorts.length > 0 ? extraPorts : editing?.mode === 'edit' ? [] : undefined,
       env,
     };
     if (showGitSettings) {
@@ -321,6 +350,7 @@ export default function Apps() {
         command: app.command ?? '',
         work_dir: app.work_dir ?? '',
         port: app.port ? String(app.port) : '',
+        ports: formatPorts(app.ports),
         envText: envMapToText(app.env),
         git_url: app.deploy?.git_url ?? '',
         git_branch: app.deploy?.git_branch ?? '',
@@ -832,6 +862,15 @@ export default function Apps() {
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
                   />
                 </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Additional ports</span>
+                  <input
+                    value={form.ports}
+                    onChange={e => setForm(f => ({ ...f, ports: e.target.value }))}
+                    placeholder="5173, 8080"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                  />
+                </label>
                 <label className="space-y-1 md:col-span-2">
                   <span className="text-xs text-muted-foreground">Description</span>
                   <input
@@ -1062,7 +1101,9 @@ export default function Apps() {
                       {app.runtime === 'docker' ? <Container size={10} /> : <Cpu size={10} />}
                       {runtimeLabel[app.runtime] ?? app.runtime}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">port {app.port}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {(app.ports?.length ?? 0) > 1 ? `ports ${app.ports?.join(', ')}` : `port ${app.port}`}
+                      </span>
                     {app.uptime && <span className="text-[10px] text-muted-foreground">· up {app.uptime}</span>}
                   </div>
                 </div>

@@ -1075,6 +1075,7 @@ export interface App {
   command?: string;
   work_dir?: string;
   port?: number;
+  ports?: number[];
   env?: Record<string, string>;
   auto_restart?: boolean;
   disabled?: boolean;
@@ -1089,6 +1090,7 @@ export interface AppInstance {
   runtime: AppRuntime;
   command?: string;
   port: number;
+  ports?: number[];
   work_dir?: string;
   pid?: number;
   running: boolean;

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.36] - 2026-06-18
+
+### Added
+
+- Added optional additional ports for managed applications while keeping the
+  existing primary `port` field backward-compatible.
+- Added app-port aware reverse proxy routing with `apps://<app>:<port>`, so
+  different domains can target different ports exposed by the same app.
+- Added dashboard controls to edit additional app ports and select a specific
+  app port when creating or editing reverse proxy domains.
+
+### Fixed
+
+- Kept File Manager app workdir resolution working for port-specific app
+  upstreams such as `apps://my-app:5173`.
+
 ## [0.6.35] - 2026-06-18
 
 ### Fixed

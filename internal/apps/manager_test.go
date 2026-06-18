@@ -314,6 +314,35 @@ func TestEnsureStartPortAvailableReassignsOccupiedPort(t *testing.T) {
 	}
 }
 
+func TestListenAddrForPortUsesDeclaredPorts(t *testing.T) {
+	mgr := NewManager(NewStore(t.TempDir()), nil)
+	app := &App{Name: "multi", Runtime: RuntimeDocker, Port: 3000, Ports: []int{5173}, Docker: DockerSpec{ContainerPort: 3000, Image: "example"}}
+	mgr.mu.Lock()
+	mgr.procs["multi"] = &process{
+		name:        "multi",
+		app:         app,
+		runtimeKind: RuntimeDocker,
+		port:        3000,
+		dockerID:    "running",
+		stopCh:      make(chan struct{}),
+	}
+	mgr.mu.Unlock()
+
+	if got := mgr.ListenAddr("multi"); got != "127.0.0.1:3000" {
+		t.Fatalf("ListenAddr = %q, want primary port", got)
+	}
+	if got := mgr.ListenAddrForPort("multi", 5173); got != "127.0.0.1:5173" {
+		t.Fatalf("ListenAddrForPort = %q, want declared extra port", got)
+	}
+	if got := mgr.ListenAddrForPort("multi", 8080); got != "" {
+		t.Fatalf("ListenAddrForPort undeclared = %q, want empty", got)
+	}
+	inst := mgr.Get("multi")
+	if inst == nil || len(inst.Ports) != 2 || inst.Ports[0] != 3000 || inst.Ports[1] != 5173 {
+		t.Fatalf("instance ports = %#v", inst)
+	}
+}
+
 func TestMonitorNativeUsesStartStopChannelSnapshot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/sh")

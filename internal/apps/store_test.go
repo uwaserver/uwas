@@ -18,6 +18,7 @@ func TestStoreSaveLoadRoundtrip(t *testing.T) {
 		Runtime: RuntimeNode,
 		Command: "node index.js",
 		Port:    3001,
+		Ports:   []int{5173, 8080},
 		Env:     map[string]string{"FOO": "bar"},
 	}
 	if err := s.Save(want); err != nil {
@@ -49,6 +50,9 @@ func TestStoreSaveLoadRoundtrip(t *testing.T) {
 	}
 	if got.Name != "my-api" || got.Port != 3001 || got.Command != "node index.js" {
 		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	if len(got.Ports) != 2 || got.Ports[0] != 5173 || got.Ports[1] != 8080 {
+		t.Fatalf("ports not preserved: %+v", got.Ports)
 	}
 	if got.Env["FOO"] != "bar" {
 		t.Fatalf("env not preserved: %+v", got.Env)
@@ -170,12 +174,12 @@ func TestValidateDockerRequiresContainerPort(t *testing.T) {
 
 func TestSanitizeName(t *testing.T) {
 	cases := map[string]string{
-		"My App":            "my-app",
-		"foo.example.com":   "foo-example-com",
-		"weird!@#$%chars":   "weirdchars",
-		"--leading-dashes":  "leading-dashes",
-		"":                  "app",
-		"!!!":               "app",
+		"My App":                 "my-app",
+		"foo.example.com":        "foo-example-com",
+		"weird!@#$%chars":        "weirdchars",
+		"--leading-dashes":       "leading-dashes",
+		"":                       "app",
+		"!!!":                    "app",
 		strings.Repeat("a", 100): strings.Repeat("a", 64),
 	}
 	for in, want := range cases {
