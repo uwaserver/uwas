@@ -186,7 +186,7 @@ func (p *Route53Provider) r53Request(method, path string, body []byte) ([]byte, 
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("route53: read response: %w", err)
 	}
