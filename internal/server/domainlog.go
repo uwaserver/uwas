@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	defaultMaxLogSize    = 50 * 1024 * 1024 // 50MB per log file
-	defaultMaxBackups    = 5
-	defaultMaxAge        = 30 * 24 * time.Hour // 30 days
-	cleanupInterval      = 1 * time.Hour
-	rotatedTimeFormat    = "20060102-150405"
+	defaultMaxLogSize = 50 * 1024 * 1024 // 50MB per log file
+	defaultMaxBackups = 5
+	defaultMaxAge     = 30 * 24 * time.Hour // 30 days
+	cleanupInterval   = 1 * time.Hour
+	rotatedTimeFormat = "20060102-150405.000000000"
 )
 
 // domainLogManager manages per-domain access log files with rotation.
@@ -33,6 +33,7 @@ type domainLogManager struct {
 	mu    sync.RWMutex
 	files map[string]*domainLogFile
 	stop  chan struct{}
+	bg    sync.WaitGroup
 }
 
 type domainLogFile struct {
@@ -129,7 +130,11 @@ func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 	ts := time.Now().Format(rotatedTimeFormat)
 	rotatedName := fmt.Sprintf("%s.%s", dlf.path, ts)
 	if err := os.Rename(dlf.path, rotatedName); err == nil {
-		go compressFile(rotatedName) // compress in background
+		m.bg.Add(1)
+		go func() {
+			defer m.bg.Done()
+			compressFile(rotatedName)
+		}()
 	}
 
 	// Enforce max backups
@@ -137,7 +142,11 @@ func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 	if maxBackups <= 0 {
 		maxBackups = defaultMaxBackups
 	}
-	go pruneBackups(dlf.path, maxBackups)
+	m.bg.Add(1)
+	go func() {
+		defer m.bg.Done()
+		pruneBackups(dlf.path, maxBackups)
+	}()
 
 	// Open fresh log file
 	f, err := os.OpenFile(dlf.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -204,13 +213,14 @@ func (m *domainLogManager) cleanupOld() {
 func (m *domainLogManager) Close() {
 	close(m.stop)
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, dlf := range m.files {
 		dlf.mu.Lock()
 		dlf.f.Close()
 		dlf.mu.Unlock()
 	}
 	m.files = make(map[string]*domainLogFile)
+	m.mu.Unlock()
+	m.bg.Wait()
 }
 
 // compressFile gzips a file in-place (src → src.gz, then removes src).

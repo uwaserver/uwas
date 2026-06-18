@@ -15,6 +15,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/middleware"
 )
 
 func testConfig(root string) *config.Config {
@@ -997,7 +998,7 @@ RewriteRule . /index.php [L]
 		Global: config.GlobalConfig{WorkerCount: "1", LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{{
 			Host: "wp.test", Root: dir, Type: "php",
-			SSL: config.SSLConfig{Mode: "off"},
+			SSL:      config.SSLConfig{Mode: "off"},
 			Htaccess: config.HtaccessConfig{Mode: "import"},
 		}},
 	}
@@ -1259,7 +1260,7 @@ func TestHandleHTTPNonSSLServesContent(t *testing.T) {
 func TestHandleHTTPUnknownHostNonSSL(t *testing.T) {
 	// No domains configured — no fallback, unknown host is rejected.
 	cfg := &config.Config{
-		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Global:  config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
@@ -1311,6 +1312,36 @@ func TestBuildMiddlewareChainWithRateLimit(t *testing.T) {
 
 	if rec.Code == 0 {
 		t.Error("expected a non-zero status code")
+	}
+}
+
+func TestRealIPTrustedProxiesIncludesCloudflareRanges(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:       "error",
+			LogFormat:      "text",
+			TrustedProxies: []string{"10.0.0.0/8"},
+			Cloudflare: config.CloudflareConfig{
+				IPRanges: []string{"203.0.113.0/24"},
+			},
+		},
+	}
+	log := logger.New("error", "text")
+	s := New(cfg, log)
+
+	captured := ""
+	h := middleware.RealIP(s.realIPTrustedProxies())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.RemoteAddr
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "203.0.113.44:443"
+	req.Header.Set("CF-Connecting-IP", "198.51.100.77")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if captured != "198.51.100.77:0" {
+		t.Fatalf("captured RemoteAddr = %q, want real Cloudflare client IP", captured)
 	}
 }
 
