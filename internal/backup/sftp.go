@@ -25,13 +25,13 @@ import (
 // dependencies. File operations are performed through the SSH subsystem
 // "sftp" protocol, which is supported by all standard OpenSSH servers.
 type SFTPProvider struct {
-	host                 string
-	port                 int
-	user                 string
-	keyFile              string
-	password             string
-	remotePath           string
-	insecureKnownHosts   bool // Allow unknown hosts (auto-accept TOFU — not recommended)
+	host               string
+	port               int
+	user               string
+	keyFile            string
+	password           string
+	remotePath         string
+	insecureKnownHosts bool // Allow unknown hosts (auto-accept TOFU — not recommended)
 }
 
 // NewSFTPProvider creates an SFTPProvider.
@@ -57,6 +57,13 @@ func NewSFTPProvider(host string, port int, user, keyFile, password, remotePath 
 	}
 }
 
+// knownHostsPathOverride, when non-empty, replaces the default
+// ~/.ssh/known_hosts path used for SSH host-key verification. Tests set it to an
+// isolated temp file so they neither read from nor pollute the real user
+// known_hosts (which previously caused intermittent "key mismatch" failures
+// when a dynamic test port was reused across runs with a fresh host key).
+var knownHostsPathOverride string
+
 func (p *SFTPProvider) Name() string { return "sftp" }
 
 func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Reader) error {
@@ -71,8 +78,11 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	if err != nil {
 		return err
 	}
-	_ = session.Run("mkdir -p -- " + shellQuote(p.remotePath))
+	mkdirErr := session.Run("mkdir -p -- " + shellQuote(p.remotePath))
 	session.Close()
+	if mkdirErr != nil {
+		return fmt.Errorf("sftp mkdir %q: %w", p.remotePath, mkdirErr)
+	}
 
 	if err := safeBackupFilename(filename); err != nil {
 		return err
@@ -106,13 +116,24 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 		errCh <- session.Run("cat > " + shellQuote(remoteDest))
 	}()
 
-	if _, err := stdin.Write(content); err != nil {
-		stdin.Close()
-		return fmt.Errorf("write data: %w", err)
-	}
+	// io.Writer semantics guarantee a short write is reported as an error here.
+	writeErr := func() error {
+		_, err := stdin.Write(content)
+		return err
+	}()
 	stdin.Close()
 
-	return <-errCh
+	// Always wait for the remote `cat` to finish. On a write failure the remote
+	// error (e.g. disk full / permission denied) is usually the real cause, so
+	// prefer it over the local pipe error.
+	runErr := <-errCh
+	if runErr != nil {
+		return fmt.Errorf("sftp upload %q: %w", remoteDest, runErr)
+	}
+	if writeErr != nil {
+		return fmt.Errorf("write data: %w", writeErr)
+	}
+	return nil
 }
 
 func (p *SFTPProvider) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
@@ -254,14 +275,17 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 
 	// Use known_hosts for TOFU (Trust On First Use) — validates against ~/.ssh/known_hosts
 	// and auto-accepts new hosts on first connection.
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.Getenv("HOME")
+	knownHostsFile := knownHostsPathOverride
+	if knownHostsFile == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			home = os.Getenv("HOME")
+		}
+		if home == "" {
+			return nil, fmt.Errorf("home directory not found for known_hosts")
+		}
+		knownHostsFile = filepath.Join(home, ".ssh", "known_hosts")
 	}
-	if home == "" {
-		return nil, fmt.Errorf("home directory not found for known_hosts")
-	}
-	knownHostsFile := filepath.Join(home, ".ssh", "known_hosts")
 	if err := os.MkdirAll(filepath.Dir(knownHostsFile), 0700); err != nil {
 		return nil, fmt.Errorf("create known_hosts dir: %w", err)
 	}
