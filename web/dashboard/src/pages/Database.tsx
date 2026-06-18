@@ -34,7 +34,7 @@ import {
   configureDBRemoteAccess,
   exportDatabase,
   importDatabase,
-  getToken,
+  getAuthHeaders,
   startDB,
   stopDB,
   restartDB,
@@ -261,9 +261,8 @@ export default function Database() {
     setExportingDB(dbName);
     setStatus(null);
     try {
-      const tok = getToken();
       const res = await fetch(exportDatabase(dbName), {
-        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+        headers: { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: res.statusText }));

@@ -273,6 +273,30 @@ func TestSettingsPut(t *testing.T) {
 	}
 }
 
+func TestSettingsPutEnablesAuthManager(t *testing.T) {
+	s := testServer()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(cfgPath, []byte("global: {}"), 0644)
+	s.SetConfigPath(cfgPath)
+	s.config.Global.WebRoot = dir
+	s.authMgr = nil
+
+	req := httptest.NewRequest("PUT", "/api/v1/settings", strings.NewReader(`{"global.users.enabled":true}`))
+	rec := httptest.NewRecorder()
+	s.handleSettingsPut(rec, withAdminContext(req))
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if s.authMgr == nil {
+		t.Fatal("auth manager was not initialized")
+	}
+	if mgr, ok := s.authMgr.(*auth.Manager); ok {
+		mgr.Stop()
+	}
+}
+
 func TestSettingsPutBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
@@ -627,7 +651,7 @@ func TestUserCreateAuthInvalidRole(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
-	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users", strings.NewReader(`{"username":"newuser","email":"a@b.com","password":"pass","role":"admin"}`)))
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users", strings.NewReader(`{"username":"newuser","email":"a@b.com","password":"pass","role":"superadmin"}`)))
 	req.RemoteAddr = "10.0.0.1:1234"
 	s.handleUserCreateAuth(rec, req)
 	if rec.Code != 400 {

@@ -24,7 +24,7 @@ import {
   createDir,
   uploadFile,
   fetchDiskUsage,
-  getToken,
+  getAuthHeaders,
   type FileEntry,
   type FileWorkspace,
 } from '@/lib/api';
@@ -182,15 +182,14 @@ export default function FileManager() {
         lowerName.endsWith('.jpeg') || lowerName.endsWith('.gif') ||
         lowerName.endsWith('.webp') || lowerName.endsWith('.svg') ||
         lowerName.endsWith('.ico')) {
-      // The /read endpoint is auth-gated by Bearer token, so a plain
+      // The /read endpoint is auth-gated, so a plain
       // window.open() lands on a 401. Fetch with auth, turn the response
       // into a blob URL, then open that in a new tab.
       setError('');
       try {
-        const tok = getToken();
         const res = await fetch(
           `/api/v1/files/${encodeURIComponent(selectedWorkspaceID)}/read?path=${encodeURIComponent(entry.path)}`,
-          { headers: tok ? { Authorization: `Bearer ${tok}` } : {} },
+          { headers: getAuthHeaders() },
         );
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: res.statusText }));
