@@ -70,23 +70,7 @@ func (m *Manager) startDocker(p *process) error {
 		return fmt.Errorf("apps: %s: docker.container_port is required", p.name)
 	}
 
-	args := []string{
-		"run", "-d",
-		"--name", cname,
-		"--rm",
-		"-p", fmt.Sprintf("127.0.0.1:%d:%d", p.port, containerPort),
-		"-e", fmt.Sprintf("PORT=%d", containerPort),
-	}
-	for k, v := range p.env {
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
-	}
-	for _, v := range p.app.Docker.Volumes {
-		args = append(args, "-v", v)
-	}
-	if p.app.Docker.ExtraArgs != nil {
-		args = append(args, p.app.Docker.ExtraArgs...)
-	}
-	args = append(args, image)
+	args, extraPorts := dockerRunArgs(p, cname, image, containerPort)
 
 	cmd := execCommandFn("docker", args...)
 	var stdout, stderr bytes.Buffer
@@ -103,7 +87,7 @@ func (m *Manager) startDocker(p *process) error {
 
 	if m.logger != nil {
 		m.logger.Info("apps: docker container started",
-			"app", p.name, "container", cname, "image", image, "host_port", p.port, "container_port", containerPort)
+			"app", p.name, "container", cname, "image", image, "host_port", p.port, "container_port", containerPort, "extra_ports", extraPorts)
 	}
 
 	// Spawn watcher that triggers auto-restart on container exit.
@@ -143,6 +127,40 @@ func (m *Manager) startDocker(p *process) error {
 			p.name, tail)
 	}
 	return nil
+}
+
+func dockerRunArgs(p *process, cname, image string, containerPort int) ([]string, []int) {
+	args := []string{
+		"run", "-d",
+		"--name", cname,
+		"--rm",
+		"-p", fmt.Sprintf("127.0.0.1:%d:%d", p.port, containerPort),
+		"-e", fmt.Sprintf("PORT=%d", containerPort),
+	}
+	extraPorts := make([]int, 0, len(p.app.Ports))
+	seenPorts := map[int]struct{}{p.port: {}}
+	for _, port := range p.app.Ports {
+		if port <= 0 {
+			continue
+		}
+		if _, seen := seenPorts[port]; seen {
+			continue
+		}
+		seenPorts[port] = struct{}{}
+		extraPorts = append(extraPorts, port)
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port))
+	}
+	for k, v := range p.env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
+	}
+	for _, v := range p.app.Docker.Volumes {
+		args = append(args, "-v", v)
+	}
+	if p.app.Docker.ExtraArgs != nil {
+		args = append(args, p.app.Docker.ExtraArgs...)
+	}
+	args = append(args, image)
+	return args, extraPorts
 }
 
 // dockerContainerRunning reports whether the named container is still

@@ -343,6 +343,44 @@ func TestListenAddrForPortUsesDeclaredPorts(t *testing.T) {
 	}
 }
 
+func TestDockerRunArgsPublishesAdditionalPorts(t *testing.T) {
+	p := &process{
+		name: "multi",
+		app: &App{
+			Name:    "multi",
+			Runtime: RuntimeDocker,
+			Port:    3000,
+			Ports:   []int{5173, 3000, 8080, 5173},
+			Docker: DockerSpec{
+				Image:         "example",
+				ContainerPort: 3000,
+			},
+		},
+		port: 3000,
+		env:  map[string]string{"NODE_ENV": "production"},
+	}
+
+	args, extraPorts := dockerRunArgs(p, "uwas-app-multi", "example", 3000)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"127.0.0.1:3000:3000",
+		"127.0.0.1:5173:5173",
+		"127.0.0.1:8080:8080",
+		"PORT=3000",
+		"NODE_ENV=production",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("docker args missing %q: %v", want, args)
+		}
+	}
+	if len(extraPorts) != 2 || extraPorts[0] != 5173 || extraPorts[1] != 8080 {
+		t.Fatalf("extraPorts = %#v, want [5173 8080]", extraPorts)
+	}
+	if strings.Count(joined, "127.0.0.1:5173:5173") != 1 {
+		t.Fatalf("duplicate extra port mapping in args: %v", args)
+	}
+}
+
 func TestMonitorNativeUsesStartStopChannelSnapshot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses /bin/sh")

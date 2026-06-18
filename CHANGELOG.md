@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.37] - 2026-06-18
+
+### Added
+
+- Added application work directories to the SFTP Users target selector, so an
+  app can get its own generated SFTP password and SSH keys without needing a
+  domain root.
+- Added Docker publishing for additional managed app ports, preserving the
+  existing primary `port` to `docker.container_port` mapping.
+
+### Fixed
+
+- Made domain health checks app-port aware for `apps://<app>:<port>` upstreams
+  by probing the resolved local app listener and reporting stopped app upstreams
+  as down instead of checking the public hostname.
+- Fixed SFTP SSH key management for application-backed SFTP targets by using a
+  stable internal hostname identity for app workdirs.
+
 ## [0.6.36] - 2026-06-18
 
 ### Added
