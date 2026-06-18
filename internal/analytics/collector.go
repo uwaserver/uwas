@@ -57,11 +57,19 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 
+	// maxDistinct caps each unbounded per-domain map so a client sending many
+	// distinct IPs/referrers/user-agents can't grow them without limit (remote
+	// memory exhaustion). Existing keys still update; only new keys are dropped
+	// past the cap.
+	const maxDistinct = 50000
+
 	stats.PageViews++
 	if stats.UniqueIPs == nil {
 		stats.UniqueIPs = make(map[string]bool)
 	}
-	stats.UniqueIPs[ip] = true
+	if stats.UniqueIPs[ip] || len(stats.UniqueIPs) < maxDistinct {
+		stats.UniqueIPs[ip] = true
+	}
 
 	stats.BytesSent += bytesSent
 
@@ -87,7 +95,9 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 		}
 		ref := extractRefDomain(referrer)
 		if ref != "" && ref != host {
-			stats.Referrers[ref]++
+			if _, ok := stats.Referrers[ref]; ok || len(stats.Referrers) < maxDistinct {
+				stats.Referrers[ref]++
+			}
 		}
 	}
 
@@ -97,7 +107,9 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 			stats.UserAgents = make(map[string]int64)
 		}
 		browser := classifyUA(userAgent)
-		stats.UserAgents[browser]++
+		if _, ok := stats.UserAgents[browser]; ok || len(stats.UserAgents) < maxDistinct {
+			stats.UserAgents[browser]++
+		}
 	}
 
 	// Rolling minute bucket

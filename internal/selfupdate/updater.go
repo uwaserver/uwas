@@ -142,6 +142,15 @@ func Update(downloadURL string) error {
 		return fmt.Errorf("untrusted download URL: %s", downloadURL)
 	}
 
+	// Resolve the target binary up front so the temp file can live in the SAME
+	// directory — otherwise the final rename crosses filesystems (e.g. /tmp →
+	// /usr/local/bin) and fails with EXDEV, breaking every update.
+	exe, err := osExecutableFn()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	exe, _ = evalSymlinksFn(exe)
+
 	// Download to temp file
 	client := httpClientFn(5 * time.Minute)
 	resp, err := client.Get(downloadURL)
@@ -149,8 +158,13 @@ func Update(downloadURL string) error {
 		return fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// Without this, a 404/500 HTML/JSON error page would be written over the
+		// running binary (the optional checksum is the only other guard).
+		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
 
-	tmp, err := osCreateTempFn("", "uwas-update-*")
+	tmp, err := osCreateTempFn(filepath.Dir(exe), "uwas-update-*")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
@@ -171,17 +185,21 @@ func Update(downloadURL string) error {
 				expectedBytes, _ := io.ReadAll(io.LimitReader(shaResp.Body, 128))
 				expected := strings.TrimSpace(string(expectedBytes))
 
-				// Compute actual checksum of downloaded binary
+				// A checksum was published, so verify it and fail closed on any
+				// error — don't silently install an unverified binary.
 				f, err := os.Open(tmp.Name())
-				if err == nil {
-					h := sha256.New()
-					io.Copy(h, f)
+				if err != nil {
+					return fmt.Errorf("open downloaded binary for checksum: %w", err)
+				}
+				h := sha256.New()
+				if _, err := io.Copy(h, f); err != nil {
 					f.Close()
-					actual := hex.EncodeToString(h.Sum(nil))
-
-					if !strings.EqualFold(expected, actual) {
-						return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
-					}
+					return fmt.Errorf("hash downloaded binary: %w", err)
+				}
+				f.Close()
+				actual := hex.EncodeToString(h.Sum(nil))
+				if !strings.EqualFold(expected, actual) {
+					return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
 				}
 			}
 		}
@@ -192,14 +210,8 @@ func Update(downloadURL string) error {
 		return fmt.Errorf("chmod: %w", err)
 	}
 
-	// Replace current binary
-	exe, err := osExecutableFn()
-	if err != nil {
-		return fmt.Errorf("find executable: %w", err)
-	}
-	exe, _ = evalSymlinksFn(exe)
-
-	// Backup current binary
+	// Replace current binary (exe was resolved above so the temp file shares its
+	// directory and the rename below is a same-filesystem atomic swap).
 	backup := exe + ".bak"
 	osRemoveFn(backup)
 	if err := osRenameFn(exe, backup); err != nil {

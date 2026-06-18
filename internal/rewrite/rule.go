@@ -120,21 +120,29 @@ func (r *Rule) Match(uri string) (bool, []string) {
 	return true, matches
 }
 
-// Apply substitutes backreferences ($1, $2, ...) in the target string.
+// Apply substitutes backreferences ($1.. for the rule, %1.. for conditions) in
+// the target string. It does a single left-to-right pass so that a value
+// captured by one group can never be re-interpreted as another backreference
+// (e.g. a request path captured into $2 that itself contains the text "$1").
+// Backreferences are single-digit, matching Apache mod_rewrite.
 func (r *Rule) Apply(target string, ruleMatches, condMatches []string) string {
-	result := target
-
-	// Rule backreferences: $1, $2, ...
-	for i := len(ruleMatches) - 1; i >= 0; i-- {
-		placeholder := "$" + strconv.Itoa(i)
-		result = strings.ReplaceAll(result, placeholder, ruleMatches[i])
+	var b strings.Builder
+	b.Grow(len(target))
+	for i := 0; i < len(target); i++ {
+		c := target[i]
+		if (c == '$' || c == '%') && i+1 < len(target) && target[i+1] >= '0' && target[i+1] <= '9' {
+			idx := int(target[i+1] - '0')
+			matches := ruleMatches
+			if c == '%' {
+				matches = condMatches
+			}
+			if idx < len(matches) {
+				b.WriteString(matches[idx])
+			}
+			i++ // consume the digit (an out-of-range backref expands to empty)
+			continue
+		}
+		b.WriteByte(c)
 	}
-
-	// Condition backreferences: %1, %2, ...
-	for i := len(condMatches) - 1; i >= 0; i-- {
-		placeholder := "%" + strconv.Itoa(i)
-		result = strings.ReplaceAll(result, placeholder, condMatches[i])
-	}
-
-	return result
+	return b.String()
 }
