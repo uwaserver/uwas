@@ -1472,7 +1472,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			strings.HasPrefix(p, "/wp-content") ||
 			strings.HasSuffix(p, ".php")
 		if !skipRewrite {
-			s.applyHtaccess(ctx, domain)
+			if s.applyHtaccess(ctx, domain) {
+				return
+			}
 		}
 	}
 
@@ -1934,10 +1936,12 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 
 // applyHtaccess reads and applies .htaccess rewrite rules from the document root.
 // Parsed rules are cached per domain root and invalidated on config reload.
-func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) {
+// Returns true when the request was fully handled (forbidden/gone/redirect) and
+// the caller must stop dispatch — mirroring applyRewrites for the YAML path.
+func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain) bool {
 	ruleSet := s.getHtaccessRuleSet(domain.Root)
 	if ruleSet == nil || ruleSet.raw == nil {
-		return
+		return false
 	}
 
 	// 1. Apply rewrite rules. Engine was built once at parse time
@@ -1949,6 +1953,22 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
 		result := ruleSet.engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
+		// Honor access-control results, exactly like applyRewrites. Without
+		// this, .htaccess [F]/[G]/[R] rules (commonly guarding backups,
+		// includes, uploads on migrated Apache sites) were computed and then
+		// silently discarded — a fail-open security gap.
+		if result.Forbidden {
+			renderDomainError(ctx.Response, http.StatusForbidden, domain)
+			return true
+		}
+		if result.Gone {
+			renderDomainError(ctx.Response, http.StatusGone, domain)
+			return true
+		}
+		if result.Redirect {
+			http.Redirect(ctx.Response, ctx.Request, result.URI, result.StatusCode)
+			return true
+		}
 		if result.Modified {
 			ctx.Request.URL.Path = result.URI
 			if result.Query != "" {
@@ -2014,6 +2034,7 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 			"PHP_VALUE": strings.Join(phpValues, "\n"),
 		}
 	}
+	return false
 }
 
 // parseExpiresDuration converts Apache Expires format to seconds.
