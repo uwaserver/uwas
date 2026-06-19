@@ -1013,8 +1013,14 @@ func (s *Server) rejectNonCloudflareOrigin(w http.ResponseWriter, r *http.Reques
 	if domain == nil || !domain.Security.CloudflareOnly {
 		return false
 	}
+	// Snapshot the Cloudflare ranges under configMu — reload() overwrites the
+	// whole *s.config struct under the write lock, so reading the slice header
+	// here without the read lock is a data race.
+	s.configMu.RLock()
+	cfRanges := s.config.Global.Cloudflare.IPRanges
+	s.configMu.RUnlock()
 	originIP := directPeerIP(r)
-	allowed := originIP != "" && s.cloudflareIPs.Contains(originIP, s.config.Global.Cloudflare.IPRanges)
+	allowed := originIP != "" && s.cloudflareIPs.Contains(originIP, cfRanges)
 	if allowed {
 		return false
 	}
@@ -1023,7 +1029,7 @@ func (s *Server) rejectNonCloudflareOrigin(w http.ResponseWriter, r *http.Reques
 		clientIP = host
 	}
 	reason := "cloudflare_only"
-	if len(s.config.Global.Cloudflare.IPRanges) == 0 {
+	if len(cfRanges) == 0 {
 		reason = "cloudflare_only_no_ranges"
 	}
 	if s.securityStats != nil {
@@ -1675,18 +1681,36 @@ func normalizedRemoteIP(r *http.Request) string {
 	return strings.TrimSpace(r.RemoteAddr)
 }
 
+// dirListingAllowed reports whether a directory-listing request is safe to
+// serve: no dotfile path components and the resolved target stays within the
+// doc root (both lexically and after symlink resolution).
+func dirListingAllowed(root, rawPath, urlPath string) bool {
+	for _, component := range strings.Split(urlPath, "/") {
+		if strings.HasPrefix(component, ".") && component != "." && component != ".." {
+			return false
+		}
+	}
+	return pathsafe.IsWithinBase(root, rawPath) && pathsafe.IsWithinBaseResolved(root, rawPath)
+}
+
 func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Domain) {
 	// Save original URI before any rewriting (PHP needs this for SCRIPT_NAME)
 	if ctx.OriginalURI == "" {
 		ctx.OriginalURI = ctx.Request.URL.RequestURI()
 	}
 
-	// Check if the raw path points to a directory (for directory listing)
+	// Check if the raw path points to a directory (for directory listing).
+	// Apply the same guards the normal static path enforces: reject dotfile
+	// path components and require the target stay within the (symlink-resolved)
+	// doc root. Without these, `GET /.config/` or a symlinked subdir pointing
+	// outside the root would be listed, leaking out-of-root filenames.
 	if domain.DirectoryListing && domain.Root != "" {
 		rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
-		if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
-			static.ServeDirListing(ctx, rawPath, ctx.Request.URL.Path)
-			return
+		if dirListingAllowed(domain.Root, rawPath, ctx.Request.URL.Path) {
+			if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
+				static.ServeDirListing(ctx, rawPath, ctx.Request.URL.Path)
+				return
+			}
 		}
 	}
 
