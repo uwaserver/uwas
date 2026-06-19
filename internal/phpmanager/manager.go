@@ -85,6 +85,11 @@ type domainInstance struct {
 	// looping start→crash→start every 500ms forever.
 	restartCount int
 	lastRestart  time.Time
+	// stopGen is bumped by StopDomain/StopAll. The crash monitor captures it
+	// before its restart backoff and re-checks after, so a stop issued while
+	// the monitor is sleeping in backoff cancels the pending auto-restart
+	// instead of resurrecting a process the operator just stopped.
+	stopGen int
 }
 
 // Manager detects and manages PHP installations and subprocesses.
@@ -367,8 +372,10 @@ func (m *Manager) StartDomain(domain string) error {
 		di, stillAssigned := m.domainMap[domain]
 		shouldRestart := stillAssigned && di.proc != nil && di.proc.cmd == cmd
 		var backoff time.Duration
+		var restartGen int
 		giveUp := false
 		if shouldRestart {
+			restartGen = di.stopGen
 			di.proc = nil
 			if di.tmpINI != "" {
 				os.Remove(di.tmpINI)
@@ -412,6 +419,17 @@ func (m *Manager) StartDomain(domain string) error {
 				return
 			}
 			time.Sleep(backoff)
+			// A StopDomain/StopAll during the backoff sleep bumps stopGen (or
+			// removes the assignment). Re-check before restarting so an
+			// operator's stop isn't undone by the pending auto-restart.
+			m.domainMu.Lock()
+			cur, ok := m.domainMap[domain]
+			canceled := !ok || cur != di || cur.stopGen != restartGen
+			m.domainMu.Unlock()
+			if canceled {
+				m.logger.Info("PHP-CGI auto-restart canceled by stop", "domain", domain)
+				return
+			}
 			if err := m.StartDomain(domain); err != nil {
 				m.logger.Error("PHP-CGI auto-restart failed", "domain", domain, "error", err)
 			} else {
@@ -431,6 +449,10 @@ func (m *Manager) StopDomain(domain string) error {
 		m.domainMu.Unlock()
 		return fmt.Errorf("domain %s has no PHP assignment", domain)
 	}
+	// Record the stop intent before the proc==nil early return: during a crash
+	// backoff inst.proc is already nil, but the monitor is sleeping and about
+	// to restart — bumping stopGen cancels that pending restart.
+	inst.stopGen++
 	if inst.proc == nil {
 		m.domainMu.Unlock()
 		return fmt.Errorf("PHP for domain %s is not running", domain)
@@ -780,6 +802,8 @@ func (m *Manager) StopAll() {
 	// Stop all per-domain instances.
 	m.domainMu.Lock()
 	for domain, inst := range m.domainMap {
+		// Cancel any pending crash-backoff restart (see StopDomain).
+		inst.stopGen++
 		if inst.proc != nil {
 			if inst.proc.cmd != nil && inst.proc.cmd.Process != nil {
 				if err := inst.proc.cmd.Process.Kill(); err != nil {
