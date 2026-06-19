@@ -109,10 +109,23 @@ func (p *Pool) Put(c *conn) {
 		return
 	}
 	c.usedAt = time.Now()
+	// Hold mu across the closed check and the send so we can't race Close()'s
+	// close(p.idle): a select-send on a closed channel takes the send case and
+	// panics rather than the default. Close() takes mu before closing, so while
+	// we hold it the channel can't be closed under us.
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		c.netConn.Close()
+		p.active.Add(-1)
+		return
+	}
 	select {
 	case p.idle <- c:
+		p.mu.Unlock()
 	default:
 		// Pool full
+		p.mu.Unlock()
 		c.netConn.Close()
 		p.active.Add(-1)
 	}
@@ -127,9 +140,13 @@ func (p *Pool) Discard(c *conn) {
 	p.active.Add(-1)
 }
 
-// Close drains and closes all connections.
+// Close drains and closes all connections. Idempotent.
 func (p *Pool) Close() {
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
 	p.closed = true
 	p.mu.Unlock()
 
