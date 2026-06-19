@@ -224,6 +224,38 @@ func withResellerContext(r *http.Request) *http.Request {
 	return r.WithContext(auth.WithUser(r.Context(), user))
 }
 
+// TestStateChangingRoutesRequireAdmin locks in the RBAC fix: these
+// state-changing handlers must reject a non-admin (authenticated) user with
+// 403 before performing any action. Regression guard for the missing
+// requireAdmin checks.
+func TestStateChangingRoutesRequireAdmin(t *testing.T) {
+	s := testServer()
+	s.SetWebhookManager(webhook.NewManager("", logger.New("error", "text")))
+	cases := []struct {
+		name    string
+		handler func(http.ResponseWriter, *http.Request)
+		method  string
+		body    string
+	}{
+		{"doctor_fix", s.handleDoctorFix, "POST", ""},
+		{"webhook_create", s.handleWebhookCreate, "POST", `{"url":"https://example.com/h","events":["domain.add"]}`},
+		{"webhook_test", s.handleWebhookTest, "POST", `{"url":"https://example.com/h"}`},
+		{"webhook_delete", s.handleWebhookDelete, "DELETE", ""},
+		{"cloudflare_disconnect", s.handleCloudflareDisconnect, "POST", ""},
+		{"cloudflare_cache_purge", s.handleCloudflareCachePurge, "POST", `{"everything":true}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := withResellerContext(httptest.NewRequest(tc.method, "/x", strings.NewReader(tc.body)))
+			tc.handler(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s: status = %d, want 403 for non-admin", tc.name, rec.Code)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // Settings tests
 // =============================================================================
@@ -1341,7 +1373,7 @@ func TestWebhookListEmpty(t *testing.T) {
 func TestWebhookCreateBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleWebhookCreate(rec, httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader("not json")))
+	s.handleWebhookCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1350,7 +1382,7 @@ func TestWebhookCreateBadJSON(t *testing.T) {
 func TestWebhookCreateMissingURL(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleWebhookCreate(rec, httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader(`{"events":["test"]}`)))
+	s.handleWebhookCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader(`{"events":["test"]}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1359,7 +1391,7 @@ func TestWebhookCreateMissingURL(t *testing.T) {
 func TestWebhookCreateInvalidURL(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleWebhookCreate(rec, httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader(`{"url":"ftp://invalid"}`)))
+	s.handleWebhookCreate(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader(`{"url":"ftp://invalid"}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1370,7 +1402,7 @@ func TestWebhookCreateSuccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/webhooks", strings.NewReader(`{"url":"https://example.com/hook","events":["domain.add"]}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleWebhookCreate(rec, req)
+	s.handleWebhookCreate(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
 	}
@@ -1384,7 +1416,7 @@ func TestWebhookDeleteBadID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/webhooks/abc", nil)
 	req.SetPathValue("id", "abc")
-	s.handleWebhookDelete(rec, req)
+	s.handleWebhookDelete(rec, withAdminContext(req))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1395,7 +1427,7 @@ func TestWebhookDeleteNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/webhooks/5", nil)
 	req.SetPathValue("id", "5")
-	s.handleWebhookDelete(rec, req)
+	s.handleWebhookDelete(rec, withAdminContext(req))
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
@@ -1410,7 +1442,7 @@ func TestWebhookDeleteSuccess(t *testing.T) {
 	req := httptest.NewRequest("DELETE", "/api/v1/webhooks/0", nil)
 	req.SetPathValue("id", "0")
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleWebhookDelete(rec, req)
+	s.handleWebhookDelete(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1422,7 +1454,7 @@ func TestWebhookDeleteSuccess(t *testing.T) {
 func TestWebhookTestNoMgr(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleWebhookTest(rec, httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader(`{"url":"https://example.com"}`)))
+	s.handleWebhookTest(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader(`{"url":"https://example.com"}`))))
 	if rec.Code != 503 {
 		t.Errorf("status = %d, want 503", rec.Code)
 	}
@@ -1432,7 +1464,7 @@ func TestWebhookTestMissingURL(t *testing.T) {
 	s := testServer()
 	s.SetWebhookManager(webhook.NewManager("", logger.New("error", "text")))
 	rec := httptest.NewRecorder()
-	s.handleWebhookTest(rec, httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader(`{}`)))
+	s.handleWebhookTest(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader(`{}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1444,7 +1476,7 @@ func TestWebhookTestSuccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader(`{"url":"https://example.com/hook"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleWebhookTest(rec, req)
+	s.handleWebhookTest(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1454,7 +1486,7 @@ func TestWebhookTestBadJSON(t *testing.T) {
 	s := testServer()
 	s.SetWebhookManager(webhook.NewManager("", logger.New("error", "text")))
 	rec := httptest.NewRecorder()
-	s.handleWebhookTest(rec, httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader("not json")))
+	s.handleWebhookTest(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/webhooks/test", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1609,7 +1641,7 @@ func TestDoctorFixHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/doctor/fix", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handleDoctorFix(rec, req)
+	s.handleDoctorFix(rec, withAdminContext(req))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}

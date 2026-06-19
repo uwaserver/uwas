@@ -569,7 +569,7 @@ func TestGrpD_HandleCloudflaredInstallReseller403(t *testing.T) {
 func TestGrpD_HandleCloudflareCachePurgeNotConnected(t *testing.T) {
 	grpDResetCloudflare(t)
 	s := testServer()
-	r := grpDReq("POST", "/cf/cache/purge", []byte(`{"everything":true}`))
+	r := withAdminContext(grpDReq("POST", "/cf/cache/purge", []byte(`{"everything":true}`)))
 	rec := grpDDo(s.handleCloudflareCachePurge, r)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (not connected)", rec.Code)
@@ -582,7 +582,7 @@ func TestGrpD_HandleCloudflareCachePurgeInvalidJSON(t *testing.T) {
 	cloudflareConfig = &cloudflareState{Connected: true, Tunnels: []cloudflareTunnel{}}
 	cloudflareMu.Unlock()
 	s := testServer()
-	r := grpDReq("POST", "/cf/cache/purge", []byte(`{bad`))
+	r := withAdminContext(grpDReq("POST", "/cf/cache/purge", []byte(`{bad`)))
 	rec := grpDDo(s.handleCloudflareCachePurge, r)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (invalid JSON)", rec.Code)

@@ -5921,6 +5921,9 @@ func (s *Server) validateCloudflareToken(token, accountID string) (string, error
 }
 
 func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	cloudflareMu.Lock()
 	oldCfg := cloudflareConfig
 	cloudflareConfig = nil
@@ -6313,6 +6316,9 @@ func (s *Server) handleCloudflaredInstall(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	cloudflareMu.RLock()
 	cfg := cloudflareConfig
 	cloudflareMu.RUnlock()

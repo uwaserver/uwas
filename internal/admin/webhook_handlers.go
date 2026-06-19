@@ -43,6 +43,9 @@ func (s *Server) handleWebhookList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req config.WebhookConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -92,6 +95,9 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if !s.requirePin(w, r) {
 		return
 	}
@@ -128,6 +134,9 @@ func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhookTest(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		URL string `json:"url"`
