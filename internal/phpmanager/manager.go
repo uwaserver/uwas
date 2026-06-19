@@ -1,6 +1,7 @@
 package phpmanager
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -469,7 +470,7 @@ func (m *Manager) StopDomain(domain string) error {
 		m.logger.Info("detached from system php-fpm", "domain", domain)
 		return nil
 	}
-	if err := proc.cmd.Process.Kill(); err != nil {
+	if err := proc.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("kill php-cgi for domain %s: %w", domain, err)
 	}
 
