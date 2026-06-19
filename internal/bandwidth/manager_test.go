@@ -624,7 +624,7 @@ func TestAlertDailyExceeded(t *testing.T) {
 	}
 }
 
-func TestAlertNotFiredOutsideWindow(t *testing.T) {
+func TestAlertFiresOnceWhenCrossing90(t *testing.T) {
 	var alertCount atomic.Int32
 
 	m := NewManager(testDomains(config.BandwidthConfig{
@@ -637,16 +637,23 @@ func TestAlertNotFiredOutsideWindow(t *testing.T) {
 		alertCount.Add(1)
 	})
 
-	// Push to 85% — no alert window
+	// 85% — below the 90% threshold, no alert.
 	m.Record("example.com", 85)
 	if alertCount.Load() != 0 {
 		t.Errorf("expected 0 alerts at 85%%, got %d", alertCount.Load())
 	}
 
-	// Push to 92% (past the 90-91% window) — no alert
+	// Jump to 92% — crosses 90% in one record; the alert must still fire even
+	// though it landed past a narrow 90-91% band.
 	m.Record("example.com", 7)
-	if alertCount.Load() != 0 {
-		t.Errorf("expected 0 alerts at 92%% (past window), got %d", alertCount.Load())
+	if alertCount.Load() != 1 {
+		t.Errorf("expected 1 alert after crossing 90%% (now 92%%), got %d", alertCount.Load())
+	}
+
+	// 93% — already past 90%, no new crossing, no duplicate alert.
+	m.Record("example.com", 1)
+	if alertCount.Load() != 1 {
+		t.Errorf("expected no duplicate 90%% alert, got %d", alertCount.Load())
 	}
 }
 
@@ -1547,16 +1554,16 @@ func TestResponseWriterFlushMultipleTimes(t *testing.T) {
 
 	rw.Write([]byte("abc"))
 	rw.Flush()
-	// bytesWritten is still 3 — Flush doesn't reset it
+	// Flushing again records no new bytes — only the delta since the last
+	// record is counted, so the 3 bytes are billed once, not once per flush.
 	rw.Flush()
 
 	status := m.GetStatus("example.com")
 	if status == nil {
 		t.Fatal("expected status")
 	}
-	// Called Record twice with 3 bytes each time
-	if status.MonthlyBytes != 6 {
-		t.Errorf("expected MonthlyBytes=6 after double flush, got %d", status.MonthlyBytes)
+	if status.MonthlyBytes != 3 {
+		t.Errorf("expected MonthlyBytes=3 (no double-count on second flush), got %d", status.MonthlyBytes)
 	}
 }
 

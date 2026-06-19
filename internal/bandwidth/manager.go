@@ -128,22 +128,30 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	monthlyLimit := int64(limit.MonthlyLimit)
 	dailyLimit := int64(limit.DailyLimit)
 
-	// Send alerts at thresholds (before block/throttle returns)
+	// Send alerts when usage CROSSES a threshold this call. Comparing the
+	// pre-add value to the post-add value fires exactly once per crossing
+	// regardless of jump size — the old razor-thin band (pct >= 0.9 && < 0.91)
+	// silently missed the alert whenever a single record jumped the ratio past
+	// the band (e.g. a 100MB response against a 1GB limit).
 	if alertFn != nil {
+		crossed := func(prev, cur, lim int64, frac float64) bool {
+			threshold := frac * float64(lim)
+			return float64(prev) < threshold && float64(cur) >= threshold
+		}
 		if monthlyLimit > 0 {
-			pct := float64(monthlyBytes) / float64(monthlyLimit)
-			if pct >= 0.9 && pct < 0.91 {
-				alertFn(host, "monthly_90", monthlyBytes, monthlyLimit)
-			} else if pct >= 1.0 && pct < 1.01 {
+			prev := monthlyBytes - bytes
+			if crossed(prev, monthlyBytes, monthlyLimit, 1.0) {
 				alertFn(host, "monthly_exceeded", monthlyBytes, monthlyLimit)
+			} else if crossed(prev, monthlyBytes, monthlyLimit, 0.9) {
+				alertFn(host, "monthly_90", monthlyBytes, monthlyLimit)
 			}
 		}
 		if dailyLimit > 0 {
-			pct := float64(dailyBytes) / float64(dailyLimit)
-			if pct >= 0.9 && pct < 0.91 {
-				alertFn(host, "daily_90", dailyBytes, dailyLimit)
-			} else if pct >= 1.0 && pct < 1.01 {
+			prev := dailyBytes - bytes
+			if crossed(prev, dailyBytes, dailyLimit, 1.0) {
 				alertFn(host, "daily_exceeded", dailyBytes, dailyLimit)
+			} else if crossed(prev, dailyBytes, dailyLimit, 0.9) {
+				alertFn(host, "daily_90", dailyBytes, dailyLimit)
 			}
 		}
 	}
@@ -310,11 +318,7 @@ func (m *Manager) Middleware() func(http.Handler) http.Handler {
 
 			// Wrap response writer to capture bytes written
 			rw := &responseWriter{ResponseWriter: w, host: host, manager: m}
-			defer func() {
-				if rw.bytesWritten > 0 {
-					m.Record(host, rw.bytesWritten)
-				}
-			}()
+			defer rw.recordDelta()
 			next.ServeHTTP(rw, r)
 		})
 	}
@@ -326,7 +330,19 @@ type responseWriter struct {
 	host         string
 	manager      *Manager
 	bytesWritten int64
+	recorded     int64 // bytes already reported to manager.Record
 	wroteHeader  bool
+}
+
+// recordDelta reports only the bytes written since the last record. Flush and
+// the post-request defer both call it; recording rw.bytesWritten directly each
+// time would re-count the whole cumulative total on every flush (a streaming
+// response flushed K times would bill ~K× its real size).
+func (rw *responseWriter) recordDelta() {
+	if delta := rw.bytesWritten - rw.recorded; delta > 0 {
+		rw.manager.Record(rw.host, delta)
+		rw.recorded = rw.bytesWritten
+	}
 }
 
 func (rw *responseWriter) Write(p []byte) (n int, err error) {
@@ -347,9 +363,11 @@ func (rw *responseWriter) WriteHeader(code int) {
 }
 
 func (rw *responseWriter) Flush() {
-	// Record bandwidth after response is complete
-	if rw.bytesWritten > 0 {
-		rw.manager.Record(rw.host, rw.bytesWritten)
+	// Record the bytes produced so far (delta only), then flush downstream so
+	// streaming responses (SSE, chunked) actually reach the client.
+	rw.recordDelta()
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
