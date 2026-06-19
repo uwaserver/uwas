@@ -156,8 +156,12 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 		}
 	}
 	m.deploys[req.Domain] = status
-	// Create cancellation channel for this deploy
-	m.cancelCh[req.Domain] = make(chan struct{})
+	// Create cancellation channel for this deploy. Capture it in a local so the
+	// deploy goroutine selects on the channel directly and never reads the
+	// shared cancelCh map without the lock — a concurrent map read (here) vs.
+	// the delete() in CancelDeploy/defer is a fatal, unrecoverable panic.
+	cancelCh := make(chan struct{})
+	m.cancelCh[req.Domain] = cancelCh
 	m.mu.Unlock()
 
 	go func() {
@@ -191,12 +195,12 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 		if mode == "docker" {
 			err = m.deployDocker(req, appRoot, status, &log)
 		} else {
-			err = m.deployGit(req, appRoot, branch, status, &log)
+			err = m.deployGit(req, appRoot, branch, cancelCh, status, &log)
 		}
 	}()
 }
 
-func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *DeployStatus, log *strings.Builder) error {
+func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh <-chan struct{}, status *DeployStatus, log *strings.Builder) error {
 	// Step 1: Git clone or pull
 	m.mu.Lock()
 	status.Status = "deploying"
@@ -281,7 +285,7 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, status *D
 	// Step 2: Build
 	// Check if cancelled before build
 	select {
-	case <-m.cancelCh[req.Domain]:
+	case <-cancelCh:
 		return fmt.Errorf("deployment cancelled")
 	default:
 	}
