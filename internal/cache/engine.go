@@ -185,7 +185,10 @@ func (e *Engine) PurgeAll() {
 		e.disk.PurgeAll()
 	}
 	if e.redis != nil {
-		e.redis.Close()
+		// Delete the keys — NOT Close(): closing only drops the connection
+		// (which auto-reconnects), leaving every cached entry intact so the
+		// purge would silently do nothing and stale content would be served.
+		_ = e.redis.PurgeAll()
 	}
 }
 

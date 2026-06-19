@@ -137,6 +137,30 @@ func (r *RedisCache) PurgeByTag(tag string) error {
 	return nil
 }
 
+// PurgeAll deletes every cache key under the configured prefix, leaving the
+// connection usable. When no prefix is configured this matches all keys in the
+// selected DB, so operators sharing a Redis DB with other data should set
+// Prefix. Used by the engine's "Purge All"; do NOT use Close for that — Close
+// only drops the connection (the client auto-reconnects and every key is still
+// there, so the purge silently does nothing).
+func (r *RedisCache) PurgeAll() error {
+	if r == nil || r.client == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	keys, err := r.client.Keys(ctx, r.prefixKey("*"))
+	if err != nil {
+		return err
+	}
+	if len(keys) > 0 {
+		return r.client.Del(ctx, keys...)
+	}
+	return nil
+}
+
 // Close closes the Redis connection.
 func (r *RedisCache) Close() error {
 	if r == nil || r.client == nil {
