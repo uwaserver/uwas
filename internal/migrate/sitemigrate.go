@@ -243,7 +243,17 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 		cmd = execCommandFn("ssh", sshArgs...)
 	}
 
-	dumpFile := filepath.Join(tempDirFn(), fmt.Sprintf("uwas-migrate-%s-%d.sql", req.DBName, time.Now().Unix()))
+	// Unique temp file via CreateTemp — a name built from only (DBName, unix
+	// second) collides when two migrations of the same DB run in the same
+	// second (concurrent processes, or rapid retries), and one's deferred
+	// os.Remove then deletes the other's dump out from under it.
+	dumpF, err := os.CreateTemp(tempDirFn(), fmt.Sprintf("uwas-migrate-%s-*.sql", req.DBName))
+	if err != nil {
+		log.WriteString(fmt.Sprintf("create dump file: %s\n", err))
+		return "error: write failed"
+	}
+	dumpFile := dumpF.Name()
+	_ = dumpF.Close()
 	defer os.Remove(dumpFile)
 
 	dump, err := cmd.Output()
