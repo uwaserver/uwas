@@ -1,13 +1,36 @@
 package apps
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+// uniqueDockerApp returns a process-unique app name so concurrent runs of the
+// real-daemon tests (separate OS processes) don't collide on the shared
+// container name "uwas-app-<name>".
+func uniqueDockerApp(base string) string {
+	return base + "-" + strconv.Itoa(os.Getpid())
+}
+
+// freeHostPort returns an OS-assigned free localhost port. Each test process
+// gets a distinct ephemeral port, so concurrent docker runs don't all pile
+// onto the manager's fixed 3001 base and fail to bind the host port.
+func freeHostPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port
+}
 
 // pickSmallImage returns a locally-available small image to run, or skips.
 func pickSmallImage(t *testing.T) string {
@@ -50,7 +73,7 @@ func TestDockerLifecycleRealDaemon(t *testing.T) {
 	}
 	img := pickSmallImage(t)
 
-	const app = "coverage-lifecycle"
+	app := uniqueDockerApp("coverage-lifecycle")
 	cname := containerName(app)
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "-f", "-v", cname).Run()
@@ -128,7 +151,7 @@ func TestStartDockerSuccessRealDaemon(t *testing.T) {
 	}
 	img := pickSmallImage(t)
 
-	const app = "coverage-startdocker"
+	app := uniqueDockerApp("coverage-startdocker")
 	cname := containerName(app)
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "-f", "-v", cname).Run()
@@ -148,7 +171,8 @@ func TestStartDockerSuccessRealDaemon(t *testing.T) {
 	store.DataRoot = filepath.Join(dir, "data")
 	m := NewManager(store, quietLog())
 
-	spec := &App{Name: app, Runtime: RuntimeDocker, Docker: DockerSpec{Image: img, ContainerPort: 54321}}
+	// Explicit unique host port avoids the fixed-3001 cross-process collision.
+	spec := &App{Name: app, Runtime: RuntimeDocker, Port: freeHostPort(t), Docker: DockerSpec{Image: img, ContainerPort: 54321}}
 	if err := m.Register(spec); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -200,7 +224,7 @@ func TestStartDockerBuildContextRealDaemon(t *testing.T) {
 	}
 	base := pickSmallImage(t) // busybox/alpine present locally
 
-	const app = "coverage-build"
+	app := uniqueDockerApp("coverage-build")
 	cname := containerName(app)
 	defImage := cname + ":latest"
 	t.Cleanup(func() {
@@ -234,6 +258,7 @@ func TestStartDockerBuildContextRealDaemon(t *testing.T) {
 		Name:    app,
 		Runtime: RuntimeDocker,
 		WorkDir: workDir,
+		Port:    freeHostPort(t),
 		Docker:  DockerSpec{ContainerPort: 54321, Build: DockerBuild{Context: "."}},
 	}
 	stopCh := make(chan struct{})
@@ -322,7 +347,7 @@ func TestCleanupOrphanContainersKeepsKnown(t *testing.T) {
 		t.Skip("docker daemon not available")
 	}
 
-	const app = "coverage-known-test"
+	app := uniqueDockerApp("coverage-known-test")
 	cname := containerName(app)
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "-f", "-v", cname).Run()
