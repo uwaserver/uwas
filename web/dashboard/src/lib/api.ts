@@ -960,6 +960,28 @@ export const installPackage = (id: string) =>
 export const removePackage = (id: string) =>
   api<{ status: string; package: string }>('/api/v1/packages/install', { method: 'POST', body: JSON.stringify({ id, action: 'remove' }) });
 
+// ── Setup wizard ────────────────────────────────────
+export interface SetupInstallItem {
+  type: 'package' | 'php';
+  id: string;
+}
+export interface SetupInstallResult {
+  type: string;
+  id: string;
+  name: string;
+  task_id?: string;
+  skipped?: boolean;
+  reason?: string;
+}
+// startSetupInstall queues a batch of PHP versions + packages; the server skips
+// already-installed items and serializes the rest on the install queue. Watch
+// progress via fetchTasks().
+export const startSetupInstall = (items: SetupInstallItem[]) =>
+  api<{ items: SetupInstallResult[]; queued: number }>('/api/v1/setup/install', {
+    method: 'POST',
+    body: JSON.stringify({ items }),
+  });
+
 // ── Clone / Staging ─────────────────────────────────
 
 export interface CloneRequest {
