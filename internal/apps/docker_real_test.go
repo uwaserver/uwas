@@ -11,6 +11,30 @@ import (
 	"time"
 )
 
+// lockDockerHost serializes the orphan-sweep tests across processes. They all
+// manipulate the host-global "uwas-app-" docker container namespace, so one
+// process's cleanupOrphanContainers would otherwise remove a container another
+// process expects kept/removed. A portable O_EXCL lock file (no syscall, builds
+// on Windows) is acquired by spinning until it's free.
+func lockDockerHost(t *testing.T) {
+	t.Helper()
+	lockPath := filepath.Join(os.TempDir(), "uwas-orphan-test.lock")
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			t.Cleanup(func() { _ = f.Close(); _ = os.Remove(lockPath) })
+			return
+		}
+		if time.Now().After(deadline) {
+			// Stale lock (a crashed run left it behind) — take it over.
+			t.Cleanup(func() { _ = os.Remove(lockPath) })
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // uniqueDockerApp returns a process-unique app name so concurrent runs of the
 // real-daemon tests (separate OS processes) don't collide on the shared
 // container name "uwas-app-<name>".
@@ -71,6 +95,7 @@ func TestDockerLifecycleRealDaemon(t *testing.T) {
 	if !dockerAvailable(t) {
 		t.Skip("docker daemon not available")
 	}
+	lockDockerHost(t)
 	img := pickSmallImage(t)
 
 	app := uniqueDockerApp("coverage-lifecycle")
@@ -149,6 +174,7 @@ func TestStartDockerSuccessRealDaemon(t *testing.T) {
 	if !dockerAvailable(t) {
 		t.Skip("docker daemon not available")
 	}
+	lockDockerHost(t)
 	img := pickSmallImage(t)
 
 	app := uniqueDockerApp("coverage-startdocker")
@@ -222,6 +248,7 @@ func TestStartDockerBuildContextRealDaemon(t *testing.T) {
 	if !dockerAvailable(t) {
 		t.Skip("docker daemon not available")
 	}
+	lockDockerHost(t)
 	base := pickSmallImage(t) // busybox/alpine present locally
 
 	app := uniqueDockerApp("coverage-build")
@@ -308,6 +335,7 @@ func TestCleanupOrphanContainersRemovesCreatedOrphan(t *testing.T) {
 	if !dockerAvailable(t) {
 		t.Skip("docker daemon not available")
 	}
+	lockDockerHost(t)
 
 	// PID-unique name (still "uwas-app-"-prefixed so the sweep treats it as a
 	// managed orphan) so concurrent test processes don't race on a shared
@@ -359,6 +387,7 @@ func TestCleanupOrphanContainersKeepsKnown(t *testing.T) {
 	if !dockerAvailable(t) {
 		t.Skip("docker daemon not available")
 	}
+	lockDockerHost(t)
 
 	app := uniqueDockerApp("coverage-known-test")
 	cname := containerName(app)
