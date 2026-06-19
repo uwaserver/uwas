@@ -106,6 +106,17 @@ func TestParseCronLine(t *testing.T) {
 			"/bin/cleanup",
 		},
 		{
+			// Cron shorthand schedule — single @-field, then the command.
+			"@reboot /usr/local/bin/startup.sh",
+			"@reboot",
+			"/usr/local/bin/startup.sh",
+		},
+		{
+			"@daily /usr/local/bin/backup.sh --full",
+			"@daily",
+			"/usr/local/bin/backup.sh --full",
+		},
+		{
 			// Too few fields — entire line becomes Command
 			"short",
 			"",
