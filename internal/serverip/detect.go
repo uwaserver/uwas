@@ -2,6 +2,7 @@
 package serverip
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -116,10 +117,11 @@ func PublicIP() string {
 		if err != nil {
 			continue
 		}
-		buf := make([]byte, 64)
-		n, _ := resp.Body.Read(buf)
+		// Read the whole (tiny) body — a single Read can return a partial
+		// response, truncating the IP and failing the parse.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
 		resp.Body.Close()
-		ip := strings.TrimSpace(string(buf[:n]))
+		ip := strings.TrimSpace(string(body))
 		if net.ParseIP(ip) != nil {
 			return ip
 		}
