@@ -7,20 +7,21 @@ import (
 )
 
 // TestOrConditionChaining tests OR condition evaluation.
-// With [OR] flag: cond1[OR], cond2 → means (cond1 OR cond2).
-// The engine evaluates: if cond1 matches, skip to end of OR group and overall=true.
-// If cond1 doesn't match, cond2 is the last AND in the group.
+// cond1[OR], cond2 (no flag) form the OR group "(a.com OR b.com)"; cond3 is a
+// separate AND condition. So the rule fires for "(a.com OR b.com) AND .*".
+// (cond2 must NOT carry [OR] — that would fold cond3 into the OR group, giving
+// "(a.com OR b.com OR .*)", which the always-matching .* makes unconditionally
+// true.)
 func TestOrConditionChaining(t *testing.T) {
-	// Use a single regex that matches both: HTTP_HOST matches "^(a|b)\\.com$"
 	cond1, err := ParseCondition("%{HTTP_HOST}", "^a\\.com$", "[OR]")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cond2, err := ParseCondition("%{HTTP_HOST}", "^b\\.com$", "[OR]")
+	cond2, err := ParseCondition("%{HTTP_HOST}", "^b\\.com$", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Need a trailing AND condition that always passes to end the OR group
+	// Trailing AND condition (always passes) — a separate group from the OR.
 	cond3, err := ParseCondition("%{REQUEST_URI}", ".*", "")
 	if err != nil {
 		t.Fatal(err)
@@ -38,12 +39,10 @@ func TestOrConditionChaining(t *testing.T) {
 		t.Errorf("a.com: URI = %q, want /matched", result.URI)
 	}
 
-	// Host is c.com (neither OR matches, but cond3 is AND and matches)
+	// Host is c.com: (a.com OR b.com) is false, so even though cond3 (.*)
+	// matches, the AND makes the whole thing false → not modified.
 	vars3 := &Variables{HTTPHost: "c.com", RequestURI: "/test"}
 	result3 := engine.Process("/test", "", vars3)
-	// Since cond1 and cond2 both fail (both have OR), groupResult becomes false.
-	// cond3 then does groupResult(false) && matched(true) = false
-	// overallResult was false, so evalConditions returns false
 	if result3.Modified {
 		t.Errorf("c.com: should NOT be modified")
 	}

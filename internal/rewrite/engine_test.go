@@ -598,9 +598,10 @@ func TestConvertConfigRewritesWithChain(t *testing.T) {
 	}
 }
 
-// --- engine.go: evalConditions with OR group where first fails and second is AND ---
+// --- engine.go: evalConditions OR group — either alternative may match ---
 
-func TestEvalConditionsOrFirstFailsSecondAnd(t *testing.T) {
+func TestEvalConditionsOrGroupEitherMatches(t *testing.T) {
+	// cond1[OR], cond2 (no flag) → "(DELETE OR PUT)". Either method matches.
 	cond1, _ := ParseCondition("%{REQUEST_METHOD}", "^DELETE$", "[OR]")
 	cond2, _ := ParseCondition("%{REQUEST_METHOD}", "^PUT$", "")
 
@@ -609,19 +610,23 @@ func TestEvalConditionsOrFirstFailsSecondAnd(t *testing.T) {
 
 	engine := NewEngine([]*Rule{rule})
 
-	// DELETE matches via first OR condition
+	// DELETE matches via the first OR alternative.
 	vars := &Variables{RequestMethod: "DELETE", RequestURI: "/resource"}
-	result := engine.Process("/resource", "", vars)
-	if result.URI != "/write-handler" {
+	if result := engine.Process("/resource", "", vars); result.URI != "/write-handler" {
 		t.Errorf("DELETE: URI = %q, want /write-handler", result.URI)
 	}
 
-	// PUT doesn't match because when cond1[OR] fails, groupResult becomes false
-	// and cond2 (AND) evaluates false && true = false
+	// PUT matches via the second OR alternative — a failing first alternative
+	// must not poison a matching later one.
 	vars2 := &Variables{RequestMethod: "PUT", RequestURI: "/resource"}
-	result2 := engine.Process("/resource", "", vars2)
-	if result2.Modified {
-		t.Error("PUT: should not be modified (OR group fails, AND with second fails)")
+	if result2 := engine.Process("/resource", "", vars2); result2.URI != "/write-handler" {
+		t.Errorf("PUT: URI = %q, want /write-handler (matches OR group)", result2.URI)
+	}
+
+	// GET matches neither alternative → not modified.
+	vars3 := &Variables{RequestMethod: "GET", RequestURI: "/resource"}
+	if result3 := engine.Process("/resource", "", vars3); result3.Modified {
+		t.Error("GET: should not be modified (matches neither OR alternative)")
 	}
 }
 

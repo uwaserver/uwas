@@ -155,46 +155,49 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 	return result
 }
 
-// evalConditions evaluates a list of conditions with AND/OR logic.
+// evalConditions evaluates a list of conditions with Apache RewriteCond
+// semantics: conditions are AND-ed by default, and a run of conditions linked
+// by [OR] forms an OR-group whose members are OR-ed together. So
+// "A [OR] B  C" means "(A OR B) AND C". The overall result is the AND of every
+// group's OR result.
 func (e *Engine) evalConditions(conditions []Condition, vars *Variables) (bool, []string) {
 	if len(conditions) == 0 {
 		return true, nil
 	}
 
 	var lastCaptures []string
-	overallResult := false
-	groupResult := true // current AND-group result
+	overall := true       // AND accumulator across groups
+	groupMatched := false // OR accumulator within the current group
+	inGroup := false      // a multi-member OR-group is open
 
-	for i, cond := range conditions {
+	for _, cond := range conditions {
 		matched, captures := cond.Evaluate(vars)
-
 		if matched {
 			lastCaptures = captures
+			groupMatched = true
 		}
 
 		if cond.OrNext {
-			// OR logic: if any in the OR group matches, the group is true
-			if matched {
-				overallResult = true
-				// Skip remaining OR conditions in this group
-				for i+1 < len(conditions) && conditions[i].OrNext {
-					i++
-				}
-				continue
-			}
-			groupResult = groupResult && matched
-		} else {
-			// AND logic (default)
-			groupResult = groupResult && matched
-			if !groupResult && !overallResult {
-				return false, nil
-			}
-			overallResult = overallResult || groupResult
-			groupResult = true
+			// More alternatives follow — keep OR-accumulating, don't close
+			// the group yet. (A failed alternative must not poison a later
+			// matching one — the bug this replaces.)
+			inGroup = true
+			continue
 		}
+
+		// End of the current group (this condition is its last member):
+		// fold the group's OR result into the overall AND, then reset.
+		overall = overall && groupMatched
+		groupMatched = false
+		inGroup = false
 	}
 
-	return overallResult || groupResult, lastCaptures
+	// Fold a trailing, never-closed OR-group (malformed input ending in [OR]).
+	if inGroup {
+		overall = overall && groupMatched
+	}
+
+	return overall, lastCaptures
 }
 
 // skipChain skips rules that are chained ([C] flag) after a non-matching rule.

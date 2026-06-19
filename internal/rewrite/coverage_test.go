@@ -80,9 +80,11 @@ func TestConvertConfigRewritesDefaultLast(t *testing.T) {
 // TestEvalConditionsComplexOrAnd covers the OR/AND evaluation logic more
 // thoroughly to hit remaining uncovered branches.
 func TestEvalConditionsComplexOrAnd(t *testing.T) {
-	// Test case: first OR fails, second OR fails, falls through to AND
+	// "(DELETE OR PATCH) AND REQUEST_URI ^/api" — cond1[OR], cond2 closes the
+	// OR group (no flag), cond3 is the AND. (cond2 must not carry [OR], else
+	// cond3 folds into the OR group.)
 	cond1, _ := ParseCondition("%{REQUEST_METHOD}", "^DELETE$", "[OR]")
-	cond2, _ := ParseCondition("%{REQUEST_METHOD}", "^PATCH$", "[OR]")
+	cond2, _ := ParseCondition("%{REQUEST_METHOD}", "^PATCH$", "")
 	cond3, _ := ParseCondition("%{REQUEST_URI}", "^/api", "")
 
 	rule, _ := ParseRule(".*", "/handler", "L")
@@ -90,12 +92,17 @@ func TestEvalConditionsComplexOrAnd(t *testing.T) {
 
 	engine := NewEngine([]*Rule{rule})
 
-	// GET /api: both OR conditions fail, cond3 matches
+	// GET /api: (DELETE OR PATCH) is false, so the AND is false → not modified.
 	vars := &Variables{RequestMethod: "GET", RequestURI: "/api/test"}
 	result := engine.Process("/api/test", "", vars)
-	// OR group both fail -> groupResult false, cond3 AND with false -> still false
 	if result.Modified {
 		t.Error("GET: should not be modified (OR group both fail)")
+	}
+
+	// DELETE /api: (DELETE OR PATCH) true AND /api true → modified.
+	varsDel := &Variables{RequestMethod: "DELETE", RequestURI: "/api/test"}
+	if r := engine.Process("/api/test", "", varsDel); !r.Modified {
+		t.Error("DELETE /api: should be modified (OR matches, AND matches)")
 	}
 }
 
