@@ -81,9 +81,24 @@ func (m *Manager) startDocker(p *process) error {
 			p.name, err, strings.TrimSpace(stderr.String()))
 	}
 
-	// `docker run -d` prints the container ID on stdout. Trim and stash.
-	p.dockerID = strings.TrimSpace(stdout.String())
+	// `docker run -d` prints the container ID on stdout.
+	dockerID := strings.TrimSpace(stdout.String())
+
+	m.mu.Lock()
+	// If Stop() landed while this (re)start was in flight, abort: tear down
+	// the container we just created and don't register a watcher. Otherwise a
+	// backoff-triggered restart racing with Stop() would leak a container that
+	// keeps restarting, ignoring the operator's stop. Also keeps the p.dockerID
+	// / p.startedAt writes under the lock that every reader holds.
+	if p.stopped {
+		m.mu.Unlock()
+		_ = exec.Command("docker", "stop", dockerID).Run()
+		return nil
+	}
+	p.dockerID = dockerID
 	p.startedAt = time.Now()
+	stopCh := p.stopCh
+	m.mu.Unlock()
 
 	if m.logger != nil {
 		m.logger.Info("apps: docker container started",
@@ -91,8 +106,6 @@ func (m *Manager) startDocker(p *process) error {
 	}
 
 	// Spawn watcher that triggers auto-restart on container exit.
-	stopCh := p.stopCh
-	dockerID := p.dockerID
 	if m.logger != nil {
 		m.logger.SafeGo("apps.docker."+p.name, func() {
 			m.watchDocker(p, dockerID, stopCh)
@@ -122,7 +135,11 @@ func (m *Manager) startDocker(p *process) error {
 		if tail == "" {
 			tail = "(no container output — check build log)"
 		}
-		p.dockerID = ""
+		m.mu.Lock()
+		if p.dockerID == dockerID {
+			p.dockerID = ""
+		}
+		m.mu.Unlock()
 		return fmt.Errorf("apps: %s: docker container exited within 500ms of start. Last log:\n%s",
 			p.name, tail)
 	}
@@ -318,15 +335,27 @@ func (m *Manager) watchDocker(p *process, id string, stopCh <-chan struct{}) {
 	// our own stop path). Treat both as "container is no longer
 	// running" and let stopCh / autoRestart decide next steps.
 
+	// All p.* state below is shared with readers (Stats, Instances, isRunning,
+	// stopLocked) that hold m.mu — so every access here takes the lock too,
+	// mirroring monitorNative. Reading these fields unlocked is a data race.
 	select {
 	case <-stopCh:
 		// Graceful stop — don't restart.
-		p.dockerID = ""
+		m.mu.Lock()
+		if p.dockerID == id {
+			p.dockerID = ""
+		}
+		m.mu.Unlock()
 		return
 	default:
 	}
 
-	p.dockerID = ""
+	m.mu.Lock()
+	if p.dockerID == id {
+		p.dockerID = ""
+	}
+	autoRestart := p.autoRestart
+	crashloopGave := p.crashloopGave
 
 	if waitErr != nil && m.logger != nil {
 		m.logger.Warn("apps: docker container exited",
@@ -335,7 +364,8 @@ func (m *Manager) watchDocker(p *process, id string, stopCh <-chan struct{}) {
 		m.logger.Info("apps: docker container exited", "app", p.name)
 	}
 
-	if !p.autoRestart || p.crashloopGave {
+	if !autoRestart || crashloopGave {
+		m.mu.Unlock()
 		return
 	}
 
@@ -353,18 +383,22 @@ func (m *Manager) watchDocker(p *process, id string, stopCh <-chan struct{}) {
 
 	if p.restartCount >= crashloopMaxRestarts {
 		p.crashloopGave = true
+		restartCount := p.restartCount
+		m.mu.Unlock()
 		if m.logger != nil {
 			m.logger.Error("apps: giving up docker auto-restart after crashloop",
-				"app", p.name, "consecutive_crashes", p.restartCount,
+				"app", p.name, "consecutive_crashes", restartCount,
 				"hint", "check the build log and the image's entrypoint, then click Start")
 		}
 		return
 	}
 
 	delay := computeBackoff(p.restartCount)
-	if m.logger != nil && p.restartCount > 1 {
+	restartCount := p.restartCount
+	m.mu.Unlock()
+	if m.logger != nil && restartCount > 1 {
 		m.logger.Warn("apps: backing off docker auto-restart",
-			"app", p.name, "consecutive_crashes", p.restartCount, "delay", delay)
+			"app", p.name, "consecutive_crashes", restartCount, "delay", delay)
 	}
 
 	backoff := time.NewTimer(delay)
