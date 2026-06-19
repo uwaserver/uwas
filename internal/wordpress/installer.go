@@ -331,6 +331,16 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 }
 
 func generateWPConfig(webRoot, dbName, dbUser, dbPass, dbHost string) error {
+	// Escape the DB credentials before interpolating them into PHP single-
+	// quoted strings. A value containing ' or \ (e.g. a user-supplied password)
+	// would otherwise corrupt wp-config.php and not match the credentials
+	// createMySQLDB stored (which are escaped). escSQL's \-and-' escaping is
+	// exactly PHP single-quote escaping.
+	dbName = escSQL(dbName)
+	dbUser = escSQL(dbUser)
+	dbPass = escSQL(dbPass)
+	dbHost = escSQL(dbHost)
+
 	salts := make([]string, 8)
 	saltKeys := []string{
 		"AUTH_KEY", "SECURE_AUTH_KEY", "LOGGED_IN_KEY", "NONCE_KEY",
