@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -166,22 +167,54 @@ func SetAdminPort(port string) {
 
 // validatePort checks that port is a valid number or range, not empty, not "any".
 func validatePort(port string) error {
+	_, _, err := parsePortSpec(port)
+	return err
+}
+
+// parsePortSpec parses a single port ("80") or an inclusive range ("8000:8100")
+// into [lo, hi]. It rejects empty segments, out-of-range numbers, inverted
+// ranges, and "any"/"all"/"*".
+func parsePortSpec(port string) (int, int, error) {
 	if port == "" {
-		return fmt.Errorf("port is required")
+		return 0, 0, fmt.Errorf("port is required")
 	}
 	p := strings.ToLower(strings.TrimSpace(port))
 	if p == "any" || p == "all" || p == "*" {
-		return fmt.Errorf("cannot use '%s' as port — specify a port number", port)
+		return 0, 0, fmt.Errorf("cannot use '%s' as port — specify a port number", port)
 	}
-	// Allow ranges like "8000:8100"
-	for _, part := range strings.Split(p, ":") {
-		for _, ch := range part {
-			if ch < '0' || ch > '9' {
-				return fmt.Errorf("invalid port: %s", port)
-			}
+	parts := strings.Split(p, ":")
+	if len(parts) > 2 {
+		return 0, 0, fmt.Errorf("invalid port: %s", port)
+	}
+	nums := make([]int, len(parts))
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 1 || n > 65535 {
+			return 0, 0, fmt.Errorf("invalid port: %s", port)
+		}
+		nums[i] = n
+	}
+	lo, hi := nums[0], nums[len(nums)-1]
+	if lo > hi {
+		return 0, 0, fmt.Errorf("invalid port range: %s", port)
+	}
+	return lo, hi, nil
+}
+
+// deniesProtectedPort reports whether a deny target (single port or range)
+// covers any protected port. Without this a range like "20:30" slips past the
+// single-key protectedPorts lookup and `ufw deny 20:30/tcp` locks out SSH.
+func deniesProtectedPort(port string) bool {
+	lo, hi, err := parsePortSpec(port)
+	if err != nil {
+		return false
+	}
+	for pp := range protectedPorts {
+		if n, err := strconv.Atoi(pp); err == nil && n >= lo && n <= hi {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 // AllowPort adds a ufw allow rule.
@@ -224,8 +257,8 @@ func DenyPort(port, proto string) error {
 	if err := validateProto(proto); err != nil {
 		return err
 	}
-	if protectedPorts[port] {
-		return fmt.Errorf("cannot deny port %s — it is required for server operation (HTTP/HTTPS/SSH/Admin)", port)
+	if deniesProtectedPort(port) {
+		return fmt.Errorf("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
 	}
 	target := port
 	if proto != "" {
