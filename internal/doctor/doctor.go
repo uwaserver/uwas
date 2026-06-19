@@ -32,9 +32,9 @@ var (
 type Status string
 
 const (
-	StatusOK   Status = "ok"
-	StatusWarn Status = "warn"
-	StatusFail Status = "fail"
+	StatusOK    Status = "ok"
+	StatusWarn  Status = "warn"
+	StatusFail  Status = "fail"
 	StatusFixed Status = "fixed"
 )
 
@@ -43,8 +43,8 @@ type Check struct {
 	Name    string `json:"name"`
 	Status  Status `json:"status"`
 	Message string `json:"message"`
-	Fix     string `json:"fix,omitempty"`     // what was auto-fixed
-	HowTo   string `json:"how_to,omitempty"`  // manual fix instructions
+	Fix     string `json:"fix,omitempty"`    // what was auto-fixed
+	HowTo   string `json:"how_to,omitempty"` // manual fix instructions
 }
 
 // Report is the full doctor report.

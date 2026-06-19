@@ -265,15 +265,15 @@ func (s *Server) registerTools() {
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Handler: func(_ json.RawMessage) (any, error) {
 			return map[string]any{
-				"requests_total":   s.metrics.RequestsTotal.Load(),
-				"active_conns":     s.metrics.ActiveConns.Load(),
-				"bytes_sent":       s.metrics.BytesSent.Load(),
-				"cache_hits":       s.metrics.CacheHits.Load(),
-				"cache_misses":     s.metrics.CacheMisses.Load(),
-				"slow_requests":    s.metrics.SlowRequests.Load(),
-				"static_requests":  s.metrics.StaticRequests.Load(),
-				"php_requests":     s.metrics.PHPRequests.Load(),
-				"proxy_requests":   s.metrics.ProxyRequests.Load(),
+				"requests_total":  s.metrics.RequestsTotal.Load(),
+				"active_conns":    s.metrics.ActiveConns.Load(),
+				"bytes_sent":      s.metrics.BytesSent.Load(),
+				"cache_hits":      s.metrics.CacheHits.Load(),
+				"cache_misses":    s.metrics.CacheMisses.Load(),
+				"slow_requests":   s.metrics.SlowRequests.Load(),
+				"static_requests": s.metrics.StaticRequests.Load(),
+				"php_requests":    s.metrics.PHPRequests.Load(),
+				"proxy_requests":  s.metrics.ProxyRequests.Load(),
 			}, nil
 		},
 	}
@@ -307,10 +307,10 @@ func (s *Server) CallTool(name string, input json.RawMessage) (any, error) {
 // path (handleDomainDetail) intentionally does NOT sanitize — operators
 // need to view and edit these fields there.
 func sanitizeDomainForMCP(d config.Domain) config.Domain {
-	d.PHP.Env = nil           // env vars frequently hold DB creds, API keys
-	d.App.Env = nil           // same for non-PHP apps
-	d.BasicAuth.Users = nil   // username → password map (often hashed, but still)
-	d.WebhookSecret = ""      // per-domain webhook HMAC
-	d.SSL.Key = ""            // path or inline private key — neither belongs in agent output
+	d.PHP.Env = nil         // env vars frequently hold DB creds, API keys
+	d.App.Env = nil         // same for non-PHP apps
+	d.BasicAuth.Users = nil // username → password map (often hashed, but still)
+	d.WebhookSecret = ""    // per-domain webhook HMAC
+	d.SSL.Key = ""          // path or inline private key — neither belongs in agent output
 	return d
 }
