@@ -309,12 +309,19 @@ func loadFromString(t *testing.T, content string) *Config {
 }
 
 func loadStringConfig(content string) (*Config, error) {
-	dir := os.TempDir()
-	path := filepath.Join(dir, "uwas_test.yaml")
+	// Use a uniquely-named temp file, not a fixed /tmp/uwas_test.yaml — the
+	// many tests sharing this helper would otherwise clobber each other's file
+	// (missing/half-written reads) when run concurrently across processes.
+	f, err := os.CreateTemp("", "uwas_test_*.yaml")
+	if err != nil {
+		return nil, err
+	}
+	path := f.Name()
+	_ = f.Close()
+	defer os.Remove(path)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return nil, err
 	}
-	defer os.Remove(path)
 	return Load(path)
 }
 

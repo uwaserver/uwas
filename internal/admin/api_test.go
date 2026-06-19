@@ -1162,6 +1162,7 @@ http.createServer((req, res) => res.end('old')).listen(port, '127.0.0.1');
 		Name:    "node-redeploy",
 		Runtime: apps.RuntimeNode,
 		WorkDir: workDir,
+		Port:    freeTestPort(t),
 		Deploy: apps.DeployConfig{
 			GitURL:    "https://github.com/acme/private-node.git",
 			GitBranch: "main",
@@ -1289,6 +1290,7 @@ http.createServer((req, res) => {
 		Name:    "node-rollback",
 		Runtime: apps.RuntimeNode,
 		WorkDir: workDir,
+		Port:    freeTestPort(t),
 		Env:     map[string]string{"OLD_FLAG": "1"},
 		Deploy: apps.DeployConfig{
 			GitURL:     "https://github.com/acme/private-node.git",
@@ -1498,6 +1500,7 @@ func TestAppDeployPrivateRepoAutoBuildThenStartsNPMApp(t *testing.T) {
 	if err := mgr.Register(&apps.App{
 		Name:    "node-build-private",
 		Runtime: apps.RuntimeNode,
+		Port:    freeTestPort(t),
 		WorkDir: workDir,
 	}); err != nil {
 		t.Fatal(err)
@@ -1612,6 +1615,7 @@ func TestAppDeployBuildFailureDoesNotStartAppOrReturnOK(t *testing.T) {
 	if err := mgr.Register(&apps.App{
 		Name:    "node-build-fail",
 		Runtime: apps.RuntimeNode,
+		Port:    freeTestPort(t),
 		WorkDir: workDir,
 	}); err != nil {
 		t.Fatal(err)
@@ -1709,6 +1713,7 @@ func TestAppDeployRejectsReservedEnv(t *testing.T) {
 	if err := mgr.Register(&apps.App{
 		Name:    "node-env",
 		Runtime: apps.RuntimeNode,
+		Port:    freeTestPort(t),
 		WorkDir: workDir,
 	}); err != nil {
 		t.Fatal(err)
