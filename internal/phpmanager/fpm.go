@@ -6,6 +6,7 @@
 package phpmanager
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,7 +142,7 @@ func (m *Manager) StopFPM(version string) error {
 		m.logger.Warn("stale PHP-CGI process entry removed", "version", version)
 		return nil
 	}
-	if err := info.cmd.Process.Kill(); err != nil {
+	if err := info.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("kill php-cgi: %w", err)
 	}
 
