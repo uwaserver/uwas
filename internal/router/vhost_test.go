@@ -37,6 +37,27 @@ func TestVHostAliasMatch(t *testing.T) {
 	}
 }
 
+// TestVHostExplicitNotClobberedByImplicitVariant guards against a cross-tenant
+// routing hijack: when one domain explicitly owns example.com and another
+// explicitly owns www.example.com, the implicit apex/www variant derived from
+// one must never overwrite the other's explicit registration — in either
+// registration order.
+func TestVHostExplicitNotClobberedByImplicitVariant(t *testing.T) {
+	orders := [][]config.Domain{
+		{{Host: "example.com", Root: "/var/www/apex"}, {Host: "www.example.com", Root: "/var/www/www"}},
+		{{Host: "www.example.com", Root: "/var/www/www"}, {Host: "example.com", Root: "/var/www/apex"}},
+	}
+	for i, domains := range orders {
+		r := NewVHostRouter(domains)
+		if d := r.Lookup("example.com"); d == nil || d.Root != "/var/www/apex" {
+			t.Errorf("order %d: Lookup(example.com) = %v, want apex config", i, d)
+		}
+		if d := r.Lookup("www.example.com"); d == nil || d.Root != "/var/www/www" {
+			t.Errorf("order %d: Lookup(www.example.com) = %v, want www config", i, d)
+		}
+	}
+}
+
 func TestVHostImplicitWWWMatch(t *testing.T) {
 	domains := []config.Domain{
 		{Host: "example.com", Root: "/var/www"},
