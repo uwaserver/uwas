@@ -36,14 +36,18 @@ func RealIP(trustedProxies []string) Middleware {
 				return
 			}
 
-			// Priority: CF-Connecting-IP > X-Real-IP > X-Forwarded-For
-			if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
+			// Priority: CF-Connecting-IP > X-Real-IP > X-Forwarded-For.
+			// Validate the header is a real IP before trusting it: a trusted
+			// proxy forwarding an attacker-controlled, non-IP (or otherwise
+			// bogus) value must not poison RemoteAddr — that feeds ACLs, access
+			// logs, and BotGuard's loopback check downstream.
+			if ip := r.Header.Get("CF-Connecting-IP"); ip != "" && net.ParseIP(ip) != nil {
 				r.RemoteAddr = ip + ":0"
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			if ip := r.Header.Get("X-Real-IP"); ip != "" {
+			if ip := r.Header.Get("X-Real-IP"); ip != "" && net.ParseIP(ip) != nil {
 				r.RemoteAddr = ip + ":0"
 				next.ServeHTTP(w, r)
 				return
