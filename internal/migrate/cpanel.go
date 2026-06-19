@@ -131,12 +131,22 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 	}
 
 	for i, dom := range result.Domains {
-		srcRoot := filepath.Join(homeDir, dom.DocRoot)
+		// dom.Domain and dom.DocRoot come from attacker-controlled userdata in
+		// the uploaded archive. Reject a domain whose name isn't a safe single
+		// path component (it's joined into targetDir and cert filenames), and
+		// neutralize ".." in DocRoot via leading-slash Clean so the copy source
+		// can't escape homeDir.
+		if dom.Domain == "" || strings.ContainsAny(dom.Domain, `/\`) || strings.Contains(dom.Domain, "..") {
+			result.Errors = append(result.Errors, "skipped domain with unsafe name: "+dom.Domain)
+			continue
+		}
+		docRoot := filepath.Clean("/" + dom.DocRoot)
+		srcRoot := filepath.Join(homeDir, docRoot)
 		if _, err := os.Stat(srcRoot); err != nil {
 			// Try relative to homedir
 			srcRoot = filepath.Join(homeDir, "public_html")
 			if dom.Type == "addon" {
-				srcRoot = filepath.Join(homeDir, dom.DocRoot)
+				srcRoot = filepath.Join(homeDir, docRoot)
 			}
 		}
 
