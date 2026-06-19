@@ -219,6 +219,11 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
+	// System-wide privileged auto-fix — admin only (the read-only handleDoctor
+	// is intentionally not gated, but AutoFix mutates permissions/config).
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	webRoot := s.config.Global.WebRoot
 	s.configMu.RUnlock()
