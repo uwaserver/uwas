@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -929,6 +930,21 @@ func TestAppGetRedactsGitToken(t *testing.T) {
 	}
 }
 
+// freeTestPort returns an OS-assigned free localhost port. Deploy tests that
+// start a real node app register it on a unique port (instead of the manager's
+// fixed 3001 base) so independent test processes running concurrently don't
+// collide on the same host port (EADDRINUSE).
+func freeTestPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return port
+}
+
 func TestAppDeployPrivateRepoRefreshesCommandAndStartsClonedNodeApp(t *testing.T) {
 	s := testServer()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
@@ -940,6 +956,7 @@ func TestAppDeployPrivateRepoRefreshesCommandAndStartsClonedNodeApp(t *testing.T
 		Name:    "node-private",
 		Runtime: apps.RuntimeNode,
 		WorkDir: workDir,
+		Port:    freeTestPort(t),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1046,6 +1063,7 @@ func TestAppDeployClearsDisabledAndStartsApp(t *testing.T) {
 		Name:     "node-disabled",
 		Runtime:  apps.RuntimeNode,
 		WorkDir:  workDir,
+		Port:     freeTestPort(t),
 		Disabled: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -1403,6 +1421,7 @@ func TestWebhookDeployRefreshesCommandAndStartsClonedNodeApp(t *testing.T) {
 		Name:    "node-webhook",
 		Runtime: apps.RuntimeNode,
 		WorkDir: workDir,
+		Port:    freeTestPort(t),
 		Deploy: apps.DeployConfig{
 			GitURL:        "https://github.com/acme/private-node.git",
 			GitBranch:     "main",
