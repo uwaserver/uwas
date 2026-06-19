@@ -282,7 +282,13 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 
 		// Import
 		importCmd := execCommandFn(bin, "-u", "root", req.DBName)
-		importCmd.Stdin, _ = os.Open(dumpFile)
+		dump, err := os.Open(dumpFile)
+		if err != nil {
+			log.WriteString(fmt.Sprintf("import error: cannot open dump %s: %s\n", dumpFile, err))
+			return "error: import failed"
+		}
+		defer dump.Close()
+		importCmd.Stdin = dump
 		if out, err := importCmd.CombinedOutput(); err != nil {
 			log.WriteString(fmt.Sprintf("import error: %s — %s\n", err, string(out)))
 			return "error: import failed"
