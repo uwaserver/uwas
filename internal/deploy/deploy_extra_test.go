@@ -219,7 +219,6 @@ func TestDeployGit_Cancelled(t *testing.T) {
 	// Pre-create a cancel channel and close it so the select hits the cancel case.
 	ch := make(chan struct{})
 	close(ch)
-	m.cancelCh["test.com"] = ch
 
 	status := &DeployStatus{Domain: "test.com", Status: "deploying", StartedAt: time.Now()}
 	var log strings.Builder
@@ -230,7 +229,7 @@ func TestDeployGit_Cancelled(t *testing.T) {
 		BuildCmd:  "npm install",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", ch, status, &log)
 	if err == nil {
 		t.Fatal("deployGit() expected cancellation error")
 	}
@@ -269,7 +268,7 @@ func TestDeployGit_SkipBuildKeyword(t *testing.T) {
 			GitBranch: "main",
 			BuildCmd:  kw,
 		}
-		if err := m.deployGit(req, appRoot, "main", status, &log); err != nil {
+		if err := m.deployGit(req, appRoot, "main", nil, status, &log); err != nil {
 			t.Errorf("deployGit() with BuildCmd=%q error = %v", kw, err)
 		}
 	}
@@ -303,7 +302,7 @@ func TestDeployGit_HealthCheckSuccess(t *testing.T) {
 		GitBranch: "main",
 		BuildCmd:  "none",
 	}
-	if err := m.deployGit(req, appRoot, "main", status, &log); err != nil {
+	if err := m.deployGit(req, appRoot, "main", nil, status, &log); err != nil {
 		t.Errorf("deployGit() error = %v", err)
 	}
 	if checkedAddr != "127.0.0.1:8081" {
@@ -340,7 +339,7 @@ func TestDeployGit_HealthCheckFails(t *testing.T) {
 		GitBranch: "main",
 		BuildCmd:  "none",
 	}
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 	if err == nil {
 		t.Fatal("deployGit() expected health check error")
 	}
@@ -384,7 +383,7 @@ func TestDeployGit_ExistingRepoTokenRemoteSetURL(t *testing.T) {
 		GitBranch: "main",
 		GitToken:  "tok_abc",
 	}
-	if err := m.deployGit(req, appRoot, "main", status, &log); err != nil {
+	if err := m.deployGit(req, appRoot, "main", nil, status, &log); err != nil {
 		t.Errorf("deployGit() error = %v", err)
 	}
 	if !sawSetURL {
@@ -425,7 +424,7 @@ func TestDeployGit_DetectBuildCmd(t *testing.T) {
 		GitBranch: "main",
 		BuildCmd:  "", // triggers detectBuildCmd
 	}
-	if err := m.deployGit(req, appRoot, "main", status, &log); err != nil {
+	if err := m.deployGit(req, appRoot, "main", nil, status, &log); err != nil {
 		t.Errorf("deployGit() error = %v", err)
 	}
 	if ranBuild != "npm install && npm run build" {
@@ -851,7 +850,7 @@ func TestDeployGit_RedactsTokenOnError(t *testing.T) {
 		GitBranch: "main",
 		GitToken:  "supersecret",
 	}
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 	if err == nil {
 		t.Fatal("expected fetch error")
 	}

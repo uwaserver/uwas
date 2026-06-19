@@ -470,7 +470,7 @@ func TestDeployGit_FreshClone(t *testing.T) {
 		BuildCmd:  "npm install",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err != nil {
 		t.Errorf("deployGit() error = %v, want nil", err)
@@ -532,7 +532,7 @@ func TestDeployGit_ExistingRepo(t *testing.T) {
 		GitBranch: "develop",
 	}
 
-	err := m.deployGit(req, appRoot, "develop", status, &log)
+	err := m.deployGit(req, appRoot, "develop", nil, status, &log)
 
 	if err != nil {
 		t.Errorf("deployGit() error = %v, want nil", err)
@@ -583,7 +583,7 @@ func TestDeployGit_CloneFails(t *testing.T) {
 		GitBranch: "main",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
 		t.Error("deployGit() expected error for failed clone")
@@ -612,7 +612,7 @@ func TestDeployGit_NoGitURL(t *testing.T) {
 		GitBranch: "main",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
 		t.Error("deployGit() expected error for empty GitURL")
@@ -659,7 +659,7 @@ func TestDeployGit_NoBuildCmd(t *testing.T) {
 		BuildCmd:  "", // No build
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err != nil {
 		t.Errorf("deployGit() error = %v, want nil", err)
@@ -709,7 +709,7 @@ func TestDeployGit_WithToken(t *testing.T) {
 		GitToken:  "ghp_token123",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err != nil {
 		t.Errorf("deployGit() error = %v, want nil", err)
@@ -752,7 +752,7 @@ func TestDeployGit_BuildFails(t *testing.T) {
 		BuildCmd:  "npm run build",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
 		t.Error("deployGit() expected error for failed build")
@@ -1113,7 +1113,7 @@ func TestDeployGit_FetchFails(t *testing.T) {
 		GitBranch: "main",
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
 		t.Error("deployGit() expected error for failed fetch")
@@ -1155,7 +1155,7 @@ func TestDeployGit_ResetFails(t *testing.T) {
 		GitBranch: "nonexistent",
 	}
 
-	err := m.deployGit(req, appRoot, "nonexistent", status, &log)
+	err := m.deployGit(req, appRoot, "nonexistent", nil, status, &log)
 
 	if err == nil {
 		t.Error("deployGit() expected error for failed reset")
@@ -1213,7 +1213,7 @@ func TestDeployGit_WithSSHKey(t *testing.T) {
 		SSHKeyPath: sshKeyPath,
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err != nil {
 		t.Errorf("deployGit() error = %v, want nil", err)
@@ -1275,7 +1275,7 @@ func TestDeployGit_InvalidSSHKeyPath(t *testing.T) {
 			SSHKeyPath: tt.keyPath,
 		}
 
-		err := m.deployGit(req, appRoot, "main", status, &log)
+		err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 		if err == nil {
 			t.Errorf("%s: deployGit() expected error", tt.name)
@@ -1339,7 +1339,7 @@ func TestDeployGit_WithCustomEnv(t *testing.T) {
 		},
 	}
 
-	err := m.deployGit(req, appRoot, "main", status, &log)
+	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err != nil {
 		t.Errorf("deployGit() error = %v, want nil", err)
