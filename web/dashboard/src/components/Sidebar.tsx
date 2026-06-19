@@ -33,6 +33,7 @@ import {
   ChevronDown,
   ChevronRight,
   Stethoscope,
+  Wand2,
   Package,
   Sun,
   Moon,
@@ -130,6 +131,7 @@ const groups: NavGroup[] = [
     label: 'System',
     icon: Settings,
     items: [
+      { to: '/setup', label: 'Setup Wizard', icon: Wand2 },
       { to: '/config-editor', label: 'Config Editor', icon: Code },
       { to: '/webhooks', label: 'Webhooks', icon: Webhook, featureKey: 'webhooks' },
       { to: '/backups', label: 'Backups', icon: Archive, featureKey: 'backups' },

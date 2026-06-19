@@ -38,6 +38,7 @@ const PHPConfig = lazy(() => import('@/pages/PHPConfig'));
 const IPManagement = lazy(() => import('@/pages/IPManagement'));
 const Services = lazy(() => import('@/pages/Services'));
 const Packages = lazy(() => import('@/pages/Packages'));
+const Setup = lazy(() => import('@/pages/Setup'));
 const Doctor = lazy(() => import('@/pages/Doctor'));
 const CloneStaging = lazy(() => import('@/pages/CloneStaging'));
 const Migration = lazy(() => import('@/pages/Migration'));
@@ -204,6 +205,7 @@ export default function App() {
             <Route path="/updates" element={<Updates />} />
             <Route path="/services" element={<Services />} />
             <Route path="/packages" element={<Packages />} />
+            <Route path="/setup" element={<Setup />} />
             <Route path="/doctor" element={<Doctor />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/apps" element={<Apps />} />
