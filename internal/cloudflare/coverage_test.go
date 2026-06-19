@@ -3,7 +3,6 @@ package cloudflare
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,7 +36,7 @@ func shortBodyServer(t *testing.T) *httptest.Server {
 		// Promise 1000 bytes, send 3, then close abruptly.
 		_, _ = bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nabc")
 		_ = bufrw.Flush()
-		_ = conn.(net.Conn).Close()
+		_ = conn.Close()
 	}))
 	t.Cleanup(srv.Close)
 	return srv
