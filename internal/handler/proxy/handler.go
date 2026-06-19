@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -255,8 +256,11 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				"error_class", classifyUpstreamErr(err),
 			)
 
-			// Don't retry if the original client request context is done
-			if ctx.Request.Context().Err() == context.DeadlineExceeded {
+			// Don't retry if the original client request context is done.
+			// A deadline — observed on the client context OR surfaced directly
+			// by the transport (this attempt's read-timeout) — is a gateway
+			// timeout, not a bad gateway.
+			if ctx.Request.Context().Err() == context.DeadlineExceeded || isTimeoutErr(err) {
 				ctx.Response.Error(http.StatusGatewayTimeout, "504 Gateway Timeout")
 				return
 			}
@@ -271,6 +275,11 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				continue
 			}
 
+			// Final failure: a timed-out upstream is a 504, everything else 502.
+			if isTimeoutErr(err) {
+				ctx.Response.Error(http.StatusGatewayTimeout, "504 Gateway Timeout")
+				return
+			}
 			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — "+classifyUpstreamErr(err))
 			return
 		}
@@ -332,6 +341,24 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 }
 
 // isRetryableError checks if the error is a connection-level error worth retrying.
+// isTimeoutErr reports whether an upstream error is a deadline/timeout —
+// either a context deadline (the per-attempt read-timeout or the client
+// request deadline) or a network-level timeout. Such errors map to 504
+// Gateway Timeout rather than 502 Bad Gateway.
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return false
+}
+
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
