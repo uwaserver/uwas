@@ -334,6 +334,7 @@ func (c *Collector) Handler() http.Handler {
 		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"php\"} %d\n", c.PHPRequests.Load())
 		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"proxy\"} %d\n", c.ProxyRequests.Load())
 		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"redirect\"} %d\n", c.RedirectRequests.Load())
+		fmt.Fprintf(&b, "uwas_requests_by_handler{handler=\"app\"} %d\n", c.AppRequests.Load())
 
 		// Per-handler latency percentiles. Refs: refactor.md O4.
 		fmt.Fprintf(&b, "# HELP uwas_handler_duration_seconds Latency percentiles per handler type.\n")
