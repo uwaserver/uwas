@@ -3,10 +3,10 @@ package config
 // BackupConfig controls automated backup behavior.
 type BackupConfig struct {
 	Enabled      bool              `yaml:"enabled"`
-	Provider     string            `yaml:"provider"`     // local | s3 | sftp
-	Schedule     string            `yaml:"schedule"`     // duration string e.g. "24h" (fallback if Cron is empty)
-	Cron         string            `yaml:"cron"`         // cron expression e.g. "0 2 * * *" (5-field, local timezone)
-	Keep         int               `yaml:"keep"`         // keep last N backups
+	Provider     string            `yaml:"provider"`       // local | s3 | sftp
+	Schedule     string            `yaml:"schedule"`       // duration string e.g. "24h" (fallback if Cron is empty)
+	Cron         string            `yaml:"cron"`           // cron expression e.g. "0 2 * * *" (5-field, local timezone)
+	Keep         int               `yaml:"keep"`           // keep last N backups
 	MaxFileSize  int64             `yaml:"max_file_size"`  // max bytes per file (default 500MB)
 	MaxTotalSize int64             `yaml:"max_total_size"` // max bytes total (default 10GB)
 	Local        BackupLocalConfig `yaml:"local"`

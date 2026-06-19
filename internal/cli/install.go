@@ -408,7 +408,6 @@ func extractCredsFromConfig(path string) configCreds {
 	return c
 }
 
-
 // UninstallCmd removes UWAS service and binary.
 type UninstallCmd struct{}
 

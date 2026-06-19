@@ -113,8 +113,8 @@ func TestRunner_DoubleStartFails(t *testing.T) {
 
 func TestFormatUptime(t *testing.T) {
 	cases := map[time.Duration]string{
-		5 * time.Second:                              "5s",
-		90 * time.Second:                             "1m30s",
+		5 * time.Second:  "5s",
+		90 * time.Second: "1m30s",
 		2*time.Hour + 13*time.Minute + 5*time.Second: "2h13m",
 	}
 	for in, want := range cases {

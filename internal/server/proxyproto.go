@@ -30,8 +30,8 @@ func (l *proxyProtoListener) Accept() (net.Conn, error) {
 // proxyProtoConn wraps a net.Conn to parse the PROXY protocol header on first read.
 type proxyProtoConn struct {
 	net.Conn
-	reader  *bufio.Reader
-	parsed  bool
+	reader   *bufio.Reader
+	parsed   bool
 	realAddr net.Addr
 }
 

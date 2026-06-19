@@ -74,13 +74,13 @@ func TestVerifyWebhookSignatureNoHeaders(t *testing.T) {
 
 func TestExtractPushRef(t *testing.T) {
 	cases := map[string]string{
-		`{"ref":"refs/heads/main"}`:        "refs/heads/main",
-		`{"ref":"refs/heads/feature/x"}`:   "refs/heads/feature/x",
-		`{"ref":"refs/tags/v1.0"}`:         "refs/tags/v1.0",
-		`{}`:                               "",
-		`{"other":"field"}`:                "",
-		``:                                 "",
-		`not json at all`:                  "",
+		`{"ref":"refs/heads/main"}`:      "refs/heads/main",
+		`{"ref":"refs/heads/feature/x"}`: "refs/heads/feature/x",
+		`{"ref":"refs/tags/v1.0"}`:       "refs/tags/v1.0",
+		`{}`:                             "",
+		`{"other":"field"}`:              "",
+		``:                               "",
+		`not json at all`:                "",
 	}
 	for body, want := range cases {
 		got := extractPushRef([]byte(body))

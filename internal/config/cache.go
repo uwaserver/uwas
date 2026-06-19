@@ -18,7 +18,7 @@ type CacheConfig struct {
 // RedisConfig configures the optional L3 Redis cache tier.
 type RedisConfig struct {
 	Enabled  bool   `yaml:"enabled"`
-	Addr     string `yaml:"addr"`     // "localhost:6379"
+	Addr     string `yaml:"addr"` // "localhost:6379"
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
 	Prefix   string `yaml:"prefix"` // key prefix

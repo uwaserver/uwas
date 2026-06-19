@@ -14,9 +14,9 @@ import (
 // MirrorConfig configures request mirroring for a proxy domain.
 type MirrorConfig struct {
 	Enabled      bool   `yaml:"enabled"`
-	Backend      string `yaml:"backend"`               // mirror backend URL
-	Percent      int    `yaml:"percent"`               // percentage of requests to mirror (0-100)
-	MaxBodyBytes int    `yaml:"max_body_bytes"`        // max body size for mirroring (default 2MB)
+	Backend      string `yaml:"backend"`        // mirror backend URL
+	Percent      int    `yaml:"percent"`        // percentage of requests to mirror (0-100)
+	MaxBodyBytes int    `yaml:"max_body_bytes"` // max body size for mirroring (default 2MB)
 }
 
 // Mirror handles fire-and-forget request mirroring to a secondary backend.
@@ -35,10 +35,10 @@ func NewMirror(cfg MirrorConfig, log *logger.Logger) *Mirror {
 		maxBytes = 2 << 20 // default 2MB
 	}
 	return &Mirror{
-		backend: cfg.Backend,
-		percent: cfg.Percent,
+		backend:  cfg.Backend,
+		percent:  cfg.Percent,
 		maxBytes: maxBytes,
-		logger:  log,
+		logger:   log,
 		transport: &http.Transport{
 			MaxIdleConns:          50,
 			IdleConnTimeout:       30 * time.Second,

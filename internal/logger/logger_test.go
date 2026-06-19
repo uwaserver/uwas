@@ -261,9 +261,9 @@ func TestParseLevelVariations(t *testing.T) {
 		{"warning", slog.LevelWarn},
 		{"ERROR", slog.LevelError},
 		{"error", slog.LevelError},
-		{"", slog.LevelInfo},          // empty defaults to info
-		{"invalid", slog.LevelInfo},   // invalid defaults to info
-		{"UNKNOWN", slog.LevelInfo},   // unknown defaults to info
+		{"", slog.LevelInfo},        // empty defaults to info
+		{"invalid", slog.LevelInfo}, // invalid defaults to info
+		{"UNKNOWN", slog.LevelInfo}, // unknown defaults to info
 	}
 
 	for _, tt := range tests {

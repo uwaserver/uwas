@@ -171,7 +171,7 @@ func TestDockerVersion_Empty(t *testing.T) {
 func TestCreateDockerDB_Success(t *testing.T) {
 	saveDockerHook(t)
 	dockerExecCommandFn = fakeDockerCmdRouter(map[string]cmdRoute{
-		"ps":  {stdout: "", exitCode: 0},    // no existing container
+		"ps":  {stdout: "", exitCode: 0},               // no existing container
 		"run": {stdout: "abc123def456xx", exitCode: 0}, // new container ID
 	}, cmdRoute{stdout: "", exitCode: 0})
 

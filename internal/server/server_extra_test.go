@@ -137,7 +137,7 @@ func TestApplyRewritesCacheHit(t *testing.T) {
 func TestHandleHTTPUnknownHostServes404(t *testing.T) {
 	// No domains configured — no fallback, unknown host is rejected.
 	cfg := &config.Config{
-		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Global:  config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
@@ -1134,8 +1134,8 @@ func (m *mockConn) Close() error {
 	m.closed = true
 	return nil
 }
-func (m *mockConn) LocalAddr() net.Addr  { return m.localAddr }
-func (m *mockConn) RemoteAddr() net.Addr { return m.remoteAddr }
+func (m *mockConn) LocalAddr() net.Addr                { return m.localAddr }
+func (m *mockConn) RemoteAddr() net.Addr               { return m.remoteAddr }
 func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
 func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }

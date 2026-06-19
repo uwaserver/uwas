@@ -489,11 +489,11 @@ func TestResolveRequestWPAdmin(t *testing.T) {
 		path     string
 		wantFile string
 	}{
-		{"/", "index.php"},                               // root → root index.php
-		{"/wp-admin/", "index.php"},                      // wp-admin dir → wp-admin/index.php
-		{"/wp-admin", "index.php"},                       // no trailing slash → wp-admin/index.php
-		{"/wp-admin/post.php", "post.php"},               // direct .php → post.php
-		{"/hello-world/", "index.php"},                   // pretty permalink → root index.php (front controller)
+		{"/", "index.php"},                 // root → root index.php
+		{"/wp-admin/", "index.php"},        // wp-admin dir → wp-admin/index.php
+		{"/wp-admin", "index.php"},         // no trailing slash → wp-admin/index.php
+		{"/wp-admin/post.php", "post.php"}, // direct .php → post.php
+		{"/hello-world/", "index.php"},     // pretty permalink → root index.php (front controller)
 	}
 
 	for _, tt := range tests {

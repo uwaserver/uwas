@@ -16,8 +16,8 @@ import (
 	"github.com/quic-go/quic-go/http3"
 
 	"github.com/uwaserver/uwas/internal/admin"
-	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/alerting"
+	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/cache"
@@ -1805,7 +1805,7 @@ func TestStartHTTPServeError(t *testing.T) {
 func TestHandleHTTPUnknownHostFirstTime421(t *testing.T) {
 	// No domains configured — no fallback, unknown host is recorded and rejected.
 	cfg := &config.Config{
-		Global: config.GlobalConfig{WorkerCount: "1", LogLevel: "error", LogFormat: "text"},
+		Global:  config.GlobalConfig{WorkerCount: "1", LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
@@ -1864,7 +1864,7 @@ func TestSetConfigPathRelativeDomainsDir(t *testing.T) {
 			WorkerCount: "1",
 			LogLevel:    "error",
 			LogFormat:   "text",
-			Backup: config.BackupConfig{Enabled: true, Local: config.BackupLocalConfig{Path: dir}},
+			Backup:      config.BackupConfig{Enabled: true, Local: config.BackupLocalConfig{Path: dir}},
 		},
 		Domains: []config.Domain{
 			{Host: "a.local", Root: filepath.Join(dir, "a"), Type: "static", SSL: config.SSLConfig{Mode: "off"}},

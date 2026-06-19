@@ -26,8 +26,8 @@ type OAuthConfig struct {
 
 // BrandingConfig allows white-labeling the dashboard.
 type BrandingConfig struct {
-	Name         string `yaml:"name,omitempty" json:"name,omitempty"`           // e.g. "My Hosting Panel"
-	LogoURL      string `yaml:"logo_url,omitempty" json:"logo_url,omitempty"`   // URL or data: URI
+	Name         string `yaml:"name,omitempty" json:"name,omitempty"`         // e.g. "My Hosting Panel"
+	LogoURL      string `yaml:"logo_url,omitempty" json:"logo_url,omitempty"` // URL or data: URI
 	FaviconURL   string `yaml:"favicon_url,omitempty" json:"favicon_url,omitempty"`
 	PrimaryColor string `yaml:"primary_color,omitempty" json:"primary_color,omitempty"` // hex color
 	FooterText   string `yaml:"footer_text,omitempty" json:"footer_text,omitempty"`
