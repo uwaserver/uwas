@@ -246,8 +246,10 @@ func checkMySQL(autoFix bool) Check {
 	issues := []string{}
 
 	// Check data directory
+	dataDirMissing := false
 	if _, err := osStatFn("/var/lib/mysql"); os.IsNotExist(err) {
 		issues = append(issues, "data directory /var/lib/mysql missing")
+		dataDirMissing = true
 	}
 
 	// Check socket directories
@@ -294,12 +296,17 @@ func checkMySQL(autoFix bool) Check {
 	}
 	fixLog = append(fixLog, "created data/socket/log dirs")
 
-	// 4. Init database if data dir was missing
-	for _, bin := range []string{"mariadb-install-db", "mysql_install_db"} {
-		if path, err := execLookPathFn(bin); err == nil {
-			execCommandFn(path, "--user=mysql", "--datadir=/var/lib/mysql").Run()
-			fixLog = append(fixLog, "initialized database")
-			break
+	// 4. Init database ONLY if the data dir was actually missing (a fresh
+	// install). Running install-db against a populated datadir is at best a
+	// no-op and at worst a data-loss risk — previously this ran on every
+	// auto-fix despite the "if data dir was missing" comment.
+	if dataDirMissing {
+		for _, bin := range []string{"mariadb-install-db", "mysql_install_db"} {
+			if path, err := execLookPathFn(bin); err == nil {
+				execCommandFn(path, "--user=mysql", "--datadir=/var/lib/mysql").Run()
+				fixLog = append(fixLog, "initialized database")
+				break
+			}
 		}
 	}
 
