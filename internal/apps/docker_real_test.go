@@ -337,10 +337,19 @@ func TestCleanupOrphanContainersRemovesCreatedOrphan(t *testing.T) {
 	// No app named "coverage-orphan-test" is registered → it's an orphan.
 	m.cleanupOrphanContainers()
 
-	// The container should be gone.
-	out, _ := exec.Command("docker", "ps", "-a", "--filter", "name="+cname, "--format", "{{.Names}}").CombinedOutput()
-	if strings.Contains(string(out), cname) {
-		t.Fatalf("orphan container %q should have been removed, ps output: %q", cname, out)
+	// The container should be gone. Poll rather than check once — under heavy
+	// parallel load `docker rm` can lag behind cleanupOrphanContainers.
+	var out []byte
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out, _ = exec.Command("docker", "ps", "-a", "--filter", "name="+cname, "--format", "{{.Names}}").CombinedOutput()
+		if !strings.Contains(string(out), cname) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("orphan container %q should have been removed, ps output: %q", cname, out)
+		}
+		time.Sleep(150 * time.Millisecond)
 	}
 }
 

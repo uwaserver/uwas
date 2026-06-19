@@ -1758,9 +1758,8 @@ func TestMigrateDBRealDumpSuccessWithMySQLClient(t *testing.T) {
 		DBUser:     "user",
 		DBPass:     "pass",
 	}, &log)
-	// Should fail at import because we can't really open a dump file, but
-	// the code will try. Actually, the command succeeds (go version), so
-	// it should return "ok".
+	// The command succeeds (go version) and the dump file now has a unique
+	// name, so the import opens it and the result is "ok".
 	if result != "ok" {
 		t.Errorf("result = %q, want ok", result)
 	}
