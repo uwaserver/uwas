@@ -249,7 +249,7 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 	// os.Remove then deletes the other's dump out from under it.
 	dumpF, err := os.CreateTemp(tempDirFn(), fmt.Sprintf("uwas-migrate-%s-*.sql", req.DBName))
 	if err != nil {
-		log.WriteString(fmt.Sprintf("create dump file: %s\n", err))
+		log.WriteString(fmt.Sprintf("write dump file: %s\n", err))
 		return "error: write failed"
 	}
 	dumpFile := dumpF.Name()
