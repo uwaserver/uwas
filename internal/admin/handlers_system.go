@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -357,19 +356,7 @@ func (s *Server) handlePackageList(w http.ResponseWriter, r *http.Request) {
 			Warning:     kp.warning,
 			CanRemove:   kp.canRemove,
 		}
-		if kp.id == "docker-compose" {
-			pi.Installed, pi.Version = detectDockerComposePackage()
-		} else {
-			for _, bin := range kp.binaries {
-				if p, err := exec.LookPath(bin); err == nil {
-					pi.Installed = true
-					if out, err := newSystemExecCommand(p, "--version").CombinedOutput(); err == nil {
-						pi.Version = packageVersionLine(out)
-					}
-					break
-				}
-			}
-		}
+		pi.Installed, pi.Version = packageInstalled(kp)
 		pkgs = append(pkgs, pi)
 	}
 	limit, offset := parsePagination(r)
@@ -454,58 +441,7 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 	action := req.Action
 	s.recordAuditR(r, "package."+action, pkg.name, true)
 
-	pkgName := pkg.name
-	pkgID := pkg.id
-	aptPkgs := pkg.aptPkgs
-	aptRemove := pkg.aptRemove
+	task := s.taskMgr.Submit("package", pkg.name, action, s.packageTaskFn(*pkg, action))
 
-	task := s.taskMgr.Submit("package", pkgName, action, func(appendOutput func(string)) error {
-		var cmd *exec.Cmd
-
-		if action == "remove" {
-			if pkgID == "wp-cli" {
-				cmd = newSystemExecCommand("rm", "-f", "/usr/local/bin/wp")
-			} else {
-				newSystemExecCommand("systemctl", "stop", pkgID).Run()
-				args := append([]string{"remove", "-y", "--purge"}, aptRemove...)
-				cmd = newSystemExecCommand("apt", args...)
-			}
-		} else {
-			if pkgID == "wp-cli" {
-				cmd = newSystemExecCommand("bash", "-c", "curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && chmod +x /usr/local/bin/wp")
-			} else if pkgID == "nodejs" {
-				// Distro nodejs is typically too old to run modern apps.
-				// Use NodeSource LTS setup so Apps page Node.js sites work out of the box.
-				cmd = newSystemExecCommand("bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt install -y nodejs")
-			} else if pkgID == "docker-compose" {
-				cmd = newSystemExecCommand("bash", "-c", strings.Join([]string{
-					"apt-get update",
-					"(apt-get install -y docker.io docker-compose-plugin || apt-get install -y docker.io docker-compose)",
-					"(systemctl enable --now docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true)",
-				}, " && "))
-			} else if len(aptPkgs) > 0 {
-				args := append([]string{"install", "-y"}, aptPkgs...)
-				cmd = newSystemExecCommand("apt", args...)
-			} else {
-				return fmt.Errorf("no install method for %s", pkgName)
-			}
-		}
-
-		cmd.Env = append(os.Environ(),
-			"DEBIAN_FRONTEND=noninteractive",
-			"NEEDRESTART_MODE=a",
-			"APT_LISTCHANGES_FRONTEND=none",
-			"DEBIAN_PRIORITY=critical",
-		)
-		out, err := cmd.CombinedOutput()
-		appendOutput(string(out))
-		if err != nil {
-			s.logger.Error("package "+action+" failed", "package", pkgName, "error", err)
-			return err
-		}
-		s.logger.Info("package "+action+" complete", "package", pkgName)
-		return nil
-	})
-
-	jsonResponse(w, map[string]string{"status": action + "ing", "package": pkgName, "task_id": task.ID})
+	jsonResponse(w, map[string]string{"status": action + "ing", "package": pkg.name, "task_id": task.ID})
 }

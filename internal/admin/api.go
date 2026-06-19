@@ -1048,22 +1048,9 @@ func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
 	info := phpmanager.GetInstallInfo(req.Version)
 	s.logger.Info("starting PHP install", "version", req.Version, "distro", info.Distro)
 
-	phpMgr := s.phpMgr
 	// Task Name carries the bare version (e.g. "8.5") so dashboards rendering
 	// "Installing PHP {version}" don't end up with "PHP PHP 8.5".
-	task := s.taskMgr.Submit("php", req.Version, "install", func(appendOutput func(string)) error {
-		output, err := phpRunInstall(req.Version)
-		appendOutput(output)
-		if err != nil {
-			s.logger.Error("PHP install failed", "version", req.Version, "error", err)
-			return err
-		}
-		s.logger.Info("PHP install complete", "version", req.Version)
-		if phpMgr != nil {
-			phpMgr.Detect()
-		}
-		return nil
-	})
+	task := s.taskMgr.Submit("php", req.Version, "install", s.phpInstallTaskFn(req.Version))
 
 	jsonResponse(w, map[string]string{
 		"status":  "started",
