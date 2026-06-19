@@ -124,8 +124,13 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecuritySta
 			if isAPContentType(ct) {
 				return true
 			}
-			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyScan))
-			if err == nil && len(bodyBytes) > 0 {
+			// Read up to maxBodyScan for inspection. Reconstruct the body from
+			// whatever was consumed REGARDLESS of a read error — gating the
+			// MultiReader on err==nil would silently drop the already-consumed
+			// prefix on a partial read, handing the downstream handler a
+			// truncated (corrupted) POST body.
+			bodyBytes, _ := io.ReadAll(io.LimitReader(r.Body, maxBodyScan))
+			if len(bodyBytes) > 0 {
 				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), r.Body))
 				body := string(bodyBytes)
 				decodedBody, _ := url.QueryUnescape(body)
