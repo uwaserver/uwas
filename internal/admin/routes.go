@@ -300,6 +300,8 @@ func (s *Server) registerSystemAdminRoutes() {
 	s.mux.HandleFunc("POST /api/v1/system/update", s.handleUpdate)
 	s.mux.HandleFunc("GET /api/v1/packages", s.handlePackageList)
 	s.mux.HandleFunc("POST /api/v1/packages/install", s.handlePackageInstall)
+	// Setup wizard — batch-install PHP versions + packages via the queue.
+	s.mux.HandleFunc("POST /api/v1/setup/install", s.handleSetupInstall)
 
 	// SSH keys + system resources/IPs
 	s.mux.HandleFunc("GET /api/v1/users/{domain}/ssh-keys", s.handleSSHKeyList)
