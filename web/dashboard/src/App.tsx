@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, Component, type ReactNode } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { getToken, onPinRequired } from '@/lib/api';
+import { getToken, onPinRequired, fetchBranding } from '@/lib/api';
 import { addDebugLog } from '@/lib/debugLog';
 import Sidebar from '@/components/Sidebar';
 import SystemStatsBar from '@/components/SystemStatsBar';
@@ -134,19 +134,17 @@ export default function App() {
     });
 
     // Apply white-label branding (favicon + document title)
-    import('@/lib/api').then(({ fetchBranding }) => {
-      fetchBranding().then(b => {
-        if (b.favicon_url) {
-          const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]') || document.createElement('link');
-          link.rel = 'icon';
-          link.href = b.favicon_url;
-          document.head.appendChild(link);
-        }
-        if (b.name) {
-          document.title = b.name;
-        }
-      }).catch(() => {});
-    });
+    fetchBranding().then(b => {
+      if (b.favicon_url) {
+        const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]') || document.createElement('link');
+        link.rel = 'icon';
+        link.href = b.favicon_url;
+        document.head.appendChild(link);
+      }
+      if (b.name) {
+        document.title = b.name;
+      }
+    }).catch(() => {});
   }, []);
 
   return (
