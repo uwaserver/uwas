@@ -809,7 +809,7 @@ func TestHandleRequestHeaderTransforms(t *testing.T) {
 func TestHandleHTTPBlockedUnknownHost(t *testing.T) {
 	// No domains configured — no fallback, unknown hosts are recorded and rejected.
 	cfg := &config.Config{
-		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Global:  config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")
@@ -849,7 +849,7 @@ func TestHandleRequestBlockedUnknownHostHTTPS(t *testing.T) {
 	// Note: handleRequest doesn't have blocked-unknown-host checking (that's in handleHTTP).
 	// This test verifies that an unknown host with no fallback returns 404.
 	cfg := &config.Config{
-		Global: config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
+		Global:  config.GlobalConfig{LogLevel: "error", LogFormat: "text"},
 		Domains: []config.Domain{},
 	}
 	log := logger.New("error", "text")

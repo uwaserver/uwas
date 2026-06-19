@@ -49,13 +49,13 @@ type JobStatus struct {
 
 // Monitor tracks cron job executions and provides alerting.
 type Monitor struct {
-	mu        sync.RWMutex
-	history   map[string][]ExecutionRecord // key: domain:command
+	mu         sync.RWMutex
+	history    map[string][]ExecutionRecord // key: domain:command
 	maxHistory int
-	alertFn   func(domain, command, output string, exitCode int)
-	dataDir   string
+	alertFn    func(domain, command, output string, exitCode int)
+	dataDir    string
 	// Per-job overlap guard: prevents concurrent execution of the same job.
-	running   map[string]bool // key: domain:command, true if job is currently running
+	running map[string]bool // key: domain:command, true if job is currently running
 }
 
 // NewMonitor creates a new cron job monitor.

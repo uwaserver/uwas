@@ -340,8 +340,8 @@ func TestGetServerIPsIPAddr(t *testing.T) {
 	interfaceAddrs = func() ([]net.Addr, error) {
 		return []net.Addr{
 			&net.IPAddr{IP: net.ParseIP("192.168.1.100")},
-			&net.IPAddr{IP: net.ParseIP("127.0.0.1")},       // loopback, should be skipped
-			&net.IPAddr{IP: net.ParseIP("fe80::1")},          // link-local, should be skipped
+			&net.IPAddr{IP: net.ParseIP("127.0.0.1")}, // loopback, should be skipped
+			&net.IPAddr{IP: net.ParseIP("fe80::1")},   // link-local, should be skipped
 		}, nil
 	}
 

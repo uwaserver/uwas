@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	auditMaxFileSize  = 10 * 1024 * 1024 // rotate when log exceeds 10MB
-	auditKeepRotated  = 3                // keep audit.log.1 .. audit.log.3 → ~40MB total history
+	auditMaxFileSize = 10 * 1024 * 1024 // rotate when log exceeds 10MB
+	auditKeepRotated = 3                // keep audit.log.1 .. audit.log.3 → ~40MB total history
 )
 
 func (s *Server) auditLogFile() string {

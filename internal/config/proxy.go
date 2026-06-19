@@ -13,7 +13,7 @@ type ProxyConfig struct {
 	MaxRetries            int               `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`
 	Canary                CanaryConfig      `yaml:"canary,omitempty" json:"canary,omitempty"`
 	Mirror                MirrorConfig      `yaml:"mirror,omitempty" json:"mirror,omitempty"`
-	BufferResponse        bool              `yaml:"buffer_response,omitempty" json:"buffer_response,omitempty"`               // buffer entire upstream response
+	BufferResponse        bool              `yaml:"buffer_response,omitempty" json:"buffer_response,omitempty"`                 // buffer entire upstream response
 	AllowPrivateUpstreams bool              `yaml:"allow_private_upstreams,omitempty" json:"allow_private_upstreams,omitempty"` // allow private IP upstreams (default false for SSRF protection)
 	// InsecureSkipVerify disables TLS certificate verification for HTTPS
 	// upstreams. Opt-in only — needed for self-signed or hostname-mismatched

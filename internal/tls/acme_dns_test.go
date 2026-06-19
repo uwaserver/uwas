@@ -13,13 +13,13 @@ type mockZoneRecords map[string][]dnsmanager.Record
 
 // mockDNSProvider implements dnsmanager.Provider for testing.
 type mockDNSProvider struct {
-	zones      []dnsmanager.Zone
-	records    mockZoneRecords
-	createErr  error
-	listErr    error
-	deleteErr  error
+	zones       []dnsmanager.Zone
+	records     mockZoneRecords
+	createErr   error
+	listErr     error
+	deleteErr   error
 	findZoneErr error
-	nextRecID  int
+	nextRecID   int
 }
 
 func (m *mockDNSProvider) ListZones() ([]dnsmanager.Zone, error) {

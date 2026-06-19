@@ -729,4 +729,3 @@ func TestHandlePackageInstall_NoPackage(t *testing.T) {
 		t.Errorf("status = %d, want 501, 404, 400, or 500", rec.Code)
 	}
 }
-

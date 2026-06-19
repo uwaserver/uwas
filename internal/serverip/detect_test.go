@@ -391,9 +391,9 @@ func TestDetectAll_MixedValidInvalidAddrs(t *testing.T) {
 	}
 	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
 		return []net.Addr{
-			&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},   // loopback - filtered
-			&net.IPNet{IP: net.ParseIP("169.254.1.1"), Mask: net.CIDRMask(16, 32)}, // link-local - filtered
-			&net.IPNet{IP: net.ParseIP("10.0.0.1"), Mask: net.CIDRMask(24, 32)},    // valid
+			&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},     // loopback - filtered
+			&net.IPNet{IP: net.ParseIP("169.254.1.1"), Mask: net.CIDRMask(16, 32)},  // link-local - filtered
+			&net.IPNet{IP: net.ParseIP("10.0.0.1"), Mask: net.CIDRMask(24, 32)},     // valid
 			&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(10, 128)},     // link-local v6 - filtered
 			&net.IPNet{IP: net.ParseIP("2001:db8::1"), Mask: net.CIDRMask(64, 128)}, // valid
 		}, nil

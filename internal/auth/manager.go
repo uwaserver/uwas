@@ -41,7 +41,7 @@ type User struct {
 	Email      string    `json:"email"`
 	Password   string    `json:"password_hash,omitempty"` // bcrypt hash
 	Role       Role      `json:"role"`
-	Domains    []string  `json:"domains,omitempty"` // For resellers: managed domains
+	Domains    []string  `json:"domains,omitempty"`      // For resellers: managed domains
 	APIKey     string    `json:"api_key,omitempty"`      // Display prefix only (first 8 chars)
 	APIKeyHash string    `json:"api_key_hash,omitempty"` // SHA256 hash of full API key
 	FullAPIKey string    `json:"-"`                      // Full key, set only at generation time (not persisted)
@@ -72,12 +72,12 @@ func (u *User) latestLastLogin() time.Time {
 type Session struct {
 	Token     string    `json:"token"`
 	UserID    string    `json:"user_id"`
-	Username   string    `json:"username"`
-	Role       Role      `json:"role"`
-	Domains    []string  `json:"domains,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	LastStep   int64     `json:"last_step,omitempty"` // TOTP step (Unix/30) last used — prevents replay
+	Username  string    `json:"username"`
+	Role      Role      `json:"role"`
+	Domains   []string  `json:"domains,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	LastStep  int64     `json:"last_step,omitempty"` // TOTP step (Unix/30) last used — prevents replay
 }
 
 // Permission represents a specific action that can be performed.
@@ -121,17 +121,17 @@ var rolePermissions = map[Role][]Permission{
 // Manager handles user authentication and authorization.
 type Manager struct {
 	mu        sync.RWMutex
-	users     map[string]*User    // key: username
-	usersByID map[string]*User    // key: user ID
+	users     map[string]*User // key: username
+	usersByID map[string]*User // key: user ID
 	// usersByAPIKeyHash maps SHA256(api-key) → user for O(1) lookup in
 	// AuthenticateAPIKey. Only populated for users that have an
 	// APIKeyHash (legacy plaintext-only users still require the scan
 	// fallback). Refs: refactor.md P8.
 	usersByAPIKeyHash map[string]*User
 	sessions          map[string]*Session // key: token
-	dataDir       string
-	apiKey        string // Global admin API key (backward compat)
-	jwtSecret     []byte
+	dataDir           string
+	apiKey            string // Global admin API key (backward compat)
+	jwtSecret         []byte
 
 	// allowLegacyPlaintextKey gates the v0.1 plaintext API-key fallback
 	// in AuthenticateAPIKey. Off by default from v0.5; operators with

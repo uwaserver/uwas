@@ -128,4 +128,3 @@ func redactReferer(ref string) string {
 
 	return parts[0] + "?" + query.Encode()
 }
-
