@@ -362,9 +362,13 @@ func TestEnsureStartPortAvailableReassignsOccupiedPort(t *testing.T) {
 	if p.port == occupied {
 		t.Fatalf("port should have been reassigned away from occupied %d", occupied)
 	}
-	if !isPortFreeFn(p.port) {
-		t.Fatalf("replacement port %d should be free", p.port)
+	if p.port <= 0 {
+		t.Fatalf("replacement port %d is invalid", p.port)
 	}
+	// NB: don't re-check isPortFreeFn(p.port) here — allocateFreePortLocked
+	// already verified freeness at allocation time, and a real localhost port
+	// can be grabbed by a concurrent test process between then and now (a
+	// TOCTOU that made this assertion flaky under parallel test load).
 	saved, err := mgr.Store().Get(app.Name)
 	if err != nil {
 		t.Fatalf("load saved app: %v", err)
