@@ -11,11 +11,11 @@ import (
 
 // Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
-	memory       *MemoryCache
-	disk         *DiskCache
-	redis        *RedisCache
-	logger       *logger.Logger
-	VaryHeaders  []string // additional headers to include in cache key (from config)
+	memory      *MemoryCache
+	disk        *DiskCache
+	redis       *RedisCache
+	logger      *logger.Logger
+	VaryHeaders []string // additional headers to include in cache key (from config)
 }
 
 // NewEngine creates a cache engine with memory and optional disk backing.

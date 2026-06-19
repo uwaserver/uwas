@@ -20,21 +20,21 @@ import (
 
 // Testable hooks — can be overridden in tests to mock command execution.
 var (
-	runCmdFn    = runCmdImpl
-	runShellFn  = runShellImpl
+	runCmdFn     = runCmdImpl
+	runShellFn   = runShellImpl
 	waitForAppFn = waitForAppImpl
 )
 
 // DeployRequest describes a deployment action.
 type DeployRequest struct {
 	Domain        string            `json:"domain"`
-	GitURL        string            `json:"git_url,omitempty"`         // e.g. https://github.com/user/repo.git
+	GitURL        string            `json:"git_url,omitempty"`        // e.g. https://github.com/user/repo.git
 	GitBranch     string            `json:"git_branch,omitempty"`     // default: main
-	BuildCmd      string            `json:"build_cmd,omitempty"`       // e.g. "npm install && npm run build"; "skip"/"none" to disable
-	SSHKeyPath    string            `json:"ssh_key_path,omitempty"`    // path to SSH private key for private repos
+	BuildCmd      string            `json:"build_cmd,omitempty"`      // e.g. "npm install && npm run build"; "skip"/"none" to disable
+	SSHKeyPath    string            `json:"ssh_key_path,omitempty"`   // path to SSH private key for private repos
 	GitToken      string            `json:"git_token,omitempty"`      // GitHub/GitLab personal access token
-	DockerFile    string            `json:"dockerfile,omitempty"`      // path to Dockerfile (enables Docker mode)
-	DockerPort    int               `json:"docker_port,omitempty"`   // container internal port (e.g. 3000)
+	DockerFile    string            `json:"dockerfile,omitempty"`     // path to Dockerfile (enables Docker mode)
+	DockerPort    int               `json:"docker_port,omitempty"`    // container internal port (e.g. 3000)
 	DockerNetwork string            `json:"docker_network,omitempty"` // docker network mode: "bridge", "host", or custom network name
 	AppPort       int               `json:"app_port,omitempty"`       // app listen port for health check (auto-detected if 0)
 	Env           map[string]string `json:"env,omitempty"`            // environment variables for build/run

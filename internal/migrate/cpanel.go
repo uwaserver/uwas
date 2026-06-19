@@ -13,30 +13,30 @@ import (
 
 // CPanelResult holds the result of a cPanel backup import.
 type CPanelResult struct {
-	User        string           `json:"user"`
-	Domains     []CPanelDomain   `json:"domains"`
-	Databases   []CPanelDatabase `json:"databases"`
-	SSLCerts    int              `json:"ssl_certs"`
-	FilesCount  int              `json:"files_count"`
-	Errors      []string         `json:"errors,omitempty"`
+	User       string           `json:"user"`
+	Domains    []CPanelDomain   `json:"domains"`
+	Databases  []CPanelDatabase `json:"databases"`
+	SSLCerts   int              `json:"ssl_certs"`
+	FilesCount int              `json:"files_count"`
+	Errors     []string         `json:"errors,omitempty"`
 }
 
 // CPanelDomain is a domain extracted from a cPanel backup.
 type CPanelDomain struct {
-	Domain    string `json:"domain"`
-	DocRoot   string `json:"doc_root"`
-	Type      string `json:"type"` // main, addon, sub
-	SSL       bool   `json:"ssl"`
+	Domain     string `json:"domain"`
+	DocRoot    string `json:"doc_root"`
+	Type       string `json:"type"` // main, addon, sub
+	SSL        bool   `json:"ssl"`
 	PHPVersion string `json:"php_version,omitempty"`
 }
 
 // CPanelDatabase is a database from a cPanel backup.
 type CPanelDatabase struct {
-	Name     string `json:"name"`
-	User     string `json:"user"`
-	SQLFile  string `json:"sql_file"`
+	Name     string  `json:"name"`
+	User     string  `json:"user"`
+	SQLFile  string  `json:"sql_file"`
 	SizeMB   float64 `json:"size_mb"`
-	Imported bool   `json:"imported"`
+	Imported bool    `json:"imported"`
 }
 
 // ImportCPanelBackup extracts a cPanel backup (cpmove-*.tar.gz) into UWAS format.

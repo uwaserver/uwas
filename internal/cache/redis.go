@@ -168,4 +168,3 @@ func (r *RedisCache) Close() error {
 	}
 	return r.client.Close()
 }
-
