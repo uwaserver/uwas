@@ -53,6 +53,7 @@ type process struct {
 	dockerID  string    // docker container id (short, returned by `docker run -d`)
 	startedAt time.Time
 	stopCh    chan struct{}
+	stopped   bool // set by stopLocked; guards close(stopCh) and aborts in-flight restarts
 
 	// Crashloop tracking: exponential backoff escalates with each
 	// quick-succession crash so a permanently broken app doesn't
@@ -373,6 +374,11 @@ func (m *Manager) Start(name string) error {
 	// will climb again from zero.
 	p.restartCount = 0
 	p.crashloopGave = false
+	// Install a fresh stop channel for this run. stopLocked() closes
+	// stopCh once and never replaces it, so each new run needs its own
+	// channel (and a cleared stopped flag).
+	p.stopped = false
+	p.stopCh = make(chan struct{})
 	m.mu.Unlock()
 
 	if p.runtimeKind != RuntimeCustom {
@@ -420,15 +426,18 @@ func (m *Manager) stop(p *process) error {
 // Docker containers stay on `docker stop` which itself does
 // SIGTERM-then-SIGKILL with the container's configured stop timeout.
 func (m *Manager) stopLocked(p *process) error {
-	// Signal monitor to skip auto-restart, then reset stopCh for the
-	// next Start.
-	select {
-	case <-p.stopCh:
-		// already closed
-	default:
+	// Signal the monitor/watcher to skip auto-restart. Close stopCh
+	// exactly once and mark the proc stopped; do NOT replace the channel.
+	// Replacing it would race with an in-flight auto-restart that
+	// snapshots p.stopCh in startNative/startDocker — the restart would
+	// watch the fresh channel while this close lands on the old one,
+	// resurrecting an app the operator just stopped. Start() installs a
+	// fresh stopCh for the next run; the stopped flag makes any restart
+	// racing with this Stop abort (see startNative/startDocker).
+	if !p.stopped {
+		p.stopped = true
 		close(p.stopCh)
 	}
-	p.stopCh = make(chan struct{})
 
 	if p.runtimeKind == RuntimeDocker {
 		return m.stopDockerLocked(p)
@@ -953,6 +962,18 @@ func (m *Manager) startNative(p *process) error {
 	}
 
 	m.mu.Lock()
+	// If Stop() landed while this (re)start was in flight, abort: kill the
+	// freshly-started process and don't register a monitor. Without this a
+	// backoff-triggered restart racing with Stop() would leak a process
+	// that keeps restarting, ignoring the operator's stop.
+	if p.stopped {
+		m.mu.Unlock()
+		_ = gracefulKill(cmd, p.name)
+		if logFile != nil {
+			_ = logFile.Close()
+		}
+		return nil
+	}
 	p.cmd = cmd
 	p.startedAt = time.Now()
 	stopCh := p.stopCh
