@@ -1631,12 +1631,9 @@ func TestScheduleBackupCronImpossibleDate(t *testing.T) {
 	m, _ := testManager(t)
 	// Feb 31 never exists -> nextCronRun yields zero inside the goroutine.
 	m.ScheduleBackupCron("0 0 31 2 *")
-	// Give the goroutine a moment to run nextCronRun and return.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		// nothing to assert beyond no panic/deadlock; the goroutine should exit.
-		break
-	}
+	// Give the goroutine a moment to run nextCronRun and return; nothing to
+	// assert beyond no panic/deadlock.
+	time.Sleep(50 * time.Millisecond)
 	m.Stop()
 }
 
