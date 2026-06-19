@@ -89,15 +89,24 @@ func registerExactHost(exact map[string]*config.Domain, host string, d *config.D
 		exact[host[:idx]] = d
 		return
 	}
+	// Implicit www.↔apex variants: only fill them when no domain explicitly
+	// owns the key. An implicit/derived registration must never clobber
+	// another domain's explicit host — otherwise registering www.example.com
+	// would hijack a different tenant's explicit example.com (last-writer-wins,
+	// order-dependent).
 	if strings.HasPrefix(host, "www.") {
 		apex := strings.TrimPrefix(host, "www.")
 		if apex != "" && strings.Contains(apex, ".") {
-			exact[apex] = d
+			if _, exists := exact[apex]; !exists {
+				exact[apex] = d
+			}
 		}
 		return
 	}
 	if !strings.HasPrefix(host, "*.") && strings.Contains(host, ".") {
-		exact["www."+host] = d
+		if _, exists := exact["www."+host]; !exists {
+			exact["www."+host] = d
+		}
 	}
 }
 
