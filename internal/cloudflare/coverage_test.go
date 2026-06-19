@@ -848,11 +848,11 @@ func TestRunner_MonitorRestartFailedWithLogger(t *testing.T) {
 	_ = r.Stop("t1")
 }
 
-func TestRunner_StopKillAlreadyExited(t *testing.T) {
+func TestRunner_StopAlreadyExitedProcess(t *testing.T) {
 	// Construct a runningProc whose cmd is an already-finished (reaped) process,
-	// then call Stop. cmd.Process.Kill() on a finished process returns an error,
-	// exercising Stop's kill-error branch deterministically and without involving
-	// the monitor goroutine.
+	// then call Stop. Kill returns os.ErrProcessDone on a finished process —
+	// which is exactly the outcome Stop wants, so Stop must report success, not
+	// an error.
 	cmd := helperCmd("GO_HELPER_SLEEP_MS=0")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper: %v", err)
@@ -870,9 +870,8 @@ func TestRunner_StopKillAlreadyExited(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	err := r.Stop("t1")
-	if err == nil || !strings.Contains(err.Error(), "kill cloudflared") {
-		t.Fatalf("expected kill error on finished process, got %v", err)
+	if err := r.Stop("t1"); err != nil {
+		t.Fatalf("Stop on an already-exited process should succeed, got %v", err)
 	}
 	r.Forget("t1")
 }
