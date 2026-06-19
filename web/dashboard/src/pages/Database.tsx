@@ -54,6 +54,7 @@ import {
   fetchDBTables,
   fetchDBColumns,
   runDBQuery,
+  fetchTask,
 } from '@/lib/api';
 import { copyText } from '@/lib/clipboard';
 import Card from '@/components/Card';
@@ -326,7 +327,6 @@ export default function Database() {
       if (res.task_id) {
         installPollRef.current = setInterval(async () => {
           try {
-            const { fetchTask } = await import('../lib/api');
             const task = await fetchTask(res.task_id!);
             if (task.status === 'done') {
               if (installPollRef.current) { clearInterval(installPollRef.current); installPollRef.current = null; }

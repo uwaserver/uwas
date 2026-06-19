@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import PinModal from '@/components/PinModal';
-import { setPinCode, clearPinCode } from '@/lib/api';
+import { setPinCode, clearPinCode, bulkImportDomains } from '@/lib/api';
 import {
   X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
@@ -721,12 +721,10 @@ export default function Domains() {
             if (!input) return;
             const hosts = input.split('\n').map(h => h.trim()).filter(Boolean);
             if (hosts.length === 0) return;
-            import('@/lib/api').then(({ bulkImportDomains }) => {
-              bulkImportDomains(hosts.map(h => ({ host: h }))).then(res => {
-                setStatus({ ok: true, message: `Added ${res.added.length}, skipped ${res.skipped.length}` });
-                loadDomains();
-              }).catch(e => setStatus({ ok: false, message: (e as Error).message }));
-            });
+            bulkImportDomains(hosts.map(h => ({ host: h }))).then(res => {
+              setStatus({ ok: true, message: `Added ${res.added.length}, skipped ${res.skipped.length}` });
+              loadDomains();
+            }).catch(e => setStatus({ ok: false, message: (e as Error).message }));
           }} className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground hover:bg-accent">
             <Upload size={14} /> Bulk Import
           </button>
