@@ -57,10 +57,18 @@ func saveAndRestore() func() {
 	origGOOS := runtimeGOOS
 	origCommand := execCommandFn
 	origLookPath := execLookPathFn
+	// Snapshot the global protectedPorts too — several tests reset/mutate it,
+	// and without restoring it those mutations leak into later tests (and into
+	// the next iteration under -count=2, wiping 80/443/22).
+	origProtected := make(map[string]bool, len(protectedPorts))
+	for k, v := range protectedPorts {
+		origProtected[k] = v
+	}
 	return func() {
 		runtimeGOOS = origGOOS
 		execCommandFn = origCommand
 		execLookPathFn = origLookPath
+		protectedPorts = origProtected
 	}
 }
 
@@ -413,6 +421,31 @@ func TestDenyPort_ProtectedPort(t *testing.T) {
 	}
 }
 
+func TestDenyPort_ProtectedRange(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	// A range covering a protected port (22 ∈ 20:30) must be rejected — without
+	// the range check this would run `ufw deny 20:30/tcp` and lock out SSH.
+	for _, port := range []string{"20:30", "1:1000", "443:444"} {
+		if err := DenyPort(port, "tcp"); err == nil {
+			t.Errorf("DenyPort(%s) should fail — range covers a protected port", port)
+		}
+	}
+	// A range clear of protected ports is still allowed.
+	if err := DenyPort("8000:8100", "tcp"); err != nil {
+		t.Errorf("DenyPort(8000:8100) error = %v, want nil", err)
+	}
+	// Malformed ranges are rejected.
+	for _, bad := range []string{":", "80:", ":443", "1:2:3", "70000"} {
+		if err := DenyPort(bad, "tcp"); err == nil {
+			t.Errorf("DenyPort(%q) should fail — malformed port", bad)
+		}
+	}
+}
+
 func TestDenyPort_AnyBlocked(t *testing.T) {
 	defer saveAndRestore()()
 	runtimeGOOS = "linux"
@@ -614,6 +647,7 @@ func TestStatusStruct(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSetAdminPort(t *testing.T) {
+	defer saveAndRestore()()
 	// Clear protected ports before test
 	protectedPorts = make(map[string]bool)
 
@@ -624,6 +658,7 @@ func TestSetAdminPort(t *testing.T) {
 }
 
 func TestSetAdminPortWithHost(t *testing.T) {
+	defer saveAndRestore()()
 	protectedPorts = make(map[string]bool)
 
 	SetAdminPort("0.0.0.0:9443")
@@ -633,6 +668,7 @@ func TestSetAdminPortWithHost(t *testing.T) {
 }
 
 func TestSetAdminPortEmpty(t *testing.T) {
+	defer saveAndRestore()()
 	protectedPorts = make(map[string]bool)
 
 	SetAdminPort("")
@@ -642,6 +678,7 @@ func TestSetAdminPortEmpty(t *testing.T) {
 }
 
 func TestSetAdminPortColonOnly(t *testing.T) {
+	defer saveAndRestore()()
 	protectedPorts = make(map[string]bool)
 
 	SetAdminPort(":8080")
