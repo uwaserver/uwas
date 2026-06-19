@@ -149,6 +149,17 @@ func writeCrontab(content string) error {
 func parseCronLine(line string) Job {
 	line = strings.TrimSpace(line)
 	parts := strings.Fields(line)
+	// Cron shorthand schedules (@reboot, @daily, @hourly, …) are a single
+	// field followed by the command, not the 5-field numeric schedule. Without
+	// this, such a job parses with an empty Schedule and the whole "@reboot …"
+	// merged into Command — making it unmatchable by List/Remove (it could
+	// never be deleted through the API).
+	if len(parts) >= 2 && strings.HasPrefix(parts[0], "@") {
+		return Job{
+			Schedule: parts[0],
+			Command:  strings.Join(parts[1:], " "),
+		}
+	}
 	if len(parts) < 6 {
 		return Job{Command: line}
 	}
