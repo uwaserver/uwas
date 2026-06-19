@@ -309,7 +309,11 @@ func TestCleanupOrphanContainersRemovesCreatedOrphan(t *testing.T) {
 		t.Skip("docker daemon not available")
 	}
 
-	const cname = "uwas-app-coverage-orphan-test"
+	// PID-unique name (still "uwas-app-"-prefixed so the sweep treats it as a
+	// managed orphan) so concurrent test processes don't race on a shared
+	// container name. The assertion below filters on this exact name, so it
+	// only ever checks this process's own container.
+	cname := "uwas-app-coverage-orphan-test-" + strconv.Itoa(os.Getpid())
 	// Always clean up, even if the sweep under test fails.
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "-f", "-v", cname).Run()

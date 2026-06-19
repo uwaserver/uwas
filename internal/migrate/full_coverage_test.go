@@ -1735,7 +1735,9 @@ func TestMigrateDBRealDumpSuccessWithMySQLClient(t *testing.T) {
 	callCount := 0
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
 		callCount++
-		// All commands succeed with "go version" output.
+		// All commands succeed with "go version" output (the dump command's
+		// stdout is redirected to the dump file, so non-empty output matters —
+		// the import then opens that file).
 		return exec.Command("go", "version")
 	}
 	execLookPathFn = func(file string) (string, error) {
