@@ -196,6 +196,13 @@ func DecodeParams(data []byte) (map[string]string, error) {
 			return params, err
 		}
 
+		// Reject lengths that exceed the remaining buffer BEFORE allocating —
+		// a length field can encode ~2GiB, so a hostile/corrupt peer could
+		// otherwise trigger a multi-GB allocation (DoS).
+		if nameLen > r.Len() || valueLen > r.Len()-nameLen {
+			return params, fmt.Errorf("fastcgi: param length %d/%d exceeds remaining %d bytes", nameLen, valueLen, r.Len())
+		}
+
 		name := make([]byte, nameLen)
 		if _, err := io.ReadFull(r, name); err != nil {
 			return params, err
