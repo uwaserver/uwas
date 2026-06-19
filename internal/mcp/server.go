@@ -105,7 +105,12 @@ func (s *Server) registerTools() {
 			var params struct {
 				Tag string `json:"tag"`
 			}
-			json.Unmarshal(input, &params)
+			// Reject malformed input rather than falling through to PurgeAll:
+			// a JSON error would otherwise leave Tag empty and wipe the whole
+			// cache on an unintended/garbled request.
+			if err := json.Unmarshal(input, &params); err != nil {
+				return nil, fmt.Errorf("invalid cache_purge input: %w", err)
+			}
 			if s.cache == nil {
 				return map[string]string{"status": "cache not enabled"}, nil
 			}
