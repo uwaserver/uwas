@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -91,7 +92,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 	}
 
 	for _, c := range candidates {
-		if !strings.Contains(accept, c.encoding) {
+		if !acceptsEncoding(accept, c.encoding) {
 			continue
 		}
 		compPath := path + c.ext
@@ -108,13 +109,48 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		w.Header().Set("Content-Encoding", c.encoding)
 		w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
 		w.Header().Add("Vary", "Accept-Encoding")
-		w.Header().Set("ETag", generateETag(origInfo)+"-"+c.encoding)
+		// Put the encoding discriminator INSIDE the quotes — appending it after
+		// the closing " (W/"<hex>"-gzip) is a malformed entity-tag that
+		// conditional-request matching ignores past the quote.
+		base := generateETag(origInfo)
+		w.Header().Set("ETag", base[:len(base)-1]+"-"+c.encoding+`"`)
 
 		http.ServeContent(w, r, filepath.Base(path), origInfo.ModTime(), f)
 		_ = f.Close()
 		return true
 	}
 
+	return false
+}
+
+// acceptsEncoding reports whether the client accepts the given content-coding,
+// honoring Accept-Encoding q-values. A coding listed with q=0 is an explicit
+// refusal (e.g. "gzip;q=0") and must NOT be served — a plain substring match
+// would wrongly send it. Token matching is exact, so "br" won't match inside an
+// unrelated token.
+func acceptsEncoding(header, coding string) bool {
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name := part
+		q := 1.0
+		if i := strings.IndexByte(part, ';'); i != -1 {
+			name = strings.TrimSpace(part[:i])
+			for _, p := range strings.Split(part[i+1:], ";") {
+				p = strings.TrimSpace(p)
+				if v, ok := strings.CutPrefix(p, "q="); ok {
+					if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+						q = f
+					}
+				}
+			}
+		}
+		if strings.EqualFold(name, coding) {
+			return q > 0
+		}
+	}
 	return false
 }
 
