@@ -1,8 +1,10 @@
 package cloudflare
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -225,7 +227,9 @@ func (r *Runner) Stop(tunnelID string) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	if err := cmd.Process.Kill(); err != nil {
+	// A process that already exited on its own is the outcome Stop wants —
+	// Kill returns os.ErrProcessDone in that case, which is not a failure.
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("kill cloudflared: %w", err)
 	}
 	return nil
