@@ -24,6 +24,7 @@ type runningProc struct {
 	cmd       *exec.Cmd
 	startedAt time.Time
 	stopCh    chan struct{}
+	stopped   bool // set once by Stop; guards close(stopCh) and aborts in-flight restarts
 	logTail   *ringBuffer
 }
 
@@ -128,12 +129,22 @@ func (r *Runner) spawn(p *runningProc, token string) error {
 	}
 
 	r.mu.Lock()
+	// If Stop() landed while this (re)start was in flight, abort: kill the
+	// freshly-started process and do not register a monitor. Without this check
+	// a backoff-triggered restart racing with Stop() would leak a process that
+	// keeps restarting forever, ignoring the operator's stop.
+	if p.stopped {
+		r.mu.Unlock()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return nil
+	}
 	p.cmd = cmd
 	p.startedAt = time.Now()
-	// Snapshot the stop channel under the lock. Stop() closes AND replaces
-	// p.stopCh, so the monitor must watch the exact channel that was live when
-	// this process started — reading p.stopCh live would race with Stop() and
-	// could miss the close (resurrecting a tunnel the operator just stopped).
+	// Snapshot the stop channel under the lock. p.stopCh is fixed for the proc's
+	// lifetime (Stop() closes it but never replaces it), so the monitor always
+	// watches the exact channel Stop() will close — no missed-close race.
 	stopCh := p.stopCh
 	r.mu.Unlock()
 
@@ -200,8 +211,14 @@ func (r *Runner) Stop(tunnelID string) error {
 		r.mu.Unlock()
 		return nil
 	}
-	close(p.stopCh)
-	p.stopCh = make(chan struct{}) // reset so Start can run again
+	// Idempotent: close stopCh exactly once. Start() always allocates a fresh
+	// runningProc (with a fresh stopCh), so there is no need to replace the
+	// channel here — and replacing it would race with an in-flight restart's
+	// snapshot, losing the stop signal.
+	if !p.stopped {
+		p.stopped = true
+		close(p.stopCh)
+	}
 	cmd := p.cmd
 	r.mu.Unlock()
 
