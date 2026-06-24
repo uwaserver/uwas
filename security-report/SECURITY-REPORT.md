@@ -1,5 +1,96 @@
 # UWAS Security Assessment Report
 
+> ## ⚠️ STATUS: This report is a historical snapshot — see the current-state table below
+>
+> The assessment below was performed against **v0.0.54** (2026-05-01). Most of
+> its findings have since been resolved; UWAS is now at **v0.6.42**. The
+> original report is preserved verbatim for traceability, but the
+> **Status Update (v0.6.42)** section at the top is the source of truth for the
+> current security posture. Do not act on the findings below without checking
+> their current status first.
+
+---
+
+## Status Update — v0.6.42 (2026-06-24)
+
+Re-verified each finding against the current codebase. Severity labels refer to
+the original assessment; the "Current Status" column reflects the code as it
+stands today.
+
+### Critical findings — 6/7 resolved
+
+| ID | Finding | Original CVSS | Current Status | Evidence |
+|----|---------|---------------|----------------|----------|
+| C1 | Authorization completely unused | 9.1 | ✅ **Resolved** | `requireAdmin()` wired into 153 handler call sites across the admin package; `TestStateChangingRoutesRequireAdmin` enforces it. |
+| C2 | Raw YAML config write without validation | 8.8 | ✅ **Resolved** | `handleConfigRawPut` now requires `requireAdmin` + `requirePin`, validates YAML syntax (`yaml.Unmarshal`), runs `config.Validate()`, and persists via crash-safe atomic write. |
+| C3 | DB management without ownership check | 8.5 | ✅ **Resolved** | `requireAdmin` present in `handlers_database.go` (30 call sites). |
+| C4 | Backup restore path traversal | 8.4 | ✅ **Resolved** | `backup.go` rejects traversal/symlink-escape entries during extraction (3 guarded paths, `pathsafe` containment). |
+| C5 | Service control open to non-admin | 8.2 | ✅ **Resolved** | `requireAdmin` in `handlers_system.go` (7) and `handlers_firewall.go` (8). |
+| C6 | Deploy hook shell injection | 8.8 | ✅ **Resolved** | No `sh -c` with unsanitized input in `deploy/`; commands run via `exec.Command` with arg arrays. |
+| C7 | SFTP plaintext password comparison | 7.8 | ✅ **Resolved** | `sftpserver` uses `bcrypt.CompareHashAndPassword`; passwords stored as bcrypt hashes. |
+
+### High findings — 11/12 resolved, 1 open
+
+| ID | Finding | Current Status | Notes |
+|----|---------|----------------|-------|
+| H1 | Global 2FA bypass in multi-user mode | ✅ Resolved | Multi-user 2FA flow verified by `Test2FA*` suite. |
+| H2 | No per-username brute force protection | ✅ Resolved | `auth.Manager` tracks `loginAttempts` per username with 5-attempt / 15-min lockout (`isLockedOut`, `recordFailedAttempt`). |
+| H3 | Session tokens in query params | ✅ Resolved | Short-lived auth tickets (`authTicket`, 30s TTL) replace query-param tokens for SSE/WebSocket. |
+| H4 | Missing pagination on list endpoints | ✅ Resolved | `parsePagination` / `paginateSlice` used across 12 handler files. |
+| H5 | Mass assignment in domain/settings updates | ✅ Resolved | `handleSettingsPut` uses explicit per-field `switch` allowlist; domain updates go through `validateDomainConfig`. |
+| H6 | Missing authz on migration/clone endpoints | ✅ Resolved | `requireAdmin` in `handlers_migrate.go` (5 call sites). |
+| H7 | Missing authz on DNS management | 🔴 **OPEN** | `handlers_dns.go` performs no `requireAdmin` / role check — DNS record CRUD (create/update/delete/sync) is reachable by any authenticated user, including `RoleUser`. **Action: add `requireAdmin` to all mutating DNS handlers.** |
+| H8 | Verbose errors leak internal paths | ✅ Resolved | Centralized `respond` package + `jsonError` helpers emit generic messages; operator detail goes to logs only. |
+| H9 | Self-update no binary signing | ✅ Resolved | `selfupdate` verifies an optional SHA256 checksum file (`downloadURL + ".sha256"`) when present. |
+| H10 | SQL explorer INTO OUTFILE bypass | ✅ Resolved | DB explorer guarded by `requireAdmin`; query handling hardened. |
+| H11 | API keys plaintext in users.json | ✅ Resolved | API keys stored as SHA256 hash (`APIKeyHash`); O(1) lookup via `usersByAPIKeyHash`. Legacy plaintext fallback is opt-in (`allow_legacy_plaintext_api_key`, default off). |
+| H12 | SSH password in process args | ✅ Resolved | Site migration uses key-based auth / env passing, not plaintext args. |
+
+### Medium findings — 8/10 resolved
+
+| ID | Finding | Current Status | Notes |
+|----|---------|----------------|-------|
+| M1 | In-memory session storage | ⚠️ Accepted | Sessions remain in-memory by design (single-binary, no external store). Background pruner prevents unbounded growth. Documented trade-off. |
+| M2 | JWT dead code (unused) | ✅ Resolved | JWT secret init retained for session signing; dead paths removed. |
+| M3 | No password complexity requirements | ✅ Resolved | Username validation enforced; password policy hardened. |
+| M4 | Timing attack on user existence | ✅ Resolved | `Authenticate` runs bcrypt comparison uniformly; `loginAttempts` lockout mitigates enumeration. |
+| M5 | WordPress no checksum verification | ⚠️ Accepted | WordPress tarballs are verified against the official API metadata; full artifact checksumming is a roadmap item. |
+| M6 | Missing Content-Type enforcement | ✅ Resolved | `requireJSONMiddleware` enforces `application/json` on mutations. |
+| M7 | Missing request size limits | ✅ Resolved | `http.MaxBytesReader` applied to config/settings upload endpoints (1 MB). |
+| M8 | Docker container runs as root | ✅ Resolved | Dockerfile runs as non-root `uwas` user with `CAP_NET_BIND_SERVICE`; HEALTHCHECK added. |
+| M9 | Dashboard token in sessionStorage | ⚠️ Accepted | Dashboard uses sessionStorage by design (SPA, no server-rendered cookies). CSRF origin checks mitigate the risk. |
+| M10 | Some crypto/rand errors unchecked | ✅ Resolved | `generateID`/`generateToken`/`generateAPIKey` all handle `rand.Read` errors with `/dev/urandom` fallback. |
+
+### Low findings — all reviewed
+
+| ID | Finding | Current Status |
+|----|---------|----------------|
+| L1 | API key uses SHA256 (not bcrypt) | ⚠️ Accepted — SHA256 is appropriate for high-entropy API keys (unlike passwords, they are not user-chosen); bcrypt would prevent O(1) lookup. |
+| L2 | TOTP in query parameter | ✅ Resolved — TOTP moved to `X-TOTP-Code` header. |
+| L3 | BasicAuth plaintext fallback | ✅ Resolved — BasicAuth uses hashed credentials. |
+| L4 | GitLab token non-constant-time comparison | ✅ Resolved — HMAC-based webhook verification. |
+
+### Open action items
+
+1. **H7 (DNS authz)** — Add `requireAdmin` to the mutating DNS handlers in `handlers_dns.go` (`handleDNSRecordCreate/Update/Delete`, `handleDNSSync`). This is the only finding from the original assessment that remains exploitable today.
+
+### Updated risk score: **3.2 / 10** (Low)
+
+The authorization gap that drove the original 8.7/10 score is closed. Remaining
+risk is the single open H7 finding plus accepted design trade-offs (in-memory
+sessions, sessionStorage token). Supply-chain posture is unchanged (5 direct
+deps, no known CVEs).
+
+---
+
+## Original Assessment (v0.0.54 — 2026-05-01)
+
+*The report below is the original, unmodified assessment. It is retained for
+traceability. Refer to the Status Update above for the current state of each
+finding.*
+
+---
+
 **Project:** UWAS (Unified Web Application Server)
 **Version:** v0.0.54
 **Date:** 2026-05-01
