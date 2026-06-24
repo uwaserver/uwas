@@ -17,6 +17,7 @@ import (
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/siteuser"
 	"github.com/uwaserver/uwas/internal/webhook"
+	"gopkg.in/yaml.v3"
 )
 
 func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
@@ -1574,3 +1575,174 @@ func findDomainHostnameConflict(domains []config.Domain, skipIndex int, host str
 // isValidHostname is kept as a package-local alias for readability at the
 // call sites. config.IsValidHostname is the authoritative implementation.
 func isValidHostname(s string) bool { return config.IsValidHostname(s) }
+
+// --- Per-domain raw YAML editor (moved from api.go) ---
+
+func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.recordAuditR(r, "domain.read_raw", "domain: "+host+" (forbidden)", false)
+				jsonError(w, "forbidden: cannot view this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	// Try reading from domains.d/ file first
+	path, err := s.domainFilePath(host)
+	if err == nil {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			jsonResponse(w, map[string]string{"content": string(data)})
+			return
+		}
+	}
+
+	// Fallback: generate YAML from the in-memory config for this domain
+	s.configMu.RLock()
+	var found *config.Domain
+	for i := range s.config.Domains {
+		if s.config.Domains[i].Host == host {
+			d := s.config.Domains[i]
+			found = &d
+			break
+		}
+	}
+	s.configMu.RUnlock()
+
+	if found == nil {
+		jsonError(w, "domain not found", http.StatusNotFound)
+		return
+	}
+
+	data, err := yaml.Marshal(found)
+	if err != nil {
+		jsonError(w, "failed to marshal domain config", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]string{"content": string(data)})
+}
+
+// handleDomainRawPut validates and writes raw YAML content for a single
+// domain file in domains.d/, then triggers a reload.
+func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+
+	// Check domain permissions for non-admin users
+	if s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			if !s.authMgr.CanManageDomain(user, host) {
+				s.recordAuditR(r, "domain.update_raw", "domain: "+host+" (forbidden)", false)
+				jsonError(w, "forbidden: cannot modify this domain", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	path, err := s.domainFilePath(host)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	data := []byte(req.Content)
+
+	// Validate YAML syntax by parsing as a domain.
+	var probe config.Domain
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate domain semantics before persisting.
+	tmpCfg := config.Config{
+		Global: config.GlobalConfig{
+			LogLevel:  "info",
+			LogFormat: "json",
+			Admin:     config.AdminConfig{Listen: "127.0.0.1:9443"},
+			WebRoot:   "/var/www",
+		},
+		Domains: []config.Domain{probe},
+	}
+	if err := config.Validate(&tmpCfg); err != nil {
+		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Ensure the domains.d directory exists.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		s.logger.Error("domain raw put: mkdir failed", "error", err)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
+		return
+	}
+
+	// Crash-safe write: unique temp file + fsync + rename.
+	s.persistMu.Lock()
+	writeErr := atomicWriteFile(path, data, 0600)
+	s.persistMu.Unlock()
+	if writeErr != nil {
+		s.logger.Error("domain raw put: write failed", "error", writeErr)
+		jsonError(w, "failed to save domain configuration", http.StatusInternalServerError)
+		return
+	}
+
+	// Trigger reload if available.
+	if s.reloadFn != nil {
+		if err := s.reloadFn(); err != nil {
+			jsonError(w, "domain saved but reload failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// domainFilePath resolves the on-disk path for a domain's YAML file inside
+// the domains.d/ directory adjacent to the main config file.
+func (s *Server) domainFilePath(host string) (string, error) {
+	if s.configPath == "" {
+		return "", fmt.Errorf("config path not set")
+	}
+
+	// Reject path traversal characters before any transformation
+	if strings.ContainsAny(host, `/\`) || strings.Contains(host, "..") {
+		return "", fmt.Errorf("invalid host name")
+	}
+
+	// Sanitize host: replace port separator for filesystem safety
+	clean := strings.ReplaceAll(host, ":", "_")
+	clean = filepath.Base(clean)
+	if clean == "." || clean == ".." {
+		return "", fmt.Errorf("invalid host name")
+	}
+
+	baseDir := filepath.Dir(s.configPath)
+
+	// Use configured domains_dir if present, else default to domains.d/
+	s.configMu.RLock()
+	domainsDir := s.config.DomainsDir
+	s.configMu.RUnlock()
+
+	if domainsDir == "" {
+		domainsDir = "domains.d"
+	}
+	if !filepath.IsAbs(domainsDir) {
+		domainsDir = filepath.Join(baseDir, domainsDir)
+	}
+
+	return filepath.Join(domainsDir, clean+".yaml"), nil
+}
