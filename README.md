@@ -511,10 +511,35 @@ sudo systemctl reload uwas
 
 ### Docker
 
+The image runs as a non-root `uwas` user (with `CAP_NET_BIND_SERVICE` for ports
+80/443), includes a healthcheck, and ships a baked default config that the
+entrypoint seeds into a writable volume on first boot — so domain additions and
+config edits made from the dashboard persist across restarts.
+
+**docker compose (recommended):** includes MariaDB + PHP-FPM sidecars.
+
+```bash
+cp .env.example .env       # set UWAS_ADMIN_KEY (required for the dashboard)
+docker compose up -d
+```
+
+The admin API binds `:9443` inside the container and requires a key — UWAS
+refuses to start a publicly-bound admin listener without authentication. Set
+`UWAS_ADMIN_KEY` in `.env` (generate one with `openssl rand -hex 24`). The
+config lives in a named volume (`uwas_config`); edit it from the dashboard or
+drop a custom `docker/uwas.yaml` before the first boot.
+
+**docker run (standalone):**
+
 ```bash
 docker build -t uwas .
-docker run -p 80:80 -p 443:443 -v ./uwas.yaml:/etc/uwas/uwas.yaml uwas
+docker run -d -p 80:80 -p 443:443 -p 9443:9443 \
+  -e UWAS_ADMIN_KEY=your-admin-key \
+  -v uwas_config:/etc/uwas \
+  uwas
 ```
+
+See [`docker-compose.yml`](docker-compose.yml) and [`docker/uwas.yaml`](docker/uwas.yaml) for the full reference.
 
 ## Migration from Nginx/Apache
 
