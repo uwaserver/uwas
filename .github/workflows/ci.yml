@@ -126,9 +126,15 @@ jobs:
       - name: Build UWAS binary
         run: CGO_ENABLED=0 go build -o /tmp/uwas ./cmd/uwas
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/dashboard/package-lock.json') }}
+
       - name: Install Playwright browsers
         working-directory: web/dashboard
-        run: npx playwright install chromium
+        run: node_modules/.bin/playwright install chromium
 
       - name: Run E2E tests
         working-directory: web/dashboard
