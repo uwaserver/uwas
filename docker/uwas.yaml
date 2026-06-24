@@ -1,0 +1,68 @@
+# UWAS — Docker container configuration
+#
+# This is tailored for running UWAS inside a container (see docker-compose.yml).
+# It differs from uwas.example.yaml (the bare-metal reference) in two ways:
+#
+#   1. admin.listen is ":9443", not "127.0.0.1:9443". A container's loopback is
+#      its own network namespace — a published port (-p 9443:9443) forwards to
+#      the container's eth0, so the admin API must bind the wildcard address to
+#      be reachable from the host. Binding it publicly requires an api_key.
+#
+#   2. api_key is read from the UWAS_ADMIN_KEY environment variable. Set it in
+#      docker-compose.yml (or a .env file). UWAS refuses to start a public admin
+#      listener without authentication, so a key is mandatory here.
+#
+# Paths below match the volumes declared in docker-compose.yml and the
+# directories pre-created + chowned in the Dockerfile:
+#   /var/www              → web roots (bind: ./data/www)
+#   /var/lib/uwas/certs   → TLS certs / ACME storage (named volume: certs)
+#   /var/cache/uwas       → disk cache (named volume: cache)
+
+global:
+  worker_count: auto
+  max_connections: 65536
+
+  http_listen: ":80"
+  https_listen: ":443"
+  http3: true
+
+  pid_file: /var/run/uwas.pid
+
+  log_level: info
+  log_format: json
+
+  admin:
+    enabled: true
+    listen: ":9443"          # wildcard: reachable via the published port
+    api_key: "${UWAS_ADMIN_KEY}"
+
+  acme:
+    email: "admin@example.com"
+    storage: /var/lib/uwas/certs
+
+  cache:
+    enabled: true
+    memory_limit: 512MB
+    disk_path: /var/cache/uwas
+    disk_limit: 10GB
+    default_ttl: 3600
+    grace_ttl: 86400
+    stale_while_revalidate: true
+
+domains:
+  # Sample static site. Replace the host with your domain and flip ssl.mode to
+  # "auto" once the domain's A record points at this host — UWAS then obtains a
+  # Let's Encrypt certificate automatically. ssl.mode=off here so the demo
+  # boots cleanly without ACME errors for the reserved example.com domain.
+  - host: "example.com"
+    root: /var/www/example.com/public
+    type: static
+    ssl:
+      mode: off
+    compression:
+      enabled: true
+      algorithms: [br, gzip]
+      min_size: 1024
+    cache:
+      enabled: true
+      ttl: 3600
