@@ -72,3 +72,4 @@ commit.bat
 
 .dfmt/
 
+.wrongstack/
