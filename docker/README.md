@@ -24,6 +24,10 @@ TLS is not yet configured). Log in with the admin API key you set.
   already holds a config and the copy is skipped — your edits are preserved.
 - **Exposes a healthcheck** against `/api/v1/health` (no auth required).
 - **Persists state across restarts** via named volumes (config, certs, cache).
+- **Reports its runtime in the dashboard.** The UWAS card on the main dashboard
+  shows the container type and non-root status (e.g. `docker · non-root`) so
+  you can confirm the hardening is active at a glance. This comes from
+  `/api/v1/system` (`container` and `non_root` fields).
 
 ## Configuration
 
@@ -167,3 +171,17 @@ errors.
 This happens if the config is bind-mounted read-only (`-v ./uwas.yaml:/etc/uwas/uwas.yaml:ro`)
 instead of using the `uwas_config` named volume. The volume is required for
 persistence — see [Volumes](#volumes).
+
+### Verifying the runtime environment
+The dashboard UWAS card shows `docker · non-root` when running correctly in a
+container. To verify from the command line instead:
+
+```bash
+docker exec <container> id                # uid should not be 0
+docker exec <container> wget -qO- http://127.0.0.1:9443/api/v1/system | grep -o '"container":"[^"]*"'
+```
+
+If `container` reports `"none"`, the container detection heuristics
+(`/.dockerenv`, `/proc/1/cgroup`) did not match — this can happen on niche
+runtimes. The UWAS binary still runs correctly; only the dashboard label is
+affected.
