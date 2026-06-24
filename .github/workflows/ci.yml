@@ -127,21 +127,27 @@ jobs:
         run: CGO_ENABLED=0 go build -o /tmp/uwas ./cmd/uwas
 
       - name: Cache Playwright browsers
+        id: pw-cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('web/dashboard/package-lock.json') }}
+          path: /opt/pw-browsers
+          key: pw-${{ runner.os }}-${{ hashFiles('web/dashboard/package-lock.json') }}
 
       - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: web/dashboard
         run: node_modules/.bin/playwright install chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
+        timeout-minutes: 5
 
       - name: Run E2E tests
         working-directory: web/dashboard
-        run: npx playwright test
+        run: node_modules/.bin/playwright test
         env:
           CI: "true"
           UWAS_BIN: "/tmp/uwas"
+          PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
 
       - name: Upload Playwright report
         if: always()
