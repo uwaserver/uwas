@@ -8,16 +8,20 @@
 
 | Metric | Count |
 |--------|------:|
-| Go source files | 284 |
-| Test files | 136 |
-| Lines of Go code | ~136,000 |
-| Internal packages | 52 |
+| Go source files | 214 |
+| Test files | 215 |
+| Lines of Go code | ~59,000 |
+| Internal packages | 46 |
 | Public packages (pkg/) | 2 |
 | CLI commands | 19 |
 | API endpoints | 205+ |
 | Dashboard pages | 40 |
 | Direct Go dependencies | 5 |
 | Binary size (linux/amd64) | ~15 MB |
+
+> **Note:** The `internal/admin` package was refactored from a single 6,707-line
+> `api.go` into 37 focused files (largest: `api.go` at 1,458 lines, down 78%).
+> Handler logic is split by topic — see the Package Map below.
 
 ---
 
@@ -141,8 +145,23 @@ cmd/uwas/
 
 internal/
 ├── admin/                      API server (205+ routes) + dashboard embed + auth
-│   ├── api.go                  Route registration + middleware
-│   ├── handlers_*.go           Handler implementations (hosting, app)
+│   ├── api.go                  Core: Server struct, lifecycle, middleware, helpers
+│   ├── routes.go               Route registration (15 themed sub-registrars)
+│   ├── handlers_auth.go        Login, 2FA, multi-user RBAC, sessions
+│   ├── handlers_domain.go      Domain CRUD, unknown-host tracking
+│   ├── domain_alias.go         www↔apex canonical redirect logic
+│   ├── handlers_cloudflare.go  CF connection, IPs, cache purge
+│   ├── handlers_cloudflare_tunnel.go  CF tunnel lifecycle (create/start/stop)
+│   ├── handlers_cloudflare_zones.go   CF zone + DNS record management
+│   ├── handlers_settings.go    Settings + raw config editor
+│   ├── handlers_php.go         PHP-FPM lifecycle (detect/install/assign)
+│   ├── handlers_database.go    MySQL/MariaDB + Docker DB management
+│   ├── handlers_backup.go      Backup create/restore/schedule
+│   ├── handlers_mcp.go         MCP (AI management) tool calls
+│   ├── handlers_cron.go        Cron job monitoring + execution
+│   ├── handlers_bandwidth.go   Per-domain bandwidth limits
+│   ├── handlers_certs.go       TLS cert listing/renewal/upload
+│   ├── handlers_*.go           Apps, deploy, files, firewall, DNS, etc.
 │   ├── audit.go                Audit trail ring buffer
 │   └── dashboard/dist/         Embedded React SPA (go:embed)
 │
