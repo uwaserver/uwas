@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Vet
         run: |
@@ -27,7 +31,7 @@ jobs:
       - name: Vulnerability scan
         run: |
           GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go run golang.org/x/vuln/cmd/govulncheck@latest $GO_PACKAGES
+          govulncheck $GO_PACKAGES
 
       - name: Test
         run: |
@@ -113,6 +117,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
 
       - uses: actions/setup-node@v6
         with:
