@@ -5,8 +5,14 @@ services:
       - "80:80"
       - "443:443"
       - "9443:9443"
+    environment:
+      # Admin API key (read by docker/uwas.yaml via ${UWAS_ADMIN_KEY}).
+      # UWAS rejects a publicly-bound admin listener without auth, so a key is
+      # required for the dashboard + container healthcheck to work. Override on
+      # the host or in a .env file; never commit a real key.
+      - UWAS_ADMIN_KEY=${UWAS_ADMIN_KEY:-please-change-this-admin-key}
     volumes:
-      - ./uwas.example.yaml:/etc/uwas/uwas.yaml:ro
+      - ./docker/uwas.yaml:/etc/uwas/uwas.yaml:ro
       - ./data/www:/var/www
       - certs:/var/lib/uwas/certs
       - cache:/var/cache/uwas
