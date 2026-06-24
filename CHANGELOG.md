@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Docker image now runs as a non-root `uwas` user with `CAP_NET_BIND_SERVICE`,
+  includes a `HEALTHCHECK` against `/api/v1/health`, and ships an entrypoint
+  that seeds the config volume from a baked default on first boot.
+- Container runtime detection in `/api/v1/system` (`container`, `non_root`
+  fields); the dashboard UWAS card now shows `docker · non-root` when running
+  in a container.
+- `docker-compose.yml` wires a named `uwas_config` volume and `UWAS_ADMIN_KEY`
+  env so domain additions and config edits persist across restarts.
+- `.env.example`, `docker/uwas.yaml` (container-tailored config), and
+  `docker/README.md` (container usage guide: first boot, volumes, troubleshooting).
+
+### Changed
+
+- Refactored `internal/admin/api.go` from 6,707 lines into 37 focused files,
+  split by topic (auth, domain, cloudflare connection/tunnel/zones, settings,
+  php, database, backup, mcp, cron, bandwidth, certs, domain aliases). Largest
+  file is now `api.go` at 1,458 lines (down 78%).
+- Docker README section rewritten to cover volume seeding, env-based admin key,
+  and standalone `docker run` usage.
+- CONTRIBUTING.md: updated Go requirement to 1.26, added Node.js 22+ and Docker,
+  added a Docker Development section (build, smoke test, compose, iteration).
+- ARCHITECTURE.md: updated codebase statistics (214 source files, ~59K LOC,
+  46 packages) and expanded the admin package map to list all handler files.
+- README: updated statistics to v0.6.42 (42 dashboard pages, 254 API routes,
+  57 Go packages).
+
+### Fixed
+
+- Security (H7): mutating DNS handlers (`handleDNSRecordCreate/Update/Delete`,
+  `handleDNSSync`) now require the admin role. Previously any authenticated
+  user could modify DNS records via the server's global provider credentials.
+  Verified by `TestDNSMutatingHandlersRequireAdmin`.
+- Security report (`security-report/SECURITY-REPORT.md`) updated with a v0.6.42
+  status table: all 7 CRITICAL and 11/12 HIGH findings resolved; risk score
+  lowered from 8.7 to 2.8.
+
 ## [0.6.38] - 2026-06-18
 
 ### Added
