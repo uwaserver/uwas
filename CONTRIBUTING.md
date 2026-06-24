@@ -17,8 +17,9 @@ Thank you for your interest in contributing to UWAS.
 
 ### Requirements
 
-- Go 1.23 or later
-- Make (optional, for convenience)
+- Go 1.26 or later
+- Node.js 22+ (dashboard development only)
+- Docker (optional, for containerized testing)
 
 ### Build
 
@@ -33,6 +34,72 @@ make build   # Production binary (stripped, versioned)
 make test    # go test ./...
 make lint    # go vet + staticcheck
 ```
+
+### Docker Development
+
+The project ships a Dockerfile and docker-compose setup for containerized
+development and testing. This is the fastest way to verify that changes work
+in the production runtime environment (non-root user, volume-seeded config).
+
+#### Build the image
+
+```bash
+make build        # production binary (needed before Docker build embeds it)
+docker build -t uwas:dev .
+```
+
+> **Note:** The Dockerfile builds the Go binary itself, so `make build` is only
+> needed if you want to skip the in-image build via multi-stage caching.
+
+#### Quick smoke test
+
+```bash
+docker run -d -p 9443:9443 -e UWAS_ADMIN_KEY=dev-key-123 \
+  -v uwas_dev_config:/etc/uwas uwas:dev
+```
+
+The dashboard is at `http://localhost:9443/_uwas/dashboard/`. The healthcheck
+hits `/api/v1/health` automatically.
+
+#### Full stack with compose
+
+```bash
+cp .env.example .env       # set UWAS_ADMIN_KEY + DB passwords
+docker compose up -d       # starts UWAS + PHP-FPM + MariaDB
+```
+
+This mounts a named volume at `/etc/uwas` so domain additions persist. See
+[`docker/README.md`](docker/README.md) for volume management, reseeding, and
+troubleshooting.
+
+#### Iterating on changes
+
+The Dockerfile copies the full source, so any Go or dashboard change requires
+a rebuild. For fast iteration on the dashboard alone, run the Vite dev server
+on the host and point it at a running container:
+
+```bash
+cd web/dashboard && npm run dev    # Vite dev server (hot reload)
+```
+
+For Go changes, rebuild the image:
+
+```bash
+docker build -t uwas:dev . && docker compose up -d --force-recreate uwas
+```
+
+#### Verifying non-root hardening
+
+The image runs as the `uwas` user with `CAP_NET_BIND_SERVICE`. Confirm it from
+inside the container:
+
+```bash
+docker exec <container> id          # should show uid!=0
+docker exec <container> uwas version
+```
+
+The dashboard's UWAS card shows the runtime environment (`docker · non-root`)
+when running in a container — see `/api/v1/system`.
 
 ### Project Structure
 
