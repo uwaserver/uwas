@@ -67,4 +67,16 @@ test.describe('UWAS Dashboard', () => {
     await page.goto(`${DASHBOARD}/`);
     await page.waitForURL(/\/login/, { timeout: 5000 });
   });
+
+  test('system endpoint exposes container runtime fields', async ({ request }) => {
+    const resp = await request.get(`${BASE}/api/v1/system`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    expect(resp.ok()).toBeTruthy();
+    const sys = await resp.json();
+    // container field must be present and a known value
+    expect(['none', 'docker', 'lxc', 'kubernetes']).toContain(sys.container);
+    // non_root is a boolean
+    expect(typeof sys.non_root).toBe('boolean');
+  });
 });
