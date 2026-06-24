@@ -46,6 +46,13 @@ RUN addgroup -S uwas && adduser -S -D -H -G uwas uwas
 RUN mkdir -p /etc/uwas /var/lib/uwas/certs /var/cache/uwas /var/log/uwas /var/www /run && \
     chown -R uwas:uwas /etc/uwas /var/lib/uwas /var/cache/uwas /var/log/uwas /var/www /run
 
+# Container entrypoint: seeds the config volume from this baked default on
+# first boot, then execs the binary. Lets the named volume at /etc/uwas hold
+# domain additions (domains.d/*.yaml) and config edits across restarts.
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY docker/uwas.yaml /etc/uwas.default/uwas.yaml
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 USER uwas
 
 EXPOSE 80 443 9443
@@ -56,5 +63,7 @@ EXPOSE 80 443 9443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:9443/api/v1/health || exit 1
 
-ENTRYPOINT ["uwas"]
+# Entrypoint seeds the config volume on first boot, then runs the binary.
+# CMD passes the serve subcommand + config path as args to the entrypoint.
+ENTRYPOINT ["docker-entrypoint.sh", "uwas"]
 CMD ["serve", "-c", "/etc/uwas/uwas.yaml"]

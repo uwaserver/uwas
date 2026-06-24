@@ -12,7 +12,7 @@ services:
       # the host or in a .env file; never commit a real key.
       - UWAS_ADMIN_KEY=${UWAS_ADMIN_KEY:-please-change-this-admin-key}
     volumes:
-      - ./docker/uwas.yaml:/etc/uwas/uwas.yaml:ro
+      - uwas_config:/etc/uwas
       - ./data/www:/var/www
       - certs:/var/lib/uwas/certs
       - cache:/var/cache/uwas
@@ -39,6 +39,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  uwas_config:
   certs:
   cache:
   db_data:
