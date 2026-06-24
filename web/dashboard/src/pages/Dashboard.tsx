@@ -146,7 +146,7 @@ export default function Dashboard() {
         />
         <Card icon={<MemoryStick size={18} />} label="RAM" value={sysInfo?.ram_total_human || '--'} sub={sysInfo?.ram_available_human ? `${sysInfo.ram_available_human} available` : undefined} />
         <Card icon={<HardDrive size={18} />} label="Disk" value={sysInfo?.disk_total_human || '--'} sub={sysInfo?.disk_free_human ? `${sysInfo.disk_free_human} free` : undefined} />
-        <Card icon={<Server size={18} />} label="UWAS" value={sysInfo?.version || '--'} sub={sysInfo ? `${sysInfo.uptime} uptime` : undefined} />
+        <Card icon={<Server size={18} />} label="UWAS" value={sysInfo?.version || '--'} sub={sysInfo ? `${sysInfo.uptime} uptime${sysInfo.container && sysInfo.container !== 'none' ? ` · ${sysInfo.container}${sysInfo.non_root ? ' · non-root' : ''}` : ''}` : undefined} />
       </div>
 
       {/* Status panels */}

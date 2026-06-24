@@ -264,6 +264,8 @@ export interface SystemInfo {
   domain_count: number;
   disk_used_bytes?: number;
   disk_used_human?: string;
+  container?: string;
+  non_root?: boolean;
 }
 
 export const fetchHealth = () => api<HealthData>('/api/v1/health');
