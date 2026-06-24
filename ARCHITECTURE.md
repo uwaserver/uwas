@@ -144,7 +144,7 @@ cmd/uwas/
 └── main.go                     CLI entry point
 
 internal/
-├── admin/                      API server (205+ routes) + dashboard embed + auth
+├── admin/                      API server (254+ routes) + dashboard embed + auth
 │   ├── api.go                  Core: Server struct, lifecycle, middleware, helpers
 │   ├── routes.go               Route registration (15 themed sub-registrars)
 │   ├── handlers_auth.go        Login, 2FA, multi-user RBAC, sessions
@@ -161,7 +161,13 @@ internal/
 │   ├── handlers_cron.go        Cron job monitoring + execution
 │   ├── handlers_bandwidth.go   Per-domain bandwidth limits
 │   ├── handlers_certs.go       TLS cert listing/renewal/upload
-│   ├── handlers_*.go           Apps, deploy, files, firewall, DNS, etc.
+│   ├── handlers_software_library.go  Software Library CRUD + lifecycle handlers
+│   ├── handlers_software_docker.go   Docker Compose runner + container monitoring
+│   ├── handlers_software_backup.go   Software instance backup/restore
+│   ├── handlers_software_ports.go    Port allocation + conflict detection
+│   ├── handlers_software_store.go    Instance persistence + secret/env helpers
+│   ├── handlers_software_templates.go  Docker Compose YAML templates (11 apps)
+│   ├── handlers_*.go           Apps, deploy, git, files, firewall, DNS, etc.
 │   ├── audit.go                Audit trail ring buffer
 │   └── dashboard/dist/         Embedded React SPA (go:embed)
 │
