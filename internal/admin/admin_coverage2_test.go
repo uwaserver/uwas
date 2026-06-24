@@ -2656,7 +2656,7 @@ func TestDNSRecordsNoProvider(t *testing.T) {
 func TestDNSRecordCreateNoProvider(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/dns/example.com/records", strings.NewReader(`{"type":"A","name":"@","content":"1.2.3.4"}`))
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/dns/example.com/records", strings.NewReader(`{"type":"A","name":"@","content":"1.2.3.4"}`)))
 	req.SetPathValue("domain", "example.com")
 	s.handleDNSRecordCreate(rec, req)
 	if rec.Code != 501 {
@@ -2667,7 +2667,7 @@ func TestDNSRecordCreateNoProvider(t *testing.T) {
 func TestDNSRecordUpdateNoProvider(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PUT", "/api/v1/dns/example.com/records/123", strings.NewReader(`{"type":"A","name":"@","content":"1.2.3.4"}`))
+	req := withAdminContext(httptest.NewRequest("PUT", "/api/v1/dns/example.com/records/123", strings.NewReader(`{"type":"A","name":"@","content":"1.2.3.4"}`)))
 	req.SetPathValue("domain", "example.com")
 	req.SetPathValue("id", "123")
 	s.handleDNSRecordUpdate(rec, req)
@@ -2679,7 +2679,7 @@ func TestDNSRecordUpdateNoProvider(t *testing.T) {
 func TestDNSRecordDeleteNoProvider(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("DELETE", "/api/v1/dns/example.com/records/123", nil)
+	req := withAdminContext(httptest.NewRequest("DELETE", "/api/v1/dns/example.com/records/123", nil))
 	req.SetPathValue("domain", "example.com")
 	req.SetPathValue("id", "123")
 	s.handleDNSRecordDelete(rec, req)
@@ -2691,11 +2691,40 @@ func TestDNSRecordDeleteNoProvider(t *testing.T) {
 func TestDNSSyncNoProvider(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/dns/example.com/sync", nil)
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/dns/example.com/sync", nil))
 	req.SetPathValue("domain", "example.com")
 	s.handleDNSSync(rec, req)
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
+	}
+}
+
+// DNS mutating handlers must require admin role (H7 fix).
+// A reseller/user with domain access must still be denied because DNS
+// operations use server-level provider credentials (zone-wide scope).
+func TestDNSMutatingHandlersRequireAdmin(t *testing.T) {
+	s := testServer()
+	cases := []struct {
+		name string
+		fn   func(w http.ResponseWriter, r *http.Request)
+		req  *http.Request
+	}{
+		{"create", s.handleDNSRecordCreate, httptest.NewRequest("POST", "/api/v1/dns/example.com/records", strings.NewReader(`{}`))},
+		{"update", s.handleDNSRecordUpdate, httptest.NewRequest("PUT", "/api/v1/dns/example.com/records/1", strings.NewReader(`{}`))},
+		{"delete", s.handleDNSRecordDelete, httptest.NewRequest("DELETE", "/api/v1/dns/example.com/records/1", nil)},
+		{"sync", s.handleDNSSync, httptest.NewRequest("POST", "/api/v1/dns/example.com/sync", nil)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := withResellerContext(tc.req)
+			req.SetPathValue("domain", "example.com")
+			req.SetPathValue("id", "1")
+			tc.fn(rec, req)
+			if rec.Code != 403 {
+				t.Errorf("%s: status = %d, want 403 (reseller denied)", tc.name, rec.Code)
+			}
+		})
 	}
 }
 

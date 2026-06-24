@@ -39,7 +39,7 @@ stands today.
 | H4 | Missing pagination on list endpoints | ✅ Resolved | `parsePagination` / `paginateSlice` used across 12 handler files. |
 | H5 | Mass assignment in domain/settings updates | ✅ Resolved | `handleSettingsPut` uses explicit per-field `switch` allowlist; domain updates go through `validateDomainConfig`. |
 | H6 | Missing authz on migration/clone endpoints | ✅ Resolved | `requireAdmin` in `handlers_migrate.go` (5 call sites). |
-| H7 | Missing authz on DNS management | 🔴 **OPEN** | `handlers_dns.go` performs no `requireAdmin` / role check — DNS record CRUD (create/update/delete/sync) is reachable by any authenticated user, including `RoleUser`. **Action: add `requireAdmin` to all mutating DNS handlers.** |
+| H7 | Missing authz on DNS management | ✅ Resolved | All mutating DNS handlers (`handleDNSRecordCreate/Update/Delete`, `handleDNSSync`) now require `requireAdmin`; verified by `TestDNSMutatingHandlersRequireAdmin`. Read-only handlers (`handleDNSCheck`, `handleDNSRecords`) remain available to authenticated users. |
 | H8 | Verbose errors leak internal paths | ✅ Resolved | Centralized `respond` package + `jsonError` helpers emit generic messages; operator detail goes to logs only. |
 | H9 | Self-update no binary signing | ✅ Resolved | `selfupdate` verifies an optional SHA256 checksum file (`downloadURL + ".sha256"`) when present. |
 | H10 | SQL explorer INTO OUTFILE bypass | ✅ Resolved | DB explorer guarded by `requireAdmin`; query handling hardened. |
@@ -72,14 +72,14 @@ stands today.
 
 ### Open action items
 
-1. **H7 (DNS authz)** — Add `requireAdmin` to the mutating DNS handlers in `handlers_dns.go` (`handleDNSRecordCreate/Update/Delete`, `handleDNSSync`). This is the only finding from the original assessment that remains exploitable today.
+None. All findings from the original assessment are now resolved or accepted.
 
-### Updated risk score: **3.2 / 10** (Low)
+### Updated risk score: **2.8 / 10** (Low)
 
-The authorization gap that drove the original 8.7/10 score is closed. Remaining
-risk is the single open H7 finding plus accepted design trade-offs (in-memory
-sessions, sessionStorage token). Supply-chain posture is unchanged (5 direct
-deps, no known CVEs).
+The authorization gap that drove the original 8.7/10 score is closed, including
+the DNS management authorization (H7). Remaining risk is limited to accepted
+design trade-offs (in-memory sessions, sessionStorage token). Supply-chain
+posture is unchanged (5 direct deps, no known CVEs).
 
 ---
 

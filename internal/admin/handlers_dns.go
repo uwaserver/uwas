@@ -91,6 +91,9 @@ func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	domain := r.PathValue("domain")
 	if !s.requireDomainAccess(w, r, domain, "dns.create") {
 		return
@@ -121,6 +124,9 @@ func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if !s.requirePin(w, r) {
 		return
 	}
@@ -148,6 +154,9 @@ func (s *Server) handleDNSRecordDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSRecordUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	domain := r.PathValue("domain")
 	if !s.requireDomainAccess(w, r, domain, "dns.update") {
 		return
@@ -179,6 +188,9 @@ func (s *Server) handleDNSRecordUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSSync(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	domain := r.PathValue("domain")
 	if !s.requireDomainAccess(w, r, domain, "dns.sync") {
 		return
