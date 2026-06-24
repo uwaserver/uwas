@@ -6,17 +6,64 @@ Thank you for your interest in contributing to UWAS.
 
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/uwas.git`
-3. Create a branch: `git checkout -b my-feature`
-4. Make your changes
+3. Create a topic branch (see [Branch Naming](#branch-naming) below)
+4. Make your changes — one logical concern per commit
 5. Build the dashboard: `make dashboard` (embeds into the Go binary via `go:embed`)
-6. Run tests: `make test`
-7. Run lints: `make lint`
-8. Commit and push
-9. Open a Pull Request
+6. Run the pre-push gate: `make check` (lint + TypeScript typecheck + tests)
+7. Commit with a [conventional commit message](#commit-format)
+8. Push and open a Pull Request
 
-> **Note:** `make check` runs all three (lint + TypeScript typecheck + tests) in
-> one shot. Use it as a pre-push gate. Dashboard changes require
-> `npm install` in `web/dashboard/` first.
+> **Note:** Dashboard changes require `npm install` in `web/dashboard/` first.
+> `make check` runs lint + `tsc -b` + `go test` in one shot.
+
+### Branch Naming
+
+Use a descriptive prefix + kebab-case topic:
+
+| Prefix | When | Example |
+|--------|------|---------|
+| `feat/` | New feature | `feat/multi-domain-cache` |
+| `fix/` | Bug fix | `fix/sftp-chroot-escape` |
+| `refactor/` | Code reorganization (no behavior change) | `refactor/split-cloudflare-handlers` |
+| `docs/` | Documentation only | `docs/docker-quickstart` |
+| `chore/` | Tooling, deps, CI | `chore/bump-go-version` |
+
+Always branch from `main`. Delete the branch after merge.
+
+### Commit Format
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+type: short imperative description
+
+Optional body explaining WHY (not what — the diff shows what).
+```
+
+**Types:** `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`
+
+Rules:
+- Subject ≤ 72 chars, imperative mood, no trailing period
+- One concern per commit — never mix logic changes with lockfile updates
+- Reference issues: `Fix #123` or `Closes GH-456`
+
+```
+# Good
+fix: correct race condition in token refresh
+
+Retry logic now respects backoff multiplier. Without this,
+repeated failures would hammer the provider instead of backing off.
+
+# Bad
+fix: fixed bug
+```
+
+### Pull Requests
+
+- One feature or fix per PR
+- Include tests for new functionality
+- Update documentation if behavior changes
+- Keep PRs small and focused — split large work into stacked PRs
 
 ## Development
 
