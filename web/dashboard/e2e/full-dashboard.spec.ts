@@ -136,6 +136,9 @@ test.describe('Dashboard - API Verification', () => {
     expect(body.go_version).toContain('go');
     expect(body.cpus).toBeGreaterThan(0);
     expect(body.goroutines).toBeGreaterThan(0);
+    // Container runtime detection fields
+    expect(['none', 'docker', 'lxc', 'kubernetes']).toContain(body.container);
+    expect(typeof body.non_root).toBe('boolean');
   });
 
   test('admin API stats returns latency metrics', async ({ request }) => {
