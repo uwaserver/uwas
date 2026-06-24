@@ -32,6 +32,8 @@ Thumbs.db
 # ── Config with secrets (not the example) ──
 /uwas.yaml
 !uwas.example.yaml
+/.env
+!.env.example
 
 # ── Runtime data ──
 *.pid
@@ -70,6 +72,18 @@ run-tests.js
 commit.bat
 .npm/
 
+# ── AI agent scratch ──
+.claude/
 .dfmt/
-
 .wrongstack/
+
+# ── Build caches ──
+.cache/
+.turbo/
+.ruff_cache/
+.mypy_cache/
+
+# ── Backup / merge artifacts ──
+*.bak
+*.orig
+*.rej
