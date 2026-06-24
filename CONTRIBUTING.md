@@ -8,10 +8,15 @@ Thank you for your interest in contributing to UWAS.
 2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/uwas.git`
 3. Create a branch: `git checkout -b my-feature`
 4. Make your changes
-5. Run tests: `make test`
-6. Run lints: `make lint`
-7. Commit and push
-8. Open a Pull Request
+5. Build the dashboard: `make dashboard` (embeds into the Go binary via `go:embed`)
+6. Run tests: `make test`
+7. Run lints: `make lint`
+8. Commit and push
+9. Open a Pull Request
+
+> **Note:** `make check` runs all three (lint + TypeScript typecheck + tests) in
+> one shot. Use it as a pre-push gate. Dashboard changes require
+> `npm install` in `web/dashboard/` first.
 
 ## Development
 

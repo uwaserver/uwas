@@ -557,13 +557,16 @@ uwas migrate apache /etc/apache2/sites-enabled/example.conf > uwas.yaml
 
 ```bash
 make dev        # Build development binary
-make test       # Run all tests
+make dashboard  # Build the React dashboard (required before go:embed)
+make build      # Production binary (includes dashboard build)
+make test       # Run all Go tests
 make lint       # Run go vet + staticcheck
+make check      # Pre-push gate: lint + tsc + tests
 make clean      # Clean build artifacts
-
-# Dashboard
-cd web/dashboard && npm run build
 ```
+
+> **Dashboard changes** require `npm install` in `web/dashboard/`, then
+> `make dashboard` to rebuild before the Go binary picks them up.
 
 ## License
 
