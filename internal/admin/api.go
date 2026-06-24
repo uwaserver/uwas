@@ -661,6 +661,35 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		"uptime_secs":  time.Since(s.metrics.StartTime).Seconds(),
 	}
 
+	// Container runtime detection. Exposed to the dashboard so operators can
+	// see at a glance whether UWAS is running in a container (where healthcheck
+	// + volume seeding apply) or on bare metal. .dockerenv is the simplest
+	// signal; /proc/1/cgroup covers Podman/k8s and cgroup v2 unified hierarchies.
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		result["container"] = "docker"
+	} else if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		cg := string(data)
+		switch {
+		case strings.Contains(cg, "docker"), strings.Contains(cg, "containerd"):
+			result["container"] = "docker"
+		case strings.Contains(cg, "lxc"):
+			result["container"] = "lxc"
+		case strings.Contains(cg, "kubepods"):
+			result["container"] = "kubernetes"
+		}
+	}
+	if result["container"] == nil {
+		result["container"] = "none"
+	}
+
+	// Running as non-root? (UID != 0). The Docker image runs as the `uwas`
+	// user; this flag lets the dashboard confirm the hardening is active.
+	if os.Getuid() != 0 {
+		result["non_root"] = true
+	} else {
+		result["non_root"] = false
+	}
+
 	// OS-level info (Linux)
 	if runtime.GOOS == "linux" {
 		if data, err := os.ReadFile("/etc/os-release"); err == nil {
