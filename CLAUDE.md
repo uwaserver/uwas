@@ -61,7 +61,13 @@ make all                              # Full check + build
 ```
 cmd/uwas/            CLI entry point (19 commands)
 internal/
-  admin/             API server (205+ routes) + dashboard embed + TOTP auth
+  admin/             API server (254+ routes) + dashboard embed + TOTP auth
+    api.go            Core: Server struct, lifecycle, middleware, helpers
+    routes.go         Route registration (15 themed sub-registrars)
+    handlers_*.go     Topic-split handlers (auth, domain, cloudflare×3,
+                      settings, php, database, backup, mcp, cron, bandwidth,
+                      certs, dns, apps, deploy, files, firewall, software, etc.)
+    domain_alias.go   www↔apex canonical redirect logic
   alerting/          Alert thresholds + notifications
   analytics/         Per-domain traffic analytics
   appmanager/        Node.js/Python/Ruby/Go process management
@@ -112,7 +118,7 @@ internal/
 pkg/
   fastcgi/           FastCGI binary protocol, connection pool
   htaccess/          .htaccess parser (IfModule, RewriteCond, Header, Expires)
-web/dashboard/       React 19 SPA (40 pages, Vite + TypeScript + Tailwind)
+web/dashboard/       React 19 SPA (42 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Request Flow
@@ -180,10 +186,10 @@ TCP → TLS (SNI routing)
 
 | Task | Files to Modify |
 |------|-----------------|
-| Add config field | `internal/config/config.go` → Settings API in `admin/api.go:handleSettingsGet/Put` |
+| Add config field | `internal/config/config.go` → Settings API in `admin/handlers_settings.go:handleSettingsGet/Put` |
 | Add global middleware | Create in `internal/middleware/`, add to chain in `server.go:buildMiddlewareChain()` |
 | Add per-domain middleware | Add config field in `config.go`, wire in `server.go:handleRequest()` after domain lookup |
-| Add admin endpoint | Register in `internal/admin/api.go:registerRoutes()`, add handler method |
+| Add admin endpoint | Register in `internal/admin/routes.go` (themed sub-registrar), add handler in the matching `handlers_*.go` |
 | Add MCP tool | Register in `internal/mcp/server.go:registerTools()` |
 | Add CLI command | Create in `internal/cli/`, register in `cmd/uwas/main.go` |
 | Add dashboard page | Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to `Sidebar.tsx` |
@@ -198,7 +204,7 @@ go test ./internal/cache/            # Single package
 go test -v -run TestWordPress ./...  # Specific test
 ```
 
-## Dashboard Pages (40)
+## Dashboard Pages (42)
 
 - **Sites:** Domains, Domain Detail, Topology, Certificates, DNS, Cloudflare, WordPress, Clone/Staging, Migration, File Manager
 - **Server:** PHP, PHP Config, Applications (Apps), Database, DB Explorer, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
