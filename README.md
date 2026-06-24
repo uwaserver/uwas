@@ -20,15 +20,15 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 40-page React dashboard with 205+ API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard with 254+ API endpoints.
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.32)
+## Current Snapshot (v0.6.42)
 
-- **Dashboard pages:** 40 (`web/dashboard/src/pages`)
-- **Admin API routes:** 220 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
-- **Go packages:** 55 (from `go list ./...`)
+- **Dashboard pages:** 42 (`web/dashboard/src/pages`)
+- **Admin API routes:** 254 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
+- **Go packages:** 57 (from `go list ./...`)
 - **CLI commands:** 19
 - **Test status:** `go test -p 1 ./...` passing
 - **70 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
@@ -84,7 +84,7 @@ One binary. Zero hassle.
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **40-page Dashboard** — React 19 admin panel with dark/light theme
+- **42-page Dashboard** — React 19 admin panel with dark/light theme
 - **Applications** — Deploy and supervise Node.js, Python, Ruby, Go, custom, and Docker apps
 - **Web Terminal** — Browser-based shell via WebSocket-to-PTY bridge
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
@@ -394,7 +394,7 @@ Request Flow:
 ```
 cmd/uwas/                → CLI entry point (19 commands)
 internal/
-  admin/                 → REST API (205+ routes) + dashboard embed + TOTP auth
+  admin/                 → REST API (254+ routes) + dashboard embed + TOTP auth
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
   apps/                  → Standalone Node/Python/Ruby/Go/custom/Docker app supervision
@@ -445,12 +445,12 @@ internal/
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
   htaccess/              → .htaccess parser and converter
-web/dashboard/           → React 19 SPA (40 pages, Vite + TypeScript + Tailwind)
+web/dashboard/           → React 19 SPA (42 pages, Vite + TypeScript + Tailwind)
 ```
 
 ## Dashboard
 
-UWAS includes a 40-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
+UWAS includes a 42-page React 19 dashboard at `/_uwas/dashboard/` with dark/light theme:
 
 **Sites:** Dashboard, Domains, Domain Detail, Topology, Certificates, DNS Zone Editor, Cloudflare, WordPress, Clone/Staging, Migration, File Manager
 
