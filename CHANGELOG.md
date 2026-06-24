@@ -5,6 +5,27 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Refactored `handlers_software_library.go` (2,103 lines) into 6 focused files:
+  `handlers_software_library.go` (760, CRUD handlers), `handlers_software_docker.go`
+  (581, compose runner + container monitoring), `handlers_software_backup.go` (273,
+  instance backup/restore), `handlers_software_store.go` (197, instance persistence
+  + secret/env helpers), `handlers_software_ports.go` (162, port allocation +
+  conflict detection), `handlers_software_templates.go` (175, Docker Compose YAML
+  templates for 11 apps). 64% size reduction for the main file.
+- Split `handlers_cloudflare.go` (1,073 lines) into tunnel + zone files.
+- Split `handlers_apps_deploy.go` (1,069 lines) by extracting git/shell helpers
+  into `handlers_apps_git.go`.
+- Updated CLAUDE.md, ARCHITECTURE.md, and CONTRIBUTING.md to reflect the new
+  admin package file structure.
+
+### Added
+
+- E2E test asserting `/api/v1/system` exposes `container` and `non_root` fields.
+
 ## [0.7.1] - 2026-06-24
 
 ### Added
