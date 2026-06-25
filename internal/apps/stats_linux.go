@@ -54,9 +54,18 @@ func readProcStats(pid int) (cpuPct float64, rss, vms int64) {
 		return 0, rss, vms
 	}
 
-	utime, _ := strconv.ParseFloat(rest[11], 64)
-	stime, _ := strconv.ParseFloat(rest[12], 64)
-	starttime, _ := strconv.ParseFloat(rest[19], 64)
+	utime, err := strconv.ParseFloat(rest[11], 64)
+	if err != nil {
+		return 0, rss, vms
+	}
+	stime, err := strconv.ParseFloat(rest[12], 64)
+	if err != nil {
+		return 0, rss, vms
+	}
+	starttime, err := strconv.ParseFloat(rest[19], 64)
+	if err != nil {
+		return 0, rss, vms
+	}
 
 	uptimeData, err := os.ReadFile("/proc/uptime")
 	if err != nil {
@@ -66,7 +75,10 @@ func readProcStats(pid int) (cpuPct float64, rss, vms int64) {
 	if len(uptimeFields) < 1 {
 		return 0, rss, vms
 	}
-	systemUptime, _ := strconv.ParseFloat(uptimeFields[0], 64)
+	systemUptime, err := strconv.ParseFloat(uptimeFields[0], 64)
+	if err != nil {
+		return 0, rss, vms
+	}
 
 	const clkTck = 100.0
 	totalTime := utime + stime
