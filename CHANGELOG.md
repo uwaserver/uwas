@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Extracted guard factories and proxy pool rebuild into `server_routing.go`
+  (144 lines, 9 functions). `server.go` down to 1,410 (51% reduction across
+  all four extractions: htaccess, reload, dispatch, routing).
+
 ## [0.8.0] - 2026-06-25
 
 ### Changed
