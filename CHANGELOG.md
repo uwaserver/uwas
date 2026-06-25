@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Extracted htaccess/rewrite logic from `internal/server/server.go` (2,861 lines)
+  into `server_htaccess.go` (309 lines, 5 functions). `server.go` down to 2,566.
+
+### Added
+
+- E2E test instructions added to docker/README.md (system Chrome, local Playwright).
+
 ## [0.7.8] - 2026-06-25
 
 ### Fixed
