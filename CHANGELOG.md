@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Extracted request dispatch pipeline from `internal/server/server.go` into
+  `server_dispatch.go` (860 lines, 7 functions). `server.go` down to 1,544
+  (46% reduction across all three extractions: htaccess, reload, dispatch).
+
 ## [0.7.9] - 2026-06-25
 
 ### Changed
