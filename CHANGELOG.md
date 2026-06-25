@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- Middleware chain allocations reduced by 75% in isolated benchmark (16→4
+  allocs/op, 1,500→170 ns/op). RequestID middleware now uses pre-computed
+  canonical header key and direct map access instead of Header.Get/Header.Set,
+  eliminating 3 `canonicalMIMEHeaderKey` calls per request.
+
 ## [0.8.3] - 2026-06-25
 
 ### Security
