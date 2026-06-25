@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Backup package now included in CI race detection (`go test -race`). The
+  `TestRestoreBackupWithDatabaseDump` test was made CI-compatible with
+  `CREATE DATABASE IF NOT EXISTS` (idempotent SQL) + MariaDB service container
+  + `UWAS_DB_*` env vars for TCP auth. All 46 packages now pass with `-race`.
+
 ## [0.7.5] - 2026-06-25
 
 ### Changed
