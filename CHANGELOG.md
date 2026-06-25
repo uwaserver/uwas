@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- OWASP Top 10 audit of admin API completed. All 7 categories pass: access
+  control (requireAdmin/requirePin on all mutating endpoints), cryptographic
+  practices (bcrypt, constant-time compare, crypto/rand), injection controls
+  (sanitizeSoftwareName, validateBuildCommand, EscapeSQL + validDBIdentifier),
+  SSRF protection (SafeDialControl at dial time), and auth hardening (brute
+  force lockout, 2FA, short-lived tickets). No critical or high findings.
+
 ## [0.8.2] - 2026-06-25
 
 ### Fixed
