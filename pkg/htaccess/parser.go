@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// Limits for .htaccess parsing — prevent ReDoS and resource exhaustion.
 const (
 	// MaxDirectives is the maximum number of directives allowed in an .htaccess file.
 	// Prevents ReDoS by limiting rule count.
