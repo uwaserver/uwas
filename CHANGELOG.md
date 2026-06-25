@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- 9 new software library coverage tests (not-found paths, authorization checks,
+  error branches). `handleSoftwareDomainConnect` coverage 64.3% → 71.4%.
+
+### Changed
+
+- Expanded CONTRIBUTING.md with architecture overview, how-to guides for common
+  features (endpoint, config field, middleware, dashboard page, CLI command),
+  security guidelines (path traversal, authz, injection, secrets, SSRF), and
+  review process. Reduces bus factor risk for new contributors.
+
 ## [0.7.6] - 2026-06-25
 
 ### Fixed
