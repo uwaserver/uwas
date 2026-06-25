@@ -102,7 +102,6 @@ pm.max_requests = 500
 	cmd.Stderr = m.logger.Writer(8)
 
 	if err := cmd.Start(); err != nil {
-		// Fallback: try as php-cgi
 		return fmt.Errorf("start php-fpm: %w", err)
 	}
 
