@@ -161,12 +161,12 @@ internal/
 │   ├── handlers_cron.go        Cron job monitoring + execution
 │   ├── handlers_bandwidth.go   Per-domain bandwidth limits
 │   ├── handlers_certs.go       TLS cert listing/renewal/upload
-│   ├── handlers_software_library.go  Software Library CRUD + lifecycle handlers
-│   ├── handlers_software_docker.go   Docker Compose runner + container monitoring
-│   ├── handlers_software_backup.go   Software instance backup/restore
-│   ├── handlers_software_ports.go    Port allocation + conflict detection
-│   ├── handlers_software_store.go    Instance persistence + secret/env helpers
-│   ├── handlers_software_templates.go  Docker Compose YAML templates (11 apps)
+│   ├── handlers_software_library.go  Software Library CRUD + lifecycle (760 LOC)
+│   ├── handlers_software_docker.go   Docker Compose runner + container monitoring (581)
+│   ├── handlers_software_backup.go   Software instance backup/restore (273)
+│   ├── handlers_software_ports.go    Port allocation + conflict detection (162)
+│   ├── handlers_software_store.go    Instance persistence + secret/env helpers (197)
+│   ├── handlers_software_templates.go  Docker Compose YAML templates, 11 apps (175)
 │   ├── handlers_*.go           Apps, deploy, git, files, firewall, DNS, etc.
 │   ├── audit.go                Audit trail ring buffer
 │   └── dashboard/dist/         Embedded React SPA (go:embed)
