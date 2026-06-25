@@ -147,10 +147,9 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: [test, dashboard]
-    # continue-on-error: Playwright CDN is occasionally unreachable from
-    # GitHub Actions runners. E2E failures must not block the main CI pipeline;
-    # the Go test + dashboard build jobs are the real gate. E2E runs green
-    # when the CDN is reachable.
+    # Uses the system-installed Google Chrome (channel: 'chrome') instead of
+    # downloading from Playwright CDN. This bypasses cdn.playwright.dev
+    # unreachability issues on some GitHub Actions runners.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -169,6 +168,8 @@ jobs:
       - name: Install dashboard dependencies
         working-directory: web/dashboard
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Build dashboard (go:embed)
         working-directory: web/dashboard
@@ -177,43 +178,12 @@ jobs:
       - name: Build UWAS binary
         run: CGO_ENABLED=0 go build -o /tmp/uwas ./cmd/uwas
 
-      - name: Cache Playwright browsers
-        id: pw-cache
-        uses: actions/cache@v4
-        with:
-          path: /opt/pw-browsers
-          key: pw-${{ runner.os }}-${{ hashFiles('web/dashboard/package-lock.json') }}
-
-      - name: Install Playwright browsers
-        if: steps.pw-cache.outputs.cache-hit != 'true'
-        working-directory: web/dashboard
-        run: |
-          # Retry logic: Playwright CDN (cdn.playwright.dev) can be slow or
-          # unreachable from some GitHub Actions regions. Retry up to 3 times
-          # with increasing backoff before giving up.
-          for attempt in 1 2 3; do
-            echo "::group::Attempt $attempt"
-            node_modules/.bin/playwright install chromium && break
-            echo "::endgroup::"
-            if [ "$attempt" -eq 3 ]; then
-              echo "::warning::Playwright browser install failed after 3 attempts"
-              exit 1
-            fi
-            echo "Retrying in $((attempt * 10))s..."
-            sleep $((attempt * 10))
-          done
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
-          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: "60000"
-        timeout-minutes: 12
-
       - name: Run E2E tests
         working-directory: web/dashboard
         run: node_modules/.bin/playwright test
         env:
           CI: "true"
           UWAS_BIN: "/tmp/uwas"
-          PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
 
       - name: Upload Playwright report
         if: always()
