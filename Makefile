@@ -50,7 +50,7 @@ test-coverage:
 
 lint:
 	go vet $(GO_PACKAGES)
-	@which staticcheck >/dev/null 2>&1 && staticcheck $(GO_PACKAGES) || echo "staticcheck not installed, skipping"
+	@which staticcheck >/dev/null 2>&1 && staticcheck $(GO_PACKAGES) || echo "staticcheck not installed — install with: go install honnef.co/go/tools/cmd/staticcheck@latest"
 
 check: lint
 	@echo "=== Go vet ===" && go vet $(GO_PACKAGES)
