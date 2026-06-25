@@ -6,24 +6,27 @@ import (
 	"time"
 )
 
-const requestIDHeader = "X-Request-ID"
+// Pre-computed canonical header key — avoids per-request
+// textproto.CanonicalMIMEHeaderKey calls in Header.Get/Header.Set.
+var reqIDKey = http.CanonicalHeaderKey("X-Request-ID")
 
 // RequestID adds a unique request ID to each request/response.
 // Preserves incoming X-Request-ID if present.
 func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get(requestIDHeader)
+			// Direct map access — skips Header.Get's canonicalization.
+			var id string
+			if vals := r.Header[reqIDKey]; len(vals) > 0 {
+				id = vals[0]
+			}
 			if id == "" {
 				id = generateRequestID()
-				// Stamp the request so downstream handlers (proxy, FastCGI,
-				// WebSocket tunnel) propagate the same ID to upstreams and
-				// emit it in correlated logs. Without this, only the
-				// response carried the ID and upstream traces broke at the
-				// proxy boundary. Refs: refactor.md O5.
-				r.Header.Set(requestIDHeader, id)
+				// Direct map assignment — skips Header.Set's canonicalization.
+				r.Header[reqIDKey] = []string{id}
 			}
-			w.Header().Set(requestIDHeader, id)
+			// Stamp response header (direct map, no Set canonicalization).
+			w.Header()[reqIDKey] = []string{id}
 			next.ServeHTTP(w, r)
 		})
 	}
