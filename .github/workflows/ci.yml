@@ -36,7 +36,7 @@ jobs:
       - name: Test
         run: |
           GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go test -v -count=1 -timeout 600s -p 1 $GO_PACKAGES 2>&1 | tee /tmp/test-output.log
+          go test -v -count=1 -timeout 600s $GO_PACKAGES 2>&1 | tee /tmp/test-output.log
 
       - name: Upload test output
         if: always()
