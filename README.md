@@ -568,6 +568,24 @@ make clean      # Clean build artifacts
 > **Dashboard changes** require `npm install` in `web/dashboard/`, then
 > `make dashboard` to rebuild before the Go binary picks them up.
 
+## Monitoring (Prometheus + Grafana)
+
+UWAS exposes a Prometheus-compatible metrics endpoint at `/api/v1/metrics`.
+Scrape it with Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: uwas
+    static_configs:
+      - targets: ["localhost:9443"]
+    bearer_token: "your-admin-key"
+```
+
+A ready-made Grafana dashboard is included at
+[`docs/grafana/uwas-overview.json`](docs/grafana/uwas-overview.json) — import
+it via Dashboards → Import → Upload JSON. It covers request rate, cache hit
+ratio, latency (p50/p95/p99), handler distribution, bandwidth, and more.
+
 ## License
 
 UWAS is dual-licensed:
