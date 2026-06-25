@@ -442,19 +442,18 @@ func forwardedProto(ctx *router.RequestContext) string {
 func generateTraceparent() string {
 	var traceID [16]byte
 	var spanID [8]byte
-	rand.Read(traceID[:])
-	rand.Read(spanID[:])
-
-	// Ensure trace-id is not all zeros (invalid trace)
-	allZero := true
-	for _, b := range traceID {
-		if b != 0 {
-			allZero = false
-			break
-		}
+	if _, err := rand.Read(traceID[:]); err != nil {
+		// Fallback: use timestamp-based prefix so trace ID is at least unique per-second
+		ms := uint64(time.Now().UnixMilli())
+		traceID[0] = byte(ms >> 40)
+		traceID[1] = byte(ms >> 32)
+		traceID[2] = byte(ms >> 24)
+		traceID[3] = byte(ms >> 16)
+		traceID[4] = byte(ms >> 8)
+		traceID[5] = byte(ms)
 	}
-	if allZero {
-		traceID[0] = 0x01 // Set at least one byte to non-zero
+	if _, err := rand.Read(spanID[:]); err != nil {
+		spanID[0] = 0x01
 	}
 
 	// Manual hex encoding: 00- (3) + 32 trace + - (1) + 16 span + -01 (3) = 55 bytes

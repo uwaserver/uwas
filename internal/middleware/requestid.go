@@ -41,7 +41,9 @@ func generateRequestID() string {
 	b[3] = byte(ms >> 16)
 	b[4] = byte(ms >> 8)
 	b[5] = byte(ms)
-	rand.Read(b[6:])
+	if _, err := rand.Read(b[6:]); err != nil {
+		// Fallback: timestamp prefix in bytes 0-5 already provides per-second uniqueness
+	}
 	b[6] = (b[6] & 0x0F) | 0x70
 	b[8] = (b[8] & 0x3F) | 0x80
 
