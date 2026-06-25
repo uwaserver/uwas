@@ -1425,3 +1425,194 @@ func softwareCallsContain(calls *[]softwareExecCall, parts ...string) bool {
 	}
 	return false
 }
+
+// --- Additional coverage tests ---
+
+// TestSoftwareDomainConnectSameDomain verifies the early-return path when the
+// requested domain matches the instance's existing domain.
+func TestSoftwareDomainConnectSameDomain(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	dir := filepath.Join(root, "same")
+	os.MkdirAll(dir, 0755)
+	inst := softwareInstance{
+		Name: "same", TemplateID: "n8n", Dir: dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project: "uwas-same", HasWeb: true, WebService: "n8n",
+		WebPort: 5678, HostPort: 5678, Domain: "existing.local",
+	}
+	saveSoftwareInstance(inst)
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/software/same/domain",
+		strings.NewReader(`{"domain":"existing.local"}`)))
+	req.SetPathValue("name", "same")
+	s.handleSoftwareDomainConnect(rec, req)
+	if rec.Code != 200 {
+		t.Errorf("same domain: status = %d, want 200", rec.Code)
+	}
+}
+
+// TestSoftwareDomainConnectInvalidHostname verifies the invalid-domain branch
+// after normalization.
+func TestSoftwareDomainConnectInvalidHostname(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	dir := filepath.Join(root, "inv")
+	os.MkdirAll(dir, 0755)
+	inst := softwareInstance{
+		Name: "inv", TemplateID: "n8n", Dir: dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project: "uwas-inv", HasWeb: true, WebService: "n8n",
+		WebPort: 5678, HostPort: 5679,
+	}
+	saveSoftwareInstance(inst)
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/software/inv/domain",
+		strings.NewReader(`{"domain":"   "}`)))
+	req.SetPathValue("name", "inv")
+	s.handleSoftwareDomainConnect(rec, req)
+	if rec.Code != 400 {
+		t.Errorf("invalid hostname: status = %d, want 400", rec.Code)
+	}
+}
+
+// TestSoftwareInstanceListEmptyDir verifies the handler returns an empty list
+// (not an error) when the software library directory does not exist.
+func TestSoftwareInstanceListEmptyDir(t *testing.T) {
+	s := testServer()
+	root := filepath.Join(t.TempDir(), "nonexistent")
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("GET", "/api/v1/software/instances", nil))
+	s.handleSoftwareInstanceList(rec, req)
+	if rec.Code != 200 {
+		t.Errorf("nonexistent dir: status = %d, want 200", rec.Code)
+	}
+}
+
+// TestSoftwareDomainDisconnectNotFound verifies the not-found path for
+// domain disconnect.
+func TestSoftwareDomainDisconnectNotFound(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/software/ghost/domain/disconnect", nil))
+	req.SetPathValue("name", "ghost")
+	s.handleSoftwareDomainDisconnect(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("not found: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestSoftwareLogsNotFound verifies the not-found path for logs.
+func TestSoftwareLogsNotFound(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("GET", "/api/v1/software/ghost/logs", nil))
+	req.SetPathValue("name", "ghost")
+	s.handleSoftwareLogs(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("logs not found: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestSoftwareMonitorNotFound verifies the not-found path for monitor.
+func TestSoftwareMonitorNotFound(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("GET", "/api/v1/software/ghost/monitor", nil))
+	req.SetPathValue("name", "ghost")
+	s.handleSoftwareMonitor(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("monitor not found: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestSoftwareProcessesNotFound verifies the not-found path for processes.
+func TestSoftwareProcessesNotFound(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("GET", "/api/v1/software/ghost/processes", nil))
+	req.SetPathValue("name", "ghost")
+	s.handleSoftwareProcesses(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("processes not found: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestSoftwareUpdateNotFound verifies the not-found path for update.
+func TestSoftwareUpdateNotFound(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	rec := httptest.NewRecorder()
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/software/ghost/update", nil))
+	req.SetPathValue("name", "ghost")
+	s.handleSoftwareUpdate(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("update not found: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestSoftwareDomainConnectResellerForbidden verifies the authorization check.
+func TestSoftwareDomainConnectResellerForbidden(t *testing.T) {
+	s := testServer()
+	root := t.TempDir()
+	origRoot := softwareLibraryRoot
+	softwareLibraryRoot = root
+	t.Cleanup(func() { softwareLibraryRoot = origRoot })
+
+	dir := filepath.Join(root, "rbac")
+	os.MkdirAll(dir, 0755)
+	inst := softwareInstance{
+		Name: "rbac", TemplateID: "n8n", Dir: dir,
+		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
+		Project: "uwas-rbac", HasWeb: true, WebService: "n8n",
+		WebPort: 5678, HostPort: 5680,
+	}
+	saveSoftwareInstance(inst)
+
+	rec := httptest.NewRecorder()
+	req := withResellerContext(httptest.NewRequest("POST", "/api/v1/software/rbac/domain",
+		strings.NewReader(`{"domain":"test.local"}`)))
+	req.SetPathValue("name", "rbac")
+	s.handleSoftwareDomainConnect(rec, req)
+	if rec.Code != 403 {
+		t.Errorf("reseller forbidden: status = %d, want 403", rec.Code)
+	}
+}
