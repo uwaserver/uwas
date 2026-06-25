@@ -57,7 +57,9 @@ jobs:
         image: mariadb:11
         env:
           MARIADB_ROOT_PASSWORD: root
+          MARIADB_ROOT_HOST: "%"
           MARIADB_DATABASE: test
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
         ports:
           - 3306:3306
         options: >-
