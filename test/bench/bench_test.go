@@ -172,7 +172,9 @@ func BenchmarkCacheSet(b *testing.B) {
 	})
 }
 
-// BenchmarkCacheKeyGenerate measures cache key generation speed.
+// BenchmarkCacheKeyGenerate measures cache key generation speed including
+// httptest.NewRequest overhead. Most of the 12 allocs/op come from
+// httptest.NewRequest — GenerateKey itself is 1 alloc/op (see Hoisted).
 func BenchmarkCacheKeyGenerate(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
