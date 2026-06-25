@@ -326,7 +326,10 @@ func TestRestoreBackupWithDatabaseDump(t *testing.T) {
 	tw.Write(cfgData)
 
 	// Database dump as a file entry
-	sqlData := []byte("CREATE DATABASE test;")
+	// Use IF NOT EXISTS so the dump is idempotent — re-importing on a host
+	// that already has the database (e.g. CI with a MariaDB service container)
+	// does not fail.
+	sqlData := []byte("CREATE DATABASE IF NOT EXISTS test;")
 	tw.WriteHeader(&tar.Header{Name: "databases/all-databases.sql", Size: int64(len(sqlData)), Mode: 0644})
 	tw.Write(sqlData)
 
