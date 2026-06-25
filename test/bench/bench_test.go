@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,8 +101,9 @@ func (w *nopResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (w *nopResponseWriter) WriteHeader(code int)        {}
 
 // BenchmarkMiddlewareChainHoisted isolates the per-call middleware cost from
-// httptest allocations. Each goroutine creates its own request per iteration
-// to avoid concurrent map writes in RequestID middleware.
+// httptest allocations. Uses a minimal http.Request (1 alloc for the URL)
+// instead of httptest.NewRequest (11 allocs). Each goroutine reuses its own
+// request and response writer, clearing state between iterations.
 func BenchmarkMiddlewareChainHoisted(b *testing.B) {
 	log := logger.New("error", "text")
 	chain := middleware.Chain(
@@ -113,11 +115,20 @@ func BenchmarkMiddlewareChainHoisted(b *testing.B) {
 		w.WriteHeader(200)
 	}))
 
+	u := &url.URL{Path: "/"}
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		w := &nopResponseWriter{}
+		hdr := make(http.Header, 4)
 		for pb.Next() {
-			req := httptest.NewRequest("GET", "/", nil)
+			delete(hdr, "X-Request-Id")
+			req := &http.Request{
+				Method: "GET",
+				URL:    u,
+				Header: hdr,
+				Host:   "localhost",
+			}
 			handler.ServeHTTP(w, req)
 			for k := range w.hdr {
 				delete(w.hdr, k)
