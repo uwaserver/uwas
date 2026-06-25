@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Auto-generated API reference for `pkg/fastcgi` and `pkg/htaccess`
+  (`docs/api/`). Generated from `go doc -all`, includes all exported types,
+  functions, and constants.
+- README monitoring section: Prometheus scrape config + Grafana dashboard link.
+
 ## [0.8.5] - 2026-06-25
 
 ### Added
