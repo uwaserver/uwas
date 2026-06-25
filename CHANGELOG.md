@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `BenchmarkMiddlewareChainHoisted` crash (concurrent map writes from shared
+  request across parallel goroutines). Each goroutine now creates its own request.
+
+### Performance
+
+- Static file serve allocations reduced by 27% (59→43 allocs/op, 9,800→8,030 ns/op).
+  Zero-alloc dotfile path scan replaces `strings.Split`; 5-second symlink resolution
+  cache in `Base.Contains` eliminates ~90% of `EvalSymlinks` calls in steady state.
+
 ## [0.8.1] - 2026-06-25
 
 ### Changed
