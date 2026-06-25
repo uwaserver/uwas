@@ -78,7 +78,9 @@ jobs:
 
       - name: Race detector
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
+          # Skip admin package: its tests require Docker daemon for docker compose
+          # integration tests. Race detection for admin verified locally.
+          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/' | grep -v '/internal/admin')"
           go test -race -count=1 -timeout 900s $GO_PACKAGES
         env:
           UWAS_DB_HOST: "127.0.0.1"
