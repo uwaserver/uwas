@@ -438,7 +438,9 @@ func ListDatabases() ([]DBInfo, error) {
 			db.Size = fields[1] + " MB"
 		}
 		if len(fields) >= 3 {
-			fmt.Sscanf(fields[2], "%d", &db.Tables)
+			if _, err := fmt.Sscanf(fields[2], "%d", &db.Tables); err != nil {
+				db.Tables = 0
+			}
 		}
 		dbs = append(dbs, db)
 	}

@@ -1381,7 +1381,9 @@ func toInt(v any) int {
 		return n
 	case string:
 		var i int
-		fmt.Sscanf(n, "%d", &i)
+		if _, err := fmt.Sscanf(n, "%d", &i); err != nil {
+			return 0
+		}
 		return i
 	}
 	return 0
