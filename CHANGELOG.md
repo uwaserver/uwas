@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Race detector CI job (`go test -race`) — runs in parallel with the main test
   job after it passes. Backup package excluded (requires MySQL Unix socket not
   available in CI; verified 0 data races locally).
+- staticcheck added to CI lint step alongside `go vet` — catches unused code,
+  ineffective assignments, and simplification opportunities that `go vet` misses.
 
 ## [0.7.3] - 2026-06-25
 
