@@ -11,6 +11,12 @@ services:
       # required for the dashboard + container healthcheck to work. Override on
       # the host or in a .env file; never commit a real key.
       - UWAS_ADMIN_KEY=${UWAS_ADMIN_KEY:-please-change-this-admin-key}
+      # Database connection for backup restore (mysql CLI). Points to the
+      # compose `db` service so restore can import SQL dumps over TCP.
+      - UWAS_DB_HOST=db
+      - UWAS_DB_PORT=3306
+      - UWAS_DB_USER=root
+      - UWAS_DB_PASSWORD=${DB_ROOT_PASSWORD:-uwas_root}
     volumes:
       - uwas_config:/etc/uwas
       - ./data/www:/var/www
