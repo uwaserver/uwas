@@ -5,6 +5,21 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- CI tests now run in parallel instead of serial (`-p 1` removed). Test job
+  time reduced from ~8m40s to ~3m42s (57% faster). Docker tests already use
+  unique ports/PIDs so no cross-package conflicts.
+- Added Go module cache (`cache: true`) and pre-installed `govulncheck` via
+  `go install` instead of `go run @latest`. Eliminates repeated module
+  download/compile on every run.
+- Added Playwright E2E job to CI (cache + `UWAS_BIN` + `continue-on-error`).
+  Runs when Playwright CDN is reachable; non-blocking.
+- Updated README, ARCHITECTURE.md, CLAUDE.md to remove `-p 1` serial test
+  references.
+
 ## [0.7.2] - 2026-06-24
 
 ### Changed
