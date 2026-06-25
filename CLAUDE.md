@@ -148,7 +148,7 @@ TCP → TLS (SNI routing)
 - Config structs in `internal/config/config.go` — add new fields there
 - Tests alongside source: `foo.go` → `foo_test.go`
 - Run `go vet ./...` before committing
-- Run `go test -p 1 ./...` for reliable results (integration tests need serial)
+- Run `go test ./...` for fast parallel results
 - Dashboard: TypeScript strict mode, `cd web/dashboard && npx tsc -b` must pass
 
 ## Key Patterns
@@ -199,7 +199,7 @@ TCP → TLS (SNI routing)
 
 ```bash
 make test                            # All tests (uses -count=1 -timeout 600s)
-go test -p 1 ./...                   # All tests, one package at a time (serial, most reliable)
+go test ./...                   # All tests, parallel (Docker tests use unique ports)
 go test ./internal/cache/            # Single package
 go test -v -run TestWordPress ./...  # Specific test
 ```
