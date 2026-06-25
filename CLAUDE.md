@@ -107,8 +107,9 @@ internal/
   router/            Virtual host routing, request context
   selfupdate/        Binary self-update from GitHub releases
   server/            HTTP/HTTPS/HTTP3 server + request dispatch + ESI assembly + log rotation
-    server.go           Lifecycle, middleware chain, listeners, guard factories (1,544 LOC)
+    server.go           Lifecycle, middleware chain, listeners, signals (1,410 LOC)
     server_dispatch.go  Request dispatch pipeline + file/proxy/redirect handlers (860)
+    server_routing.go   Guard factories (WAF/IP/Geo/CORS/rate) + proxy pool rebuild (144)
     server_htaccess.go  Htaccess/rewrite parsing + cache (309)
     server_reload.go    Hot config reload (193)
   serverip/          Server IP detection (interfaces + public IP)
