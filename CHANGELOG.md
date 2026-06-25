@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- E2E tests now use the system-installed Google Chrome (`channel: 'chrome'`)
+  instead of downloading Chromium from Playwright CDN. This eliminates the
+  persistent `cdn.playwright.dev` unreachability on GitHub Actions runners —
+  E2E job time dropped from ~13min (timeout/fail) to **1min (pass)**.
+
 ## [0.7.7] - 2026-06-25
 
 ### Added
