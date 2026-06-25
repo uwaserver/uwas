@@ -185,3 +185,19 @@ If `container` reports `"none"`, the container detection heuristics
 (`/.dockerenv`, `/proc/1/cgroup`) did not match — this can happen on niche
 runtimes. The UWAS binary still runs correctly; only the dashboard label is
 affected.
+
+### Running tests against a container
+The Go test suite runs in parallel by default — Docker-based integration tests
+use unique ports and PID-scoped container names, so no `-p 1` serial flag is
+needed. To run the full suite:
+
+```bash
+docker exec <container> uwas doctor    # quick sanity check (no Docker daemon inside the container)
+```
+
+For local development, tests run on the host (not inside the container) since
+they need Docker daemon access for integration tests:
+
+```bash
+make test    # parallel, ~4 min locally
+```
