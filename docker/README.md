@@ -199,5 +199,6 @@ For local development, tests run on the host (not inside the container) since
 they need Docker daemon access for integration tests:
 
 ```bash
-make test    # parallel, ~4 min locally
+make test          # parallel, ~4 min locally
+go test -race ./...  # race detector (CI runs this separately; skip backup: needs MySQL socket)
 ```
