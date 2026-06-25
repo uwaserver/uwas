@@ -767,6 +767,28 @@ func importDatabaseDump(data []byte, log *logger.Logger) error {
 	return importDatabaseDumpFunc(data, log)
 }
 
+// mysqlConnectArgs builds the argument list for the mysql CLI based on
+// optional UWAS_DB_HOST / UWAS_DB_PORT environment variables. When unset
+// (the default in production), mysql uses its built-in Unix socket path —
+// preserving existing behavior. When set (e.g. in CI with a TCP service
+// container), mysql connects via TCP.
+func mysqlConnectArgs() []string {
+	var args []string
+	if host := os.Getenv("UWAS_DB_HOST"); host != "" {
+		args = append(args, "--host="+host)
+	}
+	if port := os.Getenv("UWAS_DB_PORT"); port != "" {
+		args = append(args, "--port="+port)
+	}
+	if user := os.Getenv("UWAS_DB_USER"); user != "" {
+		args = append(args, "--user="+user)
+	}
+	if pass := os.Getenv("UWAS_DB_PASSWORD"); pass != "" {
+		args = append(args, "--password="+pass)
+	}
+	return args
+}
+
 func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 	mysqlBin, err := exec.LookPath("mysql")
 	if err != nil {
@@ -774,7 +796,7 @@ func importDatabaseDumpReal(data []byte, log *logger.Logger) error {
 		log.Warn("backup restore: mysql not found, skipping DB import")
 		return nil
 	}
-	cmd := exec.Command(mysqlBin)
+	cmd := exec.Command(mysqlBin, mysqlConnectArgs()...)
 	cmd.Stdin = strings.NewReader(string(data))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
