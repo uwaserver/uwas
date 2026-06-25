@@ -39,6 +39,8 @@ release: check dashboard linux linux-arm
 
 # ── Quality ─────────────────────────────────────────────────
 
+# Tests run in parallel by default (Docker tests use unique ports/PIDs).
+# Use -p 1 only if you suspect cross-package interference.
 test:
 	go test -count=1 -timeout 600s $(GO_PACKAGES)
 
