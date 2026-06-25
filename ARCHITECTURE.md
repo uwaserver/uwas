@@ -268,7 +268,10 @@ internal/
 ├── selfupdate/                 Binary self-update from GitHub releases
 │
 ├── server/                     Main server orchestration
-│   ├── server.go               Initialization + request dispatch (2,265 LOC)
+│   ├── server.go               Lifecycle, middleware, listeners, guards (1,544 LOC)
+│   ├── server_dispatch.go      Request dispatch pipeline + file/proxy/redirect handlers (860)
+│   ├── server_htaccess.go      Htaccess/rewrite parsing + cache (309)
+│   ├── server_reload.go        Hot config reload (193)
 │   ├── capture.go              Response capture for caching
 │   └── error.go                Domain error pages
 │
