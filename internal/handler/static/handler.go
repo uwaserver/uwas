@@ -31,8 +31,29 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	r := ctx.Request
 
 	// Security: reject dotfiles in any path component (e.g., .git, .env)
-	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
-		if strings.HasPrefix(component, ".") && component != "." && component != ".." {
+	// Zero-allocation scan: walk path segments without strings.Split.
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' && i+1 < len(path) && path[i+1] == '.' {
+			// Check if this is a dotfile component (not "." or ".." alone)
+			j := i + 1
+			for j < len(path) && path[j] != '/' {
+				j++
+			}
+			seg := path[i+1 : j]
+			if strings.HasPrefix(seg, ".") && seg != "." && seg != ".." {
+				w.Error(http.StatusForbidden, "403 Forbidden")
+				return
+			}
+		}
+	}
+	// Also check the first segment (no leading slash)
+	if len(path) > 0 && path[0] == '.' {
+		j := 0
+		for j < len(path) && path[j] != '/' {
+			j++
+		}
+		seg := path[:j]
+		if strings.HasPrefix(seg, ".") && seg != "." && seg != ".." {
 			w.Error(http.StatusForbidden, "403 Forbidden")
 			return
 		}
