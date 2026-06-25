@@ -9,7 +9,10 @@ export default defineConfig({
     viewport: { width: 1280, height: 720 },
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    // Use the system-installed Chrome (channel: 'chrome') instead of
+    // Playwright's bundled Chromium. This avoids downloading from
+    // cdn.playwright.dev which is unreachable from some CI runners.
+    { name: 'chromium', use: { browserName: 'chromium', channel: 'chrome' } },
   ],
   webServer: {
     // Use the pre-built binary if UWAS_BIN is set (CI), otherwise fall back to
