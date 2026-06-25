@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Grafana dashboard template (`docs/grafana/uwas-overview.json`) with 9 panels:
+  request rate, uptime, active connections, cache hit ratio, status codes,
+  latency (p50/p95/p99), handler distribution, bandwidth, and per-handler p95.
+
 ## [0.8.4] - 2026-06-25
 
 ### Performance
