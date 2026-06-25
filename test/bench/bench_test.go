@@ -100,8 +100,8 @@ func (w *nopResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (w *nopResponseWriter) WriteHeader(code int)        {}
 
 // BenchmarkMiddlewareChainHoisted isolates the per-call middleware cost from
-// httptest.NewRequest/NewRecorder allocations. Reuses a single request and a
-// per-goroutine response writer across iterations.
+// httptest allocations. Each goroutine creates its own request per iteration
+// to avoid concurrent map writes in RequestID middleware.
 func BenchmarkMiddlewareChainHoisted(b *testing.B) {
 	log := logger.New("error", "text")
 	chain := middleware.Chain(
@@ -112,14 +112,13 @@ func BenchmarkMiddlewareChainHoisted(b *testing.B) {
 	handler := chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
-	req := httptest.NewRequest("GET", "/", nil)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		w := &nopResponseWriter{}
 		for pb.Next() {
+			req := httptest.NewRequest("GET", "/", nil)
 			handler.ServeHTTP(w, req)
-			// Clear headers between iterations so each iter sees a fresh map.
 			for k := range w.hdr {
 				delete(w.hdr, k)
 			}
