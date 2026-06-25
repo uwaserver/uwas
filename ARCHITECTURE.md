@@ -997,7 +997,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 cd web/dashboard && npm run build
 
 # Test
-go test -p 1 ./...              # all 52 packages, serial
+go test ./...              # all 52 packages, parallel
 
 # Install (one-time)
 uwas install                    # creates dirs, systemd unit, config
@@ -1024,7 +1024,7 @@ Test approach:
   • Testable hooks: exec.Command, os.Stat wrapped for mocking
   • Mock FastCGI server for handler tests
   • Mock HTTP server for proxy tests
-  • Serial execution: go test -p 1 (integration tests need it)
+  • Parallel execution: go test (Docker tests use unique ports/PIDs)
   • Pre-push hook: go vet + build + tsc + test (automated)
 
 Key test areas:

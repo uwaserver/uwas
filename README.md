@@ -30,7 +30,7 @@ One binary. Zero hassle.
 - **Admin API routes:** 254 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
 - **Go packages:** 57 (from `go list ./...`)
 - **CLI commands:** 19
-- **Test status:** `go test -p 1 ./...` passing
+- **Test status:** `go test ./...` passing (parallel)
 - **70 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
 
 **v0.6.x highlights (standalone apps + hard legacy cutover):**
