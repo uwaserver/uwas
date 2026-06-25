@@ -202,6 +202,7 @@ make test                            # All tests (uses -count=1 -timeout 600s)
 go test ./...                   # All tests, parallel (Docker tests use unique ports)
 go test ./internal/cache/            # Single package
 go test -v -run TestWordPress ./...  # Specific test
+go test -race ./...                  # Race detector (CI runs this as a separate job; skip backup: needs MySQL socket)
 ```
 
 ## Dashboard Pages (42)
