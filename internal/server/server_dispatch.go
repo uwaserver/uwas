@@ -186,32 +186,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-domain security headers (CSP, COEP, COOP, CORP, Permissions-Policy, HSTS, etc.)
-	if sh := domain.SecurityHeaders; sh.ContentSecurityPolicy != "" {
-		ctx.Response.Header().Set("Content-Security-Policy", sh.ContentSecurityPolicy)
-	}
-	if sh := domain.SecurityHeaders; sh.PermissionsPolicy != "" {
-		ctx.Response.Header().Set("Permissions-Policy", sh.PermissionsPolicy)
-	}
-	if sh := domain.SecurityHeaders; sh.CrossOriginEmbedder != "" {
-		ctx.Response.Header().Set("Cross-Origin-Embedder-Policy", sh.CrossOriginEmbedder)
-	}
-	if sh := domain.SecurityHeaders; sh.CrossOriginOpener != "" {
-		ctx.Response.Header().Set("Cross-Origin-Opener-Policy", sh.CrossOriginOpener)
-	}
-	if sh := domain.SecurityHeaders; sh.CrossOriginResource != "" {
-		ctx.Response.Header().Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
-	}
-	if sh := domain.SecurityHeaders; sh.ReferrerPolicy != "" {
-		ctx.Response.Header().Set("Referrer-Policy", sh.ReferrerPolicy)
-	}
-	if sh := domain.SecurityHeaders; sh.StrictTransportSecurity != "" {
-		ctx.Response.Header().Set("Strict-Transport-Security", sh.StrictTransportSecurity)
-	}
-	if sh := domain.SecurityHeaders; sh.XContentTypeOptions != "" {
-		ctx.Response.Header().Set("X-Content-Type-Options", sh.XContentTypeOptions)
-	}
-	if sh := domain.SecurityHeaders; sh.XSSProtection != "" {
-		ctx.Response.Header().Set("X-XSS-Protection", sh.XSSProtection)
+	if sh := domain.SecurityHeaders; sh != (config.SecurityHeadersConfig{}) {
+		sh.SetHeaders(ctx.Response.Header())
 	}
 
 	basicAuthChecked := false

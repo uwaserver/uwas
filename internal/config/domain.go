@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/http"
 	"reflect"
 	"strings"
 )
@@ -115,6 +116,37 @@ type SecurityHeadersConfig struct {
 	StrictTransportSecurity string `yaml:"strict_transport_security,omitempty" json:"strict_transport_security,omitempty"`       // HSTS header, e.g. "max-age=31536000; includeSubDomains"
 	XContentTypeOptions     string `yaml:"x_content_type_options,omitempty" json:"x_content_type_options,omitempty"`             // nosniff
 	XSSProtection           string `yaml:"x_xss_protection,omitempty" json:"x_xss_protection,omitempty"`                         // 1; mode=block
+}
+
+// SetHeaders writes non-empty security header fields to the provided http.Header.
+func (sh SecurityHeadersConfig) SetHeaders(h http.Header) {
+	if sh.ContentSecurityPolicy != "" {
+		h.Set("Content-Security-Policy", sh.ContentSecurityPolicy)
+	}
+	if sh.PermissionsPolicy != "" {
+		h.Set("Permissions-Policy", sh.PermissionsPolicy)
+	}
+	if sh.CrossOriginEmbedder != "" {
+		h.Set("Cross-Origin-Embedder-Policy", sh.CrossOriginEmbedder)
+	}
+	if sh.CrossOriginOpener != "" {
+		h.Set("Cross-Origin-Opener-Policy", sh.CrossOriginOpener)
+	}
+	if sh.CrossOriginResource != "" {
+		h.Set("Cross-Origin-Resource-Policy", sh.CrossOriginResource)
+	}
+	if sh.ReferrerPolicy != "" {
+		h.Set("Referrer-Policy", sh.ReferrerPolicy)
+	}
+	if sh.StrictTransportSecurity != "" {
+		h.Set("Strict-Transport-Security", sh.StrictTransportSecurity)
+	}
+	if sh.XContentTypeOptions != "" {
+		h.Set("X-Content-Type-Options", sh.XContentTypeOptions)
+	}
+	if sh.XSSProtection != "" {
+		h.Set("X-XSS-Protection", sh.XSSProtection)
+	}
 }
 
 // SSLConfig is the per-domain TLS configuration.
