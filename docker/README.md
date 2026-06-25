@@ -221,3 +221,17 @@ they need Docker daemon access for integration tests:
 make test          # parallel, ~4 min locally
 go test -race ./...  # race detector (CI runs this separately; skip backup: needs MySQL socket)
 ```
+
+### E2E (Playwright) tests
+
+The dashboard E2E suite runs in CI using the system-installed Google Chrome
+(`channel: 'chrome'`) — no Playwright CDN download required. To run locally:
+
+```bash
+cd web/dashboard && npm ci      # install deps (first time only)
+npx playwright install          # install Chromium for local dev (CI uses system Chrome)
+npx playwright test             # run all E2E tests
+```
+
+CI uses `UWAS_BIN=/tmp/uwas` to start a pre-built binary. Locally, Playwright
+falls back to `go run ./cmd/uwas` which recompiles on each launch.
