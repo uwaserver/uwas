@@ -10,9 +10,10 @@ these rules; this is the authoritative, full version.
 
 Never report a task complete without running the compiler, linter, and tests.
 
-- **Go:** `go build ./...` → `go vet ./...` → `go test ./... -count=1 -short`
-  (use `go test -p 1 ./...` for the most reliable, serial run; integration
-  tests are not parallel-safe).
+- **Go:** `go build ./...` → `go vet ./...` → `go test ./... -count=1`
+  (tests run in parallel by default; Docker tests use unique ports/PIDs).
+  Use `go test -race ./...` to check for data races (skip `internal/backup` —
+  needs a local MySQL socket not available in CI).
 - **Dashboard:** `cd web/dashboard && npx tsc -b` (and `npm run lint` when
   touching `.ts/.tsx`).
 - Run `staticcheck ./...` and `gofmt -l` on changed files before committing.
@@ -56,5 +57,9 @@ may be stale.
   frameworks.
 - Use `internal/logger/` (slog wrapper), not the stdlib `log`.
 - Add new config fields in `internal/config/config.go`.
+- Add admin endpoints in `internal/admin/routes.go` (themed sub-registrar); put
+  handler logic in the matching `handlers_*.go` file (e.g. DNS →
+  `handlers_dns.go`, software library CRUD → `handlers_software_library.go`).
+  `api.go` is reserved for core (Server struct, lifecycle, middleware, helpers).
 - Tests live alongside source (`foo.go` → `foo_test.go`).
 - Persist config/domain files atomically (temp + fsync + rename).
