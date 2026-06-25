@@ -5,6 +5,14 @@ All notable changes to UWAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Race detector CI job (`go test -race`) — runs in parallel with the main test
+  job after it passes. Backup package excluded (requires MySQL Unix socket not
+  available in CI; verified 0 data races locally).
+
 ## [0.7.3] - 2026-06-25
 
 ### Changed
