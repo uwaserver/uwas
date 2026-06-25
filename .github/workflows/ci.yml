@@ -23,10 +23,14 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Vet
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: Lint (go vet + staticcheck)
         run: |
           GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
           go vet $GO_PACKAGES
+          staticcheck $GO_PACKAGES
 
       - name: Vulnerability scan
         run: |
