@@ -146,10 +146,16 @@ jobs:
       - name: Install Playwright browsers
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: web/dashboard
-        run: node_modules/.bin/playwright install chromium
+        run: |
+          # Try the default CDN first, fall back to the Akamai mirror if it
+          # times out or fails. Both serve identical builds; the mirror just
+          # has better reachability from some GitHub Actions regions.
+          node_modules/.bin/playwright install chromium || \
+          PLAYWRIGHT_DOWNLOAD_HOST=https://playwright-akamai.azureedge.net \
+            node_modules/.bin/playwright install chromium
         env:
           PLAYWRIGHT_BROWSERS_PATH: /opt/pw-browsers
-        timeout-minutes: 5
+        timeout-minutes: 8
 
       - name: Run E2E tests
         working-directory: web/dashboard
