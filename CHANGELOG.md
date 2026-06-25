@@ -12,8 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated AGENT_DIRECTIVES.md: parallel test default, race detector command,
   admin package file structure convention (handlers in `handlers_*.go`, core
   in `api.go`).
-- Reverted race job MariaDB service container approach (socket auth
-  incompatible); backup package remains excluded from race detection.
+- Simplified race job: backup package excluded (MySQL socket/auth incompatible
+  with CI service container). Backup has 0 data races (verified locally).
+
+### Added
+
+- `UWAS_DB_HOST`, `UWAS_DB_PORT`, `UWAS_DB_USER`, `UWAS_DB_PASSWORD` environment
+  variables for `mysql` CLI connection in backup restore. When unset, behavior
+  is unchanged (default Unix socket). Enables TCP connections in CI and custom
+  deployments.
 
 ## [0.7.4] - 2026-06-25
 
