@@ -83,8 +83,16 @@ make build   # Production binary (stripped, versioned)
 ### Test
 
 ```bash
-make test    # go test ./...
+make test    # go test ./... (parallel, ~4 min)
 make lint    # go vet + staticcheck
+```
+
+CI runs a separate race detector job (`go test -race`). To run it locally
+before pushing concurrent code:
+
+```bash
+go test -race ./internal/cache/... ./internal/router/...   # specific packages
+go test -race ./...                                        # all (skip backup: needs MySQL socket)
 ```
 
 ### Docker Development
