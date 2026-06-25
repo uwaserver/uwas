@@ -120,6 +120,25 @@ DB_PASSWORD=<strong-password>
 To run UWAS without the bundled database (e.g. you have an external MySQL),
 remove the `db` service and `depends_on` from `docker-compose.yml`.
 
+### Connecting backup restore to a remote database
+
+Backup restore uses the `mysql` CLI to import SQL dumps. By default it
+connects via the local Unix socket. For a remote or containerized database,
+set the `UWAS_DB_*` environment variables on the UWAS service:
+
+```yaml
+# docker-compose.yml — uwas service
+services:
+  uwas:
+    environment:
+      - UWAS_DB_HOST=db        # service name in compose, or an external host
+      - UWAS_DB_PORT=3306
+      - UWAS_DB_USER=root
+      - UWAS_DB_PASSWORD=${DB_ROOT_PASSWORD}
+```
+
+When unset, `mysql` uses its built-in socket path (the default on bare metal).
+
 ## Using PHP
 
 The compose file includes a `php` service (PHP 8.3 FPM). To route a domain to
