@@ -39,6 +39,15 @@ global:
   #   - 172.16.0.0/12
   #   - 192.168.0.0/16
 
+  # Global per-IP rate limit (fallback for unknown domains + admin API).
+  # Disabled by default (like nginx/Caddy). For internet-facing deployments a
+  # conservative global cap is recommended as a DoS backstop — uncomment and
+  # tune to your expected legitimate peak. Per-domain `rate_limit` blocks (see
+  # the domains section) override this for matched hosts.
+  # rate_limit:
+  #   requests: 600       # max requests per window per client IP
+  #   window: 60s         # sliding window
+
   # Connection timeouts
   timeouts:
     read: 30s
