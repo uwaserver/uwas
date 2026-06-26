@@ -197,11 +197,31 @@ export default function FileManager() {
         }
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        // Revoke after the new tab has had a moment to load — Firefox keeps
-        // the URL alive for the new document's lifetime, Chrome wants ~1s.
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        if (!win) setError('Browser blocked the image preview pop-up. Allow pop-ups for this site.');
+        // SVG is an XML document that can contain inline <script>. Opening it
+        // as a top-level blob document runs that script in the dashboard's
+        // origin and can exfiltrate the admin token from sessionStorage, so a
+        // malicious SVG uploaded to one site would compromise the panel.
+        // Download SVG instead of rendering it; only raster images (which
+        // cannot execute script) are opened in a new tab.
+        const isSvg = lowerName.endsWith('.svg') || blob.type === 'image/svg+xml';
+        if (isSvg) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = entry.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        } else {
+          const win = window.open(url, '_blank');
+          // Sever the opener link so the previewed document can't reach back
+          // into the dashboard window.
+          if (win) win.opener = null;
+          // Revoke after the new tab has had a moment to load — Firefox keeps
+          // the URL alive for the new document's lifetime, Chrome wants ~1s.
+          setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          if (!win) setError('Browser blocked the image preview pop-up. Allow pop-ups for this site.');
+        }
       } catch (e) {
         setError((e as Error).message);
       }

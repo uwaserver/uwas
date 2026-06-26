@@ -144,9 +144,35 @@ type Manager struct {
 	loginAttemptsMu sync.Mutex
 	loginAttempts   map[string][]time.Time // username -> timestamps of failed attempts
 
+	// authGates serializes authentication attempts per username so the lockout
+	// check and the failure-count increment around the slow bcrypt compare form
+	// one critical section. Sharded by username hash to bound memory (an
+	// unbounded per-username map would leak on attacker-supplied usernames).
+	authGates [authGateShards]sync.Mutex
+
+	// sessionTTL is the session lifetime; 0 means use the 24h default. Set from
+	// global.users.session_ttl via SetSessionTTL.
+	sessionTTL time.Duration
+
 	// Background session pruner. Closed by Stop(). Nil when sessionCleanupInterval
 	// is 0 (e.g. tests that want full control).
 	cleanupDone chan struct{}
+}
+
+// SetSessionTTL configures the session lifetime (hours). hours <= 0 keeps the
+// 24h default. Wires up the previously-ignored global.users.session_ttl.
+func (m *Manager) SetSessionTTL(hours int) {
+	if hours > 0 {
+		m.sessionTTL = time.Duration(hours) * time.Hour
+	}
+}
+
+// sessionLifetime returns the configured session TTL, or 24h if unset.
+func (m *Manager) sessionLifetime() time.Duration {
+	if m.sessionTTL > 0 {
+		return m.sessionTTL
+	}
+	return 24 * time.Hour
 }
 
 // sessionCleanupInterval is how often the background goroutine sweeps the
@@ -242,7 +268,20 @@ func (m *Manager) cleanupLoginAttempts() {
 const (
 	maxLoginAttempts   = 5
 	loginLockoutWindow = 15 * time.Minute
+	authGateShards     = 256
 )
+
+// authGateFor returns the per-username serialization mutex. Collisions across
+// the shard set only add harmless extra serialization (which also slows
+// brute-forcing), never correctness issues.
+func (m *Manager) authGateFor(username string) *sync.Mutex {
+	var h uint32 = 2166136261 // FNV-1a 32-bit
+	for i := 0; i < len(username); i++ {
+		h ^= uint32(username[i])
+		h *= 16777619
+	}
+	return &m.authGates[h%authGateShards]
+}
 
 // isLockedOut returns true if the username has exceeded maxLoginAttempts
 // failed attempts within loginLockoutWindow.
@@ -293,7 +332,30 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createUserLocked(username, email, password, role, domains)
+}
 
+// CreateFirstAdmin atomically creates the first admin during bootstrap. The
+// "no users yet" check and the insert happen under one lock, so two concurrent
+// first-run requests can't both create an admin (VULN-027 TOCTOU).
+func (m *Manager) CreateFirstAdmin(username, email, password string) (*User, error) {
+	if username == "" || password == "" {
+		return nil, errors.New("username and password required")
+	}
+	if !isValidUsername(username) {
+		return nil, errors.New("invalid username format")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.users) != 0 {
+		return nil, errors.New("bootstrap is already complete")
+	}
+	return m.createUserLocked(username, email, password, RoleAdmin, nil)
+}
+
+// createUserLocked builds and persists a user. m.mu must be held.
+func (m *Manager) createUserLocked(username, email, password string, role Role, domains []string) (*User, error) {
 	if _, exists := m.users[username]; exists {
 		return nil, errors.New("user already exists")
 	}
@@ -344,8 +406,25 @@ func (m *Manager) CreateUser(username, email, password string, role Role, domain
 	return cloneUser(user), nil
 }
 
+// decoyHash is a valid bcrypt hash (computed once, at DefaultCost) used to
+// equalize the timing of the "user does not exist" path with a real password
+// compare — otherwise the missing-user early return is measurably faster and
+// leaks which usernames exist (VULN-025).
+var decoyHash = sync.OnceValue(func() []byte {
+	h, _ := bcrypt.GenerateFromPassword([]byte("uwas-timing-equalizer-decoy"), bcrypt.DefaultCost)
+	return h
+})
+
 // Authenticate validates credentials and returns a session.
 func (m *Manager) Authenticate(username, password string) (*Session, error) {
+	// Serialize attempts for this username so the lockout check below and the
+	// failure increment after the bcrypt compare are atomic together — without
+	// this, a concurrent burst all passes isLockedOut before any records a
+	// failure, admitting more than maxLoginAttempts tries.
+	gate := m.authGateFor(username)
+	gate.Lock()
+	defer gate.Unlock()
+
 	if m.isLockedOut(username) {
 		return nil, errors.New("too many failed attempts; try again later")
 	}
@@ -354,6 +433,9 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 	user, exists := m.users[username]
 	if !exists {
 		m.mu.RUnlock()
+		// Spend the same bcrypt time as the real path to avoid leaking, via
+		// response timing, whether the username exists.
+		_ = bcrypt.CompareHashAndPassword(decoyHash(), []byte(password))
 		m.recordFailedAttempt(username)
 		return nil, errors.New("invalid credentials")
 	}
@@ -395,7 +477,7 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 		Role:      role,
 		Domains:   domains,
 		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		ExpiresAt: time.Now().Add(m.sessionLifetime()),
 	}
 
 	m.mu.Lock()

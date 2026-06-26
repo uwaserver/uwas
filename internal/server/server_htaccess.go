@@ -167,7 +167,9 @@ func parseExpiresDuration(expr string) string {
 	parts := strings.Fields(expr)
 	for i := 0; i+1 < len(parts); i += 2 {
 		n := 0
-		fmt.Sscanf(parts[i], "%d", &n)
+		if _, err := fmt.Sscanf(parts[i], "%d", &n); err != nil {
+			continue
+		}
 		unit := parts[i+1]
 		switch {
 		case strings.HasPrefix(unit, "second"):

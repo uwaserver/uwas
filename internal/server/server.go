@@ -283,6 +283,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		if cfg.Global.Users.Enabled {
 			s.authMgr = auth.NewManager(cfg.Global.WebRoot, cfg.Global.Admin.APIKey)
 			s.authMgr.SetAllowLegacyPlaintextKey(cfg.Global.Users.AllowLegacyPlaintextAPIKey)
+			s.authMgr.SetSessionTTL(cfg.Global.Users.SessionTTL)
 			s.admin.SetAuthManager(s.authMgr)
 			log.Info("multi-user auth enabled",
 				"allow_reseller", cfg.Global.Users.AllowResller,
@@ -780,6 +781,9 @@ func (s *Server) Start() error {
 	// Signal handling
 	s.wg.Add(1)
 	go s.handleSignals()
+
+	// Evict idle per-location rate-limit entries to bound memory.
+	s.logger.SafeGo("ratelimit.janitor", func() { s.locationLimiterJanitor(s.ctx) })
 
 	// HTTP listener
 	if err := s.startHTTP(); err != nil {
@@ -1365,6 +1369,33 @@ type rateLimitEntry struct {
 	windowStart time.Time
 	count       int64
 	lastAccess  time.Time
+}
+
+// locationLimiterJanitor periodically evicts idle per-location rate-limit
+// entries. Eviction is otherwise only opportunistic (on a repeat hit of the
+// same key), so one-shot rotating source IPs (IPv6 /64, botnets) would accrete
+// permanent entries and grow memory without bound (VULN-030).
+func (s *Server) locationLimiterJanitor(ctx context.Context) {
+	const idleTTL = 30 * time.Minute
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.locationLimiters.Range(func(key, val any) bool {
+				entry := val.(*rateLimitEntry)
+				entry.mu.Lock()
+				idle := now.Sub(entry.lastAccess)
+				entry.mu.Unlock()
+				if idle > idleTTL {
+					s.locationLimiters.Delete(key)
+				}
+				return true
+			})
+		}
+	}
 }
 
 // matchLocation checks if a URL path matches a location pattern.

@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Privilege escalation (Critical):** non-admin users could over-post the
+  `root` field on `PUT /api/v1/domains/{host}` and relocate a domain's web root
+  to `/`, turning the file manager into arbitrary host filesystem read/write.
+  The non-admin field guard now also rejects `root`, `type`, `ip`, `proxy`,
+  `redirect`, `app`, `internal_aliases`, `access_log`, and `webhook_secret`
+  (also closes a `type`/`proxy`/`redirect` over-post → SSRF/route-hijack). The
+  update path now enforces the same root-under-webroot containment as the
+  create path, for all users.
+- **PHP sandbox escape / RCE (High):** per-domain `php.ini` override keys and
+  values were emitted verbatim after the UWAS-enforced security directives, so a
+  newline in a value (e.g. `128M\ndisable_functions =`) injected new directives
+  that cleared `disable_functions`/`open_basedir`. Override keys are now
+  validated against a strict directive-name charset and values reject newlines
+  and control characters, with a defense-in-depth skip when building the ini.
+- **Stored XSS in File Manager (High):** uploaded SVGs were served inline as
+  `image/svg+xml` and opened via a blob URL, executing embedded `<script>` in
+  the dashboard origin and exposing the admin token. The dashboard now downloads
+  SVGs instead of rendering them (raster images still preview), severs the
+  opener link, and the server sends `nosniff` + `Content-Disposition: attachment`
+  + a sandbox CSP for SVG.
+- **Weak admin key on public bind (High):** the startup guard only refused an
+  *empty* admin key on a non-loopback listener; a well-known placeholder key
+  (e.g. the docker-compose default) booted publicly. Startup now also refuses
+  known placeholder keys on a public listener, `docker-compose.yml` fails fast
+  when `UWAS_ADMIN_KEY` is unset, and `.env.example` no longer ships a usable
+  default.
+- **Cross-tenant authorization (Medium):** in multi-user mode, `GET
+  /api/v1/dns/{domain}/records` and `GET /api/v1/domains/{host}/debug` lacked
+  per-domain authorization (the write siblings already had it), letting any
+  authenticated user enumerate other tenants' DNS zones and disclose their
+  web-root paths/listings. Both now require `requireDomainAccess`.
+- **Origin-validation bypass (Medium):** `isAllowedOrigin` matched origins by
+  prefix (`http://localhost…`), so `http://localhost.evil.com` was accepted and
+  reflected into CORS / the CSRF origin fallback. It now parses the URL and
+  compares the hostname exactly, and rejects non-http(s) schemes.
+- **Unverified self password change (Medium):** `PUT /auth/users/{username}`
+  let a user set their own password without the current password (session
+  hijack → persistent takeover). Self password changes must now use the
+  dedicated change-password endpoint; admins may still reset other users.
+- **TOTP replay (Medium):** the designed-but-unused replay protection is now
+  wired into the one-time 2FA enable/disable flows — a matched time step is
+  burned so a captured code can't be replayed within its window. (The
+  per-request gate intentionally still accepts the same code within its 30s
+  window, as it must.)
+- **Config viewer secret leak (Medium):** `GET /api/v1/config/raw` did not mask
+  `tls_key`, `recovery_codes` (a YAML list), or `google_client_secret` /
+  `github_client_secret`. The mask list now covers these and a list-aware
+  masker handles `recovery_codes`.
+- **Weak password policy (Medium):** the admin API accepted any non-empty
+  password (incl. the bootstrap admin). Bootstrap, user-create, change-password,
+  and admin-reset now enforce a 12-character minimum.
+- **Lockout race (Medium):** the brute-force check and failure-increment were
+  separate critical sections around the bcrypt compare, so a concurrent burst
+  could exceed the 5-attempt ceiling. Authentication attempts are now serialized
+  per username via sharded gates.
+- **Default DB passwords (Medium):** `docker-compose.yml` defaulted MariaDB
+  root/app passwords to known values; they are now required (`:?`) and
+  `.env.example` ships placeholders.
+- **CI hardening (Medium):** `release.yml` no longer interpolates
+  `github.ref_name`/`github.sha` directly into shell `run:` blocks (expression
+  injection) — they pass via env vars; `ci.yml` gained a least-privilege
+  top-level `permissions: { contents: read }`.
+- **Cross-tenant read scoping (Low):** the cron monitor, bandwidth, analytics,
+  uptime monitor, alerts, and per-domain stats list/get endpoints now filter by
+  domain access (and per-host variants require `requireDomainAccess`), so a
+  non-admin can no longer read other tenants' job output, usage, or traffic.
+- **Token in URL removed (Low):** the legacy `?token=` query-param auth fallback
+  for SSE/WebSocket was removed (it leaked live tokens/keys to history, Referer,
+  and proxy logs); the single-use `?ticket=` flow is now required.
+- **Session TTL honored (Low):** `global.users.session_ttl` was silently ignored
+  (lifetime hardcoded to 24h); it is now threaded into the auth manager.
+- **PIN brute-force protection (Low):** failed admin-PIN attempts now feed the
+  per-IP rate limiter and are blocked after the threshold (previously only
+  audit-logged).
+- **Login timing oracle (Low):** the no-such-user path now performs a decoy
+  bcrypt compare so response timing no longer reveals which usernames exist.
+- **Bootstrap TOCTOU (Low):** first-admin creation is now atomic
+  (`CreateFirstAdmin` checks "no users" and inserts under one lock), so two
+  concurrent first-run requests can't both create an admin.
+- **Dashboard clickjacking/CSP (Low):** dashboard responses now send
+  `X-Frame-Options: DENY`, `Referrer-Policy`, and a strict
+  `Content-Security-Policy` (`frame-ancestors 'none'`, `script-src 'self'`),
+  which also bounds the blast radius of any stored XSS.
+- **Health-check SSRF (Low):** the on-demand domain health checker now applies
+  the same `IsWebhookURLSafe` + `SafeDialControl` guards as the background
+  monitor, so a domain whose host is an internal/metadata IP can't be used as a
+  blind internal scanner.
+- **Cloudflare client timeout (Low):** outbound Cloudflare API calls use a
+  30s-timeout client instead of `http.DefaultClient` (no timeout), so a stalled
+  upstream can't hang the goroutine indefinitely.
+- **Rate-limiter memory bound (Low):** a janitor goroutine evicts idle
+  per-location rate-limit entries, preventing unbounded map growth from
+  one-shot rotating source IPs.
+- **Container hardening (Low):** compose services gained
+  `no-new-privileges`, `pids_limit`, and (for the uwas service) `cap_drop: ALL`
+  + `cap_add: NET_BIND_SERVICE`.
+- **Defense-in-depth hardening (Informational):** `validateShellCommand` now
+  also rejects a lone `&` (background exec); the cPanel tar importer enforces
+  aggregate size (50GB) and entry-count (500k) caps against decompression
+  bombs; enabling per-domain `proxy.insecure_skip_verify` now logs a warning;
+  and `.dockerignore` excludes `.env*`/`*.key`/`*.pem`/`*.crt` from builder
+  layers.
+
 ## [0.8.6] - 2026-06-25
 
 ### Added

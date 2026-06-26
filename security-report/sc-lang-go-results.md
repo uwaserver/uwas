@@ -1,49 +1,44 @@
-# Go Security Deep Scan Report
+# sc-lang-go — Go Security Deep Scan Results
 
-**Scan Date:** 2026-05-01
-**Scanner:** sc-lang-go
-**Status:** Completed via manual verification
+**Summary:** UWAS is an unusually well-hardened Go codebase; the standard Go anti-patterns (path traversal, command injection, zip-slip, missing server timeouts, weak randomness for secrets, non-constant-time auth compares, unbounded body reads) are all mitigated. Only two low-severity Go-idiomatic issues survived verification, both gated behind admin authentication.
 
-## Summary
+---
 
-| Severity | Count |
-|----------|-------|
-| CRITICAL | 0 |
-| HIGH | 1 |
-| MEDIUM | 2 |
-| LOW | 1 |
-| **Total** | **4** |
+## Defenses observed (verified, NOT findings)
 
-## HIGH Findings
+- **Path traversal:** `internal/pathsafe`, `internal/filemanager/filemanager.go:safePath`, `internal/sftpserver/server.go:safePath`, and `internal/handler/fastcgi/handler.go:tryServeFile` all use symlink-resolving containment (`IsWithinBase` + `IsWithinBaseResolved`), reject `..` pre-clean, and SFTP opens with `O_NOFOLLOW` to close the TOCTOU window.
+- **Command injection:** `os/exec` shell use (`internal/admin/handlers_apps_git.go`, `internal/deploy/deploy.go`) is admin-only, passes args via `exec.Command(name, args...)` where possible, and shell pipelines pass through `validateShellCommand`/`validateBuildCommand`/`validateGitURL` (reject `$( ) ; \` | < >` and null/control bytes). The `apt list` call in `api.go:768` is a constant string.
+- **Zip-slip:** tar extraction in `internal/migrate/cpanel.go` and `internal/backup/backup.go` rejects `..`, uses `safeRestorePath`/`IsInsideDir`, skips symlink/hardlink/device entries, strips SUID/SGID, and bounds per-file and total size.
+- **HTTP server timeouts:** public servers set ReadHeader/Read/Write/Idle timeouts (`internal/server/server.go:888,920`).
+- **Body size limits:** `http.MaxBytesReader` applied across ~80 admin endpoints; WAF body scan uses `io.LimitReader` + `MultiReader` restore (`internal/middleware/security.go:132`).
+- **Crypto:** secrets use `crypto/rand`; `math/rand/v2` only used for load-balancer/canary/mirror traffic distribution (non-security). Auth compares use `crypto/subtle.ConstantTimeCompare` throughout (`internal/auth/manager.go`, `internal/admin/totp.go`, `basicauth.go`).
+- **unsafe.Pointer:** only in `internal/terminal/pty_linux.go` (ioctl structs) and `internal/cli/pidcheck_windows.go` (Win32 syscall) — correct, idiomatic syscall usage, no attacker-controlled pointer arithmetic.
 
-### HIGH-1: In-Memory Session Storage Not Persisted Across Restarts
-- **File:** `internal/auth/manager.go`
-- **Line:** 104-112
-- **CWE:** CWE-522 (Insufficiently Protected Credentials)
-- **Description:** Sessions are stored in an in-memory map (`map[string]*Session`). Server restart invalidates all active sessions, and memory dumps could expose session tokens.
-- **Recommendation:** Persist sessions to disk (encrypted) or Redis with TTL.
+---
 
-## MEDIUM Findings
+## Findings
 
-### MEDIUM-1: JWT Secret Generated But Never Used
-- **File:** `internal/auth/manager.go`
-- **Line:** 117-128
-- **CWE:** CWE-665 (Improper Initialization)
-- **Description:** `jwtSecret` is generated at startup but never read or used for JWT operations. The system uses opaque session tokens instead. This is dead code but could confuse future maintainers.
-- **Recommendation:** Remove unused `jwtSecret` field or implement JWT-based auth.
+### [LOW] http.DefaultClient used without timeout or request context in Cloudflare admin handlers
 
-### MEDIUM-2: Global API Key Stored in Plaintext in Config
-- **File:** `internal/auth/manager.go`
-- **Line:** 110
-- **CWE:** CWE-798 (Hardcoded Credentials)
-- **Description:** The global admin API key is passed as a plaintext string to `NewManager` and stored in memory. Though not hardcoded in source, it resides in config files.
-- **Recommendation:** Hash the global API key similarly to per-user API keys.
+- **Category:** #10 net/http Missing Timeouts
+- **Location:** `internal/admin/handlers_cloudflare.go:201,236,342`; `internal/admin/handlers_cloudflare_zones.go:43,50` (and `:123,125`)
+- **Pattern Matched:** `http.NewRequest(...)` + `http.DefaultClient.Do(req)` — no `Timeout`, no `NewRequestWithContext`.
+- **Description:** These admin handlers build outbound requests with `http.NewRequest` (no context) and execute them with `http.DefaultClient`, which has a zero timeout (wait forever). If the upstream (`api.cloudflare.com`) — or a network MITM / DNS hijack holding the TCP socket open — never responds, the handler goroutine blocks indefinitely. The request context is not propagated, so client disconnect does not cancel the call.
+- **Exploitability:** Requires authenticated admin to trigger the endpoint, and depends on a stalled/hostile upstream. Impact is a hung goroutine / slow resource accumulation rather than RCE or data exposure. Contrast with `internal/tls/manager.go:267,797` which correctly use `http.NewRequestWithContext` + `context.WithTimeout`.
+- **Remediation:** Use a package-level `*http.Client{Timeout: ...}` (as already done in `internal/cloudflare/client.go:30`) and `http.NewRequestWithContext(r.Context(), ...)` so calls are bounded and cancelable.
+- **Reference:** CWE-1088 / CWE-400.
 
-## LOW Findings
+### [INFO] Per-domain reverse-proxy TLS verification can be disabled
 
-### LOW-1: Race Condition Potential in Session LastStep Update
-- **File:** `internal/auth/manager.go`
-- **Line:** 200+ (Authenticate method)
-- **CWE:** CWE-362 (Race Condition)
-- **Description:** Session `LastStep` field is updated without mutex lock during TOTP verification, though impact is low (TOTP replay within same 30s window).
-- **Recommendation:** Lock session during TOTP step update.
+- **Category:** #7 TLS Configuration Mistakes
+- **Location:** `internal/handler/proxy/handler.go:82` (`InsecureSkipVerify: true`); config at `internal/config/proxy.go:22`
+- **Pattern Matched:** `tls.Config{InsecureSkipVerify: true}`
+- **Description:** When an operator sets `proxy.insecure_skip_verify: true` for a domain, the upstream HTTPS connection skips certificate verification, exposing that origin leg to MITM. This is an explicit, documented opt-in (annotated `#nosec G402`) intended for self-signed / private-CA origins.
+- **Exploitability:** Not attacker-reachable — it is a deliberate operator configuration choice, not a default. Listed only because the skill flags the pattern. No code change recommended beyond ensuring docs warn against using it with untrusted networks; consider supporting a custom CA bundle (`RootCAs`) as the safer alternative.
+- **Reference:** CWE-295.
+
+---
+
+## Notes / out of scope for this skill
+
+- The WAF skips body inspection for `Content-Type: application/json` and several other types (`internal/middleware/security.go:isAPContentType`). This is a defense-in-depth tuning tradeoff (avoids false positives on JSON), not a Go anti-pattern; downstream handlers still enforce their own validation. Flagged to the OWASP/WAF reviewer, not counted here.

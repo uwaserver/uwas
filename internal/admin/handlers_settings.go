@@ -263,15 +263,21 @@ func (s *Server) handleConfigRawGet(w http.ResponseWriter, r *http.Request) {
 	content := string(data)
 	for _, key := range []string{
 		"api_key", "pin_code", "totp_secret", "secret_key", "password",
-		"secret_access_key", // Route53 DNS credentials
-		"api_token",         // Cloudflare / DigitalOcean DNS, generic
-		"client_secret",     // OAuth google/github
-		"telegram_token",    // alerting bot token
-		"slack_url",         // Slack incoming-webhook URL has the auth token in the path
-		"purge_key",         // cache purge key
+		"secret_access_key",    // Route53 DNS credentials
+		"api_token",            // Cloudflare / DigitalOcean DNS, generic
+		"client_secret",        // generic OAuth client secret
+		"google_client_secret", // OAuth Google (does not prefix-match client_secret)
+		"github_client_secret", // OAuth GitHub (does not prefix-match client_secret)
+		"tls_key",              // admin TLS private key
+		"telegram_token",       // alerting bot token
+		"slack_url",            // Slack incoming-webhook URL has the auth token in the path
+		"purge_key",            // cache purge key
 	} {
 		content = maskYAMLValue(content, key)
 	}
+	// recovery_codes is a YAML list (2FA bypass credential) — its child items
+	// are on separate indented lines the inline masker cannot reach.
+	content = maskYAMLListValue(content, "recovery_codes")
 
 	jsonResponse(w, map[string]string{"content": content})
 }
@@ -579,6 +585,56 @@ func maskYAMLValue(content, key string) string {
 		} else {
 			result.WriteString(line)
 		}
+		result.WriteByte('\n')
+	}
+	return strings.TrimSuffix(result.String(), "\n")
+}
+
+// maskYAMLListValue masks the items of a block-style YAML list secret, e.g.
+//
+//	recovery_codes:
+//	  - abcd-1234
+//	  - efgh-5678
+//
+// Each child item is replaced with "********". maskYAMLValue only rewrites an
+// inline value on the key's own line, so list-valued secrets would otherwise
+// leak verbatim. An inline value on the key line (flow style or scalar) is also
+// masked defensively.
+func maskYAMLListValue(content, key string) string {
+	var result strings.Builder
+	inList := false
+	keyIndent := 0
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inList {
+			if strings.HasPrefix(trimmed, key+":") {
+				idx := strings.Index(line, key+":")
+				rest := strings.TrimSpace(line[idx+len(key)+1:])
+				if rest == "" {
+					// Block-style list follows on subsequent indented lines.
+					inList = true
+					keyIndent = idx
+					result.WriteString(line)
+				} else {
+					// Inline value (scalar or flow list) — mask in place.
+					result.WriteString(line[:idx] + key + `: "********"`)
+				}
+				result.WriteByte('\n')
+				continue
+			}
+			result.WriteString(line)
+			result.WriteByte('\n')
+			continue
+		}
+		// In list mode: mask indented "- item" children; exit on blank/dedent.
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if trimmed != "" && indent > keyIndent && strings.HasPrefix(trimmed, "-") {
+			result.WriteString(line[:indent] + `- "********"`)
+			result.WriteByte('\n')
+			continue
+		}
+		inList = false
+		result.WriteString(line)
 		result.WriteByte('\n')
 	}
 	return strings.TrimSuffix(result.String(), "\n")

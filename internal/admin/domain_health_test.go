@@ -57,10 +57,13 @@ func TestDomainHealthIncludesAliasesAndEnvelope(t *testing.T) {
 	if body.Total != 2 || len(body.Items) != 2 {
 		t.Fatalf("health items = %d total = %d, want 2/2", len(body.Items), body.Total)
 	}
-	if body.Items[0].Host != primaryHost || body.Items[0].Kind != "primary" || body.Items[0].Status != "up" {
+	// The test fixtures run on loopback, which the SSRF guard (VULN-031) now
+	// blocks — so status is "down", not "up". This test still asserts the
+	// envelope/alias structure, which is its purpose.
+	if body.Items[0].Host != primaryHost || body.Items[0].Kind != "primary" || body.Items[0].Status != "down" {
 		t.Fatalf("primary health = %#v", body.Items[0])
 	}
-	if body.Items[1].Host != aliasHost || body.Items[1].ParentHost != primaryHost || body.Items[1].Kind != "alias" || body.Items[1].Status != "up" {
+	if body.Items[1].Host != aliasHost || body.Items[1].ParentHost != primaryHost || body.Items[1].Kind != "alias" || body.Items[1].Status != "down" {
 		t.Fatalf("alias health = %#v", body.Items[1])
 	}
 }

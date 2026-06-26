@@ -83,7 +83,10 @@ func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	numStr := r.PathValue("number")
 	var num int
-	fmt.Sscanf(numStr, "%d", &num)
+	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil {
+		jsonError(w, "invalid rule number", http.StatusBadRequest)
+		return
+	}
 	if num <= 0 {
 		jsonError(w, "invalid rule number", http.StatusBadRequest)
 		return
