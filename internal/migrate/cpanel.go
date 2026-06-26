@@ -65,6 +65,16 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 	}
 	defer os.RemoveAll(extractDir)
 
+	// Aggregate caps (defense against decompression bombs): the per-file 10GB
+	// limit below does not bound the total, so cap cumulative bytes and entry
+	// count across the whole archive.
+	const (
+		maxTotalExtractBytes int64 = 50 << 30 // 50GB total
+		maxExtractEntries          = 500_000  // entries
+	)
+	var totalBytes int64
+	var entryCount int
+
 	// Phase 1: Extract all files
 	for {
 		header, err := tr.Next()
@@ -73,6 +83,11 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
+		}
+
+		entryCount++
+		if entryCount > maxExtractEntries {
+			return nil, fmt.Errorf("archive exceeds entry-count limit of %d", maxExtractEntries)
 		}
 
 		// Security: prevent path traversal
@@ -94,12 +109,16 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 				continue
 			}
 			// Limit file size to 10GB
-			if _, err := io.Copy(outFile, io.LimitReader(tr, 10<<30)); err != nil {
-				outFile.Close()
-				result.Errors = append(result.Errors, "write "+name+": "+err.Error())
+			n, copyErr := io.Copy(outFile, io.LimitReader(tr, 10<<30))
+			outFile.Close()
+			if copyErr != nil {
+				result.Errors = append(result.Errors, "write "+name+": "+copyErr.Error())
 				continue
 			}
-			outFile.Close()
+			totalBytes += n
+			if totalBytes > maxTotalExtractBytes {
+				return nil, fmt.Errorf("archive exceeds aggregate extraction limit of %d bytes", maxTotalExtractBytes)
+			}
 			result.FilesCount++
 		}
 	}
