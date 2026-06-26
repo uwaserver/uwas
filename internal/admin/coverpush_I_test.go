@@ -421,7 +421,7 @@ func TestGrpI_DomainTypeUsesWebRoot(t *testing.T) {
 func TestGrpI_ValidateDomainUpdateConfig(t *testing.T) {
 	// valid partial
 	d := &config.Domain{Host: "x.com", Type: "static"}
-	if err := validateDomainUpdateConfig(d); err != nil {
+	if err := validateDomainUpdateConfig(d, nil); err != nil {
 		t.Errorf("valid partial err: %v", err)
 	}
 }

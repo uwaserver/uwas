@@ -54,6 +54,24 @@ func ValidateTOTP(secret, code string) (bool, int64) {
 	return false, -1
 }
 
+// validateTOTPNoReplay validates a TOTP code for a one-time operation and, on
+// success, atomically burns the matched time step so the same (or any earlier)
+// step cannot be replayed within its ±skew validity window. Returns false for
+// an invalid code OR a code whose step was already consumed.
+func (s *Server) validateTOTPNoReplay(secret, code string) bool {
+	valid, step := ValidateTOTP(secret, code)
+	if !valid {
+		return false
+	}
+	s.totpStepMu.Lock()
+	defer s.totpStepMu.Unlock()
+	if step <= s.lastTOTPStep {
+		return false // replay of an already-consumed step
+	}
+	s.lastTOTPStep = step
+	return true
+}
+
 // generateCode computes a single TOTP code for the given key and counter.
 func generateCode(key []byte, counter uint64) string {
 	buf := make([]byte, 8)

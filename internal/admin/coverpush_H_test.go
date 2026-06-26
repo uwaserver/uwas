@@ -173,6 +173,44 @@ func TestGrpH_UpdateDomainFull(t *testing.T) {
 		}
 	})
 
+	t.Run("reseller cannot over-post structural fields", func(t *testing.T) {
+		// Regression for VULN-001/VULN-003: root/type/proxy/redirect/ip must be
+		// admin-only on update, else a reseller escalates to filesystem escape,
+		// route hijack, or SSRF on a domain they otherwise legitimately own.
+		for field, val := range map[string]any{
+			"root": "/",
+			"type": "proxy",
+			"ip":   "10.0.0.1",
+		} {
+			s := testServer()
+			s.authMgr = newMockAuthManager()
+			s.config.Domains = append(s.config.Domains, config.Domain{Host: "reseller.com", Type: "static"})
+			r := grpHUpdateReq("PUT", "reseller.com", "", map[string]any{field: val}, true, t)
+			rec := httptest.NewRecorder()
+			s.handleUpdateDomain(rec, r)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("field %q: status=%d body=%s want 403", field, rec.Code, rec.Body.String())
+			}
+		}
+	})
+
+	t.Run("admin root must stay under web root", func(t *testing.T) {
+		// Regression for VULN-001: the update path enforces the same
+		// root-under-webroot containment as the create path, for all users.
+		s := testServer()
+		s.config.Global.WebRoot = "/var/www"
+		s.config.Domains = append(s.config.Domains, config.Domain{Host: "admin-owned.com", Type: "static"})
+		r := grpHUpdateReq("PUT", "admin-owned.com", "", map[string]any{"root": "/etc"}, false, t)
+		rec := httptest.NewRecorder()
+		s.handleUpdateDomain(rec, r)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s want 400", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "must be under") {
+			t.Errorf("unexpected body: %s", rec.Body.String())
+		}
+	})
+
 	t.Run("reseller rename to unauthorized domain", func(t *testing.T) {
 		s := testServer()
 		s.authMgr = newMockAuthManager()
@@ -529,7 +567,7 @@ func TestGrpH_ValidateDomainConfig(t *testing.T) {
 
 	t.Run("update config partial", func(t *testing.T) {
 		d := &config.Domain{Host: "x.com", Type: "static"}
-		if err := validateDomainUpdateConfig(d); err != nil {
+		if err := validateDomainUpdateConfig(d, nil); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -863,7 +901,7 @@ func TestGrpH_AuthBootstrap(t *testing.T) {
 		s.authMgr = empty
 		s.config.Global.Users.Enabled = true
 		r := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/bootstrap",
-			bytes.NewReader([]byte(`{"username":"root","email":"r@x.com","password":"password"}`))))
+			bytes.NewReader([]byte(`{"username":"root","email":"r@x.com","password":"S3cure-Passw0rd!"}`))))
 		rec := httptest.NewRecorder()
 		s.handleAuthBootstrap(rec, r)
 		if rec.Code != http.StatusOK {

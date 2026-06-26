@@ -47,7 +47,7 @@ func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := cfHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func (s *Server) fetchCloudflareDNSRecords(token, zoneID string) ([]cloudflareDN
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cfHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

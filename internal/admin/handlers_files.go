@@ -327,6 +327,17 @@ func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Header().Set("Content-Type", contentType)
+		// Never let the browser MIME-sniff a preview into something executable.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// SVG is an XML document that can carry inline <script>; if it is ever
+		// rendered as a top-level document it would run in the dashboard origin
+		// and exfiltrate the admin token. Force it to download and neuter any
+		// active content via CSP (defense-in-depth; the client also avoids
+		// opening SVG as a document).
+		if strings.HasSuffix(lowerPath, ".svg") {
+			w.Header().Set("Content-Disposition", "attachment")
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+		}
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		w.Write(data)
 		return

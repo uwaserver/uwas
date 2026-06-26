@@ -408,6 +408,7 @@ func (s *Server) registerDashboardUI() {
 		return
 	}
 	s.mux.Handle("/_uwas/dashboard/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setDashboardSecurityHeaders(w)
 		path := strings.TrimPrefix(r.URL.Path, "/_uwas/dashboard/")
 		if path != "" {
 			if _, err := fs.Stat(distFS, path); err == nil {
@@ -424,4 +425,19 @@ func (s *Server) registerDashboardUI() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(indexData)
 	}))
+}
+
+// setDashboardSecurityHeaders adds clickjacking + CSP protection to dashboard
+// responses. The Vite build loads only same-origin external scripts/styles, so
+// a strict script-src is safe; it also bounds the blast radius of any stored
+// XSS (e.g. via uploaded content) by forbidding framing and external script.
+func setDashboardSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy",
+		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "+
+			"object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 }

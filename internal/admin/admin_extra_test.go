@@ -751,6 +751,14 @@ func TestIsAllowedOriginVariants(t *testing.T) {
 		{"https://127.0.0.1", "admin.example.com", true},
 		{"http://evil.com", "admin.example.com", false},
 		{"http://admin.example.com", "admin.example.com", true}, // same origin
+		// VULN-008 regression: prefix-match bypasses must be rejected.
+		{"http://localhost.evil.com", "admin.example.com", false},
+		{"https://127.0.0.1.evil.com", "admin.example.com", false},
+		{"http://localhostevil.com", "admin.example.com", false},
+		{"http://admin.example.com.evil.com", "admin.example.com", false},
+		// Non-http(s) schemes must be rejected.
+		{"file://localhost", "admin.example.com", false},
+		{"javascript:alert(1)", "admin.example.com", false},
 	}
 
 	for _, tt := range tests {

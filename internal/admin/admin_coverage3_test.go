@@ -43,6 +43,24 @@ func TestIsLoopbackListenAddr(t *testing.T) {
 	}
 }
 
+// TestIsWeakAdminKey is the regression for VULN-005: well-known placeholder
+// admin keys must be detected so they can't guard a publicly-bound API.
+func TestIsWeakAdminKey(t *testing.T) {
+	cases := map[string]bool{
+		"please-change-this-admin-key": true,
+		"PLEASE-CHANGE-THIS-ADMIN-KEY": true, // case-insensitive
+		"  changeme  ":                 true, // trimmed
+		"admin":                        true,
+		"":                             false, // empty handled by the no-key guard
+		"a1b2c3d4e5f6a1b2c3d4e5f6":     false, // a real generated key
+	}
+	for key, want := range cases {
+		if got := isWeakAdminKey(key); got != want {
+			t.Errorf("isWeakAdminKey(%q) = %v, want %v", key, got, want)
+		}
+	}
+}
+
 // TestSensitiveSettingsEndpointsRequireAdmin locks in the requireAdmin guards
 // on the notify/branding endpoints — without them a low-priv user could
 // redirect alerts to an attacker-controlled webhook or inject branding HTML.

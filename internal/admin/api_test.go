@@ -1946,7 +1946,9 @@ func TestDeleteDomainCallsOnDomainChange(t *testing.T) {
 func TestUpdateDomain(t *testing.T) {
 	s := testServer()
 
-	body := strings.NewReader(`{"host":"example.com","type":"proxy","root":"/updated"}`)
+	// Root must stay under the web root (default /var/www); the update path
+	// enforces the same containment as the create path.
+	body := strings.NewReader(`{"host":"example.com","type":"proxy","root":"/var/www/example.com/updated"}`)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/domains/example.com", body))
 
@@ -1959,8 +1961,8 @@ func TestUpdateDomain(t *testing.T) {
 			if d.Type != "proxy" {
 				t.Errorf("type = %q, want proxy", d.Type)
 			}
-			if d.Root != "/updated" {
-				t.Errorf("root = %q, want /updated", d.Root)
+			if d.Root != "/var/www/example.com/updated" {
+				t.Errorf("root = %q, want /var/www/example.com/updated", d.Root)
 			}
 			return
 		}
@@ -2520,7 +2522,7 @@ func TestUpdateDomainSetsHostIfEmpty(t *testing.T) {
 
 	// Send update without host field — handler should set host from path.
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"type":"proxy","root":"/new"}`)
+	body := strings.NewReader(`{"type":"proxy","root":"/var/www/example.com"}`)
 	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/domains/example.com", body))
 
 	if rec.Code != 200 {

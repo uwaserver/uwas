@@ -123,11 +123,26 @@ func TestUserChangePasswordBadJSON(t *testing.T) {
 	}
 }
 
+// TestValidatePasswordPolicy is the regression for VULN-011: short passwords
+// must be rejected at the admin API boundary.
+func TestValidatePasswordPolicy(t *testing.T) {
+	for _, weak := range []string{"", "pass", "secret123", "elevenchars"} { // all < 12
+		if err := validatePasswordPolicy(weak); err == nil {
+			t.Errorf("weak password %q accepted", weak)
+		}
+	}
+	for _, ok := range []string{"twelvechars1", "S3cure-Passw0rd!"} { // >= 12
+		if err := validatePasswordPolicy(ok); err != nil {
+			t.Errorf("strong password %q rejected: %v", ok, err)
+		}
+	}
+}
+
 func TestUserChangePasswordAdminSuccess(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{"new_password":"newpass123"}`))
+	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{"new_password":"S3cure-Passw0rd!"}`))
 	r = withAdminContext(r)
 	s.mux.ServeHTTP(rec, r)
 	if rec.Code != 200 {
@@ -140,7 +155,7 @@ func TestUserChangePasswordOtherUserAsReseller(t *testing.T) {
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
 	// reseller tries to change admin's password (different user, not admin role)
-	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{"current_password":"x","new_password":"y"}`))
+	r := httptest.NewRequest("POST", "/api/v1/auth/users/admin/password", strings.NewReader(`{"current_password":"x","new_password":"S3cure-Passw0rd!"}`))
 	r = withResellerContext(r)
 	s.mux.ServeHTTP(rec, r)
 	// reseller != admin user, so it goes to self-change path, but current_password is wrong

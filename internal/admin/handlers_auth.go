@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -112,6 +114,16 @@ func (s *Server) canAccessDomain(r *http.Request, domain string) bool {
 	return s.authMgr.CanManageDomain(user, domain)
 }
 
+// isAdmin reports whether the request is from an admin. Single-key mode
+// (no auth manager) treats every caller as admin, matching authMiddleware.
+func (s *Server) isAdmin(r *http.Request) bool {
+	if s.authMgr == nil {
+		return true
+	}
+	user, ok := auth.UserFromContext(r.Context())
+	return ok && user.Role == auth.RoleAdmin
+}
+
 type adminUserResponse struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
@@ -150,12 +162,23 @@ func adminUserDTO(user *auth.User, revealAPIKey bool) adminUserResponse {
 // dashboard itself (same scheme+host as the admin listener) or is a
 // localhost address (for local development).
 func isAllowedOrigin(origin string, r *http.Request) bool {
-	// Allow any localhost origin for dev convenience.
-	lower := strings.ToLower(origin)
-	if strings.HasPrefix(lower, "http://localhost") ||
-		strings.HasPrefix(lower, "https://localhost") ||
-		strings.HasPrefix(lower, "http://127.0.0.1") ||
-		strings.HasPrefix(lower, "https://127.0.0.1") {
+	// Parse and compare the host EXACTLY. A prefix match (e.g.
+	// HasPrefix(origin, "http://localhost")) would accept attacker-controlled
+	// hosts like "http://localhost.evil.com", letting them be reflected into
+	// Access-Control-Allow-Origin and satisfy the CSRF origin fallback.
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return false
+	}
+
+	// Allow loopback origins for local development.
+	switch strings.ToLower(u.Hostname()) {
+	case "localhost", "127.0.0.1", "::1":
 		return true
 	}
 
@@ -270,6 +293,7 @@ func (s *Server) ensureAuthManagerFromConfig() {
 	webRoot := s.config.Global.WebRoot
 	apiKey := s.config.Global.Admin.APIKey
 	allowLegacyPlaintext := s.config.Global.Users.AllowLegacyPlaintextAPIKey
+	sessionTTL := s.config.Global.Users.SessionTTL
 	s.configMu.RUnlock()
 
 	if !enabled {
@@ -278,6 +302,7 @@ func (s *Server) ensureAuthManagerFromConfig() {
 	if s.authMgr == nil {
 		mgr := auth.NewManager(webRoot, apiKey)
 		mgr.SetAllowLegacyPlaintextKey(allowLegacyPlaintext)
+		mgr.SetSessionTTL(sessionTTL)
 		s.authMgr = mgr
 		if s.logger != nil {
 			s.logger.Info("multi-user auth enabled from settings")
@@ -367,8 +392,7 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, _ := ValidateTOTP(secret, req.Code)
-	if !valid {
+	if !s.validateTOTPNoReplay(secret, req.Code) {
 		jsonError(w, "invalid code", http.StatusUnauthorized)
 		return
 	}
@@ -413,8 +437,7 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, _ := ValidateTOTP(secret, req.Code)
-	if !valid {
+	if !s.validateTOTPNoReplay(secret, req.Code) {
 		jsonError(w, "invalid code", http.StatusUnauthorized)
 		return
 	}
@@ -427,6 +450,21 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	s.recordAuditR(r, "2fa.disabled", "TOTP deactivated", true)
 
 	jsonResponse(w, map[string]any{"status": "2fa_disabled"})
+}
+
+// minPasswordLength is the minimum length enforced for any password set via the
+// admin API (bootstrap, user create, password change/reset). Length is the
+// strongest single lever against guessing; 12 matches modern NIST guidance.
+const minPasswordLength = 12
+
+// validatePasswordPolicy enforces the password policy at the HTTP boundary. It
+// lives at the handler layer (not in auth.Manager) so the Manager stays a pure
+// mechanism and policy applies uniformly to externally-supplied passwords.
+func validatePasswordPolicy(password string) error {
+	if len([]rune(password)) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+	return nil
 }
 
 func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Request) {
@@ -450,6 +488,10 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := validatePasswordPolicy(req.NewPassword); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -491,6 +533,16 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 		return true // no pin configured, allow
 	}
 
+	// Brute-force protection: a short numeric PIN must not be guessable. Block
+	// once the per-IP failure threshold is reached, and feed PIN failures into
+	// the same limiter (previously they were only audit-logged).
+	ip := requestIP(r)
+	if s.checkRateLimit(ip, "") {
+		s.recordAuditR(r, "pin.blocked", r.URL.Path, false)
+		jsonError(w, "too many failed attempts; try again later", http.StatusTooManyRequests)
+		return false
+	}
+
 	provided := r.Header.Get("X-Pin-Code")
 	// WebSocket connections can't set headers — also check query param
 	if provided == "" {
@@ -501,6 +553,7 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if subtle.ConstantTimeCompare([]byte(provided), []byte(pin)) != 1 {
+		s.recordAuthFailure(ip, "")
 		s.recordAuditR(r, "pin.failed", r.URL.Path, false)
 		jsonError(w, "invalid_pin", http.StatusForbidden)
 		return false
@@ -612,12 +665,22 @@ func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "username and password required", http.StatusBadRequest)
 		return
 	}
+	if err := validatePasswordPolicy(req.Password); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	user, err := s.authMgr.CreateUser(req.Username, req.Email, req.Password, auth.RoleAdmin, nil)
+	// Atomic create: the "first admin" check and insert happen under one lock
+	// inside CreateFirstAdmin, closing the bootstrap TOCTOU.
+	user, err := s.authMgr.CreateFirstAdmin(req.Username, req.Email, req.Password)
 	if err != nil {
 		ip := requestIP(r)
 		s.recordAuthFailure(ip, req.Username)
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "already complete") {
+			status = http.StatusConflict
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
 	session, err := s.authMgr.Authenticate(req.Username, req.Password)
@@ -769,6 +832,10 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid role", http.StatusBadRequest)
 		return
 	}
+	if err := validatePasswordPolicy(req.Password); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Check if reseller role is allowed
 	s.configMu.RLock()
@@ -822,6 +889,22 @@ func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
 	if currentUser.Role != auth.RoleAdmin && currentUser.Username != username {
 		jsonError(w, "forbidden", http.StatusForbidden)
 		return
+	}
+
+	// Self-service password changes must go through the dedicated
+	// change-password endpoint, which verifies the current password. Allowing
+	// it here would let a hijacked session set a new password without knowing
+	// the old one — turning a transient session into persistent account
+	// takeover. Admins may still reset OTHER users' passwords.
+	if req.Password != nil && currentUser.Username == username {
+		jsonError(w, "use the change-password endpoint to change your own password", http.StatusBadRequest)
+		return
+	}
+	if req.Password != nil {
+		if err := validatePasswordPolicy(*req.Password); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	updates := &auth.User{}
