@@ -110,6 +110,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Container hardening (Low):** compose services gained
   `no-new-privileges`, `pids_limit`, and (for the uwas service) `cap_drop: ALL`
   + `cap_add: NET_BIND_SERVICE`.
+- **Per-(user,IP) login lockout (Low, VULN-026):** brute-force lockout was keyed
+  on username alone, so a flood from any source could lock a known operator out
+  everywhere (targeted-lockout DoS). Lockout is now scoped to (username, IP) via
+  the new `AuthenticateFrom`; the 12-char password policy covers distributed
+  many-IP brute force.
 - **RBAC enforcement (Low, VULN-021):** the declared `rolePermissions` model was
   dead code — a read-only `user` could create/update/delete any assigned domain.
   Domain create/update/delete handlers now enforce `HasPermission`
