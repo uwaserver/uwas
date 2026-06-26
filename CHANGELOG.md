@@ -110,6 +110,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Container hardening (Low):** compose services gained
   `no-new-privileges`, `pids_limit`, and (for the uwas service) `cap_drop: ALL`
   + `cap_add: NET_BIND_SERVICE`.
+- **RBAC enforcement (Low, VULN-021):** the declared `rolePermissions` model was
+  dead code — a read-only `user` could create/update/delete any assigned domain.
+  Domain create/update/delete handlers now enforce `HasPermission`
+  (`domain:create`/`update`/`delete`), so `user` is read-only and
+  `reseller`/`admin` retain write access, as the model already declared.
 - **Defense-in-depth hardening (Informational):** `validateShellCommand` now
   also rejects a lone `&` (background exec); the cPanel tar importer enforces
   aggregate size (50GB) and entry-count (500k) caps against decompression

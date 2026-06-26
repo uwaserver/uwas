@@ -154,6 +154,27 @@ func (s *Server) isAdmin(r *http.Request) bool {
 	return ok && user.Role == auth.RoleAdmin
 }
 
+// requirePermission enforces the declared role-permission model
+// (auth.rolePermissions) for the authenticated user. Admins and single-key mode
+// always pass. This wires up the previously-unenforced model so a read-only
+// `user` role can no longer perform write actions (VULN-021).
+func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, perm auth.Permission) bool {
+	if s.authMgr == nil {
+		return true // single-key mode: the caller is the implicit admin
+	}
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if user.Role == auth.RoleAdmin || s.authMgr.HasPermission(user.Role, perm) {
+		return true
+	}
+	s.recordAuditR(r, "rbac.denied", string(perm), false)
+	jsonError(w, "forbidden: your role lacks the "+string(perm)+" permission", http.StatusForbidden)
+	return false
+}
+
 type adminUserResponse struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
