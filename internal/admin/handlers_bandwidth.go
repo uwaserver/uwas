@@ -15,11 +15,21 @@ func (s *Server) handleBandwidthList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statuses := s.bwMgr.GetAllStatus()
-	jsonResponse(w, statuses)
+	// Per-domain scoping: non-admins only see their own domains' usage.
+	filtered := make([]bandwidth.Status, 0, len(statuses))
+	for _, st := range statuses {
+		if s.canAccessDomain(r, st.Host) {
+			filtered = append(filtered, st)
+		}
+	}
+	jsonResponse(w, filtered)
 }
 
 func (s *Server) handleBandwidthGet(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+	if !s.requireDomainAccess(w, r, host, "bandwidth.read") {
+		return
+	}
 	if s.bwMgr == nil {
 		jsonError(w, "bandwidth manager not initialized", http.StatusServiceUnavailable)
 		return

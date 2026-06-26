@@ -14,6 +14,11 @@ import (
 
 // --- Cloudflare Integration ---
 
+// cfHTTPClient is used for all outbound Cloudflare API calls. http.DefaultClient
+// has no timeout, so a stalled/hostile API endpoint would hang the goroutine
+// indefinitely; this bounds every call.
+var cfHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 type cloudflareTunnel struct {
 	ID             string    `json:"id"` // real Cloudflare tunnel UUID
 	Name           string    `json:"name"`
@@ -198,7 +203,7 @@ func (s *Server) validateCloudflareToken(token, accountID string) (string, error
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cfHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -233,7 +238,7 @@ func (s *Server) validateCloudflareToken(token, accountID string) (string, error
 	req2.Header.Set("Authorization", "Bearer "+token)
 	req2.Header.Set("Content-Type", "application/json")
 
-	resp2, err := http.DefaultClient.Do(req2)
+	resp2, err := cfHTTPClient.Do(req2)
 	if err != nil {
 		return "", err
 	}
@@ -339,7 +344,7 @@ func (s *Server) purgeCloudflareCache(token, url string, everything bool) error 
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := cfHTTPClient.Do(req)
 		if err != nil {
 			return err
 		}

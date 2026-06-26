@@ -72,6 +72,12 @@ func (s *Server) getDNSProvider() dnsmanager.Provider {
 
 func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	// Per-domain authorization: the write siblings already require this; without
+	// it any authenticated user could enumerate any zone's records (A/MX/TXT,
+	// incl. SPF/DKIM/ACME tokens) via the shared DNS provider token.
+	if !s.requireDomainAccess(w, r, domain, "dns.read") {
+		return
+	}
 	cf := s.getDNSProvider()
 	if cf == nil {
 		jsonError(w, "DNS provider not configured — set dns_provider and credentials in Settings → ACME", http.StatusNotImplemented)

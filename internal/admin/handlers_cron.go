@@ -17,11 +17,22 @@ func (s *Server) handleCronMonitorList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statuses := s.cronMonitor.GetAllStatus()
-	jsonResponse(w, statuses)
+	// Per-domain scoping: a non-admin must not see other tenants' job
+	// commands/output. Admins (and single-key mode) pass everything.
+	filtered := make([]cronjob.JobStatus, 0, len(statuses))
+	for _, st := range statuses {
+		if s.canAccessDomain(r, st.Domain) {
+			filtered = append(filtered, st)
+		}
+	}
+	jsonResponse(w, filtered)
 }
 
 func (s *Server) handleCronMonitorDomain(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+	if !s.requireDomainAccess(w, r, host, "cron.read") {
+		return
+	}
 	if s.cronMonitor == nil {
 		jsonError(w, "cron monitor not initialized", http.StatusServiceUnavailable)
 		return

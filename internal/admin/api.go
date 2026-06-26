@@ -114,6 +114,14 @@ type Server struct {
 	pendingTOTPMu sync.Mutex
 	pendingTOTP   map[string]string
 
+	// lastTOTPStep is the highest TOTP time-step already consumed by a one-time
+	// 2FA operation (enable/disable). It blocks replay of a captured code within
+	// its ±skew validity window. It is NOT applied to the per-request 2FA gate,
+	// where the same code is legitimately presented on every request inside its
+	// 30s window.
+	totpStepMu   sync.Mutex
+	lastTOTPStep int64
+
 	// Rate limiting for auth failures
 	rlMu      sync.Mutex
 	rateLimit map[string]*rateLimitEntry
@@ -147,6 +155,7 @@ type AuthManager interface {
 	GetUserByID(id string) (*auth.User, bool)
 	ListUsers() []*auth.User
 	CreateUser(username, email, password string, role auth.Role, domains []string) (*auth.User, error)
+	CreateFirstAdmin(username, email, password string) (*auth.User, error)
 	UpdateUser(username string, updates *auth.User) error
 	DeleteUser(username string) error
 	RegenerateAPIKey(username string) (string, error)
@@ -199,6 +208,26 @@ func isExpensiveGET(path string) bool {
 // listen address binds only to loopback. It accepts "127.0.0.1", "::1", and
 // the literal "localhost". A bare ":port" or "0.0.0.0:port" binds to all
 // interfaces and is treated as non-loopback.
+// knownWeakAdminKeys are placeholder / example admin keys that ship in docs,
+// .env.example, and docker-compose.yml. Operators routinely leave them in
+// place, so they must never be allowed to guard a publicly-bound admin API.
+var knownWeakAdminKeys = map[string]bool{
+	"please-change-this-admin-key": true,
+	"changeme":                     true,
+	"change-me":                    true,
+	"change_me":                    true,
+	"admin":                        true,
+	"password":                     true,
+	"secret":                       true,
+	"uwas":                         true,
+	"test":                         true,
+}
+
+// isWeakAdminKey reports whether key is a well-known placeholder value.
+func isWeakAdminKey(key string) bool {
+	return knownWeakAdminKeys[strings.ToLower(strings.TrimSpace(key))]
+}
+
 func isLoopbackListenAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -240,6 +269,15 @@ func (s *Server) Start() error {
 		s.logger.Warn("admin API has no credentials configured — every request will be granted admin role",
 			"listen", addr,
 			"fix", "set global.admin.api_key or enable global.users.enabled")
+	}
+
+	// A non-empty but well-known placeholder key on a public listener is no
+	// better than no key at all — refuse to expose the API guessably.
+	if isWeakAdminKey(apiKey) && !isLoopbackListenAddr(addr) {
+		return fmt.Errorf(
+			"admin API listen address %q is public but global.admin.api_key is a well-known "+
+				"placeholder value; set a strong, unique key (e.g. `openssl rand -hex 24`) "+
+				"or bind to 127.0.0.1 / ::1", addr)
 	}
 
 	httpSrv := &http.Server{
@@ -392,28 +430,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 					}
 				}
 			}
-			// Also check token query param for SSE/WebSocket (legacy fallback)
-			if !authenticated {
-				if token := r.URL.Query().Get("token"); token != "" {
-					if session, err := s.authMgr.ValidateSession(token); err == nil {
-						if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
-							authenticated = true
-							user = u
-						}
-					}
-					if !authenticated {
-						if u, err := s.authMgr.AuthenticateAPIKey(token); err == nil {
-							authenticated = true
-							user = u
-						}
-					}
-					if authenticated {
-						q := r.URL.Query()
-						q.Del("token")
-						r.URL.RawQuery = q.Encode()
-					}
-				}
-			}
+			// Note: the legacy `?token=` query-param fallback was removed — a
+			// live session token / API key in the URL leaks to history, Referer,
+			// and proxy logs. SSE/WebSocket clients must use the single-use
+			// `?ticket=` flow above.
 		}
 
 		// Fall back to legacy API key auth if multi-user auth failed or not enabled
@@ -425,11 +445,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 					if realToken := s.redeemTicket(ticket); realToken != "" {
 						authHeader = "Bearer " + realToken
 					}
-				}
-			}
-			if authHeader == "" {
-				if token := r.URL.Query().Get("token"); token != "" {
-					authHeader = "Bearer " + token
 				}
 			}
 			if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1 {
@@ -450,13 +465,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Strip token from URL after successful auth to prevent leaking
-		if r.URL.Query().Get("token") != "" {
-			q := r.URL.Query()
-			q.Del("token")
-			r.URL.RawQuery = q.Encode()
-		}
-
 		// Store user in context for handlers to access
 		ctx := auth.WithUser(r.Context(), user)
 		r = r.WithContext(ctx)
@@ -474,6 +482,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				jsonError(w, "2fa_required", http.StatusForbidden)
 				return
 			}
+			// No step-burning here: this gate runs on every admin request, so
+			// the same code is legitimately presented many times within its 30s
+			// window. Replay-burning is enforced on the one-time enable/disable
+			// flows instead (validateTOTPNoReplay).
 			valid, _ := ValidateTOTP(totpSecret, totpCode)
 			if !valid {
 				s.recordAuthFailure(ip, "")
@@ -851,7 +863,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, s.metrics.DomainStatsSnapshot())
+	// Per-domain scoping: non-admins only see their own domains' stats.
+	snap := s.metrics.DomainStatsSnapshot()
+	filtered := make(map[string]map[string]int64, len(snap))
+	for host, stats := range snap {
+		if s.canAccessDomain(r, host) {
+			filtered[host] = stats
+		}
+	}
+	jsonResponse(w, filtered)
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -873,9 +893,24 @@ func (s *Server) SetCache(c *cache.Engine) { s.cache = c }
 // SetAnalytics sets the analytics collector and registers analytics routes.
 func (s *Server) SetAnalytics(a *analytics.Collector) {
 	s.analytics = a
-	allHandler, hostHandler := a.Handler()
-	s.mux.HandleFunc("GET /api/v1/analytics", allHandler)
-	s.mux.HandleFunc("GET /api/v1/analytics/{host}", hostHandler)
+	_, hostHandler := a.Handler()
+	s.mux.HandleFunc("GET /api/v1/analytics", func(w http.ResponseWriter, r *http.Request) {
+		// Per-domain scoping: non-admins only see their own domains' analytics.
+		snaps := a.GetAll()
+		filtered := make([]analytics.Snapshot, 0, len(snaps))
+		for _, snap := range snaps {
+			if s.canAccessDomain(r, snap.Host) {
+				filtered = append(filtered, snap)
+			}
+		}
+		jsonResponse(w, filtered)
+	})
+	s.mux.HandleFunc("GET /api/v1/analytics/{host}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireDomainAccess(w, r, r.PathValue("host"), "analytics.read") {
+			return
+		}
+		hostHandler(w, r)
+	})
 }
 
 // Analytics returns the analytics collector, if set.
@@ -889,7 +924,15 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "monitor not enabled", http.StatusNotImplemented)
 		return
 	}
-	jsonResponse(w, s.monitor.Results())
+	// Per-domain scoping: non-admins only see their own domains' uptime.
+	results := s.monitor.Results()
+	filtered := make([]monitor.HealthResult, 0, len(results))
+	for _, res := range results {
+		if s.canAccessDomain(r, res.Host) {
+			filtered = append(filtered, res)
+		}
+	}
+	jsonResponse(w, filtered)
 }
 
 // SetAlerter sets the alerting engine for the /api/v1/alerts endpoint.
@@ -900,11 +943,18 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "alerting not enabled", http.StatusNotImplemented)
 		return
 	}
+	// Per-domain scoping: non-admins only see alerts for their own domains.
+	// Alerts without a Host (global/system alerts) are admin-only.
 	alerts := s.alerter.Alerts()
-	if alerts == nil {
-		alerts = []alerting.Alert{}
+	filtered := make([]alerting.Alert, 0, len(alerts))
+	for _, a := range alerts {
+		if a.Host != "" && s.canAccessDomain(r, a.Host) {
+			filtered = append(filtered, a)
+		} else if a.Host == "" && s.isAdmin(r) {
+			filtered = append(filtered, a)
+		}
 	}
-	jsonResponse(w, alerts)
+	jsonResponse(w, filtered)
 }
 
 // --- Task API handlers ---

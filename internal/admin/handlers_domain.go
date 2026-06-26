@@ -693,6 +693,17 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// Structural/security-sensitive top-level fields non-admins may never set.
+		// Omitting these enables privilege escalation: root → filesystem escape
+		// (the file manager jails to the domain root); type/proxy/redirect → route
+		// hijack & SSRF; ip → bind to another address; app → process control;
+		// internal_aliases → X-Accel/X-Sendfile path widening; access_log →
+		// arbitrary log path; webhook_secret → forged webhook signatures.
+		for _, field := range []string{"root", "type", "ip", "proxy", "redirect", "app", "internal_aliases", "access_log", "webhook_secret"} {
+			if _, ok := raw[field]; ok {
+				sensitive = append(sensitive, field)
+			}
+		}
 		if len(sensitive) > 0 {
 			s.recordAuditR(r, "domain.update", "domain: "+host+" (forbidden fields: "+strings.Join(sensitive, ", ")+")", false)
 			jsonError(w, "forbidden: non-admin users cannot modify "+strings.Join(sensitive, ", "), http.StatusForbidden)
@@ -765,7 +776,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if err := validateDomainUpdateConfig(&merged); err != nil {
+			if err := validateDomainUpdateConfig(&merged, s); err != nil {
 				s.configMu.Unlock()
 				s.recordAuditR(r, "domain.update", "domain: "+host+" (validation failed)", false)
 				jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
@@ -1138,9 +1149,28 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 // validateDomainUpdateConfig is the merge/update variant: same shape checks
 // as validateDomainConfig but lenient about cross-field invariants
 // (config.ValidateDomainPartial) so PATCH-style updates aren't rejected for
-// fields the caller intentionally didn't touch.
-func validateDomainUpdateConfig(d *config.Domain) error {
-	return config.ValidateDomainPartial(d)
+// fields the caller intentionally didn't touch. It also enforces the
+// root-under-webroot containment that the create path applies, so an update
+// can't relocate a domain's root outside the web root (filesystem escape).
+//
+// The sole runtime caller (handleUpdateDomain) holds s.configMu while calling
+// this, so WebRoot is read directly without re-locking — the RWMutex is not
+// reentrant and an RLock here would deadlock.
+func validateDomainUpdateConfig(d *config.Domain, s *Server) error {
+	if err := config.ValidateDomainPartial(d); err != nil {
+		return err
+	}
+
+	webRoot := "/var/www"
+	if s != nil && s.config.Global.WebRoot != "" {
+		webRoot = s.config.Global.WebRoot
+	}
+	if d.Root != "" && d.Type != "redirect" {
+		if !pathsafe.IsWithinBase(webRoot, d.Root) || !pathsafe.IsWithinBaseResolved(webRoot, d.Root) {
+			return fmt.Errorf("root path must be under %s (got %s)", webRoot, d.Root)
+		}
+	}
+	return nil
 }
 
 func domainTypeUsesWebRoot(domainType string) bool {
