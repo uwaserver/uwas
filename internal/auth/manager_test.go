@@ -16,6 +16,49 @@ func newTestManager(t *testing.T) *Manager {
 	return NewManager(t.TempDir(), "test-global-api-key")
 }
 
+// TestCreateFirstAdmin is the regression for VULN-027: only one admin can be
+// bootstrapped; a second call must fail rather than create a duplicate admin.
+func TestCreateFirstAdmin(t *testing.T) {
+	m := newTestManager(t)
+	if _, err := m.CreateFirstAdmin("root", "", "S3cure-Passw0rd!"); err != nil {
+		t.Fatalf("first admin: %v", err)
+	}
+	if _, err := m.CreateFirstAdmin("root2", "", "S3cure-Passw0rd!"); err == nil {
+		t.Fatal("second CreateFirstAdmin should fail once a user exists")
+	}
+	if n := len(m.ListUsers()); n != 1 {
+		t.Errorf("user count = %d, want 1", n)
+	}
+}
+
+// TestSessionTTLConfigured is the regression for VULN-023: session_ttl must
+// actually control session lifetime (it was previously hardcoded to 24h).
+func TestSessionTTLConfigured(t *testing.T) {
+	m := newTestManager(t)
+	if got := m.sessionLifetime(); got != 24*time.Hour {
+		t.Fatalf("default lifetime = %v, want 24h", got)
+	}
+	m.SetSessionTTL(2)
+	if got := m.sessionLifetime(); got != 2*time.Hour {
+		t.Errorf("after SetSessionTTL(2) lifetime = %v, want 2h", got)
+	}
+	m.SetSessionTTL(0) // no-op, keeps previous
+	if got := m.sessionLifetime(); got != 2*time.Hour {
+		t.Errorf("SetSessionTTL(0) should be a no-op, got %v", got)
+	}
+
+	if _, err := m.CreateUser("ttluser", "", "S3cure-Passw0rd!", RoleAdmin, nil); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	sess, err := m.Authenticate("ttluser", "S3cure-Passw0rd!")
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if d := time.Until(sess.ExpiresAt); d > 2*time.Hour+time.Minute || d < 2*time.Hour-time.Minute {
+		t.Errorf("session expiry ~%v, want ~2h", d)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CreateUser
 // ---------------------------------------------------------------------------
