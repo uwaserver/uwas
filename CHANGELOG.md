@@ -131,6 +131,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `.github/dependabot.yml` was added to keep GitHub Actions, Go modules,
   dashboard npm deps, and Docker base images updated — the maintenance basis for
   safely pinning actions/images (INFO-6, VULN-034).
+- **Global rate-limit guidance (Informational, INFO-3):** the example config now
+  documents an opt-in global per-IP `rate_limit` (DoS backstop for unknown
+  domains + the admin API). The capability already existed; the default stays
+  off (matching nginx/Caddy) so operators tune it to their own traffic.
 
 ## [0.8.6] - 2026-06-25
 
