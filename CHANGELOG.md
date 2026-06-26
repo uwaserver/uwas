@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Data race on config reload:** `altSvcHeader` read `config.Global.HTTP3Enabled`
+  /`HTTPSListen` on the request hot path without a lock, racing the reload's
+  `*s.config = *newCfg` (run on every HTTP/1.1+HTTP/2 response during a SIGHUP
+  reload). It now reads under `configMu.RLock`. Covered by a new concurrent
+  reload-while-serving test under `-race`.
+
 ### Security
 
 - **Privilege escalation (Critical):** non-admin users could over-post the

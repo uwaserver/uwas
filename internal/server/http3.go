@@ -38,11 +38,17 @@ func (s *Server) startHTTP3() error {
 // This header is added to HTTP/1.1 and HTTP/2 responses so browsers know
 // they can upgrade to HTTP/3.
 func (s *Server) altSvcHeader() string {
-	if !s.config.Global.HTTP3Enabled || s.h3srv == nil {
+	// Read config under the lock: this runs on the request hot path and reload
+	// rewrites *s.config under configMu (data race otherwise).
+	s.configMu.RLock()
+	enabled := s.config.Global.HTTP3Enabled
+	addr := s.config.Global.HTTPSListen
+	s.configMu.RUnlock()
+
+	if !enabled || s.h3srv == nil {
 		return ""
 	}
 	// Extract port from HTTPS listen address
-	addr := s.config.Global.HTTPSListen
 	port := "443"
 	for i := len(addr) - 1; i >= 0; i-- {
 		if addr[i] == ':' {
