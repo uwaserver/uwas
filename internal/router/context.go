@@ -113,7 +113,9 @@ func generateIDBytes(buf *[16]byte) {
 			return // Leave buffer partially uninitialized — request will still be processed
 		}
 		defer f.Close()
-		io.ReadFull(f, buf[6:])
+		if _, readErr := io.ReadFull(f, buf[6:]); readErr != nil {
+			return // Best-effort; partial randomness still acceptable
+		}
 	}
 	// Set version (7) and variant (RFC 9562)
 	buf[6] = (buf[6] & 0x0F) | 0x70

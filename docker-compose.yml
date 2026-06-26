@@ -7,16 +7,18 @@ services:
       - "9443:9443"
     environment:
       # Admin API key (read by docker/uwas.yaml via ${UWAS_ADMIN_KEY}).
-      # UWAS rejects a publicly-bound admin listener without auth, so a key is
-      # required for the dashboard + container healthcheck to work. Override on
-      # the host or in a .env file; never commit a real key.
-      - UWAS_ADMIN_KEY=${UWAS_ADMIN_KEY:-please-change-this-admin-key}
+      # UWAS rejects a publicly-bound admin listener with no key OR a well-known
+      # placeholder key, so a strong unique value is required. There is no
+      # default on purpose: `docker compose up` fails fast if it is unset.
+      # Set it in a .env file (UWAS_ADMIN_KEY=...) — generate with
+      # `openssl rand -hex 24`; never commit a real key.
+      - UWAS_ADMIN_KEY=${UWAS_ADMIN_KEY:?set UWAS_ADMIN_KEY in your .env (openssl rand -hex 24)}
       # Database connection for backup restore (mysql CLI). Points to the
       # compose `db` service so restore can import SQL dumps over TCP.
       - UWAS_DB_HOST=db
       - UWAS_DB_PORT=3306
       - UWAS_DB_USER=root
-      - UWAS_DB_PASSWORD=${DB_ROOT_PASSWORD:-uwas_root}
+      - UWAS_DB_PASSWORD=${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in your .env}
     volumes:
       - uwas_config:/etc/uwas
       - ./data/www:/var/www
@@ -26,23 +28,39 @@ services:
       - php
       - db
     restart: unless-stopped
+    # Runtime hardening: forbid privilege escalation, drop all Linux
+    # capabilities (re-adding only the one needed to bind :80/:443 as non-root),
+    # and bound process count to limit fork-bomb blast radius.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 512
 
   php:
     image: php:8.3-fpm-alpine
     volumes:
       - ./data/www:/var/www
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
 
   db:
     image: mariadb:11
     environment:
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-uwas_root}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in your .env}
       MARIADB_DATABASE: wordpress
       MARIADB_USER: wordpress
-      MARIADB_PASSWORD: ${DB_PASSWORD:-uwas_wp}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in your .env}
     volumes:
       - db_data:/var/lib/mysql
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
 
 volumes:
   uwas_config:

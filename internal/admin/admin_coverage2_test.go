@@ -85,7 +85,9 @@ func newMockAuthManager() *mockAuthManager {
 
 func (m *mockAuthManager) Authenticate(username, password string) (*auth.Session, error) {
 	u, ok := m.users[username]
-	if !ok || password != "password" {
+	// Accept the legacy fixture password and the policy-compliant strong test
+	// password (handlers now enforce a >=12 char minimum).
+	if !ok || (password != "password" && password != "S3cure-Passw0rd!") {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	sess := &auth.Session{
@@ -165,6 +167,13 @@ func (m *mockAuthManager) CreateUser(username, email, password string, role auth
 	}
 	m.users[username] = u
 	return u, nil
+}
+
+func (m *mockAuthManager) CreateFirstAdmin(username, email, password string) (*auth.User, error) {
+	if len(m.users) != 0 {
+		return nil, fmt.Errorf("bootstrap is already complete")
+	}
+	return m.CreateUser(username, email, password, auth.RoleAdmin, nil)
 }
 
 func (m *mockAuthManager) UpdateUser(username string, updates *auth.User) error {
@@ -531,7 +540,7 @@ func TestAuthBootstrapSuccessThroughMiddleware(t *testing.T) {
 	s.config.Global.Admin.APIKey = ""
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/auth/bootstrap", strings.NewReader(`{"username":"admin","email":"admin@example.com","password":"secret123"}`))
+	req := httptest.NewRequest("POST", "/api/v1/auth/bootstrap", strings.NewReader(`{"username":"admin","email":"admin@example.com","password":"S3cure-Passw0rd!"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
 	s.authMiddleware(s.mux).ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -771,7 +780,7 @@ func TestUserCreateAuthSuccess(t *testing.T) {
 	s.SetAuthManager(newMockAuthManager())
 	s.config.Global.Users.AllowResller = true
 	rec := httptest.NewRecorder()
-	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users", strings.NewReader(`{"username":"newuser","email":"a@b.com","password":"pass","role":"user","domains":["test.com"]}`)))
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users", strings.NewReader(`{"username":"newuser","email":"a@b.com","password":"S3cure-Passw0rd!","role":"user","domains":["test.com"]}`)))
 	req.RemoteAddr = "10.0.0.1:1234"
 	s.handleUserCreateAuth(rec, req)
 	if rec.Code != 201 {
@@ -953,7 +962,7 @@ func TestUserChangePasswordAdmin(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
 	rec := httptest.NewRecorder()
-	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users/reseller/password", strings.NewReader(`{"new_password":"newpass"}`)))
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users/reseller/password", strings.NewReader(`{"new_password":"S3cure-Passw0rd!"}`)))
 	req.SetPathValue("username", "reseller")
 	req.RemoteAddr = "10.0.0.1:1234"
 	s.handleUserChangePasswordAuth(rec, req)
@@ -3038,6 +3047,28 @@ func TestUserCreateBadJSON(t *testing.T) {
 // Helper function tests
 // =============================================================================
 
+// TestMaskYAMLListValue is the regression for VULN-007: list-valued secrets
+// (recovery_codes) must be masked, not leaked verbatim.
+func TestMaskYAMLListValue(t *testing.T) {
+	in := "admin:\n  recovery_codes:\n    - abcd-1234\n    - efgh-5678\n  pin_code: 9999\n"
+	out := maskYAMLListValue(in, "recovery_codes")
+	if strings.Contains(out, "abcd-1234") || strings.Contains(out, "efgh-5678") {
+		t.Fatalf("recovery codes leaked:\n%s", out)
+	}
+	if !strings.Contains(out, `- "********"`) {
+		t.Errorf("expected masked list items:\n%s", out)
+	}
+	// Sibling key after the list must be preserved (list mode exited on dedent).
+	if !strings.Contains(out, "pin_code: 9999") {
+		t.Errorf("sibling key after list was corrupted:\n%s", out)
+	}
+	// Inline value form is masked defensively.
+	inline := maskYAMLListValue("recovery_codes: [a, b]\n", "recovery_codes")
+	if strings.Contains(inline, "[a, b]") {
+		t.Errorf("inline list value leaked: %s", inline)
+	}
+}
+
 func TestMaskSecret(t *testing.T) {
 	tests := []struct {
 		input string
@@ -3596,12 +3627,13 @@ func TestAuthMiddlewareMultiUser(t *testing.T) {
 		t.Errorf("API key auth: status = %d, want 200", rec2.Code)
 	}
 
-	// Token in query string (for SSE)
+	// VULN-022: the legacy `?token=` query fallback was removed; a raw token in
+	// the URL must no longer authenticate. SSE/WS use the `?ticket=` flow.
 	rec3 := httptest.NewRecorder()
 	req3 := httptest.NewRequest("GET", "/api/v1/stats?token="+sess.Token, nil)
 	s.authMiddleware(s.mux).ServeHTTP(rec3, req3)
-	if rec3.Code != 200 {
-		t.Errorf("query token auth: status = %d, want 200", rec3.Code)
+	if rec3.Code != 401 {
+		t.Errorf("query token auth: status = %d, want 401 (fallback removed)", rec3.Code)
 	}
 }
 
@@ -3652,6 +3684,9 @@ func TestAuthMiddleware2FAInvalidCode(t *testing.T) {
 	}
 }
 
+// TestAuthMiddlewareLegacyTokenInQuery is the regression for VULN-022: the
+// legacy `?token=` API-key query fallback was removed, so a key in the URL must
+// be rejected (it would otherwise leak to logs/Referer).
 func TestAuthMiddlewareLegacyTokenInQuery(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{
@@ -3666,8 +3701,8 @@ func TestAuthMiddlewareLegacyTokenInQuery(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/stats?token=testkey", nil)
 	s.authMiddleware(s.mux).ServeHTTP(rec, req)
-	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200", rec.Code)
+	if rec.Code != 401 {
+		t.Errorf("status = %d, want 401 (legacy token fallback removed)", rec.Code)
 	}
 }
 

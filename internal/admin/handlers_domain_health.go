@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -18,6 +19,14 @@ import (
 
 func (s *Server) handleDomainDebug(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
+
+	// Per-domain authorization: this endpoint discloses the domain's absolute
+	// root path, PHP-FPM address/PID, and a web-root directory listing — same
+	// scoping as the sibling health/raw endpoints, else a low-priv user could
+	// map other tenants' filesystems for traversal/LFI follow-ups.
+	if !s.requireDomainAccess(w, r, host, "domain.debug") {
+		return
+	}
 
 	result := map[string]any{"host": host}
 
@@ -174,7 +183,17 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Transport: &http.Transport{DisableKeepAlives: true},
+		// SafeDialControl blocks connects to loopback/link-local/private/metadata
+		// IPs at dial time — without it this admin endpoint is a semi-blind
+		// internal scanner (a domain whose Host is 169.254.169.254 etc.), unlike
+		// the background monitor which already guards this.
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: (&net.Dialer{
+				Timeout: 5 * time.Second,
+				Control: config.SafeDialControl,
+			}).DialContext,
+		},
 	}
 
 	var wg sync.WaitGroup
@@ -193,6 +212,14 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 			if appErr != "" {
 				hr.Status = "down"
 				hr.Error = appErr
+				results[idx] = hr
+				return
+			}
+			// Reject targets that resolve to internal/metadata addresses before
+			// dialing (defense-in-depth alongside SafeDialControl above).
+			if err := config.IsWebhookURLSafe(url); err != nil {
+				hr.Status = "down"
+				hr.Error = "blocked: " + err.Error()
 				results[idx] = hr
 				return
 			}

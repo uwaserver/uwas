@@ -530,10 +530,50 @@ var blockedPHPDirectives = map[string]bool{
 	"cgi.redirect_status_env":         true,
 }
 
+// validPHPINIDirective reports whether key is a syntactically valid php.ini
+// directive name (letters, digits, '.', '_', '-'). Rejecting anything else —
+// notably newlines — stops a crafted key from slipping past the exact-match
+// blocklist below and injecting an extra ini directive.
+func validPHPINIDirective(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r == '.' || r == '_' || r == '-':
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// phpINIValueSafe rejects values containing newlines or other control
+// characters. Without this, an override value such as
+// "128M\ndisable_functions =\nopen_basedir = /" injects fresh ini lines that
+// (by PHP's last-value-wins semantics) clear the UWAS sandbox → RCE.
+func phpINIValueSafe(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // SetDomainConfig sets a per-domain php.ini override with security validation.
 func (m *Manager) SetDomainConfig(domain, key, value string) error {
 	if key == "" {
 		return fmt.Errorf("key is required")
+	}
+	if !validPHPINIDirective(key) {
+		return fmt.Errorf("invalid directive name %q — only letters, digits, '.', '_' and '-' are allowed", key)
+	}
+	if !phpINIValueSafe(value) {
+		return fmt.Errorf("invalid value for %q — newlines and control characters are not allowed", key)
 	}
 
 	// Security: block dangerous directives
@@ -734,7 +774,15 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			lines = append(lines, fmt.Sprintf("%s = %s", k, overrides[k]))
+			v := overrides[k]
+			// Defense-in-depth: never emit an override that could inject extra
+			// ini directives, even if it reached the map by another path
+			// (legacy persisted YAML, direct map mutation, etc.).
+			if !validPHPINIDirective(k) || !phpINIValueSafe(v) {
+				m.logger.Warn("skipping unsafe per-domain PHP override", "domain", domain, "key", k)
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("%s = %s", k, v))
 		}
 	}
 

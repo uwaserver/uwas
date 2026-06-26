@@ -69,6 +69,30 @@ func TestValidateTOTP(t *testing.T) {
 	}
 }
 
+// TestValidateTOTPNoReplay is the regression for VULN-006: a code accepted by a
+// one-time operation must not be replayable within its validity window.
+func TestValidateTOTPNoReplay(t *testing.T) {
+	secret, _ := GenerateTOTPSecret()
+	key, _ := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
+	counter := uint64(time.Now().Unix() / 30)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, counter)
+	mac := hmac.New(sha1.New, key)
+	mac.Write(buf)
+	h := mac.Sum(nil)
+	offset := h[len(h)-1] & 0x0f
+	truncated := binary.BigEndian.Uint32(h[offset:offset+4]) & 0x7fffffff
+	code := fmt.Sprintf("%06d", truncated%uint32(math.Pow10(6)))
+
+	s := &Server{}
+	if !s.validateTOTPNoReplay(secret, code) {
+		t.Fatalf("first use of valid code %s was rejected", code)
+	}
+	if s.validateTOTPNoReplay(secret, code) {
+		t.Fatal("replay of an already-consumed code was accepted")
+	}
+}
+
 func TestTOTPProvisioningURI(t *testing.T) {
 	uri := TOTPProvisioningURI("JBSWY3DPEHPK3PXP", "admin", "UWAS")
 	if uri == "" {

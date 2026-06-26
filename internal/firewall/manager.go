@@ -91,7 +91,9 @@ func parseUFWRule(line string) Rule {
 	}
 
 	numStr := strings.TrimSpace(line[1:closeBracket])
-	fmt.Sscanf(numStr, "%d", &r.Number)
+	if _, err := fmt.Sscanf(numStr, "%d", &r.Number); err != nil {
+		r.Number = 0
+	}
 
 	rest := strings.TrimSpace(line[closeBracket+1:])
 

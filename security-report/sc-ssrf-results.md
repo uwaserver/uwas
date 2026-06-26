@@ -1,44 +1,40 @@
-# SSRF & Path Traversal Scan Report
+# sc-ssrf results
 
-**Scan Date:** 2026-05-01
-**Scanner:** sc-ssrf + sc-path-traversal
-**Status:** Manual verification
+**Summary:** UWAS has strong, centralized SSRF defenses across its outbound HTTP paths (webhooks, notifications, uptime monitor, reverse proxy). One real defense-in-depth gap remains: the on-demand domain health-check endpoint fetches `http(s)://<domain.Host>/` with no loopback/private/metadata guard and no dial-time IP control, unlike every other comparable client in the tree.
 
-## Summary
+---
 
-| Severity | Count |
-|----------|-------|
-| CRITICAL | 0 |
-| HIGH | 1 |
-| MEDIUM | 2 |
-| LOW | 1 |
-| **Total** | **4** |
+## Defenses observed (context)
 
-## HIGH Findings
+UWAS centralizes SSRF policy in `internal/config/validate.go`:
 
-### HIGH-1: Proxy Handler Forwards to Attacker-Controlled Destinations
-- **File:** `internal/handler/proxy/*.go`
+- `SafeDialControl` (validate.go:22) — a `net.Dialer.Control` hook that re-checks the *actual* dial IP, closing the DNS-rebinding TOCTOU window. Wired into the **webhook** client (`internal/webhook/manager.go:264`) and **notify** client (`internal/notify/channels.go:42-47`).
+- `IsWebhookURLSafe` / `IsProxyUpstreamSafe` / `IsPrivateProxyUpstreamSafe` / `IsHostSafe` — pre-flight allow/deny against loopback, private, link-local, cloud-metadata (`169.254.169.254`), documentation and unspecified ranges.
+- Redirect re-validation: webhook (`manager.go`) and notify (`channels.go:32`) `CheckRedirect` re-runs the SSRF check on every hop so a `302 Location: http://169.254.169.254/` cannot be smuggled in.
+- Admin webhook create/test endpoints validate URLs before persistence (`internal/admin/webhook_handlers.go:67,154`).
+- Reverse-proxy / location-proxy upstreams are validated with the proxy policy (`internal/server/server_dispatch.go:295-300`).
+- Background uptime monitor guards each probe (`internal/monitor/monitor.go:123`, `monitorURLSafetyCheck = config.IsWebhookURLSafe`).
+- GeoIP external lookup validates the IP with `net.ParseIP` before concatenating it into the fixed `ip-api.com` URL (`internal/middleware/geoip.go:311`); host is constant.
+- All other outbound clients (Cloudflare API, DNS providers, self-update, cloudflare IP-list) target hardcoded/constant base hosts — not user-controlled.
+
+---
+
+## Findings
+
+### SSRF-001: On-demand domain health check lacks SSRF guard applied to the background monitor
+- **Severity:** Low
+- **Confidence:** 60
+- **File:** internal/admin/handlers_domain_health.go:201 (client built at :172; URL built in `domainHealthURL` :237-245)
 - **CWE:** CWE-918 (Server-Side Request Forgery)
-- **Description:** The reverse proxy handler forwards requests based on domain configuration. If an attacker can modify a domain's proxy upstream (via missing authorization), they can cause the server to make requests to internal services.
-- **Recommendation:** Restrict proxy upstreams to valid IP ranges; block localhost/169.254.0.0/10.0.0.0/8.
+- **Description:** `handleDomainHealth` (route `GET /api/v1/domains/health`, routes.go:63) builds `http(s)://<dom.Host>/` for each configured domain and fetches it with `client.Get(url)`. The client (handlers_domain_health.go:172) has **no** `SafeDialControl` and the code applies **none** of the `IsWebhookURLSafe` / loopback / private / cloud-metadata checks that the otherwise-identical background monitor explicitly added in `internal/monitor/monitor.go:119-126` ("a typo or stale entry (e.g. Host: 169.254.169.254) from turning the monitor into an internal-network scanner").
+- **Why reachable / exploitable:** `config.IsValidHostname` (validate.go:479-498) accepts bare IPv4 literals (`169.254.169.254`) and single labels (`localhost`), so a domain whose `Host` is an internal address passes validation. When that domain exists in config, the health endpoint connects to it and returns per-target `Code` (status), `Ms` (latency) and `Error` — i.e. semi-blind SSRF usable as an internal port/host scanner and to confirm cloud-metadata reachability. `CheckRedirect` returns `ErrUseLastResponse`, so redirects are not followed (limits chaining). Primary actor is an authenticated admin (the endpoint is admin-API-gated); non-admin users are filtered to their assigned domains (`allowedDomains`, lines 119-138), so a reseller can only trigger it for domains whose `Host` an admin assigned to them, narrowing real-world reach. The same `domainHealthURL` is also called for the per-domain health view.
+- **Remediation:** Apply the same guard the monitor uses before the fetch — e.g. `if err := config.IsWebhookURLSafe(url); err != nil { mark down/skip }` — and additionally wire `config.SafeDialControl` into the health client's `Transport.DialContext` (matching webhook/notify) to also defeat DNS rebinding. The `apps://`-derived loopback upstream branch (`appDomainHealthURL`) should remain exempt since it intentionally targets local app listen addresses.
 
-## MEDIUM Findings
+---
 
-### MEDIUM-1: Backup Restore Path Traversal
-- **File:** `internal/admin/api.go`
-- **CWE:** CWE-22 (Path Traversal)
-- **Description:** Already documented in sc-api-security-results.md (CRITICAL-4).
+## Not vulnerable (verified, excluded)
 
-### MEDIUM-2: File Upload Missing Extension Validation
-- **File:** `internal/admin/api.go` (`handleFileUpload`)
-- **CWE:** CWE-434 (Unrestricted Upload of File with Dangerous Type)
-- **Description:** File uploads do not appear to restrict executable file types (.php, .sh) in all contexts.
-- **Recommendation:** Block uploads of executable extensions.
-
-## LOW Findings
-
-### LOW-1: X-Accel-Redirect / X-Sendfile Paths User-Influenced
-- **File:** `internal/handler/fastcgi/*.go`
-- **CWE:** CWE-22
-- **Description:** FastCGI handler sets X-Accel-Redirect based on PHP response headers. If PHP is compromised, this could expose arbitrary files.
-- **Recommendation:** Validate X-Accel-Redirect paths against domain root.
+- `internal/admin/handlers_apps_deploy.go:385` (`probeAppHealth`) — host is hardcoded `127.0.0.1:<def.Port>`; path validated by `validateHealthPath`; intentional loopback probe.
+- `internal/middleware/geoip.go:315` — IP validated, fixed remote host.
+- `internal/selfupdate/updater.go`, `internal/cloudflare/*`, `internal/dnsmanager/*`, `internal/serverip/detect.go` — constant/operator-fixed base hosts; path segments only.
+- Reverse proxy / location proxy — upstreams validated via proxy SSRF policy at dispatch and config time.

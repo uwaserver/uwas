@@ -175,6 +175,49 @@ func TestSetDomainConfig(t *testing.T) {
 	}
 }
 
+// TestSetDomainConfigRejectsInjection is the regression for VULN-002: php.ini
+// directive injection via newlines in the override key or value, which would
+// clear the UWAS-enforced disable_functions/open_basedir sandbox → RCE.
+func TestSetDomainConfigRejectsInjection(t *testing.T) {
+	m := New(testLogger())
+	m.installations = []PHPInstall{{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4"}}
+	m.AssignDomain("blog.com", "8.4")
+
+	cases := []struct{ name, key, value string }{
+		{"newline in value", "memory_limit", "128M\ndisable_functions ="},
+		{"CR in value", "memory_limit", "128M\ropen_basedir = /"},
+		{"NUL in value", "memory_limit", "128M\x00"},
+		{"newline in key", "memory_limit\ndisable_functions", ""},
+		{"space in key", "memory_limit ", "128M"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := m.SetDomainConfig("blog.com", tc.key, tc.value); err == nil {
+				t.Fatalf("expected rejection for %q=%q, got nil", tc.key, tc.value)
+			}
+		})
+	}
+
+	// The injected directive must never have been stored.
+	cfg := m.GetDomainConfig("blog.com")
+	for k := range cfg {
+		if strings.ContainsAny(k, "\n\r") {
+			t.Fatalf("unsafe key persisted: %q", k)
+		}
+	}
+
+	// Built ini must not contain an injected disable_functions-clearing line.
+	ini, err := m.buildDomainINI("blog.com", m.installations[0], map[string]string{
+		"memory_limit": "128M\ndisable_functions =",
+	})
+	if err != nil {
+		t.Fatalf("buildDomainINI: %v", err)
+	}
+	if strings.Contains(ini, "disable_functions =\n") || strings.Count(ini, "disable_functions") > 1 {
+		t.Errorf("buildDomainINI emitted injected directive:\n%s", ini)
+	}
+}
+
 func TestSetDomainConfigNoAssignment(t *testing.T) {
 	m := New(testLogger())
 	err := m.SetDomainConfig("nonexistent.com", "memory_limit", "512M")
