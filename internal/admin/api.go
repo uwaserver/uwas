@@ -147,6 +147,7 @@ type Server struct {
 // AuthManager interface for authentication (implemented by auth.Manager)
 type AuthManager interface {
 	Authenticate(username, password string) (*auth.Session, error)
+	AuthenticateFrom(username, password, clientIP string) (*auth.Session, error)
 	AuthenticateAPIKey(key string) (*auth.User, error)
 	ValidateSession(token string) (*auth.Session, error)
 	Logout(token string)

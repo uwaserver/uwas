@@ -98,6 +98,10 @@ func (m *mockAuthManager) Authenticate(username, password string) (*auth.Session
 	return sess, nil
 }
 
+func (m *mockAuthManager) AuthenticateFrom(username, password, _ string) (*auth.Session, error) {
+	return m.Authenticate(username, password)
+}
+
 func (m *mockAuthManager) AuthenticateAPIKey(key string) (*auth.User, error) {
 	for _, u := range m.users {
 		if u.APIKey == key {

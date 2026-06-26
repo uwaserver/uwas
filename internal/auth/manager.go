@@ -415,17 +415,38 @@ var decoyHash = sync.OnceValue(func() []byte {
 	return h
 })
 
-// Authenticate validates credentials and returns a session.
+// lockoutKey scopes brute-force lockout to (username, IP) so a flood from one
+// IP can't lock a legitimate operator out from another IP (targeted-lockout
+// DoS), while still capping per-source guessing. Distributed (many-IP) brute
+// force is covered by the minimum-password-length policy. An empty IP falls
+// back to a username-only key (callers that don't supply a client IP).
+func lockoutKey(username, clientIP string) string {
+	if clientIP == "" {
+		return username
+	}
+	return username + "|" + clientIP
+}
+
+// Authenticate validates credentials and returns a session. Prefer
+// AuthenticateFrom so brute-force lockout is scoped per (username, IP).
 func (m *Manager) Authenticate(username, password string) (*Session, error) {
-	// Serialize attempts for this username so the lockout check below and the
-	// failure increment after the bcrypt compare are atomic together — without
-	// this, a concurrent burst all passes isLockedOut before any records a
-	// failure, admitting more than maxLoginAttempts tries.
-	gate := m.authGateFor(username)
+	return m.AuthenticateFrom(username, password, "")
+}
+
+// AuthenticateFrom validates credentials, scoping brute-force lockout to the
+// supplied client IP (see lockoutKey).
+func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Session, error) {
+	lockKey := lockoutKey(username, clientIP)
+
+	// Serialize attempts for this (username, IP) so the lockout check below and
+	// the failure increment after the bcrypt compare are atomic together —
+	// without this, a concurrent burst all passes isLockedOut before any records
+	// a failure, admitting more than maxLoginAttempts tries.
+	gate := m.authGateFor(lockKey)
 	gate.Lock()
 	defer gate.Unlock()
 
-	if m.isLockedOut(username) {
+	if m.isLockedOut(lockKey) {
 		return nil, errors.New("too many failed attempts; try again later")
 	}
 
@@ -436,7 +457,7 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 		// Spend the same bcrypt time as the real path to avoid leaking, via
 		// response timing, whether the username exists.
 		_ = bcrypt.CompareHashAndPassword(decoyHash(), []byte(password))
-		m.recordFailedAttempt(username)
+		m.recordFailedAttempt(lockKey)
 		return nil, errors.New("invalid credentials")
 	}
 	// Snapshot fields under the lock to avoid racing with UpdateUser.
@@ -449,16 +470,16 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 	m.mu.RUnlock()
 
 	if !enabled {
-		m.recordFailedAttempt(username)
+		m.recordFailedAttempt(lockKey)
 		return nil, errors.New("user disabled")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
-		m.recordFailedAttempt(username)
+		m.recordFailedAttempt(lockKey)
 		return nil, errors.New("invalid credentials")
 	}
 
-	m.clearFailedAttempts(username)
+	m.clearFailedAttempts(lockKey)
 
 	// Update last login lock-free. The atomic value is preferred by
 	// latestLastLogin and synced back into User.LastLogin by cloneUser and
