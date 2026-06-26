@@ -120,7 +120,22 @@ func (m *mockAuthManager) Logout(token string) {
 }
 
 func (m *mockAuthManager) HasPermission(role auth.Role, perm auth.Permission) bool {
-	return role == auth.RoleAdmin
+	// Mirror auth.rolePermissions so RBAC enforcement is exercised faithfully:
+	// admin = all; reseller = domain CRUD + reads + cert; user = read-only.
+	switch role {
+	case auth.RoleAdmin:
+		return true
+	case auth.RoleReseller:
+		switch perm {
+		case auth.PermDomainRead, auth.PermDomainCreate, auth.PermDomainUpdate,
+			auth.PermDomainDelete, auth.PermUserRead, auth.PermSystemRead, auth.PermCertManage:
+			return true
+		}
+		return false
+	case auth.RoleUser:
+		return perm == auth.PermDomainRead || perm == auth.PermSystemRead
+	}
+	return false
 }
 
 func (m *mockAuthManager) CanManageDomain(user *auth.User, domain string) bool {
@@ -231,6 +246,48 @@ func withResellerContext(r *http.Request) *http.Request {
 		Enabled: true, Domains: []string{"reseller.com"},
 	}
 	return r.WithContext(auth.WithUser(r.Context(), user))
+}
+
+func withUserContext(r *http.Request) *http.Request {
+	user := &auth.User{
+		ID: "user-id", Username: "user", Role: auth.RoleUser,
+		Enabled: true, Domains: []string{"user.com"},
+	}
+	return r.WithContext(auth.WithUser(r.Context(), user))
+}
+
+// TestRequirePermissionRBAC is the regression for VULN-021: the read-only
+// `user` role is denied domain writes while reseller/admin are allowed,
+// honoring the declared auth.rolePermissions model.
+func TestRequirePermissionRBAC(t *testing.T) {
+	s := testServer()
+	s.authMgr = newMockAuthManager()
+
+	writes := []auth.Permission{auth.PermDomainCreate, auth.PermDomainUpdate, auth.PermDomainDelete}
+
+	for _, perm := range writes {
+		// user (read-only) is denied every write permission
+		rec := httptest.NewRecorder()
+		if s.requirePermission(rec, withUserContext(httptest.NewRequest("POST", "/", nil)), perm) {
+			t.Errorf("user role should be denied %s", perm)
+		}
+		// reseller is allowed domain writes
+		rec2 := httptest.NewRecorder()
+		if !s.requirePermission(rec2, withResellerContext(httptest.NewRequest("POST", "/", nil)), perm) {
+			t.Errorf("reseller role should be allowed %s (status=%d)", perm, rec2.Code)
+		}
+		// admin is allowed
+		rec3 := httptest.NewRecorder()
+		if !s.requirePermission(rec3, withAdminContext(httptest.NewRequest("POST", "/", nil)), perm) {
+			t.Errorf("admin role should be allowed %s", perm)
+		}
+	}
+
+	// user CAN still read.
+	rec := httptest.NewRecorder()
+	if !s.requirePermission(rec, withUserContext(httptest.NewRequest("GET", "/", nil)), auth.PermDomainRead) {
+		t.Error("user role should be allowed domain:read")
+	}
 }
 
 // TestStateChangingRoutesRequireAdmin locks in the RBAC fix: these

@@ -117,6 +117,10 @@ func (s *Server) removeDomainFile(host string) {
 }
 
 func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
+	// Role-level check: a read-only `user` role cannot create domains.
+	if !s.requirePermission(w, r, auth.PermDomainCreate) {
+		return
+	}
 	// Check domain permissions for non-admin users
 	if s.authMgr != nil {
 		user, ok := auth.UserFromContext(r.Context())
@@ -431,6 +435,10 @@ func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	// Role-level check: a read-only `user` role cannot delete domains.
+	if !s.requirePermission(w, r, auth.PermDomainDelete) {
+		return
+	}
 	if !s.requirePin(w, r) {
 		return
 	}
@@ -567,6 +575,11 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	host := canonicalDomainHostname(r.PathValue("host"))
 	var currentUser *auth.User
+
+	// Role-level check: a read-only `user` role cannot modify domains.
+	if !s.requirePermission(w, r, auth.PermDomainUpdate) {
+		return
+	}
 
 	// Check domain permissions for non-admin users
 	if s.authMgr != nil {
