@@ -1595,9 +1595,19 @@ export async function terminalWSURL(pin?: string): Promise<string> {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = import.meta.env.DEV ? '127.0.0.1:9443' : window.location.host;
   const params = new URLSearchParams();
+  // Set the PIN globally first so the ticket-mint request (a normal HTTP call)
+  // carries it via the X-Pin-Code header — the server then binds PIN
+  // verification into the ticket, so the PIN never appears in this URL.
+  if (pin) setPinCode(pin);
   const ticket = await obtainTicket();
-  if (ticket) params.set('ticket', ticket);
-  if (pin) params.set('pin', pin);
+  if (ticket) {
+    params.set('ticket', ticket);
+    // PIN is bound into the ticket — do NOT put it in the URL.
+  } else if (pin) {
+    // No-auth mode: without a token there is no ticket to bind the PIN to, so
+    // fall back to the query param (the server accepts ?pin= only in this mode).
+    params.set('pin', pin);
+  }
   const qs = params.toString();
   return `${proto}//${host}/api/v1/terminal${qs ? '?' + qs : ''}`;
 }

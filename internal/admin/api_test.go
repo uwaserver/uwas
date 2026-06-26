@@ -2813,15 +2813,47 @@ func TestAuthTicketIssueAndRedeem(t *testing.T) {
 	}
 
 	// Redeem the ticket
-	token := s.redeemTicket(ticket)
+	token, _ := s.redeemTicket(ticket)
 	if token != "test-token-123" {
 		t.Errorf("redeemed token = %q, want %q", token, "test-token-123")
 	}
 
 	// Second redeem should fail (single-use)
-	token2 := s.redeemTicket(ticket)
+	token2, _ := s.redeemTicket(ticket)
 	if token2 != "" {
 		t.Errorf("second redeem should return empty, got %q", token2)
+	}
+}
+
+// TestRequirePinTicketBound is the regression for VULN-029: a ticket minted
+// with a valid PIN satisfies requirePin without the PIN ever being in the URL,
+// and the raw ?pin= query is rejected once auth is configured.
+func TestRequirePinTicketBound(t *testing.T) {
+	s := testServer()
+	s.config.Global.Admin.PinCode = "1234"
+	s.config.Global.Admin.APIKey = "k" // authenticated mode → ?pin= disallowed
+
+	// Ticket-bound PIN (context flag) passes without any header/query PIN.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/terminal", nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxPinVerified, true))
+	if !s.requirePin(rec, req) {
+		t.Errorf("ticket-bound PIN should satisfy requirePin (status=%d)", rec.Code)
+	}
+
+	// Raw ?pin= in the URL is rejected in authenticated mode.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/api/v1/terminal?pin=1234", nil)
+	if s.requirePin(rec2, req2) {
+		t.Error("?pin= query must be rejected when auth is configured")
+	}
+
+	// Header PIN still works for normal HTTP requests.
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest("GET", "/api/v1/backup", nil)
+	req3.Header.Set("X-Pin-Code", "1234")
+	if !s.requirePin(rec3, req3) {
+		t.Errorf("header PIN should satisfy requirePin (status=%d)", rec3.Code)
 	}
 }
 
@@ -2833,7 +2865,7 @@ func TestAuthTicketExpiry(t *testing.T) {
 		created: time.Now().Add(-60 * time.Second), // 60s ago, well past 30s TTL
 	}
 
-	token := s.redeemTicket("expired-ticket")
+	token, _ := s.redeemTicket("expired-ticket")
 	if token != "" {
 		t.Errorf("expired ticket should return empty, got %q", token)
 	}

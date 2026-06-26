@@ -78,6 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Token in URL removed (Low):** the legacy `?token=` query-param auth fallback
   for SSE/WebSocket was removed (it leaked live tokens/keys to history, Referer,
   and proxy logs); the single-use `?ticket=` flow is now required.
+- **PIN out of WebSocket URL (Low, VULN-029):** the admin PIN is now bound into
+  the single-use ticket at mint time (verified via the `X-Pin-Code` header on
+  the HTTP mint request) and carried through redemption into the request
+  context, so the terminal WebSocket no longer puts the PIN in its URL. `?pin=`
+  is accepted only in the no-auth bypass mode where a ticket can't be minted.
 - **Session TTL honored (Low):** `global.users.session_ttl` was silently ignored
   (lifetime hardcoded to 24h); it is now threaded into the auth manager.
 - **PIN brute-force protection (Low):** failed admin-PIN attempts now feed the
