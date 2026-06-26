@@ -119,10 +119,13 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download release binaries
         uses: actions/download-artifact@v8
         with:
           path: dist
+          # Only the uwas-* binary artifacts — exclude the validate job's
+          # test-output artifact so it isn't attached to the release.
+          pattern: uwas-*
           merge-multiple: true
 
       - name: Upload to release
