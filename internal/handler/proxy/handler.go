@@ -80,6 +80,12 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 	// defaults (system roots, verify peer, SNI from URL.Host).
 	if domain.Proxy.InsecureSkipVerify {
 		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — opt-in via per-domain config
+		// Surface this MITM-exposing opt-in so it can't be enabled silently.
+		// Cached per domain, so this logs once per domain, not per request.
+		if h.logger != nil {
+			h.logger.Warn("proxy upstream TLS verification DISABLED — MITM possible on the UWAS→backend hop",
+				"domain", domain.Host)
+		}
 	}
 
 	actual, _ := h.transports.LoadOrStore(domain.Host, t)
