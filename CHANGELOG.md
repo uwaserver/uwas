@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.7] - 2026-06-27
 
+> Security release. Several defaults are tightened and the multi-user
+> permission model is now enforced — see [UPGRADING.md](UPGRADING.md) before
+> upgrading multi-user or docker-compose deployments.
+
 ### Fixed
 
 - **Data race on config reload:** `altSvcHeader` read `config.Global.HTTP3Enabled`

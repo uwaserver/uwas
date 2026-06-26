@@ -135,6 +135,10 @@ curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/update.sh | sh
 
 Or download from [GitHub Releases](https://github.com/uwaserver/uwas/releases).
 
+> **Upgrading?** Releases that change runtime behavior are documented in
+> [UPGRADING.md](UPGRADING.md). v0.8.7 (security release) tightens several
+> defaults — review it before upgrading multi-user or docker-compose deployments.
+
 ### Build from Source
 
 ```bash
