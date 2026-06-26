@@ -116,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bombs; enabling per-domain `proxy.insecure_skip_verify` now logs a warning;
   and `.dockerignore` excludes `.env*`/`*.key`/`*.pem`/`*.crt` from builder
   layers.
+- **Supply-chain hardening (Informational, INFO-7):** CI tool installs are
+  pinned (`govulncheck@v1.5.0`, `staticcheck@v0.7.0`) instead of `@latest`, and
+  a `.github/dependabot.yml` was added to keep GitHub Actions, Go modules,
+  dashboard npm deps, and Docker base images updated — the maintenance basis for
+  safely pinning actions/images (INFO-6, VULN-034).
 
 ## [0.8.6] - 2026-06-25
 
