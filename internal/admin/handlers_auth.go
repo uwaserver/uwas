@@ -657,7 +657,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := s.authMgr.Authenticate(req.Username, req.Password)
+	session, err := s.authMgr.AuthenticateFrom(req.Username, req.Password, requestIP(r))
 	if err != nil {
 		ip := requestIP(r)
 		s.recordAuthFailure(ip, req.Username)
