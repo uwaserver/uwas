@@ -16,6 +16,32 @@ func newTestManager(t *testing.T) *Manager {
 	return NewManager(t.TempDir(), "test-global-api-key")
 }
 
+// TestLockoutPerUsernameIP is the regression for VULN-026: brute-force lockout
+// is scoped to (username, IP), so a flood from one IP can't lock a legitimate
+// operator out from another IP (targeted-lockout DoS).
+func TestLockoutPerUsernameIP(t *testing.T) {
+	m := newTestManager(t)
+	if _, err := m.CreateUser("victim", "", "S3cure-Passw0rd!", RoleUser, nil); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const ipA, ipB = "10.0.0.1", "10.0.0.2"
+
+	// Exhaust the lockout from ipA with wrong passwords.
+	for i := 0; i < maxLoginAttempts; i++ {
+		if _, err := m.AuthenticateFrom("victim", "wrong", ipA); err == nil {
+			t.Fatalf("attempt %d should fail", i)
+		}
+	}
+	// ipA is now locked out even with the correct password.
+	if _, err := m.AuthenticateFrom("victim", "S3cure-Passw0rd!", ipA); err == nil {
+		t.Error("ipA should be locked out after exhausting attempts")
+	}
+	// ipB is unaffected — the legitimate operator can still log in.
+	if _, err := m.AuthenticateFrom("victim", "S3cure-Passw0rd!", ipB); err != nil {
+		t.Errorf("ipB should not be locked out by ipA's failures: %v", err)
+	}
+}
+
 // TestCreateFirstAdmin is the regression for VULN-027: only one admin can be
 // bootstrapped; a second call must fail rather than create a duplicate admin.
 func TestCreateFirstAdmin(t *testing.T) {
