@@ -25,11 +25,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Pin tool versions (not @latest) for reproducible CI; Dependabot
+      # (.github/dependabot.yml) proposes bumps.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
 
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
 
       - name: Lint (go vet + staticcheck)
         run: |
