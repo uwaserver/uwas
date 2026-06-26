@@ -1,0 +1,33 @@
+version: 2
+# Keeps pinned dependencies fresh so version/SHA pinning is safe rather than a
+# source of frozen-vulnerable deps. Covers CI actions, Go modules, the
+# dashboard's npm deps, and the Docker base images.
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      go-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/web/dashboard"
+    schedule:
+      interval: weekly
+    groups:
+      dashboard-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
