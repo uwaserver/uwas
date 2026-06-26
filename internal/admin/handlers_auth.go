@@ -18,10 +18,18 @@ import (
 )
 
 type authTicket struct {
-	token     string    // the real session token or API key
-	created   time.Time // when the ticket was issued
-	expiresAt time.Time // when the ticket expires
+	token       string    // the real session token or API key
+	created     time.Time // when the ticket was issued
+	expiresAt   time.Time // when the ticket expires
+	pinVerified bool      // a valid admin PIN was presented when the ticket was minted
 }
+
+// adminCtxKey is the private context-key type for admin-middleware values.
+type adminCtxKey int
+
+// ctxPinVerified marks a request whose single-use ticket was minted with a
+// valid admin PIN — lets requirePin pass without the PIN traveling in the URL.
+const ctxPinVerified adminCtxKey = iota
 
 // handleAuthTicket issues a short-lived, single-use ticket that can be passed
 // as a query parameter for SSE/WebSocket connections. This avoids putting the
@@ -67,29 +75,51 @@ func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
 			delete(s.tickets, k)
 		}
 	}
-	s.tickets[ticket] = &authTicket{token: realToken, created: now, expiresAt: now.Add(ticketTTL)}
+	// Bind PIN verification into the ticket: if the (header-authenticated)
+	// mint request carried a valid PIN, the redeemed ticket satisfies requirePin
+	// so the PIN never has to travel in the WebSocket URL.
+	s.tickets[ticket] = &authTicket{
+		token:       realToken,
+		created:     now,
+		expiresAt:   now.Add(ticketTTL),
+		pinVerified: s.pinSatisfied(r),
+	}
 	s.ticketMu.Unlock()
 
 	jsonResponse(w, map[string]any{"ticket": ticket, "expires_at": now.Add(ticketTTL)})
 }
 
-// redeemTicket exchanges a single-use ticket for the real auth token.
-// Returns empty string if the ticket is invalid or expired.
-// Uses atomic delete — single-use: once redeemed, the ticket is deleted.
-func (s *Server) redeemTicket(ticket string) string {
+// pinSatisfied reports whether the request carries a valid admin PIN via the
+// X-Pin-Code header (or no PIN is configured). Used to bind PIN verification
+// into a ticket at mint time.
+func (s *Server) pinSatisfied(r *http.Request) bool {
+	s.configMu.RLock()
+	pin := s.config.Global.Admin.PinCode
+	s.configMu.RUnlock()
+	if pin == "" {
+		return true
+	}
+	provided := r.Header.Get("X-Pin-Code")
+	return provided != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(pin)) == 1
+}
+
+// redeemTicket exchanges a single-use ticket for the real auth token. Returns
+// the token ("" if invalid/expired) and whether the ticket was minted with a
+// valid admin PIN. Uses atomic delete — single-use: once redeemed, deleted.
+func (s *Server) redeemTicket(ticket string) (string, bool) {
 	s.ticketMu.Lock()
 	defer s.ticketMu.Unlock()
 	t, ok := s.tickets[ticket]
 	if !ok {
-		return ""
+		return "", false
 	}
 	if time.Now().After(t.expiresAt) {
 		delete(s.tickets, ticket)
-		return ""
+		return "", false
 	}
-	// Single-use: delete now so it cannot be redeemed again, then return the token.
+	// Single-use: delete now so it cannot be redeemed again, then return.
 	delete(s.tickets, ticket)
-	return t.token
+	return t.token, t.pinVerified
 }
 
 func (s *Server) requireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {
@@ -527,10 +557,18 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 	s.configMu.RLock()
 	pin := s.config.Global.Admin.PinCode
+	apiKey := s.config.Global.Admin.APIKey
+	multiUser := s.config.Global.Users.Enabled
 	s.configMu.RUnlock()
 
 	if pin == "" {
 		return true // no pin configured, allow
+	}
+
+	// A single-use ticket minted with a valid PIN satisfies the PIN without it
+	// ever appearing in the WebSocket URL (VULN-029).
+	if v, ok := r.Context().Value(ctxPinVerified).(bool); ok && v {
+		return true
 	}
 
 	// Brute-force protection: a short numeric PIN must not be guessable. Block
@@ -544,8 +582,11 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	provided := r.Header.Get("X-Pin-Code")
-	// WebSocket connections can't set headers — also check query param
-	if provided == "" {
+	// The PIN in a `?pin=` query param leaks to history/Referer/logs, so it is
+	// accepted ONLY in the no-auth bypass mode (no api_key, no multi-user) where
+	// a WebSocket cannot obtain a PIN-bound ticket. Every authenticated
+	// deployment must use the X-Pin-Code header or a PIN-bound ticket.
+	if provided == "" && apiKey == "" && !multiUser {
 		provided = r.URL.Query().Get("pin")
 	}
 	if provided == "" {

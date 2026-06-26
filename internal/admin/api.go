@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -379,6 +380,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		var authenticated bool
 		var user *auth.User
+		var ticketPinVerified bool
 
 		// Try multi-user auth first if enabled
 		if multiUserEnabled && s.authMgr != nil {
@@ -407,7 +409,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			// Check ticket query param for SSE/WebSocket (short-lived, single-use).
 			if !authenticated {
 				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					if realToken := s.redeemTicket(ticket); realToken != "" {
+					realToken, pinOK := s.redeemTicket(ticket)
+					if realToken != "" {
 						// Try as session token first
 						if session, err := s.authMgr.ValidateSession(realToken); err == nil {
 							if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
@@ -424,6 +427,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 						}
 					}
 					if authenticated {
+						ticketPinVerified = pinOK
 						q := r.URL.Query()
 						q.Del("ticket")
 						r.URL.RawQuery = q.Encode()
@@ -442,8 +446,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			// Check ticket query param first (preferred), then legacy token param
 			if authHeader == "" {
 				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					if realToken := s.redeemTicket(ticket); realToken != "" {
+					if realToken, pinOK := s.redeemTicket(ticket); realToken != "" {
 						authHeader = "Bearer " + realToken
+						ticketPinVerified = pinOK
 					}
 				}
 			}
@@ -467,6 +472,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		// Store user in context for handlers to access
 		ctx := auth.WithUser(r.Context(), user)
+		if ticketPinVerified {
+			ctx = context.WithValue(ctx, ctxPinVerified, true)
+		}
 		r = r.WithContext(ctx)
 
 		// 2FA check for legacy auth: if TOTP is enabled, require valid code.
