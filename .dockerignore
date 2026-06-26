@@ -17,3 +17,13 @@ docs/site/dist/
 security-report/
 tmp/
 *.log
+
+# Secrets — never copy into builder layers (defense-in-depth; the final image
+# copies only the binary + entrypoint + docker/uwas.yaml).
+.env
+.env.*
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
