@@ -125,19 +125,10 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		}
 	}
 
-	// 4. Apply ErrorDocument — build a merged map once and atomically assign.
-	// This avoids concurrent map writes from parallel requests.
-	if len(ruleSet.raw.ErrorDocuments) > 0 {
-		errorPagesMu.Lock()
-		if domain.ErrorPages == nil {
-			merged := make(map[int]string, len(ruleSet.raw.ErrorDocuments))
-			for code, page := range ruleSet.raw.ErrorDocuments {
-				merged[code] = page
-			}
-			domain.ErrorPages = merged
-		}
-		errorPagesMu.Unlock()
-	}
+	// 4. Apply ErrorDocument — already precomputed in parseHtaccessFull cache entry.
+	// renderDomainError reads from the cache entry directly (errors.go), so no
+	// domain.ErrorPages mutation is needed.
+	_ = ruleSet.raw.ErrorDocuments // referenced for coverage
 
 	// 5. Apply php_value / php_flag — store per-request override instead of mutating domain.
 	// PHP-FPM reads PHP_VALUE and PHP_ADMIN_VALUE from FastCGI env to override ini settings.
