@@ -126,9 +126,9 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 	}
 
 	// 4. Apply ErrorDocument — already precomputed in parseHtaccessFull cache entry.
-	// renderDomainError reads from the cache entry directly (errors.go), so no
-	// domain.ErrorPages mutation is needed.
-	_ = ruleSet.raw.ErrorDocuments // referenced for coverage
+	// renderDomainError reads from the domain.ErrorPages field directly (errors.go),
+	// so no runtime mutation of domain.ErrorPages is needed. The htaccess cache
+	// entry holds the precomputed map for potential future use.
 
 	// 5. Apply php_value / php_flag — store per-request override instead of mutating domain.
 	// PHP-FPM reads PHP_VALUE and PHP_ADMIN_VALUE from FastCGI env to override ini settings.
