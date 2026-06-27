@@ -22,6 +22,7 @@ type HealthChecker struct {
 	mu        sync.Mutex
 	failures  map[*Backend]int
 	successes map[*Backend]int
+	cancel    context.CancelFunc // cancels the derived context that stops the background goroutine
 }
 
 // HealthConfig configures health checking.
@@ -65,14 +66,26 @@ func NewHealthChecker(pool *UpstreamPool, cfg HealthConfig, log *logger.Logger) 
 }
 
 // Start begins periodic health checking.
+// The parent ctx controls the goroutine lifetime; call Stop() to cancel
+// it early (e.g. on config reload). Safe to call multiple times — subsequent
+// calls are no-ops until the previous goroutine exits.
 func (hc *HealthChecker) Start(ctx context.Context) {
+	hc.mu.Lock()
+	if hc.cancel != nil {
+		hc.mu.Unlock()
+		return // already running
+	}
+	derivedCtx, cancel := context.WithCancel(ctx)
+	hc.cancel = cancel
+	hc.mu.Unlock()
+
 	go func() {
 		ticker := time.NewTicker(hc.interval)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-derivedCtx.Done():
 				return
 			case <-ticker.C:
 				hc.checkAll()
@@ -81,10 +94,15 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 	}()
 }
 
-// Stop signals the health checker to stop.
+// Stop cancels the background goroutine and resets internal maps.
+// Safe to call multiple times; subsequent calls are no-ops.
 func (hc *HealthChecker) Stop() {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
+	if hc.cancel != nil {
+		hc.cancel()
+		hc.cancel = nil
+	}
 	// Reset failure/success maps to prevent memory leak
 	hc.failures = make(map[*Backend]int)
 	hc.successes = make(map[*Backend]int)
