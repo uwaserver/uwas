@@ -170,6 +170,9 @@ func (m *Manager) runPHP(binary string, args ...string) (string, error) {
 		done <- cmd.Wait()
 	}()
 
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -178,7 +181,7 @@ func (m *Manager) runPHP(binary string, args ...string) (string, error) {
 			}
 			return "", err
 		}
-	case <-time.After(3 * time.Second):
+	case <-timer.C:
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}

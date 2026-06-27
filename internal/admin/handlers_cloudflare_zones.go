@@ -206,7 +206,10 @@ func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Reque
 		DryRun      bool     `json:"dry_run"`   // preview only — don't persist
 		Hostnames   []string `json:"hostnames"` // optional whitelist; if set, only these are imported
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	if req.DefaultType == "" {
 		req.DefaultType = "static"
 	}

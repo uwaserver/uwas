@@ -75,5 +75,9 @@ func writeError(w http.ResponseWriter, code int, msg string, cause error) {
 	if reqID != "" {
 		body["request_id"] = reqID
 	}
-	_ = json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		if l := pkgLogger.Load(); l != nil {
+			l.Debug("json error response encode failed", "error", err, "request_id", reqID)
+		}
+	}
 }
