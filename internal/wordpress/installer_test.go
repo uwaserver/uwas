@@ -194,8 +194,14 @@ func TestSanitizeDBNameMaxLength(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGenerateSecret(t *testing.T) {
-	s1 := generateSecret(16)
-	s2 := generateSecret(16)
+	s1, err := generateSecret(16)
+	if err != nil {
+		t.Fatalf("generateSecret(16): %v", err)
+	}
+	s2, err := generateSecret(16)
+	if err != nil {
+		t.Fatalf("generateSecret(16): %v", err)
+	}
 	if len(s1) != 16 {
 		t.Errorf("length = %d, want 16", len(s1))
 	}
@@ -203,7 +209,10 @@ func TestGenerateSecret(t *testing.T) {
 		t.Error("secrets should be different")
 	}
 	// Larger length
-	s3 := generateSecret(32)
+	s3, err := generateSecret(32)
+	if err != nil {
+		t.Fatalf("generateSecret(32): %v", err)
+	}
 	if len(s3) != 32 {
 		t.Errorf("length = %d, want 32", len(s3))
 	}

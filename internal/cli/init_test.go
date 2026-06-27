@@ -270,20 +270,26 @@ func TestEnsureDefaultConfigIdempotent(t *testing.T) {
 }
 
 func TestGenerateAPIKey(t *testing.T) {
-	key := generateAPIKey()
+	key, err := generateAPIKey()
+	if err != nil {
+		t.Fatalf("generateAPIKey: %v", err)
+	}
 
 	if len(key) != 32 {
 		t.Errorf("key length = %d, want 32", len(key))
 	}
 
 	// Should be valid hex.
-	_, err := hex.DecodeString(key)
+	_, err = hex.DecodeString(key)
 	if err != nil {
 		t.Errorf("key should be valid hex: %v", err)
 	}
 
 	// Two calls should produce different keys.
-	key2 := generateAPIKey()
+	key2, err := generateAPIKey()
+	if err != nil {
+		t.Fatalf("generateAPIKey: %v", err)
+	}
 	if key == key2 {
 		t.Error("two keys should be different")
 	}

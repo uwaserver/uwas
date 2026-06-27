@@ -63,22 +63,22 @@ func findConfig(explicit string) (string, bool) {
 }
 
 // generateAPIKey creates a random 32-char hex API key.
-func generatePinCode() string {
+func generatePinCode() (string, error) {
 	b := make([]byte, 3)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("generate pin code: %w", err)
 	}
 	// 6-digit numeric pin
 	n := int(b[0])<<16 | int(b[1])<<8 | int(b[2])
-	return fmt.Sprintf("%06d", n%1000000)
+	return fmt.Sprintf("%06d", n%1000000), nil
 }
 
-func generateAPIKey() string {
+func generateAPIKey() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("generate api key: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // ensureDefaultConfig creates the default config directory and file if they
@@ -107,8 +107,14 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 	}
 
 	// Generate config with provided ports
-	apiKey := generateAPIKey()
-	pinCode := generatePinCode()
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("ensure default config: %w", err)
+	}
+	pinCode, err := generatePinCode()
+	if err != nil {
+		return "", fmt.Errorf("ensure default config: %w", err)
+	}
 
 	configContent := generateDefaultConfig(httpPort, adminPort, adminBind, apiKey, pinCode, dir, webRoot, acmeEmail)
 
@@ -122,7 +128,11 @@ func ensureDefaultConfig(httpPort, adminPort, adminBind, webRoot, acmeEmail stri
 
 	// Write .env file
 	envPath := filepath.Join(dir, ".env")
-	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, generateAPIKey())
+	purgeKey, err := generateAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("ensure default config: %w", err)
+	}
+	envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, purgeKey)
 	os.WriteFile(envPath, []byte(envContent), 0600)
 
 	fmt.Printf("\n  %s Created default configuration\n", colorize("*", "green"))
