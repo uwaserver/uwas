@@ -379,10 +379,12 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 	for attempt := 0; attempt < 3 && len(pending) > 0; attempt++ {
 		if attempt > 0 {
 			m.logger.Info("retrying failed certificates", "count", len(pending), "attempt", attempt+1)
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-time.After(backoff):
+			case <-timer.C:
 			}
 			backoff *= 2
 		}
@@ -641,10 +643,12 @@ func (m *Manager) StartRenewal(ctx context.Context) {
 		if initDelay == 0 {
 			initDelay = 1 * time.Minute
 		}
+		initTimer := time.NewTimer(initDelay)
 		select {
 		case <-ctx.Done():
+			initTimer.Stop()
 			return
-		case <-time.After(initDelay):
+		case <-initTimer.C:
 		}
 
 		interval := m.renewalInterval
