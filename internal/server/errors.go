@@ -5,15 +5,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/uwaserver/uwas/internal/config"
 )
-
-// errorPagesMu guards the lazily-populated domain.ErrorPages map, which is
-// written from the htaccess apply path and read here — both on request
-// goroutines for a shared *config.Domain.
-var errorPagesMu sync.RWMutex
 
 var defaultErrorTitles = map[int]string{
 	400: "Bad Request",
@@ -26,21 +20,20 @@ var defaultErrorTitles = map[int]string{
 }
 
 // renderDomainError serves a custom error page if configured, otherwise the default styled page.
+// ErrorPages is set from YAML config at load time and is immutable at runtime (the old htaccess
+// path that mutated domain.ErrorPages has been removed — error pages now live in the htaccess
+// cache entry only). No locking is needed since config reloads atomically swap the entire config.
 func renderDomainError(w http.ResponseWriter, code int, domain *config.Domain) {
-	if domain != nil {
-		errorPagesMu.RLock()
-		pagePath, ok := "", false
+	if domain != nil && domain.Root != "" {
 		if domain.ErrorPages != nil {
-			pagePath, ok = domain.ErrorPages[code]
-		}
-		errorPagesMu.RUnlock()
-		if ok && domain.Root != "" {
-			fullPath := filepath.Join(domain.Root, pagePath)
-			if data, err := os.ReadFile(fullPath); err == nil {
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.WriteHeader(code)
-				w.Write(data)
-				return
+			if pagePath, ok := domain.ErrorPages[code]; ok {
+				fullPath := filepath.Join(domain.Root, pagePath)
+				if data, err := os.ReadFile(fullPath); err == nil {
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.WriteHeader(code)
+					w.Write(data)
+					return
+				}
 			}
 		}
 	}
