@@ -1136,7 +1136,10 @@ func TestDomainToUsernameTruncation(t *testing.T) {
 func TestGeneratePasswordUniqueness(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		p := generatePassword()
+		p, err := generatePassword()
+		if err != nil {
+			t.Fatalf("generatePassword: %v", err)
+		}
 		if len(p) == 0 {
 			t.Fatal("generatePassword returned empty string")
 		}
@@ -1148,7 +1151,10 @@ func TestGeneratePasswordUniqueness(t *testing.T) {
 }
 
 func TestGeneratePasswordLength(t *testing.T) {
-	p := generatePassword()
+	p, err := generatePassword()
+	if err != nil {
+		t.Fatalf("generatePassword: %v", err)
+	}
 	if len(p) != 24 {
 		t.Errorf("expected password length 24, got %d", len(p))
 	}

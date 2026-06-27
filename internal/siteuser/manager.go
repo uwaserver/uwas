@@ -72,7 +72,10 @@ func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	}
 
 	// Generate password
-	password := generatePassword()
+	password, err := generatePassword()
+	if err != nil {
+		return nil, "", fmt.Errorf("create user %s: %w", hostname, err)
+	}
 
 	// Create system user:
 	// - home dir = domain dir (for chroot)
@@ -204,12 +207,12 @@ func domainToUsername(hostname string) string {
 	return name
 }
 
-func generatePassword() string {
+func generatePassword() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("generate password: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func userExists(username string) bool {

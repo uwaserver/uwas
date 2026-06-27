@@ -265,7 +265,11 @@ func DockerDBListDatabases(containerName string) ([]DBInfo, error) {
 // DockerDBCreateDatabase creates a database inside a Docker container.
 func DockerDBCreateDatabase(containerName, dbName, user, password string) (*CreateResult, error) {
 	if password == "" {
-		password = generateDBPassword()
+		var pwErr error
+		password, pwErr = generateDBPassword()
+		if pwErr != nil {
+			return nil, fmt.Errorf("docker create database: %w", pwErr)
+		}
 	}
 	if user == "" {
 		user = dbName

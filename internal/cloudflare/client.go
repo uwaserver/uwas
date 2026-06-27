@@ -96,10 +96,14 @@ type Tunnel struct {
 // CreateTunnel creates a locally-managed tunnel and returns its UUID + name.
 // configSrc must be "cloudflare" (we manage ingress via API).
 func (c *Client) CreateTunnel(name string) (*Tunnel, error) {
+	secret, err := randomTunnelSecret()
+	if err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"name":          name,
 		"config_src":    "cloudflare",
-		"tunnel_secret": randomTunnelSecret(),
+		"tunnel_secret": secret,
 	}
 	raw, err := c.do("POST", "/accounts/"+c.accountID+"/cfd_tunnel", body)
 	if err != nil {

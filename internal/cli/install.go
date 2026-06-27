@@ -137,8 +137,14 @@ func installUWAS(args []string) error {
 			// System install defaults: bind admin to loopback only, /var/www web root,
 			// /var/lib/uwas for cert/cache/backup storage. Operators who want public
 			// admin access can flip global.admin.listen by hand or via dashboard.
-			apiKey := generateAPIKey()
-			pinCode := generatePinCode()
+			apiKey, err := generateAPIKey()
+			if err != nil {
+				return fmt.Errorf("install: %w", err)
+			}
+			pinCode, err := generatePinCode()
+			if err != nil {
+				return fmt.Errorf("install: %w", err)
+			}
 			content := generateDefaultConfig(
 				"80", "9443", "127.0.0.1",
 				apiKey, pinCode,
@@ -149,7 +155,11 @@ func installUWAS(args []string) error {
 			if err := installOsWriteFile(cfgPath, []byte(content), 0600); err != nil {
 				return fmt.Errorf("write %s: %w", cfgPath, err)
 			}
-			envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, generateAPIKey())
+			purgeKey, err := generateAPIKey()
+			if err != nil {
+				return fmt.Errorf("install: %w", err)
+			}
+			envContent := fmt.Sprintf("UWAS_ADMIN_KEY=%s\nUWAS_PURGE_KEY=%s\n", apiKey, purgeKey)
 			_ = installOsWriteFile(envPath, []byte(envContent), 0600)
 			fmt.Printf("  ✓ Baseline config: %s\n", cfgPath)
 		} else {

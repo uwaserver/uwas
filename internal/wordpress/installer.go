@@ -95,7 +95,12 @@ func Install(req InstallRequest) InstallResult {
 		req.DBUser = req.DBName
 	}
 	if req.DBPass == "" {
-		req.DBPass = generateSecret(16)
+		var genErr error
+		req.DBPass, genErr = generateSecret(16)
+		if genErr != nil {
+			result.Error = genErr.Error()
+			return result
+		}
 	}
 	if req.SiteTitle == "" {
 		req.SiteTitle = req.Domain
@@ -347,7 +352,11 @@ func generateWPConfig(webRoot, dbName, dbUser, dbPass, dbHost string) error {
 		"AUTH_SALT", "SECURE_AUTH_SALT", "LOGGED_IN_SALT", "NONCE_SALT",
 	}
 	for i := range salts {
-		salts[i] = fmt.Sprintf("define('%s', '%s');", saltKeys[i], generateSecret(32))
+		secret, err := generateSecret(32)
+		if err != nil {
+			return err
+		}
+		salts[i] = fmt.Sprintf("define('%s', '%s');", saltKeys[i], secret)
 	}
 
 	config := fmt.Sprintf(`<?php
@@ -424,12 +433,12 @@ func sanitizeDBName(domain string) string {
 	return "wp_" + name
 }
 
-func generateSecret(length int) string {
+func generateSecret(length int) (string, error) {
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("generate secret: %w", err)
 	}
-	return hex.EncodeToString(b)[:length]
+	return hex.EncodeToString(b)[:length], nil
 }
 
 // ensurePHPExtensions installs MySQL and other WordPress-required PHP extensions.

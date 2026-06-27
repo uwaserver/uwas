@@ -287,8 +287,14 @@ func TestNew_Defaults(t *testing.T) {
 // --- secret.go -------------------------------------------------------------
 
 func TestRandomTunnelSecret(t *testing.T) {
-	a := randomTunnelSecret()
-	b := randomTunnelSecret()
+	a, err := randomTunnelSecret()
+	if err != nil {
+		t.Fatalf("randomTunnelSecret: %v", err)
+	}
+	b, err := randomTunnelSecret()
+	if err != nil {
+		t.Fatalf("randomTunnelSecret: %v", err)
+	}
 	if a == "" || a == b {
 		t.Fatalf("expected unique non-empty secrets, got %q / %q", a, b)
 	}

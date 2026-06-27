@@ -1094,8 +1094,14 @@ func TestInstallMySQL_NoPackageManager(t *testing.T) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 func TestGenerateDBPassword(t *testing.T) {
-	p1 := generateDBPassword()
-	p2 := generateDBPassword()
+	p1, err := generateDBPassword()
+	if err != nil {
+		t.Fatalf("generateDBPassword: %v", err)
+	}
+	p2, err := generateDBPassword()
+	if err != nil {
+		t.Fatalf("generateDBPassword: %v", err)
+	}
 
 	if len(p1) != 32 {
 		t.Errorf("expected 32-char hex password, got %d chars: %q", len(p1), p1)

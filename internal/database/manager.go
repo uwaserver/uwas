@@ -480,7 +480,11 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 		return nil, fmt.Errorf("invalid username: only letters, digits, underscore, hyphen allowed (max 64 chars)")
 	}
 	if password == "" {
-		password = generateDBPassword()
+		var err error
+		password, err = generateDBPassword()
+		if err != nil {
+			return nil, fmt.Errorf("create database %q: %w", name, err)
+		}
 	}
 	if host == "" {
 		host = "localhost"
@@ -562,7 +566,11 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 		return nil, fmt.Errorf("invalid database name")
 	}
 	if password == "" {
-		password = generateDBPassword()
+		var pwErr error
+		password, pwErr = generateDBPassword()
+		if pwErr != nil {
+			return nil, fmt.Errorf("create remote user: %w", pwErr)
+		}
 	}
 
 	configPath, err := setBindAddressAllInterfaces()
@@ -850,12 +858,12 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 	return "", fmt.Errorf("neither mariadb nor mysql client found")
 }
 
-func generateDBPassword() string {
+func generateDBPassword() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("generate db password: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func backtick(name string) string {
