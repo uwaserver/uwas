@@ -9,6 +9,15 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
+const maxConcurrentWrites = 16 // max concurrent L2/L3 write goroutines
+
+// cacheWrite represents an async write to an L2/L3 backend.
+type cacheWrite struct {
+	key  string
+	resp *CachedResponse
+	ttl  time.Duration // zero for disk (no TTL)
+}
+
 // Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
 	memory      *MemoryCache
@@ -16,14 +25,16 @@ type Engine struct {
 	redis       *RedisCache
 	logger      *logger.Logger
 	VaryHeaders []string // additional headers to include in cache key (from config)
+	writeSem    chan struct{} // bounds concurrent L2/L3 writes
 }
 
 // NewEngine creates a cache engine with memory and optional disk backing.
 // The ctx parameter controls the lifetime of background cleanup goroutines.
 func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimit int64, log *logger.Logger) *Engine {
 	e := &Engine{
-		memory: NewMemoryCache(memoryLimit),
-		logger: log,
+		memory:   NewMemoryCache(memoryLimit),
+		logger:   log,
+		writeSem: make(chan struct{}, maxConcurrentWrites),
 	}
 
 	if diskPath != "" {
@@ -67,7 +78,14 @@ func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
 			if resp.IsFresh() || resp.IsStale() {
 				e.memory.Set(key, resp) // promote
 				if e.disk != nil {
-					go e.disk.Set(key, resp) // also promote to disk
+					select {
+					case e.writeSem <- struct{}{}:
+						go func() {
+							defer func() { <-e.writeSem }()
+							_ = e.disk.Set(key, resp) // also promote to disk
+						}()
+					default:
+					}
 				}
 				if resp.IsFresh() {
 					return resp, StatusHit
@@ -91,22 +109,33 @@ func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
 	key := GenerateKey(r, e.varyKeys())
 	e.memory.Set(key, resp)
 
-	// Async disk write
+	// Async disk write (bounded by writeSem — drops on overload)
 	if e.disk != nil {
-		go func() {
-			if err := e.disk.Set(key, resp); err != nil {
-				e.logger.Warn("disk cache write failed", "key", key, "error", err)
-			}
-		}()
+		select {
+		case e.writeSem <- struct{}{}:
+			go func() {
+				defer func() { <-e.writeSem }()
+				if err := e.disk.Set(key, resp); err != nil {
+					e.logger.Warn("disk cache write failed", "key", key, "error", err)
+				}
+			}()
+		default:
+			// L1 write already succeeded; dropping L2 is acceptable
+		}
 	}
 
-	// Async Redis write
+	// Async Redis write (bounded by writeSem)
 	if e.redis != nil {
-		go func() {
-			if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
-				e.logger.Warn("redis cache write failed", "key", key, "error", err)
-			}
-		}()
+		select {
+		case e.writeSem <- struct{}{}:
+			go func() {
+				defer func() { <-e.writeSem }()
+				if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
+					e.logger.Warn("redis cache write failed", "key", key, "error", err)
+				}
+			}()
+		default:
+		}
 	}
 }
 
@@ -147,18 +176,28 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 	e.memory.Set(key, resp)
 	if e.disk != nil {
-		go func() {
-			if err := e.disk.Set(key, resp); err != nil {
-				e.logger.Warn("disk cache write failed", "key", key, "error", err)
-			}
-		}()
+		select {
+		case e.writeSem <- struct{}{}:
+			go func() {
+				defer func() { <-e.writeSem }()
+				if err := e.disk.Set(key, resp); err != nil {
+					e.logger.Warn("disk cache write failed", "key", key, "error", err)
+				}
+			}()
+		default:
+		}
 	}
 	if e.redis != nil {
-		go func() {
-			if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
-				e.logger.Warn("redis cache write failed", "key", key, "error", err)
-			}
-		}()
+		select {
+		case e.writeSem <- struct{}{}:
+			go func() {
+				defer func() { <-e.writeSem }()
+				if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
+					e.logger.Warn("redis cache write failed", "key", key, "error", err)
+				}
+			}()
+		default:
+		}
 	}
 }
 
