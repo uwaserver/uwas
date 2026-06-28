@@ -1192,8 +1192,11 @@ func (s *Server) FetchFragment(host, path string, parentReq *http.Request) ([]by
 	s.dispatchHandler(ctx, domain)
 
 	result := rec.Result()
-	body, _ := io.ReadAll(result.Body)
+	body, readErr := io.ReadAll(result.Body)
 	result.Body.Close()
+	if readErr != nil {
+		return nil, 0, nil, fmt.Errorf("ESI: read body: %w", readErr)
+	}
 	return body, result.StatusCode, result.Header, nil
 }
 
