@@ -182,7 +182,10 @@ func Update(downloadURL string) error {
 		if err == nil {
 			defer shaResp.Body.Close()
 			if shaResp.StatusCode == 200 {
-				expectedBytes, _ := io.ReadAll(io.LimitReader(shaResp.Body, 128))
+				expectedBytes, readErr := io.ReadAll(io.LimitReader(shaResp.Body, 128))
+				if readErr != nil {
+					return fmt.Errorf("read checksum: %w", readErr)
+				}
 				expected := strings.TrimSpace(string(expectedBytes))
 
 				// A checksum was published, so verify it and fail closed on any

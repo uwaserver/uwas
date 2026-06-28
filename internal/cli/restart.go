@@ -59,8 +59,11 @@ func (r *RestartCommand) Run(args []string) error {
 	healthData, err := apiRequest("GET", *apiURL+"/api/v1/health", *apiKey, nil)
 	if err == nil {
 		var health map[string]any
-		json.Unmarshal(healthData, &health)
-		fmt.Printf("Current server status: %s (uptime: %s)\n", health["status"], health["uptime"])
+		if json.Unmarshal(healthData, &health) == nil {
+			status, _ := health["status"].(string)
+			uptime, _ := health["uptime"].(string)
+			fmt.Printf("Current server status: %s (uptime: %s)\n", status, uptime)
+		}
 	}
 
 	// Read PID from file
