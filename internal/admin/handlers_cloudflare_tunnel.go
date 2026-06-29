@@ -39,6 +39,11 @@ func (s *Server) tunnelToView(t cloudflareTunnel) tunnelView {
 }
 
 func (s *Server) handleCloudflareTunnels(w http.ResponseWriter, r *http.Request) {
+	// Tunnel inventory includes local targets, process IDs, and account-wide
+	// routing topology; keep it admin-only unless a scoped view is added later.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	cloudflareMu.RLock()
 	cfg := cloudflareConfig
 	cloudflareMu.RUnlock()
@@ -355,6 +360,11 @@ func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Reque
 // handleCloudflareTunnelLogs returns the last ~64 lines from the tunnel's
 // cloudflared process. Useful for debugging connection issues from the UI.
 func (s *Server) handleCloudflareTunnelLogs(w http.ResponseWriter, r *http.Request) {
+	// cloudflared logs can disclose internal hostnames, local service targets,
+	// tunnel IDs, and operational diagnostics for the whole account.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if _, ok := s.findTunnel(id); !ok {
 		jsonError(w, "tunnel not found", http.StatusNotFound)

@@ -89,6 +89,38 @@ func TestSensitiveSettingsEndpointsRequireAdmin(t *testing.T) {
 }
 
 // TestGetDomainNotFound2 tests getting a non-existent domain.
+func TestSensitiveReadEndpointsRequireAdmin(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"notify_prefs_get", "/api/v1/settings/notifications"},
+		{"webhooks_get", "/api/v1/webhooks"},
+		{"tasks_list", "/api/v1/tasks"},
+		{"tasks_get", "/api/v1/tasks/task-1"},
+		{"cloudflare_status", "/api/v1/cloudflare/status"},
+		{"cloudflare_tunnels", "/api/v1/cloudflare/tunnels"},
+		{"cloudflare_tunnel_logs", "/api/v1/cloudflare/tunnels/tunnel-1/logs"},
+		{"cloudflare_zones", "/api/v1/cloudflare/zones"},
+		{"doctor", "/api/v1/doctor"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testServer()
+			req := httptest.NewRequest("GET", tc.path, nil)
+			req = req.WithContext(auth.WithUser(req.Context(), &auth.User{
+				ID: "u1", Username: "regular", Role: auth.RoleUser, Enabled: true,
+			}))
+			rec := httptest.NewRecorder()
+			// Dispatch via the inner mux directly to skip testMux's auto-admin shim.
+			s.mux.(*testMux).mux.ServeHTTP(rec, req)
+			if rec.Code != 403 {
+				t.Errorf("non-admin read of %s returned %d, want 403", tc.path, rec.Code)
+			}
+		})
+	}
+}
+
 func TestGetDomainNotFound2(t *testing.T) {
 	s := testServer()
 

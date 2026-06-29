@@ -1604,9 +1604,7 @@ export async function terminalWSURL(pin?: string): Promise<string> {
     params.set('ticket', ticket);
     // PIN is bound into the ticket — do NOT put it in the URL.
   } else if (pin) {
-    // No-auth mode: without a token there is no ticket to bind the PIN to, so
-    // fall back to the query param (the server accepts ?pin= only in this mode).
-    params.set('pin', pin);
+    throw new Error('Could not create a terminal access ticket; refusing to put the PIN in the WebSocket URL.');
   }
   const qs = params.toString();
   return `${proto}//${host}/api/v1/terminal${qs ? '?' + qs : ''}`;

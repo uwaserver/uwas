@@ -254,7 +254,7 @@ func TestGrpD_HandleFeatures(t *testing.T) {
 func TestGrpD_HandleCloudflareStatusNotConnected(t *testing.T) {
 	grpDResetCloudflare(t)
 	s := testServer()
-	rec := grpDDo(s.handleCloudflareStatus, grpDReq("GET", "/cf/status", nil))
+	rec := grpDDo(s.handleCloudflareStatus, withAdminContext(grpDReq("GET", "/cf/status", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -274,7 +274,7 @@ func TestGrpD_HandleCloudflareStatusConnected(t *testing.T) {
 	}
 	cloudflareMu.Unlock()
 	s := testServer()
-	rec := grpDDo(s.handleCloudflareStatus, grpDReq("GET", "/cf/status", nil))
+	rec := grpDDo(s.handleCloudflareStatus, withAdminContext(grpDReq("GET", "/cf/status", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -519,7 +519,7 @@ func TestGrpD_HandleCloudflareTunnelStopNotFound(t *testing.T) {
 func TestGrpD_HandleCloudflareTunnelLogsNotFound(t *testing.T) {
 	grpDResetCloudflare(t)
 	s := testServer()
-	r := grpDReq("GET", "/cf/tunnels/missing/logs", nil)
+	r := withAdminContext(grpDReq("GET", "/cf/tunnels/missing/logs", nil))
 	r.SetPathValue("id", "missing")
 	rec := grpDDo(s.handleCloudflareTunnelLogs, r)
 	if rec.Code != http.StatusNotFound {
@@ -536,7 +536,7 @@ func TestGrpD_HandleCloudflareTunnelLogsRunnerNil(t *testing.T) {
 	}
 	cloudflareMu.Unlock()
 	s := testServer() // cfRunner is nil
-	r := grpDReq("GET", "/cf/tunnels/t1/logs", nil)
+	r := withAdminContext(grpDReq("GET", "/cf/tunnels/t1/logs", nil))
 	r.SetPathValue("id", "t1")
 	rec := grpDDo(s.handleCloudflareTunnelLogs, r)
 	if rec.Code != http.StatusOK {
@@ -596,7 +596,7 @@ func TestGrpD_HandleCloudflareCachePurgeInvalidJSON(t *testing.T) {
 func TestGrpD_HandleCloudflareZonesNotConnected(t *testing.T) {
 	grpDResetCloudflare(t)
 	s := testServer()
-	rec := grpDDo(s.handleCloudflareZones, grpDReq("GET", "/cf/zones", nil))
+	rec := grpDDo(s.handleCloudflareZones, withAdminContext(grpDReq("GET", "/cf/zones", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
