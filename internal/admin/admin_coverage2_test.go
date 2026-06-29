@@ -1434,7 +1434,7 @@ func TestCronExecuteSuccess(t *testing.T) {
 func TestWebhookListEmpty(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleWebhookList(rec, httptest.NewRequest("GET", "/api/v1/webhooks", nil))
+	s.handleWebhookList(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/webhooks", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -1694,7 +1694,7 @@ func TestDoctorHandler(t *testing.T) {
 
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handleDoctor(rec, httptest.NewRequest("GET", "/api/v1/doctor", nil))
+	s.handleDoctor(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/doctor", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}

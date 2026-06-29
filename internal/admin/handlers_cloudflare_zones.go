@@ -12,6 +12,11 @@ import (
 )
 
 func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request) {
+	// The stored Cloudflare token can enumerate every zone on the account, so the
+	// result is global provider metadata rather than per-domain tenant data.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	cloudflareMu.RLock()
 	cfg := cloudflareConfig
 	cloudflareMu.RUnlock()

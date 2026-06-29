@@ -969,6 +969,11 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 // --- Task API handlers ---
 
 func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
+	// Install task output is global system command output and may contain paths,
+	// package names, repository details, or command diagnostics.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	tasks := s.taskMgr.List()
 	if tasks == nil {
 		tasks = []install.Task{}
@@ -985,6 +990,10 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTaskGet(w http.ResponseWriter, r *http.Request) {
+	// Individual task records include the same global command output as the list.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	task := s.taskMgr.Get(id)
 	if task == nil {

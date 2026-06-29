@@ -14,6 +14,11 @@ import (
 // --- Webhook Handlers ---
 
 func (s *Server) handleWebhookList(w http.ResponseWriter, r *http.Request) {
+	// Outbound webhook destinations, headers, and retry policy expose global
+	// infrastructure details even when individual secrets are masked.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	webhooks := s.config.Global.Webhooks
 	s.configMu.RUnlock()

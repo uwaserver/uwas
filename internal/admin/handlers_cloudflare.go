@@ -55,6 +55,11 @@ var (
 )
 
 func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) {
+	// Connected account identity, token mask, and tunnel counts are global
+	// provider state and should not leak to non-admin tenants.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	cloudflareMu.RLock()
 	cfg := cloudflareConfig
 	cloudflareMu.RUnlock()

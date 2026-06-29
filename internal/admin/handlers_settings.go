@@ -96,6 +96,11 @@ func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 // ── Notification Preferences ───────────────────────────────────────
 
 func (s *Server) handleNotifyPrefsGet(w http.ResponseWriter, r *http.Request) {
+	// Global notification destinations and webhook URLs are system-wide
+	// operational metadata, not domain-scoped tenant data.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	prefs := map[string]any{
 		"alerting": s.config.Global.Alerting,

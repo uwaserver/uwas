@@ -205,6 +205,11 @@ func (s *Server) handleSecurityBlocked(w http.ResponseWriter, r *http.Request) {
 // ── Doctor ─────────────────────────────────────────────────
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	// The full doctor report includes config paths, web roots, installed
+	// components, and remediation details for the entire host.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	webRoot := s.config.Global.WebRoot
 	s.configMu.RUnlock()
