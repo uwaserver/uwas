@@ -128,6 +128,10 @@ jobs:
           pattern: uwas-*
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          (cd dist && sha256sum uwas-* > SHA256SUMS)
+
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

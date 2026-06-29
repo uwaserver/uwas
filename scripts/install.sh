@@ -19,6 +19,33 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 
+verify_release_checksum() {
+  local asset_file=$1
+  local asset_name=$2
+  local checksum_file=$3
+  local checksum_base asset_dir expected actual
+  checksum_base=$(basename "$checksum_file")
+  asset_dir=$(dirname "$asset_file")
+
+  if ! awk -v name="$asset_name" '$2 == name { found=1 } END { exit found ? 0 : 1 }' "$checksum_file"; then
+    fail "Checksum for $asset_name not found in SHA256SUMS"
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    if ! (cd "$asset_dir" && awk -v name="$asset_name" '$2 == name { print; found=1 } END { if (!found) exit 1 }' "$checksum_base" | sha256sum -c - >/dev/null); then
+      fail "Checksum verification failed for $asset_name"
+    fi
+  elif command -v shasum >/dev/null 2>&1; then
+    expected=$(awk -v name="$asset_name" '$2 == name { print $1; exit }' "$checksum_file")
+    actual=$(shasum -a 256 "$asset_file" | awk '{ print $1 }')
+    if [[ -z "$expected" || "$expected" != "$actual" ]]; then
+      fail "Checksum verification failed for $asset_name"
+    fi
+  else
+    fail "Checksum verification requires sha256sum or shasum"
+  fi
+}
+
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║     UWAS — Unified Web Application Server     ║${NC}"
@@ -60,10 +87,19 @@ LATEST=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep 
 ok "Latest version: $LATEST"
 
 DOWNLOAD_URL="https://github.com/$REPO/releases/download/$LATEST/$ASSET"
+CHECKSUM_URL="https://github.com/$REPO/releases/download/$LATEST/SHA256SUMS"
 info "Downloading $ASSET..."
-TMP=$(mktemp)
-curl -fsSL -o "$TMP" "$DOWNLOAD_URL" || fail "Download failed: $DOWNLOAD_URL"
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT HUP INT TERM
+TMP="$TMPDIR/$ASSET"
+curl -fsSL -o "$TMP" "$DOWNLOAD_URL" || { rm -rf "$TMPDIR"; fail "Download failed: $DOWNLOAD_URL"; }
 ok "Downloaded $(du -h "$TMP" | cut -f1)"
+
+info "Downloading SHA256SUMS..."
+curl -fsSL -o "$TMPDIR/SHA256SUMS" "$CHECKSUM_URL" || { rm -rf "$TMPDIR"; fail "Checksum download failed: $CHECKSUM_URL"; }
+info "Verifying checksum..."
+verify_release_checksum "$TMP" "$ASSET" "$TMPDIR/SHA256SUMS"
+ok "Checksum verified"
 
 # ── Stop existing service ───────────────────────────────
 
@@ -78,6 +114,7 @@ fi
 # ── Install binary ──────────────────────────────────────
 
 mv "$TMP" "$BIN"
+rm -rf "$TMPDIR"
 chmod 755 "$BIN"
 ok "Binary installed: $BIN"
 
