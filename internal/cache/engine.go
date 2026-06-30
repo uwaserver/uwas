@@ -11,13 +11,6 @@ import (
 
 const maxConcurrentWrites = 16 // max concurrent L2/L3 write goroutines
 
-// cacheWrite represents an async write to an L2/L3 backend.
-type cacheWrite struct {
-	key  string
-	resp *CachedResponse
-	ttl  time.Duration // zero for disk (no TTL)
-}
-
 // Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
 	memory      *MemoryCache
