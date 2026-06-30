@@ -5,7 +5,7 @@
 - **Name**: UWAS (Unified Web Application Server)
 - **Pronunciation**: "you-wass"
 - **Tagline**: One binary to serve them all
-- **Language**: Go (1.23+)
+- **Language**: Go (1.26.4+)
 - **License**: Apache 2.0
 - **Distribution**: Single static binary, Docker image, apt/yum repo
 - **Dependencies**: Minimal — stdlib-first, proven libs where stdlib falls short

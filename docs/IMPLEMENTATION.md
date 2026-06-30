@@ -14,7 +14,7 @@ mkdir uwas && cd uwas
 go mod init github.com/uwaserver/uwas
 ```
 
-**Go version**: 1.23+ (generics, slog, improved TLS)
+**Go version**: 1.26.4+ (matches `go.mod`; generics, slog, improved TLS)
 
 **Build command**:
 ```bash
