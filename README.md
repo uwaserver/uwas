@@ -24,16 +24,22 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.6.42)
+## Current Snapshot (v0.8.7 + current main)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`)
-- **Admin API routes:** 254 (route registrations under `/api/v1` in `internal/admin/routes.go` + analytics hooks)
-- **Go packages:** 57 (from `go list ./...`)
+- **Admin API routes:** 251 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
+- **Go packages:** 55 (from `go list ./... | grep -v '/node_modules/'`)
 - **CLI commands:** 19
-- **Test status:** `go test ./...` passing (parallel)
-- **70 security/stability fixes + 14 hot-path perf wins** since v0.4.0 (see [CHANGELOG](CHANGELOG.md))
+- **Test status:** targeted post-fix validation is passing; CI runs `go test`, `go test -race`, `go vet`, `staticcheck`, `govulncheck`, shellcheck, installer tests, Docker Compose validation, and dashboard/site builds
+- **Security/stability fixes:** v0.8.7 plus current main include tightened multi-user authorization, admin metadata endpoint gates, release checksum verification, goroutine/timer leak fixes, bounded cache writes, and checked parser/crypto/I/O errors (see [CHANGELOG](CHANGELOG.md))
 
-**v0.6.x highlights (standalone apps + hard legacy cutover):**
+**v0.8.x highlights (security hardening + release integrity):**
+- Multi-user authorization is enforced more consistently across domain, DNS, notification, webhook, Cloudflare, task, and doctor/admin metadata endpoints
+- Release assets now publish `SHA256SUMS`, and installer/update scripts verify the selected binary before execution or installation
+- Admin/API hardening includes stricter public-listener admin key validation, stronger default password policy, safer dashboard terminal auth, and tighter file/config access controls
+- Runtime stability fixes cover proxy health checker shutdown, bounded cache write concurrency, timer cleanup, and checked parser/crypto/I/O errors
+
+**Recent app/platform highlights:**
 - Apps are first-class objects under `/etc/uwas/apps.d/<name>.yaml`
 - Domains expose apps with reverse proxy upstreams such as `apps://my-api`
 - Domains use a dedicated Add Redirect flow for `www.<domain>` redirects,
