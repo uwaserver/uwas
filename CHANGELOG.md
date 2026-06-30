@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Release workflow now publishes `SHA256SUMS` alongside release binaries, and
+  install/update scripts verify the selected asset checksum before execution or
+  installation.
+
+### Changed
+
+- README and implementation/specification docs now describe the v0.8.7/current
+  main state, including current dashboard/API/package counts and the Go 1.26.4+
+  source requirement.
+
+### Fixed
+
+- Admin metadata/read endpoints now consistently require admin access for
+  global notification preferences, webhooks, task details/output, Cloudflare
+  status/zones/tunnels/logs, and doctor reports.
+- Dashboard terminal WebSocket URLs no longer fall back to embedding the PIN in
+  the query string, avoiding exposure through logs, browser history, or proxy
+  telemetry.
+- Cache, proxy, PHP, TLS, restart, parser, crypto, and I/O paths received
+  stability hardening: bounded cache writes, health checker shutdown, timer
+  cleanup, checked `crypto/rand.Read`, checked numeric parsing, checked
+  `io.ReadAll`, safer restart handling, and `.htaccess` nil-guard coverage.
+
 ## [0.8.7] - 2026-06-27
 
 > Security release. Several defaults are tightened and the multi-user
