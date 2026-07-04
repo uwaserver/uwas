@@ -3,7 +3,7 @@ module github.com/uwaserver/uwas
 go 1.26.4
 
 require (
-	github.com/andybalholm/brotli v1.2.1
+	github.com/andybalholm/brotli v1.2.2
 	github.com/quic-go/quic-go v0.60.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sync v0.21.0
