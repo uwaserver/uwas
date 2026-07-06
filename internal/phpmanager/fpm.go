@@ -18,22 +18,34 @@ import (
 // StartFPM starts a php-cgi process listening on the given address (e.g. "127.0.0.1:9000").
 // It uses `php-cgi -b <addr>` as a lightweight FastCGI server.
 func (m *Manager) StartFPM(version, listenAddr string) error {
-	if _, loaded := m.processes.Load(version); loaded {
+	// Atomically reserve the version slot up-front. Load-then-Store had a TOCTOU:
+	// two concurrent StartFPM calls for the same version both passed the Load
+	// check and both spawned, leaking one untracked process. The placeholder is
+	// replaced by the real processInfo on success and released on any failure.
+	if _, loaded := m.processes.LoadOrStore(version, &processInfo{listenAddr: listenAddr}); loaded {
 		return fmt.Errorf("PHP %s is already running", version)
 	}
+	release := func() { m.processes.Delete(version) }
 
 	inst, ok := m.findInstall(version)
 	if !ok {
+		release()
 		return fmt.Errorf("PHP %s not found", version)
 	}
 	if inst.SAPI != "cgi-fcgi" && inst.SAPI != "fpm-fcgi" {
+		release()
 		return fmt.Errorf("PHP %s binary %s is %s, not cgi-fcgi — install php-cgi or php-fpm", version, inst.Binary, inst.SAPI)
 	}
 
-	// If php-fpm binary exists, prefer it (proper process manager)
+	// If php-fpm binary exists, prefer it (proper process manager). On success
+	// startFPMDaemon replaces the reservation with the real process entry.
 	fpmBinary := strings.Replace(inst.Binary, "php-cgi", "php-fpm", 1)
 	if inst.SAPI == "fpm-fcgi" || fileExists(fpmBinary) {
-		return m.startFPMDaemon(version, fpmBinary, listenAddr)
+		if err := m.startFPMDaemon(version, fpmBinary, listenAddr); err != nil {
+			release()
+			return err
+		}
+		return nil
 	}
 
 	cmd := m.execCommand(inst.Binary, "-b", listenAddr)
@@ -47,6 +59,7 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	cmd.Stderr = m.logger.Writer(8) // slog.LevelError
 
 	if err := cmd.Start(); err != nil {
+		release()
 		return fmt.Errorf("start php-cgi: %w", err)
 	}
 

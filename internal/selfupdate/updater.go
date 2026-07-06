@@ -176,33 +176,43 @@ func Update(downloadURL string) error {
 	}
 	tmp.Close()
 
-	// Verify SHA256 checksum if available (backward compatible — missing checksum file is not an error)
-	if checksumURL := downloadURL + ".sha256"; isTrustedDownloadURL(checksumURL) {
-		shaResp, err := httpClientFn(30 * time.Second).Get(checksumURL)
-		if err == nil {
-			defer shaResp.Body.Close()
-			if shaResp.StatusCode == 200 {
-				expectedBytes, readErr := io.ReadAll(io.LimitReader(shaResp.Body, 128))
-				if readErr != nil {
-					return fmt.Errorf("read checksum: %w", readErr)
-				}
-				expected := strings.TrimSpace(string(expectedBytes))
+	// Verify against the release SHA256SUMS file. The release pipeline publishes
+	// a single `SHA256SUMS` (coreutils `sha256sum` output: "<hex>  <name>" per
+	// line), not a per-asset `<name>.sha256` — fetching the latter always 404'd,
+	// so verification was silently skipped and every self-update went unchecked.
+	// Older releases without SHA256SUMS are still allowed (backward compatible),
+	// but when it is present we fail closed on any error or mismatch.
+	if idx := strings.LastIndex(downloadURL, "/"); idx >= 0 {
+		sumsURL := downloadURL[:idx+1] + "SHA256SUMS"
+		assetName := downloadURL[idx+1:]
+		if isTrustedDownloadURL(sumsURL) {
+			shaResp, err := httpClientFn(30 * time.Second).Get(sumsURL)
+			if err == nil {
+				defer shaResp.Body.Close()
+				if shaResp.StatusCode == 200 {
+					sumsData, readErr := io.ReadAll(io.LimitReader(shaResp.Body, 1<<16))
+					if readErr != nil {
+						return fmt.Errorf("read checksums: %w", readErr)
+					}
+					expected := checksumForAsset(string(sumsData), assetName)
+					if expected == "" {
+						return fmt.Errorf("no checksum for %s in SHA256SUMS", assetName)
+					}
 
-				// A checksum was published, so verify it and fail closed on any
-				// error — don't silently install an unverified binary.
-				f, err := os.Open(tmp.Name())
-				if err != nil {
-					return fmt.Errorf("open downloaded binary for checksum: %w", err)
-				}
-				h := sha256.New()
-				if _, err := io.Copy(h, f); err != nil {
+					f, err := os.Open(tmp.Name())
+					if err != nil {
+						return fmt.Errorf("open downloaded binary for checksum: %w", err)
+					}
+					h := sha256.New()
+					if _, err := io.Copy(h, f); err != nil {
+						f.Close()
+						return fmt.Errorf("hash downloaded binary: %w", err)
+					}
 					f.Close()
-					return fmt.Errorf("hash downloaded binary: %w", err)
-				}
-				f.Close()
-				actual := hex.EncodeToString(h.Sum(nil))
-				if !strings.EqualFold(expected, actual) {
-					return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+					actual := hex.EncodeToString(h.Sum(nil))
+					if !strings.EqualFold(expected, actual) {
+						return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+					}
 				}
 			}
 		}
@@ -229,6 +239,26 @@ func Update(downloadURL string) error {
 
 	osRemoveFn(backup)
 	return nil
+}
+
+// checksumForAsset returns the hex SHA-256 for asset from coreutils sha256sum
+// output ("<hex>  <name>" per line), or "" if the asset is not listed. It
+// tolerates the "*" binary-mode marker and any path prefix on the name.
+func checksumForAsset(sums, asset string) string {
+	for _, line := range strings.Split(sums, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		name := strings.TrimPrefix(fields[1], "*")
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+		if name == asset {
+			return fields[0]
+		}
+	}
+	return ""
 }
 
 // RestartSelf replaces the current process with a fresh exec of the same binary.

@@ -167,6 +167,29 @@ max_execution_time = 30
 	}
 }
 
+// TestUpdateINIPrefixKeyNotClobbered is the regression for the unbounded
+// comment-prefix match: setting opcache.enable must touch that directive, not
+// the unrelated ;opcache.enable_cli line that shares its prefix.
+func TestUpdateINIPrefixKeyNotClobbered(t *testing.T) {
+	dir := t.TempDir()
+	ini := filepath.Join(dir, "php.ini")
+	content := ";opcache.enable_cli = 1\n;opcache.enable = 0\n"
+	os.WriteFile(ini, []byte(content), 0644)
+
+	if err := updateINI(ini, "opcache.enable", "1"); err != nil {
+		t.Fatalf("updateINI: %v", err)
+	}
+	data, _ := os.ReadFile(ini)
+	got := string(data)
+	if !strings.Contains(got, "opcache.enable = 1") {
+		t.Errorf("opcache.enable directive not set:\n%s", got)
+	}
+	// The _cli line must be left intact (still commented, still 1).
+	if !strings.Contains(got, ";opcache.enable_cli = 1") {
+		t.Errorf("opcache.enable_cli was clobbered:\n%s", got)
+	}
+}
+
 func TestManagerNewAndInstallations(t *testing.T) {
 	m := New(testLogger())
 	if m == nil {

@@ -16,13 +16,14 @@ import (
 )
 
 // binaryHandler returns an http.HandlerFunc that serves binaryContent for normal
-// requests and the SHA256 hex digest for .sha256 requests.
+// requests and a coreutils-format SHA256SUMS listing for SHA256SUMS requests.
+// The download asset basename used by the Update tests is "download".
 func binaryHandler(binaryContent []byte) http.HandlerFunc {
 	hash := sha256.Sum256(binaryContent)
 	hashHex := hex.EncodeToString(hash[:])
 	return func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".sha256") {
-			io.WriteString(w, hashHex)
+		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
+			io.WriteString(w, hashHex+"  download\n")
 			return
 		}
 		w.Write(binaryContent)
@@ -812,8 +813,8 @@ func TestUpdate_ChecksumMismatch(t *testing.T) {
 	evalSymlinksFn = func(p string) (string, error) { return p, nil }
 
 	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".sha256") {
-			io.WriteString(w, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
+			io.WriteString(w, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  download\n")
 			return
 		}
 		w.Write([]byte("new-binary-content"))
@@ -848,9 +849,9 @@ func TestUpdate_ChecksumMatchesExplicit(t *testing.T) {
 	sum := sha256.Sum256(content)
 	hexSum := hex.EncodeToString(sum[:])
 	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".sha256") {
-			// Include surrounding whitespace + filename suffix to exercise TrimSpace.
-			io.WriteString(w, "  "+hexSum+"  ")
+		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
+			// Multiple entries + a "*" binary-mode marker exercise the parser.
+			io.WriteString(w, "aaaa  uwas-other\n"+hexSum+"  *download\n")
 			return
 		}
 		w.Write(content)
@@ -876,9 +877,9 @@ func TestUpdate_ChecksumNon200_Skipped(t *testing.T) {
 	osExecutableFn = func() (string, error) { return exePath, nil }
 	evalSymlinksFn = func(p string) (string, error) { return p, nil }
 
-	// .sha256 returns 404 -> checksum verification is skipped, update succeeds.
+	// SHA256SUMS returns 404 (old release) -> verification is skipped, succeeds.
 	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".sha256") {
+		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
 			w.WriteHeader(404)
 			return
 		}
@@ -891,6 +892,37 @@ func TestUpdate_ChecksumNon200_Skipped(t *testing.T) {
 	got, _ := os.ReadFile(exePath)
 	if string(got) != "no-checksum-binary" {
 		t.Errorf("binary = %q, want no-checksum-binary", got)
+	}
+}
+
+// TestUpdate_ChecksumAssetMissing_FailsClosed is the regression for the
+// SHA256SUMS switch: when the checksums file is present but does not list the
+// downloaded asset, the update must fail closed rather than install unverified.
+func TestUpdate_ChecksumAssetMissing_FailsClosed(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
+			io.WriteString(w, "aaaa  uwas-some-other-asset\n") // download not listed
+			return
+		}
+		w.Write([]byte("new-binary-content"))
+	})
+
+	err := Update(srv.URL + "/download")
+	if err == nil || !strings.Contains(err.Error(), "no checksum for") {
+		t.Fatalf("expected fail-closed 'no checksum for' error, got %v", err)
+	}
+	if got, _ := os.ReadFile(exePath); string(got) != "old" {
+		t.Errorf("binary replaced despite missing checksum: %q", got)
 	}
 }
 

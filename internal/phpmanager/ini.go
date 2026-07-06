@@ -143,13 +143,9 @@ func updateINI(path, key, value string) error {
 	lines := strings.Split(string(data), "\n")
 	found := false
 	newLine := key + " = " + value
-	prefix := key + " "
-	prefixEq := key + "="
-	commentPrefix := ";" + key
 
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, prefix) || strings.HasPrefix(trimmed, prefixEq) || strings.HasPrefix(trimmed, commentPrefix) {
+		if iniLineSetsKey(strings.TrimSpace(line), key) {
 			lines[i] = newLine
 			found = true
 			break
@@ -160,6 +156,19 @@ func updateINI(path, key, value string) error {
 	}
 
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+}
+
+// iniLineSetsKey reports whether a trimmed php.ini line assigns key (whether
+// active or commented out). It requires the key to be followed by an "="
+// (allowing whitespace) so setting "opcache.enable" does not clobber an
+// unrelated ";opcache.enable_cli = 1" line — the old prefix match did.
+func iniLineSetsKey(trimmed, key string) bool {
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, ";"))
+	if !strings.HasPrefix(rest, key) {
+		return false
+	}
+	after := strings.TrimLeft(rest[len(key):], " \t")
+	return strings.HasPrefix(after, "=")
 }
 
 // GetExtensions returns the list of enabled extensions for the given version.

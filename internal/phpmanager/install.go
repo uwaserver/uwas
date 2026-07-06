@@ -101,13 +101,21 @@ func GetInstallInfo(phpVersion string) InstallInfo {
 		info.Notes = "The ondrej/php PPA provides latest PHP versions for Ubuntu/Debian."
 
 	case "centos", "rhel", "rocky", "alma":
+		// RunInstall executes commands without a shell (strings.Fields), so
+		// `$(rpm -E %{rhel})` was never expanded — and its internal spaces even
+		// split the URL across args, so the remi-release install always failed.
+		// Substitute the RHEL major version from os-release's VERSION_ID instead.
+		rhelMajor := d.Version
+		if i := strings.IndexByte(rhelMajor, '.'); i >= 0 {
+			rhelMajor = rhelMajor[:i]
+		}
 		info.Packages = []string{
 			fmt.Sprintf("php%s-php-cgi", strings.Replace(short, ".", "", 1)),
 			fmt.Sprintf("php%s-php-fpm", strings.Replace(short, ".", "", 1)),
 		}
 		info.Commands = []string{
 			"dnf install -y epel-release",
-			"dnf install -y https://rpms.remirepo.net/enterprise/remi-release-$(rpm -E %{rhel}).rpm",
+			fmt.Sprintf("dnf install -y https://rpms.remirepo.net/enterprise/remi-release-%s.rpm", rhelMajor),
 			fmt.Sprintf("dnf module enable -y php:remi-%s", short),
 			fmt.Sprintf("dnf install -y php%s-php-cgi php%s-php-fpm php%s-php-mysqlnd php%s-php-gd php%s-php-mbstring",
 				strings.Replace(short, ".", "", 1), strings.Replace(short, ".", "", 1),
