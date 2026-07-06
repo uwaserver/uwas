@@ -1,4 +1,10 @@
 # sc-docker — Docker Security Scan Results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** UWAS's Dockerfile is well-hardened (multi-stage, non-root USER, minimal `cap_net_bind_service`, healthcheck, COPY-not-ADD, exec-form ENTRYPOINT), but the default `docker-compose.yml` ships weak/guessable default credentials (admin API key and DB root password) and publishes the full admin control panel on all interfaces, and the compose services lack runtime hardening (no `no-new-privileges`, `cap_drop`, `read_only`, or resource limits).
 

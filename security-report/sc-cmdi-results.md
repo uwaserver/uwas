@@ -1,4 +1,10 @@
 # sc-cmdi — OS Command Injection scan results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** No credible OS command-injection vulnerabilities found. UWAS executes external
 binaries in ~57 sites; every reachable shell path is either array-form (no shell), guarded by

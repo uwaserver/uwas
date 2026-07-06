@@ -1,4 +1,10 @@
 # sc-cors results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: One CORS/origin-validation weakness found — `isAllowedOrigin` uses prefix matching for localhost/127.0.0.1, letting attacker-controlled hostnames (e.g. `localhost.evil.com`) pass origin validation. Impact is bounded because the admin API never emits `Access-Control-Allow-Credentials` and uses header-based (not cookie) auth.
 

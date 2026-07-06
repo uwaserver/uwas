@@ -1,4 +1,10 @@
 # sc-clickjacking results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: Public-facing sites are protected by a global `X-Frame-Options: SAMEORIGIN` middleware and the JSON API sets `X-Frame-Options: DENY`, but the embedded admin dashboard HTML (the SPA shell served at `/_uwas/dashboard/`) is served with no frame-protection header at all. Exploitability is limited because dashboard auth is a `sessionStorage` Bearer token (no ambient cookie authority), so this is a defense-in-depth gap rather than a directly exploitable clickjacking flaw.
 

@@ -1,4 +1,10 @@
 # sc-open-redirect results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** No credible open-redirect (CWE-601) vulnerabilities found. All HTTP redirect destinations are either admin-controlled configuration values or built from a request Host that has already been validated against the configured virtual-host set. The dashboard performs only hardcoded, relative client-side redirects.
 

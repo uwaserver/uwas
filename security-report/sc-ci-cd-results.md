@@ -1,4 +1,10 @@
 # sc-ci-cd — CI/CD Pipeline Security Results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: UWAS CI/CD is generally well-hardened (no `pull_request_target`, no user-controlled `github.event.*` interpolation into shells, secrets passed via `env:` not inline). Findings are limited to a controllable-context shell injection in the release workflow, a missing `permissions` block in `ci.yml`, and unpinned action/tool references.
 

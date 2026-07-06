@@ -1,4 +1,10 @@
 # sc-session — Session Management Flaw Scan (UWAS)
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** UWAS uses a token-based session model (server-generated 256-bit random tokens, sent via `X-Session-Token` header, stored client-side in `sessionStorage`) with solid core hygiene — new token per login (no fixation), server-side invalidation on logout/password-change/disable, 0600 on-disk persistence, brute-force lockout, and single-use short-lived tickets to keep tokens out of URLs. Two real but low-severity weaknesses were traced: a configured session-lifetime that is silently ignored, and a legacy code path that still accepts the raw session token in a URL query parameter.
 

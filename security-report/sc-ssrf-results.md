@@ -1,4 +1,10 @@
 # sc-ssrf results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** UWAS has strong, centralized SSRF defenses across its outbound HTTP paths (webhooks, notifications, uptime monitor, reverse proxy). One real defense-in-depth gap remains: the on-demand domain health-check endpoint fetches `http(s)://<domain.Host>/` with no loopback/private/metadata guard and no dial-time IP control, unlike every other comparable client in the tree.
 

@@ -1,4 +1,10 @@
 # sc-privilege-escalation — Results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: One real privilege-escalation issue found — a non-admin (reseller) can escape the per-domain file-manager jail to the whole filesystem by repointing a managed domain's `root` via `PUT /api/v1/domains/{host}`, because the update path's mass-assignment blocklist omits `root` and the update validator does not enforce root-under-webroot (the create path does). RBAC, role storage, and the user CRUD surface are otherwise solid.
 

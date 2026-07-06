@@ -1,4 +1,10 @@
 # sc-auth results — Authentication flaw scan (UWAS)
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** The core authentication is well-built (bcrypt password hashing, per-username brute-force lockout, `crypto/subtle` constant-time comparisons, session invalidation on password change/disable, single-use SSE/WS tickets, CSRF origin checks, loopback-only guard when unauthenticated). No authentication bypass, no plaintext password storage, and no hardcoded admin credentials were found in reachable code paths. The findings below are real but lower-severity policy / hardening gaps.
 
