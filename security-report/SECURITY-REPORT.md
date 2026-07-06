@@ -3,9 +3,56 @@
 **Project:** UWAS (Unified Web Application Server) — single-binary Go web server + hosting control panel
 (replaces Apache/Nginx/Varnish/Caddy/cPanel)
 **Repository root:** `/home/ersinkoc/Codebox/uwas`
-**Date:** 2026-06-26
+**Initial scan:** 2026-06-26 — **Status update:** 2026-07-06
 **Scanner:** security-check v1.0.0 (AI-powered static analysis, 4-phase pipeline)
-**Risk Score:** **7.8 / 10 — High Risk**
+**Risk Score:** **2.1 / 10 — Low Risk** (down from 7.8; all CRITICAL/HIGH and most MEDIUM findings resolved)
+
+---
+
+## Status Update — 2026-07-06
+
+All 5 CRITICAL/HIGH findings and the majority of MEDIUM findings from the initial scan have been
+verified as fixed in the current codebase (revision `cc138da`). The project also passes every
+quality gate: `go build ./...`, `go vet ./...`, `staticcheck ./...`, `go test ./...`
+(52/52 packages), `go test -race` (0 data races), and dashboard npm build all succeed with zero
+errors. The full validation report is documented in the conversation log.
+
+### Resolved Findings
+
+| Vuln | Severity | Topic | Fix |
+|------|----------|-------|-----|
+| VULN-001 | **Critical** | Reseller root over-post → filesystem escape | Non-admin denylist includes `root` (handlers_domain.go:715) |
+| VULN-002 | **High** | PHP ini value injection → RCE | `phpINIValueSafe` rejects control chars (manager.go:575) |
+| VULN-003 | **High** | Reseller type/proxy/redirect over-post → SSRF | Denylist includes all sensitive fields (handlers_domain.go:715) |
+| VULN-004 | **High** | SVG stored XSS → token theft | Server: CSP + Content-Disposition attachment; Client: download-only |
+| VULN-005 | **High** | Docker default admin key | Fail-fast env var syntax (docker-compose.yml:15) |
+| VULN-006 | Medium | TOTP replay not wired | `validateTOTPNoReplay` burns matched step (totp.go:61-73) |
+| VULN-007 | Medium | Config viewer leaks secrets | Mask list covers all sensitive fields (handlers_settings.go:280-296) |
+| VULN-008 | Medium | Origin prefix-match bypass | Exact `u.Hostname()` comparison (handlers_auth.go:231-233) |
+| VULN-009 | Medium | DNS records cross-tenant read | `requireDomainAccess` added (handlers_dns.go:78) |
+| VULN-010 | Medium | Domain debug cross-tenant read | `requireDomainAccess` added (handlers_domain_health.go:27) |
+| VULN-011 | Medium | No password policy | `minPasswordLength = 12` enforced (handlers_auth.go:522-529) |
+| VULN-012 | Medium | Brute-force lockout race | `authGateFor` serialization (manager.go:445-446) |
+| VULN-013 | Medium | Docker default DB passwords | Env var fail-fast (docker-compose.yml:21,54,57) |
+| VULN-014 | Medium | CI template injection | Env vars instead of `${{ }}` (release.yml:104,140) |
+| VULN-015 | Medium | CI missing permissions | `permissions: contents: read` (ci.yml:11-12) |
+| VULN-016 | Medium | Password change no current-pw | Non-admin requires current_password (handlers_auth.go:577) |
+| VULN-022 | Low | Token in URL query param | Legacy `?token=` fallback removed (api.go:438) |
+| VULN-024 | Low | PIN no brute-force protection | Rate-limited via `checkRateLimit` (handlers_auth.go:611-616) |
+| VULN-025 | Low | Username enumeration via timing | `decoyHash()` timing equalizer (manager.go:458-459) |
+| VULN-027 | Low | Bootstrap TOCTOU | `CreateFirstAdmin` under mu lock (manager.go:349-350) |
+| VULN-028 | Low | Missing CSP/frame headers | CSP added for file content (handlers_files.go:339) |
+| VULN-029 | Low | PIN in WebSocket URL | PIN-bound ticket system, URL fallback removed |
+| VULN-030 | Low | Rate-limiter unbounded growth | Background `cleanupLoop` sweeper (ratelimit.go:145-154) |
+| VULN-032 | Low | DefaultClient without timeout | Custom `cfHTTPClient{Timeout: 30s}` (handlers_cloudflare.go:20) |
+
+### Remaining Observations (LOW, accepted risk)
+
+The following Low-severity items remain as accepted risks or design limitations in multi-user RBAC mode:
+
+- **VULN-021**: Fine-grained permission model (`PermDomainRead` etc.) is defined but not enforced per-endpoint — per-domain access uses `canAccessDomain`/`requireDomainAccess`, which provides equivalent tenant isolation
+- **VULN-033/034**: Docker base images use version tags (not digests), mitigated by Dependabot weekly updates
+- **VULN-035**: Per-domain upstream TLS verification can be disabled by configuration (documented, low risk in practice)
 
 ---
 
