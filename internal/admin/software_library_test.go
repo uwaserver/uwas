@@ -1442,7 +1442,7 @@ func TestSoftwareDomainConnectSameDomain(t *testing.T) {
 	inst := softwareInstance{
 		Name: "same", TemplateID: "n8n", Dir: dir,
 		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
-		Project: "uwas-same", HasWeb: true, WebService: "n8n",
+		Project:     "uwas-same", HasWeb: true, WebService: "n8n",
 		WebPort: 5678, HostPort: 5678, Domain: "existing.local",
 	}
 	saveSoftwareInstance(inst)
@@ -1471,7 +1471,7 @@ func TestSoftwareDomainConnectInvalidHostname(t *testing.T) {
 	inst := softwareInstance{
 		Name: "inv", TemplateID: "n8n", Dir: dir,
 		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
-		Project: "uwas-inv", HasWeb: true, WebService: "n8n",
+		Project:     "uwas-inv", HasWeb: true, WebService: "n8n",
 		WebPort: 5678, HostPort: 5679,
 	}
 	saveSoftwareInstance(inst)
@@ -1602,7 +1602,7 @@ func TestSoftwareDomainConnectResellerForbidden(t *testing.T) {
 	inst := softwareInstance{
 		Name: "rbac", TemplateID: "n8n", Dir: dir,
 		ComposeFile: filepath.Join(dir, "docker-compose.yml"),
-		Project: "uwas-rbac", HasWeb: true, WebService: "n8n",
+		Project:     "uwas-rbac", HasWeb: true, WebService: "n8n",
 		WebPort: 5678, HostPort: 5680,
 	}
 	saveSoftwareInstance(inst)

@@ -389,6 +389,29 @@ func TestDownloadAndExtract_ChecksumMismatch(t *testing.T) {
 	}
 }
 
+// TestDownloadAndExtract_Non200 is the regression for the silently-written
+// error page: a non-200 download must fail immediately instead of writing an
+// HTML/JSON error body into the tarball and failing later with "extract failed".
+func TestDownloadAndExtract_Non200(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	osMkdirAllFn = func(string, fs.FileMode) error { return nil }
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, "<html>404 Not Found</html>")
+	}))
+	defer srv.Close()
+	httpGetFn = func(string) (*http.Response, error) { return http.Get(srv.URL) }
+
+	var log strings.Builder
+	err := downloadAndExtract(t.TempDir(), &log)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("expected an HTTP 404 error, got %v", err)
+	}
+}
+
 // UpdateCore (fallback path): checksum mismatch returns an error.
 func TestUpdateCore_ChecksumMismatch(t *testing.T) {
 	snap := saveHooks()

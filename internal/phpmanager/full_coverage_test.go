@@ -60,6 +60,32 @@ OTHER_KEY=ignored
 	}
 }
 
+// TestGetInstallInfoRHELExpandsMajor is the regression for the unexpanded
+// $(rpm -E %{rhel}): the remi-release URL must carry the numeric RHEL major
+// from VERSION_ID (RunInstall has no shell to expand the substitution).
+func TestGetInstallInfoRHELExpandsMajor(t *testing.T) {
+	origGOOS := runtimeGOOSInstall
+	origRead := readOSRelease
+	defer func() {
+		runtimeGOOSInstall = origGOOS
+		readOSRelease = origRead
+	}()
+
+	runtimeGOOSInstall = "linux"
+	readOSRelease = func() ([]byte, error) {
+		return []byte("ID=rocky\nVERSION_ID=\"9.3\"\nPRETTY_NAME=\"Rocky Linux 9.3\"\n"), nil
+	}
+
+	info := GetInstallInfo("8.3")
+	joined := strings.Join(info.Commands, "\n")
+	if !strings.Contains(joined, "remi-release-9.rpm") {
+		t.Errorf("expected remi-release-9.rpm in commands, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "rpm -E") || strings.Contains(joined, "$(") {
+		t.Errorf("unexpanded shell substitution left in commands:\n%s", joined)
+	}
+}
+
 func TestDetectDistroLinuxReadError(t *testing.T) {
 	origGOOS := runtimeGOOSInstall
 	origRead := readOSRelease

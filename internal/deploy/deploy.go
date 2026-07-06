@@ -141,6 +141,11 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 		GitURL:    req.GitURL,
 		GitBranch: branch,
 		Mode:      mode,
+		// Carry the caller-supplied port so the git-mode health check below
+		// actually runs; without this it stayed 0 and the check was skipped,
+		// reporting a crashed app as "running". Auto-detection may still
+		// overwrite it later for docker mode.
+		AppPort:   req.AppPort,
 		StartedAt: time.Now(),
 	}
 

@@ -568,6 +568,17 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// Store the response in cache if it is cacheable and not too large.
 		hdrs := capture.capturedHeaders()
+		// The capture records the pre-compression body, but the global compress
+		// middleware sits below it and, for bodies >= 1KB, sets Content-Encoding:
+		// br|gzip (and drops Content-Length) on the shared header map before we
+		// snapshot it. Storing that encoding header with the uncompressed body
+		// would make every cache hit serve plaintext mislabeled as br/gzip (the
+		// compress writer skips re-compressing when Content-Encoding is already
+		// set), so the client fails to decode. Strip both: the cached body is
+		// canonical uncompressed bytes, and the compress middleware re-derives
+		// encoding/length on each hit.
+		hdrs.Del("Content-Encoding")
+		hdrs.Del("Content-Length")
 		if !capture.overflow && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
 			ttl := time.Duration(domain.Cache.TTL) * time.Second
 			if ttl <= 0 {

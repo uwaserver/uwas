@@ -287,6 +287,11 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// Without this, a 404/500 error page is written into the tarball and only
+	// surfaces later as a misleading "extract failed".
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download WordPress: HTTP %d", resp.StatusCode)
+	}
 
 	f, err := os.CreateTemp("", "wordpress-latest-*.tar.gz")
 	if err != nil {
@@ -295,8 +300,11 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 	tarPath := f.Name()
 	defer os.Remove(tarPath)
 	const maxWPDownload = 100 << 20 // 100MB safety cap
-	written, _ := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
+	written, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
 	f.Close()
+	if copyErr != nil {
+		return fmt.Errorf("download WordPress: %w", copyErr)
+	}
 	log.WriteString(fmt.Sprintf("Downloaded %.1f MB\n", float64(written)/1024/1024))
 
 	// Verify SHA1 checksum (wordpress.org publishes .sha1 and .md5; not .sha256)
@@ -326,7 +334,11 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 		for _, entry := range entries {
 			src := filepath.Join(extractedDir, entry.Name())
 			dst := filepath.Join(webRoot, entry.Name())
-			osRenameFn(src, dst)
+			// Surface move failures (e.g. ENOTEMPTY when reinstalling over an
+			// existing install) instead of silently reporting success.
+			if err := osRenameFn(src, dst); err != nil {
+				return fmt.Errorf("move %s into %s: %w", entry.Name(), webRoot, err)
+			}
 		}
 		osRemoveAllFn(extractedDir)
 	}
