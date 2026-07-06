@@ -1,4 +1,10 @@
 # sc-rate-limiting results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 One-line summary: UWAS has strong, deliberate DoS hardening (RE2 regex = no ReDoS, body-size caps everywhere, server timeouts, capped pagination, capped analytics maps, IP+username brute-force lockout on login/bootstrap/TOTP). Two minor gaps remain: the per-location rate-limiter map is never proactively cleaned up, and public web traffic has no rate limiting by default.
 

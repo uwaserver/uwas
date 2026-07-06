@@ -1,4 +1,10 @@
 # sc-race-condition results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: Two real, reachable atomicity/race issues found in the auth path — (1) TOTP one-time codes are never marked consumed so they are replayable within their validity window, and (2) the login lockout check and the failed-attempt increment are not atomic, letting a single concurrent burst bypass the 5-attempts/15-min brute-force limit. Most other shared state (bandwidth counters, rate limiter, tickets, recovery codes, domain CRUD, config maps) is correctly guarded.
 

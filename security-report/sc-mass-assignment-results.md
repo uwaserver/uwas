@@ -1,4 +1,10 @@
 # sc-mass-assignment results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: One real mass-assignment / over-posting weakness found — the non-admin denylist on `PUT /api/v1/domains/{host}` is incomplete and the update validation path drops the document-root containment check, letting a reseller over-post `root` (arbitrary file read → admin compromise) and `type`/`proxy` (SSRF). Most other JSON-decode sites use explicit DTO structs and are safe.
 

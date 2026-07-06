@@ -1,4 +1,10 @@
 # sc-file-upload results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: No critical/high file-upload vulnerabilities. All upload endpoints are authenticated and scoped (RBAC per-domain, or admin+PIN). The file-manager upload accepts any file type into the executable web root, but this is by-design hosting behaviour (cPanel-equivalent) gated by per-domain RBAC and a per-domain PHP sandbox. Two low/info residual-risk notes follow.
 

@@ -1,4 +1,10 @@
 # sc-path-traversal results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** No credible, reachable path-traversal / LFI / RFI / zip-slip / symlink-escape vulnerabilities were found. UWAS applies a centralized, symlink-aware containment guard (`internal/pathsafe`) and input validation consistently across every user-reachable file sink that was traced.
 

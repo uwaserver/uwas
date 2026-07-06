@@ -1,4 +1,10 @@
 # sc-websocket results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** The WebSocket attack surface (browser terminal → PTY bridge, reverse-proxy WS tunnel) is well defended — origin validation, single-use ticket auth, admin RBAC, and pin gating are all present and correctly ordered. No critical or high-severity, reachable WebSocket vulnerabilities were found. Two low-severity hardening gaps are noted.
 

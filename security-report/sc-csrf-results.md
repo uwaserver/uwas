@@ -1,4 +1,10 @@
 # sc-csrf — CSRF Scan Results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** The UWAS admin API uses header-based authentication (tokens in `sessionStorage` sent via `Authorization: Bearer` / `X-Session-Token`, never cookies), which makes it fundamentally CSRF-immune; multiple defense-in-depth layers exist. One genuine origin-validation bug weakens the secondary CSRF/CORS origin check but is not independently exploitable for CSRF given the header-based auth model.
 

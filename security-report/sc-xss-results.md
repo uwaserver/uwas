@@ -1,4 +1,10 @@
 # sc-xss results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 One credible stored XSS reachable via the File Manager SVG preview; server-side HTML generators are properly escaped and the React dashboard uses no unsafe-HTML sinks.
 

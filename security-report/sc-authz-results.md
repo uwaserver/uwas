@@ -1,4 +1,10 @@
 # sc-authz — Authorization Flaw Scan (IDOR / Broken Access Control)
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** The admin API is broadly well-guarded — write/state-changing and system-level endpoints consistently call `requireAdmin` or `requireDomainAccess`/`CanManageDomain`, and the multi-user management endpoints correctly prevent self-role-escalation. However, several **read-only** endpoints that expose **per-domain data are not scoped to the caller's assigned domains**, allowing a non-admin (reseller/user) tenant to read other tenants' data (horizontal IDOR / missing authorization). Separately, the fine-grained `rolePermissions`/`HasPermission` model is **dead code** — actual enforcement is binary (admin vs. domain-scoped), so the documented read-only `user` role can in fact write to any domain assigned to it.
 

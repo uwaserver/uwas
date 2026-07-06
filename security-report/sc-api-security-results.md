@@ -1,4 +1,10 @@
 # sc-api-security results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: The UWAS admin API is generally well-guarded (per-request auth middleware, CSRF origin checks, per-domain `requireDomainAccess`, admin-only `requireAdmin`, PIN gating, HMAC-verified webhooks, secret masking). However several **read** endpoints that have **write** siblings enforcing per-domain authorization are themselves NOT domain-scoped, so a non-admin (`user`/`reseller`) tenant can read other tenants' resources (Broken Object Level Authorization). All findings require multi-user mode (`global.users.enabled`) with a non-admin role to be exploitable — in legacy single-API-key mode every caller is admin, and write paths remain protected.
 

@@ -1,4 +1,10 @@
 # sc-lang-typescript results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 One-line summary: The React 19 / TypeScript dashboard (`web/dashboard/`) is unusually clean — no `eval`/`Function`, no `dangerouslySetInnerHTML`/`innerHTML`, no `as any`/`@ts-ignore`, tokens never placed in URLs, SSE/WebSocket auth via short-lived single-use tickets, debug-log redaction of secrets. Only one low-severity, defense-in-depth observation (auth token in `sessionStorage` with no CSP on the dashboard).
 

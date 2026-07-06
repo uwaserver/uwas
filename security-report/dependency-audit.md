@@ -1,4 +1,10 @@
 # Dependency Audit — UWAS
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Scope: Go modules (`go.mod`/`go.sum`) and dashboard npm deps (`web/dashboard/package.json` + `package-lock.json`).
 Date: 2026-06-26.

@@ -1,4 +1,10 @@
 # sc-secrets results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: No hardcoded production secrets, private keys, or service tokens were found in the UWAS source; the only finding is a weak default DB password baked into the example `docker-compose.yml` fallback.
 

@@ -1,4 +1,10 @@
 # sc-data-exposure results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: Two reachable information-disclosure issues found — an incomplete secret-masking control in the raw-config viewer that leaks TLS private keys, 2FA recovery codes and OAuth client secrets to the dashboard, and a domain "debug" endpoint that performs no per-domain authorization and exposes other tenants' filesystem paths and directory listings. Several strong defenses were also observed (access-log query/Referer redaction, dotfile rejection in the static handler, fully sanitized config export, sanitized `/api/v1/config`, no source maps, no pprof/expvar exposure, default error pages contain no internals).
 

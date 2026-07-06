@@ -5,6 +5,63 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.8.8
+
+v0.8.8 is a stability and bug-fix release with 26 fixes across the engine,
+backup, DNS, cron, middleware, PHP, WordPress, and selfupdate subsystems.
+Most changes are transparent bug fixes, but review the items below before
+upgrading.
+
+### Action may be required
+
+1. **Cron job timeout now enforced (24h ceiling).** A cron job that hangs
+   indefinitely will be killed after 24 hours and its overlap guard released,
+   allowing the next scheduled run to proceed. Most setups are unaffected,
+   but if you deliberately run cron jobs longer than 24 hours they will now
+   be killed.
+
+2. **Crontab read failure now surfaces as an error.** Previously, a transient
+   `crontab -l` failure (permission error, fork failure) was silently treated
+   as "no crontab" — the crontab would be overwritten with only UWAS's own
+   entry, destroying every unrelated cron job on the system. Now the error is
+   surfaced and the write aborts. If you see cron job management errors after
+   upgrading, verify crontab permissions.
+
+3. **Route53 DNS signing always uses us-east-1.** Route53 is a global AWS
+   service and must be signed against us-east-1 regardless of the provider's
+   configured region. If you use Route53 with a non-us-east-1 region and your
+   setup depended on the previous (incorrect) signing behaviour, verify DNS
+   records after upgrading.
+
+4. **Cache: Content-Encoding stripped from cached responses.** The cache now
+   strips `Content-Encoding` and `Content-Length` from stored responses so the
+   compress middleware re-derives them correctly on each hit. Previously a
+   cached response could be served with the wrong encoding header. If you use
+   the cache, consider purging it after upgrading to avoid stale entries.
+
+### Behavior changes (no action needed)
+
+- **Backup: day-31 cron schedules now fire.** The calendar-walk algorithm was
+  fixed to use real month lengths (previously day 31 never occurred, so
+  schedules on the 31st silently never ran).
+- **Backup: full-backup retention no longer deletes per-domain backups.**
+  Pruning now only targets `uwas-backup-*` files; `uwas-domain-*` backups
+  keep their own lifecycle.
+- **Cloudflare: zone/record listing now paginates.** Previous code returned
+  only the first page (50 zones / 100 records), so record lookups past page 1
+  silently failed. Duplicate A records created as a result will not be
+  automatically cleaned up.
+- **Selfupdate: checksum verification now works.** The previous .sha256 URL
+  scheme always 404'd; verification was silently skipped. The new code fetches
+  `SHA256SUMS` from the release and validates the binary.
+- **WordPress installer: previously silent errors now surface.** HTTP errors,
+  download failures, and move failures are now reported instead of silently
+  claiming success.
+- **Admin 2FA endpoints require admin role.** Non-admin users cannot set up,
+  verify, or disable 2FA even when authenticated (multi-user mode only).
+
+---
+
 ## Upgrading to v0.8.7
 
 v0.8.7 is a security release. It is a drop-in upgrade for the **default

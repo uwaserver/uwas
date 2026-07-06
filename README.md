@@ -24,20 +24,23 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.8.7 + current main)
+## Current Snapshot (v0.8.8 + current main)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`)
 - **Admin API routes:** 251 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
 - **Go packages:** 55 (from `go list ./... | grep -v '/node_modules/'`)
 - **CLI commands:** 19
-- **Test status:** targeted post-fix validation is passing; CI runs `go test`, `go test -race`, `go vet`, `staticcheck`, `govulncheck`, shellcheck, installer tests, Docker Compose validation, and dashboard/site builds
-- **Security/stability fixes:** v0.8.7 plus current main include tightened multi-user authorization, admin metadata endpoint gates, release checksum verification, goroutine/timer leak fixes, bounded cache writes, and checked parser/crypto/I/O errors (see [CHANGELOG](CHANGELOG.md))
+- **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test` (52/52 packages), `go test -race` (0 data races), dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
+- **Security/stability fixes:** v0.8.8 resolved all 5 CRITICAL/HIGH and 11 MEDIUM findings from the June security audit; includes admin RBAC hardening, PHP sandbox-escape closure, SVG XSS prevention, docker-compose credential fail-fast, crontab data-loss guard, cron job timeout, Cloudflare pagination, Route53 signing fix, compress middleware WebSocket/Flush/Unwrap, TOTP replay protection, brute-force lockout serialization, and checked I/O paths
+- **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
 
 **v0.8.x highlights (security hardening + release integrity):**
-- Multi-user authorization is enforced more consistently across domain, DNS, notification, webhook, Cloudflare, task, and doctor/admin metadata endpoints
-- Release assets now publish `SHA256SUMS`, and installer/update scripts verify the selected binary before execution or installation
-- Admin/API hardening includes stricter public-listener admin key validation, stronger default password policy, safer dashboard terminal auth, and tighter file/config access controls
-- Runtime stability fixes cover proxy health checker shutdown, bounded cache write concurrency, timer cleanup, and checked parser/crypto/I/O errors
+- All security-audit findings (35 total) addressed: CRITICAL/HIGH resolved, MEDIUM resolved, LOW documented as accepted risk
+- Release assets publish `SHA256SUMS`; installer/update scripts verify before execution
+- Multi-user authorization enforced across domain, DNS, notification, webhook, Cloudflare, task, and doctor endpoints
+- Admin/API hardening: public-listener key validation, password policy (12+ chars), safer terminal auth, tighter file/config access controls
+- PHP sandbox escape vectors closed (newline injection, directive overrides)
+- Runtime stability: cron job timeout, bounded cache writes, health checker shutdown, timer cleanup, checked parser/crypto/I/O
 
 **Recent app/platform highlights:**
 - Apps are first-class objects under `/etc/uwas/apps.d/<name>.yaml`

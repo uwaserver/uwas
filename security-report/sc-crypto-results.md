@@ -1,4 +1,10 @@
 # sc-crypto results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: UWAS has strong cryptographic hygiene — bcrypt for passwords, crypto/rand everywhere, HMAC-SHA256 with constant-time comparison for webhooks/API keys, ECDSA-ES256 for ACME, ed25519 for SSH/host keys, TLS 1.2 floor with modern ciphers. No MD5, no symmetric-cipher misuse (no ECB/CBC/static IV), no hardcoded keys. Two minor (low) observations below; neither is a clear-cut exploitable bug.
 

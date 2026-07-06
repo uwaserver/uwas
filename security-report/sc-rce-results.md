@@ -1,4 +1,10 @@
 # sc-rce — Remote Code Execution scan results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 One-line summary: Go has no native eval/exec-code surface (no `plugin.Open`, `yaegi`, `go/ast`, or `text/template` with user input), but the per-domain PHP config API allows a non-admin domain manager to inject arbitrary php.ini directives via an unsanitized directive *value*, defeating the per-domain PHP sandbox (re-enabling `disable_functions`, escaping `open_basedir`, setting `auto_prepend_file`) → PHP code execution / sandbox escape.
 

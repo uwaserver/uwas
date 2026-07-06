@@ -1,4 +1,10 @@
 # sc-lang-go — Go Security Deep Scan Results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 **Summary:** UWAS is an unusually well-hardened Go codebase; the standard Go anti-patterns (path traversal, command injection, zip-slip, missing server timeouts, weak randomness for secrets, non-constant-time auth compares, unbounded body reads) are all mitigated. Only two low-severity Go-idiomatic issues survived verification, both gated behind admin authentication.
 

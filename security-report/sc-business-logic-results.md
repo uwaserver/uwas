@@ -1,4 +1,10 @@
 # sc-business-logic results
+> 
+> **Status:** This scan was performed 2026-06-26. All findings have been
+> reviewed and are **resolved** in the current codebase (v0.8.8, July 2026).
+> See [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the full status update
+> with per-finding resolution tracking.
+>
 
 Summary: UWAS is a hosting control panel, not an e-commerce app, so classic price/coupon/cart manipulation does not apply. The auth/RBAC/2FA workflows are largely well-built (per-username lockout, IP rate limiting, mass-assignment stripping for non-admin domain create, domain-ownership checks via `requireDomainAccess`/`CanManageDomain`, constant-time secret compares, login responses that do not leak account existence). A few genuine business-logic / workflow-bypass weaknesses remain, the strongest being missing TOTP replay protection that is explicitly designed-for but never wired up.
 
