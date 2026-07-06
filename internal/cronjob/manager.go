@@ -24,6 +24,27 @@ type Job struct {
 
 const uwasMarker = "# UWAS managed"
 
+// readCrontab returns the user's current crontab. A genuinely empty crontab
+// (`crontab -l` exits non-zero with a "no crontab for ..." message) is reported
+// as ("", nil). Any other failure returns an error so write callers ABORT
+// instead of treating a transient `crontab -l` failure as "no jobs" and then
+// overwriting an existing crontab with only their own entry — which would
+// destroy every unrelated cron job on the system.
+func readCrontab() (string, error) {
+	out, err := execCommandFn("crontab", "-l").Output()
+	if err == nil {
+		return string(out), nil
+	}
+	var stderr string
+	if ee, ok := err.(*exec.ExitError); ok {
+		stderr = string(ee.Stderr)
+	}
+	if strings.Contains(strings.ToLower(stderr), "no crontab") {
+		return "", nil
+	}
+	return "", fmt.Errorf("read crontab: %w: %s", err, strings.TrimSpace(stderr))
+}
+
 // List returns all UWAS-managed cron jobs.
 func List() ([]Job, error) {
 	if runtimeGOOS == "windows" {
@@ -70,11 +91,14 @@ func Add(job Job) error {
 		return fmt.Errorf("cron fields must not contain newlines")
 	}
 
-	existing, _ := execCommandFn("crontab", "-l").Output()
+	existing, err := readCrontab()
+	if err != nil {
+		return err
+	}
 	comment := fmt.Sprintf("%s [%s] %s", uwasMarker, job.Domain, job.Comment)
 	entry := fmt.Sprintf("%s\n%s %s\n", comment, job.Schedule, job.Command)
 
-	newCrontab := string(existing) + entry
+	newCrontab := existing + entry
 	return writeCrontab(newCrontab)
 }
 
@@ -84,8 +108,11 @@ func Remove(schedule, command string) error {
 		return fmt.Errorf("cron not supported on Windows")
 	}
 
-	existing, _ := execCommandFn("crontab", "-l").Output()
-	lines := strings.Split(string(existing), "\n")
+	existing, err := readCrontab()
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(existing, "\n")
 	var filtered []string
 
 	for i := 0; i < len(lines); i++ {
@@ -111,8 +138,11 @@ func RemoveByDomain(domain string) error {
 	if runtimeGOOS == "windows" {
 		return fmt.Errorf("cron not supported on Windows")
 	}
-	existing, _ := execCommandFn("crontab", "-l").Output()
-	lines := strings.Split(string(existing), "\n")
+	existing, err := readCrontab()
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(existing, "\n")
 	var filtered []string
 	skipNext := false
 	marker := fmt.Sprintf("%s [%s]", uwasMarker, domain)

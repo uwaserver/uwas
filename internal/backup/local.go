@@ -23,11 +23,14 @@ func NewLocalProvider(dir string) *LocalProvider {
 func (p *LocalProvider) Name() string { return "local" }
 
 func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reader) error {
-	if err := os.MkdirAll(p.dir, 0755); err != nil {
+	// Backup archives bundle uwas.yaml (API keys, admin secrets) and the TLS
+	// certs directory (private keys), so both the directory and the files must
+	// be owner-only — 0755/0644 would expose credentials to every local user.
+	if err := os.MkdirAll(p.dir, 0700); err != nil {
 		return fmt.Errorf("create backup dir: %w", err)
 	}
 	dst := filepath.Join(p.dir, filepath.Base(filename))
-	f, err := os.Create(dst)
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}

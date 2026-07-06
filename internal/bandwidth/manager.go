@@ -81,7 +81,20 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 
 // Record records bandwidth usage for a domain.
 // Returns true if the request should be blocked.
+// normalizeHost strips any port and lowercases the host so lookups match the
+// map keys, which are the configured domain hosts (normalized). The live
+// dispatch path records usage with the raw request Host — which may carry a
+// port (example.com:8443) or mixed case — so callers must not be relied on to
+// pre-normalize.
+func normalizeHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.ToLower(host)
+}
+
 func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool) {
+	host = normalizeHost(host)
 	m.mu.RLock()
 	limit, hasLimit := m.limits[host]
 	usage, hasUsage := m.usage[host]
@@ -285,13 +298,8 @@ func (m *Manager) Reset(host string) {
 func (m *Manager) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Strip port from host to match domain limits correctly
-			host := r.Host
-			if h, _, err := net.SplitHostPort(host); err == nil {
-				host = h
-			}
-			// Additionally, normalize to lowercase for case-insensitive matching
-			host = strings.ToLower(host)
+			// Strip port and lowercase so lookups match the configured hosts.
+			host := normalizeHost(r.Host)
 
 			m.mu.RLock()
 			_, hasLimit := m.limits[host]

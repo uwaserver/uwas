@@ -727,7 +727,7 @@ func TestNextCronRunFieldMatching(t *testing.T) {
 		"30 14 * * *", // every day at 14:30
 		"0 0 * * 0",   // weekly on Sunday
 		"*/15 * * * *",
-		"0 0 30 12 *", // day 30 (prod candidate generation only emits days 1-30)
+		"0 0 30 12 *", // day 30 of December
 	}
 	for _, e := range exprs {
 		if got := nextCronRun(e); got.IsZero() {
@@ -738,6 +738,23 @@ func TestNextCronRunFieldMatching(t *testing.T) {
 	// candidate-day generation cleanly but should still terminate; verify it
 	// does not hang and returns something deterministic).
 	_ = nextCronRun("0 0 30 2 1")
+}
+
+// TestNextCronRunDay31 is the regression for the calendar-walk bug: a schedule
+// on day 31 must actually resolve to a day-31 run. The old index math built
+// candidates as 1+(i%30), so day 31 never occurred and day-31 schedules silently
+// never fired.
+func TestNextCronRunDay31(t *testing.T) {
+	next := nextCronRun("0 2 31 * *") // 02:00 on the 31st, any month with 31 days
+	if next.IsZero() {
+		t.Fatal("nextCronRun(day 31) returned zero — day-31 schedules never fire")
+	}
+	if next.Day() != 31 {
+		t.Errorf("next run day = %d, want 31", next.Day())
+	}
+	if next.Hour() != 2 || next.Minute() != 0 {
+		t.Errorf("next run time = %02d:%02d, want 02:00", next.Hour(), next.Minute())
+	}
 }
 
 // --- ScheduleBackupCron goroutine fires ---

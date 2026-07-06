@@ -202,6 +202,11 @@ func (p *Route53Provider) signRequest(req *http.Request, body []byte, t time.Tim
 	amzDate := t.Format("20060102T150405Z")
 	service := "route53"
 
+	// Route53 is a global service reached at route53.amazonaws.com and MUST be
+	// signed against us-east-1 regardless of the account's configured region;
+	// using p.region here produced SignatureDoesNotMatch for any other region.
+	const signingRegion = "us-east-1"
+
 	// Canonical request
 	bodyHash := sha256hex(body)
 	headers := []string{"host", "x-amz-date"}
@@ -214,12 +219,12 @@ func (p *Route53Provider) signRequest(req *http.Request, body []byte, t time.Tim
 	}, "\n")
 
 	// String to sign
-	credScope := dateStamp + "/" + p.region + "/" + service + "/aws4_request"
+	credScope := dateStamp + "/" + signingRegion + "/" + service + "/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + sha256hex([]byte(canonicalReq))
 
 	// Signing key
 	kDate := hmacSHA256([]byte("AWS4"+p.secretKey), []byte(dateStamp))
-	kRegion := hmacSHA256(kDate, []byte(p.region))
+	kRegion := hmacSHA256(kDate, []byte(signingRegion))
 	kService := hmacSHA256(kRegion, []byte(service))
 	kSigning := hmacSHA256(kService, []byte("aws4_request"))
 

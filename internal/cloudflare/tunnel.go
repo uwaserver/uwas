@@ -90,9 +90,20 @@ func (r *Runner) Start(tunnelID, token string) error {
 		return fmt.Errorf("connector token is empty")
 	}
 	r.mu.Lock()
-	if existing, ok := r.procs[tunnelID]; ok && existing.cmd != nil && existing.cmd.Process != nil {
+	// Reject if the tunnel is already managed and not stopped. Checking
+	// `cmd != nil` instead left a race window: between storing the placeholder
+	// below (cmd still nil) and spawn() assigning cmd — and during a monitor
+	// restart backoff (cmd temporarily nil) — a second Start saw cmd==nil,
+	// proceeded, and leaked an untracked second cloudflared process. A
+	// non-stopped entry means "running or starting"; Stop() sets stopped=true so
+	// a genuine restart is still allowed.
+	if existing, ok := r.procs[tunnelID]; ok && !existing.stopped {
+		pid := 0
+		if existing.cmd != nil && existing.cmd.Process != nil {
+			pid = existing.cmd.Process.Pid
+		}
 		r.mu.Unlock()
-		return fmt.Errorf("tunnel %s already running (pid %d)", tunnelID, existing.cmd.Process.Pid)
+		return fmt.Errorf("tunnel %s already running or starting (pid %d)", tunnelID, pid)
 	}
 	p := &runningProc{
 		tunnelID: tunnelID,

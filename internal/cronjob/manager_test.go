@@ -465,6 +465,59 @@ func TestWriteCrontab_CommandFails(t *testing.T) {
 	}
 }
 
+// ─── manager.go: readCrontab ────────────────────────────────────────────────
+
+// TestReadCrontab_Empty verifies that a genuine "no crontab" (exit 1 with the
+// expected stderr message) is reported as an empty crontab, not an error.
+func TestReadCrontab_Empty(t *testing.T) {
+	origCmd := execCommandFn
+	defer func() { execCommandFn = origCmd }()
+
+	execCommandFn = fakeExecCommandWithStderr("", "no crontab for user\n", 1)
+
+	out, err := readCrontab()
+	if err != nil {
+		t.Fatalf("no-crontab should not error, got %v", err)
+	}
+	if out != "" {
+		t.Fatalf("expected empty crontab, got %q", out)
+	}
+}
+
+// TestReadCrontab_TransientFailureAborts is the regression for the crontab
+// data-loss bug: a `crontab -l` failure that is NOT "no crontab" (permission
+// error, transient fork failure) must surface as an error so write callers
+// abort instead of overwriting an existing crontab with only their own entry.
+func TestReadCrontab_TransientFailureAborts(t *testing.T) {
+	origCmd := execCommandFn
+	defer func() { execCommandFn = origCmd }()
+
+	execCommandFn = fakeExecCommandWithStderr("", "crontab: permission denied\n", 1)
+
+	if _, err := readCrontab(); err == nil {
+		t.Fatal("a non-'no crontab' failure must return an error, got nil")
+	}
+}
+
+// TestAdd_AbortsOnReadFailure confirms Add does not attempt to rewrite the
+// crontab when the existing crontab cannot be read for a non-empty reason.
+func TestAdd_AbortsOnReadFailure(t *testing.T) {
+	origGOOS := runtimeGOOS
+	origCmd := execCommandFn
+	runtimeGOOS = "linux"
+	defer func() {
+		runtimeGOOS = origGOOS
+		execCommandFn = origCmd
+	}()
+
+	execCommandFn = fakeExecCommandWithStderr("", "crontab: cannot open /var/spool/cron: I/O error\n", 1)
+
+	err := Add(Job{Schedule: "*/5 * * * *", Command: "/bin/true", Domain: "example.com"})
+	if err == nil {
+		t.Fatal("Add must abort when the existing crontab cannot be read, got nil")
+	}
+}
+
 // ─── monitor.go: NewMonitor ─────────────────────────────────────────────────
 func TestNewMonitor(t *testing.T) {
 	dir := t.TempDir()
@@ -598,6 +651,62 @@ func TestMonitor_Execute_Failure(t *testing.T) {
 	}
 	if rec.ExitCode != 1 {
 		t.Errorf("ExitCode = %d, want 1", rec.ExitCode)
+	}
+}
+
+// TestMonitor_Execute_Timeout is the regression for the hung-job bug: a command
+// that never exits must be killed by the timeout so its overlap-guard entry is
+// released, instead of blocking every future run forever.
+func TestMonitor_Execute_Timeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	origCmd := monitorExecCommandFn
+	origGOOS := monitorRuntimeGOOS
+	defer func() {
+		monitorExecCommandFn = origCmd
+		monitorRuntimeGOOS = origGOOS
+	}()
+
+	monitorRuntimeGOOS = "linux"
+	monitorExecCommandFn = exec.Command // real sh so the process actually hangs
+
+	m := NewMonitor(t.TempDir())
+	m.SetTimeout(100 * time.Millisecond)
+
+	start := time.Now()
+	rec := m.Execute("example.com", "* * * * *", "sleep 30")
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("Execute did not honor the timeout (took %s)", elapsed)
+	}
+	if rec.Success {
+		t.Error("expected failure for a timed-out command")
+	}
+	if !strings.Contains(rec.Error, "timed out") {
+		t.Errorf("expected a timeout error, got %q", rec.Error)
+	}
+	// The overlap guard must be released so the next run is not skipped.
+	m.mu.RLock()
+	stillRunning := m.running[m.jobKey("example.com", "sleep 30")]
+	m.mu.RUnlock()
+	if stillRunning {
+		t.Error("job still marked running after timeout")
+	}
+}
+
+// TestMonitor_LoadHistoryNullNoPanic is the regression for the nil-map panic: a
+// history file containing literal `null` must not leave m.history nil, which
+// would panic on the next RecordExecution.
+func TestMonitor_LoadHistoryNullNoPanic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cron_history.json"), []byte("null"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewMonitor(dir) // loadHistory reads "null"
+	// Must not panic writing into the history map.
+	m.RecordExecution(ExecutionRecord{Domain: "example.com", Command: "echo"})
+	if got := m.GetStatus("example.com", "echo"); got == nil {
+		t.Error("expected a status entry after recording")
 	}
 }
 

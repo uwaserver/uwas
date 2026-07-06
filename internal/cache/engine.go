@@ -17,7 +17,7 @@ type Engine struct {
 	disk        *DiskCache
 	redis       *RedisCache
 	logger      *logger.Logger
-	VaryHeaders []string // additional headers to include in cache key (from config)
+	VaryHeaders []string      // additional headers to include in cache key (from config)
 	writeSem    chan struct{} // bounds concurrent L2/L3 writes
 }
 

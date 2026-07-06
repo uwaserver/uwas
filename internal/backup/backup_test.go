@@ -268,6 +268,32 @@ func TestPruneOldBackups(t *testing.T) {
 	}
 }
 
+// TestPruneOldKeepsDomainBackups is the regression for full-backup retention
+// deleting per-domain backups: pruning full backups must leave uwas-domain-*
+// archives untouched.
+func TestPruneOldKeepsDomainBackups(t *testing.T) {
+	m, mp := testManager(t)
+	m.keepCount = 2
+
+	for i := 0; i < 4; i++ {
+		name := "uwas-backup-" + time.Now().Add(time.Duration(i)*time.Second).Format("20060102-150405") + ".tar.gz"
+		mp.files[name] = []byte("data")
+		time.Sleep(time.Millisecond)
+	}
+	// A per-domain backup that must survive full-backup pruning.
+	mp.files["uwas-domain-example.com-20200101-000000.tar.gz"] = []byte("domain")
+
+	m.pruneOld("mem")
+
+	if _, ok := mp.files["uwas-domain-example.com-20200101-000000.tar.gz"]; !ok {
+		t.Error("per-domain backup was deleted by full-backup retention")
+	}
+	// Full backups pruned to keepCount (2) + the 1 domain backup = 3 remaining.
+	if len(mp.files) != 3 {
+		t.Errorf("expected 3 files after prune (2 full + 1 domain), got %d", len(mp.files))
+	}
+}
+
 func TestUnknownProvider(t *testing.T) {
 	m, _ := testManager(t)
 	m.SetPaths("/tmp/test.yaml", "")
@@ -1515,8 +1541,8 @@ func TestPruneOldWithDeleteError(t *testing.T) {
 
 	cp := &listButFailDeleteProvider{
 		items: []BackupInfo{
-			{Name: "old.tar.gz", Created: time.Now().Add(-2 * time.Hour), Provider: "custom"},
-			{Name: "new.tar.gz", Created: time.Now(), Provider: "custom"},
+			{Name: "uwas-backup-old.tar.gz", Created: time.Now().Add(-2 * time.Hour), Provider: "custom"},
+			{Name: "uwas-backup-new.tar.gz", Created: time.Now(), Provider: "custom"},
 		},
 	}
 	m.providers["custom"] = cp
