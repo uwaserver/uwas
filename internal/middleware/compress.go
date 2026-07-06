@@ -94,6 +94,16 @@ func Compress(minSize int) Middleware {
 				return
 			}
 
+			// Protocol upgrades (WebSocket) must reach the underlying Hijacker
+			// directly. compressResponseWriter is not an http.Hijacker, so
+			// wrapping an upgrade request would make the hijack fail with
+			// "hijack not supported" and break every browser WebSocket (browsers
+			// send Accept-Encoding on the upgrade). Never wrap upgrades.
+			if r.Header.Get("Upgrade") != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			enc := selectEncoding(r.Header.Get("Accept-Encoding"))
 			if enc == encodingNone {
 				next.ServeHTTP(w, r)
@@ -169,24 +179,61 @@ func (w *compressResponseWriter) Write(b []byte) (int, error) {
 			ct = http.DetectContentType(w.buf)
 		}
 
-		// Skip if already compressed by upstream (PHP ob_gzip_handler, etc.)
-		if ce := w.Header().Get("Content-Encoding"); ce != "" {
-			return w.flushUncompressed()
+		// The helpers flush the whole accumulated buffer, so their write count
+		// covers previously-buffered bytes too. From this call's perspective all
+		// of b was consumed, so return len(b): returning the buffer length would
+		// exceed len(b) and trip io.Copy's errInvalidWrite on chunked/streamed
+		// responses (proxy, ServeContent) whose small writes cross minSize here.
+		var err error
+		switch {
+		case w.Header().Get("Content-Encoding") != "":
+			// Already compressed by upstream (PHP ob_gzip_handler, etc.)
+			_, err = w.flushUncompressed()
+		case isCompressible(ct):
+			_, err = w.startCompression()
+		default:
+			_, err = w.flushUncompressed()
 		}
-
-		if isCompressible(ct) {
-			return w.startCompression()
+		if err != nil {
+			return 0, err
 		}
-
-		// Not compressible, flush buffer
-		return w.flushUncompressed()
+		return len(b), nil
 	}
 
 	if w.writer != nil {
-		return w.writer.Write(b)
+		if _, err := w.writer.Write(b); err != nil {
+			return 0, err
+		}
+		return len(b), nil
 	}
 
 	return w.ResponseWriter.Write(b)
+}
+
+// Flush pushes any buffered or compressed data to the underlying writer so
+// streaming responses (SSE) reach the client without waiting for the buffer to
+// fill or the handler to return.
+func (w *compressResponseWriter) Flush() {
+	// Still below minSize: a Flush signals streaming, so emit what we have
+	// uncompressed rather than holding it.
+	if w.writer == nil && !w.compressed && len(w.buf) > 0 {
+		w.flushUncompressed()
+	}
+	if w.writer != nil {
+		if f, ok := w.writer.(interface{ Flush() error }); ok {
+			_ = f.Flush()
+		}
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the underlying ResponseWriter so net/http's ResponseController
+// (and callers that traverse Unwrap chains) can reach Hijack/Flush/deadline
+// controls on a writer that supports them.
+func (w *compressResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func (w *compressResponseWriter) startCompression() (int, error) {

@@ -32,28 +32,33 @@ func NewBase(docRoot string) (*Base, error) {
 // symlinks. Equivalent to IsWithinBaseResolved(base.raw, target) but skips the
 // per-call resolution of the base.
 //
-// Uses a short-lived LRU cache for resolved target paths to avoid repeated
-// EvalSymlinks calls on hot static-serve paths. The cache entry is keyed by
-// the original path string and stores the resolved result + a deadline. Entries
-// expire after 5 seconds, which is short enough to catch symlink changes while
-// eliminating ~90% of EvalSymlinks calls in steady-state traffic.
+// Uses a short-lived cache for resolved target paths to avoid repeated
+// EvalSymlinks calls on hot static-serve paths. The cache is keyed by the
+// original path string and stores only the base-independent resolved path (not
+// the containment verdict): resolvePath depends solely on target, while the
+// isWithin check depends on this base's root and must be recomputed per call.
+// Caching the verdict instead would let one base's result be served to a
+// different base checking the same target string — a fail-open containment bug
+// when docroots overlap. Entries expire after 5 seconds, short enough to catch
+// symlink changes while eliminating ~90% of EvalSymlinks calls in steady state.
 func (b *Base) Contains(target string) bool {
-	// Fast path: check cache
+	// Fast path: reuse a recently resolved target path, but always re-evaluate
+	// containment against this base's own resolved root.
 	if entry, ok := targetCache.Load(target); ok {
 		tc := entry.(*targetCacheEntry)
 		if time.Since(tc.time) < 5*time.Second {
-			return tc.result
+			return tc.resolvedOK && isWithin(b.resolved, tc.resolved)
 		}
 	}
 	resolvedTarget, err := resolvePath(target)
-	result := err == nil && isWithin(b.resolved, resolvedTarget)
-	targetCache.Store(target, &targetCacheEntry{result: result, time: time.Now()})
-	return result
+	targetCache.Store(target, &targetCacheEntry{resolved: resolvedTarget, resolvedOK: err == nil, time: time.Now()})
+	return err == nil && isWithin(b.resolved, resolvedTarget)
 }
 
 type targetCacheEntry struct {
-	result bool
-	time   time.Time
+	resolved   string
+	resolvedOK bool
+	time       time.Time
 }
 
 var targetCache sync.Map // map[string]*targetCacheEntry

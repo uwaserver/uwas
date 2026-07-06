@@ -60,6 +60,23 @@ func TestIsBlockedResetClearsState(t *testing.T) {
 	}
 }
 
+// TestRecordNormalizesHost is the regression for the enforcement bypass: the
+// live dispatch path records usage with the raw request Host, which may carry a
+// port or mixed case. Record must normalize it so usage lands on the configured
+// domain's counter instead of silently going unrecorded.
+func TestRecordNormalizesHost(t *testing.T) {
+	m := NewManager(testDomains(config.BandwidthConfig{
+		Enabled:      true,
+		MonthlyLimit: 100,
+		Action:       "block",
+	}))
+	// Raw Host with a port and mixed case must still hit "example.com".
+	m.Record("Example.COM:8443", 200)
+	if !m.IsBlocked("example.com") {
+		t.Error("usage recorded under a raw host:port was not attributed to the configured domain")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Middleware: host:port stripping branch
 // ---------------------------------------------------------------------------

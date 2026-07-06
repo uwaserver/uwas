@@ -216,6 +216,37 @@ func TestCloudflare_ListRecords_Success(t *testing.T) {
 	}
 }
 
+// TestCloudflare_ListRecords_Paginated is the regression for single-page
+// fetching: when the zone has more records than one page, ListRecords must
+// follow result_info.total_pages and return every record — otherwise records
+// past page 1 are invisible and SyncDomainToIP would create a duplicate A record.
+func TestCloudflare_ListRecords_Paginated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		w.Header().Set("Content-Type", "application/json")
+		// Two pages: page 1 has r1, page 2 has r2; total_pages=2.
+		rec := Record{ID: "r1", Type: "A", Name: "a.example.com", Content: "1.2.3.4"}
+		if page == "2" {
+			rec = Record{ID: "r2", Type: "A", Name: "b.example.com", Content: "5.6.7.8"}
+		}
+		recJSON, _ := json.Marshal(rec)
+		w.Write([]byte(`{"success":true,"result":[` + string(recJSON) + `],"errors":[],"result_info":{"total_pages":2}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	recs, err := p.ListRecords("z1")
+	if err != nil {
+		t.Fatalf("ListRecords error: %v", err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 records across 2 pages, got %d: %+v", len(recs), recs)
+	}
+	if recs[0].ID != "r1" || recs[1].ID != "r2" {
+		t.Errorf("records not collected in page order: %+v", recs)
+	}
+}
+
 func TestCloudflare_ListRecords_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -61,6 +61,19 @@ func imageForEngine(engine DockerDBEngine) string {
 	}
 }
 
+// dockerNameExists reports whether newline-separated docker output (a list of
+// container names from `--format {{.Names}}`) contains target exactly. It exists
+// because Docker's name filter matches substrings, so the caller must confirm an
+// exact hit.
+func dockerNameExists(out, target string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == target {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateDockerDB creates and starts a new database container.
 func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, dataDir string) (*DockerDBContainer, error) {
 	image := imageForEngine(engine)
@@ -70,8 +83,10 @@ func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, data
 
 	containerName := containerPrefix + name
 
-	// Check if already exists
-	if out, _ := dockerExecCommandFn("docker", "ps", "-a", "--filter", "name="+containerName, "--format", "{{.ID}}").Output(); len(strings.TrimSpace(string(out))) > 0 {
+	// Check if already exists. Docker's `name` filter is a substring/regex match,
+	// so it also returns e.g. uwas-db-foobar when creating uwas-db-foo — compare
+	// the returned names exactly to avoid a false "already exists".
+	if out, _ := dockerExecCommandFn("docker", "ps", "-a", "--filter", "name="+containerName, "--format", "{{.Names}}").Output(); dockerNameExists(string(out), containerName) {
 		return nil, fmt.Errorf("container %s already exists", containerName)
 	}
 
@@ -232,9 +247,14 @@ func DockerDBExecSQL(containerName, sql string) (string, error) {
 	if strings.Contains(image, "postgres") {
 		cmd = dockerExecCommandFn(args[0], args[1:]...)
 	} else {
-		// Use stdin to pass SQL — avoids shell escaping issues entirely.
+		// Use stdin to pass SQL — avoids shell escaping issues entirely. Select
+		// the client by availability and exec exactly one: the old
+		// `mariadb || mysql` fell back on ANY non-zero exit, so a SQL error from
+		// mariadb triggered mysql, which then read the already-consumed stdin,
+		// ran nothing, and exited 0 — masking the failure as success (callers
+		// like DockerDBCreateDatabase then returned creds for a DB never created).
 		cmd = dockerExecCommandFn("docker", "exec", "-i", fullName, "sh", "-c",
-			`mariadb -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names 2>/dev/null || mysql -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names 2>/dev/null`)
+			`if command -v mariadb >/dev/null 2>&1; then exec mariadb -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names 2>/dev/null; else exec mysql -u root -p"$MYSQL_ROOT_PASSWORD" --batch --skip-column-names 2>/dev/null; fi`)
 		cmd.Stdin = strings.NewReader(sql)
 	}
 

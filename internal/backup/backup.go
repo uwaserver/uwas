@@ -286,6 +286,8 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 	m.mu.Lock()
 	configPath := m.configPath
 	certsDir := m.certsDir
+	domainsDir := m.domainsDir
+	webRoot := m.webRoot
 	m.mu.Unlock()
 
 	if configPath == "" {
@@ -344,7 +346,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		case strings.HasPrefix(hdr.Name, "config/"):
 			outPath = configPath
 		case strings.HasPrefix(hdr.Name, "domains.d/"):
-			if m.domainsDir == "" {
+			if domainsDir == "" {
 				continue
 			}
 			rel := strings.TrimPrefix(hdr.Name, "domains.d/")
@@ -352,7 +354,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			var ok bool
-			outPath, ok = safeRestorePath(m.domainsDir, rel)
+			outPath, ok = safeRestorePath(domainsDir, rel)
 			if !ok {
 				continue // path traversal or symlink escape attempt
 			}
@@ -371,7 +373,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			}
 		case strings.HasPrefix(hdr.Name, "sites/"):
 			// Restore domain web content to web root
-			if m.webRoot == "" {
+			if webRoot == "" {
 				continue
 			}
 			rel := strings.TrimPrefix(hdr.Name, "sites/")
@@ -379,7 +381,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 				continue
 			}
 			var ok bool
-			outPath, ok = safeRestorePath(m.webRoot, rel)
+			outPath, ok = safeRestorePath(webRoot, rel)
 			if !ok {
 				continue // path traversal or symlink escape attempt
 			}
@@ -387,7 +389,17 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			// Import database dump via mysql
 			if hdr.Typeflag != tar.TypeDir {
 				const maxDumpSize = 2 << 30 // 2GB
-				data, _ := io.ReadAll(io.LimitReader(tr, maxDumpSize))
+				// Read one byte past the limit so an oversized dump is detected and
+				// rejected rather than silently truncated (which would import a
+				// corrupt database and report success). Surface read errors too,
+				// instead of discarding them and importing a partial dump.
+				data, readErr := io.ReadAll(io.LimitReader(tr, maxDumpSize+1))
+				if readErr != nil {
+					return fmt.Errorf("read database dump from backup: %w", readErr)
+				}
+				if int64(len(data)) > maxDumpSize {
+					return fmt.Errorf("database dump exceeds %d bytes; refusing to import a truncated dump", maxDumpSize)
+				}
 				totalRead += int64(len(data))
 				if len(data) > 0 {
 					if err := importDatabaseDump(data, m.logger); err != nil {
@@ -559,6 +571,11 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 		for {
 			next := nextCronRun(cronExpr)
 			if next.IsZero() {
+				// Invalid/impossible expression: the schedule will never fire, so
+				// don't leave the manager reporting itself as actively running.
+				m.mu.Lock()
+				m.running = false
+				m.mu.Unlock()
 				return
 			}
 			wait := time.Until(next)
@@ -597,11 +614,15 @@ func nextCronRun(expr string) time.Time {
 
 	loc := time.Local
 	now := time.Now().In(loc)
-	year := now.Year()
 
-	// Try up to 2 years ahead
-	for i := 0; i < 365*2; i++ {
-		candidate := time.Date(year+i/12/30, time.Month(1+(i/30)%12), 1+(i%30), 0, 0, 0, 0, loc)
+	// Walk real calendar days with AddDate so month lengths, day 31, and leap
+	// years are handled correctly. The previous hand-rolled index math built
+	// candidates as 1+(i%30), so day 31 never occurred (day-31 schedules never
+	// fired) and February slots normalized forward into March; it also derived
+	// the candidate year (i/360) inconsistently from the returned year (i/365).
+	startDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	for d := 0; d < 366*2; d++ {
+		candidate := startDay.AddDate(0, 0, d)
 
 		// Check month
 		if !matchCronField(int(candidate.Month()), monthField) {
@@ -626,7 +647,7 @@ func nextCronRun(expr string) time.Time {
 				if !matchCronField(min, minuteField) {
 					continue
 				}
-				next := time.Date(year+i/365, candidate.Month(), candidate.Day(), h, min, 0, 0, loc)
+				next := time.Date(candidate.Year(), candidate.Month(), candidate.Day(), h, min, 0, 0, loc)
 				if next.After(now) {
 					return next
 				}
@@ -715,14 +736,23 @@ func (m *BackupManager) pruneOld(provider string) {
 	if err != nil {
 		return
 	}
-	if len(items) <= m.keepCount {
+	// Only prune full backups. The local provider's List returns every *.tar.gz,
+	// so without this filter full-backup retention would delete per-domain
+	// backups (uwas-domain-*), which have their own lifecycle.
+	var fulls []BackupInfo
+	for _, it := range items {
+		if strings.HasPrefix(it.Name, "uwas-backup-") {
+			fulls = append(fulls, it)
+		}
+	}
+	if len(fulls) <= m.keepCount {
 		return
 	}
-	// Sort oldest last.
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Created.After(items[j].Created)
+	// Sort newest first, then delete everything past keepCount.
+	sort.Slice(fulls, func(i, j int) bool {
+		return fulls[i].Created.After(fulls[j].Created)
 	})
-	for _, item := range items[m.keepCount:] {
+	for _, item := range fulls[m.keepCount:] {
 		if err := p.Delete(ctx, item.Name); err != nil {
 			m.logger.Warn("prune backup failed", "name", item.Name, "error", err)
 		} else {

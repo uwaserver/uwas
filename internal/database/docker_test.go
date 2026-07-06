@@ -207,12 +207,31 @@ func TestCreateDockerDB_UnsupportedEngine(t *testing.T) {
 func TestCreateDockerDB_AlreadyExists(t *testing.T) {
 	saveDockerHook(t)
 	dockerExecCommandFn = fakeDockerCmdRouter(map[string]cmdRoute{
-		"ps": {stdout: "existing_container_id", exitCode: 0},
+		"ps": {stdout: "uwas-db-test1\n", exitCode: 0},
 	}, cmdRoute{stdout: "", exitCode: 0})
 
 	_, err := CreateDockerDB(EngineMariaDB, "test1", 3307, "pw", "")
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected already exists error, got %v", err)
+	}
+}
+
+// TestCreateDockerDB_SubstringNameNotExists is the regression for Docker's
+// substring name filter: creating uwas-db-test1 when only uwas-db-test1x exists
+// must NOT report "already exists".
+func TestCreateDockerDB_SubstringNameNotExists(t *testing.T) {
+	saveDockerHook(t)
+	dockerExecCommandFn = fakeDockerCmdRouter(map[string]cmdRoute{
+		"ps":  {stdout: "uwas-db-test1x\n", exitCode: 0}, // substring match only
+		"run": {stdout: "newid1234567", exitCode: 0},
+	}, cmdRoute{stdout: "", exitCode: 0})
+
+	c, err := CreateDockerDB(EngineMariaDB, "test1", 3307, "pw", "")
+	if err != nil {
+		t.Fatalf("substring-only match must not block creation, got %v", err)
+	}
+	if c.Name != "uwas-db-test1" {
+		t.Errorf("Name = %q, want uwas-db-test1", c.Name)
 	}
 }
 

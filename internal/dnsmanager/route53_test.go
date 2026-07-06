@@ -17,6 +17,32 @@ func newTestRoute53(url string) *Route53Provider {
 	return p
 }
 
+// TestRoute53_SigningRegionAlwaysUsEast1 is the regression for the global-
+// service signing bug: even when the provider is configured with a non-us-east-1
+// region, Route53 requests must be signed against us-east-1 or AWS rejects them
+// with SignatureDoesNotMatch.
+func TestRoute53_SigningRegionAlwaysUsEast1(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/xml")
+		w.Write([]byte(`<ListHostedZonesResponse><HostedZones></HostedZones></ListHostedZonesResponse>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := NewRoute53("AKIATEST", "secrettest", "eu-west-1") // non-default region
+	p.baseURL = srv.URL
+	if _, err := p.ListZones(); err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+	if !strings.Contains(gotAuth, "/us-east-1/route53/aws4_request") {
+		t.Errorf("signature scope must use us-east-1, got Authorization=%q", gotAuth)
+	}
+	if strings.Contains(gotAuth, "/eu-west-1/") {
+		t.Errorf("signature must not use the configured region eu-west-1: %q", gotAuth)
+	}
+}
+
 // --- Constructor ---
 
 func TestNewRoute53(t *testing.T) {

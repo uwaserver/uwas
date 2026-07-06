@@ -56,8 +56,10 @@ func TestCloudflare_ListZones_ResultUnmarshalError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "parse zones") {
-		t.Errorf("error = %v, want 'parse zones'", err)
+	// The paginated list path parses result as an array in the envelope, so a
+	// non-array result fails at the response-parse stage.
+	if !strings.Contains(err.Error(), "parse response") {
+		t.Errorf("error = %v, want 'parse response'", err)
 	}
 }
 
@@ -90,8 +92,10 @@ func TestCloudflare_ListRecords_ResultUnmarshalError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "parse records") {
-		t.Errorf("error = %v, want 'parse records'", err)
+	// The paginated list path parses result as an array in the envelope, so a
+	// non-array result fails at the response-parse stage.
+	if !strings.Contains(err.Error(), "parse response") {
+		t.Errorf("error = %v, want 'parse response'", err)
 	}
 }
 

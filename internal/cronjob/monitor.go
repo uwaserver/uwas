@@ -54,9 +54,17 @@ type Monitor struct {
 	maxHistory int
 	alertFn    func(domain, command, output string, exitCode int)
 	dataDir    string
+	// timeout bounds a single execution so a hung command cannot keep its
+	// overlap-guard entry set forever (which would skip every future run).
+	timeout time.Duration
 	// Per-job overlap guard: prevents concurrent execution of the same job.
 	running map[string]bool // key: domain:command, true if job is currently running
 }
+
+// defaultJobTimeout is a ceiling well above any legitimate cron job — its role
+// is to reap a genuinely hung process (which would otherwise block the job
+// forever via the overlap guard), not to bound normal runtimes.
+const defaultJobTimeout = 24 * time.Hour
 
 // NewMonitor creates a new cron job monitor.
 func NewMonitor(dataDir string) *Monitor {
@@ -64,10 +72,22 @@ func NewMonitor(dataDir string) *Monitor {
 		history:    make(map[string][]ExecutionRecord),
 		maxHistory: 100, // Keep last 100 executions per job
 		dataDir:    dataDir,
+		timeout:    defaultJobTimeout,
 		running:    make(map[string]bool),
 	}
 	m.loadHistory()
 	return m
+}
+
+// SetTimeout overrides the per-execution timeout. A non-positive value restores
+// the default ceiling.
+func (m *Monitor) SetTimeout(d time.Duration) {
+	m.mu.Lock()
+	if d <= 0 {
+		d = defaultJobTimeout
+	}
+	m.timeout = d
+	m.mu.Unlock()
 }
 
 // RecordExecution records a cron job execution result.
@@ -152,7 +172,13 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	m.mu.RLock()
+	timeout := m.timeout
+	m.mu.RUnlock()
+	if timeout <= 0 {
+		timeout = defaultJobTimeout
+	}
+	err := runWithTimeout(cmd, timeout)
 	record.EndedAt = time.Now()
 	record.Duration = record.EndedAt.Sub(record.StartedAt)
 
@@ -348,6 +374,31 @@ func (m *Monitor) ClearHistory(domain, command string) {
 	m.saveHistory()
 }
 
+// runWithTimeout runs cmd and kills it if it exceeds timeout, so a hung command
+// cannot block the job's overlap guard indefinitely. It kills the whole process
+// group (setProcessGroup runs the command in its own group) — killing only the
+// shell would leave a forked child holding the stdout pipe, and cmd.Wait would
+// then block until that child exited anyway. The process is reaped after the
+// kill to avoid a zombie.
+func runWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
+	setProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		killProcessGroup(cmd)
+		<-done // reap the killed process
+		return fmt.Errorf("command timed out after %s", timeout)
+	}
+}
+
 func (m *Monitor) jobKey(domain, command string) string {
 	return domain + ":" + command
 }
@@ -375,6 +426,12 @@ func (m *Monitor) loadHistory() {
 		return
 	}
 
+	// A history file containing literal `null` unmarshals to a nil map. Assigning
+	// it would make the next RecordExecution write to a nil map and panic, so
+	// keep the initialized map when the file has no usable content.
+	if history == nil {
+		return
+	}
 	m.history = history
 }
 
