@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26-alpine3.24 AS builder
+FROM golang:1.26-alpine3.24@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
 
 RUN apk add --no-cache git
 
@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 go build \
     -o /uwas ./cmd/uwas
 
 # Runtime stage
-FROM alpine:3.24
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # ca-certificates: TLS verification for ACME, webhook delivery, DNS providers
 # tzdata: correct timestamps in logs across deployments

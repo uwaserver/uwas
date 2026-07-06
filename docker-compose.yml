@@ -40,7 +40,7 @@ services:
     pids_limit: 512
 
   php:
-    image: php:8.3-fpm-alpine
+    image: php:8.3-fpm-alpine@sha256:9fcec48321d890240d700ccdc2b475420c87d398826e68c3d8830b8fca663e5c
     volumes:
       - ./data/www:/var/www
     restart: unless-stopped
@@ -49,7 +49,7 @@ services:
     pids_limit: 256
 
   db:
-    image: mariadb:11
+    image: mariadb:11@sha256:efb4959ef2c835cd735dbc388eb9ad6aab0c78dd64febcd51bc17481111890c4
     environment:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in your .env}
       MARIADB_DATABASE: wordpress
