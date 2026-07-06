@@ -54,7 +54,8 @@ docs/site/dist/
 # ── Demo / temp ──
 demo/
 
-# ── Playwright screenshots ──
+# ── Playwright output ──
+test-results/
 .playwright-mcp/
 
 # ── Profiling ──
