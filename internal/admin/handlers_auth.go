@@ -375,6 +375,13 @@ func (s *Server) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handle2FASetup(w http.ResponseWriter, r *http.Request) {
+	// Admin-only: these endpoints mutate the global admin TOTP secret. Without
+	// this guard, any authenticated non-admin in multi-user mode could set (and
+	// therefore control) the secret, then lock every real admin out via the
+	// per-request 2FA gate in authMiddleware.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	s.configMu.RLock()
 	existing := s.config.Global.Admin.TOTPSecret
 	s.configMu.RUnlock()
@@ -410,6 +417,9 @@ func (s *Server) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Code string `json:"code"`
@@ -470,6 +480,9 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Code string `json:"code"`

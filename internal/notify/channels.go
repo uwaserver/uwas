@@ -208,14 +208,42 @@ func sendEmail(cfg map[string]string, msg Message) error {
 		from = user
 	}
 
-	subject := fmt.Sprintf("[UWAS] %s: %s", strings.ToUpper(msg.Level), msg.Title)
+	// Trim recipients so " b@y.com" (after a ", ") is not sent as a literal
+	// RCPT that SMTP servers reject, and drop empties.
+	recipients := splitRecipients(to)
+	if len(recipients) == 0 {
+		return fmt.Errorf("email: no valid recipients")
+	}
+
+	// Strip CR/LF from header-interpolated fields to prevent SMTP header
+	// injection (an extra header or a smuggled body via a crafted title/from).
+	from = stripCRLF(from)
+	subject := fmt.Sprintf("[UWAS] %s: %s", strings.ToUpper(msg.Level), stripCRLF(msg.Title))
 	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\n\nSource: %s",
-		from, to, subject, msg.Body, msg.Source)
+		from, strings.Join(recipients, ", "), subject, msg.Body, msg.Source)
 
 	addr := host + ":" + port
 	var auth smtp.Auth
 	if user != "" {
 		auth = smtp.PlainAuth("", user, pass, host)
 	}
-	return smtpSendMailFn(addr, auth, from, strings.Split(to, ","), []byte(body))
+	return smtpSendMailFn(addr, auth, from, recipients, []byte(body))
+}
+
+// stripCRLF removes carriage returns and line feeds so a value cannot break out
+// of its SMTP header line.
+func stripCRLF(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
+// splitRecipients splits a comma-separated address list, trimming whitespace and
+// CR/LF from each and dropping empties.
+func splitRecipients(to string) []string {
+	var out []string
+	for _, r := range strings.Split(to, ",") {
+		if r = strings.TrimSpace(stripCRLF(r)); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }

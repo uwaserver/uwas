@@ -431,7 +431,7 @@ func TestHandle2FASetupAlreadyEnabled(t *testing.T) {
 	s.config.Global.Admin.TOTPSecret = "existing-secret"
 
 	rec := httptest.NewRecorder()
-	s.handle2FASetup(rec, httptest.NewRequest("POST", "/api/v1/auth/2fa/setup", nil))
+	s.handle2FASetup(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/2fa/setup", nil)))
 	if rec.Code != 409 {
 		t.Errorf("status = %d, want 409", rec.Code)
 	}
@@ -441,7 +441,7 @@ func TestHandle2FASetup(t *testing.T) {
 	s := testServer()
 
 	rec := httptest.NewRecorder()
-	s.handle2FASetup(rec, httptest.NewRequest("POST", "/api/v1/auth/2fa/setup", nil))
+	s.handle2FASetup(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/2fa/setup", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -462,7 +462,7 @@ func TestHandle2FAVerifyNoPending(t *testing.T) {
 	s := testServer()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", strings.NewReader(`{"code":"123456"}`))
+	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", strings.NewReader(`{"code":"123456"}`)))
 	s.handle2FAVerify(rec, req)
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -472,7 +472,7 @@ func TestHandle2FAVerifyNoPending(t *testing.T) {
 func TestHandle2FAVerifyBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handle2FAVerify(rec, httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", strings.NewReader("not json")))
+	s.handle2FAVerify(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -490,7 +490,7 @@ func TestHandle2FAVerifyInvalidCode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/auth/2fa/verify", strings.NewReader(`{"code":"000000"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handle2FAVerify(rec, req)
+	s.handle2FAVerify(rec, withAdminContext(req))
 	// code may happen to be valid by chance, but usually 401
 	if rec.Code != 200 && rec.Code != 401 {
 		t.Errorf("status = %d, want 200 or 401", rec.Code)
@@ -501,7 +501,7 @@ func TestHandle2FADisableNotEnabled(t *testing.T) {
 	s := testServer()
 
 	rec := httptest.NewRecorder()
-	s.handle2FADisable(rec, httptest.NewRequest("POST", "/api/v1/auth/2fa/disable", strings.NewReader(`{"code":"123456"}`)))
+	s.handle2FADisable(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/2fa/disable", strings.NewReader(`{"code":"123456"}`))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -510,7 +510,7 @@ func TestHandle2FADisableNotEnabled(t *testing.T) {
 func TestHandle2FADisableBadJSON(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.handle2FADisable(rec, httptest.NewRequest("POST", "/api/v1/auth/2fa/disable", strings.NewReader("not json")))
+	s.handle2FADisable(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/2fa/disable", strings.NewReader("not json"))))
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -523,7 +523,7 @@ func TestHandle2FADisableInvalidCode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/auth/2fa/disable", strings.NewReader(`{"code":"000000"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
-	s.handle2FADisable(rec, req)
+	s.handle2FADisable(rec, withAdminContext(req))
 	if rec.Code != 401 && rec.Code != 200 {
 		t.Errorf("status = %d, want 401 or 200", rec.Code)
 	}

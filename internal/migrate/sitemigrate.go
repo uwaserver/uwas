@@ -221,7 +221,14 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 		log.WriteString("invalid database name\n")
 		return "error: invalid database name"
 	}
-	if req.DBUser != "" && !validMigrateDBIdentifier(req.DBUser) {
+	// An empty DBUser would make CREATE USER/GRANT below target ''@'localhost' —
+	// MySQL's anonymous account — granting ALL PRIVILEGES on the migrated DB to
+	// a passwordless account any local process can use. Require an explicit user.
+	if req.DBUser == "" {
+		log.WriteString("database user is required\n")
+		return "error: database user is required"
+	}
+	if !validMigrateDBIdentifier(req.DBUser) {
 		log.WriteString("invalid database user\n")
 		return "error: invalid database user"
 	}
@@ -343,7 +350,9 @@ func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder)
 		content = content[:idx] + newLine + content[idx+end+2:]
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	// 0600: wp-config.php holds DB credentials; the installer writes it 0600 and
+	// a migration must not relax that to world-readable.
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
 		return
 	}

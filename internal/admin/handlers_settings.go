@@ -43,6 +43,11 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 // ── 2FA Recovery Codes ─────────────────────────────────────────────
 
 func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	// Admin-only: recovery codes back the global admin's 2FA. A non-admin able
+	// to regenerate them could both read fresh codes and invalidate the admin's.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	codes := make([]string, 8)
 	for i := range codes {
 		b := make([]byte, 4)
@@ -62,6 +67,12 @@ func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
+	// Admin-only: consuming a recovery code mutates the global admin's code set.
+	// The admin remains RoleAdmin even before passing the TOTP gate (which
+	// exempts /api/v1/auth/2fa/* paths), so the recovery flow still works.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Code string `json:"code"`

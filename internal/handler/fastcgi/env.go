@@ -66,6 +66,13 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		if strings.HasPrefix(upper, "PHP_") {
 			continue
 		}
+		// httpoxy (CVE-2016-5385): a client-supplied "Proxy" header would
+		// become HTTP_PROXY, which Guzzle/cURL-based PHP honors for outbound
+		// requests — letting a client redirect the app's server-side traffic.
+		// The Proxy header has no legitimate request semantics; drop it.
+		if upper == "PROXY" {
+			continue
+		}
 		env["HTTP_"+upper] = strings.Join(vals, ", ")
 	}
 

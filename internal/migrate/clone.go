@@ -96,10 +96,27 @@ func Clone(req CloneRequest) *CloneResult {
 	log.WriteString("Files copied\n")
 	result.TargetRoot = req.TargetRoot
 
+	// Compute the effective DB credentials ONCE so the user we create in the
+	// database matches the one written into wp-config. Previously Step 2 created
+	// a user only when both DBUser and DBPass were supplied, while Step 3 always
+	// fell back to TargetDB + a random password — leaving wp-config pointing at a
+	// MySQL user that was never created ("Error establishing a database
+	// connection") even though the clone reported success.
+	dbUser := req.DBUser
+	dbPass := req.DBPass
+	if req.TargetDB != "" {
+		if dbUser == "" {
+			dbUser = req.TargetDB
+		}
+		if dbPass == "" {
+			dbPass = generatePassword()
+		}
+	}
+
 	// Step 2: Clone database
 	if req.SourceDB != "" {
 		log.WriteString("\n=== Cloning database ===\n")
-		if err := runCloneDB(req.SourceDB, req.TargetDB, req.DBUser, req.DBPass, &log); err != nil {
+		if err := runCloneDB(req.SourceDB, req.TargetDB, dbUser, dbPass, &log); err != nil {
 			log.WriteString(fmt.Sprintf("DB clone error: %s\n", err))
 		} else {
 			result.TargetDB = req.TargetDB
@@ -112,14 +129,6 @@ func Clone(req CloneRequest) *CloneResult {
 	if _, err := os.Stat(wpConfig); err == nil {
 		log.WriteString("\n=== Updating target wp-config.php ===\n")
 		if req.TargetDB != "" {
-			dbUser := req.DBUser
-			dbPass := req.DBPass
-			if dbUser == "" {
-				dbUser = req.TargetDB
-			}
-			if dbPass == "" {
-				dbPass = generatePassword()
-			}
 			updateWPConfigDB(wpConfig, req.TargetDB, dbUser, dbPass, &log)
 		}
 		// Update siteurl/home to target domain
@@ -219,7 +228,12 @@ func updateWPConfigURLs(path, domain string, log *strings.Builder) {
 	insert := fmt.Sprintf("define('WP_HOME', '%s');\ndefine('WP_SITEURL', '%s');\n\n", newURL, newURL)
 	content = strings.Replace(content, "require_once ABSPATH", insert+"require_once ABSPATH", 1)
 
-	os.WriteFile(path, []byte(content), 0644)
+	// 0600: wp-config.php holds DB credentials; keep it owner-only like the
+	// installer writes it, and surface a write failure instead of dropping it.
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
+		return
+	}
 	log.WriteString(fmt.Sprintf("WP_HOME/WP_SITEURL set to %s\n", newURL))
 }
 

@@ -277,7 +277,7 @@ func TestHandleGenRecoveryCodes(t *testing.T) {
 	req.Header.Set("X-API-Key", "test-key")
 	w := httptest.NewRecorder()
 
-	srv.handleGenRecoveryCodes(w, req)
+	srv.handleGenRecoveryCodes(w, withAdminContext(req))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("handleGenRecoveryCodes: expected %d, got %d", http.StatusOK, w.Code)
@@ -344,7 +344,7 @@ func TestHandleUseRecoveryCode(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	srv.handleUseRecoveryCode(w, req)
+	srv.handleUseRecoveryCode(w, withAdminContext(req))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("handleUseRecoveryCode with valid code: expected %d, got %d", http.StatusOK, w.Code)
@@ -391,7 +391,7 @@ func TestHandleUseRecoveryCodeInvalid(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	srv.handleUseRecoveryCode(w, req)
+	srv.handleUseRecoveryCode(w, withAdminContext(req))
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("handleUseRecoveryCode with invalid code: expected %d, got %d", http.StatusUnauthorized, w.Code)
@@ -421,7 +421,7 @@ func TestHandleUseRecoveryCodeEmpty(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	srv.handleUseRecoveryCode(w, req)
+	srv.handleUseRecoveryCode(w, withAdminContext(req))
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("handleUseRecoveryCode with empty codes: expected %d, got %d", http.StatusUnauthorized, w.Code)
@@ -437,7 +437,7 @@ func TestHandleUseRecoveryCodeInvalidJSON(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	srv.handleUseRecoveryCode(w, req)
+	srv.handleUseRecoveryCode(w, withAdminContext(req))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("handleUseRecoveryCode with invalid JSON: expected %d, got %d", http.StatusBadRequest, w.Code)

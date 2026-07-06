@@ -627,6 +627,22 @@ func TestMigrateDBRealInvalidDBUser(t *testing.T) {
 	}
 }
 
+// TestMigrateDBRealEmptyDBUser is the regression for the anonymous-account
+// vulnerability: an empty DBUser must be rejected, not used to create a
+// passwordless ”@'localhost' account with ALL PRIVILEGES on the migrated DB.
+func TestMigrateDBRealEmptyDBUser(t *testing.T) {
+	var log strings.Builder
+	res := migrateDBReal(MigrateRequest{
+		SourceHost: "user@host",
+		SourcePort: "22",
+		DBName:     "validdb",
+		DBUser:     "",
+	}, &log)
+	if res != "error: database user is required" {
+		t.Errorf("res = %q, want 'error: database user is required'", res)
+	}
+}
+
 func TestMigrateInvalidSSHInput(t *testing.T) {
 	res := Migrate(MigrateRequest{
 		SourceHost: "user@host",
