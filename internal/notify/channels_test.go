@@ -404,6 +404,42 @@ func TestSendEmailSuccess(t *testing.T) {
 	}
 }
 
+// TestSendEmailTrimsRecipientsAndSanitizesHeaders is the regression for the
+// multi-recipient RCPT and SMTP-header-injection issues: recipients after ", "
+// must be trimmed, and CR/LF in the title/from must not break out of the header.
+func TestSendEmailTrimsRecipientsAndSanitizesHeaders(t *testing.T) {
+	origFn := smtpSendMailFn
+	t.Cleanup(func() { smtpSendMailFn = origFn })
+
+	var capturedTo []string
+	var capturedBody []byte
+	smtpSendMailFn = func(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+		capturedTo = to
+		capturedBody = msg
+		return nil
+	}
+
+	cfg := map[string]string{
+		"smtp_host": "mail.example.com",
+		"from":      "alerts@example.com",
+		"to":        "admin@example.com, ops@example.com",
+	}
+	msg := testMsg()
+	msg.Title = "Alert\r\nBcc: attacker@evil.example" // header-injection attempt
+	if err := sendEmail(cfg, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(capturedTo) != 2 || capturedTo[0] != "admin@example.com" || capturedTo[1] != "ops@example.com" {
+		t.Errorf("recipients not trimmed/split correctly: %#v", capturedTo)
+	}
+	// The injection is prevented if "Bcc:" never appears as its own header line
+	// (i.e. preceded by a newline); appearing inline on the Subject line is safe.
+	if strings.Contains(string(capturedBody), "\nBcc:") {
+		t.Errorf("CRLF in title was not stripped — header injection possible:\n%s", capturedBody)
+	}
+}
+
 func TestSendEmailDefaultPort(t *testing.T) {
 	origFn := smtpSendMailFn
 	t.Cleanup(func() { smtpSendMailFn = origFn })

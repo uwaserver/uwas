@@ -39,6 +39,28 @@ func TestBuildEnv(t *testing.T) {
 	}
 }
 
+// TestBuildEnvStripsProxyHeader is the regression for httpoxy (CVE-2016-5385):
+// a client-supplied Proxy header must not be forwarded as HTTP_PROXY, or
+// PHP HTTP clients would route the app's outbound traffic through it.
+func TestBuildEnvStripsProxyHeader(t *testing.T) {
+	r := httptest.NewRequest("GET", "/index.php", nil)
+	r.Header.Set("Proxy", "http://attacker.example:8080")
+	r.Header.Set("User-Agent", "TestBrowser")
+	w := httptest.NewRecorder()
+	ctx := router.AcquireContext(w, r)
+	defer router.ReleaseContext(ctx)
+
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+
+	if v, ok := env["HTTP_PROXY"]; ok {
+		t.Errorf("HTTP_PROXY should not be set from a client Proxy header, got %q", v)
+	}
+	// A legitimate header must still pass through, confirming the filter is scoped.
+	if env["HTTP_USER_AGENT"] != "TestBrowser" {
+		t.Errorf("HTTP_USER_AGENT = %q, want TestBrowser", env["HTTP_USER_AGENT"])
+	}
+}
+
 func TestBuildEnvHTTPS(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
