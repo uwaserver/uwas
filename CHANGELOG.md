@@ -7,34 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-###
+### Documentation
+
+- Add v0.8.8 upgrade notes to UPGRADING.md covering cron timeout, crontab error handling, Route53 signing, and cache encoding changes
+- Update README.md current snapshot to v0.8.8 with resolved security findings (risk score 2.1/10)
+- Add resolved-status banners to all 39 security-report scanner result files
+- Update security report risk score from 7.8 to 2.1 after verifying all CRITICAL/HIGH and most MEDIUM findings are fixed
 
 
-### Fixed
-- Fix backup cron schedule: day-31 schedules never fired due to hand-rolled index math; replace with proper calendar AddDate walk
-- Detect oversized database dump imports (>2GB) instead of silent truncation; separate full-backup retention from per-domain backup pruning
-- Add execution timeout to cron job monitor with process-group kill so hung commands don't block the overlap guard forever
-- Surface crontab read errors instead of silently treating failures as empty (would destroy unrelated cron jobs)
-- Paginate Cloudflare zone/record listing (was returning only first page, causing duplicate A records)
-- Always sign Route53 requests against us-east-1 (global service) regardless of configured provider region
-- Skip compress middleware wrapping on WebSocket upgrades (broke Hijack); fix io.Writer contract violation on small-chunk streaming; add Flush/Unwrap support
-- Cache resolved path instead of verdict in path containment check (cross-docroot isolation bug)
-- Fix PHP FPM StartFPM TOCTOU race (LoadOrStore), INI prefix match clobbering wrong directives, and unexpanded shell substitution in RHEL remi-release URL
-- Check HTTP status before extracting WordPress tarball; surface io.Copy and rename errors instead of silent success
-- Switch selfupdate checksum verification from broken per-asset .sha256 URL to SHA256SUMS file with proper parser
-- Strip Content-Encoding/Length from cached responses so compress middleware re-derives them on each hit (was serving plaintext as br/gzip)
-- Carry AppPort through deploy pipeline so git-mode health check actually runs
-- Fix Docker container name exact match check (Docker filter is substring); improve exec SQL client selection with fallback
-- Fix Cloudflare tunnel Start() race allowing duplicate tunnel processes
-
-### Security
-- Admin 2FA and recovery code endpoints now require admin-level access (regression tests added)
-- Strip Proxy header from FastCGI env to prevent httpoxy (CVE-2016-5385)
-- Prevent SMTP header injection by stripping CR/LF from title/from fields and trimming email recipients
-- Reject empty DBUser in migration to prevent anonymous MySQL user grant
-
-
-## [0.8.8] - 2026-06-30
+## [0.8.8] - 2026-07-06
 
 ### Added
 
