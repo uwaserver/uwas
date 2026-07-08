@@ -12,7 +12,7 @@
 - `go mod init github.com/uwaserver/uwas`
 - Create directory structure: `cmd/uwas/`, `internal/`, `pkg/`
 - `go.mod` + initial dependencies (`gopkg.in/yaml.v3`)
-- `.gitignore`, `LICENSE` (Apache 2.0), empty `README.md`
+- `.gitignore`, `LICENSE` (dual AGPL-3.0/commercial), empty `README.md`
 - `Makefile` (build, dev, test, lint, clean targets)
 - **Test**: `go build ./...` completes without errors
 

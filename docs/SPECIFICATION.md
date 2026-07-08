@@ -6,8 +6,8 @@
 - **Pronunciation**: "you-wass"
 - **Tagline**: One binary to serve them all
 - **Language**: Go (1.26.4+)
-- **License**: Apache 2.0
-- **Distribution**: Single static binary, Docker image, apt/yum repo
+- **License**: Dual license — AGPL-3.0 open source + commercial option
+- **Distribution**: Single static binary, Docker image, Homebrew formula, install/update scripts, and source builds
 - **Dependencies**: Minimal — stdlib-first, proven libs where stdlib falls short
 - **Dependency Policy**: See Section 1.1
 - **Repository**: github.com/uwaserver/uwas
@@ -83,10 +83,9 @@ UWAS (single binary)
 |-----------|-------|-------------------------------|
 | `gopkg.in/yaml.v3` | YAML config parser | Writing a YAML parser from scratch is 3000+ lines and error-prone |
 | `github.com/andybalholm/brotli` | Brotli compression | Brotli spec is 10K+ lines, we don't want C bindings |
-| `github.com/klauspost/compress/zstd` | Zstandard compression | Same reason |
-| `github.com/quic-go/quic-go` | HTTP/3 (Phase 2+) | QUIC is a project on its own |
-| `golang.org/x/crypto` | OCSP, ACME helper utils | Go extended stdlib, quasi-official |
-| `golang.org/x/net` | HTTP/2 server push, ECH | Go extended stdlib |
+| `github.com/quic-go/quic-go` | HTTP/3 | QUIC is a project on its own |
+| `golang.org/x/crypto` | SSH/SFTP and crypto helpers | Go extended stdlib, quasi-official |
+| `golang.org/x/sync` | Bounded concurrency helpers | Go extended stdlib |
 
 **Strictly forbidden**:
 - Web frameworks (gin, echo, fiber, etc.)
@@ -95,7 +94,7 @@ UWAS (single binary)
 - Dependency injection frameworks
 - Any "kitchen sink" library
 
-**Target**: Total **< 15 direct dependencies** in `go.sum`, including indirect **< 40 total**.
+**Current target/status**: Keep direct Go dependencies small; current `go.mod` has 5 direct dependencies and 5 indirect dependencies.
 
 ---
 
@@ -1475,7 +1474,7 @@ Direct access to `.php` files → execute via FastCGI, never serve as a download
 
 ### Phase 5: Ecosystem
 - Docker official image
-- apt/yum packages
+- Homebrew formula and install/update scripts
 - Helm chart
 - Ansible/Terraform modules
 - WordPress migration guide

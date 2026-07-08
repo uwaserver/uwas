@@ -8,20 +8,18 @@
 
 | Metric | Count |
 |--------|------:|
-| Go source files | 214 |
-| Test files | 215 |
-| Lines of Go code | ~59,000 |
+| Go source files | 224 |
+| Test files | 217 |
+| Lines of Go code | ~60,000 |
 | Internal packages | 46 |
 | Public packages (pkg/) | 2 |
 | CLI commands | 19 |
-| API endpoints | 205+ |
-| Dashboard pages | 40 |
+| Admin API routes | 251 explicit registrations |
+| Dashboard pages | 42 |
 | Direct Go dependencies | 5 |
 | Binary size (linux/amd64) | ~15 MB |
 
-> **Note:** The `internal/admin` package was refactored from a single 6,707-line
-> `api.go` into 37 focused files (largest: `api.go` at 1,458 lines, down 78%).
-> Handler logic is split by topic — see the Package Map below.
+> **Note:** The `internal/admin` package is split into focused route/handler files instead of a monolithic API implementation. Current route registrations live in `routes.go`; handler logic is grouped by feature — see the Package Map below.
 
 ---
 
@@ -39,7 +37,7 @@
 │                            │                    │                  │        │
 │                    ┌───────▼─────────┐    ┌─────▼─────────┐ ┌──────▼──────┐ │
 │                    │  Request Router │    │  Admin API    │ │ SFTP Server │ │
-│                    │  (VHost + SNI)  │    │  205+ routes  │ │ chroot jail │ │
+│                    │  (VHost + SNI)  │    │  251 routes   │ │ chroot jail │ │
 │                    └────────┬────────┘    │  + Dashboard  │ └─────────────┘ │
 │                             │             │ + WebSocket   │                 │
 │              ┌──────────────┼────┐        │ + MCP         │                 │
@@ -144,7 +142,7 @@ cmd/uwas/
 └── main.go                     CLI entry point
 
 internal/
-├── admin/                      API server (254+ routes) + dashboard embed + auth
+├── admin/                      API server (251 route registrations) + dashboard embed + auth
 │   ├── api.go                  Core: Server struct, lifecycle, middleware, helpers
 │   ├── routes.go               Route registration (15 themed sub-registrars)
 │   ├── handlers_auth.go        Login, 2FA, multi-user RBAC, sessions
@@ -197,8 +195,8 @@ internal/
 │   ├── backup.go               Backup/restore
 │   ├── install.go              One-time setup + systemd unit
 │   ├── migrate.go              Apache/Nginx config import
-│   ├── doctor.go               System diagnostics
-│   └── ...                     (19 command files)
+│   ├── status.go               Runtime status
+│   └── ...                     (command files for cert, config, php, restart, stop, user, version, etc.)
 │
 ├── config/                     YAML config structs + validation + defaults
 │   ├── config.go               All config types (Domain, SSL, PHP, Proxy...)
@@ -220,20 +218,20 @@ internal/
 │   │   └── env.go              CGI env vars + open_basedir + PHP_ADMIN_VALUE
 │   ├── proxy/                  Reverse proxy + LB + circuit breaker + canary
 │   │   ├── handler.go          Forward + WebSocket tunnel
-│   │   ├── pool.go             Upstream pool + health checker
+│   │   ├── health.go           Upstream health checker
 │   │   ├── balancer.go         Round-robin, least-conn, random, weighted
 │   │   ├── circuit.go          Circuit breaker (threshold + auto-heal)
 │   │   ├── canary.go           Percentage-based canary routing
 │   │   └── mirror.go           Async request mirroring
 │   ├── static/                 Static file serving + try_files + ETag
-│   └── redirect/               HTTP redirects (301/302/307/308)
+│   (redirect responses are handled by server dispatch/config, not a separate package)
 │
 ├── install/                    Background task manager (install queue)
 ├── logger/                     log/slog wrapper (structured logging)
 ├── mcp/                        MCP server (AI management interface)
 ├── metrics/                    Request metrics + latency percentiles
 │
-├── middleware/                 17 composable middlewares
+├── middleware/                 Composable middlewares
 │   ├── chain.go                Chain(A, B, C)(handler) composition
 │   ├── recovery.go             Panic recovery
 │   ├── requestid.go            X-Request-ID (UUIDv7)
@@ -247,7 +245,6 @@ internal/
 │   ├── geoip.go                Country-level blocking (per-domain)
 │   ├── botguard.go             25+ malicious scanner patterns
 │   ├── headers.go              Security headers (HSTS, X-Frame, etc.)
-│   ├── transform.go            Request/response header transforms
 │   ├── imageopt.go             WebP/AVIF auto-conversion
 │   ├── hotlink.go              Referer-based hotlink protection
 │   └── accesslog.go            Per-domain access log to file
@@ -303,8 +300,8 @@ pkg/
                                 IfModule, php_value, php_flag
 
 web/dashboard/                  React SPA (Vite + TypeScript + Tailwind)
-├── src/pages/                  40 page components
-├── src/lib/api.ts              API client (205+ endpoints)
+├── src/pages/                  42 page components
+├── src/lib/api.ts              API client for admin REST routes
 ├── src/components/             Sidebar, PinModal, Card
 └── dist/ → go:embed            Compiled into binary
 ```

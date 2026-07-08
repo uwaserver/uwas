@@ -282,7 +282,7 @@ Right side: Small icons showing what UWAS replaces:
 - Arrow pointing to single UWAS logo
 
 Bottom: "go install github.com/uwaserver/uwas@latest"
-Footer: uwaserver.com | Apache 2.0 | github.com/uwaserver/uwas
+Footer: uwaserver.com | AGPL-3.0 + commercial | github.com/uwaserver/uwas
 ```
 
 ### Comparison Infographic
@@ -308,10 +308,7 @@ Bottom: Feature checkmarks for UWAS
 
 ### GitHub Organization
 - `github.com/uwaserver/uwas` — main repository
-- `github.com/uwaserver/uwas-docker` — official Docker images
-- `github.com/uwaserver/uwas-helm` — Kubernetes Helm chart
-- `github.com/uwaserver/uwas-ansible` — Ansible role
-- `github.com/uwaserver/uwas-docs` — documentation site source
+- `github.com/uwaserver/uwas` — main repository, Docker build context, docs, and release automation
 
 ### Community Channels
 - GitHub Discussions (primary)
