@@ -12,6 +12,11 @@ across scanners were merged; framework/existing-control mitigations (pathsafe,
 crypto/subtle, header-based auth, RE2 regex, Go net/http header sanitization,
 WAF) were applied to confidence scoring.
 
+> **Historical detail:** The sections below preserve the original verified finding
+> evidence from the 2026-06-26 scan. The current codebase has since remediated
+> the listed CRITICAL/HIGH findings and most MEDIUM findings; see
+> [SECURITY-REPORT.md](./SECURITY-REPORT.md) for the current resolution table.
+
 ## Summary
 - Total raw findings from Phase 2 (excluding "no issues found" scanners): 54
 - After duplicate merging (10 cross-scanner duplicates collapsed): 44 distinct

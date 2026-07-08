@@ -1,11 +1,11 @@
 import { ArrowRight, GitBranch } from 'lucide-react'
 
 const stats = [
-  { value: '0', label: 'Dependencies', sub: 'ext' },
-  { value: '50+', label: 'Go Packages', sub: 'all tested' },
-  { value: '38', label: 'Dashboard Pages', sub: 'built-in' },
-  { value: '200+', label: 'API Endpoints', sub: 'RESTful' },
-  { value: '~14MB', label: 'Binary', sub: 'statically linked' },
+  { value: '5', label: 'Direct Deps', sub: 'Go modules' },
+  { value: '55', label: 'Go Packages', sub: 'excluding node_modules' },
+  { value: '42', label: 'Dashboard Pages', sub: 'built-in' },
+  { value: '251', label: 'Admin Routes', sub: 'explicit registrations' },
+  { value: '~15MB', label: 'Binary', sub: 'linux/amd64' },
 ]
 
 export default function Hero() {
@@ -26,7 +26,7 @@ export default function Hero() {
           style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-secondary)' }}
         >
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          v0.0.x - Active Development
+          v0.8.8 - Current Release
         </div>
 
         {/* Heading */}
@@ -45,7 +45,7 @@ export default function Hero() {
         >
           A high-performance web server + hosting panel replacing Apache + Nginx + Varnish + Caddy + cPanel.
           Auto HTTPS, built-in cache, PHP/FastCGI, reverse proxy, WordPress management, WAF,
-          and a 38-page dashboard - all in a single binary. Written in pure Go.
+          and a 42-page dashboard - all in a single binary. Written in Go.
         </p>
 
         {/* CTA Buttons */}

@@ -1,6 +1,6 @@
 # UWAS + WordPress — Production Deployment
 
-Deploy a complete WordPress site on any VPS with a single command.
+Deploy a complete WordPress site on any VPS with Docker Compose. The example uses `ghcr.io/uwaserver/uwas:latest` by default; uncomment the `build: ../..` line in `docker-compose.yml` to build UWAS from this repository instead.
 
 ## What You Get
 
@@ -32,7 +32,7 @@ cp .env .env.local
 nano .env.local
 ```
 
-Required changes in `.env`:
+Required changes in `.env.local`:
 
 ```ini
 DOMAIN=yourdomain.com
@@ -41,6 +41,8 @@ DB_ROOT_PASSWORD=your_secure_root_password
 DB_PASSWORD=your_secure_db_password
 UWAS_ADMIN_KEY=your_secure_admin_key
 ```
+
+Optional values include `DB_NAME`, `DB_USER`, `ADMIN_PORT`, and `PHP_MEMORY_LIMIT`. The compose file reads `.env.local` via `--env-file`, so keep secrets out of committed files.
 
 ### 3. Point DNS
 
@@ -53,7 +55,7 @@ If using `www`, also create an A record for `www.yourdomain.com`.
 docker compose --env-file .env.local up -d
 ```
 
-Wait ~30 seconds for WordPress to download and database to initialize.
+Wait ~30 seconds for MariaDB to initialize and the `wp-init` service to download WordPress on the first boot.
 
 ### 5. Install WordPress
 
@@ -65,10 +67,10 @@ Open `https://yourdomain.com` in your browser and complete the WordPress setup w
 
 ```
 https://yourdomain.com:9443/_uwas/dashboard/
-API Key: your UWAS_ADMIN_KEY from .env
+API Key: your UWAS_ADMIN_KEY from .env.local
 ```
 
-Features: live stats, domain management, cache control, access logs, server metrics.
+Features: live stats, domain management, cache control, access logs, server metrics, and the full UWAS admin API.
 
 ### Common Commands
 

@@ -12,7 +12,7 @@
 ## Status Update — 2026-07-06
 
 All 5 CRITICAL/HIGH findings and the majority of MEDIUM findings from the initial scan have been
-verified as fixed in the current codebase (revision `cc138da`). The project also passes every
+verified as fixed in the current codebase (v0.8.8 and later main). The project also passes every
 quality gate: `go build ./...`, `go vet ./...`, `staticcheck ./...`, `go test ./...`
 (52/52 packages), `go test -race` (0 data races), and dashboard npm build all succeed with zero
 errors. The full validation report is documented in the conversation log.
@@ -51,7 +51,7 @@ errors. The full validation report is documented in the conversation log.
 The following Low-severity items remain as accepted risks or design limitations in multi-user RBAC mode:
 
 - **VULN-021**: Fine-grained permission model (`PermDomainRead` etc.) is defined but not enforced per-endpoint — per-domain access uses `canAccessDomain`/`requireDomainAccess`, which provides equivalent tenant isolation
-- **VULN-033/034**: Docker base images use version tags (not digests), mitigated by Dependabot weekly updates
+- **VULN-033/034**: Docker base images are pinned by digest and tracked by Dependabot; continue updating digest pins with base-image security releases
 - **VULN-035**: Per-domain upstream TLS verification can be disabled by configuration (documented, low risk in practice)
 
 ---
@@ -60,8 +60,8 @@ The following Low-severity items remain as accepted risks or design limitations 
 
 A security assessment was performed on UWAS, a security-critical, internet-facing Go web server and
 root-equivalent hosting control panel, using 36 specialized security skills across the full OWASP Top 10
-plus language-, container-, and supply-chain-specific scanners. The scan analyzed ~462 source files
-containing approximately **59,000 lines of Go** (52 internal packages) and ~24,900 lines of
+plus language-, container-, and supply-chain-specific scanners. The scan analyzed ~480 source files
+containing approximately **60,000 lines of Go** (46 top-level internal package directories; 55 Go packages excluding node_modules) and ~24,900 lines of
 TypeScript/React, plus Docker and GitHub Actions infrastructure.
 
 The codebase shows **mature, deliberate security engineering**: stdlib-first design with only 5 direct Go
@@ -71,27 +71,22 @@ SSE/WebSocket tickets, and a loopback-only bind safeguard for the no-auth bootst
 classes (SQLi, command injection, deserialization, XXE, SSTI, path traversal) were investigated and found
 **not reachable**.
 
-The residual risk is concentrated in two areas:
+The initial scan concentrated risk in two areas, both now addressed in the current codebase:
 
-1. **Multi-tenant RBAC (`global.users.enabled = true`)** — the privilege model has gaps. A reseller/user can
-   over-post fields that are not on the non-admin denylist on the domain-update path. The most severe of
-   these (**VULN-001**) lets a reseller set a domain's `root` to `/`, turning the file manager into arbitrary
-   host filesystem read/write — a data-plane-to-control-plane escalation reaching `/etc/shadow`, the admin
-   API key, and SSH `authorized_keys`. Several read endpoints (DNS, debug, bandwidth, analytics, cron) also
-   lack per-domain authorization, leaking cross-tenant data.
+1. **Multi-tenant RBAC (`global.users.enabled = true`)** — the initial report found domain-update over-posting
+   and cross-tenant read gaps. Current handlers enforce sensitive-field denylisting, root containment,
+   per-domain access checks, and role permissions for domain mutations.
 
-2. **Server-side input handling on privileged sinks** — per-domain php.ini override **values** are stored
-   verbatim and emitted unescaped after the sandbox-enforcing directives, allowing newline injection that
-   defeats `disable_functions`/`open_basedir` and yields PHP RCE (**VULN-002**); uploaded SVGs are served as
-   `image/svg+xml` with no `nosniff`/attachment, enabling cross-user stored XSS against an admin
-   (**VULN-004**); and the shipped `docker-compose.yml` carries a publicly-known default admin key while
-   publishing the control plane on `0.0.0.0` (**VULN-005**).
+2. **Server-side input handling on privileged sinks** — the initial report found PHP ini newline injection,
+   SVG preview XSS, weak compose defaults, and CI shell interpolation risks. Current code validates PHP ini
+   override keys/values, serves SVGs defensively, requires compose secrets to be set, verifies release
+   checksums, and uses safer CI environment passing.
 
-**Critical reachability nuance:** In the **default single-API-key deployment**, `authMiddleware` injects a
-virtual admin for every authenticated request, so all RBAC-conditional findings (the entire cross-tenant /
-mass-assignment class) are **not exploitable** — every caller is already admin. They become live only when
-multi-user RBAC is enabled, which UWAS ships as a first-class feature. This nuance is the primary reason the
-contextual risk score (7.8) sits below the mechanical finding-count score (~9.9).
+**Critical reachability nuance from the initial scan:** In the default single-API-key deployment,
+`authMiddleware` injected a virtual admin for every authenticated request, so RBAC-conditional findings were
+not exploitable there. They became relevant only when multi-user RBAC was enabled, which is why the initial
+contextual risk score (7.8) sat below the mechanical finding-count score (~9.9). The current reassessment
+score is 2.1/10 after the verified fixes above.
 
 ### Key Metrics
 | Metric | Value |
@@ -103,15 +98,14 @@ contextual risk score (7.8) sits below the mechanical finding-count score (~9.9)
 | Low | 21 |
 | Informational | 9 |
 
-### Top Risks
-1. **VULN-001 (Critical):** Reseller over-posts `root` on `PUT /domains/{host}`; no web-root containment on
-   the update path → file manager grants arbitrary host filesystem read/write → host compromise.
-2. **VULN-002 (High):** php.ini override **value** stored/emitted unescaped after the sandbox lines → newline
-   injection clears `disable_functions`/`open_basedir` → PHP RCE.
-3. **VULN-004 (High):** Uploaded SVG served as `image/svg+xml` (no nosniff/attachment) + client
-   `window.open(blob)` without `noopener` → cross-user stored XSS steals the admin bearer token.
-4. **VULN-005 (High):** Default `please-change-this-admin-key` in `docker-compose.yml` + admin port bound to
-   `0.0.0.0` → remote full-panel takeover if the operator skips setting `UWAS_ADMIN_KEY`.
+### Initial Top Risks (Resolved)
+1. **VULN-001 (Critical):** Reseller `root` over-post on `PUT /domains/{host}` — fixed with sensitive-field
+   denylisting and web-root containment.
+2. **VULN-002 (High):** php.ini override newline injection — fixed with directive key/value validation.
+3. **VULN-004 (High):** Uploaded SVG preview XSS — fixed with download-only SVG handling and defensive
+   response headers.
+4. **VULN-005 (High):** Default compose admin key — fixed with fail-fast secret requirements and weak-key
+   startup rejection.
 
 ---
 
@@ -119,8 +113,8 @@ contextual risk score (7.8) sits below the mechanical finding-count score (~9.9)
 
 | Statistic | Value |
 |-----------|-------|
-| Files Scanned | ~462 source files (438 Go non-test + TS/React + IaC) |
-| Lines of Code | ~59,000 Go (non-test) + ~24,900 TypeScript/React |
+| Files Scanned | ~480 source/config files (441 Go files including tests + TS/React + IaC) |
+| Lines of Code | ~60,000 Go + ~24,900 TypeScript/React |
 | Languages Detected | Go (primary), TypeScript/React; YAML, Dockerfile, GitHub Actions |
 | Frameworks Detected | Go stdlib `net/http` (1.22+ ServeMux), quic-go (HTTP/3); React 19 + Vite 8 + Tailwind 4 |
 | Skills Executed | 36 |

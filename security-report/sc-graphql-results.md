@@ -10,8 +10,8 @@ No issues found by sc-graphql.
 
 ## Scan summary
 
-UWAS does not use GraphQL. The codebase exposes its 250+ API endpoints as
-REST/JSON over the Go stdlib `net/http` router (`internal/admin/routes.go`).
+UWAS does not use GraphQL. The codebase exposes its admin API as REST/JSON
+over the Go stdlib `net/http` router (`internal/admin/routes.go`).
 There is no GraphQL server, schema, resolver, type definition, directive, or
 GraphQL dependency in `go.mod`/`go.sum` or `web/dashboard/package.json`.
 

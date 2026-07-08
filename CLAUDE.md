@@ -16,13 +16,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 41-page React dashboard.
+UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 42-page React dashboard.
 
-**Current Stats (v0.6.44):**
-- 52 Go packages, all with tests
-- 41 dashboard pages, 250+ API endpoints
+**Current Stats (v0.8.8 + current main):**
+- 55 Go packages from `go list ./... | grep -v /node_modules/`
+- 42 dashboard pages and 251 explicit admin route registrations
 - 19 CLI commands
-- ~23MB single binary
+- ~15MB stripped linux/amd64 release binary target
 
 ## Build & Test Commands
 
@@ -61,7 +61,7 @@ make all                              # Full check + build
 ```
 cmd/uwas/            CLI entry point (19 commands)
 internal/
-  admin/             API server (254+ routes) + dashboard embed + TOTP auth
+  admin/             API server (251 route registrations) + dashboard embed + TOTP auth
     api.go            Core: Server struct, lifecycle, middleware, helpers
     routes.go         Route registration (15 themed sub-registrars)
     handlers_*.go     Topic-split handlers (auth, domain, cloudflare×3,
@@ -70,7 +70,7 @@ internal/
     domain_alias.go   www↔apex canonical redirect logic
   alerting/          Alert thresholds + notifications
   analytics/         Per-domain traffic analytics
-  appmanager/        Node.js/Python/Ruby/Go process management
+  apps/              Node.js/Python/Ruby/Go/Docker app supervision and YAML persistence
   auth/              Multi-user RBAC (admin/reseller/user) + sessions + TOTP 2FA
   backup/            Local/S3/SFTP backup + restore
   bandwidth/         Per-domain bandwidth limits + throttling
@@ -196,7 +196,7 @@ TCP → TLS (SNI routing)
 | Add per-domain middleware | Add config field in `config.go`, wire in `server.go:handleRequest()` after domain lookup |
 | Add admin endpoint | Register in `internal/admin/routes.go` (themed sub-registrar), add handler in the matching `handlers_*.go` |
 | Add MCP tool | Register in `internal/mcp/server.go:registerTools()` |
-| Add CLI command | Create in `internal/cli/`, register in `cmd/uwas/main.go` |
+| Add CLI command | Create in `internal/cli/`, register in `internal/cli/root.go` |
 | Add dashboard page | Create in `web/dashboard/src/pages/`, add route in `App.tsx`, add to `Sidebar.tsx` |
 | Add API function | Add to `web/dashboard/src/lib/api.ts` with TypeScript interface |
 
