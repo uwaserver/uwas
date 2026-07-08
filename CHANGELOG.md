@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- Add v0.8.8 upgrade notes to UPGRADING.md covering cron timeout, crontab error handling, Route53 signing, and cache encoding changes
-- Update README.md current snapshot to v0.8.8 with resolved security findings (risk score 2.1/10)
-- Add resolved-status banners to all 39 security-report scanner result files
-- Update security report risk score from 7.8 to 2.1 after verifying all CRITICAL/HIGH and most MEDIUM findings are fixed
+- Add v0.8.8 upgrade notes to `UPGRADING.md` covering cron timeout, crontab error handling, Route53 signing, cache encoding changes, and release checksum verification
+- Refresh root documentation (`README.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/SPECIFICATION.md`, `docs/IMPLEMENTATION.md`, `docs/TASKS.md`, `docs/BRANDING.md`) to match current route/page/package counts, licensing, dependency inventory, and build metadata
+- Replace leftover Vite template README content in `web/dashboard/README.md` and `docs/site/README.md` with project-specific guidance
+- Refresh docs-site marketing/config examples and the WordPress example README to match the current dashboard, config schema, Docker/compose flow, and release version metadata
+- Add resolved-status framing to security report files and update the main security report narrative to align with the current fixed state (risk score 2.1/10)
 
 
 ## [0.8.8] - 2026-07-06

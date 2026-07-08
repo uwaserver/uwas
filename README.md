@@ -12,7 +12,7 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
   <img src="assets/banner.jpeg" alt="UWAS Logo" width="100%">
 </p>
 
-> **Note:** UWAS is production-ready with 50+ installed instances.
+> **Note:** UWAS is intended for production use; verify it against your own deployment, traffic, and security requirements.
 
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -20,7 +20,7 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard with 254+ API endpoints.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard backed by 251 explicit admin API route registrations.
 
 One binary. Zero hassle.
 
@@ -407,7 +407,7 @@ Request Flow:
 ```
 cmd/uwas/                → CLI entry point (19 commands)
 internal/
-  admin/                 → REST API (254+ routes) + dashboard embed + TOTP auth
+  admin/                 → REST API (251 route registrations) + dashboard embed + TOTP auth
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
   apps/                  → Standalone Node/Python/Ruby/Go/custom/Docker app supervision
