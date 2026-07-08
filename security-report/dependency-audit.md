@@ -18,13 +18,13 @@ Date: 2026-06-26.
 
 ### Go (ecosystem: Go)
 Direct (5), all exact-pinned in `go.mod`, integrity hashes present in `go.sum`:
-- `github.com/andybalholm/brotli v1.2.0`
-- `github.com/quic-go/quic-go v0.59.0`
-- `golang.org/x/crypto v0.52.0`
-- `golang.org/x/sync v0.20.0`
+- `github.com/andybalholm/brotli v1.2.1`
+- `github.com/quic-go/quic-go v0.60.0`
+- `golang.org/x/crypto v0.53.0`
+- `golang.org/x/sync v0.21.0`
 - `gopkg.in/yaml.v3 v3.0.1`
 
-Indirect (5): `github.com/kr/text v0.2.0`, `github.com/quic-go/qpack v0.6.0`, `golang.org/x/net v0.55.0`, `golang.org/x/sys v0.45.0`, `golang.org/x/text v0.37.0`.
+Indirect (5): `github.com/kr/text v0.2.0`, `github.com/quic-go/qpack v0.6.0`, `golang.org/x/net v0.55.0`, `golang.org/x/sys v0.46.0`, `golang.org/x/text v0.38.0`.
 
 - No `replace` directives (no local-path / non-standard-URL substitution).
 - No `//go:generate` directives, no cgo (`import "C"`) — no build-time code execution or external C toolchain risk.

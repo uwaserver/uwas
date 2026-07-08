@@ -23,9 +23,9 @@ go build -o uwas ./cmd/uwas
 
 # Production (static binary, stripped, versioned)
 CGO_ENABLED=0 go build -ldflags="-s -w \
-  -X main.Version=$(git describe --tags) \
-  -X main.Commit=$(git rev-parse --short HEAD) \
-  -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -X 'github.com/uwaserver/uwas/internal/build.Version=$(git describe --tags)' \
+  -X 'github.com/uwaserver/uwas/internal/build.Commit=$(git rev-parse --short HEAD)' \
+  -X 'github.com/uwaserver/uwas/internal/build.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
   -o uwas ./cmd/uwas
 ```
 
@@ -39,11 +39,12 @@ go get gopkg.in/yaml.v3
 
 # Compression (Phase 2)
 go get github.com/andybalholm/brotli
-go get github.com/klauspost/compress/zstd
+# HTTP/3
+go get github.com/quic-go/quic-go
 
 # Extended stdlib
 go get golang.org/x/crypto
-go get golang.org/x/net/http2
+go get golang.org/x/sync
 ```
 
 ### 1.3 Core Package Layout
@@ -61,7 +62,6 @@ internal/
     static/                → static file serving
     fastcgi/               → FastCGI protocol client + pool
     proxy/                 → reverse proxy, LB, health check
-    redirect/              → redirect handler
   middleware/              → chain builder + all middleware impls
   admin/                   → REST API + dashboard
   mcp/                     → MCP server protocol
@@ -1818,7 +1818,7 @@ Benchmark tests:
 
 ```dockerfile
 # Multi-stage build
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine3.24 AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download

@@ -167,7 +167,7 @@ when running in a container — see `/api/v1/system`.
 cmd/uwas/            CLI entry point
 internal/
   server/            HTTP/HTTPS/HTTP3 server + request dispatch
-  admin/             REST API (254+ routes) + dashboard embed
+  admin/             REST API (251 route registrations) + dashboard embed
     api.go            Core: Server struct, lifecycle, middleware, helpers
     routes.go         Route registration (themed sub-registrars)
     handlers_*.go     Topic-split handlers (one file per feature area)

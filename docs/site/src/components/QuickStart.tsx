@@ -11,23 +11,21 @@ const tabs: Tab[] = [
   {
     id: 'zero',
     label: 'Zero Config',
-    code: `$ uwas
+    code: `$ uwas serve -c uwas.yaml
 
 [UWAS] Starting server...
-[UWAS] Auto-detecting sites in /var/www/
-[UWAS] Found: example.com (static)
+[UWAS] Config loaded: uwas.yaml
 [UWAS] Auto-HTTPS enabled (Let's Encrypt)
 [UWAS] Cache engine: active (L1 memory + L2 disk)
-[UWAS] Dashboard: http://localhost:2019
+[UWAS] Dashboard: http://127.0.0.1:9443/_uwas/dashboard/
 [UWAS] Listening on :80, :443
 [UWAS] Ready to serve.`,
   },
   {
     id: 'docker',
     label: 'Docker',
-    code: `$ docker run -p 80:80 -p 443:443 \\
-    -v ./uwas.yaml:/etc/uwas/uwas.yaml \\
-    ghcr.io/uwaserver/uwas:latest
+    code: `$ cp .env.example .env
+$ docker compose up -d
 
 [UWAS] Starting server...
 [UWAS] Config loaded: /etc/uwas/uwas.yaml
@@ -38,24 +36,32 @@ const tabs: Tab[] = [
     id: 'config',
     label: 'Config',
     code: `# uwas.yaml
+global:
+  http_listen: ":80"
+  https_listen: ":443"
+  admin:
+    enabled: true
+    listen: "127.0.0.1:9443"
+    api_key: "\${UWAS_ADMIN_KEY}"
+
 domains:
-  - name: example.com
+  - host: example.com
     type: static
     root: /var/www/html
-    tls:
-      auto: true
+    ssl:
+      mode: auto
     cache:
       enabled: true
       ttl: 3600
 
-  - name: app.example.com
+  - host: app.example.com
     type: php
     root: /var/www/app
     php:
-      fastcgi: 127.0.0.1:9000
-      index: index.php
-    tls:
-      auto: true`,
+      fpm_address: "tcp:127.0.0.1:9000"
+      index_files: [index.php, index.html]
+    ssl:
+      mode: auto`,
   },
   {
     id: 'migrate',
