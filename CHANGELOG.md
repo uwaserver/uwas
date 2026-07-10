@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.8.9] - 2026-07-10
+
+### Fixed
+
+- **Backup (SFTP):** Uploads now stream to the remote host instead of buffering the entire archive in memory, removing the 100 MB size cap that hard-failed large backups.
+- **Backup (S3):** `List` now matches both server (`uwas-backup-*`) and per-domain (`uwas-domain-*`) archives, so domain backups stored on S3 are listable, restorable, and deletable rather than hidden.
+- **DNS (Cloudflare):** Zone lookup now walks parent-domain suffixes (longest first), so subdomains and multi-label public suffixes such as `example.co.uk` resolve to the correct registrable zone instead of failing with "zone not found". This also fixes ACME DNS-01 challenges and the admin DNS handlers for such domains.
+- **DNS (pagination):** Zone and record listings now follow pagination for Cloudflare (`FindZoneByHostname`), Hetzner (`meta.pagination`), and DigitalOcean (`links.pages.next`), so accounts with more than one page of zones/records are fully enumerated.
+- **Deploy:** Auto-detected build commands now run as separate steps, fixing Node.js deploys that failed because the generated `npm install && npm run build` was rejected by the shell-metacharacter guard.
+- **PHP-FPM:** Generated pools now include an unprivileged `user`/`group` (detected web account, falling back to `nobody`) when UWAS runs as root, so `php-fpm` actually starts instead of exiting immediately — previously `StartFPM` reported false success.
+- **Webhook:** Deliveries now run through a pool of workers, so a single slow or dead endpoint no longer head-of-line blocks delivery to every other endpoint (and no longer forces events to be dropped at the queue cap).
+
+### Security
+
+- Database and root passwords are kept off process command lines (`/proc/<pid>/cmdline`): the native/TCP MySQL client passes the root password via `MYSQL_PWD` and the SQL via stdin instead of `-p`/`-e`; `docker run` receives `-e MYSQL_ROOT_PASSWORD`/`-e POSTGRES_PASSWORD` by name with the value supplied through the environment; and remote `mysqldump` during site migration uses `MYSQL_PWD`.
+
+### Removed
+
+- Removed the unused `auth.Session.LastStep` field.
+
 ### Documentation
 
 - Add v0.8.8 upgrade notes to `UPGRADING.md` covering cron timeout, crontab error handling, Route53 signing, cache encoding changes, and release checksum verification
