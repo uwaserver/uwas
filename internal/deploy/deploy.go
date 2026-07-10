@@ -294,21 +294,27 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 		return fmt.Errorf("deployment cancelled")
 	default:
 	}
-	buildCmd := req.BuildCmd
-	if buildCmd == "" {
-		buildCmd = detectBuildCmd(appRoot)
+	var buildCmds []string
+	if req.BuildCmd != "" {
+		// Allow explicit skip via "skip" or "none".
+		if req.BuildCmd != "skip" && req.BuildCmd != "none" {
+			buildCmds = []string{req.BuildCmd}
+		}
+	} else {
+		// Auto-detected commands are returned as separate steps so we never need
+		// "&&", which validateShellCommand rejects (that previously made every
+		// auto-detected Node build fail on "npm install && npm run build").
+		buildCmds = detectBuildCmds(appRoot)
 	}
-	// Allow explicit skip via "skip" or "none"
-	if buildCmd == "skip" || buildCmd == "none" {
-		buildCmd = ""
-	}
-	if buildCmd != "" {
+	if len(buildCmds) > 0 {
 		m.mu.Lock()
 		status.Status = "building"
 		m.mu.Unlock()
-		log.WriteString("$ " + buildCmd + "\n")
-		if out, err := runShell(appRoot, req.Env, buildCmd); err != nil {
-			return fmt.Errorf("build failed: %w\n%s", err, out)
+		for _, bc := range buildCmds {
+			log.WriteString("$ " + bc + "\n")
+			if out, err := runShell(appRoot, req.Env, bc); err != nil {
+				return fmt.Errorf("build failed: %w\n%s", err, out)
+			}
 		}
 		log.WriteString("Build complete\n")
 	}
@@ -453,8 +459,10 @@ func (m *Manager) CancelDeploy(domain string) bool {
 	}
 }
 
-// detectBuildCmd infers build commands from project files.
-func detectBuildCmd(appRoot string) string {
+// detectBuildCmds infers the ordered build steps from project files. Each
+// element is a single command with no shell chaining, so the caller can run
+// them sequentially without "&&" (which validateShellCommand rejects).
+func detectBuildCmds(appRoot string) []string {
 	// Node.js
 	if data, err := os.ReadFile(filepath.Join(appRoot, "package.json")); err == nil {
 		var pkg struct {
@@ -462,24 +470,24 @@ func detectBuildCmd(appRoot string) string {
 		}
 		if json.Unmarshal(data, &pkg) == nil {
 			if _, ok := pkg.Scripts["build"]; ok {
-				return "npm install && npm run build"
+				return []string{"npm install", "npm run build"}
 			}
-			return "npm install"
+			return []string{"npm install"}
 		}
 	}
 	// Python
 	if _, err := os.Stat(filepath.Join(appRoot, "requirements.txt")); err == nil {
-		return "pip install -r requirements.txt"
+		return []string{"pip install -r requirements.txt"}
 	}
 	// Ruby
 	if _, err := os.Stat(filepath.Join(appRoot, "Gemfile")); err == nil {
-		return "bundle install"
+		return []string{"bundle install"}
 	}
 	// Go
 	if _, err := os.Stat(filepath.Join(appRoot, "go.mod")); err == nil {
-		return "go build -o app ."
+		return []string{"go build -o app ."}
 	}
-	return ""
+	return nil
 }
 
 func runCmd(dir string, env map[string]string, name string, args ...string) (string, error) {
