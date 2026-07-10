@@ -26,7 +26,7 @@ export default function Hero() {
           style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-secondary)' }}
         >
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          v0.8.8 - Current Release
+          v0.8.9 · stable release
         </div>
 
         {/* Heading */}
@@ -45,7 +45,8 @@ export default function Hero() {
         >
           A high-performance web server + hosting panel replacing Apache + Nginx + Varnish + Caddy + cPanel.
           Auto HTTPS, built-in cache, PHP/FastCGI, reverse proxy, WordPress management, WAF,
-          and a 42-page dashboard - all in a single binary. Written in Go.
+          and a 42-page dashboard — all in a single ~15&nbsp;MB binary. Pure Go, stdlib-first,
+          five dependencies, no runtime.
         </p>
 
         {/* CTA Buttons */}

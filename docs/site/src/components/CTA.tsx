@@ -21,7 +21,7 @@ export default function CTA() {
               Ready to simplify your stack?
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-lg" style={{ color: 'var(--text-secondary)' }}>
-              Replace your entire web server stack with a single 18 MB binary.
+              Replace your entire web-server stack with a single ~15&nbsp;MB binary.
               Install in seconds, configure in minutes.
             </p>
 

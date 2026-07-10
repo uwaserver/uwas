@@ -74,7 +74,7 @@ const features: Feature[] = [
 		icon: HardDrive,
 		title: "Backup / Restore",
 		description:
-			"Local, S3, and SFTP backup targets. Scheduled backups with automatic pruning and one-click restore.",
+			"Local, S3, and SFTP targets with streaming uploads (no size cap), scheduled runs, automatic pruning, and one-click restore.",
 		color: "var(--accent-indigo)",
 		bgColor: "rgba(99, 102, 241, 0.1)",
 	},
@@ -82,7 +82,7 @@ const features: Feature[] = [
 		icon: Shield,
 		title: "WAF Security",
 		description:
-			"SQL injection, XSS, path traversal protection. Configurable rate limiting and IP blocking.",
+			"SQL injection, XSS, path-traversal, and RCE detection over URL + request body. Bot guard, rate limiting, GeoIP, and IP blocking.",
 		color: "var(--accent-red)",
 		bgColor: "rgba(239, 68, 68, 0.1)",
 	},
