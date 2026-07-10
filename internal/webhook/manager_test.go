@@ -65,6 +65,47 @@ func TestFire(t *testing.T) {
 	}
 }
 
+// TestConcurrentDeliveryNoHeadOfLineBlock verifies that a slow/dead endpoint
+// does not delay delivery to other endpoints — the regression fixed by moving
+// from a single serial worker to a worker pool.
+func TestConcurrentDeliveryNoHeadOfLineBlock(t *testing.T) {
+	fastDone := make(chan struct{}, 1)
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second) // ties up a delivery worker
+		w.WriteHeader(200)
+	}))
+	defer slow.Close()
+
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case fastDone <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(200)
+	}))
+	defer fast.Close()
+
+	m := newTestManager()
+	defer m.Close()
+
+	// Slow endpoint listed first so it is enqueued first; a single serial worker
+	// would deliver it before ever reaching the fast one.
+	m.UpdateWebhooks([]WebhookConfig{
+		{URL: slow.URL, Enabled: true, RetryMax: 0, Timeout: 5 * time.Second},
+		{URL: fast.URL, Enabled: true, RetryMax: 0, Timeout: 5 * time.Second},
+	})
+
+	m.Fire(EventTest, map[string]any{"msg": "x"})
+
+	select {
+	case <-fastDone:
+		// Delivered concurrently — not blocked behind the slow endpoint.
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("fast webhook was blocked behind the slow endpoint (head-of-line blocking)")
+	}
+}
+
 func TestFireEventFiltering(t *testing.T) {
 	var mu sync.Mutex
 	var count int

@@ -105,8 +105,15 @@ func NewManager(dataDir string, logger Logger) *Manager {
 		dialControl: webhookDialControl,
 	}
 
-	// Start worker goroutine
-	go m.worker()
+	// Start a pool of delivery workers. A single worker head-of-line blocked all
+	// webhooks behind one slow/dead endpoint (each delivery can take up to
+	// timeout×(retries+1) plus backoff ≈ 2min), so unrelated events piled up and
+	// were eventually dropped at the queue cap. Each delivery is independent (no
+	// shared mutable state in deliver), so running several concurrently is safe;
+	// cross-event ordering was never guaranteed (retries already reorder).
+	for i := 0; i < webhookWorkers; i++ {
+		go m.worker()
+	}
 
 	// Keep the history path resolved early for future persistence hooks.
 	if historyPath := m.historyFile(); historyPath != "" {
@@ -223,7 +230,11 @@ func (m *Manager) FireTo(url string, eventType EventType, data any) {
 	m.sendToQueue(qe, url)
 }
 
-// worker processes the webhook queue.
+// webhookWorkers is the number of concurrent delivery workers draining the
+// queue. Kept modest so a burst of events can't spawn unbounded outbound load.
+const webhookWorkers = 8
+
+// worker processes the webhook queue. Several run concurrently (see NewManager).
 func (m *Manager) worker() {
 	for qe := range m.queue {
 		m.deliver(qe)
