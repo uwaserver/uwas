@@ -6,11 +6,11 @@ interface Metric {
 }
 
 const metrics: Metric[] = [
-  { value: '7K', label: 'req/sec', sub: 'HTTP throughput', color: 'var(--accent-blue)' },
-  { value: '75M', label: 'cache ops/sec', sub: 'Cache engine', color: 'var(--accent-cyan)' },
-  { value: '<1ms', label: 'p99 latency', sub: 'Overhead', color: 'var(--accent-green)' },
-  { value: '18MB', label: 'Binary', sub: 'Statically linked', color: 'var(--accent-purple)' },
-  { value: '1,718', label: 'Tests', sub: '100% pass', color: 'var(--accent-orange)' },
+  { value: '256', label: 'cache shards', sub: 'Lock-striped LRU', color: 'var(--accent-cyan)' },
+  { value: '<1ms', label: 'p99 overhead', sub: 'Static handler', color: 'var(--accent-green)' },
+  { value: '~15MB', label: 'Binary', sub: 'Stripped, static', color: 'var(--accent-purple)' },
+  { value: '6,100+', label: 'Tests', sub: '54 packages, 0 races', color: 'var(--accent-orange)' },
+  { value: '5', label: 'Dependencies', sub: 'stdlib-first', color: 'var(--accent-blue)' },
   { value: '<2s', label: 'Cold Start', sub: 'Ready to serve', color: 'var(--accent-pink)' },
 ]
 

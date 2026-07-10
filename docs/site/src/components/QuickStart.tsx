@@ -9,6 +9,20 @@ interface Tab {
 
 const tabs: Tab[] = [
   {
+    id: 'install',
+    label: 'Install',
+    code: `# One-line install (verifies the release SHA256 before running)
+$ curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/install.sh | sh
+
+[UWAS] Fetching latest release (v0.8.9)...
+[UWAS] Verifying SHA256SUMS...
+[UWAS] Installed: /usr/local/bin/uwas
+[UWAS] Run 'uwas version' to confirm.
+
+# Update in place later:
+$ curl -fsSL https://raw.githubusercontent.com/uwaserver/uwas/main/update.sh | sh`,
+  },
+  {
     id: 'zero',
     label: 'Zero Config',
     code: `$ uwas serve -c uwas.yaml
@@ -146,7 +160,7 @@ function CodeBlock({ code, onCopy, copied }: { code: string; onCopy: () => void;
 }
 
 export default function QuickStart() {
-  const [activeTab, setActiveTab] = useState('zero')
+  const [activeTab, setActiveTab] = useState('install')
   const [copied, setCopied] = useState(false)
 
   const activeContent = tabs.find((t) => t.id === activeTab)
@@ -169,7 +183,7 @@ export default function QuickStart() {
             Up and running in seconds
           </h2>
           <p className="mt-4 text-lg" style={{ color: 'var(--text-secondary)' }}>
-            Four ways to get started — pick the one that fits your workflow.
+            Five ways to get started — pick the one that fits your workflow.
           </p>
         </div>
 
