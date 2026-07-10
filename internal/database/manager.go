@@ -805,6 +805,24 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 		}
 	}
 
+	// mysqlClient builds a client invocation that feeds the SQL over stdin rather
+	// than via -e: the SQL for CREATE/ALTER USER embeds plaintext passwords, and
+	// -e would expose them on the process command line (/proc/<pid>/cmdline). The
+	// root password (pw) is passed through MYSQL_PWD in the environment for the
+	// same reason, instead of -p<password> on argv.
+	mysqlClient := func(bin, pw string, args ...string) *exec.Cmd {
+		cmd := execCommandFn(bin, args...)
+		cmd.Stdin = strings.NewReader(sql)
+		if pw != "" {
+			env := cmd.Env
+			if env == nil {
+				env = os.Environ()
+			}
+			cmd.Env = append(env, "MYSQL_PWD="+pw)
+		}
+		return cmd
+	}
+
 	for _, client := range []string{"mariadb", "mysql"} {
 		bin, err := execLookPathFn(client)
 		if err != nil {
@@ -813,12 +831,11 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 
 		// Docker/remote: connect via TCP with password
 		if host != "" && password != "" {
-			args := []string{"-u", "root", "-p" + password, "-h", "127.0.0.1",
-				"--batch", "--skip-column-names", "-e", sql}
+			args := []string{"-u", "root", "-h", "127.0.0.1", "--batch", "--skip-column-names"}
 			if port > 0 {
 				args = append(args, "-P", fmt.Sprintf("%d", port))
 			}
-			cmd := execCommandFn(bin, args...)
+			cmd := mysqlClient(bin, password, args...)
 			out, err := cmd.CombinedOutput()
 			if err == nil {
 				return string(out), nil
@@ -827,14 +844,14 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 		}
 
 		// Native: direct as root (unix_socket auth)
-		cmd := execCommandFn(bin, "-u", "root", "--batch", "--skip-column-names", "-e", sql)
+		cmd := mysqlClient(bin, "", "-u", "root", "--batch", "--skip-column-names")
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil
 		}
 
 		// Native: without -u root (let socket auth auto-detect user)
-		cmd = execCommandFn(bin, "--batch", "--skip-column-names", "-e", sql)
+		cmd = mysqlClient(bin, "", "--batch", "--skip-column-names")
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return string(out), nil
@@ -845,7 +862,7 @@ func runMySQLOnHost(sql, host string, port int, password string) (string, error)
 			if _, statErr := osStatFn(sock); statErr != nil {
 				continue
 			}
-			cmd = execCommandFn(bin, "-u", "root", "--socket="+sock, "--batch", "--skip-column-names", "-e", sql)
+			cmd = mysqlClient(bin, "", "-u", "root", "--socket="+sock, "--batch", "--skip-column-names")
 			out, err = cmd.CombinedOutput()
 			if err == nil {
 				return string(out), nil

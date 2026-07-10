@@ -507,9 +507,11 @@ func TestRunMySQLOnHost_TCPSuccess(t *testing.T) {
 	saveHooks(t)
 	execLookPathFn = lookPathFound("mariadb")
 	var capturedArgs []string
+	var capturedCmd *exec.Cmd
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
 		capturedArgs = args
-		return fakeCmd("tcp result", 0)(name, args...)
+		capturedCmd = fakeCmd("tcp result", 0)(name, args...)
+		return capturedCmd
 	}
 
 	out, err := runMySQLOnHost("SELECT 1", "127.0.0.1", 3307, "secret")
@@ -520,8 +522,26 @@ func TestRunMySQLOnHost_TCPSuccess(t *testing.T) {
 		t.Errorf("expected tcp result, got %q", out)
 	}
 	joined := strings.Join(capturedArgs, " ")
-	if !strings.Contains(joined, "-psecret") || !strings.Contains(joined, "-P 3307") {
-		t.Errorf("expected password + port args, got %q", joined)
+	// The password must NOT appear on the command line (visible via /proc).
+	if strings.Contains(joined, "secret") || strings.Contains(joined, "-p") {
+		t.Errorf("password must not appear on argv, got %q", joined)
+	}
+	if !strings.Contains(joined, "-P 3307") {
+		t.Errorf("expected port arg, got %q", joined)
+	}
+	// It must be passed via MYSQL_PWD in the environment instead.
+	foundPwEnv := false
+	for _, e := range capturedCmd.Env {
+		if e == "MYSQL_PWD=secret" {
+			foundPwEnv = true
+		}
+	}
+	if !foundPwEnv {
+		t.Errorf("expected MYSQL_PWD=secret in env, got %v", capturedCmd.Env)
+	}
+	// And the SQL must be delivered over stdin, not -e.
+	if strings.Contains(joined, "-e") {
+		t.Errorf("SQL must be passed via stdin, not -e; got %q", joined)
 	}
 }
 

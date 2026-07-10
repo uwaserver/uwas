@@ -1422,8 +1422,12 @@ func TestBuildMysqldumpCmd(t *testing.T) {
 	if !strings.Contains(cmd, "-u 'root'") {
 		t.Error("should contain -u root")
 	}
-	if !strings.Contains(cmd, "-p'secret'") {
-		t.Error("should contain password")
+	// Password must be delivered via MYSQL_PWD in the env, not -p on argv.
+	if !strings.Contains(cmd, "MYSQL_PWD='secret'") {
+		t.Errorf("should pass password via MYSQL_PWD: %s", cmd)
+	}
+	if strings.Contains(cmd, "-p") {
+		t.Errorf("password must not appear as -p on the command line: %s", cmd)
 	}
 	if !strings.Contains(cmd, "'mydb'") {
 		t.Error("should contain database name")
@@ -1437,7 +1441,7 @@ func TestBuildMysqldumpCmdShellQuotes(t *testing.T) {
 			t.Fatalf("command contains unquoted unsafe value %q: %s", unsafe, cmd)
 		}
 	}
-	if !strings.Contains(cmd, `-p'pa'\''ss'`) {
+	if !strings.Contains(cmd, `MYSQL_PWD='pa'\''ss'`) {
 		t.Fatalf("password was not safely shell quoted: %s", cmd)
 	}
 }

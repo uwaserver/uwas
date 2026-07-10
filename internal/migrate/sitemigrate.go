@@ -179,10 +179,13 @@ func buildSSHArgs(port, sshKey, sourceHost, remoteCmd string) []string {
 	return args
 }
 
-// buildMysqldumpCmd builds the remote mysqldump command string.
+// buildMysqldumpCmd builds the remote mysqldump command string. The password is
+// passed via MYSQL_PWD in the remote environment (the login shell evaluates the
+// leading VAR=value assignment) instead of -p<pass>, so it does not appear in
+// the long-lived mysqldump process's /proc/<pid>/cmdline on the source host.
 func buildMysqldumpCmd(dbHost, dbUser, dbPass, dbName string) string {
-	return fmt.Sprintf("mysqldump -h %s -u %s -p%s --single-transaction --quick %s",
-		shellQuote(dbHost), shellQuote(dbUser), shellQuote(dbPass), shellQuote(dbName))
+	return fmt.Sprintf("MYSQL_PWD=%s mysqldump -h %s -u %s --single-transaction --quick %s",
+		shellQuote(dbPass), shellQuote(dbHost), shellQuote(dbUser), shellQuote(dbName))
 }
 
 // syncFilesReal uses rsync to copy files from remote server.

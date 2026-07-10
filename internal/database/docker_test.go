@@ -196,6 +196,42 @@ func TestCreateDockerDB_Success(t *testing.T) {
 	}
 }
 
+// TestCreateDockerDB_PasswordNotOnArgv verifies the root password is passed to
+// docker via the environment (referenced by name) and never on the argv.
+func TestCreateDockerDB_PasswordNotOnArgv(t *testing.T) {
+	saveDockerHook(t)
+	var runArgs []string
+	var runCmd *exec.Cmd
+	dockerExecCommandFn = func(name string, args ...string) *exec.Cmd {
+		if len(args) > 0 && args[0] == "run" {
+			runArgs = args
+			runCmd = fakeDockerCmd("abc123def456xx", 0)(name, args...)
+			return runCmd
+		}
+		return fakeDockerCmd("", 0)(name, args...) // ps → no existing container
+	}
+
+	if _, err := CreateDockerDB(EngineMySQL, "sec", 3308, "s3cr3t-pw", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(runArgs, " ")
+	if strings.Contains(joined, "s3cr3t-pw") {
+		t.Errorf("password must not appear on docker argv: %s", joined)
+	}
+	if !strings.Contains(joined, "-e MYSQL_ROOT_PASSWORD") || strings.Contains(joined, "MYSQL_ROOT_PASSWORD=") {
+		t.Errorf("expected '-e MYSQL_ROOT_PASSWORD' by name only, got: %s", joined)
+	}
+	found := false
+	for _, e := range runCmd.Env {
+		if e == "MYSQL_ROOT_PASSWORD=s3cr3t-pw" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected MYSQL_ROOT_PASSWORD=s3cr3t-pw in command env, got %v", runCmd.Env)
+	}
+}
+
 func TestCreateDockerDB_UnsupportedEngine(t *testing.T) {
 	saveDockerHook(t)
 	_, err := CreateDockerDB(DockerDBEngine("redis"), "test1", 6379, "pw", "")
