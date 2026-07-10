@@ -82,6 +82,57 @@ func (c *Client) do(method, path string, body any) (json.RawMessage, error) {
 	return env.Result, nil
 }
 
+// doListPages issues paginated GETs against a Cloudflare list endpoint,
+// following result_info.total_pages until every page is collected. It returns
+// the raw `result` array from each page so callers keep control of decoding
+// (and its error message). pathBase must not already carry page/per_page.
+// Without pagination, list callers saw only the first page (default 50 items),
+// so accounts with more zones failed lookups for anything past page 1.
+func (c *Client) doListPages(pathBase string) ([]json.RawMessage, error) {
+	sep := "?"
+	if strings.Contains(pathBase, "?") {
+		sep = "&"
+	}
+	var pages []json.RawMessage
+	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
+		path := fmt.Sprintf("%s%sper_page=50&page=%d", pathBase, sep, page)
+		req, err := http.NewRequest("GET", c.baseURL+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+		var env struct {
+			envelope
+			ResultInfo struct {
+				TotalPages int `json:"total_pages"`
+			} `json:"result_info"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return nil, fmt.Errorf("parse response (status %d): %w", resp.StatusCode, err)
+		}
+		if !env.Success {
+			if len(env.Errors) > 0 {
+				return nil, fmt.Errorf("cloudflare: %s", env.Errors[0].Message)
+			}
+			return nil, fmt.Errorf("cloudflare: request failed (status %d)", resp.StatusCode)
+		}
+		pages = append(pages, env.Result)
+		if env.ResultInfo.TotalPages <= page {
+			break
+		}
+	}
+	return pages, nil
+}
+
 // --- Tunnel operations ---
 
 // Tunnel mirrors the Cloudflare Tunnel API resource (cfd_tunnel).
@@ -169,20 +220,23 @@ type Zone struct {
 // returns app.example.com.
 func (c *Client) FindZoneByHostname(host string) (*Zone, error) {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	raw, err := c.do("GET", "/zones?per_page=50", nil)
+	pages, err := c.doListPages("/zones")
 	if err != nil {
 		return nil, err
 	}
-	var zones []Zone
-	if err := json.Unmarshal(raw, &zones); err != nil {
-		return nil, fmt.Errorf("parse zones: %w", err)
-	}
 	var best *Zone
-	for i, z := range zones {
-		zn := strings.ToLower(z.Name)
-		if host == zn || strings.HasSuffix(host, "."+zn) {
-			if best == nil || len(zn) > len(best.Name) {
-				best = &zones[i]
+	for _, raw := range pages {
+		var zones []Zone
+		if err := json.Unmarshal(raw, &zones); err != nil {
+			return nil, fmt.Errorf("parse zones: %w", err)
+		}
+		for i := range zones {
+			zn := strings.ToLower(zones[i].Name)
+			if host == zn || strings.HasSuffix(host, "."+zn) {
+				if best == nil || len(zn) > len(best.Name) {
+					z := zones[i]
+					best = &z
+				}
 			}
 		}
 	}

@@ -537,25 +537,61 @@ func TestCloudflare_SyncDomainToIP_ListRecordsError(t *testing.T) {
 	}
 }
 
-// --- extractBaseDomain / splitDomain ---
+// --- suffixCandidates / splitDomain ---
 
-func TestExtractBaseDomain(t *testing.T) {
+func TestSuffixCandidates(t *testing.T) {
 	tests := []struct {
 		input string
-		want  string
+		want  []string
 	}{
-		{"example.com", "example.com"},
-		{"www.example.com", "example.com"},
-		{"sub.domain.example.com", "example.com"},
-		{"a.b.c.d.example.com", "example.com"},
-		{"singleword", "singleword"},
-		{"", ""},
+		{"example.com", []string{"example.com"}},
+		{"www.example.com", []string{"www.example.com", "example.com"}},
+		{"foo.example.co.uk", []string{"foo.example.co.uk", "example.co.uk", "co.uk"}},
+		{"singleword", []string{"singleword"}},
 	}
 	for _, tt := range tests {
-		got := extractBaseDomain(tt.input)
-		if got != tt.want {
-			t.Errorf("extractBaseDomain(%q) = %q, want %q", tt.input, got, tt.want)
+		got := suffixCandidates(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("suffixCandidates(%q) = %v, want %v", tt.input, got, tt.want)
+			continue
 		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("suffixCandidates(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+// TestCloudflare_FindZoneByDomain_MultiLabelTLD verifies that a domain on a
+// multi-label public suffix (example.co.uk) resolves to its registrable zone
+// rather than failing on a "co.uk" lookup, and that a subdomain walks up to the
+// parent zone. The mock only knows the zone "example.co.uk".
+func TestCloudflare_FindZoneByDomain_MultiLabelTLD(t *testing.T) {
+	var queried []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		queried = append(queried, name)
+		w.Header().Set("Content-Type", "application/json")
+		if name == "example.co.uk" {
+			w.Write([]byte(cfResponse(true, []Zone{{ID: "z9", Name: "example.co.uk", Status: "active"}}, "")))
+			return
+		}
+		w.Write([]byte(cfResponse(true, []Zone{}, "")))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	z, err := p.FindZoneByDomain("blog.example.co.uk")
+	if err != nil {
+		t.Fatalf("FindZoneByDomain error: %v", err)
+	}
+	if z.ID != "z9" || z.Name != "example.co.uk" {
+		t.Errorf("zone = %+v, want example.co.uk/z9", z)
+	}
+	// Must have probed the full host before the registrable domain (longest-first).
+	if len(queried) < 2 || queried[0] != "blog.example.co.uk" || queried[1] != "example.co.uk" {
+		t.Errorf("query order = %v, want [blog.example.co.uk example.co.uk ...]", queried)
 	}
 }
 
