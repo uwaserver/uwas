@@ -99,25 +99,17 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 		return err
 	}
 
-	// Read all data into memory so we know the size. For backups this is
-	// typically small (config + certs). Bound to prevent unbounded allocation.
-	const maxBackupSize = 100 << 20 // 100MB
-	content, err := io.ReadAll(io.LimitReader(data, maxBackupSize))
-	if err != nil {
-		return fmt.Errorf("read data: %w", err)
-	}
-	if len(content) >= maxBackupSize {
-		return fmt.Errorf("backup exceeds maximum size of %d bytes", maxBackupSize)
-	}
-
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- session.Run("cat > " + shellQuote(remoteDest))
 	}()
 
-	// io.Writer semantics guarantee a short write is reported as an error here.
+	// Stream the archive straight to the remote `cat` instead of buffering it
+	// in memory. Backups (esp. full domain archives) can be arbitrarily large;
+	// the previous 100MB in-memory cap hard-failed those. io.Copy reports a
+	// short write as an error, preserving the same failure semantics.
 	writeErr := func() error {
-		_, err := stdin.Write(content)
+		_, err := io.Copy(stdin, data)
 		return err
 	}()
 	stdin.Close()

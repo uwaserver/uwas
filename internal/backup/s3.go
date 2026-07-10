@@ -98,7 +98,10 @@ type s3ObjectInfo struct {
 }
 
 func (p *S3Provider) List(ctx context.Context) ([]BackupInfo, error) {
-	url := p.bucketURL() + "?list-type=2&prefix=uwas-backup-"
+	// Match both server backups (uwas-backup-*) and per-domain backups
+	// (uwas-domain-*); a narrower "uwas-backup-" prefix hid domain backups on
+	// S3, so they could not be listed/restored/deleted via the manager.
+	url := p.bucketURL() + "?list-type=2&prefix=uwas-"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

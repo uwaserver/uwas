@@ -1092,16 +1092,32 @@ func TestSFTPUploadInvalidFilename(t *testing.T) {
 	}
 }
 
-func TestSFTPUploadTooLarge(t *testing.T) {
+// TestSFTPUploadStreamsLarge verifies that uploads stream rather than buffer:
+// a payload well past the old 100MB in-memory cap must upload and round-trip
+// intact (the cap used to hard-fail such backups).
+func TestSFTPUploadStreamsLarge(t *testing.T) {
 	storageDir := t.TempDir()
 	host, port, cleanup := startTestSSHServer(t, storageDir)
 	defer cleanup()
 
 	p := NewSFTPProvider(host, port, "testuser", "", "testpass", "/backups", true)
-	big := bytes.NewReader(bytes.Repeat([]byte("x"), (100<<20)+10))
-	err := p.Upload(context.Background(), "big.tar.gz", big)
-	if err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
-		t.Fatalf("expected size error, got %v", err)
+	// A few MB is enough to exercise the streaming path without slowing the
+	// suite; the removed cap only ever triggered above 100MB.
+	payload := bytes.Repeat([]byte("uwas-stream-test\n"), 200_000) // ~3.4MB
+	if err := p.Upload(context.Background(), "big.tar.gz", bytes.NewReader(payload)); err != nil {
+		t.Fatalf("streaming upload failed: %v", err)
+	}
+	rc, err := p.Download(context.Background(), "big.tar.gz")
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read downloaded: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("round-trip mismatch: got %d bytes, want %d", len(got), len(payload))
 	}
 }
 
