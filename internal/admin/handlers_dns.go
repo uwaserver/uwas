@@ -23,7 +23,14 @@ func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
 
 // ============ DNS Records Management ============
 
+// testDNSProviderHook, when non-nil, is used by getDNSProvider instead of
+// constructing a real provider. Set in tests to avoid real API calls.
+var testDNSProviderHook func() dnsmanager.Provider
+
 func (s *Server) getDNSProvider() dnsmanager.Provider {
+	if testDNSProviderHook != nil {
+		return testDNSProviderHook()
+	}
 	s.configMu.RLock()
 	provider := s.config.Global.ACME.DNSProvider
 	creds := s.config.Global.ACME.DNSCredentials
