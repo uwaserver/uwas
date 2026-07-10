@@ -35,7 +35,7 @@ One binary. Zero hassle.
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
 
 **v0.8.x highlights (security hardening + release integrity):**
-- v0.8.9 follow-up hardening: DB/root passwords kept off process command lines (`MYSQL_PWD`/stdin, `docker -e` by name), php-fpm pool user/group when root, webhook delivery worker pool, provider DNS pagination + multi-label TLD zone lookup, streaming SFTP backups
+- v0.8.9 follow-up hardening: DB/root passwords kept off process command lines (`MYSQL_PWD`/stdin, `docker -e` by name), php-fpm pool user/group when root, webhook delivery worker pool, provider DNS pagination + multi-label TLD zone lookup, streaming SFTP backups, and Go 1.26.5 toolchain (`crypto/tls` GO-2026-5856 fix)
 - All security-audit findings (35 total) addressed: CRITICAL/HIGH resolved, MEDIUM resolved, LOW documented as accepted risk
 - Release assets publish `SHA256SUMS`; installer/update scripts verify before execution
 - Multi-user authorization enforced across domain, DNS, notification, webhook, Cloudflare, task, and doctor endpoints
@@ -343,7 +343,7 @@ domains:
 
 | Component | Minimum | Recommended | Notes |
 |-----------|---------|-------------|-------|
-| Go | 1.26+ | 1.26+ | For building from source |
+| Go | 1.26.5+ | 1.26.5+ | For building from source (1.26.5 carries the `crypto/tls` GO-2026-5856 fix) |
 | PHP | 7.4+ | 8.3+ / 8.4+ | Only needed for PHP sites |
 | Docker | 20.10+ | 24+ | Only for Docker apps and database containers |
 
