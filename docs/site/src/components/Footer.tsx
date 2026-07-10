@@ -10,10 +10,10 @@ const footerLinks = {
   ],
   documentation: [
     { label: 'Configuration', href: 'https://github.com/uwaserver/uwas#configuration', external: true },
-    { label: 'TLS / HTTPS', href: 'https://github.com/uwaserver/uwas#tls', external: true },
-    { label: 'PHP / FastCGI', href: 'https://github.com/uwaserver/uwas#php', external: true },
-    { label: 'Caching', href: 'https://github.com/uwaserver/uwas#cache', external: true },
-    { label: 'Reverse Proxy', href: 'https://github.com/uwaserver/uwas#proxy', external: true },
+    { label: 'Static Sites', href: 'https://github.com/uwaserver/uwas#static-site', external: true },
+    { label: 'WordPress / PHP', href: 'https://github.com/uwaserver/uwas#wordpress--php', external: true },
+    { label: 'Reverse Proxy', href: 'https://github.com/uwaserver/uwas#reverse-proxy-with-websocket', external: true },
+    { label: 'CLI Reference', href: 'https://github.com/uwaserver/uwas#cli', external: true },
   ],
   community: [
   { label: 'GitHub', href: 'https://github.com/uwaserver/uwas', external: true, icon: GitBranch },
