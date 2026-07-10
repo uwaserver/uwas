@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -101,17 +102,30 @@ func CreateDockerDB(engine DockerDBEngine, name string, port int, rootPass, data
 		args = append(args, "-v", fmt.Sprintf("%s:/var/lib/%s", dataDir, volumePath(engine)))
 	}
 
-	// Engine-specific env vars
+	// Engine-specific env vars. The root password is referenced by name only
+	// ("-e VAR") and its value is supplied through the docker CLI's environment,
+	// so it is never written to the `docker run` command line (/proc/<pid>/cmdline).
+	var secretEnv []string
 	switch engine {
 	case EngineMariaDB, EngineMySQL:
-		args = append(args, "-e", "MYSQL_ROOT_PASSWORD="+rootPass)
+		args = append(args, "-e", "MYSQL_ROOT_PASSWORD")
+		secretEnv = append(secretEnv, "MYSQL_ROOT_PASSWORD="+rootPass)
 	case EnginePostgreSQL:
-		args = append(args, "-e", "POSTGRES_PASSWORD="+rootPass)
+		args = append(args, "-e", "POSTGRES_PASSWORD")
+		secretEnv = append(secretEnv, "POSTGRES_PASSWORD="+rootPass)
 	}
 
 	args = append(args, image)
 
-	out, err := dockerExecCommandFn("docker", args...).CombinedOutput()
+	cmd := dockerExecCommandFn("docker", args...)
+	if len(secretEnv) > 0 {
+		env := cmd.Env
+		if env == nil {
+			env = os.Environ()
+		}
+		cmd.Env = append(env, secretEnv...)
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker run: %s — %w", strings.TrimSpace(string(out)), err)
 	}
