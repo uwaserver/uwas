@@ -777,6 +777,57 @@ func TestStartFPMDaemonSuccess(t *testing.T) {
 	m.processes.Delete("8.4.19")
 }
 
+// TestStartFPMDaemonPoolUser verifies the pool config carries an unprivileged
+// user/group when running as root (php-fpm refuses to start a rootless-pool as
+// root) and omits it otherwise.
+func TestStartFPMDaemonPoolUser(t *testing.T) {
+	origUser := fpmPoolUser
+	origWrite := osWriteFileHook
+	defer func() { fpmPoolUser = origUser; osWriteFileHook = origWrite }()
+
+	var written string
+	osWriteFileHook = func(name string, data []byte, perm os.FileMode) error {
+		if strings.Contains(name, "fpm.conf") {
+			written = string(data)
+		}
+		return os.WriteFile(name, data, perm)
+	}
+
+	m := New(testLogger())
+	m.execCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("ping", "-n", "100", "127.0.0.1")
+	}
+	killFPM := func(version string) {
+		if val, ok := m.processes.Load(version); ok {
+			if info, ok := val.(*processInfo); ok && info.cmd != nil && info.cmd.Process != nil {
+				info.cmd.Process.Kill()
+			}
+			m.processes.Delete(version)
+		}
+	}
+
+	// Root path: user/group must be present so php-fpm can actually start.
+	fpmPoolUser = func() (string, bool) { return "www-data", true }
+	if err := m.startFPMDaemon("8.4.19", "/usr/sbin/php-fpm8.4", "127.0.0.1:9000"); err != nil {
+		t.Fatalf("startFPMDaemon (root): %v", err)
+	}
+	if !strings.Contains(written, "user = www-data") || !strings.Contains(written, "group = www-data") {
+		t.Errorf("pool config missing user/group when root:\n%s", written)
+	}
+	killFPM("8.4.19")
+
+	// Non-root path: omit user/group (php-fpm ignores/rejects it when not root).
+	written = ""
+	fpmPoolUser = func() (string, bool) { return "", false }
+	if err := m.startFPMDaemon("8.3.10", "/usr/sbin/php-fpm8.3", "127.0.0.1:9001"); err != nil {
+		t.Fatalf("startFPMDaemon (non-root): %v", err)
+	}
+	if strings.Contains(written, "user =") {
+		t.Errorf("pool config should omit user/group when non-root:\n%s", written)
+	}
+	killFPM("8.3.10")
+}
+
 func TestStartFPMDaemonExecFailure(t *testing.T) {
 	m := New(testLogger())
 

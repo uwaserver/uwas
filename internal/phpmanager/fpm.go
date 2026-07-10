@@ -9,11 +9,32 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 )
+
+// fpmPoolUser reports the unprivileged account the php-fpm [www] pool should run
+// as, and whether user/group directives should be emitted at all. php-fpm
+// launched as root REFUSES to start a pool that has no user/group and exits
+// immediately — which previously made startFPMDaemon (and thus StartFPM) report
+// false success. When we are not root, php-fpm ignores the directive (it cannot
+// setuid), so we omit it. The account is picked from the conventional web users
+// present on the host, falling back to the universally-present "nobody".
+// Overridable in tests.
+var fpmPoolUser = func() (string, bool) {
+	if os.Geteuid() != 0 {
+		return "", false
+	}
+	for _, u := range []string{"www-data", "nginx", "apache", "http"} {
+		if _, err := user.Lookup(u); err == nil {
+			return u, true
+		}
+	}
+	return "nobody", true
+}
 
 // StartFPM starts a php-cgi process listening on the given address (e.g. "127.0.0.1:9000").
 // It uses `php-cgi -b <addr>` as a lightweight FastCGI server.
@@ -91,20 +112,27 @@ func (m *Manager) startFPMDaemon(version, binary, listenAddr string) error {
 	osMkdirAllHook(confDir, 0755)
 	confPath := filepath.Join(confDir, fmt.Sprintf("php%s-fpm.conf", strings.ReplaceAll(version, ".", "")))
 
+	// When running as root, php-fpm requires an unprivileged user/group on the
+	// pool or it refuses to start; emit them so the daemon actually comes up.
+	poolIdentity := ""
+	if u, ok := fpmPoolUser(); ok {
+		poolIdentity = fmt.Sprintf("user = %s\ngroup = %s\n", u, u)
+	}
+
 	conf := fmt.Sprintf(`[global]
 pid = %s/php%s-fpm.pid
 error_log = /dev/stderr
 daemonize = no
 
 [www]
-listen = %s
+%slisten = %s
 pm = dynamic
 pm.max_children = 10
 pm.start_servers = 4
 pm.min_spare_servers = 2
 pm.max_spare_servers = 6
 pm.max_requests = 500
-`, confDir, strings.ReplaceAll(version, ".", ""), listenAddr)
+`, confDir, strings.ReplaceAll(version, ".", ""), poolIdentity, listenAddr)
 
 	if err := osWriteFileHook(confPath, []byte(conf), 0644); err != nil {
 		return fmt.Errorf("write fpm config: %w", err)
