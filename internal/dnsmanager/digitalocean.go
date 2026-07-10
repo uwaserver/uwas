@@ -60,21 +60,33 @@ func (p *DigitalOceanProvider) doRequest(method, path string, body interface{}) 
 }
 
 func (p *DigitalOceanProvider) ListZones() ([]Zone, error) {
-	data, err := p.doRequest("GET", "/domains", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Domains []struct {
-			Name string `json:"name"`
-		} `json:"domains"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-	zones := make([]Zone, len(resp.Domains))
-	for i, d := range resp.Domains {
-		zones[i] = Zone{ID: d.Name, Name: d.Name, Status: "active"}
+	var zones []Zone
+	// DigitalOcean paginates (20 per page by default); follow links.pages.next
+	// until it is empty, otherwise only the first page of domains was returned.
+	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
+		data, err := p.doRequest("GET", fmt.Sprintf("/domains?per_page=200&page=%d", page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Domains []struct {
+				Name string `json:"name"`
+			} `json:"domains"`
+			Links struct {
+				Pages struct {
+					Next string `json:"next"`
+				} `json:"pages"`
+			} `json:"links"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		for _, d := range resp.Domains {
+			zones = append(zones, Zone{ID: d.Name, Name: d.Name, Status: "active"})
+		}
+		if resp.Links.Pages.Next == "" || len(resp.Domains) == 0 {
+			break
+		}
 	}
 	return zones, nil
 }
@@ -93,28 +105,40 @@ func (p *DigitalOceanProvider) FindZoneByDomain(domain string) (*Zone, error) {
 }
 
 func (p *DigitalOceanProvider) ListRecords(zoneID string) ([]Record, error) {
-	data, err := p.doRequest("GET", "/domains/"+zoneID+"/records", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Records []struct {
-			ID       int    `json:"id"`
-			Type     string `json:"type"`
-			Name     string `json:"name"`
-			Data     string `json:"data"`
-			TTL      int    `json:"ttl"`
-			Priority int    `json:"priority"`
-		} `json:"domain_records"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-	records := make([]Record, len(resp.Records))
-	for i, r := range resp.Records {
-		records[i] = Record{
-			ID: fmt.Sprintf("%d", r.ID), Type: r.Type,
-			Name: r.Name, Content: r.Data, TTL: r.TTL, Priority: r.Priority,
+	var records []Record
+	// Follow links.pages.next so domains with more than one page of records
+	// (20 per page by default) are fully enumerated.
+	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
+		data, err := p.doRequest("GET", fmt.Sprintf("/domains/%s/records?per_page=200&page=%d", zoneID, page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Records []struct {
+				ID       int    `json:"id"`
+				Type     string `json:"type"`
+				Name     string `json:"name"`
+				Data     string `json:"data"`
+				TTL      int    `json:"ttl"`
+				Priority int    `json:"priority"`
+			} `json:"domain_records"`
+			Links struct {
+				Pages struct {
+					Next string `json:"next"`
+				} `json:"pages"`
+			} `json:"links"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		for _, r := range resp.Records {
+			records = append(records, Record{
+				ID: fmt.Sprintf("%d", r.ID), Type: r.Type,
+				Name: r.Name, Content: r.Data, TTL: r.TTL, Priority: r.Priority,
+			})
+		}
+		if resp.Links.Pages.Next == "" || len(resp.Records) == 0 {
+			break
 		}
 	}
 	return records, nil

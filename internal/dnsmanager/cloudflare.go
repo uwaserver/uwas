@@ -174,7 +174,31 @@ func (c *CloudflareProvider) ListZones() ([]Zone, error) {
 }
 
 func (c *CloudflareProvider) FindZoneByDomain(domain string) (*Zone, error) {
-	data, err := c.do("GET", "/zones?name="+url.QueryEscape(domain)+"&per_page=1", nil)
+	// Try candidate suffixes longest-first (the full host, then drop the leftmost
+	// label each step, down to the final two labels) so both subdomains and
+	// multi-label public suffixes resolve to the registrable zone. The previous
+	// last-two-labels heuristic returned "co.uk" for foo.example.co.uk and failed.
+	// No public-suffix list is needed: Cloudflare only returns a zone that
+	// actually exists on the account, and longest-first prefers the most specific
+	// zone when several are present.
+	for _, candidate := range suffixCandidates(domain) {
+		zone, err := c.lookupZone(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if zone != nil {
+			return zone, nil
+		}
+	}
+	return nil, fmt.Errorf("zone not found for %s", domain)
+}
+
+// lookupZone queries Cloudflare for an exact zone name. It returns (nil, nil)
+// when no such zone exists (so callers can try a broader suffix) and a non-nil
+// error only on a genuine API failure — so transient errors are never masked as
+// "not found".
+func (c *CloudflareProvider) lookupZone(name string) (*Zone, error) {
+	data, err := c.do("GET", "/zones?name="+url.QueryEscape(name)+"&per_page=1", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -183,9 +207,24 @@ func (c *CloudflareProvider) FindZoneByDomain(domain string) (*Zone, error) {
 		return nil, fmt.Errorf("cloudflare: parse zone lookup: %w", err)
 	}
 	if len(zones) == 0 {
-		return nil, fmt.Errorf("zone not found for %s", domain)
+		return nil, nil
 	}
 	return &zones[0], nil
+}
+
+// suffixCandidates returns the domain suffixes to probe, longest first: the full
+// host, then each parent formed by dropping the leftmost label, down to and
+// including the final two labels. A single-label input yields just itself.
+func suffixCandidates(domain string) []string {
+	parts := splitDomain(domain)
+	if len(parts) < 2 {
+		return []string{domain}
+	}
+	out := make([]string, 0, len(parts)-1)
+	for i := 0; i+1 < len(parts); i++ {
+		out = append(out, strings.Join(parts[i:], "."))
+	}
+	return out
 }
 
 func (c *CloudflareProvider) ListRecords(zoneID string) ([]Record, error) {
@@ -241,7 +280,7 @@ func (c *CloudflareProvider) DeleteRecord(zoneID, recordID string) error {
 
 // SyncDomainToIP ensures a domain's A record points to the given IP.
 func (c *CloudflareProvider) SyncDomainToIP(domain, ip string) error {
-	zone, err := c.FindZoneByDomain(extractBaseDomain(domain))
+	zone, err := c.FindZoneByDomain(domain)
 	if err != nil {
 		return err
 	}
@@ -272,14 +311,6 @@ func (c *CloudflareProvider) SyncDomainToIP(domain, ip string) error {
 		TTL:     1,
 	})
 	return err
-}
-
-func extractBaseDomain(domain string) string {
-	parts := splitDomain(domain)
-	if len(parts) >= 2 {
-		return parts[len(parts)-2] + "." + parts[len(parts)-1]
-	}
-	return domain
 }
 
 func splitDomain(domain string) []string {

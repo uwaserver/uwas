@@ -60,22 +60,34 @@ func (p *HetznerProvider) hetznerRequest(method, path string, body interface{}) 
 }
 
 func (p *HetznerProvider) ListZones() ([]Zone, error) {
-	data, err := p.hetznerRequest("GET", "/zones", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Zones []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"zones"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-	zones := make([]Zone, len(resp.Zones))
-	for i, z := range resp.Zones {
-		zones[i] = Zone{ID: z.ID, Name: z.Name, Status: "active"}
+	var zones []Zone
+	// Follow meta.pagination.last_page; without this only the first 100 zones
+	// (Hetzner's default page size) were returned.
+	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
+		data, err := p.hetznerRequest("GET", fmt.Sprintf("/zones?per_page=100&page=%d", page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Zones []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"zones"`
+			Meta struct {
+				Pagination struct {
+					LastPage int `json:"last_page"`
+				} `json:"pagination"`
+			} `json:"meta"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		for _, z := range resp.Zones {
+			zones = append(zones, Zone{ID: z.ID, Name: z.Name, Status: "active"})
+		}
+		if len(resp.Zones) == 0 || resp.Meta.Pagination.LastPage <= page {
+			break
+		}
 	}
 	return zones, nil
 }
@@ -94,25 +106,37 @@ func (p *HetznerProvider) FindZoneByDomain(domain string) (*Zone, error) {
 }
 
 func (p *HetznerProvider) ListRecords(zoneID string) ([]Record, error) {
-	data, err := p.hetznerRequest("GET", "/records?zone_id="+zoneID, nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		Records []struct {
-			ID    string `json:"id"`
-			Type  string `json:"type"`
-			Name  string `json:"name"`
-			Value string `json:"value"`
-			TTL   int    `json:"ttl"`
-		} `json:"records"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
-	}
-	records := make([]Record, len(resp.Records))
-	for i, r := range resp.Records {
-		records[i] = Record{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Value, TTL: r.TTL}
+	var records []Record
+	// Follow meta.pagination.last_page so zones with more than one page of
+	// records (100 per page) are fully enumerated.
+	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
+		data, err := p.hetznerRequest("GET", fmt.Sprintf("/records?zone_id=%s&per_page=100&page=%d", zoneID, page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Records []struct {
+				ID    string `json:"id"`
+				Type  string `json:"type"`
+				Name  string `json:"name"`
+				Value string `json:"value"`
+				TTL   int    `json:"ttl"`
+			} `json:"records"`
+			Meta struct {
+				Pagination struct {
+					LastPage int `json:"last_page"`
+				} `json:"pagination"`
+			} `json:"meta"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		for _, r := range resp.Records {
+			records = append(records, Record{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Value, TTL: r.TTL})
+		}
+		if len(resp.Records) == 0 || resp.Meta.Pagination.LastPage <= page {
+			break
+		}
 	}
 	return records, nil
 }
