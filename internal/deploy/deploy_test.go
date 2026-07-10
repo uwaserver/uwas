@@ -10,55 +10,70 @@ import (
 	"time"
 )
 
+// buildCmdsEqual reports whether the detected build steps match want, and is
+// how these tests also guard that no step contains "&&" (which the deploy
+// shell-metacharacter guard rejects).
+func buildCmdsEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] || strings.Contains(got[i], "&&") {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDetectBuildCmdNode(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"vite build"}}`), 0644)
-	cmd := detectBuildCmd(dir)
-	if cmd != "npm install && npm run build" {
-		t.Errorf("got %q", cmd)
+	cmds := detectBuildCmds(dir)
+	if !buildCmdsEqual(cmds, []string{"npm install", "npm run build"}) {
+		t.Errorf("got %q", cmds)
 	}
 }
 
 func TestDetectBuildCmdNodeNoBuild(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"start":"node index.js"}}`), 0644)
-	cmd := detectBuildCmd(dir)
-	if cmd != "npm install" {
-		t.Errorf("got %q", cmd)
+	cmds := detectBuildCmds(dir)
+	if !buildCmdsEqual(cmds, []string{"npm install"}) {
+		t.Errorf("got %q", cmds)
 	}
 }
 
 func TestDetectBuildCmdPython(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask\n"), 0644)
-	cmd := detectBuildCmd(dir)
-	if cmd != "pip install -r requirements.txt" {
-		t.Errorf("got %q", cmd)
+	cmds := detectBuildCmds(dir)
+	if !buildCmdsEqual(cmds, []string{"pip install -r requirements.txt"}) {
+		t.Errorf("got %q", cmds)
 	}
 }
 
 func TestDetectBuildCmdRuby(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\n"), 0644)
-	cmd := detectBuildCmd(dir)
-	if cmd != "bundle install" {
-		t.Errorf("got %q", cmd)
+	cmds := detectBuildCmds(dir)
+	if !buildCmdsEqual(cmds, []string{"bundle install"}) {
+		t.Errorf("got %q", cmds)
 	}
 }
 
 func TestDetectBuildCmdGo(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0644)
-	cmd := detectBuildCmd(dir)
-	if cmd != "go build -o app ." {
-		t.Errorf("got %q", cmd)
+	cmds := detectBuildCmds(dir)
+	if !buildCmdsEqual(cmds, []string{"go build -o app ."}) {
+		t.Errorf("got %q", cmds)
 	}
 }
 
 func TestDetectBuildCmdEmpty(t *testing.T) {
-	cmd := detectBuildCmd(t.TempDir())
-	if cmd != "" {
-		t.Errorf("got %q", cmd)
+	cmds := detectBuildCmds(t.TempDir())
+	if len(cmds) != 0 {
+		t.Errorf("got %q", cmds)
 	}
 }
 

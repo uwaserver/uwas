@@ -409,9 +409,13 @@ func TestDeployGit_DetectBuildCmd(t *testing.T) {
 		}
 		return "", nil
 	}
-	var ranBuild string
+	var ranBuild []string
 	runShellFn = func(dir string, env map[string]string, command string) (string, error) {
-		ranBuild = command
+		if strings.Contains(command, "&&") {
+			// The real runShell rejects "&&"; a chained command would be a regression.
+			t.Errorf("build command %q contains forbidden \"&&\"", command)
+		}
+		ranBuild = append(ranBuild, command)
 		return "ok", nil
 	}
 
@@ -422,13 +426,14 @@ func TestDeployGit_DetectBuildCmd(t *testing.T) {
 		Domain:    "test.com",
 		GitURL:    "https://github.com/user/repo.git",
 		GitBranch: "main",
-		BuildCmd:  "", // triggers detectBuildCmd
+		BuildCmd:  "", // triggers detectBuildCmds
 	}
 	if err := m.deployGit(req, appRoot, "main", nil, status, &log); err != nil {
 		t.Errorf("deployGit() error = %v", err)
 	}
-	if ranBuild != "npm install && npm run build" {
-		t.Errorf("detected build cmd = %q, want npm install && npm run build", ranBuild)
+	want := []string{"npm install", "npm run build"}
+	if len(ranBuild) != len(want) || ranBuild[0] != want[0] || ranBuild[1] != want[1] {
+		t.Errorf("detected build cmds = %q, want %q", ranBuild, want)
 	}
 }
 
