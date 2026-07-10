@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Database and root passwords are kept off process command lines (`/proc/<pid>/cmdline`): the native/TCP MySQL client passes the root password via `MYSQL_PWD` and the SQL via stdin instead of `-p`/`-e`; `docker run` receives `-e MYSQL_ROOT_PASSWORD`/`-e POSTGRES_PASSWORD` by name with the value supplied through the environment; and remote `mysqldump` during site migration uses `MYSQL_PWD`.
+- Require Go 1.26.5 (`go.mod`) to pick up the `crypto/tls` fix for [GO-2026-5856](https://pkg.go.dev/vuln/GO-2026-5856), which affected the TLS/HTTP3/QUIC paths built with go1.26.4. `govulncheck` reports zero called vulnerabilities on 1.26.5.
 
 ### Removed
 
