@@ -22,6 +22,8 @@ const rows: ComparisonRow[] = [
   { feature: 'Web Dashboard',      uwas: true,  nginx: 'Paid',     caddy: false,    apache: false,    litespeed: true },
   { feature: 'HTTP/3',             uwas: true,  nginx: 'Partial',  caddy: true,     apache: false,    litespeed: true },
   { feature: 'Backup / Restore',   uwas: true,  nginx: false,      caddy: false,    apache: false,    litespeed: false },
+  { feature: 'Built-in SFTP',      uwas: true,  nginx: false,      caddy: false,    apache: false,    litespeed: false },
+  { feature: 'DNS Management',     uwas: true,  nginx: false,      caddy: false,    apache: false,    litespeed: false },
   { feature: 'MCP / AI',           uwas: true,  nginx: false,      caddy: false,    apache: false,    litespeed: false },
   { feature: 'Migration Tool',     uwas: true,  nginx: false,      caddy: false,    apache: false,    litespeed: false },
   { feature: 'WebSocket Proxy',    uwas: true,  nginx: true,       caddy: true,     apache: 'Module', litespeed: true },
