@@ -87,6 +87,7 @@ func (cr *CanaryRouter) Serve(ctx *router.RequestContext, domain *config.Domain,
 		Value:    "true",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   ctx.Request.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 	})
 

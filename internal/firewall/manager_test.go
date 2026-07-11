@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -715,6 +716,25 @@ func TestDenyPortProtectedAdminPort(t *testing.T) {
 // interface-bound "Anywhere on <iface>" form.
 // ---------------------------------------------------------------------------
 
+// TestParsePortSpecInvertedRange covers the lo > hi error branch.
+func TestParsePortSpecInvertedRange(t *testing.T) {
+	_, _, err := parsePortSpec("80:20")
+	if err == nil {
+		t.Error("expected error for inverted port range")
+	}
+	if !strings.Contains(err.Error(), "invalid port range") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestDeniesProtectedPortInvalidArg covers the error return from parsePortSpec
+// being handled (returns false).
+func TestDeniesProtectedPortInvalidArg(t *testing.T) {
+	if deniesProtectedPort("") {
+		t.Error("expected false for empty port")
+	}
+}
+
 func TestValidatePort_InvalidChars(t *testing.T) {
 	if err := validatePort("80a"); err == nil {
 		t.Error("validatePort(\"80a\") expected error for non-digit")
@@ -771,6 +791,15 @@ func TestDenyPort_InvalidProto(t *testing.T) {
 
 	if err := DenyPort("8080", "icmp"); err == nil {
 		t.Error("DenyPort(..., \"icmp\") expected validateProto error")
+	}
+}
+
+// TestParseUFWRule_NonNumericNumber covers the Sscanf error branch when
+// the text between brackets is not a valid integer.
+func TestParseUFWRule_NonNumericNumber(t *testing.T) {
+	r := parseUFWRule("[abc] 80/tcp ALLOW IN Anywhere")
+	if r.Number != 0 {
+		t.Errorf("Number = %d, want 0 for non-numeric number", r.Number)
 	}
 }
 

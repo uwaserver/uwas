@@ -4,6 +4,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"sync/atomic"
 )
 
@@ -11,6 +13,7 @@ import (
 type DiskCache struct {
 	baseDir   string
 	maxBytes  int64
+	mu        sync.RWMutex
 	usedBytes atomic.Int64
 }
 
@@ -18,7 +21,8 @@ type DiskCache struct {
 // It scans existing cache files to initialise usedBytes so the accounting
 // stays correct across restarts.
 func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
-	os.MkdirAll(baseDir, 0755)
+	os.MkdirAll(baseDir, 0750)
+	_ = os.Chmod(baseDir, 0750)
 	dc := &DiskCache{
 		baseDir:  baseDir,
 		maxBytes: maxBytes,
@@ -27,9 +31,17 @@ func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
 	// Walk existing files to seed usedBytes.
 	var total int64
 	filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return nil
 		}
+		if d.IsDir() {
+			_ = os.Chmod(path, 0750)
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 || filepath.Ext(path) != ".cache" {
+			return nil
+		}
+		_ = os.Chmod(path, 0600)
 		if info, err := d.Info(); err == nil {
 			total += info.Size()
 		}
@@ -42,6 +54,9 @@ func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
 
 // Get reads a cached response from disk.
 func (dc *DiskCache) Get(key string) (*CachedResponse, error) {
+	dc.mu.RLock()
+	defer dc.mu.RUnlock()
+
 	path := dc.path(key)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -52,6 +67,9 @@ func (dc *DiskCache) Get(key string) (*CachedResponse, error) {
 
 // Set writes a cached response to disk.
 func (dc *DiskCache) Set(key string, resp *CachedResponse) error {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+
 	data := resp.Serialize()
 
 	path := dc.path(key)
@@ -64,42 +82,84 @@ func (dc *DiskCache) Set(key string, resp *CachedResponse) error {
 		oldSize = info.Size()
 	}
 
+	currentBytes := dc.usedBytes.Load()
+	accountedOldSize := min(oldSize, currentBytes)
+	projectedBytes := currentBytes - accountedOldSize + int64(len(data))
 	// Check disk limit against the projected total after this write.
-	if dc.maxBytes > 0 && dc.usedBytes.Load()-oldSize+int64(len(data)) > dc.maxBytes {
+	if dc.maxBytes > 0 && projectedBytes > dc.maxBytes {
 		return nil // silently skip if over limit
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	tmp, err := os.CreateTemp(dir, ".uwas-cache-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := replaceCacheFile(tmpPath, path); err != nil {
 		return err
 	}
 
-	dc.usedBytes.Add(int64(len(data)) - oldSize)
+	dc.usedBytes.Store(projectedBytes)
+	return nil
+}
+
+func replaceCacheFile(tmpPath, path string) error {
+	if err := os.Rename(tmpPath, path); err != nil {
+		// Windows does not replace an existing destination with os.Rename.
+		// Operations remain serialized by DiskCache.mu during this fallback.
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			return removeErr
+		}
+		return os.Rename(tmpPath, path)
+	}
 	return nil
 }
 
 // Delete removes a cached file from disk.
 func (dc *DiskCache) Delete(key string) {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+
 	path := dc.path(key)
-	info, err := os.Stat(path)
-	if err == nil {
-		dc.usedBytes.Add(-info.Size())
+	info, statErr := os.Stat(path)
+	if err := os.Remove(path); err == nil && statErr == nil {
+		dc.subtractUsedBytes(info.Size())
 	}
-	os.Remove(path)
 }
 
 // PurgeAll removes all cache files.
 func (dc *DiskCache) PurgeAll() error {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+
+	if err := os.RemoveAll(dc.baseDir); err != nil {
+		return err
+	}
 	dc.usedBytes.Store(0)
-	return os.RemoveAll(dc.baseDir)
+	return nil
 }
 
 // PurgeByTag removes all cache entries matching any of the given tags.
 func (dc *DiskCache) PurgeByTag(tags ...string) int {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+
 	var count int
 	tagSet := make(map[string]bool, len(tags))
 	for _, t := range tags {
@@ -107,7 +167,7 @@ func (dc *DiskCache) PurgeByTag(tags ...string) int {
 	}
 
 	filepath.WalkDir(dc.baseDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		if filepath.Ext(path) != ".cache" {
@@ -122,18 +182,23 @@ func (dc *DiskCache) PurgeByTag(tags ...string) int {
 		resp, err := Deserialize(data)
 		if err != nil {
 			// Remove corrupt entries.
-			os.Remove(path)
+			if info, infoErr := d.Info(); infoErr == nil {
+				if removeErr := os.Remove(path); removeErr == nil {
+					dc.subtractUsedBytes(info.Size())
+				}
+			}
 			return nil
 		}
 
 		// Check if any tag matches.
 		for _, t := range resp.Tags {
 			if tagSet[t] {
-				if info, err := d.Info(); err == nil {
-					dc.usedBytes.Add(-info.Size())
+				if info, infoErr := d.Info(); infoErr == nil {
+					if removeErr := os.Remove(path); removeErr == nil {
+						dc.subtractUsedBytes(info.Size())
+						count++
+					}
 				}
-				os.Remove(path)
-				count++
 				break
 			}
 		}
@@ -141,6 +206,15 @@ func (dc *DiskCache) PurgeByTag(tags ...string) int {
 	})
 
 	return count
+}
+
+func (dc *DiskCache) subtractUsedBytes(size int64) {
+	current := dc.usedBytes.Load()
+	if size >= current {
+		dc.usedBytes.Store(0)
+		return
+	}
+	dc.usedBytes.Store(current - size)
 }
 
 func (dc *DiskCache) path(key string) string {

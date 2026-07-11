@@ -740,6 +740,7 @@ func TestValidateCanaryWeight_Valid(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Canary.Enabled = true
 	d.Proxy.Canary.Weight = 50
+	d.Proxy.Canary.Upstreams = []Upstream{{Address: "http://127.0.0.1:3001", Weight: 1}}
 	cfg.Domains = []Domain{d}
 	expectNoValidationError(t, cfg)
 }
@@ -749,6 +750,7 @@ func TestValidateCanaryWeight_TooHigh(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Canary.Enabled = true
 	d.Proxy.Canary.Weight = 150
+	d.Proxy.Canary.Upstreams = []Upstream{{Address: "http://127.0.0.1:3001", Weight: 1}}
 	cfg.Domains = []Domain{d}
 	expectValidationError(t, cfg, "canary.weight must be 0-100")
 }
@@ -758,6 +760,7 @@ func TestValidateCanaryWeight_Negative(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Canary.Enabled = true
 	d.Proxy.Canary.Weight = -1
+	d.Proxy.Canary.Upstreams = []Upstream{{Address: "http://127.0.0.1:3001", Weight: 1}}
 	cfg.Domains = []Domain{d}
 	expectValidationError(t, cfg, "canary.weight must be 0-100")
 }
@@ -767,6 +770,7 @@ func TestValidateCanaryWeight_BoundaryZero(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Canary.Enabled = true
 	d.Proxy.Canary.Weight = 0
+	d.Proxy.Canary.Upstreams = []Upstream{{Address: "http://127.0.0.1:3001", Weight: 1}}
 	cfg.Domains = []Domain{d}
 	expectNoValidationError(t, cfg)
 }
@@ -776,6 +780,7 @@ func TestValidateCanaryWeight_Boundary100(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Canary.Enabled = true
 	d.Proxy.Canary.Weight = 100
+	d.Proxy.Canary.Upstreams = []Upstream{{Address: "http://127.0.0.1:3001", Weight: 1}}
 	cfg.Domains = []Domain{d}
 	expectNoValidationError(t, cfg)
 }
@@ -787,6 +792,7 @@ func TestValidateMirrorPercent_Valid(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Mirror.Enabled = true
 	d.Proxy.Mirror.Percent = 50
+	d.Proxy.Mirror.Backend = "http://127.0.0.1:3001"
 	cfg.Domains = []Domain{d}
 	expectNoValidationError(t, cfg)
 }
@@ -796,6 +802,7 @@ func TestValidateMirrorPercent_TooHigh(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Mirror.Enabled = true
 	d.Proxy.Mirror.Percent = 200
+	d.Proxy.Mirror.Backend = "http://127.0.0.1:3001"
 	cfg.Domains = []Domain{d}
 	expectValidationError(t, cfg, "mirror.percent must be 0-100")
 }
@@ -805,8 +812,43 @@ func TestValidateMirrorPercent_Negative(t *testing.T) {
 	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
 	d.Proxy.Mirror.Enabled = true
 	d.Proxy.Mirror.Percent = -1
+	d.Proxy.Mirror.Backend = "http://127.0.0.1:3001"
 	cfg.Domains = []Domain{d}
 	expectValidationError(t, cfg, "mirror.percent must be 0-100")
+}
+
+func TestValidateCanaryRequiresUpstream(t *testing.T) {
+	cfg := minimalValidConfig()
+	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
+	d.Proxy.Canary.Enabled = true
+	cfg.Domains = []Domain{d}
+	expectValidationError(t, cfg, "canary.upstreams requires at least one backend")
+}
+
+func TestValidateCanaryRejectsUnsafeScheme(t *testing.T) {
+	cfg := minimalValidConfig()
+	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
+	d.Proxy.Canary.Enabled = true
+	d.Proxy.Canary.Upstreams = []Upstream{{Address: "file://localhost/tmp/socket", Weight: 1}}
+	cfg.Domains = []Domain{d}
+	expectValidationError(t, cfg, "unsupported URL scheme")
+}
+
+func TestValidateMirrorRequiresBackend(t *testing.T) {
+	cfg := minimalValidConfig()
+	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
+	d.Proxy.Mirror.Enabled = true
+	cfg.Domains = []Domain{d}
+	expectValidationError(t, cfg, "proxy.mirror: address is required")
+}
+
+func TestValidateMirrorRejectsMetadataBackend(t *testing.T) {
+	cfg := minimalValidConfig()
+	d := proxyDomain([]Upstream{{Address: "http://127.0.0.1:3000", Weight: 1}})
+	d.Proxy.Mirror.Enabled = true
+	d.Proxy.Mirror.Backend = "http://169.254.169.254/latest/meta-data"
+	cfg.Domains = []Domain{d}
+	expectValidationError(t, cfg, "cloud metadata endpoint blocked")
 }
 
 // --- Multiple Errors Accumulated ---

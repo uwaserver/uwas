@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -279,6 +280,32 @@ func TestDiskCacheSetGet(t *testing.T) {
 	}
 }
 
+func TestDiskCachePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "cache")
+	dc := NewDiskCache(dir, 1<<20)
+	key := "permissions-key"
+	if err := dc.Set(key, &CachedResponse{StatusCode: 200, Body: []byte("private")}); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, want := range map[string]os.FileMode{
+		dir:                        0750,
+		filepath.Dir(dc.path(key)): 0750,
+		dc.path(key):               0600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s permissions=%#o, want %#o", path, got, want)
+		}
+	}
+}
+
 func TestDiskCacheDelete(t *testing.T) {
 	dir := t.TempDir()
 	dc := NewDiskCache(dir, 1<<20)
@@ -498,6 +525,9 @@ func TestDiskCachePurgeByTagRemovesCorruptEntry(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("corrupt cache entry should be removed, stat err=%v", err)
+	}
+	if got := dc.usedBytes.Load(); got != 0 {
+		t.Fatalf("usedBytes=%d after corrupt removal, want 0", got)
 	}
 }
 
@@ -854,6 +884,47 @@ func TestDiskCacheConcurrentGetSet(t *testing.T) {
 	// No panics or races = success
 }
 
+func TestDiskCacheConcurrentSameKeyAccounting(t *testing.T) {
+	dir := t.TempDir()
+	dc := NewDiskCache(dir, 1<<20)
+	key := "same-key-1234567890abcdef"
+	resp := &CachedResponse{
+		StatusCode: 200,
+		Body:       []byte("one complete serialized response"),
+		Created:    time.Now(),
+		TTL:        time.Minute,
+		GraceTTL:   time.Minute,
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- dc.Set(key, resp)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Set: %v", err)
+		}
+	}
+
+	got, err := dc.Get(key)
+	if err != nil {
+		t.Fatalf("Get after concurrent writes: %v", err)
+	}
+	if string(got.Body) != string(resp.Body) {
+		t.Fatalf("body=%q, want %q", got.Body, resp.Body)
+	}
+	if want := int64(len(resp.Serialize())); dc.usedBytes.Load() != want {
+		t.Fatalf("usedBytes=%d, want %d", dc.usedBytes.Load(), want)
+	}
+}
+
 // --- Engine: Get with disk promotion ---
 
 func TestEngineGetDiskPromotion(t *testing.T) {
@@ -1187,6 +1258,17 @@ func TestDiskCacheInitialUsedBytes(t *testing.T) {
 
 	if initialUsed != usedAfterWrite {
 		t.Errorf("new DiskCache usedBytes = %d, want %d (should scan existing files)", initialUsed, usedAfterWrite)
+	}
+}
+
+func TestDiskCacheInitialUsageIgnoresUnrelatedFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.txt"), []byte("not cache data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dc := NewDiskCache(dir, 1<<20)
+	if got := dc.usedBytes.Load(); got != 0 {
+		t.Fatalf("usedBytes=%d, want 0 for unrelated files", got)
 	}
 }
 

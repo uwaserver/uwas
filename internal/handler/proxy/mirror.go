@@ -5,27 +5,31 @@ import (
 	"context"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
 // MirrorConfig configures request mirroring for a proxy domain.
 type MirrorConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	Backend      string `yaml:"backend"`        // mirror backend URL
-	Percent      int    `yaml:"percent"`        // percentage of requests to mirror (0-100)
-	MaxBodyBytes int    `yaml:"max_body_bytes"` // max body size for mirroring (default 2MB)
+	Enabled               bool   `yaml:"enabled"`
+	Backend               string `yaml:"backend"`        // mirror backend URL
+	Percent               int    `yaml:"percent"`        // percentage of requests to mirror (0-100)
+	MaxBodyBytes          int    `yaml:"max_body_bytes"` // max body size for mirroring (default 2MB)
+	AllowPrivateUpstreams bool   `yaml:"allow_private_upstreams"`
 }
 
 // Mirror handles fire-and-forget request mirroring to a secondary backend.
 type Mirror struct {
-	backend   string
-	percent   int
-	maxBytes  int
-	logger    *logger.Logger
-	transport *http.Transport
+	backend               string
+	percent               int
+	maxBytes              int
+	allowPrivateUpstreams bool
+	logger                *logger.Logger
+	transport             *http.Transport
 }
 
 // NewMirror creates a new Mirror instance.
@@ -35,11 +39,16 @@ func NewMirror(cfg MirrorConfig, log *logger.Logger) *Mirror {
 		maxBytes = 2 << 20 // default 2MB
 	}
 	return &Mirror{
-		backend:  cfg.Backend,
-		percent:  cfg.Percent,
-		maxBytes: maxBytes,
-		logger:   log,
+		backend:               config.NormalizeProxyUpstreamAddress(cfg.Backend),
+		percent:               cfg.Percent,
+		maxBytes:              maxBytes,
+		allowPrivateUpstreams: cfg.AllowPrivateUpstreams,
+		logger:                log,
 		transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: 5 * time.Second,
+				Control: config.ProxyDialControl(cfg.AllowPrivateUpstreams),
+			}).DialContext,
 			MaxIdleConns:          50,
 			IdleConnTimeout:       30 * time.Second,
 			ResponseHeaderTimeout: 10 * time.Second,
@@ -79,6 +88,10 @@ func (m *Mirror) Send(originalReq *http.Request, bodyBytes []byte) {
 func (m *Mirror) doMirror(originalReq *http.Request, bodyBytes []byte) {
 	// Build mirror URL
 	mirrorURL := m.backend + originalReq.URL.RequestURI()
+	if err := m.validateBackendURL(mirrorURL); err != nil {
+		m.logger.Warn("mirror: upstream blocked by SSRF protection", "url", mirrorURL, "error", err)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -119,4 +132,12 @@ func (m *Mirror) doMirror(originalReq *http.Request, bodyBytes []byte) {
 	if resp.StatusCode >= 500 {
 		m.logger.Debug("mirror: backend error", "status", resp.StatusCode, "url", mirrorURL)
 	}
+}
+
+func (m *Mirror) validateBackendURL(rawURL string) error {
+	ssrfCheck := config.IsProxyUpstreamSafe
+	if m.allowPrivateUpstreams {
+		ssrfCheck = config.IsPrivateProxyUpstreamSafe
+	}
+	return ssrfCheck(rawURL)
 }

@@ -36,6 +36,30 @@ func TestSafeDialControl(t *testing.T) {
 	}
 }
 
+func TestProxyDialControl(t *testing.T) {
+	tests := []struct {
+		name         string
+		address      string
+		allowPrivate bool
+		wantErr      bool
+	}{
+		{name: "loopback allowed", address: "127.0.0.1:3000"},
+		{name: "private blocked by default", address: "10.0.0.5:8080", wantErr: true},
+		{name: "private explicit opt-in", address: "10.0.0.5:8080", allowPrivate: true},
+		{name: "metadata always blocked", address: "169.254.169.254:80", allowPrivate: true, wantErr: true},
+		{name: "IPv6 loopback allowed", address: "[::1]:3000"},
+		{name: "public allowed", address: "8.8.8.8:53"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ProxyDialControl(tt.allowPrivate)("tcp", tt.address, syscall.RawConn(nil))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ProxyDialControl(%q) err=%v wantErr=%v", tt.address, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // --- ValidateDomain / ValidateDomainPartial / validateDomain ---
 
 func TestValidateDomain_Nil(t *testing.T) {

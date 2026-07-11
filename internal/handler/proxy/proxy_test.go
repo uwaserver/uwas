@@ -79,17 +79,32 @@ func TestIPHash(t *testing.T) {
 	backends := makeBackends(3)
 	ih := &IPHash{}
 
-	req1 := httptest.NewRequest("GET", "/", nil)
-	req1.RemoteAddr = "1.2.3.4:1234"
-
-	// Same IP should always select same backend
-	first := ih.Select(backends, req1)
-	for i := 0; i < 100; i++ {
-		got := ih.Select(backends, req1)
+	request := httptest.NewRequest("GET", "/", nil)
+	request.RemoteAddr = "1.2.3.4:1234"
+	first := ih.Select(backends, request)
+	for _, remoteAddr := range []string{
+		"1.2.3.4:4321",
+		"1.2.3.4:65535",
+		"1.2.3.4:1",
+	} {
+		request.RemoteAddr = remoteAddr
+		got := ih.Select(backends, request)
 		if got != first {
-			t.Error("IP hash should be consistent")
-			break
+			t.Errorf("IP hash changed with source port for %q", remoteAddr)
 		}
+	}
+}
+
+func TestIPHashIPv6IgnoresSourcePort(t *testing.T) {
+	backends := makeBackends(3)
+	ih := &IPHash{}
+	request := httptest.NewRequest("GET", "/", nil)
+	request.RemoteAddr = "[2001:db8::1]:1234"
+	first := ih.Select(backends, request)
+
+	request.RemoteAddr = "[2001:db8::1]:4321"
+	if got := ih.Select(backends, request); got != first {
+		t.Error("IPv6 hash changed with source port")
 	}
 }
 
@@ -1024,7 +1039,7 @@ func TestCanaryServe(t *testing.T) {
 	cr := NewCanaryRouter(cfg, "round_robin", log)
 	h := New(log)
 
-	req := httptest.NewRequest("GET", "/test", nil)
+	req := httptest.NewRequest("GET", "https://example.test/test", nil)
 	rec := httptest.NewRecorder()
 	ctx := newTestContext(rec, req)
 
@@ -1046,6 +1061,9 @@ func TestCanaryServe(t *testing.T) {
 	cookies := rec.Header().Get("Set-Cookie")
 	if cookies == "" || !strings.Contains(cookies, "uwas-canary=true") {
 		t.Errorf("expected canary stickiness cookie, got %q", cookies)
+	}
+	if !strings.Contains(cookies, "Secure") {
+		t.Errorf("expected secure canary cookie on HTTPS, got %q", cookies)
 	}
 }
 

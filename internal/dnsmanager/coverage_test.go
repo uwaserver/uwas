@@ -250,3 +250,108 @@ func TestRoute53_R53Request_ReadBodyError(t *testing.T) {
 		t.Errorf("error = %v, want 'read response'", err)
 	}
 }
+
+// --- Cloudflare do() read body error (covers line 82-84) ---
+func TestCloudflare_Do_ReadBodyError_CreateRecord(t *testing.T) {
+	srv := truncatedBodyServer(t)
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	_, err := p.CreateRecord("z1", Record{Type: "A", Name: "x", Content: "1.2.3.4"})
+	if err == nil {
+		t.Fatal("expected read error via do()")
+	}
+	if !strings.Contains(err.Error(), "read response") {
+		t.Errorf("error = %v, want 'read response'", err)
+	}
+}
+
+// --- Cloudflare do(): json.Unmarshal envelope error (covers line 93-95) ---
+func TestCloudflare_Do_EnvelopeUnmarshalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{{{not json"))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	_, err := p.CreateRecord("z1", Record{Type: "A", Name: "x", Content: "1.2.3.4"})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parse response") {
+		t.Errorf("error = %v, want 'parse response'", err)
+	}
+}
+
+// --- Cloudflare do(): success=false with no errors (covers line 100) ---
+func TestCloudflare_Do_APIFailureNoErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"success":false,"result":null,"errors":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	_, err := p.CreateRecord("z1", Record{Type: "A", Name: "x", Content: "1.2.3.4"})
+	if err == nil {
+		t.Fatal("expected API failure error")
+	}
+	if !strings.Contains(err.Error(), "request failed") {
+		t.Errorf("error = %v, want 'request failed'", err)
+	}
+}
+
+// --- Cloudflare doList(): success=false with no errors (covers doList non-success) ---
+func TestCloudflare_DoList_APIFailureNoErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"success":false,"result":null,"errors":[],"result_info":{"total_pages":0}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	_, err := p.ListZones()
+	if err == nil {
+		t.Fatal("expected API failure error")
+	}
+	if !strings.Contains(err.Error(), "request failed") {
+		t.Errorf("error = %v, want 'request failed'", err)
+	}
+}
+
+// --- Cloudflare ListZones: result unmarshal error (covers line 168-170) ---
+func TestCloudflare_ListZones_ResultItemUnmarshalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(cfEnvelope(`[{"id":"z1","name":"ex.com"},{"id":123}]`)))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	_, err := p.ListZones()
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parse zones") {
+		t.Errorf("error = %v, want 'parse zones'", err)
+	}
+}
+
+// --- Cloudflare ListRecords: result unmarshal error (covers line 238-240) ---
+func TestCloudflare_ListRecords_ResultItemUnmarshalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(cfEnvelope(`[{"type":"A"},{"type":123}]`)))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestCloudflare(srv.URL)
+	_, err := p.ListRecords("z1")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parse records") {
+		t.Errorf("error = %v, want 'parse records'", err)
+	}
+}

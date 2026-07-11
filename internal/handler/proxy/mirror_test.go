@@ -213,3 +213,35 @@ func TestNewMirror(t *testing.T) {
 		t.Errorf("expected percent 50, got %d", m.percent)
 	}
 }
+
+func TestMirrorRejectsMetadataBackend(t *testing.T) {
+	m := NewMirror(MirrorConfig{
+		Enabled: true,
+		Backend: "http://169.254.169.254/latest/meta-data",
+		Percent: 100,
+	}, testLogger())
+	if err := m.validateBackendURL(m.backend); err == nil {
+		t.Fatal("metadata backend should be blocked")
+	}
+}
+
+func TestMirrorPrivateBackendRequiresOptIn(t *testing.T) {
+	blocked := NewMirror(MirrorConfig{
+		Enabled: true,
+		Backend: "http://10.0.0.5:8080",
+		Percent: 100,
+	}, testLogger())
+	if err := blocked.validateBackendURL(blocked.backend); err == nil {
+		t.Fatal("private backend should be blocked without opt-in")
+	}
+
+	allowed := NewMirror(MirrorConfig{
+		Enabled:               true,
+		Backend:               "http://10.0.0.5:8080",
+		Percent:               100,
+		AllowPrivateUpstreams: true,
+	}, testLogger())
+	if err := allowed.validateBackendURL(allowed.backend); err != nil {
+		t.Fatalf("private backend with opt-in rejected: %v", err)
+	}
+}

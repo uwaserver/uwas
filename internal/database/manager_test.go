@@ -1410,6 +1410,57 @@ func TestListDatabases_OnlyNameField(t *testing.T) {
 	}
 }
 
+// TestListDatabases_BadTableCount covers the Sscanf error path when the
+// third field (tables count) is not a valid integer.
+func TestListDatabases_BadTableCount(t *testing.T) {
+	saveHooks(t)
+	runMySQLFn = func(sql string) (string, error) {
+		return "mydb\t0.50\tabc\n", nil
+	}
+
+	dbs, err := ListDatabases()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dbs) != 1 {
+		t.Fatalf("expected 1 db, got %d", len(dbs))
+	}
+	if dbs[0].Name != "mydb" {
+		t.Errorf("expected 'mydb', got %q", dbs[0].Name)
+	}
+	// Tables field should be 0 when Sscanf fails
+	if dbs[0].Tables != 0 {
+		t.Errorf("expected 0 tables for unparseable input, got %d", dbs[0].Tables)
+	}
+}
+
+// TestSetBindAddressAllInterfaces_EmptyFile covers the branch where
+// setBindAddressAllInterfaces reads an empty file, producing empty output
+// from rewriteBindAddress, triggering the default config path.
+func TestSetBindAddressAllInterfaces_EmptyFile(t *testing.T) {
+	saveHooks(t)
+	osStatFn = func(name string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	osReadFileFn = func(name string) ([]byte, error) {
+		return []byte(""), nil
+	}
+	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
+		return nil
+	}
+	osMkdirAllFn = func(path string, perm os.FileMode) error {
+		return nil
+	}
+
+	path, err := setBindAddressAllInterfaces()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path == "" {
+		t.Error("expected a config path, got empty")
+	}
+}
+
 func TestListDatabases_WhitespaceOnlyLine(t *testing.T) {
 	saveHooks(t)
 	// A line of only spaces/tabs — Fields returns empty slice, triggers len(fields)<1
