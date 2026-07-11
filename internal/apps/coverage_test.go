@@ -1948,3 +1948,273 @@ func TestStatsNativeRunningSelf(t *testing.T) {
 		t.Fatalf("native stats should report running pid: %#v", s)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// validateShellCommand — all branches
+// ---------------------------------------------------------------------------
+
+func TestValidateShellCommandAllMetas(t *testing.T) {
+	// Valid command passes.
+	if err := validateShellCommand("node server.js"); err != nil {
+		t.Fatalf("valid command rejected: %v", err)
+	}
+
+	// Forbidden control characters.
+	for _, bad := range []string{"\x00", "\n", "\r"} {
+		cmd := "echo " + bad
+		if err := validateShellCommand(cmd); err == nil {
+			t.Errorf("command with %q should be rejected", bad)
+		}
+	}
+
+	// Forbidden metacharacters. Note: "||" is detected by "|" first, so
+	// we check that the error mentions something, not that it contains the
+	// original multi-char input.
+	cases := []string{"$(", "`", "|", ">", "<", ";", "&&", "||"}
+	for _, meta := range cases {
+		cmd := "echo " + meta
+		if err := validateShellCommand(cmd); err == nil {
+			t.Errorf("command containing %q should be rejected", meta)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// State — all three branches
+// ---------------------------------------------------------------------------
+
+func TestStateNotRegistered(t *testing.T) {
+	m := NewManager(NewStore(t.TempDir()), nil)
+	if s := m.State("nobody"); s != StateNotRegistered {
+		t.Fatalf("State = %d, want %d (StateNotRegistered)", s, StateNotRegistered)
+	}
+}
+
+func TestStateStopped(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	if err := m.Register(&App{Name: "idle", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if s := m.State("idle"); s != StateStopped {
+		t.Fatalf("State = %d, want %d (StateStopped)", s, StateStopped)
+	}
+}
+
+func TestStateRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	if err := m.Register(&App{Name: "up", Runtime: RuntimeCustom, Command: "sleep 2", WorkDir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start("up"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop("up")
+	if s := m.State("up"); s != StateRunning {
+		t.Fatalf("State = %d, want %d (StateRunning)", s, StateRunning)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// containerName
+// ---------------------------------------------------------------------------
+
+func TestContainerName(t *testing.T) {
+	if got := containerName("my-app"); got != "uwas-app-my-app" {
+		t.Fatalf("containerName = %q, want %q", got, "uwas-app-my-app")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unregister
+// ---------------------------------------------------------------------------
+
+func TestUnregisterRemovesProcessAndFile(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	app := &App{Name: "gone", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}
+	if err := m.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	if m.Get("gone") == nil {
+		t.Fatal("app should be registered")
+	}
+	if err := m.Unregister("gone"); err != nil {
+		t.Fatalf("unregister: %v", err)
+	}
+	if m.Get("gone") != nil {
+		t.Fatal("app should be gone after unregister")
+	}
+	if got, _ := m.Store().Get("gone"); got != nil {
+		t.Fatalf("app file should be gone after unregister, got %#v", got)
+	}
+}
+
+func TestUnregisterIdempotent(t *testing.T) {
+	m := NewManager(NewStore(t.TempDir()), nil)
+	if err := m.Unregister("never-existed"); err != nil {
+		t.Fatalf("unregister never-registered app should succeed: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Instances
+// ---------------------------------------------------------------------------
+
+func TestInstancesReturnsAllRegistered(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	if err := m.Register(&App{Name: "a", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Register(&App{Name: "b", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	insts := m.Instances()
+	if len(insts) != 2 {
+		t.Fatalf("Instances = %d, want 2", len(insts))
+	}
+	names := map[string]bool{}
+	for _, inst := range insts {
+		names[inst.Name] = true
+	}
+	if !names["a"] || !names["b"] {
+		t.Fatalf("Instances missing apps: %#v", names)
+	}
+	// Both should be stopped.
+	for _, inst := range insts {
+		if inst.Running {
+			t.Errorf("%s should not be running", inst.Name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StopAll
+// ---------------------------------------------------------------------------
+
+func TestStopAllStopsAllRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	for _, name := range []string{"s1", "s2"} {
+		if err := m.Register(&App{Name: name, Runtime: RuntimeCustom, Command: "sleep 5", WorkDir: dir}); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Start(name); err != nil {
+			t.Fatalf("start %s: %v", name, err)
+		}
+	}
+	m.StopAll()
+	for _, name := range []string{"s1", "s2"} {
+		if s := m.State(name); s != StateStopped {
+			t.Errorf("after StopAll, %s state = %d, want Stopped", name, s)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isSameProcessRunning
+// ---------------------------------------------------------------------------
+
+func TestIsSameProcessRunningUnregistered(t *testing.T) {
+	m := NewManager(NewStore(t.TempDir()), nil)
+	if m.isSameProcessRunning("nobody", nil) {
+		t.Fatal("unregistered app should not be running")
+	}
+}
+
+func TestIsSameProcessRunningMismatchedPtr(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	app := &App{Name: "same", Runtime: RuntimeCustom, Command: "true", WorkDir: dir}
+	if err := m.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	// Wrong pointer should return false even if name matches.
+	if m.isSameProcessRunning("same", &process{name: "same", stopCh: make(chan struct{})}) {
+		t.Fatal("should return false for wrong process pointer")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Instances — docker and nil-cmd process branches
+// ---------------------------------------------------------------------------
+
+func TestInstanceFromDockerIncludesImage(t *testing.T) {
+	m := NewManager(NewStore(t.TempDir()), nil)
+	now := time.Now()
+	p := &process{
+		name:        "dock",
+		app:         &App{Name: "dock", Runtime: RuntimeDocker, Disabled: false, Docker: DockerSpec{Image: "nginx"}},
+		runtimeKind: RuntimeDocker,
+		dockerID:    "abc123",
+		startedAt:   now,
+		stopCh:      make(chan struct{}),
+	}
+	inst := m.instanceFromProcess(p)
+	if !inst.Running {
+		t.Fatal("docker app with dockerID should be running")
+	}
+	if inst.DockerImage != "nginx" {
+		t.Fatalf("DockerImage = %q, want %q", inst.DockerImage, "nginx")
+	}
+	if inst.PID != 0 {
+		t.Fatalf("docker PID should be 0, got %d", inst.PID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Restart
+// ---------------------------------------------------------------------------
+
+func TestRestartStopsAndStarts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	dir := t.TempDir()
+	m := NewManager(NewStore(dir), nil)
+	app := &App{Name: "cycle", Runtime: RuntimeCustom, Command: "sleep 5", WorkDir: dir}
+	if err := m.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start("cycle"); err != nil {
+		t.Fatalf("first start: %v", err)
+	}
+	if m.State("cycle") != StateRunning {
+		t.Fatal("app should be running before restart")
+	}
+	_ = m.Restart("cycle")
+	defer m.Stop("cycle")
+	// After restart it should be running again.
+	if m.State("cycle") != StateRunning {
+		t.Fatal("app should be running after restart")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// store.go — Names
+// ---------------------------------------------------------------------------
+
+func TestStoreNamesReturnsSorted(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	// Load populates the name cache.
+	for _, n := range []string{"z", "a", "m"} {
+		app := &App{Name: n, Runtime: RuntimeCustom, Command: "./run"}
+		if err := s.Save(app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, _ = s.Load()
+	names := s.Names()
+	if len(names) != 3 || names[0] != "a" || names[2] != "z" {
+		t.Fatalf("Names = %v, want sorted [a m z]", names)
+	}
+}

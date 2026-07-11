@@ -42,13 +42,13 @@ func RealIP(trustedProxies []string) Middleware {
 			// bogus) value must not poison RemoteAddr — that feeds ACLs, access
 			// logs, and BotGuard's loopback check downstream.
 			if ip := r.Header.Get("CF-Connecting-IP"); ip != "" && net.ParseIP(ip) != nil {
-				r.RemoteAddr = ip + ":0"
+				r.RemoteAddr = net.JoinHostPort(ip, "0")
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			if ip := r.Header.Get("X-Real-IP"); ip != "" && net.ParseIP(ip) != nil {
-				r.RemoteAddr = ip + ":0"
+				r.RemoteAddr = net.JoinHostPort(ip, "0")
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -56,7 +56,7 @@ func RealIP(trustedProxies []string) Middleware {
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 				ip := extractRealIP(xff, trusted)
 				if ip != "" {
-					r.RemoteAddr = ip + ":0"
+					r.RemoteAddr = net.JoinHostPort(ip, "0")
 				}
 			}
 

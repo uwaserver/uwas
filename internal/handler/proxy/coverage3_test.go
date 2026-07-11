@@ -60,7 +60,7 @@ func TestSetStickyCookie(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	ctx := newTestContext(httptest.NewRecorder(), req)
 
-	SetStickyCookie(ctx.Response, "uwas_sticky", "backend-1:8080", 1800)
+	SetStickyCookie(ctx.Response, "uwas_sticky", "backend-1:8080", 1800, true)
 
 	setCookie := ctx.Response.Header().Get("Set-Cookie")
 	if !strings.Contains(setCookie, "uwas_sticky=backend-1:8080") {
@@ -71,6 +71,9 @@ func TestSetStickyCookie(t *testing.T) {
 	}
 	if !strings.Contains(setCookie, "HttpOnly") {
 		t.Errorf("Set-Cookie = %q, want HttpOnly", setCookie)
+	}
+	if !strings.Contains(setCookie, "Secure") {
+		t.Errorf("Set-Cookie = %q, want Secure", setCookie)
 	}
 }
 
@@ -242,6 +245,32 @@ func TestGetTransportTimeoutOverrides(t *testing.T) {
 	// Cached on second call (same pointer).
 	if h.getTransport(domain) != tr {
 		t.Error("getTransport should cache the transport per domain")
+	}
+}
+
+func TestGetTransportChangesWithDomainPolicy(t *testing.T) {
+	h := New(newTestLogger())
+	domain := newTestDomain()
+
+	initial := h.getTransport(domain)
+	domain.Proxy.AllowPrivateUpstreams = true
+	privateAllowed := h.getTransport(domain)
+	if privateAllowed == initial {
+		t.Fatal("allow_private_upstreams change reused stale transport")
+	}
+
+	domain.Proxy.InsecureSkipVerify = true
+	insecure := h.getTransport(domain)
+	if insecure == privateAllowed {
+		t.Fatal("TLS verification policy change reused stale transport")
+	}
+	if insecure.TLSClientConfig == nil || !insecure.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("updated transport did not apply TLS verification policy")
+	}
+
+	h.ResetTransports()
+	if rebuilt := h.getTransport(domain); rebuilt == insecure {
+		t.Fatal("ResetTransports did not evict cached transport")
 	}
 }
 

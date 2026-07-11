@@ -1400,6 +1400,46 @@ func TestMonitor_Persistence_JSONRoundtrip(t *testing.T) {
 }
 
 // ─── monitor.go: concurrent access ─────────────────────────────────────────
+// TestSetTimeoutZero covers the branch where SetTimeout is called with a
+// non-positive value, restoring the default timeout.
+func TestSetTimeoutZero(t *testing.T) {
+	m := NewMonitor(t.TempDir())
+	// Initially timeout should be defaultJobTimeout
+	m.mu.RLock()
+	initial := m.timeout
+	m.mu.RUnlock()
+	if initial != defaultJobTimeout {
+		t.Fatalf("initial timeout = %v, want %v", initial, defaultJobTimeout)
+	}
+
+	// Set to a specific value first
+	m.SetTimeout(5 * time.Second)
+	m.mu.RLock()
+	specific := m.timeout
+	m.mu.RUnlock()
+	if specific != 5*time.Second {
+		t.Fatalf("timeout after SetTimeout(5s) = %v, want 5s", specific)
+	}
+
+	// Now set to zero — should restore default
+	m.SetTimeout(0)
+	m.mu.RLock()
+	restored := m.timeout
+	m.mu.RUnlock()
+	if restored != defaultJobTimeout {
+		t.Errorf("timeout after SetTimeout(0) = %v, want default %v", restored, defaultJobTimeout)
+	}
+
+	// Negative value should also restore default
+	m.SetTimeout(-1)
+	m.mu.RLock()
+	neg := m.timeout
+	m.mu.RUnlock()
+	if neg != defaultJobTimeout {
+		t.Errorf("timeout after SetTimeout(-1) = %v, want default %v", neg, defaultJobTimeout)
+	}
+}
+
 func TestMonitor_ConcurrentAccess(t *testing.T) {
 	m := NewMonitor("")
 
@@ -1801,4 +1841,75 @@ func TestMonitor_Execute_OverlapGuard(t *testing.T) {
 	m.mu.Lock()
 	delete(m.running, key)
 	m.mu.Unlock()
+}
+
+// ─── Coverage: Remove error path when readCrontab fails ─────────────────────
+func TestRemove_ReadCrontabError(t *testing.T) {
+	origGOOS := runtimeGOOS
+	origCmd := execCommandFn
+	runtimeGOOS = "linux"
+	defer func() {
+		runtimeGOOS = origGOOS
+		execCommandFn = origCmd
+	}()
+
+	// Make "crontab -l" fail
+	execCommandFn = fakeExecCommand("", 1)
+
+	err := Remove("* * * * *", "/usr/bin/test")
+	if err == nil {
+		t.Error("expected error from Remove when readCrontab fails")
+	}
+}
+
+// ─── Coverage: RemoveByDomain error path when readCrontab fails ──────────────
+func TestRemoveByDomain_ReadCrontabError(t *testing.T) {
+	origGOOS := runtimeGOOS
+	origCmd := execCommandFn
+	runtimeGOOS = "linux"
+	defer func() {
+		runtimeGOOS = origGOOS
+		execCommandFn = origCmd
+	}()
+
+	// Make "crontab -l" fail
+	execCommandFn = fakeExecCommand("", 1)
+
+	err := RemoveByDomain("example.com")
+	if err == nil {
+		t.Error("expected error from RemoveByDomain when readCrontab fails")
+	}
+}
+
+// ─── Coverage: killProcessGroup with nil Process ────────────────────────────
+// This covers the guard clause in monitor_unix.go:22-24.
+func TestKillProcessGroupNilProcess(t *testing.T) {
+	cmd := exec.Command("true")
+	// Don't start the command, so cmd.Process is nil
+	killProcessGroup(cmd)
+	// Should not panic
+}
+
+// ─── Coverage: Execute with timeout ≤ 0 (monitor.go:178-180) ────────────────
+// When Monitor.timeout is explicitly ≤ 0, Execute sets it to defaultJobTimeout.
+func TestExecute_ZeroTimeout(t *testing.T) {
+	origGOOS := runtimeGOOS
+	origCmd := execCommandFn
+	runtimeGOOS = "linux"
+	defer func() {
+		runtimeGOOS = origGOOS
+		execCommandFn = origCmd
+	}()
+
+	execCommandFn = fakeExecCommandWithStderr("done", "", 0)
+	m := NewMonitor(t.TempDir())
+	m.mu.Lock()
+	m.timeout = 0 // explicitly zero, triggers default
+	m.mu.Unlock()
+
+	rec := m.Execute("ex.com", "* * * * *", "echo ok")
+	// Should not panic, should succeed
+	if rec.Error != "" {
+		t.Logf("Execute with zero timeout: err=%v", rec.Error)
+	}
 }

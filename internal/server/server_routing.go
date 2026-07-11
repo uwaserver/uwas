@@ -71,6 +71,8 @@ func (s *Server) proxyRouteFor(host string) (*proxyhandler.UpstreamPool, proxyha
 // calling this method again — typically via onDomainChange or reload
 // when an app state changes.
 func (s *Server) rebuildProxyPools(domains []config.Domain) {
+	s.proxy.ResetTransports()
+
 	newPools := make(map[string]*proxyhandler.UpstreamPool)
 	newBalancers := make(map[string]proxyhandler.Balancer)
 	newHealthChks := make(map[string]*proxyhandler.HealthChecker)
@@ -118,10 +120,11 @@ func (s *Server) rebuildProxyPools(domains []config.Domain) {
 		}
 		if d.Proxy.Mirror.Enabled && d.Proxy.Mirror.Backend != "" {
 			newMirrors[d.Host] = proxyhandler.NewMirror(proxyhandler.MirrorConfig{
-				Enabled:      d.Proxy.Mirror.Enabled,
-				Backend:      d.Proxy.Mirror.Backend,
-				Percent:      d.Proxy.Mirror.Percent,
-				MaxBodyBytes: d.Proxy.Mirror.MaxBodyBytes,
+				Enabled:               d.Proxy.Mirror.Enabled,
+				Backend:               d.Proxy.Mirror.Backend,
+				Percent:               d.Proxy.Mirror.Percent,
+				MaxBodyBytes:          d.Proxy.Mirror.MaxBodyBytes,
+				AllowPrivateUpstreams: d.Proxy.AllowPrivateUpstreams,
 			}, s.logger)
 		}
 	}

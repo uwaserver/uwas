@@ -541,10 +541,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		// Request mirroring
 		if d.Proxy.Mirror.Enabled && d.Proxy.Mirror.Backend != "" {
 			s.proxyMirrors[d.Host] = proxyhandler.NewMirror(proxyhandler.MirrorConfig{
-				Enabled:      d.Proxy.Mirror.Enabled,
-				Backend:      d.Proxy.Mirror.Backend,
-				Percent:      d.Proxy.Mirror.Percent,
-				MaxBodyBytes: d.Proxy.Mirror.MaxBodyBytes,
+				Enabled:               d.Proxy.Mirror.Enabled,
+				Backend:               d.Proxy.Mirror.Backend,
+				Percent:               d.Proxy.Mirror.Percent,
+				MaxBodyBytes:          d.Proxy.Mirror.MaxBodyBytes,
+				AllowPrivateUpstreams: d.Proxy.AllowPrivateUpstreams,
 			}, log)
 		}
 	}

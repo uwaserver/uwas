@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,16 @@ import (
 // Handler handles reverse proxy requests with load balancing.
 type Handler struct {
 	logger     *logger.Logger
-	transports sync.Map // domain host → *http.Transport
+	transports sync.Map // proxyTransportKey -> *http.Transport
+}
+
+type proxyTransportKey struct {
+	host               string
+	connectTimeout     time.Duration
+	readTimeout        time.Duration
+	writeTimeout       time.Duration
+	allowPrivate       bool
+	insecureSkipVerify bool
 }
 
 const (
@@ -35,10 +45,6 @@ func New(log *logger.Logger) *Handler {
 
 // getTransport returns a per-domain transport with configured timeouts.
 func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
-	if t, ok := h.transports.Load(domain.Host); ok {
-		return t.(*http.Transport)
-	}
-
 	connectTimeout := 5 * time.Second
 	if domain.Proxy.Timeouts.Connect.Duration > 0 {
 		connectTimeout = domain.Proxy.Timeouts.Connect.Duration
@@ -54,12 +60,25 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 	if domain.Proxy.Timeouts.Write.Duration > 0 {
 		writeTimeout = domain.Proxy.Timeouts.Write.Duration
 	}
+	key := proxyTransportKey{
+		host:               domain.Host,
+		connectTimeout:     connectTimeout,
+		readTimeout:        headerTimeout,
+		writeTimeout:       writeTimeout,
+		allowPrivate:       domain.Proxy.AllowPrivateUpstreams,
+		insecureSkipVerify: domain.Proxy.InsecureSkipVerify,
+	}
+	if t, ok := h.transports.Load(key); ok {
+		return t.(*http.Transport)
+	}
 
+	dialer := &net.Dialer{
+		Timeout:   connectTimeout,
+		KeepAlive: 30 * time.Second,
+		Control:   config.ProxyDialControl(domain.Proxy.AllowPrivateUpstreams),
+	}
 	t := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   connectTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext:           dialer.DialContext,
 		ResponseHeaderTimeout: headerTimeout,
 		WriteBufferSize:       64 * 1024,
 		MaxIdleConns:          100,
@@ -88,8 +107,19 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 		}
 	}
 
-	actual, _ := h.transports.LoadOrStore(domain.Host, t)
+	actual, _ := h.transports.LoadOrStore(key, t)
 	return actual.(*http.Transport)
+}
+
+// ResetTransports closes idle upstream connections and removes cached
+// transports after a config reload. Active requests retain their transport;
+// subsequent requests rebuild one from the current domain policy.
+func (h *Handler) ResetTransports() {
+	h.transports.Range(func(key, value any) bool {
+		value.(*http.Transport).CloseIdleConnections()
+		h.transports.Delete(key)
+		return true
+	})
 }
 
 // Serve proxies the request to an upstream backend.
@@ -107,7 +137,15 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — no backend selected")
 			return
 		}
-		h.serveWebSocket(ctx, backend)
+		if err := proxyUpstreamSafetyCheck(domain, backend.URL.String()); err != nil {
+			h.logger.Warn("websocket proxy SSRF blocked", "upstream", backend.URL.String(), "error", err)
+			ctx.Response.Error(http.StatusForbidden, "403 Forbidden — upstream blocked (SSRF protection)")
+			return
+		}
+		h.serveWebSocketWithOptions(ctx, backend, websocketDialOptions{
+			insecureSkipVerify: domain.Proxy.InsecureSkipVerify,
+			allowPrivate:       domain.Proxy.AllowPrivateUpstreams,
+		})
 		return
 	}
 
@@ -186,11 +224,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 		// SSRF protection: local app upstreams are allowed, but metadata and
 		// link-local ranges remain blocked even when private upstreams are enabled.
-		ssrfCheck := config.IsProxyUpstreamSafe
-		if domain.Proxy.AllowPrivateUpstreams {
-			ssrfCheck = config.IsPrivateProxyUpstreamSafe
-		}
-		if err := ssrfCheck(upstreamURL.String()); err != nil {
+		if err := proxyUpstreamSafetyCheck(domain, upstreamURL.String()); err != nil {
 			backend.ActiveConns.Add(-1)
 			backend.TotalFails.Add(1)
 			h.logger.Warn("proxy SSRF blocked", "upstream", upstreamURL.String(), "error", err)
@@ -305,7 +339,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 		// Set sticky session cookie if the balancer is sticky
 		if sb, ok := balancer.(*StickyBalancer); ok {
-			SetStickyCookie(ctx.Response, sb.CookieName, backend.URL.Host, sb.TTL)
+			SetStickyCookie(ctx.Response, sb.CookieName, backend.URL.Host, sb.TTL, ctx.Request.TLS != nil)
 		}
 
 		// Write status + body
@@ -344,6 +378,13 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 	// All retries exhausted
 	ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway — all backends failed")
+}
+
+func proxyUpstreamSafetyCheck(domain *config.Domain, rawURL string) error {
+	if domain.Proxy.AllowPrivateUpstreams {
+		return config.IsPrivateProxyUpstreamSafe(rawURL)
+	}
+	return config.IsProxyUpstreamSafe(rawURL)
 }
 
 // isRetryableError checks if the error is a connection-level error worth retrying.
@@ -495,7 +536,16 @@ func IsWebSocketUpgrade(r *http.Request) bool {
 // serveWebSocket tunnels a WebSocket connection by hijacking the client
 // connection and establishing a raw TCP connection to the backend. Both
 // directions are piped concurrently until one side closes.
+type websocketDialOptions struct {
+	insecureSkipVerify bool
+	allowPrivate       bool
+}
+
 func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
+	h.serveWebSocketWithOptions(ctx, backend, websocketDialOptions{})
+}
+
+func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend *Backend, options websocketDialOptions) {
 	// Hijack the client connection (ResponseWriter implements Hijack)
 	clientConn, clientBuf, err := ctx.Response.Hijack()
 	if err != nil {
@@ -505,23 +555,38 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 	}
 
 	// Connect to upstream
-	backendAddr := backend.URL.Host
-	if !strings.Contains(backendAddr, ":") {
-		if backend.URL.Scheme == "https" || backend.URL.Scheme == "wss" {
-			backendAddr += ":443"
-		} else {
-			backendAddr += ":80"
-		}
-	}
+	backendAddr := websocketBackendAddress(backend.URL)
 
 	reqID := ctx.Request.Header.Get("X-Request-ID")
 
-	upstreamConn, err := net.DialTimeout("tcp", backendAddr, 5*time.Second)
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: config.ProxyDialControl(options.allowPrivate),
+	}
+	upstreamConn, err := dialer.DialContext(ctx.Request.Context(), "tcp", backendAddr)
 	if err != nil {
 		h.logger.Error("websocket upstream connect failed", "backend", backendAddr, "request_id", reqID, "error", err)
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		clientConn.Close()
 		return
+	}
+	if backend.URL.Scheme == "https" || backend.URL.Scheme == "wss" {
+		tlsConn := tls.Client(upstreamConn, &tls.Config{
+			ServerName:         backend.URL.Hostname(),
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: options.insecureSkipVerify, // #nosec G402 -- explicit per-domain operator opt-in
+		})
+		handshakeCtx, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
+		err = tlsConn.HandshakeContext(handshakeCtx)
+		cancel()
+		if err != nil {
+			h.logger.Error("websocket upstream TLS handshake failed", "backend", backendAddr, "request_id", reqID, "error", err)
+			upstreamConn.Close()
+			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+			clientConn.Close()
+			return
+		}
+		upstreamConn = tlsConn
 	}
 
 	// Forward the original HTTP request (including Upgrade headers) to the backend
@@ -589,4 +654,15 @@ func (h *Handler) serveWebSocket(ctx *router.RequestContext, backend *Backend) {
 	// Wait for both directions to finish
 	wg.Wait()
 	h.logger.Debug("websocket connection closed", "backend", backendAddr, "request_id", reqID, "path", ctx.Request.URL.Path)
+}
+
+func websocketBackendAddress(backendURL *url.URL) string {
+	if backendURL.Port() != "" {
+		return backendURL.Host
+	}
+	port := "80"
+	if backendURL.Scheme == "https" || backendURL.Scheme == "wss" {
+		port = "443"
+	}
+	return net.JoinHostPort(backendURL.Hostname(), port)
 }

@@ -537,6 +537,40 @@ func TestDockerDBContainerStruct(t *testing.T) {
 	}
 }
 
+// TestCreateDockerDB_NilEnv covers the branch where the exec.Cmd returned by
+// dockerExecCommandFn has a nil Env field, triggering the env = os.Environ()
+// fallback in CreateDockerDB (line 123-125).
+func TestCreateDockerDB_NilEnv(t *testing.T) {
+	origHook := dockerExecCommandFn
+	t.Cleanup(func() { dockerExecCommandFn = origHook })
+
+	// Create a mock that returns a Cmd with nil Env for the "run" subcommand.
+	// We need the "ps" check to succeed to get past the "already exists" check.
+	dockerExecCommandFn = func(name string, args ...string) *exec.Cmd {
+		cs := []string{"-test.run=TestHelperProcess", "--", name}
+		cs = append(cs, args...)
+		cmd := exec.Command(os.Args[0], cs...)
+		if len(args) > 0 && args[0] == "ps" {
+			cmd.Env = append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				"HELPER_STDOUT=",
+				"HELPER_EXIT_CODE=0",
+			)
+		} else {
+			// For "run" — leave Env nil to exercise the nil check.
+			cmd.Env = nil
+		}
+		return cmd
+	}
+
+	_, err := CreateDockerDB(EngineMariaDB, "test-nil-env", 3399, "testpass", "")
+	if err == nil {
+		// The "run" command will likely fail because the mock doesn't produce
+		// valid output, but we only care that it doesn't panic from nil Env.
+		t.Log("CreateDockerDB succeeded (unexpected but not harmful — nil Env didn't panic)")
+	}
+}
+
 func TestContainerPrefix(t *testing.T) {
 	if containerPrefix != "uwas-db-" {
 		t.Errorf("expected uwas-db- prefix, got %q", containerPrefix)

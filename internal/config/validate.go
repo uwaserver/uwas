@@ -34,6 +34,27 @@ func SafeDialControl(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// ProxyDialControl applies the reverse-proxy address policy to the IP selected
+// by the OS at connect time. Loopback is always supported for local app
+// upstreams; RFC1918/ULA addresses require the domain's explicit opt-in.
+func ProxyDialControl(allowPrivate bool) func(string, string, syscall.RawConn) error {
+	policy := urlSafetyPolicy{allowLoopback: true, allowPrivate: allowPrivate}
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			host = address
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return nil
+		}
+		if reason := ipBlockedReason(ip, policy); reason != "" {
+			return fmt.Errorf("blocked %s %q (SSRF)", reason, host)
+		}
+		return nil
+	}
+}
+
 // Validate performs structural and semantic validation on a Config.
 func Validate(cfg *Config) error {
 	var errs []string
@@ -229,22 +250,11 @@ func Validate(cfg *Config) error {
 				seen := make(map[string]bool)
 				for j, u := range d.Proxy.Upstreams {
 					uprefix := fmt.Sprintf("%s.proxy.upstreams[%d]", prefix, j)
-					if u.Address == "" {
-						errs = append(errs, fmt.Sprintf("%s: address is required", uprefix))
-					} else {
-						// Accept "host:port" by auto-prefixing http://; users often omit the scheme.
-						addr := NormalizeProxyUpstreamAddress(u.Address)
-						parsed, err := url.Parse(addr)
-						if err != nil || parsed.Host == "" {
-							errs = append(errs, fmt.Sprintf("%s: invalid URL %q", uprefix, u.Address))
-						} else if isCloudMetadataHost(parsed.Hostname()) {
-							errs = append(errs, fmt.Sprintf("%s: cloud metadata endpoint blocked (%s)", uprefix, parsed.Hostname()))
-						}
-						if seen[u.Address] {
-							errs = append(errs, fmt.Sprintf("%s: duplicate upstream address %q", uprefix, u.Address))
-						}
-						seen[u.Address] = true
+					validateProxyUpstreamAddress(uprefix, u.Address, &errs)
+					if seen[u.Address] {
+						errs = append(errs, fmt.Sprintf("%s: duplicate upstream address %q", uprefix, u.Address))
 					}
+					seen[u.Address] = true
 					if u.Weight < 0 {
 						errs = append(errs, fmt.Sprintf("%s: weight must be >= 0, got %d", uprefix, u.Weight))
 					}
@@ -262,12 +272,26 @@ func Validate(cfg *Config) error {
 				if d.Proxy.Canary.Weight < 0 || d.Proxy.Canary.Weight > 100 {
 					errs = append(errs, fmt.Sprintf("%s: proxy.canary.weight must be 0-100, got %d", prefix, d.Proxy.Canary.Weight))
 				}
+				if len(d.Proxy.Canary.Upstreams) == 0 {
+					errs = append(errs, fmt.Sprintf("%s: proxy.canary.upstreams requires at least one backend", prefix))
+				}
+				for j, u := range d.Proxy.Canary.Upstreams {
+					uprefix := fmt.Sprintf("%s.proxy.canary.upstreams[%d]", prefix, j)
+					validateProxyUpstreamAddress(uprefix, u.Address, &errs)
+					if u.Weight < 0 {
+						errs = append(errs, fmt.Sprintf("%s: weight must be >= 0, got %d", uprefix, u.Weight))
+					}
+				}
 			}
 
 			// Mirror percent validation
 			if d.Proxy.Mirror.Enabled {
 				if d.Proxy.Mirror.Percent < 0 || d.Proxy.Mirror.Percent > 100 {
 					errs = append(errs, fmt.Sprintf("%s: proxy.mirror.percent must be 0-100, got %d", prefix, d.Proxy.Mirror.Percent))
+				}
+				validateProxyUpstreamAddress(prefix+".proxy.mirror", d.Proxy.Mirror.Backend, &errs)
+				if d.Proxy.Mirror.MaxBodyBytes < 0 {
+					errs = append(errs, fmt.Sprintf("%s: proxy.mirror.max_body_bytes must be >= 0", prefix))
 				}
 			}
 		}
@@ -700,6 +724,27 @@ func NormalizeProxyUpstreamAddress(addr string) string {
 		return addr
 	}
 	return "http://" + addr
+}
+
+func validateProxyUpstreamAddress(prefix, address string, errs *[]string) {
+	if strings.TrimSpace(address) == "" {
+		*errs = append(*errs, fmt.Sprintf("%s: address is required", prefix))
+		return
+	}
+	addr := NormalizeProxyUpstreamAddress(address)
+	parsed, err := url.Parse(addr)
+	if err != nil || parsed.Host == "" {
+		*errs = append(*errs, fmt.Sprintf("%s: invalid URL %q", prefix, address))
+		return
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "ws", "wss":
+	default:
+		*errs = append(*errs, fmt.Sprintf("%s: unsupported URL scheme %q", prefix, parsed.Scheme))
+	}
+	if isCloudMetadataHost(parsed.Hostname()) {
+		*errs = append(*errs, fmt.Sprintf("%s: cloud metadata endpoint blocked (%s)", prefix, parsed.Hostname()))
+	}
 }
 
 // IsValidProxyAlgorithm reports whether the algorithm name is recognised by

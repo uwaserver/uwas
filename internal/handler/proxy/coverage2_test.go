@@ -59,66 +59,44 @@ func TestCircuitBreakerDefaultValues(t *testing.T) {
 	}
 }
 
-// TestServeWebSocketHTTPDefaultPort covers the HTTP default port (80) branch
-// in serveWebSocket (line 306) when URL host has no port and scheme is http.
-func TestServeWebSocketHTTPDefaultPort(t *testing.T) {
-	u, _ := url.Parse("http://example.com")
-	backend := &Backend{URL: u, Weight: 1}
-
-	log := logger.New("error", "text")
-	h := New(log)
-
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
-
-	go func() {
-		buf := make([]byte, 4096)
-		clientConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-		clientConn.Read(buf)
-		clientConn.Close()
-	}()
-
-	req := httptest.NewRequest("GET", "/ws", nil)
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "Upgrade")
-	req.RemoteAddr = "1.2.3.4:5678"
-
-	hjWriter := &covHijackableWriter{conn: serverConn}
-	ctx := router.AcquireContext(hjWriter, req)
-
-	// Will fail to connect to example.com:80 but exercises the default port code.
-	h.serveWebSocket(ctx, backend)
+func TestWebsocketBackendAddress(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "http://example.com", want: "example.com:80"},
+		{raw: "https://example.com", want: "example.com:443"},
+		{raw: "ws://example.com:8080", want: "example.com:8080"},
+		{raw: "wss://[2001:db8::1]", want: "[2001:db8::1]:443"},
+		{raw: "http://[2001:db8::2]:8080", want: "[2001:db8::2]:8080"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			u, err := url.Parse(tt.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := websocketBackendAddress(u); got != tt.want {
+				t.Fatalf("address=%q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
-// TestServeWebSocketWSSDefaultPort covers the WSS/HTTPS default port (:443).
-func TestServeWebSocketWSSDefaultPort(t *testing.T) {
-	u, _ := url.Parse("wss://example.com")
-	backend := &Backend{URL: u, Weight: 1}
-
-	log := logger.New("error", "text")
-	h := New(log)
-
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
-
-	go func() {
-		buf := make([]byte, 4096)
-		clientConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-		clientConn.Read(buf)
-		clientConn.Close()
-	}()
-
-	req := httptest.NewRequest("GET", "/ws", nil)
+func TestServeWebSocketBlocksPrivateUpstreamBeforeHijack(t *testing.T) {
+	pool := NewUpstreamPool([]UpstreamConfig{{Address: "http://10.0.0.5:8080", Weight: 1}})
+	h := New(logger.New("error", "text"))
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Connection", "Upgrade")
-	req.RemoteAddr = "1.2.3.4:5678"
+	rec := httptest.NewRecorder()
+	ctx := router.AcquireContext(rec, req)
+	domain := &config.Domain{Host: "test.com", Type: "proxy", Proxy: config.ProxyConfig{WebSocket: true}}
 
-	hjWriter := &covHijackableWriter{conn: serverConn}
-	ctx := router.AcquireContext(hjWriter, req)
-
-	h.serveWebSocket(ctx, backend)
+	h.Serve(ctx, domain, pool, NewBalancer("round_robin"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusForbidden)
+	}
 }
 
 // TestServeNoHealthyUpstreams covers Serve when all backends are unhealthy.

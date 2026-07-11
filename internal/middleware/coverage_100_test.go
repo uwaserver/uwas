@@ -300,6 +300,33 @@ func TestRealIPTrustedProxyCFConnectingIP(t *testing.T) {
 	}
 }
 
+func TestRealIPTrustedProxyIPv6Headers(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{name: "cloudflare", header: "CF-Connecting-IP", value: "2001:db8::10"},
+		{name: "x-real-ip", header: "X-Real-IP", value: "2001:db8::11"},
+		{name: "forwarded-for", header: "X-Forwarded-For", value: "2001:db8::12"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var seen string
+			h := RealIP([]string{"10.0.0.0/8"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = r.RemoteAddr
+			}))
+			r := httptest.NewRequest(http.MethodGet, "http://x.test/", nil)
+			r.RemoteAddr = "10.0.0.1:5000"
+			r.Header.Set(tt.header, tt.value)
+			h.ServeHTTP(httptest.NewRecorder(), r)
+			if want := net.JoinHostPort(tt.value, "0"); seen != want {
+				t.Fatalf("RemoteAddr=%q, want %q", seen, want)
+			}
+		})
+	}
+}
+
 func TestRealIPTrustedProxyXRealIP(t *testing.T) {
 	var seen string
 	h := RealIP([]string{"10.0.0.0/8"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

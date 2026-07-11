@@ -3,6 +3,7 @@ package proxy
 import (
 	"hash/fnv"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -53,7 +54,11 @@ func (ih *IPHash) Select(backends []*Backend, r *http.Request) *Backend {
 		return nil
 	}
 	h := fnv.New32a()
-	h.Write([]byte(r.RemoteAddr))
+	clientAddr := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(clientAddr); err == nil {
+		clientAddr = host
+	}
+	h.Write([]byte(clientAddr))
 	idx := h.Sum32() % uint32(len(backends))
 	return backends[idx]
 }
@@ -116,13 +121,14 @@ func (sb *StickyBalancer) Select(backends []*Backend, r *http.Request) *Backend 
 }
 
 // SetStickyCookie sets the sticky session cookie on the response after backend selection.
-func SetStickyCookie(w http.ResponseWriter, cookieName, backendHost string, ttl int) {
+func SetStickyCookie(w http.ResponseWriter, cookieName, backendHost string, ttl int, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    backendHost,
 		Path:     "/",
 		MaxAge:   ttl,
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }

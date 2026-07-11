@@ -32,6 +32,26 @@ func TestForDomainAppProxyUsesAppWorkDir(t *testing.T) {
 	}
 }
 
+func TestForDomainWithApps_AppNotFound(t *testing.T) {
+	// ForDomainWithApps line 86-88: app == nil after store.Get.
+	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))
+	// Don't save any app — store.Get will return nil
+
+	_, err := ForDomain(config.Domain{
+		Host: "missing.example.com",
+		Type: "proxy",
+		Proxy: config.ProxyConfig{Upstreams: []config.Upstream{
+			{Address: "apps://nonexistent-app"},
+		}},
+	}, store)
+	if err == nil {
+		t.Fatal("expected error for missing app")
+	}
+	if !strings.Contains(err.Error(), "app not found") {
+		t.Errorf("error = %v, want 'app not found'", err)
+	}
+}
+
 func TestForDomainAppProxyWithPortUsesAppWorkDir(t *testing.T) {
 	appRoot := t.TempDir()
 	store := apps.NewStore(filepath.Join(t.TempDir(), "apps.d"))

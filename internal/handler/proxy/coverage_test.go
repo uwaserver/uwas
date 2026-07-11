@@ -294,6 +294,66 @@ func TestServeWebSocketWithHijack(t *testing.T) {
 	h.serveWebSocket(ctx, backend)
 }
 
+func TestServeWebSocketTLSUpstream(t *testing.T) {
+	requestSeen := make(chan struct{}, 1)
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("TLS upstream does not support hijacking")
+			return
+		}
+		conn, rw, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("upstream hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+		requestSeen <- struct{}{}
+		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_ = rw.Flush()
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &Backend{URL: u, Weight: 1}
+	h := New(logger.New("error", "text"))
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	response := make(chan string, 1)
+	go func() {
+		_ = clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		data, _ := io.ReadAll(clientConn)
+		response <- string(data)
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.RemoteAddr = "1.2.3.4:5678"
+	req.Host = "test.com"
+	ctx := router.AcquireContext(&covHijackableWriter{conn: serverConn}, req)
+	h.serveWebSocketWithOptions(ctx, backend, websocketDialOptions{insecureSkipVerify: true})
+
+	select {
+	case <-requestSeen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TLS WebSocket request did not reach upstream")
+	}
+	select {
+	case got := <-response:
+		if !strings.Contains(got, "101 Switching Protocols") {
+			t.Fatalf("response=%q, want WebSocket upgrade", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for WebSocket response")
+	}
+}
+
 // --- serveWebSocket with backend connection failure ---
 
 func TestServeWebSocketBackendFail(t *testing.T) {

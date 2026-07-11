@@ -655,6 +655,19 @@ func TestCallToolPerformance(t *testing.T) {
 
 // --- CallTool domain_list with multiple domains ---
 
+// --- cache_purge malformed JSON ---
+
+func TestCachePurgeMalformedJSON(t *testing.T) {
+	s := testMCPServer()
+	_, err := s.CallTool("cache_purge", json.RawMessage(`{invalid json`))
+	if err == nil {
+		t.Fatal("expected error for malformed JSON in cache_purge")
+	}
+	if !strings.Contains(err.Error(), "invalid cache_purge input") {
+		t.Errorf("expected 'invalid cache_purge input' error, got: %v", err)
+	}
+}
+
 func TestCallToolDomainListMultiple(t *testing.T) {
 	cfg := &config.Config{
 		Global: config.GlobalConfig{WorkerCount: "auto", MaxConnections: 65536, LogLevel: "info"},

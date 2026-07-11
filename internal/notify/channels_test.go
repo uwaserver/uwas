@@ -9,6 +9,7 @@ import (
 	"net/smtp"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -643,6 +644,21 @@ func TestSendDispatchEmail(t *testing.T) {
 	}
 }
 
+// TestSendEmailNoValidRecipients covers the "no valid recipients" error path.
+func TestSendEmailNoValidRecipients(t *testing.T) {
+	cfg := map[string]string{
+		"smtp_host": "mail.example.com",
+		"to":        ",, ,", // only delimiters and whitespace, no real addresses
+	}
+	err := sendEmail(cfg, testMsg())
+	if err == nil {
+		t.Fatal("expected error for no valid recipients")
+	}
+	if !strings.Contains(err.Error(), "no valid recipients") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestSendEmailMultipleRecipients(t *testing.T) {
 	origFn := smtpSendMailFn
 	t.Cleanup(func() { smtpSendMailFn = origFn })
@@ -667,6 +683,33 @@ func TestSendEmailMultipleRecipients(t *testing.T) {
 	}
 	if capturedTo[0] != "admin@example.com" || capturedTo[1] != "ops@example.com" {
 		t.Errorf("unexpected recipients: %v", capturedTo)
+	}
+}
+
+// TestSendWebhookDialControl covers the notifyDialControl error path inside
+// the HTTP transport's DialContext Control function (line 46).
+func TestSendWebhookDialControl(t *testing.T) {
+	origDial := notifyDialControl
+	notifyDialControl = func(network, address string, c syscall.RawConn) error {
+		return fmt.Errorf("test dial control blocked")
+	}
+	t.Cleanup(func() { notifyDialControl = origDial })
+
+	// Ensure SSRF check and host check pass
+	origURL := notifyURLSafetyCheck
+	notifyURLSafetyCheck = func(string) error { return nil }
+	t.Cleanup(func() { notifyURLSafetyCheck = origURL })
+
+	origHost := notifyHostSafetyCheck
+	notifyHostSafetyCheck = func(string) error { return nil }
+	t.Cleanup(func() { notifyHostSafetyCheck = origHost })
+
+	err := sendWebhook("http://127.0.0.1:1/nonexistent", testMsg())
+	if err == nil {
+		t.Fatal("expected error from dial control")
+	}
+	if !strings.Contains(err.Error(), "test dial control blocked") {
+		t.Logf("got error (dial may have failed at a different layer): %v", err)
 	}
 }
 

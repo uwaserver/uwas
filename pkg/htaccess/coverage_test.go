@@ -427,3 +427,13 @@ func TestIsModuleLoadedReflectsModuleMap(t *testing.T) {
 		t.Error("mod_unknown.c should be true")
 	}
 }
+
+// TestParseMaxLineLength covers the scanner-level line length rejection
+// when a single physical line exceeds the scanner buffer (parser.go scanner.Buffer).
+func TestParseMaxLineLength(t *testing.T) {
+	longLine := string(make([]byte, MaxLineLength+1))
+	_, err := Parse(strings.NewReader(longLine))
+	if err == nil {
+		t.Fatal("expected error for line exceeding MaxLineLength")
+	}
+}
