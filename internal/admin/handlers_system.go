@@ -50,7 +50,7 @@ func setSystemExecCommand(fn func(string, ...string) *exec.Cmd) func() {
 // ============ Self-Update ============
 
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
-	info, err := selfupdate.CheckUpdate(build.Version)
+	info, err := selfupdate.CheckUpdateFn(build.Version)
 	if err != nil {
 		jsonErrorCause(w, "update check failed", err, http.StatusInternalServerError)
 		return
@@ -62,7 +62,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
 		return
 	}
-	info, err := selfupdate.CheckUpdate(build.Version)
+	info, err := selfupdate.CheckUpdateFn(build.Version)
 	if err != nil {
 		jsonErrorCause(w, "update check failed", err, http.StatusInternalServerError)
 		return
@@ -71,7 +71,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "up-to-date", "version": info.CurrentVersion})
 		return
 	}
-	if err := selfupdate.Update(info.DownloadURL); err != nil {
+	if err := selfupdate.UpdateFn(info.DownloadURL); err != nil {
 		jsonErrorCause(w, "update failed", err, http.StatusInternalServerError)
 		return
 	}

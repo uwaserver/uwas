@@ -96,3 +96,23 @@ func TestHandleGenRecoveryCodes_Success(t *testing.T) {
 		t.Errorf("expected count in response, got: %v", body)
 	}
 }
+
+func TestHandleCerts_Basic(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	// With the testServer's config (which has no real domains or TLS manager),
+	// handleCerts should return an empty list without error.
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/certs", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var certs []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &certs); err != nil {
+		t.Fatal(err)
+	}
+	// The testServer config may have no domains, or domains without SSL.
+	// Either way the response must be a valid JSON array.
+	if certs == nil {
+		t.Error("certs response should be an empty array, not null")
+	}
+}
