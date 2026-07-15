@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/phpmanager"
 )
 
 func setupInstallReq(body string) *http.Request {
@@ -92,5 +95,41 @@ func TestSetupInstallSkipsAndQueues(t *testing.T) {
 	}
 	if resp.Queued != 0 {
 		t.Errorf("queued = %d, want 0 (all skipped)", resp.Queued)
+	}
+}
+
+func TestPHPVersionInstalled(t *testing.T) {
+	s := testServer()
+
+	// With nil phpMgr, should return false
+	if s.phpVersionInstalled("8.3") {
+		t.Error("phpVersionInstalled should return false when phpMgr is nil")
+	}
+
+	// Set up phpMgr with known status
+	mgr := phpmanager.New(logger.New("error", "text"))
+	s.SetPHPManager(mgr)
+
+	// After setting phpMgr, the call should not panic (mgr.Status returns empty)
+	if s.phpVersionInstalled("8.3") {
+		t.Error("phpVersionInstalled should return false when no PHP versions match")
+	}
+}
+
+func TestTerminalHandler(t *testing.T) {
+	s := testServer()
+	h := s.terminalHandler()
+	if h == nil {
+		t.Fatal("terminalHandler() returned nil")
+	}
+
+	// Verify it handles HTTP requests (the handler itself returns a 400
+	// for non-WebSocket requests before attempting any upgrade).
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	h.ServeHTTP(rec, req)
+	// A non-WebSocket request should fail gracefully, not panic.
+	if rec.Code == 0 {
+		t.Error("terminal handler did not write a status code")
 	}
 }

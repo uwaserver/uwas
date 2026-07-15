@@ -942,3 +942,13 @@ func TestLookupCountryCacheHit(t *testing.T) {
 		t.Fatalf("expected cached CA, got %q", got)
 	}
 }
+
+// TestCompressUnwrap verifies that Unwrap exposes the inner ResponseWriter
+// so net/http.ResponseController can reach Hijack/Flush/deadline controls.
+func TestCompressUnwrap(t *testing.T) {
+	inner := &httptest.ResponseRecorder{}
+	w := &compressResponseWriter{ResponseWriter: inner}
+	if unwrapped := w.Unwrap(); unwrapped != inner {
+		t.Error("Unwrap() did not return the inner ResponseWriter")
+	}
+}
