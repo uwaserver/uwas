@@ -17,7 +17,12 @@ import (
 const (
 	totpDigits = 6
 	totpPeriod = 30
-	totpWindow = 1 // allow ±1 period for clock skew
+	// totpWindow allows ±1 time step (30s each) for clock skew between the
+	// authenticator app and the server. This means a code generated at T-30,
+	// T (now), or T+30 is accepted. Combined with replay protection in
+	// validateTOTPNoReplay, the effective window is 90s but each step is
+	// single-use, so window size does not extend the brute-force surface.
+	totpWindow = 1
 )
 
 // GenerateTOTPSecret creates a new random 20-byte base32-encoded secret.

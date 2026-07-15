@@ -844,7 +844,7 @@ func (s *Server) Start() error {
 				// derived from API key + domain (so compromising one doesn't
 				// expose all domains).
 				domainPass := deriveSFTPPassword(apiKey, d.Host)
-				passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), bcrypt.DefaultCost)
+				passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), auth.BcryptCost)
 				if err != nil {
 					s.logger.Warn("failed to hash SFTP password", "domain", d.Host, "error", err)
 					continue

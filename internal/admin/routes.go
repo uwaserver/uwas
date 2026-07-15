@@ -431,6 +431,14 @@ func (s *Server) registerDashboardUI() {
 // responses. The Vite build loads only same-origin external scripts/styles, so
 // a strict script-src is safe; it also bounds the blast radius of any stored
 // XSS (e.g. via uploaded content) by forbidding framing and external script.
+//
+// style-src includes 'unsafe-inline' because Tailwind CSS uses generated
+// utility classes that cannot be individually hashed at build time. The Vite
+// production build bundles all CSS into hashed files, but Tailwind's JIT
+// mode (used in dev) needs inline styles. A nonce-based approach would
+// require framework-level changes to the Vite plugin chain and is not
+// warranted for a first-party UI with no user-supplied style injection
+// surface.
 func setDashboardSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("X-Frame-Options", "DENY")

@@ -34,6 +34,13 @@ const (
 	RoleUser     Role = "user"
 )
 
+// BcryptCost is the bcrypt hash cost used for password hashing.
+// Cost 12 (~400ms on modern hardware) provides GPU/ASIC resistance
+// while staying acceptable for interactive login. The Go default is 10
+// (~100ms). Existing hashes at any cost verify correctly via
+// bcrypt.CompareHashAndPassword — only new hashes use this value.
+const BcryptCost = 12
+
 // User represents a system user with authentication credentials.
 type User struct {
 	ID         string    `json:"id"`
@@ -360,7 +367,7 @@ func (m *Manager) createUserLocked(username, email, password string, role Role, 
 	}
 
 	// Hash password
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
@@ -410,7 +417,7 @@ func (m *Manager) createUserLocked(username, email, password string, role Role, 
 // compare — otherwise the missing-user early return is measurably faster and
 // leaks which usernames exist (VULN-025).
 var decoyHash = sync.OnceValue(func() []byte {
-	h, _ := bcrypt.GenerateFromPassword([]byte("uwas-timing-equalizer-decoy"), bcrypt.DefaultCost)
+	h, _ := bcrypt.GenerateFromPassword([]byte("uwas-timing-equalizer-decoy"), BcryptCost)
 	return h
 })
 
@@ -663,7 +670,7 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 		user.Email = updates.Email
 	}
 	if updates.Password != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(updates.Password), bcrypt.DefaultCost)
+		hash, err := bcrypt.GenerateFromPassword([]byte(updates.Password), BcryptCost)
 		if err != nil {
 			return fmt.Errorf("failed to hash password: %w", err)
 		}
