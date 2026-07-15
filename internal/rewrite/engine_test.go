@@ -673,3 +673,41 @@ func TestChainConditionsMismatch(t *testing.T) {
 		t.Errorf("URI = %q, want /fallback", result.URI)
 	}
 }
+
+func TestMightMatch(t *testing.T) {
+	t.Run("empty engine", func(t *testing.T) {
+		e := NewEngine(nil)
+		if e.MightMatch("/any") {
+			t.Error("empty engine should not match")
+		}
+	})
+
+	t.Run("matching URI", func(t *testing.T) {
+		rule, err := ParseRule("^/blog/([0-9]+)", "/post", "L")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := NewEngine([]*Rule{rule})
+		if !e.MightMatch("/blog/42") {
+			t.Error("should match /blog/42")
+		}
+	})
+
+	t.Run("non-matching URI", func(t *testing.T) {
+		rule, err := ParseRule("^/blog/([0-9]+)", "/post", "L")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := NewEngine([]*Rule{rule})
+		if e.MightMatch("/about") {
+			t.Error("should not match /about")
+		}
+	})
+
+	t.Run("rule with nil pattern", func(t *testing.T) {
+		e := NewEngine([]*Rule{{}})
+		if e.MightMatch("/any") {
+			t.Error("rule with nil pattern should not match")
+		}
+	})
+}
