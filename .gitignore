@@ -15,8 +15,12 @@ cov_*
 cover_*
 *_coverage.html
 coverage.html
+coverage*.html
 coverage.txt
 coverage-*
+/coverage_*.html
+/coverage_*.out
+/admin_*.out
 
 # ── IDE ──
 .idea/
@@ -34,6 +38,7 @@ Thumbs.db
 !uwas.example.yaml
 /.env
 !.env.example
+**/.env.local
 
 # ── Runtime data ──
 *.pid

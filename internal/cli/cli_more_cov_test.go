@@ -461,8 +461,8 @@ func TestMigrateInlineDomainsNoHost(t *testing.T) {
 
 type noHelpCommand struct{}
 
-func (n *noHelpCommand) Name() string        { return "nohelp" }
-func (n *noHelpCommand) Description() string { return "no help" }
+func (n *noHelpCommand) Name() string            { return "nohelp" }
+func (n *noHelpCommand) Description() string     { return "no help" }
 func (n *noHelpCommand) Run(args []string) error { return nil }
 
 func TestHelpCommandNoHelpInterface(t *testing.T) {

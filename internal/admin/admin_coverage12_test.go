@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
-	"github.com/uwaserver/uwas/internal/alerting"
 )
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -51,13 +51,6 @@ func resetCloudflareConfig() {
 	cloudflareMu.Lock()
 	cloudflareConfig = nil
 	cloudflareMu.Unlock()
-}
-
-// clearAuditBuf seeds the in-memory audit buffer with an empty slice.
-func clearAuditBuf(s *Server) {
-	if s.auditBuf != nil {
-		s.auditBuf.Seed(nil)
-	}
 }
 
 // ── 1. api.go: handleMonitor (uncovered branch) ─────────────────────────
@@ -718,10 +711,10 @@ func TestParseDomainAliasOptionsBadCode(t *testing.T) {
 func TestParseDomainAliasOptionsExplicit(t *testing.T) {
 	preserve := false
 	opts, err := parseDomainAliasOptions(mustJSON(map[string]any{
-		"alias_mode":             "redirect",
-		"alias_redirect_code":    302,
-		"alias_preserve_path":    &preserve,
-		"canonical_host":         "www",
+		"alias_mode":          "redirect",
+		"alias_redirect_code": 302,
+		"alias_preserve_path": &preserve,
+		"canonical_host":      "www",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

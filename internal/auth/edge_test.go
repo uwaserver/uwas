@@ -254,8 +254,12 @@ func TestAuthGateFor_EmptyString(t *testing.T) {
 	if mu == nil {
 		t.Fatal("expected non-nil mutex")
 	}
-	mu.Lock()
-	mu.Unlock()
+	// Verify the mutex is functional (non-nil *sync.Mutex can Lock/Unlock).
+	func() {
+		mu.Lock()
+		defer mu.Unlock()
+		// Non-empty: the defer ensures unlock runs.
+	}()
 }
 
 // ---------------------------------------------------------------------------

@@ -284,7 +284,7 @@ func TestDecodeParamsValidData(t *testing.T) {
 	}
 	var buf []byte
 	buf = append(buf, []byte{128, 0, 0, 200}...) // 4-byte encoded key length = 200
-	buf = append(buf, 0x05)                       // 1-byte value length = 5
+	buf = append(buf, 0x05)                      // 1-byte value length = 5
 	buf = append(buf, longKey...)
 	buf = append(buf, []byte("hello")...)
 	params3, err := DecodeParams(buf)
@@ -304,10 +304,10 @@ func TestDecodeParamsLongValues(t *testing.T) {
 		largeVal[i] = 'V'
 	}
 	var buf []byte
-	buf = append(buf, 0x03)                        // 1-byte key length = 3
-	buf = append(buf, []byte{128, 0, 1, 44}...)    // 4-byte value length = 300
-	buf = append(buf, []byte("key")...)             // key name, 3 bytes
-	buf = append(buf, largeVal...)                  // value, 300 bytes
+	buf = append(buf, 0x03)                     // 1-byte key length = 3
+	buf = append(buf, []byte{128, 0, 1, 44}...) // 4-byte value length = 300
+	buf = append(buf, []byte("key")...)         // key name, 3 bytes
+	buf = append(buf, largeVal...)              // value, 300 bytes
 	params, err := DecodeParams(buf)
 	if err != nil {
 		t.Fatalf("DecodeParams long value: %v", err)
@@ -338,7 +338,7 @@ func TestGetCtxDoneDuringWait(t *testing.T) {
 		address: "127.0.0.1:9999",
 		maxIdle: 0,
 		maxOpen: 1,
-		idle:    make(chan *conn, 0),
+		idle:    make(chan *conn),
 	}
 	p.active.Store(1) // pool appears full
 
@@ -408,11 +408,11 @@ func TestExecuteReadRecordError(t *testing.T) {
 // mockNetConn implements net.Conn for testing without a real TCP connection.
 type mockNetConn struct{}
 
-func (m *mockNetConn) Read(b []byte) (int, error)   { return 0, io.EOF }
-func (m *mockNetConn) Write(b []byte) (int, error)  { return len(b), nil }
-func (m *mockNetConn) Close() error                 { return nil }
-func (m *mockNetConn) LocalAddr() net.Addr          { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
-func (m *mockNetConn) RemoteAddr() net.Addr         { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
-func (m *mockNetConn) SetDeadline(t time.Time) error  { return nil }
-func (m *mockNetConn) SetReadDeadline(t time.Time) error { return nil }
+func (m *mockNetConn) Read(b []byte) (int, error)         { return 0, io.EOF }
+func (m *mockNetConn) Write(b []byte) (int, error)        { return len(b), nil }
+func (m *mockNetConn) Close() error                       { return nil }
+func (m *mockNetConn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
+func (m *mockNetConn) RemoteAddr() net.Addr               { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0} }
+func (m *mockNetConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockNetConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockNetConn) SetWriteDeadline(t time.Time) error { return nil }
