@@ -51,14 +51,14 @@ func TestDoListPages_MultiplePages(t *testing.T) {
 			{"id": fmt.Sprintf("z%d", pageCount), "name": fmt.Sprintf("zone-%d", pageCount)},
 		}
 		resp := struct {
-			Success    bool              `json:"success"`
-			Result     []map[string]any  `json:"result"`
-			Errors     []map[string]any  `json:"errors"`
-			ResultInfo map[string]int `json:"result_info"`
+			Success    bool             `json:"success"`
+			Result     []map[string]any `json:"result"`
+			Errors     []map[string]any `json:"errors"`
+			ResultInfo map[string]int   `json:"result_info"`
 		}{
-			Success: true,
-			Result:  result,
-			Errors:  nil,
+			Success:    true,
+			Result:     result,
+			Errors:     nil,
 			ResultInfo: map[string]int{"total_pages": totalPages},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -290,9 +290,9 @@ func TestDoListPages_HardCap(t *testing.T) {
 			Errors     []map[string]any `json:"errors"`
 			ResultInfo map[string]int   `json:"result_info"`
 		}{
-			Success: true,
-			Result:  []map[string]any{{"id": "z"}},
-			Errors:  nil,
+			Success:    true,
+			Result:     []map[string]any{{"id": "z"}},
+			Errors:     nil,
 			ResultInfo: map[string]int{"total_pages": 9999},
 		}
 		w.Header().Set("Content-Type", "application/json")

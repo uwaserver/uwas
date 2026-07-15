@@ -135,7 +135,7 @@ func TestValidateDeployConfig_InvalidGitBranch(t *testing.T) {
 func TestValidateDeployConfig_InvalidBranchFilter(t *testing.T) {
 	app := &apps.App{
 		Deploy: apps.DeployConfig{
-			GitURL:      "https://github.com/user/repo.git",
+			GitURL:       "https://github.com/user/repo.git",
 			BranchFilter: "main`whoami`",
 		},
 	}
@@ -564,9 +564,9 @@ func TestHandleAppDeploy_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	store := apps.NewStore(dir)
 	app := &apps.App{
-		Name:     "testapp",
-		Runtime:  apps.RuntimeCustom,
-		WorkDir:  filepath.Join(dir, "apps", "testapp"),
+		Name:    "testapp",
+		Runtime: apps.RuntimeCustom,
+		WorkDir: filepath.Join(dir, "apps", "testapp"),
 	}
 	if err := store.Save(app); err != nil {
 		t.Fatalf("save app: %v", err)
@@ -675,7 +675,6 @@ func TestHandleAppDeploy_InvalidEnvName(t *testing.T) {
 	s.mux = &testMux{mux: s.mux.(*http.ServeMux)}
 	s.appsMgr = appMgr
 
-
 	body := `{"git_url": "https://github.com/user/repo.git", "env": {"1INVALID": "value"}}`
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/apps/testapp/deploy",
@@ -707,7 +706,6 @@ func TestHandleAppDeploy_EmptyWorkDir(t *testing.T) {
 	s := New(cfg, logger.New("error", "text"), metrics.New())
 	s.mux = &testMux{mux: s.mux.(*http.ServeMux)}
 	s.appsMgr = appMgr
-
 
 	body := `{"git_url": "https://github.com/user/repo.git"}`
 	rec := httptest.NewRecorder()
@@ -776,6 +774,7 @@ func TestValidateDockerGitDeploy_Direct(t *testing.T) {
 		}
 	}
 }
+
 // ──────────────────────────────────────────────
 // handleAppCreate endpoint-level env validation
 // ──────────────────────────────────────────────
@@ -793,7 +792,6 @@ func TestHandleAppCreate_InvalidEnv(t *testing.T) {
 	s.mux = &testMux{mux: s.mux.(*http.ServeMux)}
 	s.appsMgr = appMgr
 
-
 	body := `{"name": "testapp", "env": {"PATH": "malicious"}}`
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/apps", strings.NewReader(body)))
@@ -810,9 +808,9 @@ func TestHandleAppUpdate_InvalidEnv(t *testing.T) {
 	dir := t.TempDir()
 	store := apps.NewStore(dir)
 	app := &apps.App{
-		Name:     "testapp",
-		Runtime:  apps.RuntimeCustom,
-		WorkDir:  filepath.Join(dir, "apps", "testapp"),
+		Name:    "testapp",
+		Runtime: apps.RuntimeCustom,
+		WorkDir: filepath.Join(dir, "apps", "testapp"),
 	}
 	if err := store.Save(app); err != nil {
 		t.Fatalf("save app: %v", err)
@@ -826,7 +824,6 @@ func TestHandleAppUpdate_InvalidEnv(t *testing.T) {
 	s := New(cfg, logger.New("error", "text"), metrics.New())
 	s.mux = &testMux{mux: s.mux.(*http.ServeMux)}
 	s.appsMgr = appMgr
-
 
 	body := `{"env": {"123badname": "value"}}`
 	rec := httptest.NewRecorder()

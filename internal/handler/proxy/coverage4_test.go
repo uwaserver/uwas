@@ -223,7 +223,6 @@ func TestMirrorDoMirrorRequestCreationError(t *testing.T) {
 	m.doMirror(req, []byte("test body"))
 }
 
-
 func TestBackendHealthStates(t *testing.T) {
 	pool := NewUpstreamPool([]UpstreamConfig{
 		{Address: "http://127.0.0.1:1", Weight: 1},

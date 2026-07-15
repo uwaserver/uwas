@@ -3,9 +3,9 @@ package admin
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
