@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -372,5 +373,36 @@ func TestHandleDockerDBDropDatabase_NoDBManager(t *testing.T) {
 	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/database/docker/test-container/databases/testdb", nil))
 	if rec.Code != 501 && rec.Code != 404 && rec.Code != 500 {
 		t.Errorf("status = %d, want 501, 404, or 500", rec.Code)
+	}
+}
+
+func TestHandleDBList_NotAdmin(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	r := withResellerContext(httptest.NewRequest("GET", "/api/v1/database/list", nil))
+	s.mux.ServeHTTP(rec, r)
+	if rec.Code != 403 {
+		t.Errorf("status = %d, want 403 for non-admin", rec.Code)
+	}
+}
+
+func TestHandleDBList_DBNotRunning(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/database/list", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Items  []any `json:"items"`
+		Total  int   `json:"total"`
+		Limit  int   `json:"limit"`
+		Offset int   `json:"offset"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Total != 0 {
+		t.Errorf("total = %d, want 0 (DB not running)", resp.Total)
 	}
 }

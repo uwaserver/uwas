@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/apps"
+	"github.com/uwaserver/uwas/internal/selfupdate"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -559,6 +560,17 @@ func TestHandleServiceRestartNotFound(t *testing.T) {
 // ============================================================================
 
 func TestHandleUpdateRequiresPin(t *testing.T) {
+	// Mock the selfupdate check to avoid real GitHub API calls.
+	origCheck := selfupdate.CheckUpdateFn
+	defer func() { selfupdate.CheckUpdateFn = origCheck }()
+	selfupdate.CheckUpdateFn = func(_ string) (*selfupdate.ReleaseInfo, error) {
+		return &selfupdate.ReleaseInfo{
+			CurrentVersion: "v0.8.9",
+			LatestVersion:  "v0.8.9",
+			UpdateAvail:    false,
+		}, nil
+	}
+
 	s := testServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/system/update", nil)

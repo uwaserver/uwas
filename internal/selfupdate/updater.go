@@ -42,6 +42,14 @@ var (
 		return exec.Command("systemctl", "--no-block", "restart", "uwas").CombinedOutput()
 	}
 	syscallExecFn = syscall.Exec
+
+	// CheckUpdateFn is the function used to check for updates.
+	// Override in tests to avoid real GitHub API calls.
+	CheckUpdateFn = CheckUpdate
+
+	// UpdateFn is the function used to perform the update.
+	// Override in tests to avoid real downloads.
+	UpdateFn = Update
 )
 
 // ReleaseInfo contains version information.
