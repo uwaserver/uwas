@@ -56,10 +56,11 @@ lint: ## Run Go vet and staticcheck (if installed)
 	go vet $(GO_PACKAGES)
 	@which staticcheck >/dev/null 2>&1 && staticcheck $(GO_PACKAGES) || echo "staticcheck not installed — install with: go install honnef.co/go/tools/cmd/staticcheck@latest"
 
-check: ## Full quality gate: vet + TypeScript + tests
+check: ## Full quality gate: vet + TypeScript + frontend tests + Go tests
 	@echo "=== Go vet ===" && go vet $(GO_PACKAGES)
 	@echo "=== TypeScript ===" && cd web/dashboard && npx tsc -b
-	@echo "=== Tests ===" && go test -count=1 -timeout 600s $(GO_PACKAGES)
+	@echo "=== Frontend tests ===" && cd web/dashboard && npm test
+	@echo "=== Go tests ===" && go test -count=1 -timeout 600s $(GO_PACKAGES)
 	@echo "All checks passed."
 
 # -- Dashboard ----------------------------------------------------------------
