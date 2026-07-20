@@ -5,7 +5,7 @@
 - **Name**: UWAS (Unified Web Application Server)
 - **Pronunciation**: "you-wass"
 - **Tagline**: One binary to serve them all
-- **Language**: Go (1.26.4+)
+- **Language**: Go (1.26.5+)
 - **License**: Dual license — AGPL-3.0 open source + commercial option
 - **Distribution**: Single static binary, Docker image, Homebrew formula, install/update scripts, and source builds
 - **Dependencies**: Minimal — stdlib-first, proven libs where stdlib falls short
@@ -1238,7 +1238,7 @@ Minimal HTML dashboard at the `/_uwas/dashboard` endpoint:
 ### 13.1 Endpoints
 
 ```
-Base: https://127.0.0.1:9443/api/v1
+Base (default loopback listener): http://127.0.0.1:9443/api/v1
 
 # Domain Management
 GET    /domains                    # List all domains

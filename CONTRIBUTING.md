@@ -114,7 +114,7 @@ docker build -t uwas:dev .
 #### Quick smoke test
 
 ```bash
-docker run -d -p 9443:9443 -e UWAS_ADMIN_KEY=dev-key-123 \
+docker run -d -p 127.0.0.1:9443:9443 -e UWAS_ADMIN_KEY=dev-key-123 \
   -v uwas_dev_config:/etc/uwas uwas:dev
 ```
 

@@ -14,7 +14,7 @@ mkdir uwas && cd uwas
 go mod init github.com/uwaserver/uwas
 ```
 
-**Go version**: 1.26.4+ (matches `go.mod`; generics, slog, improved TLS)
+**Go version**: 1.26.5+ (matches `go.mod`; generics, slog, improved TLS)
 
 **Build command**:
 ```bash
@@ -1818,7 +1818,7 @@ Benchmark tests:
 
 ```dockerfile
 # Multi-stage build
-FROM golang:1.26-alpine3.24 AS builder
+FROM golang:1.26.5-alpine3.24 AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
