@@ -904,3 +904,61 @@ func TestDockerDBImport_Error(t *testing.T) {
 		t.Fatalf("expected docker import error, got %v", err)
 	}
 }
+
+// The export shell script must probe and exec exactly one dump client — a
+// `mysqldump || mariadb-dump` chain concatenated a partial dump with a full
+// second dump on mid-dump failure — and must not discard stderr.
+func TestDockerDBExport_SingleClientNoFallbackChain(t *testing.T) {
+	saveDockerHook(t)
+	var captured []string
+	dockerExecCommandFn = func(name string, args ...string) *exec.Cmd {
+		captured = args
+		return fakeDockerCmd("-- dump", 0)(name, args...)
+	}
+
+	if _, err := DockerDBExport("web", "appdb"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	script := captured[len(captured)-1]
+	if strings.Contains(script, "||") {
+		t.Errorf("export script still uses a || fallback chain: %q", script)
+	}
+	if !strings.Contains(script, "command -v mariadb-dump") {
+		t.Errorf("export script does not probe for the client: %q", script)
+	}
+	if !strings.Contains(script, "exec mariadb-dump") || !strings.Contains(script, "exec mysqldump") {
+		t.Errorf("export script does not exec a single client: %q", script)
+	}
+	if strings.Contains(script, "2>/dev/null") {
+		t.Errorf("export script discards client stderr: %q", script)
+	}
+}
+
+// The import shell script must probe and exec exactly one client — with
+// `mysql || mariadb`, a mid-import mysql failure left mariadb running on
+// already-consumed stdin, exiting 0 and masking the failure as success.
+func TestDockerDBImport_SingleClientNoFallbackChain(t *testing.T) {
+	saveDockerHook(t)
+	var captured []string
+	dockerExecCommandFn = func(name string, args ...string) *exec.Cmd {
+		captured = args
+		return fakeDockerCmd("", 0)(name, args...)
+	}
+
+	if err := DockerDBImport("web", "appdb", "CREATE TABLE t(id INT);"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	script := captured[len(captured)-1]
+	if strings.Contains(script, "||") {
+		t.Errorf("import script still uses a || fallback chain: %q", script)
+	}
+	if !strings.Contains(script, "command -v mariadb") {
+		t.Errorf("import script does not probe for the client: %q", script)
+	}
+	if !strings.Contains(script, "exec mariadb") || !strings.Contains(script, "exec mysql") {
+		t.Errorf("import script does not exec a single client: %q", script)
+	}
+	if strings.Contains(script, "2>/dev/null") {
+		t.Errorf("import script discards client stderr: %q", script)
+	}
+}

@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -352,11 +353,20 @@ func DockerDBExport(containerName, dbName string) (string, error) {
 	if dbName == "--all-databases" {
 		dbArg = "--all-databases"
 	}
+	// Probe for the client and exec exactly one (same pattern as
+	// DockerDBExecSQL): the old `mysqldump || mariadb-dump` fell back on ANY
+	// non-zero exit, so a mid-dump failure concatenated a partial dump with a
+	// full second dump — a corrupt export reported as success. Stderr is not
+	// discarded so failures stay diagnosable.
 	cmd := dockerExecCommandFn("docker", "exec", fullName, "sh", "-c",
-		fmt.Sprintf(`mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s 2>/dev/null || mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s 2>/dev/null`,
+		fmt.Sprintf(`if command -v mariadb-dump >/dev/null 2>&1; then exec mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s; else exec mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers %s; fi`,
 			dbArg, dbArg))
 	out, err := cmd.Output()
 	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return "", fmt.Errorf("docker mysqldump: %w — %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
 		return "", fmt.Errorf("docker mysqldump: %w", err)
 	}
 	return string(out), nil
@@ -368,9 +378,15 @@ func DockerDBImport(containerName, dbName, sql string) error {
 	if !strings.HasPrefix(fullName, containerPrefix) {
 		fullName = containerPrefix + containerName
 	}
+	// Probe for the client and exec exactly one (same pattern as
+	// DockerDBExecSQL): the old `mysql || mariadb` masked failures — if mysql
+	// failed mid-import it had already consumed stdin, so mariadb ran on empty
+	// stdin and exited 0, reporting a failed import as success. Stderr is not
+	// discarded so failures stay diagnosable.
+	dbArg := containerName_safe(dbName)
 	cmd := dockerExecCommandFn("docker", "exec", "-i", fullName, "sh", "-c",
-		fmt.Sprintf(`mysql -u root -p"$MYSQL_ROOT_PASSWORD" %s 2>/dev/null || mariadb -u root -p"$MYSQL_ROOT_PASSWORD" %s 2>/dev/null`,
-			containerName_safe(dbName), containerName_safe(dbName)))
+		fmt.Sprintf(`if command -v mariadb >/dev/null 2>&1; then exec mariadb -u root -p"$MYSQL_ROOT_PASSWORD" %s; else exec mysql -u root -p"$MYSQL_ROOT_PASSWORD" %s; fi`,
+			dbArg, dbArg))
 	cmd.Stdin = strings.NewReader(sql)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

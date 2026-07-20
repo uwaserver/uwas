@@ -1280,6 +1280,42 @@ func TestMonitor_ConsecutiveFailures_BrokenBySuccess(t *testing.T) {
 	}
 }
 
+// Regression: failures older than the most recent successes are NOT part of
+// the current failure streak — [F F S S] (newest last) must report
+// ConsecutiveFail = 0, not 2.
+func TestMonitor_ConsecutiveFailures_RecoveredJob(t *testing.T) {
+	m := NewMonitor("")
+
+	// 2 failures, then 2 successes (newest).
+	for i := 0; i < 2; i++ {
+		m.RecordExecution(ExecutionRecord{
+			ID: fmt.Sprintf("f%d", i), Domain: "d.com", Command: "cmd", Success: false,
+		})
+	}
+	for i := 0; i < 2; i++ {
+		m.RecordExecution(ExecutionRecord{
+			ID: fmt.Sprintf("s%d", i), Domain: "d.com", Command: "cmd", Success: true,
+		})
+	}
+
+	status := m.GetStatus("d.com", "cmd")
+	if status == nil {
+		t.Fatal("expected non-nil status")
+	}
+	if status.ConsecutiveFail != 0 {
+		t.Errorf("ConsecutiveFail = %d, want 0 (most recent runs succeeded)", status.ConsecutiveFail)
+	}
+
+	// Same history via getStatusUnsafe (GetDomainStatus path).
+	statuses := m.GetDomainStatus("d.com")
+	if len(statuses) != 1 {
+		t.Fatalf("GetDomainStatus returned %d statuses, want 1", len(statuses))
+	}
+	if statuses[0].ConsecutiveFail != 0 {
+		t.Errorf("getStatusUnsafe ConsecutiveFail = %d, want 0", statuses[0].ConsecutiveFail)
+	}
+}
+
 // ─── monitor.go: getStatusUnsafe (via GetAllStatus / GetDomainStatus) ───────
 func TestMonitor_GetStatusUnsafe_MoreThan10History(t *testing.T) {
 	m := NewMonitor("")

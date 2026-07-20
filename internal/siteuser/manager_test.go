@@ -1129,6 +1129,30 @@ func TestDomainToUsernameTruncation(t *testing.T) {
 	}
 }
 
+// TestDomainToUsernameLongHostnamesUnique is the regression for the truncation
+// collision bug: two distinct long hostnames sharing a 27-char prefix used to
+// map to the SAME system user (shared chroot → cross-tenant SFTP access).
+func TestDomainToUsernameLongHostnamesUnique(t *testing.T) {
+	a := domainToUsername("customer-alpha.hosting-platform.example.com")
+	b := domainToUsername("customer-alpha.hosting-platform.example.net")
+	if a == b {
+		t.Errorf("distinct hostnames collided onto one username %q", a)
+	}
+	for _, u := range []string{a, b} {
+		if len(u) > 32 {
+			t.Errorf("username %q length = %d, want <= 32", u, len(u))
+		}
+		if !strings.HasPrefix(u, "uwas-") {
+			t.Errorf("username %q should start with 'uwas-'", u)
+		}
+	}
+	// Deterministic: same hostname always maps to the same username, so
+	// DeleteUser (which uses the same mapping) targets the right account.
+	if again := domainToUsername("customer-alpha.hosting-platform.example.com"); again != a {
+		t.Errorf("mapping not deterministic: %q vs %q", again, a)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests: manager.go — generatePassword (kept from original)
 // ---------------------------------------------------------------------------

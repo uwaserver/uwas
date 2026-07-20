@@ -726,7 +726,9 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 		lines = append(lines, "disable_functions = exec,passthru,shell_exec,system,popen,pcntl_exec")
 		lines = append(lines, "allow_url_include = Off")
 		lines = append(lines, "expose_php = Off")
-		lines = append(lines, "display_errors = On")
+		// Security: never render PHP errors to visitors (path/info disclosure);
+		// errors still go to the log via log_errors.
+		lines = append(lines, "display_errors = Off")
 		lines = append(lines, "error_reporting = E_ALL")
 		lines = append(lines, "log_errors = On")
 		// UWAS handles compression — disable PHP's to prevent double-compress

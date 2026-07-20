@@ -246,7 +246,12 @@ func (m *Monitor) GetStatus(domain, command string) *JobStatus {
 			if status.LastFailure == nil {
 				status.LastFailure = &rec
 			}
-			status.ConsecutiveFail++
+			// Consecutive failures only count from the newest run backwards
+			// until the first success — a failure older than a success is not
+			// part of the current failure streak.
+			if status.LastSuccess == nil {
+				status.ConsecutiveFail++
+			}
 		}
 	}
 
@@ -350,7 +355,12 @@ func (m *Monitor) getStatusUnsafe(domain, command string) *JobStatus {
 			if status.LastFailure == nil {
 				status.LastFailure = &rec
 			}
-			status.ConsecutiveFail++
+			// Consecutive failures only count from the newest run backwards
+			// until the first success — a failure older than a success is not
+			// part of the current failure streak.
+			if status.LastSuccess == nil {
+				status.ConsecutiveFail++
+			}
 		}
 	}
 

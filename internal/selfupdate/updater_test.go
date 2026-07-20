@@ -866,7 +866,7 @@ func TestUpdate_ChecksumMatchesExplicit(t *testing.T) {
 	}
 }
 
-func TestUpdate_ChecksumNon200_Skipped(t *testing.T) {
+func TestUpdate_Checksum404_Skipped(t *testing.T) {
 	saveHooks(t)
 	tmpDir := t.TempDir()
 
@@ -892,6 +892,38 @@ func TestUpdate_ChecksumNon200_Skipped(t *testing.T) {
 	got, _ := os.ReadFile(exePath)
 	if string(got) != "no-checksum-binary" {
 		t.Errorf("binary = %q, want no-checksum-binary", got)
+	}
+}
+
+// TestUpdate_ChecksumFetchNon200_FailsClosed is the regression for the
+// fail-open gap: any SHA256SUMS fetch failure other than an explicit 404
+// (old release without checksums) must abort the update rather than
+// silently skip verification.
+func TestUpdate_ChecksumFetchNon200_FailsClosed(t *testing.T) {
+	saveHooks(t)
+	tmpDir := t.TempDir()
+
+	exePath := filepath.Join(tmpDir, "uwas")
+	if err := os.WriteFile(exePath, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	osExecutableFn = func() (string, error) { return exePath, nil }
+	evalSymlinksFn = func(p string) (string, error) { return p, nil }
+
+	srv := newGitHubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "SHA256SUMS") {
+			w.WriteHeader(500)
+			return
+		}
+		w.Write([]byte("new-binary-content"))
+	})
+
+	err := Update(srv.URL + "/download")
+	if err == nil || !strings.Contains(err.Error(), "unexpected status 500") {
+		t.Fatalf("expected fail-closed 'unexpected status 500' error, got %v", err)
+	}
+	if got, _ := os.ReadFile(exePath); string(got) != "old" {
+		t.Errorf("binary replaced despite checksum fetch failure: %q", got)
 	}
 }
 

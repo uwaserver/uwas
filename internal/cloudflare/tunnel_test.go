@@ -3,6 +3,7 @@ package cloudflare
 import (
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,6 +109,36 @@ func TestRunner_DoubleStartFails(t *testing.T) {
 
 	if err := r.Start("tid", "tok"); err == nil {
 		t.Fatal("expected double-start to fail")
+	}
+}
+
+// TestRunner_StartAfterSpawnFailureRetries is the regression for the stuck
+// placeholder bug: a failed spawn (missing binary, cmd.Start error) used to
+// leave a non-stopped entry in r.procs, so every later Start was rejected with
+// "already running or starting (pid 0)" until process restart.
+func TestRunner_StartAfterSpawnFailureRetries(t *testing.T) {
+	orig := execCommandFn
+	defer func() { execCommandFn = orig }()
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/nonexistent/uwas-test-binary")
+	}
+	r := &Runner{
+		procs:  make(map[string]*runningProc),
+		binary: "/fake/cloudflared", // any non-empty value bypasses LookPath
+	}
+	if err := r.Start("tid", "tok"); err == nil {
+		t.Fatal("expected first Start to fail (binary does not exist)")
+	}
+
+	// The failed placeholder must be gone so a retry is not rejected.
+	if err := r.Start("tid", "tok"); err != nil && strings.Contains(err.Error(), "already running") {
+		t.Fatalf("second Start rejected by stale placeholder: %v", err)
+	}
+	r.mu.Lock()
+	_, tracked := r.procs["tid"]
+	r.mu.Unlock()
+	if tracked {
+		t.Error("failed spawn left an entry in r.procs")
 	}
 }
 

@@ -114,10 +114,14 @@ func Clone(req CloneRequest) *CloneResult {
 	}
 
 	// Step 2: Clone database
+	var dbCloneErr error
 	if req.SourceDB != "" {
 		log.WriteString("\n=== Cloning database ===\n")
-		if err := runCloneDB(req.SourceDB, req.TargetDB, dbUser, dbPass, &log); err != nil {
-			log.WriteString(fmt.Sprintf("DB clone error: %s\n", err))
+		if dbCloneErr = runCloneDB(req.SourceDB, req.TargetDB, dbUser, dbPass, &log); dbCloneErr != nil {
+			log.WriteString(fmt.Sprintf("DB clone error: %s\n", dbCloneErr))
+			// Non-fatal (files are already cloned), but surface it so the
+			// caller doesn't see an unqualified success.
+			result.Error = fmt.Sprintf("database clone failed: %s", dbCloneErr)
 		} else {
 			result.TargetDB = req.TargetDB
 			log.WriteString(fmt.Sprintf("Database cloned: %s → %s\n", req.SourceDB, req.TargetDB))
@@ -128,7 +132,9 @@ func Clone(req CloneRequest) *CloneResult {
 	wpConfig := filepath.Join(req.TargetRoot, "wp-config.php")
 	if _, err := os.Stat(wpConfig); err == nil {
 		log.WriteString("\n=== Updating target wp-config.php ===\n")
-		if req.TargetDB != "" {
+		// Skip the DB rewrite when the clone failed — otherwise wp-config
+		// would point at a database/user that may not exist.
+		if req.TargetDB != "" && dbCloneErr == nil {
 			updateWPConfigDB(wpConfig, req.TargetDB, dbUser, dbPass, &log)
 		}
 		// Update siteurl/home to target domain
@@ -174,8 +180,12 @@ func cloneDBReal(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 
 		// Create user if provided
 		if user != "" && pass != "" {
-			execCommandFn(bin, "-u", "root", "-e",
-				fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", sqlString(user), sqlString(pass))).Run()
+			// Feed CREATE USER over stdin, not -e: the SQL embeds the plaintext
+			// password and -e would expose it on argv (/proc/<pid>/cmdline).
+			userCmd := execCommandFn(bin, "-u", "root")
+			userCmd.Stdin = strings.NewReader(
+				fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", sqlString(user), sqlString(pass)))
+			userCmd.Run()
 			execCommandFn(bin, "-u", "root", "-e",
 				fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", sqlIdent(dstDB), sqlString(user))).Run()
 		}

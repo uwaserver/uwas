@@ -195,33 +195,40 @@ func Update(downloadURL string) error {
 		assetName := downloadURL[idx+1:]
 		if isTrustedDownloadURL(sumsURL) {
 			shaResp, err := httpClientFn(30 * time.Second).Get(sumsURL)
-			if err == nil {
-				defer shaResp.Body.Close()
-				if shaResp.StatusCode == 200 {
-					sumsData, readErr := io.ReadAll(io.LimitReader(shaResp.Body, 1<<16))
-					if readErr != nil {
-						return fmt.Errorf("read checksums: %w", readErr)
-					}
-					expected := checksumForAsset(string(sumsData), assetName)
-					if expected == "" {
-						return fmt.Errorf("no checksum for %s in SHA256SUMS", assetName)
-					}
-
-					f, err := os.Open(tmp.Name())
-					if err != nil {
-						return fmt.Errorf("open downloaded binary for checksum: %w", err)
-					}
-					h := sha256.New()
-					if _, err := io.Copy(h, f); err != nil {
-						f.Close()
-						return fmt.Errorf("hash downloaded binary: %w", err)
-					}
-					f.Close()
-					actual := hex.EncodeToString(h.Sum(nil))
-					if !strings.EqualFold(expected, actual) {
-						return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
-					}
+			if err != nil {
+				return fmt.Errorf("fetch checksums: %w", err)
+			}
+			defer shaResp.Body.Close()
+			switch {
+			case shaResp.StatusCode == 200:
+				sumsData, readErr := io.ReadAll(io.LimitReader(shaResp.Body, 1<<16))
+				if readErr != nil {
+					return fmt.Errorf("read checksums: %w", readErr)
 				}
+				expected := checksumForAsset(string(sumsData), assetName)
+				if expected == "" {
+					return fmt.Errorf("no checksum for %s in SHA256SUMS", assetName)
+				}
+
+				f, err := os.Open(tmp.Name())
+				if err != nil {
+					return fmt.Errorf("open downloaded binary for checksum: %w", err)
+				}
+				h := sha256.New()
+				if _, err := io.Copy(h, f); err != nil {
+					f.Close()
+					return fmt.Errorf("hash downloaded binary: %w", err)
+				}
+				f.Close()
+				actual := hex.EncodeToString(h.Sum(nil))
+				if !strings.EqualFold(expected, actual) {
+					return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+				}
+			case shaResp.StatusCode == 404:
+				// Older releases don't publish SHA256SUMS — allowed for
+				// backward compatibility; verification is skipped.
+			default:
+				return fmt.Errorf("fetch checksums: unexpected status %d", shaResp.StatusCode)
 			}
 		}
 	}

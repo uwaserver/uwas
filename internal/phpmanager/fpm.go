@@ -84,17 +84,21 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 		return fmt.Errorf("start php-cgi: %w", err)
 	}
 
-	m.processes.Store(version, &processInfo{
+	info := &processInfo{
 		cmd:        cmd,
 		listenAddr: listenAddr,
-	})
+	}
+	m.processes.Store(version, info)
 
 	m.logger.Info("started PHP-CGI", "version", version, "listen", listenAddr, "pid", cmd.Process.Pid)
 
 	// Reap the process in the background.
 	go func() {
 		err := cmd.Wait()
-		m.processes.Delete(version)
+		// Only clear the slot if it still holds OUR entry — after RestartFPM the
+		// map may already hold the replacement process, and deleting that would
+		// allow duplicate daemons for the same version.
+		m.processes.CompareAndDelete(version, info)
 		if err != nil {
 			m.logger.Warn("PHP-CGI exited", "version", version, "error", err)
 		} else {
@@ -146,16 +150,18 @@ pm.max_requests = 500
 		return fmt.Errorf("start php-fpm: %w", err)
 	}
 
-	m.processes.Store(version, &processInfo{
+	info := &processInfo{
 		cmd:        cmd,
 		listenAddr: listenAddr,
-	})
+	}
+	m.processes.Store(version, info)
 
 	m.logger.Info("started PHP-FPM", "version", version, "listen", listenAddr, "pid", cmd.Process.Pid, "workers", 10)
 
 	go func() {
 		err := cmd.Wait()
-		m.processes.Delete(version)
+		// Ownership guard — see startFPM: never delete a replacement entry.
+		m.processes.CompareAndDelete(version, info)
 		if err != nil {
 			m.logger.Warn("PHP-FPM exited", "version", version, "error", err)
 		}

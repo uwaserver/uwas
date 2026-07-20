@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,6 +75,11 @@ func UpdateCore(webRoot string) (string, error) {
 		return log.String(), fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
+	// Without this, a 404/500 error page is written into the tarball and only
+	// surfaces later as a misleading "extract failed".
+	if resp.StatusCode != http.StatusOK {
+		return log.String(), fmt.Errorf("download WordPress: HTTP %d", resp.StatusCode)
+	}
 
 	f, err := os.CreateTemp("", "wordpress-update-*.tar.gz")
 	if err != nil {
@@ -81,8 +87,11 @@ func UpdateCore(webRoot string) (string, error) {
 	}
 	tarPath := f.Name()
 	defer os.Remove(tarPath)
-	io.Copy(f, resp.Body)
+	_, copyErr := io.Copy(f, resp.Body)
 	f.Close()
+	if copyErr != nil {
+		return log.String(), fmt.Errorf("download WordPress: %w", copyErr)
+	}
 	log.WriteString("Downloaded latest WordPress\n")
 
 	// Verify SHA1 checksum (wordpress.org publishes .sha1 and .md5; not .sha256)
