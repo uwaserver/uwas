@@ -34,10 +34,7 @@ type proxyTransportKey struct {
 	insecureSkipVerify bool
 }
 
-const (
-	maxRetryBodyBytes        int64 = 8 << 20  // 8MB cap for retryable request buffering
-	maxBufferedResponseBytes int64 = 16 << 20 // 16MB cap for buffer_response mode
-)
+const maxBufferedResponseBytes int64 = 16 << 20 // 16MB cap for buffer_response mode
 
 func New(log *logger.Logger) *Handler {
 	return &Handler{logger: log}

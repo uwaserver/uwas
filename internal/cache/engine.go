@@ -9,12 +9,6 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
-// maxConcurrentWrites limits concurrent L2 (disk) and L3 (Redis) write
-// goroutines. This prevents unbounded goroutine growth during cache
-// population under high concurrency. The semaphore is shared across
-// all cache tiers so a single slow backend cannot starve others.
-const maxConcurrentWrites = 16
-
 // Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
 	memory      *MemoryCache

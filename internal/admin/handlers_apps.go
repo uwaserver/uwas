@@ -8,16 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/uwaserver/uwas/internal/apps"
 )
-
-// listeningProbeTimeout is how long Create/Update/Start handlers wait
-// for the app's port to become connectable before reporting "started
-// but not yet listening". 3s catches normal startup; longer-warming
-// apps trip the warning but don't fail the deploy.
-const listeningProbeTimeout = 3 * time.Second
 
 // blockedEnvVars are system-critical environment variables apps must
 // not override. PATH / LD_PRELOAD / etc. are well-known privilege-

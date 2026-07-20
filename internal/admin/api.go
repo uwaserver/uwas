@@ -63,10 +63,6 @@ type LogEntry struct {
 	UserAgent  string    `json:"user_agent,omitempty"`
 }
 
-// maxLogEntries sets the capacity of the admin audit-log ring buffer.
-// Older entries are silently discarded once the buffer is full.
-const maxLogEntries = 1000
-
 type muxer interface {
 	HandleFunc(string, func(http.ResponseWriter, *http.Request))
 	Handle(string, http.Handler)
