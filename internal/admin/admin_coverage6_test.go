@@ -306,15 +306,25 @@ func TestHandleGenRecoveryCodes(t *testing.T) {
 		t.Errorf("handleGenRecoveryCodes: expected 8 stored codes, got %d", len(storedCodes))
 	}
 
-	// Verify codes are 8 characters hex
+	// Verify codes are 16 characters hex (8 random bytes)
 	for i, code := range resp.Codes {
-		if len(code) != 8 {
-			t.Errorf("handleGenRecoveryCodes: code %d has %d characters, expected 8", i, len(code))
+		if len(code) != 16 {
+			t.Errorf("handleGenRecoveryCodes: code %d has %d characters, expected 16", i, len(code))
 		}
 		for _, c := range code {
 			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
 				t.Errorf("handleGenRecoveryCodes: code %d has non-hex character: %c", i, c)
 			}
+		}
+	}
+
+	// Only SHA-256 hashes may be persisted, never the plaintext codes.
+	for i, stored := range storedCodes {
+		if len(stored) != 64 {
+			t.Errorf("stored code %d has %d characters, expected 64-char sha256 hex", i, len(stored))
+		}
+		if stored != hashRecoveryCode(resp.Codes[i]) {
+			t.Errorf("stored code %d is not the sha256 of the returned code", i)
 		}
 	}
 }

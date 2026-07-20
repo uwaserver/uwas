@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/apps"
-	"github.com/uwaserver/uwas/internal/selfupdate"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
+	"github.com/uwaserver/uwas/internal/selfupdate"
 )
 
 // ============================================================================
