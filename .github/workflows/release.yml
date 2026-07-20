@@ -8,17 +8,20 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Vet
         run: |
@@ -28,7 +31,7 @@ jobs:
       - name: Vulnerability scan
         run: |
           GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go run golang.org/x/vuln/cmd/govulncheck@latest $GO_PACKAGES
+          go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 $GO_PACKAGES
 
       - name: Test
         run: |
@@ -37,16 +40,14 @@ jobs:
 
       - name: Upload test output
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: test-output
           path: /tmp/test-output.log
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: web/dashboard/package-lock.json
 
       - name: Build dashboard
         working-directory: web/dashboard
@@ -78,21 +79,22 @@ jobs:
             goarch: amd64
             suffix: windows-amd64.exe
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: web/dashboard/package-lock.json
 
       - name: Build dashboard (embedded into binary)
         working-directory: web/dashboard
         run: npm ci && npm run build
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Build
         env:
@@ -110,7 +112,7 @@ jobs:
             ./cmd/uwas
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: uwas-${{ matrix.suffix }}
           path: uwas-${{ matrix.suffix }}
@@ -118,9 +120,11 @@ jobs:
   publish:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download release binaries
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist
           # Only the uwas-* binary artifacts — exclude the validate job's
