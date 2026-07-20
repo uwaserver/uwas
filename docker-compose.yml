@@ -4,7 +4,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "9443:9443"
+      - "127.0.0.1:9443:9443"
     environment:
       # Admin API key (read by docker/uwas.yaml via ${UWAS_ADMIN_KEY}).
       # UWAS rejects a publicly-bound admin listener with no key OR a well-known
@@ -40,7 +40,10 @@ services:
     pids_limit: 512
 
   php:
-    image: php:8.3-fpm-alpine@sha256:9fcec48321d890240d700ccdc2b475420c87d398826e68c3d8830b8fca663e5c
+    image: uwas-php:8.3
+    build:
+      context: .
+      dockerfile: docker/php.Dockerfile
     volumes:
       - ./data/www:/var/www
     restart: unless-stopped
@@ -49,7 +52,10 @@ services:
     pids_limit: 256
 
   db:
-    image: mariadb:11@sha256:efb4959ef2c835cd735dbc388eb9ad6aab0c78dd64febcd51bc17481111890c4
+    image: uwas-mariadb:11.8.8
+    build:
+      context: .
+      dockerfile: docker/mariadb.Dockerfile
     environment:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in your .env}
       MARIADB_DATABASE: wordpress
