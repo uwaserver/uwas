@@ -57,10 +57,10 @@ domains:
   - host: "${DOMAIN}"
     aliases:
       - "www.${DOMAIN}"
-    root: /var/www/wordpress
+    root: /var/www/html
     type: php
     ssl:
-      mode: auto          # automatic Let's Encrypt certificate
+      mode: "${SSL_MODE:-auto}"  # auto for Let's Encrypt; off for local testing
 
     php:
       fpm_address: "tcp:php:9000"    # Docker service name
