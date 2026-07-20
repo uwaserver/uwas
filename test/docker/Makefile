@@ -1,8 +1,13 @@
-.PHONY: test up down clean
+.PHONY: test wordpress up down clean
 
-test: up
-	docker compose -f docker-compose.test.yml run --rm tester
-	@$(MAKE) down
+test:
+	@set -e; \
+		trap '$(MAKE) down' EXIT; \
+		$(MAKE) up; \
+		docker compose -f docker-compose.test.yml run --rm tester
+
+wordpress:
+	./wordpress.sh
 
 up:
 	docker compose -f docker-compose.test.yml up -d --build uwas php db upstream

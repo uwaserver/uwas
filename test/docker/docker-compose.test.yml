@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:80"
-      - "9443:9443"
+      - "127.0.0.1:9443:9443"
     volumes:
       - ./uwas-test.yaml:/etc/uwas/uwas.yaml:ro
       - ./www:/var/www:ro
@@ -29,14 +29,21 @@ services:
       start_period: 10s
 
   php:
-    image: php:8.3-fpm-alpine
+    image: uwas-php:test
+    build:
+      context: ../..
+      dockerfile: docker/php.Dockerfile
+    working_dir: /var/www/php
     volumes:
       - ./www:/var/www:ro
     networks:
       - testnet
 
   db:
-    image: mariadb:11
+    image: uwas-mariadb:test
+    build:
+      context: ../..
+      dockerfile: docker/mariadb.Dockerfile
     environment:
       MARIADB_ROOT_PASSWORD: test_root_pass
       MARIADB_DATABASE: wordpress
@@ -48,25 +55,30 @@ services:
       - testnet
 
   upstream:
-    image: python:3.12-alpine
-    command: >
-      python3 -c "
-      from http.server import HTTPServer, BaseHTTPRequestHandler
-      import json
-      class H(BaseHTTPRequestHandler):
-          def do_GET(self):
-              self.send_response(200)
-              self.send_header('Content-Type', 'application/json')
-              self.end_headers()
-              self.wfile.write(json.dumps({'status': 'ok', 'backend': 'upstream'}).encode())
-          def log_message(self, *a): pass
-      HTTPServer(('0.0.0.0', 8080), H).serve_forever()
-      "
+    image: python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df
+    command:
+      - python3
+      - -c
+      - |
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        import json
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "backend": "upstream"}).encode())
+
+            def log_message(self, *args):
+                pass
+
+        HTTPServer(("0.0.0.0", 8080), H).serve_forever()
     networks:
       - testnet
 
   tester:
-    image: alpine:3.19
+    image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
     depends_on:
       uwas:
         condition: service_healthy
