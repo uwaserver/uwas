@@ -25,7 +25,7 @@ errors. The full validation report is documented in the conversation log.
 | VULN-002 | **High** | PHP ini value injection → RCE | `phpINIValueSafe` rejects control chars (manager.go:575) |
 | VULN-003 | **High** | Reseller type/proxy/redirect over-post → SSRF | Denylist includes all sensitive fields (handlers_domain.go:715) |
 | VULN-004 | **High** | SVG stored XSS → token theft | Server: CSP + Content-Disposition attachment; Client: download-only |
-| VULN-005 | **High** | Docker default admin key | Fail-fast env var syntax (docker-compose.yml:15) |
+| VULN-005 | **High** | Docker default admin key/public admin port | Fail-fast env var plus host-loopback publish (docker-compose.yml) |
 | VULN-006 | Medium | TOTP replay not wired | `validateTOTPNoReplay` burns matched step (totp.go:61-73) |
 | VULN-007 | Medium | Config viewer leaks secrets | Mask list covers all sensitive fields (handlers_settings.go:280-296) |
 | VULN-008 | Medium | Origin prefix-match bypass | Exact `u.Hostname()` comparison (handlers_auth.go:231-233) |
