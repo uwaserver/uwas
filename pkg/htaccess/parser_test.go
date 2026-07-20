@@ -473,15 +473,15 @@ func TestParseUnclosedBlock(t *testing.T) {
 RewriteEngine On
 RewriteRule ^(.*)$ /index.php [L]
 `
-	// No </IfModule> closing tag
+	// No </IfModule> closing tag: must be a parse error rather than the
+	// block being silently discarded (which would fail open for deny/auth
+	// directives inside it).
 	directives, err := Parse(strings.NewReader(input))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("Parse() = nil error, want error for unclosed block")
 	}
-	// The block is never closed so it stays on the stack and is not emitted.
-	// This is the expected behavior (silently ignored).
-	if len(directives) != 0 {
-		t.Errorf("directives = %d, want 0 (unclosed block stays on stack)", len(directives))
+	if directives != nil {
+		t.Errorf("directives = %v, want nil on parse error", directives)
 	}
 }
 
@@ -764,5 +764,32 @@ func TestSplitArgsTabSeparated(t *testing.T) {
 	}
 	if args[0] != "AuthType" || args[1] != "Basic" {
 		t.Errorf("args = %v", args)
+	}
+}
+
+func TestParseUnclosedBlockError(t *testing.T) {
+	// An unclosed block at EOF must be a parse error, not silently
+	// discarded — deny/auth directives inside it would vanish (fail-open)
+	// where Apache would refuse to start.
+	input := `<Files ".env">
+Require all denied`
+	_, err := Parse(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("Parse() = nil error, want error for unclosed block at EOF")
+	}
+	if !strings.Contains(err.Error(), "unclosed") {
+		t.Errorf("error = %v, want mention of unclosed block", err)
+	}
+}
+
+func TestParseUnclosedNestedBlockError(t *testing.T) {
+	input := `<IfModule mod_rewrite.c>
+    <Files ".htpasswd">
+        Require all denied
+</IfModule>`
+	// Only one close tag for two opens — innermost close pops the stack once,
+	// leaving one block open at EOF.
+	if _, err := Parse(strings.NewReader(input)); err == nil {
+		t.Fatal("Parse() = nil error, want error for unclosed nested block")
 	}
 }

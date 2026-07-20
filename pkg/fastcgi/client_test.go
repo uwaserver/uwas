@@ -1290,3 +1290,35 @@ func TestClientExecuteNilStdin(t *testing.T) {
 		t.Errorf("body = %q, want OK", body)
 	}
 }
+
+func TestPoolGetAfterCloseReturnsErrPoolClosed(t *testing.T) {
+	p := NewPool(PoolConfig{Address: "tcp:127.0.0.1:1"})
+	p.Close()
+
+	if _, err := p.Get(context.Background()); !errors.Is(err, ErrPoolClosed) {
+		t.Fatalf("Get after Close: err = %v, want ErrPoolClosed", err)
+	}
+}
+
+func TestParseHTTPMalformedHeadersKeepFullBody(t *testing.T) {
+	// When header parsing fails, the full stdout must be returned as the
+	// body — the buffered reader must not have drained bytes from it.
+	var r Response
+	payload := "not-a-header-line\n" + strings.Repeat("x", 8000)
+	r.stdout.WriteString(payload)
+
+	status, headers, body := r.ParseHTTP()
+	if status != 200 {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if len(headers) != 0 {
+		t.Errorf("headers = %v, want empty", headers)
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(data) != payload {
+		t.Fatalf("body length = %d, want %d (body truncated)", len(data), len(payload))
+	}
+}

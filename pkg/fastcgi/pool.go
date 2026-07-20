@@ -2,6 +2,7 @@ package fastcgi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -9,6 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// ErrPoolClosed is returned by Get when the pool has been closed.
+var ErrPoolClosed = errors.New("connection pool is closed")
 
 // Pool manages a pool of FastCGI connections.
 type Pool struct {
@@ -69,7 +73,11 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) {
 	// 1. Try idle connection
 	for {
 		select {
-		case c := <-p.idle:
+		case c, ok := <-p.idle:
+			if !ok {
+				// Close() closed the channel; a nil receive must not be used.
+				return nil, ErrPoolClosed
+			}
 			// Check if stale
 			if time.Since(c.usedAt) > 30*time.Second || time.Since(c.createdAt) > p.maxLife {
 				c.netConn.Close()
@@ -93,7 +101,10 @@ create:
 	timer := time.NewTimer(30 * time.Second)
 	defer timer.Stop()
 	select {
-	case c := <-p.idle:
+	case c, ok := <-p.idle:
+		if !ok {
+			return nil, ErrPoolClosed
+		}
 		c.usedAt = time.Now()
 		return c, nil
 	case <-timer.C:

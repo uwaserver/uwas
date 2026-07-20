@@ -107,7 +107,19 @@ func Parse(reader io.Reader) ([]Directive, error) {
 		}
 	}
 
-	return directives, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// An unclosed block at EOF must be an error, not silently discarded:
+	// deny/auth directives inside it would vanish (fail-open) where Apache
+	// would refuse to start.
+	if len(blockStack) > 0 {
+		open := blockStack[len(blockStack)-1]
+		return nil, fmt.Errorf("unclosed <%s> block opened at line %d", open.Name, open.LineNum)
+	}
+
+	return directives, nil
 }
 
 // parseBlockOpen parses "<IfModule mod_rewrite.c>" into name and args.
