@@ -161,10 +161,10 @@ if [ "$OS" = "linux" ] && [ -z "$UWAS_NO_SERVICE" ]; then
         sudo $BINARY install $INSTALL_FLAGS
     else
         echo ""
-        printf "${BOLD}Finish setup manually:${NC}\n"
+        printf '%bFinish setup manually:%b\n' "$BOLD" "$NC"
         echo "  sudo uwas install          # creates /etc/uwas/uwas.yaml, registers + starts service"
         echo ""
-        printf "${BOLD}Dashboard:${NC}\n"
+        printf '%bDashboard:%b\n' "$BOLD" "$NC"
         echo "  http://127.0.0.1:9443/_uwas/dashboard/  (credentials printed by 'uwas install')"
         echo ""
         echo "Docs: https://github.com/$REPO"
@@ -172,17 +172,17 @@ if [ "$OS" = "linux" ] && [ -z "$UWAS_NO_SERVICE" ]; then
     fi
 else
     # macOS or UWAS_NO_SERVICE=1 — print manual guidance only.
-    printf "${BOLD}Quick start:${NC}\n"
+    printf '%bQuick start:%b\n' "$BOLD" "$NC"
     echo "  uwas                    # Auto-setup + start server (config in ~/.uwas/)"
     echo "  uwas serve -c uwas.yaml # Start with specific config"
     echo "  uwas doctor             # System diagnostics"
     echo ""
     if [ "$OS" = "linux" ]; then
-        printf "${BOLD}Systemd service:${NC}\n"
+        printf '%bSystemd service:%b\n' "$BOLD" "$NC"
         echo "  sudo uwas install       # /etc/uwas/uwas.yaml + systemd service + autostart"
         echo ""
     fi
-    printf "${BOLD}Dashboard:${NC}\n"
+    printf '%bDashboard:%b\n' "$BOLD" "$NC"
     echo "  http://127.0.0.1:9443/_uwas/dashboard/"
     echo ""
 fi

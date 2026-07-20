@@ -74,8 +74,8 @@ dashboard-dev: ## Start dashboard dev server with hot reload
 
 # -- Utility ------------------------------------------------------------------
 
-clean: ## Remove build artifacts and test cache
-	rm -rf bin/ *.out
+clean: ## Remove build artifacts, coverage reports, and test cache
+	rm -rf bin/ *.out *.html bench.test
 	go clean -testcache
 
 all: check build ## Run all checks then build
