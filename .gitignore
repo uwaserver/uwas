@@ -82,6 +82,7 @@ commit.bat
 .claude/
 .dfmt/
 .wrongstack/
+.temp_files/
 
 # ── Build caches ──
 .cache/

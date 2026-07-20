@@ -136,8 +136,8 @@ if systemctl is-active uwas >/dev/null 2>&1; then
     sudo systemctl restart uwas
     ok "Service restarted"
 elif pgrep -x uwas >/dev/null 2>&1; then
-    printf "${CYAN}${BOLD}▸${NC} UWAS is running but not as a systemd service.\n"
-    printf "  Restart manually: ${BOLD}kill \$(pgrep uwas) && uwas serve -d${NC}\n"
+    printf '%b%b▸%b UWAS is running but not as a systemd service.\n' "$CYAN" "$BOLD" "$NC"
+    printf '  Restart manually: %b%s%b\n' "$BOLD" "kill \$(pgrep uwas) && uwas serve -d" "$NC"
 fi
 
 echo ""
