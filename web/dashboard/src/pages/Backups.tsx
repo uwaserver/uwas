@@ -26,6 +26,7 @@ import {
   type BackupSchedule,
   type FeatureStatus,
 } from '@/lib/api';
+import { addDebugLog } from '@/lib/debugLog';
 import Card from '@/components/Card';
 import FeatureBanner from '@/components/FeatureBanner';
 
@@ -38,21 +39,25 @@ const PROVIDERS: { value: Provider; label: string }[] = [
 ];
 
 const INTERVAL_OPTIONS = [
+  { value: '1h', label: 'Every hour' },
   { value: '6h', label: 'Every 6 hours' },
   { value: '12h', label: 'Every 12 hours' },
   { value: '24h', label: 'Every 24 hours' },
   { value: '168h', label: 'Every 7 days' },
+  { value: '720h', label: 'Every 30 days' },
+  { value: '__custom__', label: 'Custom...' },
 ];
 
-// CRON_PRESETS - TODO: add advanced cron schedule UI
-// const CRON_PRESETS = [
-//   { value: '', label: 'Simple Interval (above)' },
-//   { value: '0 2 * * *', label: 'Daily at 2:00 AM' },
-//   { value: '0 */6 * * *', label: 'Every 6 hours' },
-//   { value: '0 0 * * 0', label: 'Weekly (Sunday midnight)' },
-//   { value: '0 0 1 * *', label: 'Monthly (1st midnight)' },
-//   { value: '0 */12 * * *', label: 'Every 12 hours' },
-// ];
+// Custom interval label shown when the user selects "Custom...". The backend
+// parses interval as a Go time.Duration string, so valid formats are like
+// "3h", "90m", "48h", "240h". We also accept "Xd" for day-based shorthand.
+const CUSTOM_INTERVAL_PLACEHOLDER = 'e.g. 3h, 90m, 2d, 240h';
+
+function isValidCustomInterval(val: string): boolean {
+  if (!val) return false;
+  // Go time.Duration: \d+[smh] — plus our "Xd" shorthand
+  return /^\d+[smh]$/.test(val) || /^\d+d$/.test(val);
+}
 
 function providerBadge(provider: string) {
   switch (provider) {
@@ -208,12 +213,16 @@ export default function Backups() {
     enabled: boolean;
     interval: string;
     keep: number;
-  }>({ enabled: false, interval: '24h', keep: 7 });
+    customInterval: string;
+  }>({ enabled: false, interval: '24h', keep: 7, customInterval: '' });
+  const [intervalError, setIntervalError] = useState('');
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [featureStatus, setFeatureStatus] = useState<FeatureStatus | null>(null);
 
   useEffect(() => {
-    fetchFeatures().then(f => setFeatureStatus(f.backups ?? null)).catch(() => {});
+    fetchFeatures()
+      .then(f => setFeatureStatus(f.backups ?? null))
+      .catch(() => addDebugLog({ level: 'warn', scope: 'backups', message: 'Failed to fetch feature flags' }));
   }, []);
 
   const load = useCallback(async () => {
@@ -221,7 +230,7 @@ export default function Backups() {
       const [b, s] = await Promise.all([fetchBackups(), fetchBackupSchedule()]);
       setBackups(b ?? []);
       setSchedule(s);
-      setScheduleForm({ enabled: s.enabled, interval: s.interval, keep: s.keep });
+      setScheduleForm({ enabled: s.enabled, interval: s.interval, keep: s.keep, customInterval: '' });
       setError('');
     } catch (e) {
       setError((e as Error).message);
@@ -299,8 +308,27 @@ export default function Backups() {
   const handleSaveSchedule = async () => {
     setSavingSchedule(true);
     setStatus(null);
+    setIntervalError('');
     try {
-      await updateBackupSchedule(scheduleForm);
+      // Resolve the effective interval: custom input overrides the preset
+      let effectiveInterval = scheduleForm.interval;
+      if (scheduleForm.interval === '__custom__') {
+        const custom = scheduleForm.customInterval.trim();
+        if (!custom) {
+          setIntervalError('Custom interval cannot be empty');
+          setSavingSchedule(false);
+          return;
+        }
+        if (!isValidCustomInterval(custom)) {
+          setIntervalError('Invalid format. Use e.g. 3h, 90m, 2d, 240h');
+          setSavingSchedule(false);
+          return;
+        }
+        // Convert "Xd" to Go duration ("Xd" → e.g. "48h") before sending
+        const match = custom.match(/^(\d+)d$/);
+        effectiveInterval = match ? `${parseInt(match[1]) * 24}h` : custom;
+      }
+      await updateBackupSchedule({ ...scheduleForm, interval: effectiveInterval });
       showStatus({ ok: true, message: 'Backup schedule updated' });
       await load();
     } catch (e) {
@@ -531,7 +559,7 @@ export default function Backups() {
                 <select
                   value={scheduleForm.interval}
                   onChange={(e) =>
-                    setScheduleForm((prev) => ({ ...prev, interval: e.target.value }))
+                    setScheduleForm((prev) => ({ ...prev, interval: e.target.value, customInterval: '' }))
                   }
                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
                 >
@@ -541,6 +569,27 @@ export default function Backups() {
                     </option>
                   ))}
                 </select>
+                {scheduleForm.interval === '__custom__' && (
+                  <div className="mt-2">
+                    <input
+                      type="text"
+                      placeholder={CUSTOM_INTERVAL_PLACEHOLDER}
+                      value={scheduleForm.customInterval}
+                      onChange={(e) =>
+                        setScheduleForm((prev) => ({ ...prev, customInterval: e.target.value }))
+                      }
+                      className={`w-full rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500 ${
+                        intervalError ? 'border-red-500' : 'border-border'
+                      }`}
+                    />
+                    {intervalError && (
+                      <p className="mt-1 text-xs text-red-400">{intervalError}</p>
+                    )}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Use Go duration format: hours (3h, 48h, 240h), minutes (90m), or days (2d).
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Keep last N */}

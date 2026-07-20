@@ -25,6 +25,7 @@ import {
   uploadFile,
   fetchDiskUsage,
   getAuthHeaders,
+  BASE,
   type FileEntry,
   type FileWorkspace,
 } from '@/lib/api';
@@ -188,7 +189,7 @@ export default function FileManager() {
       setError('');
       try {
         const res = await fetch(
-          `/api/v1/files/${encodeURIComponent(selectedWorkspaceID)}/read?path=${encodeURIComponent(entry.path)}`,
+          `${BASE}/api/v1/files/${encodeURIComponent(selectedWorkspaceID)}/read?path=${encodeURIComponent(entry.path)}`,
           { headers: getAuthHeaders() },
         );
         if (!res.ok) {

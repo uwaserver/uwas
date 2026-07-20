@@ -7,6 +7,7 @@ import {
   fetchDomainConfigRaw, saveDomainConfigRaw,
   fetchDomains, type DomainData,
 } from '@/lib/api';
+import { addDebugLog } from '@/lib/debugLog';
 import { useConfirm } from '@/components/useConfirm';
 
 interface ConfigFile {
@@ -62,7 +63,7 @@ export default function ConfigEditor() {
         }));
         setFiles([{ id: '__main__', label: 'Main Config' }, ...domainFiles]);
       })
-      .catch(() => {});
+      .catch(() => addDebugLog({ level: 'warn', scope: 'config', message: 'Failed to load domain list for sidebar' }));
   }, []);
 
   // Load content for active file

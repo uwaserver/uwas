@@ -1,6 +1,6 @@
 import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
 
-const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
+export const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
 let token = sessionStorage.getItem('uwas_token') || '';
 let authMode = sessionStorage.getItem('uwas_auth_mode') || 'api_key';
@@ -1058,12 +1058,39 @@ export async function migrateCPanel(file: File, importDB: boolean): Promise<CPan
   form.append('backup', file);
   if (importDB) form.append('import_db', 'true');
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
-  const resp = await fetch('/api/v1/migrate/cpanel', { method: 'POST', headers, body: form });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    throw new Error(err.error || resp.statusText);
+  if (totpCode) headers['X-TOTP-Code'] = totpCode;
+  if (pinCode) headers['X-Pin-Code'] = pinCode;
+  const url = `${BASE}/api/v1/migrate/cpanel`;
+  const res = await fetch(url, { method: 'POST', headers, body: form });
+  if (res.status === 401) {
+    clearToken();
+    const currentPath = window.location.pathname;
+    if (!currentPath.includes('/login')) {
+      window.location.href = '/_uwas/dashboard/login';
+    }
+    throw new Error('Unauthorized');
   }
-  return resp.json();
+  if (res.status === 403) {
+    const body = await res.json().catch(() => ({ error: '' }));
+    if (body.error === '2fa_required') {
+      sessionStorage.removeItem('uwas_totp_verified');
+      totpCode = '';
+      window.location.href = '/_uwas/dashboard/login?2fa=required';
+      throw new Error('2FA required');
+    }
+    if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
+      const pin = await new Promise<string>((resolve, reject) => { pinPromptCallback!(resolve, reject); });
+      pinCode = pin;
+      headers['X-Pin-Code'] = pin;
+      const retryRes = await fetch(url, { method: 'POST', headers, body: form });
+      pinCode = '';
+      if (!retryRes.ok) { const e = await retryRes.json().catch(() => ({ error: retryRes.statusText })); throw new Error(e.error || retryRes.statusText); }
+      return retryRes.json();
+    }
+    throw new Error(body.error || 'Forbidden');
+  }
+  if (!res.ok) { const e = await res.json().catch(() => ({ error: res.statusText })); throw new Error(e.error || res.statusText); }
+  return res.json();
 }
 
 // ── Installation Tasks ──────────────────────────────
