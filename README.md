@@ -171,7 +171,7 @@ sudo uwas install
 sudo systemctl start uwas
 
 # Dashboard
-# http://your-ip:9443/_uwas/dashboard/
+# http://127.0.0.1:9443/_uwas/dashboard/
 
 # CLI commands (API key auto-loaded from ~/.uwas/.env)
 uwas status
@@ -537,17 +537,19 @@ cp .env.example .env       # set UWAS_ADMIN_KEY (required for the dashboard)
 docker compose up -d
 ```
 
-The admin API binds `:9443` inside the container and requires a key — UWAS
-refuses to start a publicly-bound admin listener without authentication. Set
-`UWAS_ADMIN_KEY` in `.env` (generate one with `openssl rand -hex 24`). The
-config lives in a named volume (`uwas_config`); edit it from the dashboard or
-drop a custom `docker/uwas.yaml` before the first boot.
+The admin API binds `:9443` inside the container but Compose publishes it only
+on host loopback (`127.0.0.1:9443`) because the default admin listener is HTTP.
+For remote access, use `ssh -L 9443:127.0.0.1:9443 user@server` and open
+`http://127.0.0.1:9443/_uwas/dashboard/`. Set `UWAS_ADMIN_KEY` in `.env`
+(generate one with `openssl rand -hex 24`). The config lives in a named volume
+(`uwas_config`); edit it from the dashboard or drop a custom
+`docker/uwas.yaml` before the first boot.
 
 **docker run (standalone):**
 
 ```bash
 docker build -t uwas .
-docker run -d -p 80:80 -p 443:443 -p 9443:9443 \
+docker run -d -p 80:80 -p 443:443 -p 127.0.0.1:9443:9443 \
   -e UWAS_ADMIN_KEY=your-admin-key \
   -v uwas_config:/etc/uwas \
   uwas

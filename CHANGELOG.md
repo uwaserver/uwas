@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Pin the Docker builder to the Go 1.26.5 image and pin Alpine package versions, fixing production image builds that failed because the previous digest still contained Go 1.26.4 while `go.mod` requires 1.26.5.
+- Repair the Docker integration stack: PHP-FPM now starts from an existing read-only web-root directory, the mock upstream preserves its Python source correctly, API checks match current pagination/CSRF contracts, and the stack is always removed after success or failure.
+- Repair the WordPress deployment example end to end: build UWAS from source instead of a nonexistent registry image, pass required config variables into the container, use the pinned official WordPress FPM image with `mysqli`, make WP-CLI opt-in, fail fast on missing secrets, and verify the real install page through UWAS/FastCGI in CI.
+- Rebuild the PHP, WordPress, WP-CLI, and MariaDB sidecar images from pinned upstream bases: Alpine `c-ares` is upgraded to its fixed release and MariaDB's `gosu` helper is rebuilt with Go 1.26.5.
+- Make the WordPress setup script fail on invalid input and service errors, keep generated secrets in a mode-0600 file, support safe local port/TLS overrides, and preserve source file permissions while extracting archives.
+- Make repeat WordPress setup runs use the existing environment file as the sole source of truth, reject domain mismatches, report the actual published ports, and verify WordPress through UWAS before reporting success.
+- Fix IP-hash affinity changing when a client's ephemeral source port changes, including IPv6 clients.
+- Fix trusted-proxy IPv6 addresses being written to `RemoteAddr` without the required brackets, which broke downstream ACL, rate-limit, and GeoIP parsing.
+- Make disk-cache overwrites atomic, serialize reads/writes/deletes/purges, and restrict cache files to `0600` so concurrent writes cannot corrupt entries, inflate accounting, or expose cached responses to other local users.
+- Remove all ShellCheck findings from the install, update, and Docker integration scripts without changing their user-facing output.
+
+### Security
+
+- Harden GitHub Actions by pinning every first-party action to a verified commit SHA, disabling persisted checkout credentials, moving Pages/release write permissions to the jobs that need them, and disabling caches for release artifact builds to prevent cache poisoning.
+- Make those protections regression-proof: CI now runs pinned actionlint, zizmor, Hadolint, ShellCheck, and Trivy gates plus the complete Docker Compose integration suite; all runtime images must remain free of HIGH/CRITICAL vulnerabilities and embedded secrets.
+- Publish the plaintext admin listener on host loopback only in Docker and WordPress deployments; remote dashboard access now uses an SSH tunnel instead of exposing API-key traffic on the network.
+- Apply the proxy SSRF policy both before and during WebSocket/mirror connections, block DNS-rebinding targets at dial time, use verified TLS for HTTPS/WSS upstreams, and mark affinity cookies `Secure` on HTTPS requests.
+- Rebuild cached upstream transports when proxy security or timeout settings change, so config reloads cannot retain an older private-network or TLS-verification policy.
+- Include the admin package in the permanent race-detector job instead of relying on a one-time local result.
+
+### Documentation
+
+- Align the implementation and specification documents with the Go 1.26.5 minimum required by `go.mod`.
+
 
 ## [0.8.9] - 2026-07-10
 
