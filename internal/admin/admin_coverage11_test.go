@@ -134,6 +134,27 @@ func TestBackupDomainEmptyRoot(t *testing.T) {
 	t.Logf("backup domain status = %d, body = %s", rec.Code, rec.Body.String())
 }
 
+// Unknown domains must be rejected with 404: the raw value would otherwise
+// flow into filesystem paths and produce a near-empty backup reported as 201.
+func TestBackupDomainUnknownDomain404(t *testing.T) {
+	s := testServerFromConfig(t, &config.Config{
+		Global: config.GlobalConfig{Admin: config.AdminConfig{Listen: "127.0.0.1:0"}},
+		Domains: []config.Domain{
+			{Host: "known.example.com", Type: "static", Root: "/tmp"},
+		},
+	})
+	s.SetBackupManager(testBackupManager(t))
+
+	for _, domain := range []string{"notfound.com", "../../../etc/passwd"} {
+		body := strings.NewReader(`{"domain":"` + domain + `"}`)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/backups/domain", body))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("domain %q: status = %d, want 404 (body: %s)", domain, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // ── handleBandwidthGet domain not found ──────────────────────────────────
 
 func TestBandwidthGetNotFoundCov(t *testing.T) {
