@@ -217,9 +217,13 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 
 		ctx.Upstream = backend.URL.String()
 
-		// Build upstream request
+		// Build upstream request. RawPath must be copied alongside Path so the
+		// original percent-encoding (e.g. %2F, %2e%2e%2f) is preserved when the
+		// URL is re-serialized — otherwise the backend sees a decoded/normalized
+		// path the front-end guards never inspected.
 		upstreamURL := *backend.URL
 		upstreamURL.Path = ctx.Request.URL.Path
+		upstreamURL.RawPath = ctx.Request.URL.RawPath
 		upstreamURL.RawQuery = ctx.Request.URL.RawQuery
 
 		// SSRF protection: local app upstreams are allowed, but metadata and
@@ -589,9 +593,11 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 		upstreamConn = tlsConn
 	}
 
-	// Forward the original HTTP request (including Upgrade headers) to the backend
+	// Forward the original HTTP request (including Upgrade headers) to the backend.
+	// RawPath preserves the original percent-encoding in RequestURI().
 	upstreamURL := *backend.URL
 	upstreamURL.Path = ctx.Request.URL.Path
+	upstreamURL.RawPath = ctx.Request.URL.RawPath
 	upstreamURL.RawQuery = ctx.Request.URL.RawQuery
 
 	// Write the request line

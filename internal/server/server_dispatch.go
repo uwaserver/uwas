@@ -40,7 +40,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/.well-known/health" || r.URL.Path == "/healthz" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write([]byte(`{"status":"ok"}`))
+
+		s.configMu.RLock()
+		domainCount := len(s.config.Domains)
+		s.configMu.RUnlock()
+
+		uptimeSecs := int64(time.Since(s.metrics.StartTime).Seconds())
+		resp := `{"status":"ok","uptime_secs":` + strconv.FormatInt(uptimeSecs, 10) + `,"domains":` + strconv.Itoa(domainCount) + `}`
+		w.Write([]byte(resp))
 		return
 	}
 
@@ -308,11 +315,24 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			for k, vv := range r.Header {
+				if isHopByHopHeader(k) {
+					continue
+				}
 				for _, v := range vv {
 					proxyReq.Header.Add(k, v)
 				}
 			}
-			proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+			// X-Forwarded-For carries bare IPs, not ip:port, and appends
+			// to any chain a fronting proxy already started.
+			clientIP := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				clientIP = host
+			}
+			if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
+				proxyReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
+			} else {
+				proxyReq.Header.Set("X-Forwarded-For", clientIP)
+			}
 			proxyReq.Header.Set("X-Forwarded-Host", r.Host)
 			resp, err := locationProxyHTTPClient.Do(proxyReq)
 			if err != nil {
@@ -322,6 +342,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			defer resp.Body.Close()
 			for k, vv := range resp.Header {
+				if isHopByHopHeader(k) {
+					continue
+				}
 				for _, v := range vv {
 					ctx.Response.Header().Add(k, v)
 				}
@@ -832,6 +855,18 @@ func (s *Server) dispatchHandler(ctx *router.RequestContext, domain *config.Doma
 		renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 	}
 	s.metrics.RecordHandlerLatency(string(domain.Type), ctx.Response.StatusCode(), time.Since(start))
+}
+
+// isHopByHopHeader reports whether the header is hop-by-hop (RFC 9110
+// §7.6.1) and must not be forwarded across the location-proxy hop in
+// either direction.
+func isHopByHopHeader(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+		"Te", "Trailers", "Transfer-Encoding", "Upgrade":
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domain) {

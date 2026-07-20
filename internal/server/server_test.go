@@ -1414,7 +1414,7 @@ RewriteRule ^old-page$ /new-page [L]
 
 	// Verify cache was populated
 	s.htaccessCacheMu.RLock()
-	_, cached := s.htaccessCacheV2[dir]
+	_, cached := s.htaccessCache[dir]
 	s.htaccessCacheMu.RUnlock()
 
 	if !cached {
@@ -1452,7 +1452,7 @@ func TestApplyHtaccessNoFile(t *testing.T) {
 
 	// Should complete without error (nil entry cached for missing file)
 	s.htaccessCacheMu.RLock()
-	entry, cached := s.htaccessCacheV2[dir]
+	entry, cached := s.htaccessCache[dir]
 	s.htaccessCacheMu.RUnlock()
 
 	if !cached {

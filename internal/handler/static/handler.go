@@ -30,33 +30,21 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	w := ctx.Response
 	r := ctx.Request
 
-	// Security: reject dotfiles in any path component (e.g., .git, .env)
-	// Zero-allocation scan: walk path segments without strings.Split.
-	for i := 0; i < len(path); i++ {
-		if path[i] == '/' && i+1 < len(path) && path[i+1] == '.' {
-			// Check if this is a dotfile component (not "." or ".." alone)
-			j := i + 1
-			for j < len(path) && path[j] != '/' {
-				j++
-			}
-			seg := path[i+1 : j]
-			if strings.HasPrefix(seg, ".") && seg != "." && seg != ".." {
-				w.Error(http.StatusForbidden, "403 Forbidden")
-				return
-			}
+	// Security: reject dotfiles in any path component (e.g., .git, .env).
+	// Scan only the portion relative to the document root — the docroot itself
+	// may legitimately contain a dot component (e.g. /home/x/.www), which must
+	// not 403 the whole site. Falls back to the full path when DocumentRoot is
+	// unknown. The .well-known directory (ACME, security.txt) is allowed.
+	scanPath := path
+	if ctx.DocumentRoot != "" {
+		if rel, err := filepath.Rel(ctx.DocumentRoot, path); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			scanPath = filepath.ToSlash(rel)
 		}
 	}
-	// Also check the first segment (no leading slash)
-	if len(path) > 0 && path[0] == '.' {
-		j := 0
-		for j < len(path) && path[j] != '/' {
-			j++
-		}
-		seg := path[:j]
-		if strings.HasPrefix(seg, ".") && seg != "." && seg != ".." {
-			w.Error(http.StatusForbidden, "403 Forbidden")
-			return
-		}
+	if hasHiddenComponent(scanPath) {
+		w.Error(http.StatusForbidden, "403 Forbidden")
+		return
 	}
 
 	info, err := os.Stat(path)
@@ -93,6 +81,31 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	defer f.Close()
 
 	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
+}
+
+// hasHiddenComponent reports whether any slash-separated path segment is a
+// dotfile (starts with "." but is not "." or ".."). The ".well-known"
+// directory is exempt — it must remain reachable for ACME HTTP-01 challenges
+// and RFC 9116 security.txt. Zero-allocation scan without strings.Split.
+func hasHiddenComponent(path string) bool {
+	for i := 0; i < len(path); i++ {
+		if path[i] != '.' {
+			continue
+		}
+		if i > 0 && path[i-1] != '/' {
+			continue // not at a segment start
+		}
+		j := i
+		for j < len(path) && path[j] != '/' {
+			j++
+		}
+		seg := path[i:j]
+		if seg == "." || seg == ".." || seg == ".well-known" {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // servePreCompressed checks for .br or .gz pre-compressed files.

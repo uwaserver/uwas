@@ -547,8 +547,11 @@ func TestHandleRequestHealthz(t *testing.T) {
 		t.Errorf("expected 200 for /healthz, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if body != `{"status":"ok"}` {
-		t.Errorf("body = %q", body)
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Errorf("body = %q, want status ok", body)
+	}
+	if !strings.Contains(body, `"uptime_secs"`) {
+		t.Errorf("body = %q, want uptime_secs", body)
 	}
 }
 

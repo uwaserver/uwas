@@ -198,7 +198,7 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 	htPath := filepath.Join(root, ".htaccess")
 
 	s.htaccessCacheMu.RLock()
-	if entry, ok := s.htaccessCacheV2[root]; ok {
+	if entry, ok := s.htaccessCache[root]; ok {
 		s.htaccessCacheMu.RUnlock()
 		// Check if file changed since last parse
 		if info, err := os.Stat(htPath); err == nil {
@@ -206,7 +206,7 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 				// File changed — re-parse
 				newEntry := s.parseHtaccessFull(root)
 				s.htaccessCacheMu.Lock()
-				s.htaccessCacheV2[root] = newEntry
+				s.htaccessCache[root] = newEntry
 				s.htaccessCacheMu.Unlock()
 				return newEntry
 			}
@@ -216,7 +216,7 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 		} else {
 			// File was deleted — invalidate
 			s.htaccessCacheMu.Lock()
-			delete(s.htaccessCacheV2, root)
+			delete(s.htaccessCache, root)
 			s.htaccessCacheMu.Unlock()
 			return nil
 		}
@@ -227,10 +227,10 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 	entry := s.parseHtaccessFull(root)
 
 	s.htaccessCacheMu.Lock()
-	if s.htaccessCacheV2 == nil {
-		s.htaccessCacheV2 = make(map[string]*htaccessCacheEntry)
+	if s.htaccessCache == nil {
+		s.htaccessCache = make(map[string]*htaccessCacheEntry)
 	}
-	s.htaccessCacheV2[root] = entry
+	s.htaccessCache[root] = entry
 	s.htaccessCacheMu.Unlock()
 
 	return entry
