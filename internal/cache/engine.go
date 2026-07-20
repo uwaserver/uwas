@@ -9,7 +9,11 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
-const maxConcurrentWrites = 16 // max concurrent L2/L3 write goroutines
+// maxConcurrentWrites limits concurrent L2 (disk) and L3 (Redis) write
+// goroutines. This prevents unbounded goroutine growth during cache
+// population under high concurrency. The semaphore is shared across
+// all cache tiers so a single slow backend cannot starve others.
+const maxConcurrentWrites = 16
 
 // Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
@@ -32,6 +36,7 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
 
 	if diskPath != "" {
 		e.disk = NewDiskCache(diskPath, diskLimit)
+		e.disk.StartCleanup(ctx, 10*time.Minute)
 	}
 
 	// Start periodic cleanup every 5 minutes
@@ -61,6 +66,8 @@ func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
 				}
 				return resp, StatusStale
 			}
+			// Expired: reclaim the file so dead entries don't pin usedBytes
+			e.disk.Delete(key)
 		}
 	}
 
@@ -123,7 +130,9 @@ func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
 		case e.writeSem <- struct{}{}:
 			go func() {
 				defer func() { <-e.writeSem }()
-				if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
+				// resp.TTL is already a time.Duration; include the grace
+				// window so stale-while-revalidate serving works from L3.
+				if err := e.redis.Set(key, resp, resp.TTL+resp.GraceTTL); err != nil {
 					e.logger.Warn("redis cache write failed", "key", key, "error", err)
 				}
 			}()
@@ -148,6 +157,7 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 				}
 				return resp, StatusStale
 			}
+			e.disk.Delete(key)
 		}
 	}
 	if e.redis != nil {
@@ -185,7 +195,7 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 		case e.writeSem <- struct{}{}:
 			go func() {
 				defer func() { <-e.writeSem }()
-				if err := e.redis.Set(key, resp, time.Duration(resp.TTL)*time.Second); err != nil {
+				if err := e.redis.Set(key, resp, resp.TTL+resp.GraceTTL); err != nil {
 					e.logger.Warn("redis cache write failed", "key", key, "error", err)
 				}
 			}()
@@ -246,6 +256,20 @@ func IsCacheable(r *http.Request, statusCode int, headers http.Header) bool {
 	// Only cache GET/HEAD
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
+	}
+
+	// Never share responses to credentialed requests
+	if r.Header.Get("Authorization") != "" {
+		return false
+	}
+
+	// The cache key varies only on Accept-Encoding + configured headers;
+	// a response that declares Vary on anything session-shaped (or on
+	// everything) cannot be keyed correctly, so don't cache it.
+	if v := headers.Get("Vary"); v != "" {
+		if v == "*" || strings.Contains(v, "Cookie") || strings.Contains(v, "Authorization") {
+			return false
+		}
 	}
 
 	// Only cache specific status codes

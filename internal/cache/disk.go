@@ -1,12 +1,14 @@
 package cache
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // DiskCache is a file-based L2 cache with hash-based directory sharding.
@@ -206,6 +208,52 @@ func (dc *DiskCache) PurgeByTag(tags ...string) int {
 	})
 
 	return count
+}
+
+// StartCleanup starts a background sweep that removes expired entries so
+// dead files don't pin usedBytes at maxBytes and silently disable Set.
+func (dc *DiskCache) StartCleanup(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				dc.cleanExpired()
+			}
+		}
+	}()
+}
+
+// cleanExpired removes every entry past TTL+grace, plus corrupt files.
+func (dc *DiskCache) cleanExpired() {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+
+	filepath.WalkDir(dc.baseDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if filepath.Ext(path) != ".cache" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		resp, err := Deserialize(data)
+		if err == nil && !resp.IsExpired() {
+			return nil
+		}
+		if info, infoErr := d.Info(); infoErr == nil {
+			if removeErr := os.Remove(path); removeErr == nil {
+				dc.subtractUsedBytes(info.Size())
+			}
+		}
+		return nil
+	})
 }
 
 func (dc *DiskCache) subtractUsedBytes(size int64) {

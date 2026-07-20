@@ -266,7 +266,9 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 			return fmt.Errorf("git fetch: %w\n%s", err, redactURL(out))
 		}
 		log.WriteString("$ git reset --hard origin/" + branch + "\n")
-		if out, err := runCmd(appRoot, gitEnv, "git", "reset", "--hard", "--", "origin/"+branch); err != nil {
+		// No "--" here: git would treat the ref as a pathspec and refuse
+		// ("Cannot do hard reset with paths"). branch is validated by safeBranch.
+		if out, err := runCmd(appRoot, gitEnv, "git", "reset", "--hard", "origin/"+branch); err != nil {
 			return fmt.Errorf("git reset: %w\n%s", err, redactURL(out))
 		}
 	} else if gitURL != "" {

@@ -134,6 +134,57 @@ func TestRoute53_ListZones_Success(t *testing.T) {
 	}
 }
 
+// TestRoute53_ListZones_Paginated is the regression for the first-page-only
+// bug: accounts with more than 100 zones were silently truncated because
+// IsTruncated/NextMarker were ignored.
+func TestRoute53_ListZones_Paginated(t *testing.T) {
+	page1 := `<?xml version="1.0"?>
+<ListHostedZonesResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <HostedZones>
+    <HostedZone><Id>/hostedzone/Z1</Id><Name>one.com.</Name></HostedZone>
+  </HostedZones>
+  <IsTruncated>true</IsTruncated>
+  <NextMarker>Z2MARKER</NextMarker>
+</ListHostedZonesResponse>`
+	page2 := `<?xml version="1.0"?>
+<ListHostedZonesResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <HostedZones>
+    <HostedZone><Id>/hostedzone/Z2</Id><Name>two.com.</Name></HostedZone>
+  </HostedZones>
+  <IsTruncated>false</IsTruncated>
+</ListHostedZonesResponse>`
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch r.URL.Query().Get("marker") {
+		case "":
+			w.Write([]byte(page1))
+		case "Z2MARKER":
+			w.Write([]byte(page2))
+		default:
+			t.Errorf("unexpected marker %q", r.URL.Query().Get("marker"))
+			w.Write([]byte(page2))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestRoute53(srv.URL)
+	zones, err := p.ListZones()
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+	if len(zones) != 2 {
+		t.Fatalf("len(zones) = %d, want 2", len(zones))
+	}
+	if zones[0].ID != "Z1" || zones[1].ID != "Z2" {
+		t.Errorf("zones = %+v", zones)
+	}
+}
+
 func TestRoute53_ListZones_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
@@ -303,6 +354,68 @@ func TestRoute53_ListRecords_Success(t *testing.T) {
 	// ID format: Name:Type
 	if recs[0].ID != "example.com.:A" {
 		t.Errorf("recs[0].ID = %q", recs[0].ID)
+	}
+}
+
+// TestRoute53_ListRecords_Paginated is the regression for the first-page-only
+// bug: zones with more than 100 record sets were silently truncated because
+// IsTruncated/NextRecordName/NextRecordType were ignored.
+func TestRoute53_ListRecords_Paginated(t *testing.T) {
+	page1 := `<?xml version="1.0"?>
+<ListResourceRecordSetsResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <ResourceRecordSets>
+    <ResourceRecordSet>
+      <Name>a.example.com.</Name><Type>A</Type><TTL>300</TTL>
+      <ResourceRecords><ResourceRecord><Value>1.1.1.1</Value></ResourceRecord></ResourceRecords>
+    </ResourceRecordSet>
+  </ResourceRecordSets>
+  <IsTruncated>true</IsTruncated>
+  <NextRecordName>b.example.com.</NextRecordName>
+  <NextRecordType>TXT</NextRecordType>
+</ListResourceRecordSetsResponse>`
+	page2 := `<?xml version="1.0"?>
+<ListResourceRecordSetsResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <ResourceRecordSets>
+    <ResourceRecordSet>
+      <Name>b.example.com.</Name><Type>TXT</Type><TTL>60</TTL>
+      <ResourceRecords><ResourceRecord><Value>hello</Value></ResourceRecord></ResourceRecords>
+    </ResourceRecordSet>
+  </ResourceRecordSets>
+  <IsTruncated>false</IsTruncated>
+</ListResourceRecordSetsResponse>`
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		q := r.URL.Query()
+		switch q.Get("name") {
+		case "":
+			w.Write([]byte(page1))
+		case "b.example.com.":
+			if q.Get("type") != "TXT" {
+				t.Errorf("type param = %q, want TXT", q.Get("type"))
+			}
+			w.Write([]byte(page2))
+		default:
+			t.Errorf("unexpected name param %q", q.Get("name"))
+			w.Write([]byte(page2))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	p := newTestRoute53(srv.URL)
+	recs, err := p.ListRecords("Z1")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("len(recs) = %d, want 2", len(recs))
+	}
+	if recs[0].Content != "1.1.1.1" || recs[1].Content != "hello" {
+		t.Errorf("recs = %+v", recs)
 	}
 }
 

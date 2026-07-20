@@ -541,14 +541,12 @@ func (m *Manager) StopAll() {
 // Instances returns a snapshot of every registered app's runtime view.
 func (m *Manager) Instances() []Instance {
 	m.mu.RLock()
-	procs := make([]*process, 0, len(m.procs))
-	for _, p := range m.procs {
-		procs = append(procs, p)
-	}
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
 
-	out := make([]Instance, 0, len(procs))
-	for _, p := range procs {
+	// Build the instance values while holding the lock — reading p.cmd,
+	// p.startedAt etc. after RUnlock races with monitorNative/watchDocker.
+	out := make([]Instance, 0, len(m.procs))
+	for _, p := range m.procs {
 		out = append(out, m.instanceFromProcess(p))
 	}
 	return out

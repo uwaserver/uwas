@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"strings"
 	"time"
@@ -40,23 +41,38 @@ func NewRoute53(accessKey, secretKey, region string) *Route53Provider {
 const r53BaseURL = "https://route53.amazonaws.com/2013-04-01"
 
 func (p *Route53Provider) ListZones() ([]Zone, error) {
-	body, err := p.r53Request("GET", "/hostedzone", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		HostedZones []struct {
-			Id   string `xml:"Id"`
-			Name string `xml:"Name"`
-		} `xml:"HostedZones>HostedZone"`
-	}
-	if err := xml.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
-	zones := make([]Zone, len(resp.HostedZones))
-	for i, hz := range resp.HostedZones {
-		id := strings.TrimPrefix(hz.Id, "/hostedzone/")
-		zones[i] = Zone{ID: id, Name: strings.TrimSuffix(hz.Name, "."), Status: "active"}
+	var zones []Zone
+	marker := ""
+	// Follow IsTruncated/NextMarker; without this only the first page
+	// (100 zones) was returned.
+	for page := 0; page < 1000; page++ { // hard cap: runaway guard
+		path := "/hostedzone"
+		if marker != "" {
+			path += "?marker=" + neturl.QueryEscape(marker)
+		}
+		body, err := p.r53Request("GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			HostedZones []struct {
+				Id   string `xml:"Id"`
+				Name string `xml:"Name"`
+			} `xml:"HostedZones>HostedZone"`
+			IsTruncated bool   `xml:"IsTruncated"`
+			NextMarker  string `xml:"NextMarker"`
+		}
+		if err := xml.Unmarshal(body, &resp); err != nil {
+			return nil, err
+		}
+		for _, hz := range resp.HostedZones {
+			id := strings.TrimPrefix(hz.Id, "/hostedzone/")
+			zones = append(zones, Zone{ID: id, Name: strings.TrimSuffix(hz.Name, "."), Status: "active"})
+		}
+		if !resp.IsTruncated || resp.NextMarker == "" {
+			break
+		}
+		marker = resp.NextMarker
 	}
 	return zones, nil
 }
@@ -75,34 +91,55 @@ func (p *Route53Provider) FindZoneByDomain(domain string) (*Zone, error) {
 }
 
 func (p *Route53Provider) ListRecords(zoneID string) ([]Record, error) {
-	body, err := p.r53Request("GET", "/hostedzone/"+zoneID+"/rrset", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		ResourceRecordSets []struct {
-			Name string `xml:"Name"`
-			Type string `xml:"Type"`
-			TTL  int    `xml:"TTL"`
-			Recs []struct {
-				Value string `xml:"Value"`
-			} `xml:"ResourceRecords>ResourceRecord"`
-		} `xml:"ResourceRecordSets>ResourceRecordSet"`
-	}
-	if err := xml.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
 	var records []Record
-	for _, rrs := range resp.ResourceRecordSets {
-		for _, rr := range rrs.Recs {
-			records = append(records, Record{
-				ID:      rrs.Name + ":" + rrs.Type,
-				Type:    rrs.Type,
-				Name:    strings.TrimSuffix(rrs.Name, "."),
-				Content: rr.Value,
-				TTL:     rrs.TTL,
-			})
+	nextName, nextType := "", ""
+	// Follow IsTruncated/NextRecordName+NextRecordType; without this only the
+	// first page (100 record sets) was returned.
+	for page := 0; page < 1000; page++ { // hard cap: runaway guard
+		path := "/hostedzone/" + zoneID + "/rrset"
+		if nextName != "" {
+			// Keep query params alphabetically ordered (name before type) so
+			// the SigV4 canonical request matches what AWS computes.
+			path += "?name=" + neturl.QueryEscape(nextName)
+			if nextType != "" {
+				path += "&type=" + neturl.QueryEscape(nextType)
+			}
 		}
+		body, err := p.r53Request("GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			ResourceRecordSets []struct {
+				Name string `xml:"Name"`
+				Type string `xml:"Type"`
+				TTL  int    `xml:"TTL"`
+				Recs []struct {
+					Value string `xml:"Value"`
+				} `xml:"ResourceRecords>ResourceRecord"`
+			} `xml:"ResourceRecordSets>ResourceRecordSet"`
+			IsTruncated    bool   `xml:"IsTruncated"`
+			NextRecordName string `xml:"NextRecordName"`
+			NextRecordType string `xml:"NextRecordType"`
+		}
+		if err := xml.Unmarshal(body, &resp); err != nil {
+			return nil, err
+		}
+		for _, rrs := range resp.ResourceRecordSets {
+			for _, rr := range rrs.Recs {
+				records = append(records, Record{
+					ID:      rrs.Name + ":" + rrs.Type,
+					Type:    rrs.Type,
+					Name:    strings.TrimSuffix(rrs.Name, "."),
+					Content: rr.Value,
+					TTL:     rrs.TTL,
+				})
+			}
+		}
+		if !resp.IsTruncated || resp.NextRecordName == "" {
+			break
+		}
+		nextName, nextType = resp.NextRecordName, resp.NextRecordType
 	}
 	return records, nil
 }
