@@ -1492,3 +1492,61 @@ func TestToIntV2(t *testing.T) {
 		t.Errorf("got %d, want 0", v)
 	}
 }
+
+// TestAuthMiddlewareCSRFRefererFallback verifies that a POST request with a
+// valid Referer header (same origin) passes the CSRF check when the
+// X-Requested-With header is absent.
+func TestAuthMiddlewareCSRFRefererFallback(t *testing.T) {
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{
+				Listen: "127.0.0.1:0",
+				APIKey: "csrf-test-key-123",
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "example.com", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
+		},
+	}
+	// Use a passthrough handler so we only test the middleware, not the route handler.
+	passthrough := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	s := testServerFromConfig(t, cfg)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/test", nil)
+	req.Header.Set("Authorization", "Bearer "+"csrf-test-key-123")
+	req.Header.Set("Referer", "http://127.0.0.1:9443/_uwas/dashboard/settings")
+	s.authMiddleware(passthrough).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("CSRF referer fallback: status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthMiddlewareCSRFBlockedOrigin verifies that a POST request from a
+// disallowed origin receives 403 Forbidden.
+func TestAuthMiddlewareCSRFBlockedOrigin(t *testing.T) {
+	passthrough := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			Admin: config.AdminConfig{
+				Listen: "127.0.0.1:0",
+				APIKey: "csrf-block-key-456",
+			},
+		},
+		Domains: []config.Domain{
+			{Host: "example.com", Type: "static", SSL: config.SSLConfig{Mode: "auto"}},
+		},
+	}
+	s := testServerFromConfig(t, cfg)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/test", nil)
+	req.Header.Set("Authorization", "Bearer "+"csrf-block-key-456")
+	req.Header.Set("Origin", "https://evil.com")
+	s.authMiddleware(passthrough).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("blocked origin: status = %d, want 403", rec.Code)
+	}
+}
