@@ -2,7 +2,9 @@ package admin
 
 import (
 	crand "crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -42,6 +44,13 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 
 // ── 2FA Recovery Codes ─────────────────────────────────────────────
 
+// hashRecoveryCode returns the hex SHA-256 of a recovery code for
+// at-rest storage in the config file.
+func hashRecoveryCode(code string) string {
+	sum := sha256.Sum256([]byte(code))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	// Admin-only: recovery codes back the global admin's 2FA. A non-admin able
 	// to regenerate them could both read fresh codes and invalidate the admin's.
@@ -49,17 +58,20 @@ func (s *Server) handleGenRecoveryCodes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	codes := make([]string, 8)
+	hashed := make([]string, 8)
 	for i := range codes {
-		b := make([]byte, 4)
+		b := make([]byte, 8)
 		if _, err := crand.Read(b); err != nil {
 			jsonError(w, "entropy failure", http.StatusInternalServerError)
 			return
 		}
 		codes[i] = fmt.Sprintf("%x", b)
+		hashed[i] = hashRecoveryCode(codes[i])
 	}
-	// Store hashed codes in config
+	// Only SHA-256 hashes are persisted; the plaintext codes are shown
+	// once in the response and cannot be recovered from the config.
 	s.configMu.Lock()
-	s.config.Global.Admin.RecoveryCodes = codes
+	s.config.Global.Admin.RecoveryCodes = hashed
 	s.configMu.Unlock()
 	s.persistConfig()
 	s.recordAuditR(r, "2fa.recovery_codes.generated", "", true)
@@ -81,10 +93,14 @@ func (s *Server) handleUseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	sum := hashRecoveryCode(req.Code)
 	s.configMu.Lock()
 	found := false
 	for i, c := range s.config.Global.Admin.RecoveryCodes {
-		if subtle.ConstantTimeCompare([]byte(c), []byte(req.Code)) == 1 {
+		// Match the hashed form, or a legacy plaintext code persisted
+		// before hashing-at-rest was introduced.
+		if subtle.ConstantTimeCompare([]byte(c), []byte(sum)) == 1 ||
+			subtle.ConstantTimeCompare([]byte(c), []byte(req.Code)) == 1 {
 			// Remove used code
 			s.config.Global.Admin.RecoveryCodes = append(
 				s.config.Global.Admin.RecoveryCodes[:i],
