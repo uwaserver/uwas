@@ -74,7 +74,7 @@ export default function Packages() {
         try {
           const all = await fetchPackages();
           const updated = (all ?? []).find(p => p.id === pkg.id);
-          if (updated?.installed) { clearInterval(pollRef.current); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
+          if (updated?.installed) { clearInterval(pollRef.current); clearTimeout(timeoutRef.current); setActing(''); setSuccess(`${pkg.name} installed!`); load(); }
         } catch { clearInterval(pollRef.current); setActing(''); }
       }, 3000);
       // After 120s give up — but tell the user instead of going silent.
@@ -98,7 +98,7 @@ export default function Packages() {
         try {
           const all = await fetchPackages();
           const updated = (all ?? []).find(p => p.id === pkg.id);
-          if (!updated?.installed) { clearInterval(pollRef.current); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
+          if (!updated?.installed) { clearInterval(pollRef.current); clearTimeout(timeoutRef.current); setActing(''); setSuccess(`${pkg.name} removed.`); load(); }
         } catch { clearInterval(pollRef.current); setActing(''); }
       }, 3000);
       timeoutRef.current = setTimeout(() => {
