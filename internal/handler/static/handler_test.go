@@ -66,6 +66,77 @@ func TestDotfileBlocked(t *testing.T) {
 	}
 }
 
+func TestDotfileBlockedWithDocroot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".env", "SECRET=123")
+
+	ctx := makeCtx(t, "GET", "/.env")
+	ctx.DocumentRoot = dir
+	ctx.ResolvedPath = filepath.Join(dir, ".env")
+
+	h := New()
+	h.Serve(ctx)
+
+	if ctx.Response.StatusCode() != 403 {
+		t.Errorf("status = %d, want 403 for dotfile within site", ctx.Response.StatusCode())
+	}
+}
+
+func TestDotComponentDocrootNotBlocked(t *testing.T) {
+	// A docroot that itself contains a dot component (e.g. /home/x/.www)
+	// must not 403 every file under it — only dotfiles relative to the
+	// document root are hidden.
+	base := t.TempDir()
+	dir := filepath.Join(base, ".www")
+	writeFile(t, dir, "index.html", "<h1>Hello</h1>")
+
+	ctx := makeCtx(t, "GET", "/index.html")
+	ctx.DocumentRoot = dir
+	ctx.ResolvedPath = filepath.Join(dir, "index.html")
+
+	h := New()
+	h.Serve(ctx)
+
+	if ctx.Response.StatusCode() != 200 {
+		t.Errorf("status = %d, want 200 for file under dot-component docroot", ctx.Response.StatusCode())
+	}
+}
+
+func TestWellKnownAllowed(t *testing.T) {
+	// /.well-known must stay reachable (ACME HTTP-01, security.txt).
+	dir := t.TempDir()
+	writeFile(t, dir, filepath.Join(".well-known", "acme-challenge", "token"), "challenge-data")
+
+	ctx := makeCtx(t, "GET", "/.well-known/acme-challenge/token")
+	ctx.DocumentRoot = dir
+	ctx.ResolvedPath = filepath.Join(dir, ".well-known", "acme-challenge", "token")
+
+	h := New()
+	h.Serve(ctx)
+
+	if ctx.Response.StatusCode() != 200 {
+		t.Errorf("status = %d, want 200 for .well-known", ctx.Response.StatusCode())
+	}
+}
+
+func TestHiddenFileInsideWellKnownBlocked(t *testing.T) {
+	// The .well-known exemption applies to that directory only; hidden
+	// files beneath it are still blocked.
+	dir := t.TempDir()
+	writeFile(t, dir, filepath.Join(".well-known", ".secret"), "hidden")
+
+	ctx := makeCtx(t, "GET", "/.well-known/.secret")
+	ctx.DocumentRoot = dir
+	ctx.ResolvedPath = filepath.Join(dir, ".well-known", ".secret")
+
+	h := New()
+	h.Serve(ctx)
+
+	if ctx.Response.StatusCode() != 403 {
+		t.Errorf("status = %d, want 403 for hidden file inside .well-known", ctx.Response.StatusCode())
+	}
+}
+
 func TestPreCompressedBrotli(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "app.js", "console.log('hello')")

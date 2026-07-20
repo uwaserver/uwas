@@ -106,7 +106,7 @@ func (h *Handler) ServeWith(ctx *router.RequestContext, domain *config.Domain, f
 		)
 	}
 
-	// Capture stdout length BEFORE ParseHTTP consumes the buffer
+	// Total stdout length (ParseHTTP reads from a snapshot, not the buffer)
 	stdoutLen := len(resp.Stdout())
 
 	// Parse FastCGI response into HTTP status, headers, body

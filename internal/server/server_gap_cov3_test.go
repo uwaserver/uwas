@@ -273,7 +273,7 @@ func TestApplyHtaccessCacheEntryExists(t *testing.T) {
 
 	// Verify cache entry exists
 	s.htaccessCacheMu.RLock()
-	entry, ok := s.htaccessCacheV2[dir]
+	entry, ok := s.htaccessCache[dir]
 	s.htaccessCacheMu.RUnlock()
 	if !ok {
 		t.Fatal("htaccess cache entry should exist")

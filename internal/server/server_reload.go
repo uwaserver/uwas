@@ -27,10 +27,9 @@ func (s *Server) reload() error {
 	// Update TLS domains
 	s.tlsMgr.UpdateDomains(newCfg.Domains)
 
-	// Invalidate htaccess cache (both v1 and v2)
+	// Invalidate htaccess cache
 	s.htaccessCacheMu.Lock()
-	s.htaccessCache = make(map[string][]*rewrite.Rule)
-	s.htaccessCacheV2 = make(map[string]*htaccessCacheEntry)
+	s.htaccessCache = make(map[string]*htaccessCacheEntry)
 	s.htaccessCacheMu.Unlock()
 
 	// Rebuild rewrite cache for new domains

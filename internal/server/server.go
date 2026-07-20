@@ -108,10 +108,12 @@ type Server struct {
 	cloudflareIPs *cfintegration.IPSet
 
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
-	// Invalidated on config reload.
+	// Invalidated on config reload. Lazy-initialized in getHtaccessRuleSet.
+	// The original V1 cache ([]*rewrite.Rule) was replaced by *htaccessCacheEntry
+	// which also carries headers, expires, ErrorDocument, and a pre-built
+	// rewrite.Engine. The V1 field was removed once the migration was complete.
 	htaccessCacheMu sync.RWMutex
-	htaccessCache   map[string][]*rewrite.Rule
-	htaccessCacheV2 map[string]*htaccessCacheEntry
+	htaccessCache   map[string]*htaccessCacheEntry
 
 	// rewriteCache caches pre-compiled rewrite rules keyed by domain host.
 	// Invalidated on config reload.
@@ -246,7 +248,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		unknownHosts:    router.NewUnknownHostTracker(),
 		securityStats:   middleware.NewSecurityStats(),
 		cloudflareIPs:   cfintegration.NewIPSet(),
-		htaccessCache:   make(map[string][]*rewrite.Rule),
+		htaccessCache:   make(map[string]*htaccessCacheEntry),
 		rewriteCache:    make(map[string]*rewrite.Engine),
 		domainLogs:      newDomainLogManager(),
 	}

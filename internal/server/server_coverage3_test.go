@@ -62,7 +62,6 @@ func newMinimalServer(cfg *config.Config) *Server {
 		proxyCanaries:      make(map[string]*proxyhandler.CanaryRouter),
 		unknownHosts:       router.NewUnknownHostTracker(),
 		securityStats:      middleware.NewSecurityStats(),
-		htaccessCache:      make(map[string][]*rewrite.Rule),
 		rewriteCache:       make(map[string]*rewrite.Engine),
 		domainLogs:         newDomainLogManager(),
 		domainChains:       make(map[string]middleware.Middleware),

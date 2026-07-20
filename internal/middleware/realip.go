@@ -37,17 +37,19 @@ func RealIP(trustedProxies []string) Middleware {
 			}
 
 			// Priority: CF-Connecting-IP > X-Real-IP > X-Forwarded-For.
-			// Validate the header is a real IP before trusting it: a trusted
-			// proxy forwarding an attacker-controlled, non-IP (or otherwise
-			// bogus) value must not poison RemoteAddr — that feeds ACLs, access
-			// logs, and BotGuard's loopback check downstream.
-			if ip := r.Header.Get("CF-Connecting-IP"); ip != "" && net.ParseIP(ip) != nil {
+			// Validate the header is a real, routable client IP before
+			// trusting it: a trusted proxy forwarding an attacker-controlled,
+			// non-IP (or otherwise bogus) value must not poison RemoteAddr —
+			// that feeds ACLs, access logs, and BotGuard's loopback check
+			// downstream. Loopback/unspecified values are rejected so a
+			// client-supplied "127.0.0.1" can never buy loopback trust.
+			if ip := r.Header.Get("CF-Connecting-IP"); acceptableForwardedIP(ip) {
 				r.RemoteAddr = net.JoinHostPort(ip, "0")
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			if ip := r.Header.Get("X-Real-IP"); ip != "" && net.ParseIP(ip) != nil {
+			if ip := r.Header.Get("X-Real-IP"); acceptableForwardedIP(ip) {
 				r.RemoteAddr = net.JoinHostPort(ip, "0")
 				next.ServeHTTP(w, r)
 				return
@@ -55,7 +57,7 @@ func RealIP(trustedProxies []string) Middleware {
 
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 				ip := extractRealIP(xff, trusted)
-				if ip != "" {
+				if acceptableForwardedIP(ip) {
 					r.RemoteAddr = net.JoinHostPort(ip, "0")
 				}
 			}
@@ -73,6 +75,15 @@ func DirectIP(r *http.Request) string {
 		return ip
 	}
 	return ""
+}
+
+// acceptableForwardedIP reports whether a proxy-forwarded value may be
+// used as the client address: it must parse as an IP and must not be
+// loopback or unspecified (those would grant localhost-only trust to a
+// remote client if the fronting proxy forwards headers verbatim).
+func acceptableForwardedIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && !parsed.IsLoopback() && !parsed.IsUnspecified()
 }
 
 // extractRealIP returns the rightmost untrusted IP from X-Forwarded-For.

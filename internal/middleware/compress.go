@@ -94,6 +94,14 @@ func Compress(minSize int) Middleware {
 				return
 			}
 
+			// Range requests produce 206 responses whose Content-Range
+			// describes uncompressed bytes; compressing the partial body
+			// would corrupt the download. Never wrap them.
+			if r.Header.Get("Range") != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Protocol upgrades (WebSocket) must reach the underlying Hijacker
 			// directly. compressResponseWriter is not an http.Hijacker, so
 			// wrapping an upgrade request would make the hijack fail with
@@ -186,6 +194,10 @@ func (w *compressResponseWriter) Write(b []byte) (int, error) {
 		// responses (proxy, ServeContent) whose small writes cross minSize here.
 		var err error
 		switch {
+		case w.statusCode == http.StatusPartialContent || w.Header().Get("Content-Range") != "":
+			// Partial content: Content-Range describes the uncompressed
+			// representation — compressing the body would corrupt it.
+			_, err = w.flushUncompressed()
 		case w.Header().Get("Content-Encoding") != "":
 			// Already compressed by upstream (PHP ob_gzip_handler, etc.)
 			_, err = w.flushUncompressed()

@@ -1101,7 +1101,7 @@ func TestParseHtaccessRewriteDisabled(t *testing.T) {
 
 	// Verify rules were parsed and cached
 	s.htaccessCacheMu.RLock()
-	entry, ok := s.htaccessCacheV2[dir]
+	entry, ok := s.htaccessCache[dir]
 	s.htaccessCacheMu.RUnlock()
 
 	if !ok {

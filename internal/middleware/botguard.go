@@ -49,6 +49,8 @@ type BlockedRequest struct {
 	UA     string    `json:"ua,omitempty"`
 }
 
+// maxRecentBlocked is the capacity of the SecurityStats ring buffer
+// for recent blocked-request records. Older entries wrap around.
 const maxRecentBlocked = 200
 
 // NewSecurityStats creates a new stats tracker.
