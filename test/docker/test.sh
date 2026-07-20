@@ -12,11 +12,11 @@ ADMIN_URL="http://${ADMIN_HOST}:${ADMIN_PORT}"
 HTTP_URL="http://${UWAS_HOST}:${UWAS_PORT}"
 
 AUTH_HEADER="Authorization: Bearer ${API_KEY}"
+XHR_HEADER="X-Requested-With: XMLHttpRequest"
 
 # ─── Color output ────────────────────────────────────────────────
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
@@ -93,6 +93,24 @@ assert_json_array() {
     fi
 }
 
+# assert_json_paginated URL DESCRIPTION [EXTRA_CURL_ARGS...]
+# Checks the standard {items,total,limit,offset} paginated response envelope.
+assert_json_paginated() {
+    local url="$1" desc="$2"
+    shift 2
+    local body
+    body=$(curl -s "$@" "$url" 2>/dev/null) || true
+    if echo "$body" | jq -e \
+        '(.items | type) == "array" and (.total | type) == "number" and (.limit | type) == "number" and (.offset | type) == "number"' \
+        >/dev/null 2>&1; then
+        local length
+        length=$(echo "$body" | jq '.items | length' 2>/dev/null) || true
+        pass "$desc (paginated object, items=$length)"
+    else
+        fail "$desc" "expected paginated object, got: $(echo "$body" | head -c 200)"
+    fi
+}
+
 # assert_json_object URL DESCRIPTION [EXTRA_CURL_ARGS...]
 # Checks that the response is a JSON object
 assert_json_object() {
@@ -132,12 +150,12 @@ assert_header() {
 }
 
 # ─── Wait for UWAS ──────────────────────────────────────────────
-printf "${BOLD}Waiting for UWAS to be ready...${NC}\n"
+printf '%bWaiting for UWAS to be ready...%b\n' "$BOLD" "$NC"
 MAX_WAIT=60
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
     if curl -s -o /dev/null -w "" "${ADMIN_URL}/api/v1/health" 2>/dev/null; then
-        printf "${GREEN}UWAS is ready (waited ${WAITED}s)${NC}\n"
+        printf '%bUWAS is ready (waited %ss)%b\n' "$GREEN" "$WAITED" "$NC"
         break
     fi
     sleep 1
@@ -145,7 +163,7 @@ while [ $WAITED -lt $MAX_WAIT ]; do
 done
 
 if [ $WAITED -ge $MAX_WAIT ]; then
-    printf "${RED}UWAS did not become ready within ${MAX_WAIT}s${NC}\n"
+    printf '%bUWAS did not become ready within %ss%b\n' "$RED" "$MAX_WAIT" "$NC"
     exit 1
 fi
 
@@ -201,7 +219,7 @@ assert_status "${ADMIN_URL}/api/v1/logs" "200" "GET /api/v1/logs" -H "$AUTH_HEAD
 assert_json_array "${ADMIN_URL}/api/v1/logs" "Logs returns JSON array" -H "$AUTH_HEADER"
 
 assert_status "${ADMIN_URL}/api/v1/audit" "200" "GET /api/v1/audit" -H "$AUTH_HEADER"
-assert_json_array "${ADMIN_URL}/api/v1/audit" "Audit returns JSON array" -H "$AUTH_HEADER"
+assert_json_paginated "${ADMIN_URL}/api/v1/audit" "Audit returns paginated entries" -H "$AUTH_HEADER"
 
 section "Admin API — Certs & Monitor"
 
@@ -209,14 +227,14 @@ assert_status "${ADMIN_URL}/api/v1/certs" "200" "GET /api/v1/certs" -H "$AUTH_HE
 assert_json_array "${ADMIN_URL}/api/v1/certs" "Certs returns JSON array" -H "$AUTH_HEADER"
 
 assert_status "${ADMIN_URL}/api/v1/monitor" "200" "GET /api/v1/monitor" -H "$AUTH_HEADER"
-assert_json_object "${ADMIN_URL}/api/v1/monitor" "Monitor returns JSON object" -H "$AUTH_HEADER"
+assert_json_array "${ADMIN_URL}/api/v1/monitor" "Monitor returns JSON array" -H "$AUTH_HEADER"
 
 section "Admin API — Domain CRUD"
 
 # Create a new domain
 CREATE_BODY='{"host":"new.test","type":"static","root":"/var/www/static"}'
 CREATE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    -H "$AUTH_HEADER" -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" -H "$XHR_HEADER" -H "Content-Type: application/json" \
     -d "$CREATE_BODY" "${ADMIN_URL}/api/v1/domains" 2>/dev/null) || true
 if [ "$CREATE_STATUS" = "200" ] || [ "$CREATE_STATUS" = "201" ]; then
     pass "POST /api/v1/domains — create domain (HTTP $CREATE_STATUS)"
@@ -226,7 +244,8 @@ fi
 
 # Delete the domain we just created
 DELETE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-    -H "$AUTH_HEADER" "${ADMIN_URL}/api/v1/domains/new.test?confirm=true" 2>/dev/null) || true
+    -H "$AUTH_HEADER" -H "$XHR_HEADER" \
+    "${ADMIN_URL}/api/v1/domains/new.test?confirm=true" 2>/dev/null) || true
 if [ "$DELETE_STATUS" = "200" ] || [ "$DELETE_STATUS" = "204" ]; then
     pass "DELETE /api/v1/domains/new.test (HTTP $DELETE_STATUS)"
 else
@@ -236,11 +255,12 @@ fi
 section "Admin API — Reload & Cache"
 
 # Reload config
-assert_status "${ADMIN_URL}/api/v1/reload" "200" "POST /api/v1/reload" -X POST -H "$AUTH_HEADER"
+assert_status "${ADMIN_URL}/api/v1/reload" "200" "POST /api/v1/reload" \
+    -X POST -H "$AUTH_HEADER" -H "$XHR_HEADER" -H "Content-Type: application/json" -d '{}'
 
 # Cache purge
 PURGE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    -H "$AUTH_HEADER" -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" -H "$XHR_HEADER" -H "Content-Type: application/json" \
     -d '{"pattern":"*"}' "${ADMIN_URL}/api/v1/cache/purge" 2>/dev/null) || true
 if [ "$PURGE_STATUS" = "200" ] || [ "$PURGE_STATUS" = "204" ]; then
     pass "POST /api/v1/cache/purge (HTTP $PURGE_STATUS)"
@@ -255,7 +275,7 @@ assert_json_object "${ADMIN_URL}/api/v1/cache/stats" "Cache stats returns JSON o
 section "Admin API — Backups"
 
 assert_status "${ADMIN_URL}/api/v1/backups" "200" "GET /api/v1/backups" -H "$AUTH_HEADER"
-assert_json_array "${ADMIN_URL}/api/v1/backups" "Backups returns JSON array" -H "$AUTH_HEADER"
+assert_json_paginated "${ADMIN_URL}/api/v1/backups" "Backups returns paginated entries" -H "$AUTH_HEADER"
 
 assert_status "${ADMIN_URL}/api/v1/backups/schedule" "200" "GET /api/v1/backups/schedule" -H "$AUTH_HEADER"
 assert_json_object "${ADMIN_URL}/api/v1/backups/schedule" "Backup schedule returns JSON object" -H "$AUTH_HEADER"
@@ -377,13 +397,13 @@ assert_status "${ADMIN_URL}/api/v1/health" "200" "Health endpoint is public (no 
 # SUMMARY
 # ═════════════════════════════════════════════════════════════════
 
-printf "\n${BOLD}═══════════════════════════════════════════════${NC}\n"
+printf '\n%b═══════════════════════════════════════════════%b\n' "$BOLD" "$NC"
 if [ $FAIL -eq 0 ]; then
-    printf "${GREEN}${BOLD}  ALL TESTS PASSED: ${PASS}/${TOTAL}${NC}\n"
+    printf '%b%b  ALL TESTS PASSED: %s/%s%b\n' "$GREEN" "$BOLD" "$PASS" "$TOTAL" "$NC"
 else
-    printf "${RED}${BOLD}  TESTS FAILED: ${PASS}/${TOTAL} passed, ${FAIL} failed${NC}\n"
+    printf '%b%b  TESTS FAILED: %s/%s passed, %s failed%b\n' "$RED" "$BOLD" "$PASS" "$TOTAL" "$FAIL" "$NC"
 fi
-printf "${BOLD}═══════════════════════════════════════════════${NC}\n\n"
+printf '%b═══════════════════════════════════════════════%b\n\n' "$BOLD" "$NC"
 
 if [ $FAIL -gt 0 ]; then
     exit 1
