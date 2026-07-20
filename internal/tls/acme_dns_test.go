@@ -1,7 +1,10 @@
 package uwastls
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/uwaserver/uwas/internal/dnsmanager"
@@ -105,8 +108,27 @@ func TestPresentDNSChallenge(t *testing.T) {
 	if rec.Name != "_acme-challenge" {
 		t.Errorf("record name = %q, want _acme-challenge", rec.Name)
 	}
-	if rec.Content != "keyauth123" {
-		t.Errorf("record content = %q, want keyauth123", rec.Content)
+	// RFC 8555 §8.4: TXT content is base64url(SHA-256(keyAuthorization)),
+	// never the raw key authorization.
+	want := dnsChallengeTXT("keyauth123")
+	if rec.Content != want {
+		t.Errorf("record content = %q, want %q", rec.Content, want)
+	}
+	if rec.Content == "keyauth123" {
+		t.Error("record content must not be the raw key authorization")
+	}
+}
+
+func TestDNSChallengeTXTContent(t *testing.T) {
+	// base64url(sha256(keyAuth)) per RFC 8555 §8.4, computed independently.
+	keyAuth := "token.thumbprint"
+	h := sha256.Sum256([]byte(keyAuth))
+	want := base64.RawURLEncoding.EncodeToString(h[:])
+	if got := dnsChallengeTXT(keyAuth); got != want {
+		t.Errorf("dnsChallengeTXT = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(dnsChallengeTXT(keyAuth), "+/=") {
+		t.Error("dnsChallengeTXT must be unpadded base64url")
 	}
 }
 
@@ -147,11 +169,11 @@ func TestCleanupDNSChallenge(t *testing.T) {
 		},
 		records: mockZoneRecords{
 			"zone-1": {
-				{ID: "rec-1", Type: "TXT", Name: "_acme-challenge", Content: "keyauth123"},
+				{ID: "rec-1", Type: "TXT", Name: "_acme-challenge", Content: dnsChallengeTXT("keyauth123")},
 			},
 		},
 	}
-	p := &acmeDNSProvider{dp: mp, log: log, zoneID: "zone-1", zoneName: "example.com"}
+	p := &acmeDNSProvider{dp: mp, log: log}
 
 	err := p.CleanupDNSChallenge("_acme-challenge.example.com", "token", "keyauth123")
 	if err != nil {
@@ -185,7 +207,7 @@ func TestCleanupDNSChallengeListError(t *testing.T) {
 		},
 		listErr: errors.New("list failed"),
 	}
-	p := &acmeDNSProvider{dp: mp, log: log, zoneID: "zone-1", zoneName: "example.com"}
+	p := &acmeDNSProvider{dp: mp, log: log}
 
 	err := p.CleanupDNSChallenge("_acme-challenge.example.com", "token", "keyauth")
 	if err == nil {
@@ -196,19 +218,19 @@ func TestCleanupDNSChallengeListError(t *testing.T) {
 func TestFindZoneCached(t *testing.T) {
 	log := logger.New("error", "text")
 	mp := &mockDNSProvider{
-		zones: []dnsmanager.Zone{
-			{ID: "zone-1", Name: "example.com"},
-		},
+		findZoneErr: errors.New("must not be called for cached domain"),
 	}
-	p := &acmeDNSProvider{dp: mp, log: log, zoneID: "zone-1", zoneName: "example.com"}
+	p := &acmeDNSProvider{dp: mp, log: log, zones: map[string]*dnsmanager.Zone{
+		"_acme-challenge.example.com": {ID: "zone-1", Name: "example.com"},
+	}}
 
-	// Should use cached zone
+	// Should use cached zone (provider lookup would error)
 	zone, err := p.findZone("_acme-challenge.example.com")
 	if err != nil {
 		t.Fatalf("findZone failed: %v", err)
 	}
-	if zone != "zone-1" {
-		t.Errorf("zone = %q, want zone-1", zone)
+	if zone.ID != "zone-1" {
+		t.Errorf("zone ID = %q, want zone-1", zone.ID)
 	}
 }
 
@@ -225,14 +247,58 @@ func TestFindZoneNotCached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findZone failed: %v", err)
 	}
-	if zone != "zone-1" {
-		t.Errorf("zone = %q, want zone-1", zone)
+	if zone.ID != "zone-1" {
+		t.Errorf("zone ID = %q, want zone-1", zone.ID)
 	}
-	if p.zoneID != "zone-1" {
-		t.Errorf("zoneID not cached: p.zoneID = %q", p.zoneID)
+	cached := p.zones["_acme-challenge.example.com"]
+	if cached == nil || cached.ID != "zone-1" || cached.Name != "example.com" {
+		t.Errorf("zone not cached: %+v", cached)
 	}
-	if p.zoneName != "example.com" {
-		t.Errorf("zoneName not cached: p.zoneName = %q", p.zoneName)
+}
+
+// TestFindZoneMultipleZones ensures the per-domain zone cache does not leak
+// the first domain's zone into a later domain from a different zone.
+func TestFindZoneMultipleZones(t *testing.T) {
+	log := logger.New("error", "text")
+	mp := &mockDNSProvider{
+		zones: []dnsmanager.Zone{
+			{ID: "zone-1", Name: "example.com"},
+			{ID: "zone-2", Name: "example.org"},
+		},
+		records: make(mockZoneRecords),
+	}
+	p := &acmeDNSProvider{dp: mp, log: log}
+
+	zone1, err := p.findZone("_acme-challenge.example.com")
+	if err != nil {
+		t.Fatalf("findZone example.com: %v", err)
+	}
+	zone2, err := p.findZone("_acme-challenge.example.org")
+	if err != nil {
+		t.Fatalf("findZone example.org: %v", err)
+	}
+	if zone1.ID != "zone-1" {
+		t.Errorf("zone1 ID = %q, want zone-1", zone1.ID)
+	}
+	if zone2.ID != "zone-2" {
+		t.Errorf("zone2 ID = %q, want zone-2 (stale first-zone cache)", zone2.ID)
+	}
+
+	// End-to-end: records land in their own zones with correct names.
+	if err := p.PresentDNSChallenge("_acme-challenge.example.com", "t1", "ka1"); err != nil {
+		t.Fatalf("PresentDNSChallenge example.com: %v", err)
+	}
+	if err := p.PresentDNSChallenge("_acme-challenge.example.org", "t2", "ka2"); err != nil {
+		t.Fatalf("PresentDNSChallenge example.org: %v", err)
+	}
+	if n := len(mp.records["zone-1"]); n != 1 {
+		t.Errorf("zone-1 records = %d, want 1", n)
+	}
+	if n := len(mp.records["zone-2"]); n != 1 {
+		t.Errorf("zone-2 records = %d, want 1", n)
+	}
+	if len(mp.records["zone-2"]) == 1 && mp.records["zone-2"][0].Name != "_acme-challenge" {
+		t.Errorf("zone-2 record name = %q, want _acme-challenge", mp.records["zone-2"][0].Name)
 	}
 }
 

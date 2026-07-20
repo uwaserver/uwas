@@ -659,7 +659,7 @@ func TestCleanupDNSChallengeNoMatch(t *testing.T) {
 			},
 		},
 	}
-	p := &acmeDNSProvider{dp: mp, log: log, zoneID: "zone-1", zoneName: "example.com"}
+	p := &acmeDNSProvider{dp: mp, log: log}
 	err := p.CleanupDNSChallenge("_acme-challenge.example.com", "token", "keyauth-no-match")
 	if err != nil {
 		t.Fatalf("CleanupDNSChallenge: %v", err)

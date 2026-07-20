@@ -484,6 +484,45 @@ func TestEnsureDirectoryCache(t *testing.T) {
 	}
 }
 
+// TestEnsureDirectoryDecodeErrorNotPoisoned verifies that a directory
+// decode failure does not leave a non-nil empty directory behind: the
+// next call must re-fetch and succeed.
+func TestEnsureDirectoryDecodeErrorNotPoisoned(t *testing.T) {
+	callCount := 0
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.Write([]byte("{invalid json"))
+			return
+		}
+		json.NewEncoder(w).Encode(Directory{
+			NewNonce:   "https://acme.example.com/new-nonce",
+			NewAccount: "https://acme.example.com/new-acct",
+			NewOrder:   "https://acme.example.com/new-order",
+		})
+	}))
+	defer mockServer.Close()
+
+	log := logger.New("error", "text")
+	c := NewClient(mockServer.URL, t.TempDir(), log)
+
+	if err := c.ensureDirectory(context.Background()); err == nil {
+		t.Fatal("expected decode error on first call")
+	}
+	if c.directory != nil {
+		t.Fatal("directory must stay nil after decode failure")
+	}
+	if err := c.ensureDirectory(context.Background()); err != nil {
+		t.Fatalf("second call should re-fetch and succeed: %v", err)
+	}
+	if c.directory == nil || c.directory.NewOrder == "" {
+		t.Error("directory not populated after successful re-fetch")
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 server calls, got %d", callCount)
+	}
+}
+
 // --- EnsureAccount caches result ---
 
 func TestEnsureAccountCache(t *testing.T) {

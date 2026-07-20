@@ -54,6 +54,11 @@ type Client struct {
 	logger       *logger.Logger
 	dnsProvider  DNSProvider
 
+	// initMu guards directory and account initialization (directory,
+	// accountKey, accountURL) against concurrent ObtainCertificate calls
+	// for different hosts (the manager's singleflight is per-host).
+	initMu sync.Mutex
+
 	// HTTP-01 challenge tokens: token → keyAuthorization
 	httpTokens sync.Map
 }
@@ -214,6 +219,9 @@ func (c *Client) HandleHTTPChallenge(w http.ResponseWriter, r *http.Request) boo
 }
 
 func (c *Client) ensureDirectory(ctx context.Context) error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+
 	if c.directory != nil {
 		return nil
 	}
@@ -233,11 +241,20 @@ func (c *Client) ensureDirectory(ctx context.Context) error {
 		return fmt.Errorf("directory returned %d", resp.StatusCode)
 	}
 
-	c.directory = &Directory{}
-	return json.NewDecoder(resp.Body).Decode(c.directory)
+	// Decode into a local so a failed decode doesn't leave a poisoned
+	// non-nil empty directory that would never be re-fetched.
+	dir := &Directory{}
+	if err := json.NewDecoder(resp.Body).Decode(dir); err != nil {
+		return err
+	}
+	c.directory = dir
+	return nil
 }
 
 func (c *Client) ensureAccount(ctx context.Context) error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+
 	if c.accountURL != "" {
 		return nil
 	}
