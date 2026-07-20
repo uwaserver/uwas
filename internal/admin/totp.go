@@ -35,8 +35,9 @@ func GenerateTOTPSecret() (string, error) {
 }
 
 // ValidateTOTP checks if the given code matches the TOTP for the secret,
-// allowing ±1 time step for clock skew. Returns the matched step (Unix
-// seconds / 30) on success, or -1 on failure.
+// allowing ±totpWindow time steps (default 1, see totpWindow) for clock
+// skew. Returns the matched step (Unix seconds / 30) on success, or -1
+// on failure.
 func ValidateTOTP(secret, code string) (bool, int64) {
 	secret = strings.TrimSpace(strings.ToUpper(secret))
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
