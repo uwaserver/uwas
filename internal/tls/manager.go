@@ -79,10 +79,6 @@ type Manager struct {
 }
 
 const (
-	// onDemandMaxPerMinute limits ACME on-demand certificate issuance
-	// to at most this many requests per rolling 60-second window.
-	onDemandMaxPerMinute = 10
-
 	onDemandAskTimeout      = 5 * time.Second
 	onDemandObtainTimeout   = 2 * time.Minute
 	maxOnDemandAskBodyBytes = 8 << 10 // 8KB
