@@ -910,6 +910,7 @@ func TestInstallCmd_Success(t *testing.T) {
 	origExec := installOsExecutable
 	origRead := installOsReadFile
 	origWrite := installOsWriteFile
+	origRename := installOsRename
 	origStat := installOsStat
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
@@ -921,6 +922,7 @@ func TestInstallCmd_Success(t *testing.T) {
 	installOsExecutable = func() (string, error) { return "/tmp/uwas-test", nil }
 	installOsReadFile = func(name string) ([]byte, error) { return []byte("binary-data"), nil }
 	installOsWriteFile = func(name string, data []byte, perm os.FileMode) error { return nil }
+	installOsRename = func(oldpath, newpath string) error { return nil }
 	installOsStat = func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	installOsSymlink = func(old, new string) error { return nil }
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
@@ -940,6 +942,7 @@ func TestInstallCmd_Success(t *testing.T) {
 		installOsExecutable = origExec
 		installOsReadFile = origRead
 		installOsWriteFile = origWrite
+		installOsRename = origRename
 		installOsStat = origStat
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
@@ -985,6 +988,7 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 	origExec := installOsExecutable
 	origRead := installOsReadFile
 	origWrite := installOsWriteFile
+	origRename := installOsRename
 	origStat := installOsStat
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
@@ -1008,6 +1012,7 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 	installOsExecutable = func() (string, error) { return fakeBin, nil }
 	installOsReadFile = func(name string) ([]byte, error) { return []byte("binary-data"), nil }
 	installOsWriteFile = func(name string, data []byte, perm os.FileMode) error { return nil }
+	installOsRename = func(oldpath, newpath string) error { return nil }
 	installOsStat = func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	installOsSymlink = func(old, new string) error { return nil }
 	installExecCommand = func(name string, arg ...string) *exec.Cmd {
@@ -1023,6 +1028,7 @@ func TestInstallCmd_BinaryAlreadyAtTarget(t *testing.T) {
 		installOsExecutable = origExec
 		installOsReadFile = origRead
 		installOsWriteFile = origWrite
+		installOsRename = origRename
 		installOsStat = origStat
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd
@@ -4535,6 +4541,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 	origExec := installOsExecutable
 	origRead := installOsReadFile
 	origWrite := installOsWriteFile
+	origRename := installOsRename
 	origStat := installOsStat
 	origMkdirAll := installOsMkdirAll
 	origSymlink := installOsSymlink
@@ -4545,6 +4552,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 	installOsGetuid = func() int { return 0 }
 	installOsExecutable = func() (string, error) { return fakeBin, nil }
 	installOsReadFile = func(name string) ([]byte, error) { return []byte("binary"), nil }
+	installOsRename = func(oldpath, newpath string) error { return nil }
 	// Write order: (1) binary copy → /usr/local/bin/uwas, (2) baseline
 	// /etc/uwas/uwas.yaml, (3) /etc/uwas/.env, (4) systemd service file.
 	// Fail the service write specifically by matching the target path so the
@@ -4568,6 +4576,7 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 		installOsExecutable = origExec
 		installOsReadFile = origRead
 		installOsWriteFile = origWrite
+		installOsRename = origRename
 		installOsStat = origStat
 		installOsMkdirAll = origMkdirAll
 		installOsSymlink = origSymlink

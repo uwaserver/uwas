@@ -551,6 +551,7 @@ func installRootLinuxEnv(t *testing.T, execFn func(string, ...string) *exec.Cmd)
 	origExec := installOsExecutable
 	origRead := installOsReadFile
 	origWrite := installOsWriteFile
+	origRename := installOsRename
 	origStat := installOsStat
 	origSymlink := installOsSymlink
 	origExecCmd := installExecCommand
@@ -568,6 +569,7 @@ func installRootLinuxEnv(t *testing.T, execFn func(string, ...string) *exec.Cmd)
 		return []byte("binary-data"), nil
 	}
 	installOsWriteFile = func(name string, data []byte, perm os.FileMode) error { return nil }
+	installOsRename = func(oldpath, newpath string) error { return nil }
 	installOsStat = func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	installOsSymlink = func(old, new string) error { return nil }
 	installExecCommand = execFn
@@ -580,6 +582,7 @@ func installRootLinuxEnv(t *testing.T, execFn func(string, ...string) *exec.Cmd)
 		installOsExecutable = origExec
 		installOsReadFile = origRead
 		installOsWriteFile = origWrite
+		installOsRename = origRename
 		installOsStat = origStat
 		installOsSymlink = origSymlink
 		installExecCommand = origExecCmd

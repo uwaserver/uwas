@@ -23,6 +23,7 @@ var (
 	installOsExecutable = os.Executable
 	installOsWriteFile  = os.WriteFile
 	installOsReadFile   = os.ReadFile
+	installOsRename     = os.Rename
 	installOsRemove     = os.Remove
 	installOsSymlink    = os.Symlink
 	installOsStat       = os.Stat
@@ -111,8 +112,16 @@ func installUWAS(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read binary: %w", err)
 		}
-		if err := installOsWriteFile(binPath, data, 0755); err != nil {
-			return fmt.Errorf("write %s: %w", binPath, err)
+		// Write to a temp file and rename over the target: writing binPath
+		// directly fails with ETXTBSY while the old binary is still running
+		// as a service (the service is only stopped later, before restart).
+		tmpPath := binPath + ".tmp"
+		if err := installOsWriteFile(tmpPath, data, 0755); err != nil {
+			return fmt.Errorf("write %s: %w", tmpPath, err)
+		}
+		if err := installOsRename(tmpPath, binPath); err != nil {
+			installOsRemove(tmpPath)
+			return fmt.Errorf("install %s: %w", binPath, err)
 		}
 		fmt.Printf("  ✓ Binary installed: %s\n", binPath)
 	} else {
@@ -614,7 +623,8 @@ func checkCLI_PHPModules() cliCheck {
 
 func checkCLI_MySQL(autoFix bool) cliCheck {
 	out, _ := doctorExecCommand("systemctl", "is-active", "mariadb").Output()
-	if containsCI(string(out), "active") {
+	// Exact match: containsCI would also match "inactive".
+	if strings.TrimSpace(string(out)) == "active" {
 		return cliCheck{name: "MariaDB", status: "ok", message: "Running"}
 	}
 	if _, err := doctorExecLookPath("mariadb"); err == nil {

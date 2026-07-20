@@ -37,10 +37,20 @@ func (s *StatusCommand) Run(args []string) error {
 	var stats map[string]any
 	json.Unmarshal(statsData, &stats)
 
-	// Domains
-	domainsData, _ := apiRequest("GET", *apiURL+"/api/v1/domains", *apiKey, nil)
+	// Domains — the API returns a paginated envelope: {"items":[...],"total":...}.
 	var domains []map[string]any
-	json.Unmarshal(domainsData, &domains)
+	domainsData, err := apiRequest("GET", *apiURL+"/api/v1/domains", *apiKey, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: list domains: %v\n", err)
+	} else {
+		var envelope struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(domainsData, &envelope); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: parse domains response: %v\n", err)
+		}
+		domains = envelope.Items
+	}
 
 	fmt.Println("UWAS Server Status")
 	fmt.Println("═══════════════════════════════════════")

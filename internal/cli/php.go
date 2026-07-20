@@ -93,19 +93,23 @@ func (p *PHPCommand) list(args []string) error {
 		return fmt.Errorf("list PHP installations: %w", err)
 	}
 
-	var installs []struct {
-		Version    string   `json:"version"`
-		Binary     string   `json:"binary"`
-		SAPI       string   `json:"sapi"`
-		ConfigFile string   `json:"config_file"`
-		Extensions []string `json:"extensions"`
-		Running    bool     `json:"running"`
-		ListenAddr string   `json:"listen_addr"`
-		PID        int      `json:"pid"`
+	// The API returns a paginated envelope: {"items":[...],"total":...}.
+	var resp struct {
+		Items []struct {
+			Version    string   `json:"version"`
+			Binary     string   `json:"binary"`
+			SAPI       string   `json:"sapi"`
+			ConfigFile string   `json:"config_file"`
+			Extensions []string `json:"extensions"`
+			Running    bool     `json:"running"`
+			ListenAddr string   `json:"listen_addr"`
+			PID        int      `json:"pid"`
+		} `json:"items"`
 	}
-	if err := json.Unmarshal(body, &installs); err != nil {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parse response: %w", err)
 	}
+	installs := resp.Items
 
 	if len(installs) == 0 {
 		fmt.Println("No PHP installations detected.")

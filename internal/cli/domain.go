@@ -75,20 +75,23 @@ func (d *DomainCommand) list(args []string) error {
 		return fmt.Errorf("list domains: %w", err)
 	}
 
-	var domains []struct {
-		Host    string   `json:"host"`
-		Aliases []string `json:"aliases"`
-		Type    string   `json:"type"`
-		SSL     string   `json:"ssl"`
-		Root    string   `json:"root"`
+	// The API returns a paginated envelope: {"items":[...],"total":...}.
+	var resp struct {
+		Items []struct {
+			Host    string   `json:"host"`
+			Aliases []string `json:"aliases"`
+			Type    string   `json:"type"`
+			SSL     string   `json:"ssl"`
+			Root    string   `json:"root"`
+		} `json:"items"`
 	}
-	if err := json.Unmarshal(body, &domains); err != nil {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parse response: %w", err)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(w, "HOST\tTYPE\tSSL\tROOT\n")
-	for _, d := range domains {
+	for _, d := range resp.Items {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d.Host, d.Type, d.SSL, d.Root)
 	}
 	w.Flush()
