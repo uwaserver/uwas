@@ -395,11 +395,14 @@ func TestDomainListCommand(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer testkey" {
 			t.Errorf("auth = %q", r.Header.Get("Authorization"))
 		}
-		domains := []map[string]any{
-			{"host": "example.com", "type": "static", "ssl": "auto", "root": "/var/www"},
-			{"host": "api.test.com", "type": "proxy", "ssl": "off", "root": ""},
-		}
-		json.NewEncoder(w).Encode(domains)
+		// Paginated envelope, matching handleListDomains.
+		json.NewEncoder(w).Encode(map[string]any{
+			"items": []map[string]any{
+				{"host": "example.com", "type": "static", "ssl": "auto", "root": "/var/www"},
+				{"host": "api.test.com", "type": "proxy", "ssl": "off", "root": ""},
+			},
+			"total": 2, "limit": 50, "offset": 0,
+		})
 	}))
 	defer srv.Close()
 
@@ -1240,9 +1243,12 @@ func TestStatusCommandWithMockAPI(t *testing.T) {
 				"bytes_sent":     1048576,
 			})
 		case "/api/v1/domains":
-			json.NewEncoder(w).Encode([]map[string]any{
-				{"host": "example.com", "type": "static", "ssl": "auto"},
-				{"host": "api.test.com", "type": "proxy", "ssl": nil},
+			json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{"host": "example.com", "type": "static", "ssl": "auto"},
+					{"host": "api.test.com", "type": "proxy", "ssl": nil},
+				},
+				"total": 2, "limit": 50, "offset": 0,
 			})
 		}
 	}))
@@ -1297,8 +1303,11 @@ func TestStatusCommandNullSSL(t *testing.T) {
 		case "/api/v1/stats":
 			w.WriteHeader(500) // stats fails -- still should not crash
 		case "/api/v1/domains":
-			json.NewEncoder(w).Encode([]map[string]any{
-				{"host": "no-ssl.com", "type": "static"},
+			json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{"host": "no-ssl.com", "type": "static"},
+				},
+				"total": 1, "limit": 50, "offset": 0,
 			})
 		}
 	}))

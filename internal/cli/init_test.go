@@ -482,21 +482,25 @@ func TestPHPListCommand(t *testing.T) {
 		if r.URL.Path != "/api/v1/php" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode([]map[string]any{
-			{
-				"version":     "8.4",
-				"binary":      "/usr/bin/php8.4",
-				"sapi":        "cgi",
-				"running":     true,
-				"listen_addr": "127.0.0.1:9000",
-				"pid":         1234,
+		// Paginated envelope, matching handlePHPList.
+		json.NewEncoder(w).Encode(map[string]any{
+			"items": []map[string]any{
+				{
+					"version":     "8.4",
+					"binary":      "/usr/bin/php8.4",
+					"sapi":        "cgi",
+					"running":     true,
+					"listen_addr": "127.0.0.1:9000",
+					"pid":         1234,
+				},
+				{
+					"version": "8.3",
+					"binary":  "/usr/bin/php8.3",
+					"sapi":    "cgi",
+					"running": false,
+				},
 			},
-			{
-				"version": "8.3",
-				"binary":  "/usr/bin/php8.3",
-				"sapi":    "cgi",
-				"running": false,
-			},
+			"total": 2, "limit": 50, "offset": 0,
 		})
 	}))
 	defer srv.Close()
@@ -532,7 +536,7 @@ func TestPHPListCommand(t *testing.T) {
 
 func TestPHPListEmpty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "[]")
+		fmt.Fprint(w, `{"items":[],"total":0,"limit":50,"offset":0}`)
 	}))
 	defer srv.Close()
 
