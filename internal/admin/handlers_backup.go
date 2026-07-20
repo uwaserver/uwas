@@ -109,16 +109,25 @@ func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
 		req.Provider = "local"
 	}
 
-	// Find domain root and DB name from config
+	// Find domain root and DB name from config. Reject unknown domains: the
+	// raw request value would otherwise flow into filesystem paths (domain
+	// config lookup, backup filename) and yield a near-empty backup as 201.
 	var webRoot, dbName string
+	found := false
 	s.configMu.RLock()
 	for _, d := range s.config.Domains {
 		if d.Host == req.Domain {
 			webRoot = d.Root
+			found = true
 			break
 		}
 	}
 	s.configMu.RUnlock()
+	if !found {
+		s.recordAuditR(r, "backup.domain", req.Domain+": unknown domain", false)
+		jsonError(w, "unknown domain: "+req.Domain, http.StatusNotFound)
+		return
+	}
 
 	// Try to detect DB name from wp-config.php
 	wpConfig := filepath.Join(webRoot, "wp-config.php")
