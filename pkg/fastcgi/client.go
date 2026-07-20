@@ -171,13 +171,16 @@ func (r *Response) Stderr() []byte {
 // ParseHTTP parses the FastCGI response as HTTP (status, headers, body).
 // PHP-FPM returns: "Status: 200 OK\r\nContent-Type: text/html\r\n\r\n<body>"
 func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Reader) {
-	reader := bufio.NewReader(&r.stdout)
+	// Parse from a snapshot of the buffer rather than draining r.stdout:
+	// if header parsing fails, the buffered reader has already consumed up to
+	// 4KB, so returning the drained buffer would truncate the body.
+	reader := bufio.NewReader(bytes.NewReader(r.stdout.Bytes()))
 	tp := textproto.NewReader(reader)
 
 	mimeHeader, err := tp.ReadMIMEHeader()
 	if err != nil {
-		// If header parsing fails, return raw stdout as body
-		return http.StatusOK, http.Header{}, &r.stdout
+		// If header parsing fails, return the full raw stdout as body
+		return http.StatusOK, http.Header{}, bytes.NewReader(r.stdout.Bytes())
 	}
 
 	headers = http.Header(mimeHeader)
