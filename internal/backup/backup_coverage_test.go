@@ -1466,3 +1466,70 @@ func TestSFTPDialMissingKeyFile(t *testing.T) {
 		t.Fatalf("Upload with missing key but valid password: %v", err)
 	}
 }
+
+// RestoreBackup must refuse domain archives (uwas-domain-*): their layout puts
+// the domain YAML under config/, so restoring one here would overwrite the
+// main uwas.yaml with a domain config.
+func TestRestoreBackupRefusesDomainArchive(t *testing.T) {
+	m, _ := testManager(t)
+	mp := newMemoryProvider("mem")
+	m.providers["mem"] = mp
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	domainCfg := []byte("host: example.com")
+	tw.WriteHeader(&tar.Header{Name: "config/example.com.yaml", Size: int64(len(domainCfg)), Mode: 0644})
+	tw.Write(domainCfg)
+	tw.Close()
+	gw.Close()
+	name := "uwas-domain-example.com-20260101-000000.tar.gz"
+	mp.files[name] = buf.Bytes()
+
+	dstDir := t.TempDir()
+	cfgFile := filepath.Join(dstDir, "uwas.yaml")
+	original := []byte("original main config")
+	os.WriteFile(cfgFile, original, 0644)
+	m.SetPaths(cfgFile, "")
+
+	err := m.RestoreBackup(name, "mem")
+	if err == nil || !strings.Contains(err.Error(), "domain backups cannot be restored") {
+		t.Fatalf("expected domain backup refusal, got %v", err)
+	}
+	data, _ := os.ReadFile(cfgFile)
+	if !bytes.Equal(data, original) {
+		t.Errorf("main config was modified by domain archive restore: %q", data)
+	}
+}
+
+// databases/docker-*.sql entries have no restore path — they must be skipped
+// (with a warning) and never fed to the native mysql import.
+func TestRestoreBackupSkipsDockerDump(t *testing.T) {
+	m, _ := testManager(t)
+	mp := newMemoryProvider("mem")
+	m.providers["mem"] = mp
+
+	origImport := importDatabaseDumpFunc
+	t.Cleanup(func() { importDatabaseDumpFunc = origImport })
+	importDatabaseDumpFunc = func(data []byte, log *logger.Logger) error {
+		t.Error("docker DB dump must not be imported via the native mysql path")
+		return nil
+	}
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	sqlData := []byte("CREATE DATABASE IF NOT EXISTS appdb;")
+	tw.WriteHeader(&tar.Header{Name: "databases/docker-appdb.sql", Size: int64(len(sqlData)), Mode: 0644})
+	tw.Write(sqlData)
+	tw.Close()
+	gw.Close()
+	mp.files["docker-db.tar.gz"] = buf.Bytes()
+
+	dstDir := t.TempDir()
+	m.SetPaths(filepath.Join(dstDir, "uwas.yaml"), "")
+
+	if err := m.RestoreBackup("docker-db.tar.gz", "mem"); err != nil {
+		t.Fatal(err)
+	}
+}

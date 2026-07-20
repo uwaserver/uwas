@@ -1152,6 +1152,13 @@ func TestBuildDomainINIWithWebRoot(t *testing.T) {
 	if !strings.Contains(content, "allow_url_include = Off") {
 		t.Error("expected allow_url_include = Off")
 	}
+	// Regression: PHP errors must not render to visitors (path/info disclosure).
+	if !strings.Contains(content, "display_errors = Off") {
+		t.Error("expected display_errors = Off in enforced section")
+	}
+	if !strings.Contains(content, "log_errors = On") {
+		t.Error("expected log_errors = On in enforced section")
+	}
 	if !strings.Contains(content, "open_basedir") {
 		t.Error("expected open_basedir when webRoot is set")
 	}

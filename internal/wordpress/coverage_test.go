@@ -442,6 +442,29 @@ func TestUpdateCore_ChecksumMismatch(t *testing.T) {
 	}
 }
 
+// UpdateCore (fallback path): a non-200 response must fail instead of
+// writing the error page into the tarball (regression).
+func TestUpdateCore_DownloadHTTPError(t *testing.T) {
+	snap := saveHooks()
+	defer restoreHooks(snap)
+
+	// No wp-cli → fallback download path.
+	execLookPathFn = fakeLookPathFail
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	httpGetFn = func(url string) (*http.Response, error) {
+		return http.Get(srv.URL)
+	}
+
+	_, err := UpdateCore(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("expected HTTP 404 error, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // setWPConfigDefine
 // ---------------------------------------------------------------------------

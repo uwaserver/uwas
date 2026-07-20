@@ -1108,6 +1108,42 @@ func TestS3ProviderUploadSuccess(t *testing.T) {
 	}
 }
 
+// Upload with an *os.File body (the archiveAndUpload path) must send an
+// explicit Content-Length — a chunked PUT is rejected by real AWS S3 with
+// 501 MissingContentLength.
+func TestS3ProviderUploadFileSetsContentLength(t *testing.T) {
+	var gotContentLength int64
+	var gotTransferEncoding []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentLength = r.ContentLength
+		gotTransferEncoding = r.TransferEncoding
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	f, err := os.CreateTemp(t.TempDir(), "s3-upload-*.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	payload := []byte("archive data from file")
+	if _, err := f.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewS3Provider(srv.URL, "test-bucket", "key", "secret", "us-east-1")
+	if err := p.Upload(context.Background(), "test.tar.gz", f); err != nil {
+		t.Fatal(err)
+	}
+	if gotContentLength != int64(len(payload)) {
+		t.Errorf("Content-Length = %d, want %d (chunked encoding: %v)", gotContentLength, len(payload), gotTransferEncoding)
+	}
+}
+
 func TestS3ProviderDownloadSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

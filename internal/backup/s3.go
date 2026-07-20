@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,14 @@ func (p *S3Provider) Upload(ctx context.Context, filename string, data io.Reader
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, data)
 	if err != nil {
 		return err
+	}
+	// http.NewRequest only infers ContentLength for in-memory readers; an
+	// *os.File body (the usual case, via archiveAndUpload) would be sent with
+	// chunked encoding, which real AWS S3 rejects (501 MissingContentLength).
+	if f, ok := data.(*os.File); ok {
+		if info, statErr := f.Stat(); statErr == nil {
+			req.ContentLength = info.Size()
+		}
 	}
 	req.Header.Set("Content-Type", "application/gzip")
 	p.signRequest(req, "UNSIGNED-PAYLOAD")

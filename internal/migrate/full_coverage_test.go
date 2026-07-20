@@ -948,6 +948,14 @@ func TestCloneDBError(t *testing.T) {
 	tmpSrc := t.TempDir()
 	tmpDst := t.TempDir()
 
+	// wp-config.php present in the target — the DB rewrite must be skipped
+	// when the DB clone fails, or wp-config would point at a missing DB.
+	wpContent := `<?php
+define('DB_NAME', 'old_db');
+require_once ABSPATH . 'wp-settings.php';
+`
+	os.WriteFile(filepath.Join(tmpDst, "wp-config.php"), []byte(wpContent), 0644)
+
 	result := Clone(CloneRequest{
 		SourceRoot:   tmpSrc,
 		TargetRoot:   tmpDst,
@@ -962,9 +970,18 @@ func TestCloneDBError(t *testing.T) {
 	if !strings.Contains(result.Output, "DB clone error") {
 		t.Error("output should mention DB clone error")
 	}
+	// ...but the failure must be surfaced to the caller.
+	if !strings.Contains(result.Error, "database clone failed") {
+		t.Errorf("Error = %q, want it to mention the DB clone failure", result.Error)
+	}
 	// TargetDB should NOT be set when clone fails.
 	if result.TargetDB != "" {
 		t.Errorf("TargetDB = %q, want empty on DB error", result.TargetDB)
+	}
+	// wp-config must keep the old DB_NAME (no rewrite to a missing DB).
+	data, _ := os.ReadFile(filepath.Join(tmpDst, "wp-config.php"))
+	if !strings.Contains(string(data), "define('DB_NAME', 'old_db')") {
+		t.Errorf("wp-config DB_NAME was rewritten despite DB clone failure:\n%s", data)
 	}
 }
 
@@ -1769,6 +1786,47 @@ func TestMigrateDBRealDumpSuccessWithMySQLClient(t *testing.T) {
 	}
 }
 
+// Regression: the CREATE USER ... IDENTIFIED BY '<pass>' statement must be fed
+// to the mysql client over stdin, never as an -e argv argument where the
+// password would be visible in /proc/<pid>/cmdline.
+func TestMigrateDBRealCreateUserNotOnArgv(t *testing.T) {
+	origCmd := execCommandFn
+	origLookPath := execLookPathFn
+	defer func() {
+		execCommandFn = origCmd
+		execLookPathFn = origLookPath
+	}()
+
+	var gotArgs []string
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		gotArgs = append(gotArgs, args...)
+		return exec.Command("go", "version")
+	}
+	execLookPathFn = func(file string) (string, error) {
+		if file == "mysql" {
+			return "/usr/bin/mysql", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+
+	var log strings.Builder
+	result := migrateDBReal(MigrateRequest{
+		SourceHost: "user@1.2.3.4",
+		SourcePort: "22",
+		DBName:     "testdb",
+		DBUser:     "user",
+		DBPass:     "s3cretpass",
+	}, &log)
+	if result != "ok" {
+		t.Fatalf("result = %q, want ok", result)
+	}
+	for _, a := range gotArgs {
+		if strings.Contains(a, "IDENTIFIED BY") {
+			t.Fatalf("CREATE USER (with password) leaked onto argv: %q", a)
+		}
+	}
+}
+
 func TestMigrateDBRealDumpSuccessImportFail(t *testing.T) {
 	origCmd := execCommandFn
 	origLookPath := execLookPathFn
@@ -1963,6 +2021,42 @@ func TestCloneDBRealNoUserPass(t *testing.T) {
 	err := cloneDBReal("srcdb", "dstdb", "", "", &log)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// Regression: cloneDBReal must feed CREATE USER (with the plaintext password)
+// to the mysql client over stdin, never via -e on argv (/proc/<pid>/cmdline).
+func TestCloneDBRealPasswordNotOnArgv(t *testing.T) {
+	origCmd := execCommandFn
+	origLookPath := execLookPathFn
+	defer func() {
+		execCommandFn = origCmd
+		execLookPathFn = origLookPath
+	}()
+
+	var gotArgs []string
+	execCommandFn = func(name string, args ...string) *exec.Cmd {
+		gotArgs = append(gotArgs, args...)
+		return exec.Command("go", "version")
+	}
+	execLookPathFn = func(file string) (string, error) {
+		if file == "mysql" {
+			return "/usr/bin/mysql", nil
+		}
+		if file == "mysqldump" {
+			return "/usr/bin/mysqldump", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+
+	var log strings.Builder
+	if err := cloneDBReal("srcdb", "dstdb", "cloneuser", "s3cretpass", &log); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, a := range gotArgs {
+		if strings.Contains(a, "s3cretpass") {
+			t.Fatalf("password leaked onto argv: %q", a)
+		}
 	}
 }
 

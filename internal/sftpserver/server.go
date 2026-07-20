@@ -182,6 +182,13 @@ func (s *Server) handleConn(nConn net.Conn) {
 
 func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *ssh.Permissions) {
 	defer ch.Close()
+	// A panic in the SFTP protocol handlers would otherwise propagate up this
+	// goroutine and kill the whole process; contain it to this session.
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("SFTP session panic", "panic", r)
+		}
+	}()
 
 	for req := range reqs {
 		if req.Type != "subsystem" || len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
@@ -472,7 +479,12 @@ func (sess *sftpSession) handleRealPath(id uint32, payload []byte) {
 	}
 	info, err := os.Stat(safe)
 	if err != nil {
-		info, _ = os.Stat(sess.root)
+		info, err = os.Stat(sess.root)
+	}
+	if err != nil || info == nil {
+		// Both stats failed — encodeName(nil) would panic.
+		sess.sendStatus(id, sshFXNoSuchFile, "not found")
+		return
 	}
 	nameData := encodeName(result, info)
 	buf := make([]byte, 4+len(nameData))

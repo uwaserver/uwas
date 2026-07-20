@@ -1747,12 +1747,11 @@ func TestCreateMySQLDB_UsesSafeSQLIdentifier(t *testing.T) {
 	defer restoreHooks(snap)
 
 	execLookPathFn = fakeLookPathOK
-	var gotSQL string
+	var gotArgs []string
 	execCommandFn = func(name string, args ...string) *exec.Cmd {
-		if len(args) >= 4 && args[2] == "-e" {
-			gotSQL = args[3]
-		}
-		return fakeCmd("Query OK\n")(name, args...)
+		gotArgs = append(gotArgs, args...)
+		// The SQL is fed over stdin — echo it back so it lands in the log.
+		return exec.Command("cat")
 	}
 
 	var log strings.Builder
@@ -1760,11 +1759,22 @@ func TestCreateMySQLDB_UsesSafeSQLIdentifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gotSQL := log.String()
 	if !strings.Contains(gotSQL, "CREATE DATABASE IF NOT EXISTS `wp_test`") {
 		t.Fatalf("CREATE DATABASE did not use backtick identifier: %s", gotSQL)
 	}
 	if !strings.Contains(gotSQL, "GRANT ALL PRIVILEGES ON `wp_test`.*") {
 		t.Fatalf("GRANT did not use backtick identifier: %s", gotSQL)
+	}
+	// Regression: the password must be fed over stdin, never on argv
+	// where it would be visible in /proc/<pid>/cmdline.
+	for _, a := range gotArgs {
+		if strings.Contains(a, "testpass") {
+			t.Fatalf("password leaked onto argv: %q", a)
+		}
+		if a == "-e" {
+			t.Fatal("SQL passed via -e instead of stdin")
+		}
 	}
 }
 

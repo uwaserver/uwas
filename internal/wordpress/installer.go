@@ -222,12 +222,16 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	}
 
 	sql := strings.Join(cmds, "\n")
-	cmd := execCommandFn("mysql", "-u", "root", "-e", sql)
+	// Feed the SQL over stdin, not -e: CREATE USER embeds the plaintext
+	// password and -e would expose it on argv (/proc/<pid>/cmdline).
+	cmd := execCommandFn("mysql", "-u", "root")
+	cmd.Stdin = strings.NewReader(sql)
 	out, err := cmd.CombinedOutput()
 	log.Write(out)
 	if err != nil {
 		// Try without -u root (let socket auth auto-detect user)
-		cmd = execCommandFn("mysql", "-e", sql)
+		cmd = execCommandFn("mysql")
+		cmd.Stdin = strings.NewReader(sql)
 		out, err = cmd.CombinedOutput()
 		log.Write(out)
 	}

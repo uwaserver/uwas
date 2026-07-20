@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/uwaserver/uwas/internal/logger"
 )
@@ -84,6 +85,7 @@ type WSConn struct {
 	rwc    io.ReadWriteCloser // underlying TCP conn (for Close)
 	reader io.Reader          // buffered reader (may have pre-read data)
 	writer io.Writer          // buffered writer
+	wmu    sync.Mutex         // serializes writes: PTY pump, close-frame echo and Close run concurrently
 }
 
 // UpgradeWebSocket performs the HTTP→WebSocket handshake.
@@ -188,12 +190,16 @@ func (c *WSConn) WriteText(data []byte) error {
 			byte(len(data)>>24), byte(len(data)>>16), byte(len(data)>>8), byte(len(data)))
 	}
 	frame = append(frame, data...)
+	c.wmu.Lock()
 	_, err := c.writer.Write(frame)
+	c.wmu.Unlock()
 	return err
 }
 
 func (c *WSConn) Close() error {
+	c.wmu.Lock()
 	c.writer.Write([]byte{0x88, 0x00}) // close frame
+	c.wmu.Unlock()
 	return c.rwc.Close()
 }
 

@@ -246,6 +246,47 @@ func TestStartFPMWithMockBinary(t *testing.T) {
 	}
 }
 
+// --- Reaper ownership: an old process's reaper must never delete a
+// replacement entry (regression for duplicate daemons after RestartFPM) ---
+
+func TestStartFPMReaperDoesNotDeleteReplacement(t *testing.T) {
+	m := New(testLogger())
+	m.installations = []PHPInstall{
+		{Version: "8.4.19", Binary: "/usr/bin/php-cgi8.4", SAPI: "cgi-fcgi"},
+	}
+
+	// Long-running mock so the test controls when the reaper fires.
+	m.execCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("sleep", "60")
+	}
+
+	if err := m.StartFPM("8.4.19", "127.0.0.1:9000"); err != nil {
+		t.Fatalf("StartFPM: %v", err)
+	}
+	oldVal, ok := m.processes.Load("8.4.19")
+	if !ok {
+		t.Fatal("process entry missing after StartFPM")
+	}
+	oldInfo := oldVal.(*processInfo)
+
+	// Simulate RestartFPM having already stored a replacement entry.
+	replacement := &processInfo{listenAddr: "127.0.0.1:9000"}
+	m.processes.Store("8.4.19", replacement)
+
+	// Kill the OLD process; its reaper must leave the replacement alone.
+	if err := oldInfo.cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		v, ok := m.processes.Load("8.4.19")
+		if !ok || v.(*processInfo) != replacement {
+			t.Fatal("old process's reaper removed the replacement entry")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // --- GetConfig for version with no config file ---
 
 func TestGetConfigNoConfigFile(t *testing.T) {

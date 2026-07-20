@@ -295,8 +295,12 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 		safeUser := sqlString(req.DBUser)
 		safePass := sqlString(req.DBPass)
 		safeName := sqlIdent(req.DBName)
-		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", safeUser, safePass)).Run()
+		// Feed CREATE USER over stdin, not -e: the SQL embeds the plaintext
+		// password and -e would expose it on argv (/proc/<pid>/cmdline).
+		userCmd := execCommandFn(bin, "-u", "root")
+		userCmd.Stdin = strings.NewReader(
+			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", safeUser, safePass))
+		userCmd.Run()
 		execCommandFn(bin, "-u", "root", "-e",
 			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).Run()
 

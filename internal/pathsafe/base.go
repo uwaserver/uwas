@@ -2,6 +2,7 @@ package pathsafe
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,12 +47,16 @@ func (b *Base) Contains(target string) bool {
 	// containment against this base's own resolved root.
 	if entry, ok := targetCache.Load(target); ok {
 		tc := entry.(*targetCacheEntry)
-		if time.Since(tc.time) < 5*time.Second {
+		if time.Since(tc.time) < targetCacheTTL {
 			return tc.resolvedOK && isWithin(b.resolved, tc.resolved)
 		}
 	}
 	resolvedTarget, err := resolvePath(target)
-	targetCache.Store(target, &targetCacheEntry{resolved: resolvedTarget, resolvedOK: err == nil, time: time.Now()})
+	if _, loaded := targetCache.Swap(target, &targetCacheEntry{resolved: resolvedTarget, resolvedOK: err == nil, time: time.Now()}); !loaded {
+		if targetCacheSize.Add(1) > targetCacheMaxEntries {
+			sweepTargetCache()
+		}
+	}
 	return err == nil && isWithin(b.resolved, resolvedTarget)
 }
 
@@ -61,7 +66,47 @@ type targetCacheEntry struct {
 	time       time.Time
 }
 
-var targetCache sync.Map // map[string]*targetCacheEntry
+// targetCacheTTL is how long a resolved target path stays valid.
+const targetCacheTTL = 5 * time.Second
+
+// targetCacheMaxEntries caps the target cache so an attacker requesting
+// millions of unique URLs cannot grow RSS without bound. Entries expire after
+// targetCacheTTL but are only removed by the sweep triggered at this cap.
+const targetCacheMaxEntries = 16384
+
+var (
+	targetCache         sync.Map // map[string]*targetCacheEntry
+	targetCacheSize     atomic.Int64
+	targetCacheSweeping atomic.Bool
+)
+
+// sweepTargetCache evicts expired entries; if the cache is still over
+// capacity afterwards (all entries fresh — e.g. a burst of unique URLs), it
+// clears everything. Only one goroutine sweeps at a time; concurrent callers
+// return immediately so the hot path stays cheap. The size counter is
+// approximate: concurrent inserts during a sweep may drift it slightly, which
+// only means the next sweep triggers marginally early or late.
+func sweepTargetCache() {
+	if !targetCacheSweeping.CompareAndSwap(false, true) {
+		return
+	}
+	defer targetCacheSweeping.Store(false)
+	now := time.Now()
+	targetCache.Range(func(k, v any) bool {
+		if now.Sub(v.(*targetCacheEntry).time) >= targetCacheTTL {
+			targetCache.Delete(k)
+			targetCacheSize.Add(-1)
+		}
+		return true
+	})
+	if targetCacheSize.Load() > targetCacheMaxEntries {
+		targetCache.Range(func(k, _ any) bool {
+			targetCache.Delete(k)
+			targetCacheSize.Add(-1)
+			return true
+		})
+	}
+}
 
 // Resolved returns the cached absolute, symlink-resolved root path.
 func (b *Base) Resolved() string { return b.resolved }

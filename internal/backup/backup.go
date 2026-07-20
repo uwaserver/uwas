@@ -216,8 +216,13 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 			}
 		}
 
-		// MySQL/MariaDB native dump (best-effort).
-		if dbDump, err := dumpAllDatabases(); err == nil && len(dbDump) > 0 {
+		// MySQL/MariaDB native dump (best-effort, but never silent: a failed
+		// dump would otherwise produce a DB-less backup reported as success).
+		dbDump, dumpErr := dumpAllDatabases()
+		if dumpErr != nil {
+			m.logger.Warn("backup: database dump failed, backup will not contain databases", "error", dumpErr)
+		}
+		if dumpErr == nil && len(dbDump) > 0 {
 			hdr := &tar.Header{
 				Name:    "databases/native-all-databases.sql",
 				Size:    int64(len(dbDump)),
@@ -292,6 +297,13 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 
 	if configPath == "" {
 		return fmt.Errorf("config path not set")
+	}
+
+	// Domain archives (uwas-domain-*) use a different layout: config/<domain>.yaml
+	// holds the domain YAML, not the main uwas.yaml. Restoring one here would
+	// overwrite the main config with a domain config and restore nothing else.
+	if strings.HasPrefix(filepath.Base(name), "uwas-domain-") {
+		return fmt.Errorf("domain backups cannot be restored through this endpoint")
 	}
 
 	p := m.providers[provider]
@@ -407,6 +419,12 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 					}
 				}
 			}
+			continue
+		case strings.HasPrefix(hdr.Name, "databases/docker-"):
+			// Docker container dumps are written by CreateBackup but automatic
+			// restore is not supported (the target container may not exist);
+			// warn instead of silently dropping them.
+			m.logger.Warn("backup restore: skipping docker DB dump, import it into the container manually", "name", hdr.Name)
 			continue
 		default:
 			continue

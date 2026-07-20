@@ -4,6 +4,7 @@ package siteuser
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -202,7 +203,12 @@ func domainToUsername(hostname string) string {
 	name = strings.ReplaceAll(name, ".", "--")
 	name = "uwas-" + name
 	if len(name) > 32 {
-		name = name[:32]
+		// Plain truncation collided distinct long hostnames onto one system
+		// user (shared chroot → cross-tenant SFTP access). Keep a truncated
+		// prefix and append a short hash of the full hostname for uniqueness.
+		sum := sha256.Sum256([]byte(strings.ToLower(hostname)))
+		suffix := hex.EncodeToString(sum[:4]) // 8 hex chars
+		name = name[:32-1-len(suffix)] + "-" + suffix
 	}
 	return name
 }

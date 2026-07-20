@@ -2122,6 +2122,40 @@ func TestSFTP_Open_NotFound(t *testing.T) {
 	}
 }
 
+// TestHandleRealPath_MissingRootNoPanic is the regression for the nil-FileInfo
+// panic: when os.Stat on both the requested path and the session root failed
+// (e.g. the chroot dir was deleted), a nil info reached encodeName and the
+// panic killed the whole process.
+func TestHandleRealPath_MissingRootNoPanic(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	root := filepath.Join(t.TempDir(), "gone") // never created — Stat fails
+	sess := &sftpSession{
+		ch:      newPipeChannel(server),
+		root:    root,
+		handles: make(map[string]*openHandle),
+	}
+
+	done := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := client.Read(buf)
+		done <- buf[:n]
+	}()
+
+	sess.handleRealPath(9, marshalString("/")) // must not panic
+
+	got := <-done
+	if len(got) < 5 || got[4] != sshFXPStatus {
+		t.Fatalf("expected STATUS packet, got % x", got)
+	}
+	if code := binary.BigEndian.Uint32(got[9:13]); code != sshFXNoSuchFile {
+		t.Errorf("status code = %d, want %d (no such file)", code, sshFXNoSuchFile)
+	}
+}
+
 // =============================================================================
 // Packet I/O Tests via net.Pipe
 // =============================================================================

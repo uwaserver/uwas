@@ -113,7 +113,19 @@ func (r *Runner) Start(tunnelID, token string) error {
 	r.procs[tunnelID] = p
 	r.mu.Unlock()
 
-	return r.spawn(p, token)
+	if err := r.spawn(p, token); err != nil {
+		// Remove the placeholder so a later Start can retry. Leaving a
+		// non-stopped entry (missing binary, pipe error, cmd.Start failure)
+		// made every subsequent Start fail with "already running or starting
+		// (pid 0)" until process restart.
+		r.mu.Lock()
+		if cur, ok := r.procs[tunnelID]; ok && cur == p {
+			delete(r.procs, tunnelID)
+		}
+		r.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // spawn launches the process and starts the monitor goroutine.
@@ -210,8 +222,17 @@ func (r *Runner) monitor(p *runningProc, token string, cmd *exec.Cmd, stopCh cha
 		return
 	case <-backoff.C:
 	}
-	if err := r.spawn(p, token); err != nil && r.logger != nil {
-		r.logger.Error("cloudflared restart failed", "tunnel_id", p.tunnelID, "error", err.Error())
+	if err := r.spawn(p, token); err != nil {
+		if r.logger != nil {
+			r.logger.Error("cloudflared restart failed", "tunnel_id", p.tunnelID, "error", err.Error())
+		}
+		// Drop the dead entry so a manual Start can retry — same stuck-state
+		// hazard as a failed initial spawn.
+		r.mu.Lock()
+		if cur, ok := r.procs[p.tunnelID]; ok && cur == p {
+			delete(r.procs, p.tunnelID)
+		}
+		r.mu.Unlock()
 	}
 }
 
