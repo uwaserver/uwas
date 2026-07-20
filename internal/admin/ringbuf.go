@@ -90,3 +90,23 @@ func (r *ringBuffer[T]) PosAndEntries() (int, []T) {
 	r.mu.Unlock()
 	return pos, entries
 }
+
+// Since returns the current write position and a copy of the entries
+// appended after position from (oldest first). from must be a position
+// previously returned by Since or PosAndEntries; positions are always in
+// [0, cap). If a full lap (or more) happened between calls the wrapped
+// portion is lost, matching ring-buffer semantics.
+func (r *ringBuffer[T]) Since(from int) (int, []T) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pos := r.pos
+	if from < 0 || from >= r.cap || from == pos {
+		return pos, nil
+	}
+	n := (pos - from + r.cap) % r.cap
+	out := make([]T, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, r.entries[(from+i)%r.cap])
+	}
+	return pos, out
+}

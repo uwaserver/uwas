@@ -63,6 +63,8 @@ type LogEntry struct {
 	UserAgent  string    `json:"user_agent,omitempty"`
 }
 
+// maxLogEntries sets the capacity of the admin audit-log ring buffer.
+// Older entries are silently discarded once the buffer is full.
 const maxLogEntries = 1000
 
 type muxer interface {
@@ -1080,10 +1082,14 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 
 	cacheStats := s.cache.Stats()
 
-	// Per-domain cache info
+	// Per-domain cache info, scoped to the domains the caller may access
+	// (matching handleStatsDomains and the analytics handlers).
 	s.configMu.RLock()
 	domainCache := make([]map[string]any, 0)
 	for _, d := range s.config.Domains {
+		if !s.canAccessDomain(r, d.Host) {
+			continue
+		}
 		dc := map[string]any{
 			"host":    d.Host,
 			"enabled": d.Cache.Enabled,
@@ -1213,21 +1219,16 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 			if s.logBuf == nil {
 				continue
 			}
-			pos, entries := s.logBuf.PosAndEntries()
-
-			if len(entries) == 0 || pos == lastSeen {
+			pos, newEntries := s.logBuf.Since(lastSeen)
+			lastSeen = pos
+			if len(newEntries) == 0 {
 				continue
 			}
 
-			// Collect new entries since lastSeen
-			for lastSeen != pos {
-				if entries[lastSeen%len(entries)].Host == "" {
-					lastSeen++
+			for _, e := range newEntries {
+				if e.Host == "" {
 					continue
 				}
-				e := entries[lastSeen%len(entries)]
-				lastSeen++
-
 				if domainFilter != "" && e.Host != domainFilter {
 					continue
 				}
