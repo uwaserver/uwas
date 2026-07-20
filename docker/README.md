@@ -11,8 +11,10 @@ cp .env.example .env       # then edit .env and set UWAS_ADMIN_KEY
 docker compose up -d
 ```
 
-The dashboard is at `https://<host>:9443/_uwas/dashboard/` (or `http://` if
-TLS is not yet configured). Log in with the admin API key you set.
+The default admin listener is HTTP and Compose publishes it only on host
+loopback. For remote access, run
+`ssh -L 9443:127.0.0.1:9443 user@server`, then open
+`http://127.0.0.1:9443/_uwas/dashboard/` and log in with the admin API key.
 
 ## What the image does for you
 
@@ -31,8 +33,9 @@ TLS is not yet configured). Log in with the admin API key you set.
 
 ## Configuration
 
-The admin API binds `:9443` inside the container and **requires an API key** —
-UWAS refuses to start a publicly-bound admin listener without authentication.
+The admin API binds `:9443` inside the container and **requires an API key**.
+The host-side publish is loopback-only so the key is not sent over plaintext
+HTTP on an untrusted network.
 
 ### Set the admin key
 
@@ -104,7 +107,7 @@ docker run --rm -v uwas_uwas_config:/data -v "$PWD":/backup alpine \
 | 80 | TCP | HTTP (redirects to HTTPS, serves ACME challenges) |
 | 443 | TCP | HTTPS (TLS termination) |
 | 443 | UDP | HTTP/3 (QUIC) |
-| 9443 | TCP | Admin API + dashboard |
+| 9443 | TCP (host loopback only) | Admin API + dashboard |
 
 ## Using a database (MariaDB)
 
@@ -157,7 +160,7 @@ domains:
 
 ```bash
 docker build -t uwas .
-docker run -d -p 80:80 -p 443:443 -p 9443:9443 \
+docker run -d -p 80:80 -p 443:443 -p 127.0.0.1:9443:9443 \
   -e UWAS_ADMIN_KEY=your-admin-key \
   -v uwas_config:/etc/uwas \
   uwas

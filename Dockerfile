@@ -1,7 +1,7 @@
 # Build stage
-FROM golang:1.26-alpine3.24@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
+FROM golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git=2.54.0-r0
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -27,7 +27,10 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 # libcap: grants CAP_NET_BIND_SERVICE to the binary so the non-root user can
 #         bind privileged ports (80/443). CGO_ENABLED=0 produces a static
 #         binary that ignores setuid, so the capability must live on the file.
-RUN apk add --no-cache ca-certificates tzdata libcap
+RUN apk add --no-cache \
+    ca-certificates=20260611-r0 \
+    libcap=2.78-r0 \
+    tzdata=2026b-r0
 
 COPY --from=builder /uwas /usr/local/bin/uwas
 
@@ -51,7 +54,7 @@ RUN mkdir -p /etc/uwas /var/lib/uwas/certs /var/cache/uwas /var/log/uwas /var/ww
 # domain additions (domains.d/*.yaml) and config edits across restarts.
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker/uwas.yaml /etc/uwas.default/uwas.yaml
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 USER uwas
 

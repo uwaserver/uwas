@@ -4,9 +4,9 @@
 # It differs from uwas.example.yaml (the bare-metal reference) in two ways:
 #
 #   1. admin.listen is ":9443", not "127.0.0.1:9443". A container's loopback is
-#      its own network namespace — a published port (-p 9443:9443) forwards to
-#      the container's eth0, so the admin API must bind the wildcard address to
-#      be reachable from the host. Binding it publicly requires an api_key.
+#      its own network namespace, so the admin API must bind the wildcard
+#      address to be reachable through Docker NAT. The compose/CLI examples
+#      publish it on host loopback only (`127.0.0.1:9443:9443`).
 #
 #   2. api_key is read from the UWAS_ADMIN_KEY environment variable. Set it in
 #      docker-compose.yml (or a .env file). UWAS refuses to start a public admin
@@ -33,7 +33,7 @@ global:
 
   admin:
     enabled: true
-    listen: ":9443"          # wildcard: reachable via the published port
+    listen: ":9443"          # wildcard in container; host publish is loopback-only
     api_key: "${UWAS_ADMIN_KEY}"
 
   acme:
