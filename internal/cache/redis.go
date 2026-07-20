@@ -116,23 +116,44 @@ func (r *RedisCache) Delete(key string) error {
 	return r.client.Del(ctx, r.prefixKey(key))
 }
 
-// PurgeByTag removes all keys matching a tag pattern.
+// PurgeByTag removes all entries whose stored Tags contain the given tag.
+// Tags live inside the stored JSON value, not in the key, so the only way
+// to find matches through the minimal RedisClient interface is to scan the
+// prefix and inspect each entry. Purges are rare operator/deploy actions,
+// so the O(N) scan is acceptable.
 func (r *RedisCache) PurgeByTag(tag string) error {
 	if r == nil || r.client == nil {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pattern := r.prefixKey("*tag:" + tag + "*")
-	keys, err := r.client.Keys(ctx, pattern)
+	keys, err := r.client.Keys(ctx, r.prefixKey("*"))
 	if err != nil {
 		return err
 	}
 
-	if len(keys) > 0 {
-		return r.client.Del(ctx, keys...)
+	var toDelete []string
+	for _, k := range keys {
+		data, err := r.client.Get(ctx, k) // k is already prefixed
+		if err != nil {
+			continue
+		}
+		var resp CachedResponse
+		if json.Unmarshal([]byte(data), &resp) != nil {
+			continue
+		}
+		for _, t := range resp.Tags {
+			if t == tag {
+				toDelete = append(toDelete, k)
+				break
+			}
+		}
+	}
+
+	if len(toDelete) > 0 {
+		return r.client.Del(ctx, toDelete...)
 	}
 	return nil
 }

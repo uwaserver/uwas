@@ -166,14 +166,20 @@ func (mc *MemoryCache) PurgeByTag(tags ...string) int {
 
 // PurgeAll clears the entire cache.
 func (mc *MemoryCache) PurgeAll() {
+	// Subtract exactly what each shard held rather than Store(0): a
+	// concurrent Set on an already-purged shard must keep its accounting.
 	for i := range mc.shards {
 		s := &mc.shards[i]
 		s.mu.Lock()
+		var freed int64
+		for _, e := range s.items {
+			freed += e.size
+		}
 		s.items = make(map[string]*entry)
 		s.lru.Init()
 		s.mu.Unlock()
+		mc.usedBytes.Add(-freed)
 	}
-	mc.usedBytes.Store(0)
 }
 
 // Stats returns cache statistics.

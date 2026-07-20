@@ -108,17 +108,25 @@ func (p *ESIProcessor) Process(body []byte, host string, parentReq *http.Request
 func (p *ESIProcessor) fetchFragment(host, path string, parentReq *http.Request, tags []string, depth int) ([]byte, error) {
 	key := esiFragmentKey(host, path)
 
+	// The sub-request forwards the parent's Cookie header, so a fragment
+	// rendered for a cookie-carrying request may contain per-user content.
+	// The fragment cache key is cookie-blind — such fragments must neither
+	// be served from nor stored into the shared cache.
+	shareable := parentReq == nil || parentReq.Header.Get("Cookie") == ""
+
 	// Check cache first
-	if cached, status := p.cache.GetByKey(key); cached != nil && (status == StatusHit || status == StatusStale) {
-		body := cached.Body
-		if ContainsESI(body) {
-			var err error
-			body, err = p.Process(body, host, parentReq, tags, depth+1)
-			if err != nil {
-				return nil, err
+	if shareable {
+		if cached, status := p.cache.GetByKey(key); cached != nil && (status == StatusHit || status == StatusStale) {
+			body := cached.Body
+			if ContainsESI(body) {
+				var err error
+				body, err = p.Process(body, host, parentReq, tags, depth+1)
+				if err != nil {
+					return nil, err
+				}
 			}
+			return body, nil
 		}
-		return body, nil
 	}
 
 	// Cache miss: sub-request
@@ -130,19 +138,21 @@ func (p *ESIProcessor) fetchFragment(host, path string, parentReq *http.Request,
 		return nil, fmt.Errorf("fragment %s returned %d", path, statusCode)
 	}
 
-	// Cache the fragment
-	ttl := parseFragmentTTL(headers)
-	if ttl <= 0 {
-		ttl = 60 * time.Second
+	// Cache the fragment (only when rendered without user cookies)
+	if shareable {
+		ttl := parseFragmentTTL(headers)
+		if ttl <= 0 {
+			ttl = 60 * time.Second
+		}
+		p.cache.SetByKey(key, &CachedResponse{
+			StatusCode: statusCode,
+			Headers:    headers,
+			Body:       body,
+			Created:    time.Now(),
+			TTL:        ttl,
+			Tags:       tags,
+		})
 	}
-	p.cache.SetByKey(key, &CachedResponse{
-		StatusCode: statusCode,
-		Headers:    headers,
-		Body:       body,
-		Created:    time.Now(),
-		TTL:        ttl,
-		Tags:       tags,
-	})
 
 	// Recursive ESI processing on fragment
 	if ContainsESI(body) {

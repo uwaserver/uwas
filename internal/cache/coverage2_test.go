@@ -404,12 +404,23 @@ func TestEnginePurgeByTagRedis(t *testing.T) {
 	dir := t.TempDir()
 	e, stub := newRedisStubEngine(t, dir)
 
-	// Seed a redis entry whose key matches the tag pattern "*tag:news*".
-	stub.seed("x-tag:news-y", "v")
+	// Tags live inside the stored JSON value, not in the key: PurgeByTag
+	// must delete the tagged entry and leave the untagged one alone.
+	tagged := freshResp("tagged body", time.Hour)
+	tagged.Tags = []string{"news"}
+	taggedData, _ := json.Marshal(tagged)
+	stub.seed("key-tagged", string(taggedData))
+
+	otherData, _ := json.Marshal(freshResp("other body", time.Hour))
+	stub.seed("key-other", string(otherData))
+
 	count := e.PurgeByTag("news")
 	_ = count
-	if stub.has("x-tag:news-y") {
-		t.Fatal("expected redis key purged by tag")
+	if stub.has("key-tagged") {
+		t.Fatal("expected tagged redis entry purged by tag")
+	}
+	if !stub.has("key-other") {
+		t.Fatal("untagged redis entry must survive PurgeByTag")
 	}
 
 	// Error path: redis PurgeByTag returns an error -> logged, not fatal.

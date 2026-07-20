@@ -33,9 +33,14 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 	b.Reset()
 	defer builderPool.Put(b)
 
-	// Normalize host: lowercase + strip port
+	// Normalize host: lowercase + strip port. Bracketed IPv6 literals
+	// contain colons, so only strip after the closing bracket for those.
 	host := r.Host
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
+	if strings.HasPrefix(host, "[") {
+		if idx := strings.LastIndex(host, "]"); idx != -1 {
+			host = host[:idx+1]
+		}
+	} else if idx := strings.LastIndex(host, ":"); idx != -1 {
 		host = host[:idx]
 	}
 	host = strings.ToLower(host)

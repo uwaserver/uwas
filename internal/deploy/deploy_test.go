@@ -562,6 +562,11 @@ func TestDeployGit_ExistingRepo(t *testing.T) {
 		}
 		if strings.Contains(cmd, "git reset") {
 			hasReset = true
+			// Regression: a "--" separator makes git treat the ref as a
+			// pathspec and always fail ("Cannot do hard reset with paths").
+			if cmd != "git reset --hard origin/develop" {
+				t.Errorf("git reset command = %q, want %q", cmd, "git reset --hard origin/develop")
+			}
 		}
 	}
 	if !hasFetch {
