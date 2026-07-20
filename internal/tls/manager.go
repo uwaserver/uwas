@@ -62,6 +62,10 @@ type Manager struct {
 
 	// renewalInitialDelay overrides the 1-minute initial delay in StartRenewal for testing.
 	renewalInitialDelay time.Duration
+
+	// retryBackoff overrides the 30-second retry delay in ObtainCerts for testing.
+	// When zero, defaults to 30 * time.Second.
+	retryBackoff time.Duration
 	// renewalInterval overrides the 12-hour ticker interval in StartRenewal for testing.
 	renewalInterval time.Duration
 
@@ -74,9 +78,11 @@ type Manager struct {
 	AllowSelfSigned bool
 }
 
-const onDemandMaxPerMinute = 10
-
 const (
+	// onDemandMaxPerMinute limits ACME on-demand certificate issuance
+	// to at most this many requests per rolling 60-second window.
+	onDemandMaxPerMinute = 10
+
 	onDemandAskTimeout      = 5 * time.Second
 	onDemandObtainTimeout   = 2 * time.Minute
 	maxOnDemandAskBodyBytes = 8 << 10 // 8KB
@@ -376,6 +382,9 @@ func (m *Manager) ObtainCerts(ctx context.Context) {
 	}
 
 	backoff := 30 * time.Second
+	if m.retryBackoff > 0 {
+		backoff = m.retryBackoff
+	}
 	for attempt := 0; attempt < 3 && len(pending) > 0; attempt++ {
 		if attempt > 0 {
 			m.logger.Info("retrying failed certificates", "count", len(pending), "attempt", attempt+1)
@@ -741,6 +750,9 @@ func (m *Manager) renewOne(ctx context.Context, c renewalCandidate) {
 		}
 		return
 	}
+
+	// OCSP staple (best-effort), same as first issuance in obtainCert.
+	m.stapleOCSP(newCert, c.host)
 
 	m.certs.Store(c.host, newCert)
 	if err := m.storage.Save(c.host, newCert, keyPEM, certPEM); err != nil {

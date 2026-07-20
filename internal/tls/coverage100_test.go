@@ -926,14 +926,13 @@ func TestObtainCertsAllRetriesFail(t *testing.T) {
 		{Host: "allfail.com", SSL: config.SSLConfig{Mode: "auto"}},
 	}
 	m := NewManager(cfg, domains, log)
+	m.retryBackoff = 1 * time.Millisecond // fast retries so the test doesn't wait 90s
 
 	m.acmeObtainFunc = func(ctx context.Context, doms []string) (*tls.Certificate, []byte, []byte, error) {
 		return nil, nil, nil, fmt.Errorf("always fails")
 	}
 
-	// Needs enough time for 3 attempts with backoff: 0 + 30s + 60s
-	// Use context with shorter timeout so it bails faster
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	m.ObtainCerts(ctx)
 
