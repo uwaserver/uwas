@@ -452,7 +452,13 @@ func cloneStringMap(in map[string]string) map[string]string {
 }
 
 func probeAppHealth(def *apps.App, path string) error {
-	if def == nil || path == "" {
+	if def == nil {
+		return fmt.Errorf("HTTP port not set (nil app)")
+	}
+	if def.Port == 0 {
+		return fmt.Errorf("HTTP port not set")
+	}
+	if path == "" {
 		return nil
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -474,31 +480,29 @@ func appDeployPreflight(def *apps.App) []AppPreflightCheck {
 	// Docker check
 	if def.Docker.Build.Dockerfile != "" {
 		checks = append(checks, AppPreflightCheck{
-			Label: "Docker Compose", OK: true, Detail: "Docker-based app",
+			Name: "docker", Label: "Docker Compose", OK: true, Detail: "Docker-based app",
 		})
 	} else {
 		// Port check
 		checks = append(checks, AppPreflightCheck{
-			Label: "Port " + fmt.Sprintf("%d", def.Port), OK: true,
+			Name: "port", Label: "Port " + fmt.Sprintf("%d", def.Port), OK: def.Port > 0,
 		})
 		// Workdir check
 		if def.WorkDir != "" {
 			if _, err := os.Stat(def.WorkDir); err == nil {
 				checks = append(checks, AppPreflightCheck{
-					Label: "Workdir exists", OK: true,
+					Name: "workdir", Label: "Workdir exists", OK: true,
 				})
 			} else {
 				checks = append(checks, AppPreflightCheck{
-					Label: "Workdir exists", OK: false, Detail: def.WorkDir + " not found (will be created)",
+					Name: "workdir", Label: "Workdir exists", OK: false, Detail: def.WorkDir + " not found (will be created)",
 				})
 			}
 		}
 	}
 	// Git URL check
 	if def.Deploy.GitURL != "" {
-		checks = append(checks, AppPreflightCheck{
-			Label: "Git URL", OK: true, Detail: def.Deploy.GitURL,
-		})
+		checks = append(checks, AppPreflightCheck{Name: "deploy", Label: "Deploy Config", OK: true, Detail: def.Deploy.GitURL})
 	}
 	return checks
 }
@@ -520,12 +524,23 @@ func validateDockerGitDeploy(def *apps.App) error {
 	return nil
 }
 
+func CloneStringMap(in map[string]string) map[string]string { return cloneStringMap(in) }
+
 func validateHealthPath(path string) error {
 	if path == "" {
 		return nil
 	}
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("health path must start with /")
+	}
+	if strings.HasPrefix(path, "//") {
+		return fmt.Errorf("health path cannot start with //")
+	}
+	if strings.ContainsAny(path, "\n\r") {
+		return fmt.Errorf("health path contains newline")
+	}
+	if len(path) > 512 {
+		return fmt.Errorf("health path too long")
 	}
 	return nil
 }
@@ -557,11 +572,11 @@ func validateDeployConfigImpl(def *apps.App) error {
 	}
 	if def.Deploy.SSHKeyPath != "" {
 		if strings.ContainsAny(def.Deploy.SSHKeyPath, "\x00") {
-			return fmt.Errorf("ssh_key_path contains null byte")
+			return fmt.Errorf("invalid SSH key path: null byte in path")
 		}
 		cleanKey := filepath.Clean(def.Deploy.SSHKeyPath)
 		if !filepath.IsAbs(cleanKey) {
-			return fmt.Errorf("ssh_key_path must be absolute")
+			return fmt.Errorf("invalid SSH key path: path must be absolute")
 		}
 	}
 	if def.Deploy.GitToken != "" {
