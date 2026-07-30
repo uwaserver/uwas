@@ -9,6 +9,32 @@ import (
 	"github.com/uwaserver/uwas/internal/rewrite"
 )
 
+// domainGuards groups the five per-domain security guards that are all looked
+// up via routeMu on every request. By snapshotting them in a single RLock
+// we collapse 5 separate lock acquisitions to 1 per request.
+type domainGuards struct {
+	waf       func(http.ResponseWriter, *http.Request) bool
+	ipACL     func(http.ResponseWriter, *http.Request) bool
+	geo       func(http.ResponseWriter, *http.Request) bool
+	cors      func(http.ResponseWriter, *http.Request) bool
+	rateLimit *middleware.RateLimiter
+}
+
+// guardsFor returns all per-domain security guards for the given host in a
+// single routeMu.RLock/RUnlock pair. Use this instead of calling the
+// individual *For accessors when you need more than one guard per request.
+func (s *Server) guardsFor(host string) domainGuards {
+	s.routeMu.RLock()
+	defer s.routeMu.RUnlock()
+	return domainGuards{
+		waf:       s.wafGuards[host],
+		ipACL:     s.ipACLGuards[host],
+		geo:       s.geoGuards[host],
+		cors:      s.corsGuards[host],
+		rateLimit: s.domainRateLimiters[host],
+	}
+}
+
 func (s *Server) wafGuardFor(host string) func(http.ResponseWriter, *http.Request) bool {
 	s.routeMu.RLock()
 	defer s.routeMu.RUnlock()
