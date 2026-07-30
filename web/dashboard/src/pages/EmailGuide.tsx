@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Mail, Copy, Check, ExternalLink } from 'lucide-react';
 import { fetchDomains, fetchServerIPs, type DomainData } from '@/lib/api';
 import { copyText } from '@/lib/clipboard';

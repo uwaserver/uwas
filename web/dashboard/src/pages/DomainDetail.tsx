@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router';
 import {
   ExternalLink, RefreshCw, Shield, HardDrive, BarChart3, ArrowRight,
   FileText, Settings, Lock, Plug, Save, Plus, Trash2, ArrowLeft, Eye, Server,

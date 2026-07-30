@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { KeyRound, AlertCircle, ShieldCheck, User } from 'lucide-react';
 import { setToken, setTOTPCode, fetchStats, loginUser, bootstrapFirstAdmin, fetchBranding, type BrandingConfig } from '@/lib/api';
 

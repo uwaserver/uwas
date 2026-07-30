@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router';
 import { fetchSystem, fetchBranding, fetchFeatures, type BrandingConfig, type FeaturesMap } from '@/lib/api';
 import {
   LayoutDashboard,
