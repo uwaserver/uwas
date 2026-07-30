@@ -4,32 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 )
 
-func removeDomainAlias(aliases []string, host string) []string {
-	host = normalizeDomainHostname(host)
-	if host == "" {
-		return aliases
-	}
-	out := aliases[:0]
-	for _, alias := range aliases {
-		if normalizeDomainHostname(alias) == host {
-			continue
-		}
-		out = append(out, alias)
-	}
-	return out
-}
+// domainAliasOptions holds alias redirect/canonical configuration parsed from request body.
+type domainAliasOptions = domainutilAliasOptions
 
-type domainAliasOptions struct {
+type domainutilAliasOptions struct {
 	redirect         bool
 	redirectCode     int
 	preservePath     bool
 	canonicalHost    string
 	canonicalHostSet bool
+}
+
+func removeDomainAlias(aliases []string, host string) []string {
+	return domainutil.RemoveDomainAlias(aliases, host)
 }
 
 func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
@@ -42,14 +34,14 @@ func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return domainAliasOptions{}, fmt.Errorf("invalid JSON")
 	}
-	mode := strings.ToLower(strings.TrimSpace(raw.AliasMode))
+	mode := normalizeLowerTrim(raw.AliasMode)
 	opts := domainAliasOptions{preservePath: true}
 	if raw.AliasPreservePath != nil {
 		opts.preservePath = *raw.AliasPreservePath
 	}
 	if raw.CanonicalHost != "" {
 		opts.canonicalHostSet = true
-		canonicalHost, err := normalizeRequestedCanonicalHost(raw.CanonicalHost)
+		canonicalHost, err := domainutil.NormalizeRequestedCanonicalHost(raw.CanonicalHost)
 		if err != nil {
 			return domainAliasOptions{}, err
 		}
@@ -71,69 +63,41 @@ func parseDomainAliasOptions(body []byte) (domainAliasOptions, error) {
 	return opts, nil
 }
 
-func validateRequestedDomainAliases(host string, aliases []string) error {
-	rawHost := normalizeDomainHostname(host)
-	host = canonicalDomainHostname(host)
-	seen := make(map[string]struct{}, len(aliases))
-	for _, alias := range aliases {
-		rawAlias := normalizeDomainHostname(alias)
-		aliasKey := canonicalDomainHostname(alias)
-		if aliasKey == "" {
-			continue
+func normalizeLowerTrim(s string) string {
+	// Local helper to avoid importing strings just for this
+	lowered := ""
+	for _, c := range s {
+		if c >= 'A' && c <= 'Z' {
+			c += 32
 		}
-		if rawAlias == rawHost {
-			return fmt.Errorf("alias %q cannot be the same as the domain host", rawAlias)
-		}
-		if aliasKey == host {
-			continue
-		}
-		if _, ok := seen[aliasKey]; ok {
-			return fmt.Errorf("duplicate alias %q", aliasKey)
-		}
-		seen[aliasKey] = struct{}{}
+		lowered += string(c)
 	}
-	return nil
+	// trim spaces
+	start, end := 0, len(lowered)
+	for start < end && lowered[start] == ' ' { start++ }
+	for end > start && lowered[end-1] == ' ' { end-- }
+	return lowered[start:end]
+}
+
+func validateRequestedDomainAliases(host string, aliases []string) error {
+	return domainutil.ValidateRequestedDomainAliases(host, aliases)
 }
 
 func newCanonicalRedirectAliasDomain(alias, targetHost string, status int, preservePath bool) config.Domain {
-	alias = canonicalDomainHostname(alias)
-	targetHost = canonicalDomainHostname(targetHost)
-	if status == 0 {
-		status = http.StatusMovedPermanently
-	}
-	return config.Domain{
-		Host: alias,
-		Type: string(config.DomainTypeRedirect),
-		SSL:  config.SSLConfig{Mode: "auto"},
-		Redirect: config.RedirectConfig{
-			Target:       "https://" + targetHost,
-			Status:       status,
-			PreservePath: preservePath,
-		},
-	}
+	return domainutil.NewCanonicalRedirectAliasDomain(alias, targetHost, status, preservePath)
 }
 
 func autoWWWRedirectHost(d config.Domain) string {
-	host := normalizeDomainHostname(d.Host)
-	if host == "" || d.Type == string(config.DomainTypeRedirect) {
-		return ""
-	}
-	if strings.HasPrefix(host, "www.") || strings.Contains(host, ":") || strings.HasPrefix(host, "*.") {
-		return ""
-	}
-	if !strings.Contains(host, ".") {
-		return ""
-	}
-	return "www." + host
+	return domainutil.AutoWWWRedirectHost(d)
 }
 
 func applyDomainCanonicalPreference(d *config.Domain, opts domainAliasOptions) []string {
-	host := normalizeDomainHostname(d.Host)
+	host := domainutil.NormalizeDomainHostname(d.Host)
 	if host == "" || d.Type == string(config.DomainTypeRedirect) {
 		d.CanonicalHost = ""
 		return nil
 	}
-	apex, _, ok := apexAndWWWHost(host)
+	apex, _, ok := domainutil.ApexAndWWWHost(host)
 	if !ok {
 		return nil
 	}
@@ -141,181 +105,52 @@ func applyDomainCanonicalPreference(d *config.Domain, opts domainAliasOptions) [
 	if opts.canonicalHostSet {
 		d.CanonicalHost = opts.canonicalHost
 	} else {
-		d.CanonicalHost = normalizeCanonicalHostPreference(d.CanonicalHost)
+		d.CanonicalHost = domainutil.NormalizeCanonicalHostPreference(d.CanonicalHost)
 	}
-	normalizeDomainHostnames(d)
+	domainutil.NormalizeDomainHostnames(d)
 	return nil
 }
 
 func normalizeRequestedCanonicalHost(value string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "apex", "root", "naked", "domain":
-		return "apex", nil
-	case "www":
-		return "www", nil
-	case "both", "none", "no-redirect":
-		return "apex", nil
-	default:
-		return "", fmt.Errorf("canonical_host must be apex or www")
-	}
+	return domainutil.NormalizeRequestedCanonicalHost(value)
 }
 
 func normalizeCanonicalHostPreference(value string) string {
-	canonical, err := normalizeRequestedCanonicalHost(value)
-	if err != nil {
-		return "apex"
-	}
-	return canonical
+	return domainutil.NormalizeCanonicalHostPreference(value)
 }
 
 func apexAndWWWHost(host string) (string, string, bool) {
-	host = normalizeDomainHostname(host)
-	if host == "" || strings.Contains(host, ":") || strings.HasPrefix(host, "*.") || !strings.Contains(host, ".") {
-		return "", "", false
-	}
-	if strings.HasPrefix(host, "www.") {
-		apex := strings.TrimPrefix(host, "www.")
-		if apex == "" || !strings.Contains(apex, ".") {
-			return "", "", false
-		}
-		return apex, host, true
-	}
-	return host, "www." + host, true
+	return domainutil.ApexAndWWWHost(host)
 }
 
 func uniqueNormalizedHostnames(hosts []string) []string {
-	seen := make(map[string]struct{}, len(hosts))
-	out := make([]string, 0, len(hosts))
-	for _, host := range hosts {
-		host = normalizeDomainHostname(host)
-		if host == "" {
-			continue
-		}
-		if _, ok := seen[host]; ok {
-			continue
-		}
-		seen[host] = struct{}{}
-		out = append(out, host)
-	}
-	return out
+	return domainutil.UniqueNormalizedHostnames(hosts)
 }
 
 func upsertCanonicalRedirectAliasDomains(domains *[]config.Domain, skipIndex int, aliases []string, targetHost string, status int, preservePath bool) {
-	for _, alias := range aliases {
-		alias = canonicalDomainHostname(alias)
-		if alias == "" {
-			continue
-		}
-		redirectDomain := newCanonicalRedirectAliasDomain(alias, targetHost, status, preservePath)
-		updated := false
-		for i := range *domains {
-			if i == skipIndex {
-				continue
-			}
-			if canonicalDomainHostname((*domains)[i].Host) == alias {
-				(*domains)[i] = redirectDomain
-				updated = true
-				break
-			}
-		}
-		if !updated {
-			*domains = append(*domains, redirectDomain)
-		}
-	}
+	domainutil.UpsertCanonicalRedirectAliasDomains(domains, skipIndex, aliases, targetHost, status, preservePath)
 }
 
 func removeImplicitWWWRedirectDomains(domains *[]config.Domain, targetHost string, skipIndex int) {
-	targetHost = canonicalDomainHostname(targetHost)
-	if targetHost == "" {
-		return
-	}
-	out := (*domains)[:0]
-	for i, d := range *domains {
-		if i == skipIndex || !isCanonicalRedirectAliasDomain(d, implicitWWWHostname(targetHost), targetHost) {
-			out = append(out, d)
-		}
-	}
-	*domains = out
+	domainutil.RemoveImplicitWWWRedirectDomains(domains, targetHost, skipIndex)
 }
 
 func isImplicitWWWRedirectForDomains(d config.Domain, domains []config.Domain) bool {
-	if d.Type != string(config.DomainTypeRedirect) {
-		return false
-	}
-	host := canonicalDomainHostname(d.Host)
-	if host == "" {
-		return false
-	}
-	for _, candidate := range domains {
-		if candidate.Type == string(config.DomainTypeRedirect) {
-			continue
-		}
-		if canonicalDomainHostname(candidate.Host) == host && isCanonicalRedirectAliasDomain(d, d.Host, candidate.Host) {
-			return true
-		}
-	}
-	return false
+	return domainutil.IsImplicitWWWRedirectForDomains(d, domains)
 }
 
 func publicDomainAliases(d config.Domain) []string {
-	host := canonicalDomainHostname(d.Host)
-	seen := make(map[string]struct{}, len(d.Aliases))
-	out := make([]string, 0, len(d.Aliases))
-	for _, alias := range d.Aliases {
-		alias = canonicalDomainHostname(alias)
-		if alias == "" || alias == host {
-			continue
-		}
-		if _, ok := seen[alias]; ok {
-			continue
-		}
-		seen[alias] = struct{}{}
-		out = append(out, alias)
-	}
-	return out
+	return domainutil.PublicDomainAliases(d)
 }
 
 func findDomainHostnameConflictAllowingRedirect(domains []config.Domain, skipIndex int, host, targetHost string) string {
-	host = canonicalDomainHostname(host)
-	targetHost = canonicalDomainHostname(targetHost)
-	if host == "" {
-		return ""
-	}
-	for i, d := range domains {
-		if i == skipIndex {
-			continue
-		}
-		if canonicalDomainHostname(d.Host) == host {
-			if isCanonicalRedirectAliasDomain(d, host, targetHost) {
-				return ""
-			}
-			return d.Host
-		}
-		for _, alias := range d.Aliases {
-			if canonicalDomainHostname(alias) == host {
-				return d.Host
-			}
-		}
-	}
-	return ""
+	return domainutil.FindDomainHostnameConflictAllowingRedirect(domains, skipIndex, host, targetHost)
 }
 
 func isCanonicalRedirectAliasDomain(d config.Domain, host, targetHost string) bool {
-	if canonicalDomainHostname(d.Host) != canonicalDomainHostname(host) {
-		return false
-	}
-	if d.Type != string(config.DomainTypeRedirect) {
-		return false
-	}
-	target := strings.TrimRight(strings.ToLower(strings.TrimSpace(d.Redirect.Target)), "/")
-	return target == "https://"+canonicalDomainHostname(targetHost) || target == "https://"+implicitWWWHostname(targetHost)
+	return domainutil.IsCanonicalRedirectAliasDomain(d, host, targetHost)
 }
 
 func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
+	return domainutil.FirstNonEmpty(values...)
 }
