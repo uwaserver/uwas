@@ -2,10 +2,12 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	deployadmin "github.com/uwaserver/uwas/internal/admin/deploy"
 	"github.com/uwaserver/uwas/internal/apps"
@@ -158,7 +160,100 @@ var (
 )
 
 func (s *Server) runWebhookDeploy(name, ref string) {
-	deployHandler.RunWebhookDeploy(name, ref)
+	// This is a retained function for test compat — runs the webhook deploy
+	// synchronously using admin-level state. The sub-package handlers
+	// (Webhook, WebhookStatus) call through to the sub-package's Handler.
+	lock := deployLocks.get(name)
+	lock.Lock()
+	defer lock.Unlock()
+
+	status := &deployadmin.WebhookDeployStatus{
+		StartedAt: time.Now(),
+		Ref:       ref,
+	}
+
+	appsMgr := s.appsMgr
+	def, err := appsMgr.Store().Get(name)
+	if err != nil || def == nil {
+		status.OK = false
+		status.Error = "app disappeared between webhook and deploy"
+		status.Finished = time.Now()
+		recordLastWebhookFn(name, status)
+		return
+	}
+
+	if def.WorkDir == "" {
+		status.OK = false
+		status.Error = "app has no work_dir resolved"
+		status.Finished = time.Now()
+		recordLastWebhookFn(name, status)
+		return
+	}
+	if err := validateDockerGitDeploy(def); err != nil {
+		status.OK = false
+		status.Error = err.Error()
+		status.Finished = time.Now()
+		recordLastWebhookFn(name, status)
+		return
+	}
+
+	logBuf := &strings.Builder{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
+
+	env := deployadmin.CloneStringMap(def.Env)
+
+	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, env, logBuf); err != nil {
+		status.OK = false
+		status.Error = err.Error()
+		if rollbackSHA != "" {
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, deployadmin.CloneStringMap(def.Env), false, logBuf)
+		}
+		status.LogTail = tailString(logBuf.String(), 4096)
+		status.Finished = time.Now()
+		recordLastWebhookFn(name, status)
+		return
+	}
+
+	if sha, err := runOutput(ctx, def.WorkDir, "git", "rev-parse", "HEAD"); err == nil {
+		status.CommitSHA = strings.TrimSpace(sha)
+	}
+
+	if err := s.completeDeployedApp(name, def, false); err != nil {
+		status.OK = false
+		status.Error = err.Error()
+		if rollbackSHA != "" {
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, deployadmin.CloneStringMap(def.Env), true, logBuf)
+		}
+		status.LogTail = tailString(logBuf.String(), 4096)
+		status.Finished = time.Now()
+		recordLastWebhookFn(name, status)
+		return
+	}
+
+	status.OK = true
+	status.LogTail = tailString(logBuf.String(), 2048)
+	status.Finished = time.Now()
+	recordLastWebhookFn(name, status)
+	if s.reloadFn != nil {
+		_ = s.reloadFn()
+	}
+	s.logger.Info("webhook deploy ok",
+		"app", name, "commit", status.CommitSHA, "duration", status.Finished.Sub(status.StartedAt))
+}
+
+func currentGitSHA(ctx context.Context, workDir string) string {
+	if sha, err := runOutput(ctx, workDir, "git", "rev-parse", "HEAD"); err == nil {
+		return strings.TrimSpace(sha)
+	}
+	return ""
+}
+
+func recordLastWebhookFn(name string, status *deployadmin.WebhookDeployStatus) {
+	lastWebhookMu.Lock()
+	lastWebhookByName[name] = status
+	lastWebhookMu.Unlock()
 }
 
 // appDeployHistoryEntry is aliased for test compat.
@@ -197,7 +292,30 @@ var execLookPath = exec.LookPath
 
 // appDeployPreflight delegates to the sub-package.
 func appDeployPreflight(def *apps.App) []AppPreflightCheck {
-	return deployadmin.AppDeployPreflight(def)
+	// Delegate to the sub-package, then add runtime tool checks.
+	checks := deployadmin.AppDeployPreflight(def)
+	// Runtime tool checks (use admin-level execLookPath for test compat)
+	switch def.Runtime {
+	case apps.RuntimeNode:
+		if _, err := execLookPath("node"); err == nil {
+			checks = append(checks, deployadmin.AppPreflightCheck{Name: "node", Label: "Node.js", OK: true})
+		} else {
+			checks = append(checks, deployadmin.AppPreflightCheck{Name: "node", Label: "Node.js", OK: false, Detail: "node not found in PATH"})
+		}
+		if _, err := execLookPath("npm"); err == nil {
+			checks = append(checks, deployadmin.AppPreflightCheck{Name: "npm", Label: "npm", OK: true})
+		} else {
+			checks = append(checks, deployadmin.AppPreflightCheck{Name: "npm", Label: "npm", OK: false, Required: true})
+		}
+	}
+	if def.Deploy.GitURL != "" {
+		if _, err := execLookPath("git"); err == nil {
+			checks = append(checks, deployadmin.AppPreflightCheck{Name: "git", Label: "Git", OK: true})
+		} else {
+			checks = append(checks, deployadmin.AppPreflightCheck{Name: "git", Label: "Git", OK: false, Detail: "git not found in PATH"})
+		}
+	}
+	return checks
 }
 
 // deployHistoryMu and deployHistory are retained for test compat.
@@ -253,10 +371,27 @@ func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool)
 	if s.appsMgr == nil {
 		return nil
 	}
+	if def != nil {
+		def.Disabled = skipStart
+	}
+	_ = s.appsMgr.Stop(name)
+	if err := s.appsMgr.Register(def); err != nil {
+		return fmt.Errorf("deploy succeeded but app refresh failed: %w", err)
+	}
 	if skipStart {
 		return nil
 	}
-	return s.appsMgr.Restart(name)
+	time.Sleep(500 * time.Millisecond)
+	if err := s.appsMgr.Start(name); err != nil {
+		return fmt.Errorf("deploy succeeded but restart failed: %w", err)
+	}
+	if err := s.appsMgr.WaitListening(name, listeningProbeTimeout); err != nil {
+		return fmt.Errorf("deploy succeeded and process started, but app is not listening: %w", err)
+	}
+	if err := deployadmin.ProbeAppHealth(def, def.Deploy.HealthPath); err != nil {
+		return fmt.Errorf("deploy succeeded and process is listening, but health check failed: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) rollbackDeployedApp(
@@ -269,8 +404,15 @@ func (s *Server) rollbackDeployedApp(
 	restart bool,
 	logBuf *strings.Builder,
 ) (bool, string, string) {
+	rollbackSHA = strings.TrimSpace(rollbackSHA)
 	if rollbackSHA == "" {
-		return false, "", "no rollback SHA"
+		return false, "", "rollback skipped: previous commit is unknown"
+	}
+	// If the original context was cancelled, create a fresh one for the rollback.
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
 	}
 	_ = s.appsMgr.Stop(name)
 	// Run git reset --hard <sha> via exec
@@ -283,7 +425,7 @@ func (s *Server) rollbackDeployedApp(
 		if logBuf != nil {
 			logBuf.WriteString(combined.String())
 		}
-		return false, "", "git reset failed: " + err.Error()
+		return false, rollbackSHA, "git reset failed: " + err.Error()
 	}
 	if logBuf != nil {
 		logBuf.WriteString(combined.String())
@@ -293,5 +435,5 @@ func (s *Server) rollbackDeployedApp(
 			return false, rollbackSHA, "restart failed: " + err.Error()
 		}
 	}
-	return true, rollbackSHA[:7], "rolled back to " + rollbackSHA[:7]
+	return true, rollbackSHA, "rolled back to " + rollbackSHA
 }

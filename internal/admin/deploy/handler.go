@@ -231,14 +231,14 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := runDeployCore(ctx, def, validationDef.Deploy.GitURL, validationDef.Deploy.GitBranch, validationDef.Deploy.BuildCmd, validationDef.Deploy.SSHKeyPath, validationDef.Deploy.GitToken, env, logBuf); err != nil {
-		resp := &AppDeployResponse{OK: false, Error: err.Error(), LogTail: tailString(logBuf.String(), 4096)}
+		resp := &AppDeployResponse{OK: false, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096)}
 		if rollbackSHA != "" {
 			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), !req.SkipStart, logBuf)
 			resp.RolledBack = rb
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 		}
 		h.deps.RecordAudit(r, "app.deploy", name+" error: "+err.Error(), false)
-		respond500(w, resp, tailString(logBuf.String(), 4096))
+		jsonResponse(w, resp)
 		return
 	}
 
@@ -248,14 +248,15 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.deps.AppCompleteDeploy(name, def, req.SkipStart); err != nil {
-		resp := &AppDeployResponse{OK: false, CommitSHA: commitSHA, Error: err.Error()}
+		resp := &AppDeployResponse{OK: false, CommitSHA: commitSHA, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096), RollbackSHA: rollbackSHA}
 		if rollbackSHA != "" {
 			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), true, logBuf)
 			resp.RolledBack = rb
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
+			resp.RollbackSHA = rbSHA
 		}
 		h.deps.RecordAudit(r, "app.deploy", name+" post-deploy error: "+err.Error(), false)
-		respond500(w, resp, tailString(logBuf.String(), 4096))
+		jsonResponse(w, resp)
 		return
 	}
 
@@ -264,12 +265,12 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		Source: "manual", StartedAt: time.Now(), Finished: time.Now(),
 		OK: true, CommitSHA: commitSHA, LogTail: tailString(logBuf.String(), 2048),
 	})
-	if err := h.deps.Reload(); err != nil && h.deps.LogError != nil {
-		// Log but don't fail — the deploy succeeded.
+	if err := h.deps.Reload(); err != nil {
+		h.deps.LogError("reload after deploy failed", "error", err)
 	}
 	jsonResponse(w, &AppDeployResponse{
 		OK: true, CommitSHA: commitSHA, Message: "deployed successfully",
-		LogTail: tailString(logBuf.String(), 2048),
+		Log: logBuf.String(), LogTail: tailString(logBuf.String(), 2048),
 	})
 }
 

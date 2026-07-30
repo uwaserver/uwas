@@ -711,8 +711,11 @@ func TestHandleAppDeploy_EmptyWorkDir(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/apps/testapp/deploy",
 		strings.NewReader(body)))
-	if rec.Code != 500 {
-		t.Errorf("status = %d, want 500 (empty workdir), body=%s", rec.Code, truncateStr(rec.Body.String(), 80))
+	if rec.Code != 200 {
+		t.Errorf("status = %d, want 200 (returns OK:false on error), body=%s", rec.Code, truncateStr(rec.Body.String(), 80))
+	}
+	if !strings.Contains(rec.Body.String(), `"ok":false`) {
+		t.Errorf("expected ok:false, body=%s", truncateStr(rec.Body.String(), 80))
 	}
 }
 
