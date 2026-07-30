@@ -289,10 +289,11 @@ internal/admin/
 ├── database/              # Database handler sub-package
 ├── php/                   # PHP handler sub-package
 ├── cloudflare/            # Cloudflare handler sub-package
+├── domain/                # Domain handler sub-package
 ├── handlers_database.go   # Adapter (dbDeps + thin wrappers)
 ├── handlers_php.go        # Adapter (phpDeps + thin wrappers)
 ├── handlers_cloudflare.go # Adapter (cfDeps + thin wrappers + state types)
-├── handlers_domain.go     # Not yet extracted
+├── handlers_domain.go     # Adapter (domainDeps + thin wrappers)
 ├── handlers_apps.go       # Not yet extracted
 └── ...                    # Other handlers + tests
 ```
@@ -301,5 +302,42 @@ Each extracted area produces:
 - **1 new sub-package file** (`internal/admin/<area>/handler.go`) — the real logic
 - **1 modified adapter file** (`handlers_<area>.go`) — shrinks from full handlers to adapter + thin wrappers
 
-The adapter file should be <200 LOC after extraction. The thin wrappers can be
+The adapter file should be <300 LOC after extraction. The thin wrappers can be
 removed entirely once test files are migrated to call the sub-package directly.
+
+---
+
+## Completed Extractions
+
+| Sub-package | Handler LOC | Routes | Notes |
+|-------------|-------------|--------|-------|
+| `admin/authmw` | 326 | (middleware) | Function-closure Deps to avoid circular import |
+| `admin/database` | 807 | 34 | Service hooks read at call time for test isolation |
+| `admin/php` | 554 | 21 | PHPManager read via Deps (not cached at construction) |
+| `admin/cloudflare` | 871 | 16 | CF API helpers with injectable HTTP client |
+| `admin/domain` | 780 | 15 | Requires `internal/domainutil/` prerequisite (25 pure helpers) |
+
+### Special case: admin/domain
+
+`handlers_domain.go` (1481 LOC) was the largest and most coupled handler file.
+Its 25 pure hostname helper functions were used by 7+ other admin files,
+making a direct extraction impossible (circular import). The solution was a
+two-step migration:
+
+1. **`internal/domainutil/`** (403 LOC) — pure helpers with zero admin dependency
+2. **`internal/admin/domain/`** (780 LOC) — handler methods importing `domainutil`
+
+The domain sub-package also required porting the full alias canonicalization
+flow (`parseAliasOptions`, `applyDomainCanonicalPreference`, same-site www
+detection, redirect alias conflict resolution) — ~200 lines of complex logic
+from `domain_alias.go`.
+
+## Remaining Candidates
+
+| File | LOC | Priority |
+|------|-----|----------|
+| `handlers_apps.go` + `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` | ~1800 | High |
+| `handlers_settings.go` | 683 | Medium |
+| `handlers_backup.go` | ~400 | Medium |
+| `handlers_files.go` | ~500 | Medium |
+| `handlers_wordpress.go` | ~400 | Low |
