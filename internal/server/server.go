@@ -208,7 +208,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			int64(cfg.Global.Cache.DiskLimit),
 			log,
 		)
-		cacheEngine.VaryHeaders = cfg.Global.Cache.VaryByHeaders
+		cacheEngine.SetVaryHeaders(cfg.Global.Cache.VaryByHeaders)
 
 		// L3: Redis cache
 		if cfg.Global.Cache.Redis.Enabled {

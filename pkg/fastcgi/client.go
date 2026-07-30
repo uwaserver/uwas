@@ -10,7 +10,23 @@ import (
 	"net/http"
 	"net/textproto"
 	"strconv"
+	"sync"
 	"time"
+)
+
+// Buffer pools — eliminate ~72 KB of per-request allocation (4 KB bufio
+// writer + 64 KB stdin buffer + 4 KB bufio reader) on the hot PHP path.
+// Response is NOT pooled because it is returned to the caller.
+var (
+	bufWriterPool = sync.Pool{
+		New: func() any { return bufio.NewWriterSize(io.Discard, 4096) },
+	}
+	bufReaderPool = sync.Pool{
+		New: func() any { return bufio.NewReaderSize(nil, 4096) },
+	}
+	stdinBufPool = sync.Pool{
+		New: func() any { b := make([]byte, maxContentLength); return &b },
+	}
 )
 
 // Client sends requests to a FastCGI server via a connection pool.
@@ -57,8 +73,9 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 	}
 	cn.netConn.SetDeadline(deadline)
 
-	// Use a buffered writer for efficiency
-	bw := bufio.NewWriter(cn.netConn)
+	// Use a pooled buffered writer (4 KB buffer, Reset to point at the connection).
+	bw := bufWriterPool.Get().(*bufio.Writer)
+	bw.Reset(cn.netConn)
 	requestID := uint16(1)
 
 	// 1. FCGI_BEGIN_REQUEST
@@ -92,9 +109,11 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 		return nil, fmt.Errorf("write params end: %w", err)
 	}
 
-	// 3. FCGI_STDIN (request body)
+	// 3. FCGI_STDIN (request body) — use pooled 64 KB buffer
 	if stdin != nil {
-		buf := make([]byte, maxContentLength)
+		stdinBufPtr := stdinBufPool.Get().(*[]byte)
+		buf := *stdinBufPtr
+		defer func() { stdinBufPool.Put(stdinBufPtr) }()
 		for {
 			n, readErr := stdin.Read(buf)
 			if n > 0 {
@@ -118,15 +137,19 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 		return nil, fmt.Errorf("write stdin end: %w", err)
 	}
 
-	// Flush all buffered writes
+	// Flush all buffered writes, then return writer to pool.
 	if err := bw.Flush(); err != nil {
+		bufWriterPool.Put(bw)
 		broken = true
 		return nil, fmt.Errorf("flush: %w", err)
 	}
+	bufWriterPool.Put(bw)
 
-	// 4. Read response records
+	// 4. Read response records — use pooled buffered reader.
 	resp := &Response{}
-	br := bufio.NewReader(cn.netConn)
+	br := bufReaderPool.Get().(*bufio.Reader)
+	br.Reset(cn.netConn)
+	defer bufReaderPool.Put(br)
 
 	for {
 		rec, err := ReadRecord(br)

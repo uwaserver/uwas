@@ -174,7 +174,7 @@ func TestEngineGetRedisPromotionFresh(t *testing.T) {
 	e, stub := newRedisStubEngine(t, dir)
 
 	req := httptest.NewRequest("GET", "http://example.com/redis-fresh", nil)
-	key := GenerateKey(req, e.varyKeys())
+	key := e.Key(req)
 
 	data, _ := json.Marshal(freshResp("redis fresh body", time.Hour))
 	stub.seed(key, string(data))
@@ -207,7 +207,7 @@ func TestEngineGetRedisPromotionStale(t *testing.T) {
 	e, stub := newRedisStubEngine(t, dir)
 
 	req := httptest.NewRequest("GET", "http://example.com/redis-stale", nil)
-	key := GenerateKey(req, e.varyKeys())
+	key := e.Key(req)
 
 	stale := &CachedResponse{
 		StatusCode: 200,
@@ -234,7 +234,7 @@ func TestEngineGetRedisExpiredBeyondGrace(t *testing.T) {
 	e, stub := newRedisStubEngine(t, dir)
 
 	req := httptest.NewRequest("GET", "http://example.com/redis-expired", nil)
-	key := GenerateKey(req, e.varyKeys())
+	key := e.Key(req)
 
 	expired := &CachedResponse{
 		StatusCode: 200,
@@ -272,7 +272,7 @@ func TestEngineSetRedisWrite(t *testing.T) {
 	e, stub := newRedisStubEngine(t, dir)
 
 	req := httptest.NewRequest("GET", "http://example.com/set-redis", nil)
-	key := GenerateKey(req, e.varyKeys())
+	key := e.Key(req)
 
 	e.Set(req, freshResp("set into redis", time.Hour))
 

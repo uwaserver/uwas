@@ -186,8 +186,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain WAF (Content-Type aware, with bypass path support).
 	// Predicate-form guard precompiled at config load (refactor.md P2/P3);
 	// no per-request closure allocation, no one-shot handler wrap.
-	if guard := s.wafGuardFor(domain.Host); guard != nil {
-		if !guard(ctx.Response, r) {
+	// Snapshot all per-domain guards in a single routeMu.RLock to avoid
+	// 5 separate lock acquisitions per request.
+	guards := s.guardsFor(domain.Host)
+	if guards.waf != nil {
+		if !guards.waf(ctx.Response, r) {
 			return
 		}
 	}
@@ -350,7 +353,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			ctx.Response.WriteHeader(resp.StatusCode)
-			io.Copy(ctx.Response, resp.Body)
+			if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
+				s.logger.Warn("location proxy: response body copy failed",
+					"host", r.Host, "path", r.URL.Path, "error", err)
+			}
 			return
 		}
 
@@ -382,26 +388,26 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-domain IP ACL (whitelist/blacklist) — predicate form (P2/P3).
-	if guard := s.ipACLGuardFor(domain.Host); guard != nil {
-		if !guard(ctx.Response, r) {
+	if guards.ipACL != nil {
+		if !guards.ipACL(ctx.Response, r) {
 			return
 		}
 	}
 
 	// Per-domain GeoIP blocking — predicate form (P2/P3).
-	if guard := s.geoGuardFor(domain.Host); guard != nil {
-		if !guard(ctx.Response, r) {
+	if guards.geo != nil {
+		if !guards.geo(ctx.Response, r) {
 			return
 		}
 	}
 
 	// Per-domain rate limiting
-	if rl := s.rateLimiterFor(domain.Host); rl != nil {
+	if guards.rateLimit != nil {
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || ip == "" {
 			ip = r.RemoteAddr
 		}
-		if !rl.Allow(ip) {
+		if !guards.rateLimit.Allow(ip) {
 			ctx.Response.Header().Set("Retry-After", "60")
 			ctx.Response.WriteHeader(http.StatusTooManyRequests)
 			ctx.Response.Write([]byte("429 Too Many Requests"))
@@ -418,8 +424,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain CORS — predicate form (P2/P3). Guard handles preflight
 	// inline and returns false when the response was terminated there.
-	if guard := s.corsGuardFor(domain.Host); guard != nil {
-		if !guard(ctx.Response, r) {
+	if guards.cors != nil {
+		if !guards.cors(ctx.Response, r) {
 			return
 		}
 	}
@@ -529,8 +535,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Compute cache key once for both lookup and store (avoids recomputing
+	// the key + reallocating the vary slice on the Set path).
+	var cacheKey string
 	if cacheEnabled {
-		cached, status := s.cache.Get(r)
+		cacheKey = s.cache.Key(r)
+		cached, status := s.cache.GetByKey(cacheKey)
 		if cached != nil && (status == cache.StatusHit || status == cache.StatusStale) {
 			ctx.CacheStatus = status
 			s.metrics.RecordCache(status)
@@ -621,7 +631,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				etag[33] = '"'
 				hdrs.Set("ETag", string(etag[:]))
 			}
-			s.cache.Set(r, &cache.CachedResponse{
+			s.cache.SetByKey(cacheKey, &cache.CachedResponse{
 				StatusCode:  ctx.Response.StatusCode(),
 				Headers:     hdrs,
 				Body:        capturedBody,
@@ -697,10 +707,15 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 
 	resolved := ctx.ResolvedPath
 
-	info, err := os.Stat(resolved)
-	if err != nil {
-		renderDomainError(ctx.Response, http.StatusNotFound, domain)
-		return
+	// Use FileInfo from ResolveRequest if available; otherwise stat.
+	info := ctx.FileInfo
+	if info == nil {
+		var err error
+		info, err = os.Stat(resolved)
+		if err != nil {
+			renderDomainError(ctx.Response, http.StatusNotFound, domain)
+			return
+		}
 	}
 
 	if info.IsDir() {

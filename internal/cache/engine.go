@@ -11,12 +11,22 @@ import (
 
 // Engine is the main cache interface combining L1 memory + L2 disk + L3 Redis.
 type Engine struct {
-	memory      *MemoryCache
-	disk        *DiskCache
-	redis       *RedisCache
-	logger      *logger.Logger
-	VaryHeaders []string      // additional headers to include in cache key (from config)
-	writeSem    chan struct{} // bounds concurrent L2/L3 writes
+	memory   *MemoryCache
+	disk     *DiskCache
+	redis    *RedisCache
+	logger   *logger.Logger
+	varyKeys []string      // precomputed: ["Accept-Encoding", ...configuredVaryHeaders]
+	writeSem chan struct{} // bounds concurrent L2/L3 writes
+}
+
+// SetVaryHeaders precomput the full vary-key list (Accept-Encoding + caller
+// headers).  Call once at config load; the slice is reused on every request
+// with zero per-request allocation.
+func (e *Engine) SetVaryHeaders(headers []string) {
+	keys := make([]string, 0, len(headers)+1)
+	keys = append(keys, "Accept-Encoding")
+	keys = append(keys, headers...)
+	e.varyKeys = keys
 }
 
 // NewEngine creates a cache engine with memory and optional disk backing.
@@ -25,6 +35,7 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
 	e := &Engine{
 		memory:   NewMemoryCache(memoryLimit),
 		logger:   log,
+		varyKeys: []string{"Accept-Encoding"}, // default; extended via SetVaryHeaders
 		writeSem: make(chan struct{}, maxConcurrentWrites),
 	}
 
@@ -39,100 +50,21 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
 	return e
 }
 
-// Get looks up a cache entry: L1 (memory) → L2 (disk) → L3 (Redis) → miss.
-func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
-	key := GenerateKey(r, e.varyKeys())
-
-	// L1: memory
-	resp, status := e.memory.Get(key)
-	if resp != nil {
-		return resp, status
-	}
-
-	// L2: disk (promote to memory on hit)
-	if e.disk != nil {
-		resp, err := e.disk.Get(key)
-		if err == nil && resp != nil {
-			if resp.IsFresh() || resp.IsStale() {
-				e.memory.Set(key, resp) // promote
-				if resp.IsFresh() {
-					return resp, StatusHit
-				}
-				return resp, StatusStale
-			}
-			// Expired: reclaim the file so dead entries don't pin usedBytes
-			e.disk.Delete(key)
-		}
-	}
-
-	// L3: Redis (promote to memory on hit)
-	if e.redis != nil {
-		resp, err := e.redis.Get(key)
-		if err == nil && resp != nil {
-			if resp.IsFresh() || resp.IsStale() {
-				e.memory.Set(key, resp) // promote
-				if e.disk != nil {
-					select {
-					case e.writeSem <- struct{}{}:
-						go func() {
-							defer func() { <-e.writeSem }()
-							_ = e.disk.Set(key, resp) // also promote to disk
-						}()
-					default:
-					}
-				}
-				if resp.IsFresh() {
-					return resp, StatusHit
-				}
-				return resp, StatusStale
-			}
-		}
-	}
-
-	return nil, StatusMiss
+// Key computes the cache key for a request.  Callers that need to look up
+// and store a response (the normal cache miss → handler → cache set path)
+// should call this once and pass the result to GetByKey / SetByKey to avoid
+// recomputing the key (and reallocating the vary slice) a second time.
+func (e *Engine) Key(r *http.Request) string {
+	return GenerateKey(r, e.varyKeys)
 }
 
-// Set stores a response in L1 and async-writes to L2.
-func (e *Engine) varyKeys() []string {
-	keys := []string{"Accept-Encoding"}
-	keys = append(keys, e.VaryHeaders...)
-	return keys
+// Get looks up a cache entry: L1 (memory) → L2 (disk) → L3 (Redis) → miss.
+func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
+	return e.GetByKey(GenerateKey(r, e.varyKeys))
 }
 
 func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
-	key := GenerateKey(r, e.varyKeys())
-	e.memory.Set(key, resp)
-
-	// Async disk write (bounded by writeSem — drops on overload)
-	if e.disk != nil {
-		select {
-		case e.writeSem <- struct{}{}:
-			go func() {
-				defer func() { <-e.writeSem }()
-				if err := e.disk.Set(key, resp); err != nil {
-					e.logger.Warn("disk cache write failed", "key", key, "error", err)
-				}
-			}()
-		default:
-			// L1 write already succeeded; dropping L2 is acceptable
-		}
-	}
-
-	// Async Redis write (bounded by writeSem)
-	if e.redis != nil {
-		select {
-		case e.writeSem <- struct{}{}:
-			go func() {
-				defer func() { <-e.writeSem }()
-				// resp.TTL is already a time.Duration; include the grace
-				// window so stale-while-revalidate serving works from L3.
-				if err := e.redis.Set(key, resp, resp.TTL+resp.GraceTTL); err != nil {
-					e.logger.Warn("redis cache write failed", "key", key, "error", err)
-				}
-			}()
-		default:
-		}
-	}
+	e.SetByKey(GenerateKey(r, e.varyKeys), resp)
 }
 
 // GetByKey looks up a cache entry by explicit key (for ESI fragments).
@@ -159,6 +91,17 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 		if err == nil && resp != nil {
 			if resp.IsFresh() || resp.IsStale() {
 				e.memory.Set(key, resp)
+				// Async promote to disk so subsequent L2 hits avoid Redis round-trips.
+				if e.disk != nil {
+					select {
+					case e.writeSem <- struct{}{}:
+						go func() {
+							defer func() { <-e.writeSem }()
+							_ = e.disk.Set(key, resp)
+						}()
+					default:
+					}
+				}
 				if resp.IsFresh() {
 					return resp, StatusHit
 				}

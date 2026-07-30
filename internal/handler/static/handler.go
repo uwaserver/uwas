@@ -47,10 +47,14 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 		return
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		w.Error(http.StatusNotFound, "404 Not Found")
-		return
+	// Use FileInfo from ResolveRequest if available; otherwise stat.
+	info, err := ctx.FileInfo, error(nil)
+	if info == nil {
+		info, err = os.Stat(path)
+		if err != nil {
+			w.Error(http.StatusNotFound, "404 Not Found")
+			return
+		}
 	}
 
 	// Set content type with charset for text types
@@ -337,10 +341,11 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 			// Try index files within directory
 			for _, idx := range indexFiles {
 				idxPath := filepath.Join(fullPath, idx)
-				if _, err := os.Stat(idxPath); err == nil {
+				if idxInfo, err := os.Stat(idxPath); err == nil {
 					ctx.ResolvedPath = idxPath
 					ctx.RewrittenURI = filepath.ToSlash(filepath.Join(resolved, idx))
 					ctx.DocumentRoot = docRoot
+					ctx.FileInfo = idxInfo
 					return true
 				}
 			}
@@ -350,6 +355,7 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		ctx.ResolvedPath = fullPath
 		ctx.RewrittenURI = resolved
 		ctx.DocumentRoot = docRoot
+		ctx.FileInfo = stat
 		return true
 	}
 
@@ -365,6 +371,12 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 				return false
 			}
 
+			// Stat the front-controller so downstream code doesn't re-stat.
+			// If the file doesn't physically exist (some apps are purely virtual),
+			// proceed without FileInfo — the downstream handler will 404.
+			if fi, err := os.Stat(fullPath); err == nil {
+				ctx.FileInfo = fi
+			}
 			ctx.ResolvedPath = fullPath
 			ctx.RewrittenURI = last
 			ctx.DocumentRoot = docRoot
