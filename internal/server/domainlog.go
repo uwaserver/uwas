@@ -243,8 +243,17 @@ func compressFile(path string) {
 		os.Remove(path + ".gz")
 		return
 	}
-	gz.Close()
-	dst.Close()
+	// gz.Close() flushes the gzip trailer (CRC32 + size). If it fails the
+	// .gz is corrupt — keep the original log and remove the bad archive.
+	if err := gz.Close(); err != nil {
+		dst.Close()
+		os.Remove(path + ".gz")
+		return
+	}
+	if err := dst.Close(); err != nil {
+		os.Remove(path + ".gz")
+		return
+	}
 	src.Close()
 	os.Remove(path) // remove uncompressed
 }

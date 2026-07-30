@@ -22,12 +22,18 @@ import (
 	"github.com/uwaserver/uwas/internal/database"
 )
 
+// downloadClient is used for all outbound WordPress.org downloads
+// (tarball + checksum). The timeout covers connect + transfer; 5 minutes
+// is generous for a ~50 MB tarball on a slow link while preventing an
+// indefinite hang if wordpress.org stalls.
+var downloadClient = &http.Client{Timeout: 5 * time.Minute}
+
 // Testable hooks — replaced in tests to avoid real exec/HTTP/filesystem calls.
 var (
 	runtimeGOOS    = runtime.GOOS
 	execCommandFn  = exec.Command
 	execLookPathFn = exec.LookPath
-	httpGetFn      = http.Get
+	httpGetFn      = downloadClient.Get
 	osStatFn       = os.Stat
 	osReadFileFn   = os.ReadFile
 	osWriteFileFn  = os.WriteFile
