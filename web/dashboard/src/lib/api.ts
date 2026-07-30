@@ -71,6 +71,42 @@ export function clearPinCode() { pinCode = ''; }
 let pinPromptCallback: ((resolve: (pin: string) => void, reject: () => void) => void) | null = null;
 export function onPinRequired(cb: typeof pinPromptCallback) { pinPromptCallback = cb; }
 
+// DEFAULT_REQUEST_TIMEOUT bounds how long a single API request can take before
+// being automatically aborted. 30s is generous for most admin operations; SSE
+// and terminal WebSocket paths use their own long-lived connections.
+const DEFAULT_REQUEST_TIMEOUT = 30_000;
+
+/**
+ * Creates an AbortController that fires after `timeoutMs` and also aborts when
+ * the caller's `externalSignal` (if any) fires. Returns the controller and a
+ * cleanup function that clears the timeout (call in a finally block).
+ */
+function abortWithTimeout(
+  timeoutMs: number = DEFAULT_REQUEST_TIMEOUT,
+  externalSignal?: AbortSignal | null,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(id),
+  };
+}
+
+/** Returns true if the error is an AbortError (timeout or caller-cancelled). */
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError';
+}
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const started = performance.now();
   const method = options?.method || 'GET';
@@ -94,17 +130,20 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   let res: Response;
+  const { signal, cleanup } = abortWithTimeout(DEFAULT_REQUEST_TIMEOUT, options?.signal);
   try {
-    res = await fetch(`${BASE}${path}`, { ...options, headers });
+    res = await fetch(`${BASE}${path}`, { ...options, headers, signal });
   } catch (e) {
     addDebugLog({
       level: 'error',
       scope: 'api',
-      message: `${method} ${path} network error`,
-      detail: e instanceof Error ? e.message : String(e),
+      message: `${method} ${path} ${isAbortError(e) ? 'timeout' : 'network error'}`,
+      detail: isAbortError(e) ? `Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s` : (e instanceof Error ? e.message : String(e)),
       duration_ms: Math.round(performance.now() - started),
     });
-    throw e;
+    throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+  } finally {
+    cleanup();
   }
 
   const logResponse = (level: 'success' | 'warn' | 'error', message: string, detail?: unknown) => {
@@ -147,7 +186,15 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
       addDebugLog({ level: 'info', scope: 'api', message: `${method} ${path} retrying with PIN` });
       // Retry the same request with pin
       const retryHeaders: Record<string, string> = { ...headers, 'X-Pin-Code': pin };
-      const retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders });
+      const { signal: retrySignal, cleanup: retryCleanup } = abortWithTimeout(DEFAULT_REQUEST_TIMEOUT, options?.signal);
+      let retryRes: Response;
+      try {
+        retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders, signal: retrySignal });
+      } catch (e) {
+        throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+      } finally {
+        retryCleanup();
+      }
       pinCode = '';
       if (!retryRes.ok) {
         const retryBody = await retryRes.json().catch(() => ({ error: retryRes.statusText }));
