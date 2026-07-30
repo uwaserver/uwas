@@ -21,6 +21,7 @@ class EventSourceMock {
 
   constructor(url: string) {
     this.url = url;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- capture mock instance for test assertions
     currentEventSource = this;
     // Defer onopen so the hook has time to attach the handler.
     Promise.resolve().then(() => this.onopen?.());
