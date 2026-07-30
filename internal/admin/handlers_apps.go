@@ -80,11 +80,8 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, offset := parsePagination(r)
 	items, total := paginateSlice(out, limit, offset)
-	jsonResponse(w, map[string]any{
-		"items":  items,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+	jsonResponse(w, PaginatedResponse[any]{
+		Items: items, Total: total, Limit: limit, Offset: offset,
 	})
 }
 
