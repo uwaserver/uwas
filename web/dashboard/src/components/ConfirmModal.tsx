@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertTriangle, Info, X } from 'lucide-react';
 import { ConfirmContext, type BaseDialogOptions, type PromptOptions } from './useConfirm';
 
@@ -25,6 +25,7 @@ const variantClasses: Record<DialogVariant, { icon: string; button: string }> = 
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const confirmAction = useCallback((options: BaseDialogOptions) => new Promise<boolean>((resolve) => {
     setDialog({ kind: 'confirm', options, resolve });
@@ -46,6 +47,28 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     setDialog(null);
   };
 
+  // Escape to close.
+  useEffect(() => {
+    if (!dialog) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (dialog.kind === 'confirm') closeConfirm(false);
+        else closePrompt(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [dialog]);
+
+  // Focus the dialog container when it opens — but only if no descendant
+  // already has focus (e.g. an input with autoFocus).
+  useEffect(() => {
+    if (dialog && dialogRef.current && !dialogRef.current.contains(document.activeElement)) {
+      dialogRef.current.focus();
+    }
+  }, [dialog]);
+
   const submitPrompt = (e: FormEvent) => {
     e.preventDefault();
     if (dialog?.kind === 'prompt') closePrompt(dialog.value);
@@ -64,14 +87,22 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       {dialog && opts && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => dialog.kind === 'confirm' ? closeConfirm(false) : closePrompt(null)}>
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-modal-title"
+            tabIndex={-1}
+            className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl outline-none"
+            onClick={e => e.stopPropagation()}
+          >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${styles.icon}`}>
                   {variant === 'info' ? <Info size={17} /> : <AlertTriangle size={17} />}
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold text-foreground">{opts.title}</h2>
+                  <h2 id="confirm-modal-title" className="text-sm font-semibold text-foreground">{opts.title}</h2>
                   {opts.message && <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{opts.message}</div>}
                 </div>
               </div>

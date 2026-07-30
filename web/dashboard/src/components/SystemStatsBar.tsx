@@ -1,16 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Cpu, HardDrive, MemoryStick, Activity } from 'lucide-react';
 import { fetchSystem, type SystemInfo } from '@/lib/api';
+import { usePolling } from '@/hooks/usePolling';
 
 export default function SystemStatsBar() {
   const [sys, setSys] = useState<SystemInfo | null>(null);
 
-  useEffect(() => {
-    const load = () => fetchSystem().then(setSys).catch(() => {});
-    load();
-    const id = setInterval(load, 2000);
-    return () => clearInterval(id);
-  }, []);
+  usePolling(() => fetchSystem().then(setSys).catch(() => {}), 2000);
 
   if (!sys) return null;
 

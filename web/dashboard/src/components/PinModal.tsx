@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Lock, X } from 'lucide-react';
 
 interface PinModalProps {
@@ -13,9 +13,9 @@ export default function PinModal({ open, title, message, onConfirm, onCancel }: 
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  if (!open) return null;
-
+  // Close/cancel: reset state and notify parent.
   const handleCancel = () => {
     setPin('');
     setError('');
@@ -34,22 +34,69 @@ export default function PinModal({ open, title, message, onConfirm, onCancel }: 
     onConfirm(cleanPin);
   };
 
+  // Focus the input when modal opens.
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+  }, [open]);
+
+  // Escape to close + focus trap.
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+        return;
+      }
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open]);
+
+  if (!open) return null;
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={handleCancel}>
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pin-modal-title"
+        aria-describedby="pin-modal-desc"
+        className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-500/10">
               <Lock size={16} className="text-red-400" />
             </div>
-            <h2 className="text-sm font-semibold text-foreground">{title || 'Pin Required'}</h2>
+            <h2 id="pin-modal-title" className="text-sm font-semibold text-foreground">{title || 'Pin Required'}</h2>
           </div>
           <button onClick={handleCancel} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
             <X size={16} />
           </button>
         </div>
 
-        <p className="text-xs text-muted-foreground mb-4">
+        <p id="pin-modal-desc" className="text-xs text-muted-foreground mb-4">
           {message || 'Enter your pin code to confirm this destructive operation.'}
         </p>
 
