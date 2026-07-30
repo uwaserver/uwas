@@ -188,6 +188,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	s.initCloudflareHandler()
 	s.initPHPHandler() // initialize with nil manager; SetPHPManager upgrades it
 	s.initDomainHandler()
+	s.initAppsHandler()
 	s.initAudit()
 	if err := s.loadAuditLog(); err != nil {
 		log.Warn("audit log restore failed", "error", err.Error())
