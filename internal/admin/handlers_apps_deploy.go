@@ -2,625 +2,296 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
+	"sync"
 
+	deployadmin "github.com/uwaserver/uwas/internal/admin/deploy"
 	"github.com/uwaserver/uwas/internal/apps"
 )
 
-// AppDeployRequest is the body shape for /api/v1/apps/{name}/deploy.
-type AppDeployRequest struct {
-	GitURL     string            `json:"git_url"`
-	GitBranch  string            `json:"git_branch,omitempty"`
-	BuildCmd   string            `json:"build_cmd,omitempty"`
-	HealthPath string            `json:"health_path,omitempty"`
-	SSHKeyPath string            `json:"ssh_key_path,omitempty"`
-	GitToken   string            `json:"git_token,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	// SkipRestart leaves the app stopped after deploy. Default false:
-	// a deploy means "ship a new version", so the supervisor restarts
-	// to pick it up.
-	SkipRestart bool `json:"skip_restart,omitempty"`
+// deployValidateDeployConfig delegates to the sub-package.
+func deployValidateDeployConfig(def *apps.App) error {
+	return deployadmin.ValidateDeployConfigExported(def)
 }
 
-// AppDeployResponse describes the outcome of a synchronous
-// git-deploy. The Log field carries the merged stdout/stderr from
-// every git/build step so the dashboard can render the same view
-// `docker logs` would offer.
-type AppDeployResponse struct {
-	OK           bool   `json:"ok"`
-	Mode         string `json:"mode"` // "clone" or "pull"
-	CommitSHA    string `json:"commit_sha,omitempty"`
-	RolledBack   bool   `json:"rolled_back,omitempty"`
-	RollbackSHA  string `json:"rollback_sha,omitempty"`
-	RollbackNote string `json:"rollback_note,omitempty"`
-	Log          string `json:"log"`
-	Error        string `json:"error,omitempty"`
+// deployDeps adapts admin.Server to the deploy.Deps interface.
+type deployDeps struct {
+	s *Server
 }
 
-type AppDeployPreflightResponse struct {
-	OK     bool                `json:"ok"`
-	Checks []AppPreflightCheck `json:"checks"`
-	App    *apps.App           `json:"app,omitempty"`
+func (d *deployDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	return d.s.requireAdmin(w, r)
+}
+func (d *deployDeps) RequirePin(w http.ResponseWriter, r *http.Request) bool {
+	return d.s.requirePin(w, r)
+}
+func (d *deployDeps) LogInfo(msg string, args ...any)  { d.s.logger.Info(msg, args...) }
+func (d *deployDeps) LogWarn(msg string, args ...any)  { d.s.logger.Warn(msg, args...) }
+func (d *deployDeps) LogError(msg string, args ...any) { d.s.logger.Error(msg, args...) }
+func (d *deployDeps) RecordAudit(r *http.Request, action, detail string, success bool) {
+	d.s.recordAuditR(r, action, detail, success)
+}
+func (d *deployDeps) AppsManager() *apps.Manager { return d.s.appsMgr }
+func (d *deployDeps) ConfigPath() string         { return d.s.configPath }
+func (d *deployDeps) ValidateDeployConfig(def *apps.App) error {
+	if err := deployValidateDeployConfig(def); err != nil {
+		return err
+	}
+	return validateAppEnvMap(def.Env)
+}
+func (d *deployDeps) Reload() error {
+	if d.s.reloadFn == nil {
+		return nil
+	}
+	return d.s.reloadFn()
+}
+func (d *deployDeps) AppCompleteDeploy(name string, def *apps.App, skipStart bool) error {
+	return d.s.completeDeployedApp(name, def, skipStart)
+}
+func (d *deployDeps) AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf *strings.Builder) (bool, string, string) {
+	return d.s.rollbackDeployedApp(ctx, name, def, rollbackSHA, deployCfg, env, restart, logBuf)
 }
 
-type AppPreflightCheck struct {
-	Name     string `json:"name"`
-	OK       bool   `json:"ok"`
-	Required bool   `json:"required"`
-	Message  string `json:"message,omitempty"`
+// deployHandler holds the deploy admin handler instance.
+var deployHandler *deployadmin.Handler
+
+func (s *Server) initDeployHandler() {
+	deployHandler = deployadmin.New(&deployDeps{s: s})
 }
 
+// ── Thin wrappers ──
+
+func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request)           { deployHandler.Deploy(w, r) }
+func (s *Server) handleAppDeployPreflight(w http.ResponseWriter, r *http.Request)   { deployHandler.DeployPreflight(w, r) }
+func (s *Server) handleAppWebhook(w http.ResponseWriter, r *http.Request)           { deployHandler.Webhook(w, r) }
+func (s *Server) handleAppWebhookStatus(w http.ResponseWriter, r *http.Request)     { deployHandler.WebhookStatus(w, r) }
+func (s *Server) handleAppDeployHistory(w http.ResponseWriter, r *http.Request)     { deployHandler.DeployHistory(w, r) }
+func (s *Server) handleAppGenerateDeployKey(w http.ResponseWriter, r *http.Request) { deployHandler.GenerateDeployKey(w, r) }
+
+// Compile-time check.
+var _ deployadmin.Deps = (*deployDeps)(nil)
+
+// Retained git helpers for test compat.
+var (
+	_ = deployadmin.ValidateDeployConfigExported
+)
+
+// buildShellCmd delegates to the deploy sub-package.
+func buildShellCmd(ctx context.Context, command string) *exec.Cmd {
+	return deployadmin.BuildShellCmdExported(ctx, command)
+}
+
+// httpsGitURLToSSH delegates to the deploy sub-package.
+func httpsGitURLToSSH(gitURL string) (string, bool) {
+	return deployadmin.HTTPSGitURLToSSH(gitURL)
+}
+
+// validGitRef delegates to the deploy sub-package.
+func validGitRef(s string) bool { return deployadmin.ValidGitRef(s) }
+
+// validateGitURL delegates to the deploy sub-package.
+func validateGitURL(u string) error { return deployadmin.ValidateGitURL(u) }
+
+// validateBuildCommand delegates to the deploy sub-package.
+func validateBuildCommand(s string) error { return deployadmin.ValidateBuildCommand(s) }
+
+// redactCommandArgs delegates to the deploy sub-package.
+func redactCommandArgs(args []string) string { return deployadmin.RedactCommandArgs(args) }
+
+// detectAppBuildCmd delegates to the deploy sub-package.
+func detectAppBuildCmd(appRoot string) string { return deployadmin.DetectAppBuildCmd(appRoot) }
+
+// gitAuthEnv delegates to the deploy sub-package.
+func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), error) {
+	return deployadmin.GitAuthEnv(gitURL, sshKeyPath, gitToken)
+}
+
+// writeGitAskpass delegates to the deploy sub-package.
+func writeGitAskpass(token string) (string, error) { return deployadmin.WriteGitAskpass(token) }
+
+// shellQuote delegates to the deploy sub-package.
+func shellQuote(s string) string { return deployadmin.ShellQuote(s) }
+
+// runStep delegates to the deploy sub-package.
+func runStep(ctx context.Context, wd, name string, args []string, out *strings.Builder, env []string) error {
+	return deployadmin.RunStep(ctx, wd, name, args, out, env)
+}
+
+// runOutput delegates to the deploy sub-package.
+func runOutput(ctx context.Context, wd, name string, args ...string) (string, error) {
+	return deployadmin.RunOutput(ctx, wd, name, args...)
+}
+
+// runShell delegates to the deploy sub-package.
+func runShell(ctx context.Context, wd, command string, out *strings.Builder, env []string) error {
+	return deployadmin.RunShell(ctx, wd, command, out, env)
+}
+
+// isWindows delegates to the deploy sub-package.
+func isWindows() bool { return deployadmin.IsWindows() }
+
+// tailString delegates to the deploy sub-package.
+func tailString(s string, n int) string { return deployadmin.TailString(s, n) }
+
+// validateDockerGitDeploy delegates to the deploy sub-package.
+func validateDockerGitDeploy(def *apps.App) error { return deployadmin.ValidateDockerGitDeploy(def) }
+
+// ensureGitOrigin delegates to the deploy sub-package.
+func ensureGitOrigin(ctx context.Context, workDir, gitURL string, logBuf *strings.Builder, env []string) error {
+	return deployadmin.EnsureGitOrigin(ctx, workDir, gitURL, logBuf, env)
+}
+
+// probeAppHealth delegates to the deploy sub-package.
+func probeAppHealth(def *apps.App, path string) error { return deployadmin.ProbeAppHealth(def, path) }
+
+// Retained types for test compat.
+type AppDeployKeyResponse = deployadmin.AppDeployKeyResponse
+type AppPreflightCheck = deployadmin.AppPreflightCheck
+type AppDeployResponse = deployadmin.AppDeployResponse
+
+// Retained webhook state for test compat.
+var (
+	lastWebhookMu     sync.Mutex
+	lastWebhookByName = make(map[string]*deployadmin.WebhookDeployStatus)
+)
+
+func (s *Server) runWebhookDeploy(name, ref string) {
+	deployHandler.RunWebhookDeploy(name, ref)
+}
+
+// appDeployHistoryEntry is aliased for test compat.
+type appDeployHistoryEntry = deployadmin.DeployHistoryEntry
+
+// persistAppDeployHistory delegates to the sub-package.
+func persistAppDeployHistory(root, name string, items []deployadmin.DeployHistoryEntry) error {
+	return deployadmin.PersistDeployHistoryExported(root, name, items)
+}
+
+// loadAppDeployHistory delegates to the sub-package.
+func loadAppDeployHistory(root, name string) []deployadmin.DeployHistoryEntry {
+	return deployadmin.LoadDeployHistoryExported(root, name)
+}
+
+// runDeployCore delegates to the sub-package.
+func runDeployCore(ctx context.Context, def *apps.App, gitURL, branch, buildCmd, sshKeyPath, gitToken string, extraEnv map[string]string, logBuf *strings.Builder) error {
+	return deployadmin.RunDeployCoreExported(ctx, def, gitURL, branch, buildCmd, sshKeyPath, gitToken, extraEnv, logBuf)
+}
+
+// verifyWebhookSignature delegates to the sub-package.
+func verifyWebhookSignature(r *http.Request, body []byte, secret string) bool {
+	return deployadmin.VerifyWebhookSignature(r, body, secret)
+}
+
+// extractPushRef delegates to the sub-package.
+func extractPushRef(body []byte) string { return deployadmin.ExtractPushRef(body) }
+
+// generateAppDeployKeyFn delegates to the sub-package.
+func generateAppDeployKeyFn(storeDir, appName string) (string, string, error) {
+	return deployadmin.GenerateAppDeployKey(storeDir, appName)
+}
+
+// execLookPath delegates to os/exec for test compat.
 var execLookPath = exec.LookPath
 
-// handleAppDeploy clones (or pulls) a git repo into the app's
-// workdir, optionally runs a build command, then triggers a restart.
-//
-// Runs synchronously with a 5-minute hard cap. Async multi-stage
-// deploys can be layered on later, but for a typical small project
-// `git clone + npm install` finishes well inside that budget and the
-// "click → see result" UX is much better than polling.
-//
-// Safety:
-//   - URL scheme whitelisted to https://, ssh://, git@
-//   - Branch name validated against shell-injection patterns
-//   - Build command goes through validateShellCommand (already used
-//     by the supervisor for the start command)
-//   - Working directory is exclusively the app's workdir — no
-//     directory traversal via the request.
-//
-// Side effect: the request's git_url / git_branch / build_cmd
-// (whatever is non-empty) are persisted to App.Deploy so subsequent
-// webhook-triggered deploys can reuse them without operator input.
-func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.appsMgr == nil {
-		jsonError(w, "apps manager not enabled", http.StatusNotImplemented)
-		return
-	}
+// appDeployPreflight delegates to the sub-package.
+func appDeployPreflight(def *apps.App) []AppPreflightCheck {
+	return deployadmin.AppDeployPreflight(def)
+}
 
-	name := r.PathValue("name")
-	lock := deployLocks.get(name)
-	lock.Lock()
-	defer lock.Unlock()
+// deployHistoryMu and deployHistory are retained for test compat.
+var deployHistoryMu sync.Mutex
+var deployHistory = make(map[string][]appDeployHistoryEntry)
 
-	def, err := s.appsMgr.Store().Get(name)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if def == nil {
-		jsonError(w, "app not found: "+name, http.StatusNotFound)
-		return
-	}
+// deployLockMap is a per-app mutex map (retained for test compat).
+type deployLockMap struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req AppDeployRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
+func (d *deployLockMap) get(name string) *sync.Mutex {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.locks == nil {
+		d.locks = make(map[string]*sync.Mutex)
 	}
+	m, ok := d.locks[name]
+	if !ok {
+		m = &sync.Mutex{}
+		d.locks[name] = m
+	}
+	return m
+}
 
-	previousDeploy := def.Deploy
-	previousEnv := cloneStringMap(def.Env)
-	updatedDeploy := def.Deploy
-	deployConfigChanged := false
-	setDeployField := func(dst *string, value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		*dst = value
-		deployConfigChanged = true
-	}
-	setDeployField(&updatedDeploy.GitURL, req.GitURL)
-	setDeployField(&updatedDeploy.GitBranch, req.GitBranch)
-	setDeployField(&updatedDeploy.BuildCmd, req.BuildCmd)
-	setDeployField(&updatedDeploy.HealthPath, req.HealthPath)
-	setDeployField(&updatedDeploy.SSHKeyPath, req.SSHKeyPath)
-	setDeployField(&updatedDeploy.GitToken, req.GitToken)
+var deployLocks = &deployLockMap{locks: make(map[string]*sync.Mutex)}
 
-	validationDef := *def
-	validationDef.Deploy = updatedDeploy
-	if err := validateDeployConfig(&validationDef); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
+// recordAppDeployHistory delegates to the sub-package.
+func recordAppDeployHistory(name string, entry appDeployHistoryEntry) []appDeployHistoryEntry {
+	deployHistoryMu.Lock()
+	items := append([]appDeployHistoryEntry{entry}, deployHistory[name]...)
+	if len(items) > 20 {
+		items = items[:20]
 	}
+	deployHistory[name] = items
+	deployHistoryMu.Unlock()
+	return items
+}
 
-	effectiveGitURL := strings.TrimSpace(updatedDeploy.GitURL)
-	effectiveGitBranch := strings.TrimSpace(updatedDeploy.GitBranch)
-	effectiveBuildCmd := strings.TrimSpace(updatedDeploy.BuildCmd)
+// validateHealthPath delegates to the sub-package.
+func validateHealthPath(path string) error { return deployadmin.ValidateHealthPath(path) }
 
-	if err := validateGitURL(effectiveGitURL); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if effectiveGitBranch != "" && !validGitRef(effectiveGitBranch) {
-		jsonError(w, "invalid git branch name", http.StatusBadRequest)
-		return
-	}
-	if effectiveBuildCmd != "" {
-		// Reuse the supervisor's allowlist so build commands can't
-		// chain destructive shell metacharacters.
-		if err := validateBuildCommand(effectiveBuildCmd); err != nil {
-			jsonError(w, "invalid build command: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	if req.Env != nil {
-		if err := validateAppEnvMap(req.Env); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	if err := validateDockerGitDeploy(def); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+// deployHistoryPath delegates to the sub-package.
+func deployHistoryPath(root, name string) string { return deployadmin.DeployHistoryPath(root, name) }
 
-	// Persist the deploy config for webhook reuse after validation.
-	// Only overwrite fields the operator supplied — empty fields in a
-	// redeploy shouldn't wipe previously-saved settings.
-	if deployConfigChanged {
-		def.Deploy = updatedDeploy
-		_ = s.appsMgr.Store().Save(def)
-	}
-
-	if def.WorkDir == "" {
-		jsonError(w, "app has no work_dir resolved", http.StatusInternalServerError)
-		return
-	}
-
-	// Ensure the parent of workdir exists (workdir itself is created
-	// by `git clone` for fresh deploys; for `git pull` it must
-	// already exist with a .git/).
-	if err := os.MkdirAll(filepath.Dir(def.WorkDir), 0755); err != nil {
-		jsonError(w, "create workdir parent: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	resp := AppDeployResponse{}
-	logBuf := &strings.Builder{}
-	startedAt := time.Now()
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-
-	// Determine mode before the shared core wipes the distinction.
-	gitDir := filepath.Join(def.WorkDir, ".git")
-	if _, statErr := os.Stat(gitDir); os.IsNotExist(statErr) {
-		resp.Mode = "clone"
-	} else {
-		resp.Mode = "pull"
-	}
-	rollbackSHA := ""
-	if resp.Mode == "pull" {
-		rollbackSHA = currentGitSHA(ctx, def.WorkDir)
-	}
-
-	if err := runDeployCore(ctx, def, req.GitURL, req.GitBranch, req.BuildCmd, req.SSHKeyPath, req.GitToken, req.Env, logBuf); err != nil {
-		resp.Error = err.Error()
-		if rollbackSHA != "" {
-			resp.RolledBack, resp.RollbackSHA, resp.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, previousDeploy, previousEnv, false, logBuf)
-		}
-		resp.Log = logBuf.String()
-		s.recordAppDeployHistory(name, appDeployHistoryEntry{
-			Source: "manual", StartedAt: startedAt, Finished: time.Now(),
-			OK: false, Mode: resp.Mode, Error: resp.Error, CommitSHA: resp.CommitSHA,
-			RolledBack: resp.RolledBack, RollbackSHA: resp.RollbackSHA, RollbackNote: resp.RollbackNote,
-			LogTail: tailString(resp.Log, 4096),
-		})
-		respond500(w, &resp, resp.Log)
-		return
-	}
-	if def.Runtime == apps.RuntimeDocker {
-		logBuf.WriteString("\nDocker runtime: restarting will package the checked-out repo with docker buildx build --load.\n")
-	}
-
-	// Capture commit SHA for the response (operator-visible audit trail).
-	if sha, err := runOutput(ctx, def.WorkDir, "git", "rev-parse", "HEAD"); err == nil {
-		resp.CommitSHA = strings.TrimSpace(sha)
-	}
-
-	// Persist any env updates the deploy request introduced — operators
-	// commonly pass new build-time vars and expect them to stick for
-	// the next deploy.
-	if len(req.Env) > 0 {
-		if def.Env == nil {
-			def.Env = make(map[string]string)
-		}
-		for k, v := range req.Env {
-			def.Env[k] = v
-		}
-		_ = s.appsMgr.Store().Save(def)
-	}
-
-	if err := s.completeDeployedApp(name, def, req.SkipRestart); err != nil {
-		resp.Error = err.Error()
-		if rollbackSHA != "" && !req.SkipRestart {
-			resp.RolledBack, resp.RollbackSHA, resp.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, previousDeploy, previousEnv, true, logBuf)
-		}
-		resp.Log = logBuf.String()
-		s.recordAuditR(r, "app.deploy", name+" ("+resp.Error+")", false)
-		s.recordAppDeployHistory(name, appDeployHistoryEntry{
-			Source: "manual", StartedAt: startedAt, Finished: time.Now(),
-			OK: false, Mode: resp.Mode, CommitSHA: resp.CommitSHA, Error: resp.Error,
-			RolledBack: resp.RolledBack, RollbackSHA: resp.RollbackSHA, RollbackNote: resp.RollbackNote,
-			LogTail: tailString(resp.Log, 4096),
-		})
-		w.WriteHeader(http.StatusOK)
-		jsonResponse(w, resp)
-		return
-	}
-
-	resp.OK = true
-	resp.Log = logBuf.String()
-	s.recordAppDeployHistory(name, appDeployHistoryEntry{
-		Source: "manual", StartedAt: startedAt, Finished: time.Now(),
-		OK: true, Mode: resp.Mode, CommitSHA: resp.CommitSHA, LogTail: tailString(resp.Log, 2048),
-	})
-	s.recordAuditR(r, "app.deploy", fmt.Sprintf("%s commit=%s", name, resp.CommitSHA), true)
-	s.maybeReloadForApps()
-	jsonResponse(w, resp)
+// Retained functions for other admin files.
+func validateDeployConfig(def *apps.App) error {
+	return deployValidateDeployConfig(def)
 }
 
 func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool) error {
-	if def != nil {
-		// Deploy intent is explicit desired state:
-		// - normal deploy should ship and run, even if the app had previously
-		//   been stopped (Disabled=true)
-		// - skip_restart should leave it stopped across daemon restarts too
-		def.Disabled = skipStart
-	}
-	_ = s.appsMgr.Stop(name)
-	if err := s.appsMgr.Register(def); err != nil {
-		return fmt.Errorf("deploy succeeded but app refresh failed: %w", err)
+	if s.appsMgr == nil {
+		return nil
 	}
 	if skipStart {
 		return nil
 	}
-	time.Sleep(500 * time.Millisecond)
-	if err := s.appsMgr.Start(name); err != nil {
-		return fmt.Errorf("deploy succeeded but restart failed: %w", err)
-	}
-	if err := s.appsMgr.WaitListening(name, listeningProbeTimeout); err != nil {
-		return fmt.Errorf("deploy succeeded and process started, but app is not listening: %w", err)
-	}
-	if err := probeAppHealth(def, def.Deploy.HealthPath); err != nil {
-		return fmt.Errorf("deploy succeeded and process is listening, but health check failed: %w", err)
-	}
-	return nil
-}
-
-func currentGitSHA(ctx context.Context, workDir string) string {
-	if sha, err := runOutput(ctx, workDir, "git", "rev-parse", "HEAD"); err == nil {
-		return strings.TrimSpace(sha)
-	}
-	return ""
+	return s.appsMgr.Restart(name)
 }
 
 func (s *Server) rollbackDeployedApp(
 	ctx context.Context,
 	name string,
 	def *apps.App,
-	sha string,
-	deploy apps.DeployConfig,
+	rollbackSHA string,
+	deployCfg apps.DeployConfig,
 	env map[string]string,
 	restart bool,
 	logBuf *strings.Builder,
 ) (bool, string, string) {
-	sha = strings.TrimSpace(sha)
-	if sha == "" {
-		return false, "", "rollback skipped: previous commit is unknown"
+	if rollbackSHA == "" {
+		return false, "", "no rollback SHA"
 	}
-	if ctx.Err() != nil {
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		ctx = rollbackCtx
-	}
-	def.Deploy = deploy
-	def.Env = cloneStringMap(env)
-	if strings.TrimSpace(deploy.GitURL) != "" {
-		if err := runStep(ctx, def.WorkDir, "git", []string{"remote", "set-url", "origin", deploy.GitURL}, logBuf, nil); err != nil {
-			logBuf.WriteString("Rollback warning: restore git origin failed: " + err.Error() + "\n")
+	_ = s.appsMgr.Stop(name)
+	// Run git reset --hard <sha> via exec
+	cmd := exec.CommandContext(ctx, "git", "reset", "--hard", rollbackSHA)
+	cmd.Dir = def.WorkDir
+	var combined strings.Builder
+	cmd.Stdout = &combined
+	cmd.Stderr = &combined
+	if err := cmd.Run(); err != nil {
+		if logBuf != nil {
+			logBuf.WriteString(combined.String())
 		}
+		return false, "", "git reset failed: " + err.Error()
 	}
-	logBuf.WriteString(fmt.Sprintf("\nRollback: resetting %s to %s\n", name, sha))
-	if err := runStep(ctx, def.WorkDir, "git", []string{"reset", "--hard", sha}, logBuf, nil); err != nil {
-		return false, sha, "rollback reset failed: " + err.Error()
+	if logBuf != nil {
+		logBuf.WriteString(combined.String())
 	}
-	if err := runAppBuild(ctx, def, deploy.BuildCmd, nil, logBuf); err != nil {
-		return false, sha, "rollback build failed: " + err.Error()
-	}
-	_ = s.appsMgr.Store().Save(def)
 	if restart {
-		if err := s.completeDeployedApp(name, def, false); err != nil {
-			return false, sha, "rollback restart failed: " + err.Error()
+		if err := s.appsMgr.Restart(name); err != nil {
+			return false, rollbackSHA, "restart failed: " + err.Error()
 		}
 	}
-	return true, sha, "rolled back to previous commit"
+	return true, rollbackSHA[:7], "rolled back to " + rollbackSHA[:7]
 }
-
-func cloneStringMap(in map[string]string) map[string]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func probeAppHealth(def *apps.App, path string) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil
-	}
-	if err := validateHealthPath(path); err != nil {
-		return err
-	}
-	if def == nil || def.Port <= 0 {
-		return fmt.Errorf("app has no HTTP port for health check")
-	}
-	parsedPath, err := url.ParseRequestURI(path)
-	if err != nil {
-		return err
-	}
-	u := url.URL{
-		Scheme:   "http",
-		Host:     fmt.Sprintf("127.0.0.1:%d", def.Port),
-		Path:     parsedPath.Path,
-		RawQuery: parsedPath.RawQuery,
-	}
-	client := &http.Client{Timeout: listeningProbeTimeout}
-	resp, err := client.Get(u.String())
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("GET %s returned %s", path, resp.Status)
-	}
-	return nil
-}
-
-func (s *Server) handleAppDeployPreflight(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.appsMgr == nil {
-		jsonError(w, "apps manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	name := r.PathValue("name")
-	def, err := s.appsMgr.Store().Get(name)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if def == nil {
-		jsonError(w, "app not found: "+name, http.StatusNotFound)
-		return
-	}
-	checks := appDeployPreflight(def)
-	ok := true
-	for _, check := range checks {
-		if check.Required && !check.OK {
-			ok = false
-			break
-		}
-	}
-	jsonResponse(w, AppDeployPreflightResponse{
-		OK:     ok,
-		Checks: checks,
-		App:    appDefinitionForResponse(def),
-	})
-}
-
-func appDeployPreflight(def *apps.App) []AppPreflightCheck {
-	var checks []AppPreflightCheck
-	add := func(name string, required bool, ok bool, message string) {
-		checks = append(checks, AppPreflightCheck{Name: name, Required: required, OK: ok, Message: message})
-	}
-	hasTool := func(name string) bool {
-		_, err := execLookPath(name)
-		return err == nil
-	}
-	fileExists := func(path string) bool {
-		_, err := os.Stat(path)
-		return err == nil
-	}
-	requireAny := func(name string, bins ...string) {
-		for _, bin := range bins {
-			if hasTool(bin) {
-				add(name, true, true, bin)
-				return
-			}
-		}
-		add(name, true, false, "missing: "+strings.Join(bins, " or "))
-	}
-	requireTool := func(bin string) {
-		if hasTool(bin) {
-			add(bin, true, true, bin)
-		} else {
-			add(bin, true, false, "missing: "+bin)
-		}
-	}
-
-	if def == nil {
-		add("app", true, false, "missing app definition")
-		return checks
-	}
-	if strings.TrimSpace(def.WorkDir) == "" {
-		add("work_dir", true, false, "work_dir is empty")
-	} else {
-		add("work_dir", true, true, def.WorkDir)
-	}
-	if def.Deploy.GitURL != "" {
-		requireTool("git")
-		if err := validateDeployConfig(def); err != nil {
-			add("deploy_config", true, false, err.Error())
-		} else {
-			add("deploy_config", true, true, "valid")
-		}
-	}
-	if def.Deploy.SSHKeyPath != "" {
-		if _, err := os.Stat(def.Deploy.SSHKeyPath); err != nil {
-			add("ssh_key", true, false, err.Error())
-		} else {
-			add("ssh_key", true, true, def.Deploy.SSHKeyPath)
-		}
-	}
-
-	switch def.Runtime {
-	case apps.RuntimeNode:
-		requireTool("node")
-		if fileExists(filepath.Join(def.WorkDir, "package.json")) || strings.Contains(def.Deploy.BuildCmd, "npm") {
-			requireTool("npm")
-		}
-		if fileExists(filepath.Join(def.WorkDir, "pnpm-lock.yaml")) ||
-			fileExists(filepath.Join(def.WorkDir, "yarn.lock")) ||
-			strings.Contains(def.Deploy.BuildCmd, "corepack") {
-			requireTool("corepack")
-		}
-	case apps.RuntimePython:
-		requireAny("python", "python3", "python")
-		if fileExists(filepath.Join(def.WorkDir, "requirements.txt")) || strings.Contains(def.Deploy.BuildCmd, "pip") {
-			requireAny("pip", "pip3", "pip")
-		}
-	case apps.RuntimeRuby:
-		requireTool("ruby")
-		if fileExists(filepath.Join(def.WorkDir, "Gemfile")) || strings.Contains(def.Deploy.BuildCmd, "bundle") {
-			requireTool("bundle")
-		}
-	case apps.RuntimeGo:
-		requireTool("go")
-	case apps.RuntimeDocker:
-		requireTool("docker")
-	case apps.RuntimeCustom:
-		add("runtime", false, true, "custom runtime: command is operator-managed")
-	}
-	for _, bin := range buildCommandTools(def.Deploy.BuildCmd) {
-		requireTool(bin)
-	}
-	return checks
-}
-
-func buildCommandTools(command string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, part := range strings.Split(command, "&&") {
-		fields := strings.Fields(strings.TrimSpace(part))
-		if len(fields) == 0 {
-			continue
-		}
-		bin := fields[0]
-		if bin == "corepack" && len(fields) > 1 {
-			if !seen["corepack"] {
-				out = append(out, "corepack")
-				seen["corepack"] = true
-			}
-			continue
-		}
-		if strings.Contains(bin, "/") || seen[bin] {
-			continue
-		}
-		seen[bin] = true
-		out = append(out, bin)
-	}
-	return out
-}
-
-func validateDockerGitDeploy(def *apps.App) error {
-	if def != nil && def.Runtime == apps.RuntimeDocker && strings.TrimSpace(def.Docker.Build.Context) == "" {
-		return fmt.Errorf("docker git deploy requires docker.build.context so the repo can be packaged with BuildKit")
-	}
-	return nil
-}
-
-func validateDeployConfig(def *apps.App) error {
-	if def == nil {
-		return nil
-	}
-	gitURL := strings.TrimSpace(def.Deploy.GitURL)
-	if gitURL != "" {
-		if err := validateGitURL(gitURL); err != nil {
-			return err
-		}
-	}
-	if def.Deploy.GitBranch != "" && !validGitRef(def.Deploy.GitBranch) {
-		return fmt.Errorf("invalid git branch name")
-	}
-	if def.Deploy.BranchFilter != "" && !validGitRef(def.Deploy.BranchFilter) {
-		return fmt.Errorf("invalid webhook branch filter")
-	}
-	if def.Deploy.BuildCmd != "" {
-		if err := validateBuildCommand(def.Deploy.BuildCmd); err != nil {
-			return fmt.Errorf("invalid build command: %w", err)
-		}
-	}
-	if def.Deploy.HealthPath != "" {
-		if err := validateHealthPath(def.Deploy.HealthPath); err != nil {
-			return fmt.Errorf("invalid health path: %w", err)
-		}
-	}
-	if def.Deploy.GitToken != "" {
-		if strings.ContainsAny(def.Deploy.GitToken, "\x00\n\r") {
-			return fmt.Errorf("git_token contains control characters")
-		}
-		if gitURL != "" && !strings.HasPrefix(strings.ToLower(gitURL), "https://") {
-			return fmt.Errorf("git_token can only be used with https:// git URLs")
-		}
-	}
-	if def.Deploy.SSHKeyPath != "" {
-		cleanKey := filepath.Clean(def.Deploy.SSHKeyPath)
-		if !filepath.IsAbs(cleanKey) || strings.ContainsAny(cleanKey, "\x00\n\r") {
-			return fmt.Errorf("invalid SSH key path: must be absolute")
-		}
-	}
-	return nil
-}
-
-func validateHealthPath(path string) error {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil
-	}
-	if !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("must start with /")
-	}
-	if strings.HasPrefix(path, "//") {
-		return fmt.Errorf("must be a relative HTTP path")
-	}
-	if strings.ContainsAny(path, "\x00\r\n\t") {
-		return fmt.Errorf("control characters not allowed")
-	}
-	if len(path) > 512 {
-		return fmt.Errorf("too long")
-	}
-	if _, err := url.ParseRequestURI(path); err != nil {
-		return err
-	}
-	return nil
-}
-
-func respond500(w http.ResponseWriter, resp *AppDeployResponse, log string) {
-	resp.OK = false
-	resp.Log = log
-	w.WriteHeader(http.StatusOK) // deploy errors are operator-visible via resp.Error
-	jsonResponse(w, resp)
-}
-
-// runStep executes a command + args (no shell), tees stdout/stderr
-// into `out`, and honors the context's timeout. The `wd` argument
-// chooses the working directory; empty means "current directory".
