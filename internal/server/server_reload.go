@@ -53,12 +53,9 @@ func (s *Server) reload() error {
 
 	// Swap all per-domain routing maps under routeMu so request goroutines
 	// reading them via the *For accessors never observe a torn map header.
-	s.routeMu.Lock()
-	s.rewriteCache = newRewriteCache
-
-	// Rebuild per-domain middleware chains + predicate guards
-	// (refactor.md P2/P3). Two parallel forms so any composed middleware
-	// path retains the chain-style entry while the hot path uses guards.
+	// All maps are built into locals BEFORE acquiring the lock so concurrent
+	// requests are only blocked for the pointer swaps, not the construction
+	// loops (which iterate all domains and can be O(hundreds)).
 	newDomainChains := make(map[string]middleware.Middleware)
 	newIPACLGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	for _, d := range newCfg.Domains {
@@ -71,8 +68,6 @@ func (s *Server) reload() error {
 			newIPACLGuards[d.Host] = middleware.IPACLGuard(cfg)
 		}
 	}
-	s.domainChains = newDomainChains
-	s.ipACLGuards = newIPACLGuards
 
 	newGeoChains := make(map[string]middleware.Middleware)
 	newGeoGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
@@ -86,8 +81,6 @@ func (s *Server) reload() error {
 			newGeoGuards[d.Host] = middleware.GeoIPGuard(cfg)
 		}
 	}
-	s.geoChains = newGeoChains
-	s.geoGuards = newGeoGuards
 
 	newCORSGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
 	newWAFGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
@@ -105,8 +98,6 @@ func (s *Server) reload() error {
 			newWAFGuards[d.Host] = middleware.DomainWAFGuard(s.logger, d.Security.WAF.BypassPaths, s.securityStats)
 		}
 	}
-	s.corsGuards = newCORSGuards
-	s.wafGuards = newWAFGuards
 
 	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
 	// before swapping the map; otherwise each reload leaks N goroutines bound
@@ -121,8 +112,6 @@ func (s *Server) reload() error {
 			newRateLimiters[d.Host] = middleware.NewRateLimiter(s.ctx, d.Security.RateLimit.Requests, window)
 		}
 	}
-	oldRateLimiters := s.domainRateLimiters
-	s.domainRateLimiters = newRateLimiters
 
 	// Rebuild image optimization chains
 	newImageOpt := make(map[string]middleware.Middleware)
@@ -134,6 +123,19 @@ func (s *Server) reload() error {
 			}, d.Root)
 		}
 	}
+
+	// Atomic swap: all maps are pre-built, so the lock is held only for
+	// pointer assignments — O(1) critical section regardless of domain count.
+	s.routeMu.Lock()
+	s.rewriteCache = newRewriteCache
+	s.domainChains = newDomainChains
+	s.ipACLGuards = newIPACLGuards
+	s.geoChains = newGeoChains
+	s.geoGuards = newGeoGuards
+	s.corsGuards = newCORSGuards
+	s.wafGuards = newWAFGuards
+	oldRateLimiters := s.domainRateLimiters
+	s.domainRateLimiters = newRateLimiters
 	s.imageOptChains = newImageOpt
 	s.routeMu.Unlock()
 
