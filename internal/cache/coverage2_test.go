@@ -303,6 +303,18 @@ func TestEngineSetRedisWriteError(t *testing.T) {
 func TestEngineGetByKeyRedis(t *testing.T) {
 	dir := t.TempDir()
 	e, stub := newRedisStubEngine(t, dir)
+	t.Cleanup(func() {
+		// Wait for async disk promotion goroutines to finish before
+		// TempDir cleanup removes the directory they're writing to.
+		// writeSem has capacity maxConcurrentWrites — fill it to block
+		// new writes, drain pending ones, then release.
+		for i := 0; i < maxConcurrentWrites; i++ {
+			e.writeSem <- struct{}{}
+		}
+		for i := 0; i < maxConcurrentWrites; i++ {
+			<-e.writeSem
+		}
+	})
 
 	// Fresh
 	fk := "esi|h|/frag"
