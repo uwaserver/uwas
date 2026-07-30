@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/apps"
+	"github.com/uwaserver/uwas/internal/admin/authmw"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -2836,7 +2837,7 @@ func TestRequirePinTicketBound(t *testing.T) {
 	// Ticket-bound PIN (context flag) passes without any header/query PIN.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/terminal", nil)
-	req = req.WithContext(context.WithValue(req.Context(), ctxPinVerified, true))
+	req = req.WithContext(context.WithValue(req.Context(), authmw.CtxPinVerified, true))
 	if !s.requirePin(rec, req) {
 		t.Errorf("ticket-bound PIN should satisfy requirePin (status=%d)", rec.Code)
 	}

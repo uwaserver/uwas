@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/admin/authmw"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/serverip"
 	"github.com/uwaserver/uwas/internal/siteuser"
@@ -26,10 +26,6 @@ type authTicket struct {
 
 // adminCtxKey is the private context-key type for admin-middleware values.
 type adminCtxKey int
-
-// ctxPinVerified marks a request whose single-use ticket was minted with a
-// valid admin PIN — lets requirePin pass without the PIN traveling in the URL.
-const ctxPinVerified adminCtxKey = iota
 
 // handleAuthTicket issues a short-lived, single-use ticket that can be passed
 // as a query parameter for SSE/WebSocket connections. This avoids putting the
@@ -86,7 +82,7 @@ func (s *Server) handleAuthTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.ticketMu.Unlock()
 
-	jsonResponse(w, map[string]any{"ticket": ticket, "expires_at": now.Add(ticketTTL)})
+	jsonResponse(w, TicketResponse{Ticket: ticket, ExpiresAt: now.Add(ticketTTL)})
 }
 
 // pinSatisfied reports whether the request carries a valid admin PIN via the
@@ -207,40 +203,6 @@ func adminUserDTO(user *auth.User, revealAPIKey bool) adminUserResponse {
 		UpdatedAt: user.UpdatedAt,
 		LastLogin: user.LastLogin,
 	}
-}
-
-// isAllowedOrigin returns true when the Origin header belongs to the
-// dashboard itself (same scheme+host as the admin listener) or is a
-// localhost address (for local development).
-func isAllowedOrigin(origin string, r *http.Request) bool {
-	// Parse and compare the host EXACTLY. A prefix match (e.g.
-	// HasPrefix(origin, "http://localhost")) would accept attacker-controlled
-	// hosts like "http://localhost.evil.com", letting them be reflected into
-	// Access-Control-Allow-Origin and satisfy the CSRF origin fallback.
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-	default:
-		return false
-	}
-
-	// Allow loopback origins for local development.
-	switch strings.ToLower(u.Hostname()) {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-
-	// Allow the dashboard's own origin: derive it from the Host header
-	// which is the admin listener itself.
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	dashboardOrigin := scheme + "://" + r.Host
-	return origin == dashboardOrigin
 }
 
 // --- SFTP Users ---
@@ -476,7 +438,7 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	s.persistConfig()
 	s.recordAuditR(r, "2fa.enabled", "TOTP activated", true)
 
-	jsonResponse(w, map[string]any{"status": "2fa_enabled"})
+	jsonResponse(w, StatusResponse{Status: "2fa_enabled"})
 }
 
 func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +475,7 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	s.persistConfig()
 	s.recordAuditR(r, "2fa.disabled", "TOTP deactivated", true)
 
-	jsonResponse(w, map[string]any{"status": "2fa_disabled"})
+	jsonResponse(w, StatusResponse{Status: "2fa_disabled"})
 }
 
 // minPasswordLength is the minimum length enforced for any password set via the
@@ -601,7 +563,7 @@ func (s *Server) requirePin(w http.ResponseWriter, r *http.Request) bool {
 
 	// A single-use ticket minted with a valid PIN satisfies the PIN without it
 	// ever appearing in the WebSocket URL (VULN-029).
-	if v, ok := r.Context().Value(ctxPinVerified).(bool); ok && v {
+	if v, ok := r.Context().Value(authmw.CtxPinVerified).(bool); ok && v {
 		return true
 	}
 
@@ -695,14 +657,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	jsonResponse(w, map[string]any{
-		"status":     "authenticated",
-		"token":      session.Token,
-		"user_id":    session.UserID,
-		"username":   session.Username,
-		"role":       session.Role,
-		"domains":    session.Domains,
-		"expires_at": session.ExpiresAt,
+	jsonResponse(w, LoginResponse{
+		Status:    "authenticated",
+		Token:     session.Token,
+		UserID:    session.UserID,
+		Username:  session.Username,
+		Role:      string(session.Role),
+		Domains:   session.Domains,
+		ExpiresAt: session.ExpiresAt,
 	})
 }
 
@@ -766,15 +728,15 @@ func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	ip := requestIP(r)
 	s.RecordAuditUser("auth.bootstrap", req.Username, ip, req.Username, true)
-	jsonResponse(w, map[string]any{
-		"status":     "authenticated",
-		"token":      session.Token,
-		"user_id":    session.UserID,
-		"username":   session.Username,
-		"role":       session.Role,
-		"domains":    session.Domains,
-		"expires_at": session.ExpiresAt,
-		"api_key":    user.FullAPIKey,
+	jsonResponse(w, LoginResponse{
+		Status:    "authenticated",
+		Token:     session.Token,
+		UserID:    session.UserID,
+		Username:  session.Username,
+		Role:      string(session.Role),
+		Domains:   session.Domains,
+		ExpiresAt: session.ExpiresAt,
+		APIKey:    user.FullAPIKey,
 	})
 }
 

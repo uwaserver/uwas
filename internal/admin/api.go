@@ -1,13 +1,10 @@
 package admin
 
 import (
-	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +19,10 @@ import (
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/apps"
+	"github.com/uwaserver/uwas/internal/admin/authmw"
+	dbadmin "github.com/uwaserver/uwas/internal/admin/database"
+	cfadmin "github.com/uwaserver/uwas/internal/admin/cloudflare"
+	phpadmin "github.com/uwaserver/uwas/internal/admin/php"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
@@ -100,6 +101,11 @@ type Server struct {
 	securityStats *middleware.SecurityStats
 	cfRunner      *cfintegration.Runner
 
+	// Sub-package handler instances (per-Server for test isolation).
+	dbHandler *dbadmin.Handler
+	phpHandler *phpadmin.Handler
+	cfHandler  *cfadmin.Handler
+
 	// Global installation task manager (serializes apt/dpkg operations).
 	// PHP install state lives entirely in taskMgr (queryable via ActiveByType("php")).
 	taskMgr *install.Queue
@@ -176,6 +182,9 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 		taskMgr: install.New(),
 	}
 	s.cfRunner = cfintegration.NewRunner(log)
+	s.initDBHandler()
+	s.initCloudflareHandler()
+	s.initPHPHandler() // initialize with nil manager; SetPHPManager upgrades it
 	s.initAudit()
 	if err := s.loadAuditLog(); err != nil {
 		log.Warn("audit log restore failed", "error", err.Error())
@@ -187,21 +196,63 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	return s
 }
 
-// isExpensiveGET reports whether a GET endpoint has enough side-effect cost
-// (full database dump, full config dump, etc.) that an attacker forcing the
-// admin's browser to fetch it via an <img>/<iframe> CSRF would constitute a
-// real denial-of-service even though the attacker never reads the response.
-// The list is path-suffix based — sub-paths (e.g. Docker DB export) match.
-func isExpensiveGET(path string) bool {
-	switch {
-	case strings.HasSuffix(path, "/export"):
-		return true
-	case strings.HasSuffix(path, "/backup"):
-		return true
-	case strings.HasSuffix(path, "/download"):
-		return true
-	}
-	return false
+// isExpensiveGET delegates to authmw.IsExpensiveGET (kept for test compat).
+func isExpensiveGET(path string) bool { return authmw.IsExpensiveGET(path) }
+
+// isAllowedOrigin delegates to authmw.IsAllowedOrigin (kept for test compat).
+func isAllowedOrigin(origin string, r *http.Request) bool { return authmw.IsAllowedOrigin(origin, r) }
+
+// authMiddleware builds the authmw middleware with the server's dependencies.
+// Kept as a Server method so tests that call s.authMiddleware(handler) still work.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return authmw.New(authmw.Deps{
+		GetAPIKey: func() string {
+			s.configMu.RLock()
+			defer s.configMu.RUnlock()
+			return s.config.Global.Admin.APIKey
+		},
+		GetUsersEnabled: func() bool {
+			s.configMu.RLock()
+			defer s.configMu.RUnlock()
+			return s.config.Global.Users.Enabled
+		},
+		GetTOTPSecret: func() string {
+			s.configMu.RLock()
+			defer s.configMu.RUnlock()
+			return s.config.Global.Admin.TOTPSecret
+		},
+		AuthByKey: func(key string) (*auth.User, error) {
+			if s.authMgr != nil {
+				return s.authMgr.AuthenticateAPIKey(key)
+			}
+			return nil, fmt.Errorf("auth manager not configured")
+		},
+		ValidateSess: func(token string) (*auth.Session, error) {
+			if s.authMgr != nil {
+				return s.authMgr.ValidateSession(token)
+			}
+			return nil, fmt.Errorf("auth manager not configured")
+		},
+		GetUserByID: func(id string) (*auth.User, bool) {
+			if s.authMgr != nil {
+				return s.authMgr.GetUserByID(id)
+			}
+			return nil, false
+		},
+		CheckRateLimit: func(ip string) bool {
+			return s.checkRateLimit(ip, "")
+		},
+		RecordFailure: func(ip string) {
+			s.recordAuthFailure(ip, "")
+		},
+		RedeemTicket: func(ticket string) (string, bool) {
+			return s.redeemTicket(ticket)
+		},
+		ValidateTOTP: func(secret, code string) (bool, error) {
+			valid, _ := ValidateTOTP(secret, code)
+			return valid, nil
+		},
+	}, next)
 }
 
 // isLoopbackListenAddr reports whether the host portion of a "host:port"
@@ -309,231 +360,6 @@ func (s *Server) Start() error {
 	return httpSrv.Serve(ln)
 }
 
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read auth config per-request so config changes take effect without restart
-		s.configMu.RLock()
-		apiKey := s.config.Global.Admin.APIKey
-		multiUserEnabled := s.config.Global.Users.Enabled
-		s.configMu.RUnlock()
-
-		// If no auth configured at all, allow all (inject virtual admin for compat)
-		if apiKey == "" && !multiUserEnabled {
-			user := &auth.User{ID: "local", Username: "admin", Role: auth.RoleAdmin, Enabled: true}
-			next.ServeHTTP(w, r.WithContext(auth.WithUser(r.Context(), user)))
-			return
-		}
-		// CORS: only allow the dashboard's own origin (or localhost for dev).
-		if origin := r.Header.Get("Origin"); origin != "" {
-			if isAllowedOrigin(origin, r) {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Session-Token, X-TOTP-Code, X-Pin-Code")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Add("Vary", "Origin")
-			}
-		}
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(204)
-			return
-		}
-
-		// Public endpoints: health check, dashboard UI, read-only login chrome,
-		// deploy webhooks (no auth needed).
-		if r.URL.Path == "/api/v1/health" ||
-			(r.URL.Path == "/api/v1/settings/branding" && r.Method == "GET") ||
-			strings.HasPrefix(r.URL.Path, "/_uwas/dashboard") ||
-			(strings.HasPrefix(r.URL.Path, "/api/v1/apps/") && strings.HasSuffix(r.URL.Path, "/webhook") && r.Method == "POST") {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Login endpoint: public but rate-limited
-		if r.URL.Path == "/api/v1/auth/login" {
-			ip := requestIP(r)
-			if s.checkRateLimit(ip, "") {
-				w.Header().Set("Retry-After", "300")
-				jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
-				return
-			}
-			next.ServeHTTP(w, r)
-			return
-		}
-		if r.URL.Path == "/api/v1/auth/bootstrap" && r.Method == "POST" {
-			ip := requestIP(r)
-			if s.checkRateLimit(ip, "") {
-				w.Header().Set("Retry-After", "300")
-				jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
-				return
-			}
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Rate limiting: check if IP is blocked before auth check.
-		ip := requestIP(r)
-		if s.checkRateLimit(ip, "") {
-			w.Header().Set("Retry-After", "300")
-			jsonError(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
-			return
-		}
-
-		var authenticated bool
-		var user *auth.User
-		var ticketPinVerified bool
-
-		// Try multi-user auth first if enabled
-		if multiUserEnabled && s.authMgr != nil {
-			// Try API key (Authorization: Bearer <key>)
-			authHeader := r.Header.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				key := strings.TrimPrefix(authHeader, "Bearer ")
-				if u, err := s.authMgr.AuthenticateAPIKey(key); err == nil {
-					authenticated = true
-					user = u
-				}
-			}
-
-			// Try session token (X-Session-Token header)
-			if !authenticated {
-				if token := r.Header.Get("X-Session-Token"); token != "" {
-					if session, err := s.authMgr.ValidateSession(token); err == nil {
-						if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
-							authenticated = true
-							user = u
-						}
-					}
-				}
-			}
-
-			// Check ticket query param for SSE/WebSocket (short-lived, single-use).
-			if !authenticated {
-				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					realToken, pinOK := s.redeemTicket(ticket)
-					if realToken != "" {
-						// Try as session token first
-						if session, err := s.authMgr.ValidateSession(realToken); err == nil {
-							if u, exists := s.authMgr.GetUserByID(session.UserID); exists {
-								authenticated = true
-								user = u
-							}
-						}
-						// Try as API key
-						if !authenticated {
-							if u, err := s.authMgr.AuthenticateAPIKey(realToken); err == nil {
-								authenticated = true
-								user = u
-							}
-						}
-					}
-					if authenticated {
-						ticketPinVerified = pinOK
-						q := r.URL.Query()
-						q.Del("ticket")
-						r.URL.RawQuery = q.Encode()
-					}
-				}
-			}
-			// Note: the legacy `?token=` query-param fallback was removed — a
-			// live session token / API key in the URL leaks to history, Referer,
-			// and proxy logs. SSE/WebSocket clients must use the single-use
-			// `?ticket=` flow above.
-		}
-
-		// Fall back to legacy API key auth if multi-user auth failed or not enabled
-		if !authenticated && apiKey != "" {
-			authHeader := r.Header.Get("Authorization")
-			// Check ticket query param first (preferred), then legacy token param
-			if authHeader == "" {
-				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					if realToken, pinOK := s.redeemTicket(ticket); realToken != "" {
-						authHeader = "Bearer " + realToken
-						ticketPinVerified = pinOK
-					}
-				}
-			}
-			if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1 {
-				authenticated = true
-				// Create a virtual admin user for legacy auth
-				user = &auth.User{
-					ID:       "admin",
-					Username: "admin",
-					Role:     auth.RoleAdmin,
-					Enabled:  true,
-				}
-			}
-		}
-
-		if !authenticated {
-			s.recordAuthFailure(ip, "")
-			jsonError(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// Store user in context for handlers to access
-		ctx := auth.WithUser(r.Context(), user)
-		if ticketPinVerified {
-			ctx = context.WithValue(ctx, ctxPinVerified, true)
-		}
-		r = r.WithContext(ctx)
-
-		// 2FA check for legacy auth: if TOTP is enabled, require valid code.
-		// Skip for multi-user auth (TOTP handled separately) and 2FA management endpoints.
-		s.configMu.RLock()
-		totpSecret := s.config.Global.Admin.TOTPSecret
-		s.configMu.RUnlock()
-		if totpSecret != "" && user.Role == auth.RoleAdmin &&
-			!strings.HasPrefix(r.URL.Path, "/api/v1/auth/2fa/") {
-			totpCode := r.Header.Get("X-TOTP-Code")
-			if totpCode == "" {
-				w.Header().Set("X-2FA-Required", "true")
-				jsonError(w, "2fa_required", http.StatusForbidden)
-				return
-			}
-			// No step-burning here: this gate runs on every admin request, so
-			// the same code is legitimately presented many times within its 30s
-			// window. Replay-burning is enforced on the one-time enable/disable
-			// flows instead (validateTOTPNoReplay).
-			valid, _ := ValidateTOTP(totpSecret, totpCode)
-			if !valid {
-				s.recordAuthFailure(ip, "")
-				jsonError(w, "invalid 2FA code", http.StatusForbidden)
-				return
-			}
-		}
-
-		// CSRF protection: state-changing methods must send X-Requested-With
-		// or come from the dashboard origin. We also apply the same check to
-		// a handful of expensive GET endpoints (database export, config
-		// export, etc.) — those are technically reads but a CSRF-triggered
-		// request can pin a CPU to a full mysqldump even though the attacker
-		// never sees the response body. Treat them as state-changing for
-		// CSRF purposes.
-		needsCSRFCheck := r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" || r.Method == "DELETE"
-		if !needsCSRFCheck && r.Method == "GET" && isExpensiveGET(r.URL.Path) {
-			needsCSRFCheck = true
-		}
-		if needsCSRFCheck {
-			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
-				// Also allow if Origin/Referer exactly matches the dashboard origin.
-				origin := r.Header.Get("Origin")
-				referer := r.Header.Get("Referer")
-				sameOrigin := origin != "" && isAllowedOrigin(origin, r)
-				if !sameOrigin && referer != "" {
-					if u, err := url.Parse(referer); err == nil {
-						sameOrigin = isAllowedOrigin(u.Scheme+"://"+u.Host, r)
-					}
-				}
-				if !sameOrigin {
-					jsonError(w, "csrf: invalid origin", http.StatusForbidden)
-					return
-				}
-			}
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	checks := make(map[string]string)
 	overallStatus := "ok"
@@ -564,15 +390,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	domainCount := len(s.config.Domains)
 	s.configMu.RUnlock()
 
-	resp := map[string]any{
-		"status":       overallStatus,
-		"uptime":       humanDuration(time.Since(s.metrics.StartTime)),
-		"uptime_secs":  time.Since(s.metrics.StartTime).Seconds(),
-		"domains":      domainCount,
-		"requests":     s.metrics.RequestsTotal.Load(),
-		"active_conns": s.metrics.ActiveConns.Load(),
-		"checks":       checks,
-		"version":      build.Version,
+	resp := HealthResponse{
+		Status:      overallStatus,
+		Uptime:      humanDuration(time.Since(s.metrics.StartTime)),
+		UptimeSecs:  time.Since(s.metrics.StartTime).Seconds(),
+		Domains:     domainCount,
+		Requests:    s.metrics.RequestsTotal.Load(),
+		ActiveConns: s.metrics.ActiveConns.Load(),
+		Checks:      checks,
+		Version:     build.Version,
 	}
 
 	jsonResponse(w, resp)
@@ -843,29 +669,29 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	// Per-handler latency percentiles surfaced for the Metrics dashboard
 	// so operators can compare "static p99 = 5ms" vs "proxy p99 = 800ms"
 	// without scraping Prometheus. Refs: refactor.md O4.
-	handlerLatency := make(map[string]map[string]float64, 5)
+	handlerLatency := make(map[string]HandlerLatency, 5)
 	for _, h := range []string{"static", "php", "proxy", "redirect", "app"} {
 		hp50, hp95, hp99, hmax := s.metrics.HandlerPercentiles(h)
-		handlerLatency[h] = map[string]float64{
-			"p50_ms": hp50 * 1000,
-			"p95_ms": hp95 * 1000,
-			"p99_ms": hp99 * 1000,
-			"max_ms": hmax * 1000,
+		handlerLatency[h] = HandlerLatency{
+			P50Ms: hp50 * 1000,
+			P95Ms: hp95 * 1000,
+			P99Ms: hp99 * 1000,
+			MaxMs: hmax * 1000,
 		}
 	}
-	jsonResponse(w, map[string]any{
-		"requests_total":  s.metrics.RequestsTotal.Load(),
-		"cache_hits":      s.metrics.CacheHits.Load(),
-		"cache_misses":    s.metrics.CacheMisses.Load(),
-		"active_conns":    s.metrics.ActiveConns.Load(),
-		"bytes_sent":      s.metrics.BytesSent.Load(),
-		"uptime":          humanDuration(time.Since(s.metrics.StartTime)),
-		"slow_requests":   s.metrics.SlowRequests.Load(),
-		"latency_p50_ms":  p50 * 1000,
-		"latency_p95_ms":  p95 * 1000,
-		"latency_p99_ms":  p99 * 1000,
-		"latency_max_ms":  max * 1000,
-		"handler_latency": handlerLatency,
+	jsonResponse(w, MetricsResponse{
+		RequestsTotal:  s.metrics.RequestsTotal.Load(),
+		CacheHits:      s.metrics.CacheHits.Load(),
+		CacheMisses:    s.metrics.CacheMisses.Load(),
+		ActiveConns:    s.metrics.ActiveConns.Load(),
+		BytesSent:      s.metrics.BytesSent.Load(),
+		Uptime:         humanDuration(time.Since(s.metrics.StartTime)),
+		SlowRequests:   s.metrics.SlowRequests.Load(),
+		LatencyP50Ms:   p50 * 1000,
+		LatencyP95Ms:   p95 * 1000,
+		LatencyP99Ms:   p99 * 1000,
+		LatencyMaxMs:   max * 1000,
+		HandlerLatency: handlerLatency,
 	})
 }
 
@@ -883,14 +709,14 @@ func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// Return sanitized config (no secrets)
-	jsonResponse(w, map[string]any{
-		"global": map[string]any{
-			"worker_count":    s.config.Global.WorkerCount,
-			"max_connections": s.config.Global.MaxConnections,
-			"log_level":       s.config.Global.LogLevel,
-			"log_format":      s.config.Global.LogFormat,
+	jsonResponse(w, ConfigSummaryResponse{
+		Global: ConfigGlobalSummary{
+			WorkerCount:    s.config.Global.WorkerCount,
+			MaxConnections: s.config.Global.MaxConnections,
+			LogLevel:       s.config.Global.LogLevel,
+			LogFormat:      s.config.Global.LogFormat,
 		},
-		"domain_count": len(s.config.Domains),
+		DomainCount: len(s.config.Domains),
 	})
 }
 
@@ -1010,6 +836,38 @@ func (s *Server) HTTPServer() *http.Server {
 
 // persistDomainPHPOverrides saves the current in-memory PHP config overrides
 // for a domain into its domains.d/*.yaml file so they survive server restarts.
+func (s *Server) persistDomainPHPOverrides(domain string) {
+	if s.phpMgr == nil {
+		return
+	}
+	overrides := s.phpMgr.GetDomainConfig(domain)
+	path, err := s.domainFilePath(domain)
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: bad domain path", "domain", domain, "error", err)
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: read failed", "domain", domain, "error", err)
+		return
+	}
+	var domCfg config.Domain
+	if err := yaml.Unmarshal(data, &domCfg); err != nil {
+		s.logger.Warn("cannot persist PHP overrides: parse failed", "domain", domain, "error", err)
+		return
+	}
+	domCfg.PHP.ConfigOverrides = overrides
+	out, err := yaml.Marshal(&domCfg)
+	if err != nil {
+		s.logger.Warn("cannot persist PHP overrides: marshal failed", "domain", domain, "error", err)
+		return
+	}
+	if err := atomicWriteFile(path, out, 0600); err != nil {
+		s.logger.Warn("cannot persist PHP overrides: write failed", "domain", domain, "error", err)
+		return
+	}
+	s.logger.Info("persisted PHP config overrides", "domain", domain, "count", len(overrides))
+}
 
 // Close releases background resources used by the admin module.
 func (s *Server) Close() {
@@ -1059,7 +917,7 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 	if req.Tag != "" {
 		count := s.cache.PurgeByTag(req.Tag)
 		s.recordAuditR(r, "cache.purge", "tag: "+req.Tag, true)
-		jsonResponse(w, map[string]any{"status": "purged", "tag": req.Tag, "count": count})
+		jsonResponse(w, CachePurgeResponse{Status: "purged", Tag: req.Tag, Count: count})
 	} else {
 		s.cache.PurgeAll()
 		s.recordAuditR(r, "cache.purge", "all", true)
@@ -1069,9 +927,9 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	if s.cache == nil {
-		jsonResponse(w, map[string]any{
-			"enabled": false,
-			"message": "cache not enabled",
+		jsonResponse(w, CacheDisabledResponse{
+			Enabled: false,
+			Message: "cache not enabled",
 		})
 		return
 	}
@@ -1081,29 +939,29 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 	// Per-domain cache info, scoped to the domains the caller may access
 	// (matching handleStatsDomains and the analytics handlers).
 	s.configMu.RLock()
-	domainCache := make([]map[string]any, 0)
+	domainCacheInfo := make([]CacheDomainInfo, 0)
 	for _, d := range s.config.Domains {
 		if !s.canAccessDomain(r, d.Host) {
 			continue
 		}
-		dc := map[string]any{
-			"host":    d.Host,
-			"enabled": d.Cache.Enabled,
-			"ttl":     d.Cache.TTL,
-			"tags":    d.Cache.Tags,
+		dc := CacheDomainInfo{
+			Host:    d.Host,
+			Enabled: d.Cache.Enabled,
+			TTL:     d.Cache.TTL,
+			Tags:    d.Cache.Tags,
 		}
 		if len(d.Cache.Rules) > 0 {
-			var rules []map[string]any
+			rules := make([]CacheRuleSummary, 0, len(d.Cache.Rules))
 			for _, rule := range d.Cache.Rules {
-				rules = append(rules, map[string]any{
-					"match":  rule.Match,
-					"ttl":    rule.TTL,
-					"bypass": rule.Bypass,
+				rules = append(rules, CacheRuleSummary{
+					Match:  rule.Match,
+					TTL:    rule.TTL,
+					Bypass: rule.Bypass,
 				})
 			}
-			dc["rules"] = rules
+			dc.Rules = rules
 		}
-		domainCache = append(domainCache, dc)
+		domainCacheInfo = append(domainCacheInfo, dc)
 	}
 	s.configMu.RUnlock()
 
@@ -1113,15 +971,15 @@ func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
 		hitRate = float64(cacheStats["hits"]) / float64(total) * 100
 	}
 
-	jsonResponse(w, map[string]any{
-		"enabled":    true,
-		"hits":       cacheStats["hits"],
-		"misses":     cacheStats["misses"],
-		"stales":     cacheStats["stales"],
-		"entries":    cacheStats["entries"],
-		"used_bytes": cacheStats["used_bytes"],
-		"hit_rate":   fmt.Sprintf("%.1f%%", hitRate),
-		"domains":    domainCache,
+	jsonResponse(w, CacheStatsResponse{
+		Enabled:   true,
+		Hits:      cacheStats["hits"],
+		Misses:    cacheStats["misses"],
+		Stales:    cacheStats["stales"],
+		Entries:   cacheStats["entries"],
+		UsedBytes: cacheStats["used_bytes"],
+		HitRate:   fmt.Sprintf("%.1f%%", hitRate),
+		Domains:   domainCacheInfo,
 	})
 }
 
