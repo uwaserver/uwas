@@ -31,7 +31,6 @@ var builderPool = sync.Pool{
 func GenerateKey(r *http.Request, varyHeaders []string) string {
 	b := builderPool.Get().(*strings.Builder)
 	b.Reset()
-	defer builderPool.Put(b)
 
 	// Normalize host: lowercase + strip port. Bracketed IPv6 literals
 	// contain colons, so only strip after the closing bracket for those.
@@ -73,7 +72,13 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 		b.WriteString(r.Header.Get(name))
 	}
 
-	return b.String()
+	// Copy the string before returning the Builder to the pool.
+	// strings.Builder.String() shares the internal buffer — if we pool the
+	// Builder, a concurrent Get+WriteString would overwrite the returned
+	// string's backing array.
+	result := strings.Clone(b.String())
+	builderPool.Put(b)
+	return result
 }
 
 // writeSortedQuery splits raw on '&', sorts the parts lexicographically, and

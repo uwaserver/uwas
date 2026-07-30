@@ -31,6 +31,7 @@ type RequestContext struct {
 	RewrittenURI string
 	DocumentRoot string
 	ResolvedPath string
+	FileInfo     os.FileInfo // populated by ResolveRequest to avoid redundant stat
 	ScriptName   string
 	PathInfo     string
 
