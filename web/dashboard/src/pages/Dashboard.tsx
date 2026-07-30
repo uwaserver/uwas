@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router';
 import {
   Activity, Zap, HardDrive, Clock, CheckCircle, AlertTriangle,
   Gauge, AlertCircle, Shield, Globe, Lock, Cpu, ShieldAlert,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import PinModal from '@/components/PinModal';
 import { setPinCode, clearPinCode, bulkImportDomains } from '@/lib/api';
 import {

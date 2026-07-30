@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense, Component, type ReactNode } from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet } from 'react-router';
 import { getToken, onPinRequired, fetchBranding } from '@/lib/api';
 import { addDebugLog } from '@/lib/debugLog';
 import Sidebar from '@/components/Sidebar';
