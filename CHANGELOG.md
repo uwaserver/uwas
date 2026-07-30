@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-07-30
+
+### Changed
+
+- Dashboard backup scheduling now exposes hourly (`1h`) and 30-day (`720h`) interval presets plus a validated custom-interval input, surfacing the arbitrary-duration schedules the backend already accepted.
+- API client hardening: standardize the `401 → clear token → redirect` flow across all dashboard fetches, export the API base URL, and forward 2FA (`X-TOTP-Code`) and PIN (`X-Pin-Code`) headers on the cPanel migration request. Minor UX fixes to the Config Editor, File Manager, and Packages pages.
+
 ### Fixed
 
 - Pin the Docker builder to the Go 1.26.5 image and pin Alpine package versions, fixing production image builds that failed because the previous digest still contained Go 1.26.4 while `go.mod` requires 1.26.5.
@@ -22,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Increase the bcrypt work factor for all stored password hashes from cost 10 to cost 14 across every production hash call site. Existing hashes at any prior cost continue to verify with no migration required.
+- Store admin recovery codes only as SHA-256 hashes at rest; plaintext codes are shown once in the response and can no longer be recovered from the config file. Legacy plaintext codes continue to match transparently via hash comparison.
 - Harden GitHub Actions by pinning every first-party action to a verified commit SHA, disabling persisted checkout credentials, moving Pages/release write permissions to the jobs that need them, and disabling caches for release artifact builds to prevent cache poisoning.
 - Make those protections regression-proof: CI now runs pinned actionlint, zizmor, Hadolint, ShellCheck, and Trivy gates plus the complete Docker Compose integration suite; all runtime images must remain free of HIGH/CRITICAL vulnerabilities and embedded secrets.
 - Publish the plaintext admin listener on host loopback only in Docker and WordPress deployments; remote dashboard access now uses an SSH tunnel instead of exposing API-key traffic on the network.
