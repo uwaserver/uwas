@@ -290,6 +290,8 @@ internal/admin/
 ├── php/                   # PHP handler sub-package
 ├── cloudflare/            # Cloudflare handler sub-package
 ├── domain/                # Domain handler sub-package
+├── apps/                  # Apps CRUD + lifecycle sub-package
+├── settings/              # Settings sub-package
 ├── handlers_database.go   # Adapter (dbDeps + thin wrappers)
 ├── handlers_php.go        # Adapter (phpDeps + thin wrappers)
 ├── handlers_cloudflare.go # Adapter (cfDeps + thin wrappers + state types)
@@ -316,6 +318,8 @@ removed entirely once test files are migrated to call the sub-package directly.
 | `admin/php` | 554 | 21 | PHPManager read via Deps (not cached at construction) |
 | `admin/cloudflare` | 871 | 16 | CF API helpers with injectable HTTP client |
 | `admin/domain` | 780 | 15 | Requires `internal/domainutil/` prerequisite (25 pure helpers) |
+| `admin/apps` | 700 | 10 | CRUD + lifecycle extracted; deploy/git/webhook deferred to `internal/deploy/` |
+| `admin/settings` | 630 | 12 | Config get/put, branding, notifications, recovery codes, raw YAML editor |
 
 ### Special case: admin/domain
 
@@ -336,8 +340,7 @@ from `domain_alias.go`.
 
 | File | LOC | Priority |
 |------|-----|----------|
-| `handlers_apps.go` + `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` | ~1800 | High |
-| `handlers_settings.go` | 683 | Medium |
+| `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` + `handlers_apps_keys.go` | ~1500 | High (deploy pipeline — needs `internal/deploy/`) |
 | `handlers_backup.go` | ~400 | Medium |
 | `handlers_files.go` | ~500 | Medium |
 | `handlers_wordpress.go` | ~400 | Low |
