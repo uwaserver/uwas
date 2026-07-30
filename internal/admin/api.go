@@ -191,6 +191,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	s.initAppsHandler()
 	s.initSettingsHandler()
 	s.initBackupHandler()
+	s.initFilesHandler()
 	s.initAudit()
 	if err := s.loadAuditLog(); err != nil {
 		log.Warn("audit log restore failed", "error", err.Error())

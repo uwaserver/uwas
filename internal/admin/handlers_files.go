@@ -1,34 +1,78 @@
 package admin
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 
+	"github.com/uwaserver/uwas/internal/admin/files"
 	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
-	"github.com/uwaserver/uwas/internal/cronjob"
-	"github.com/uwaserver/uwas/internal/domainroot"
-	"github.com/uwaserver/uwas/internal/filemanager"
 )
 
-// ============ File Manager ============
-
-type fileWorkspace struct {
-	ID      string   `json:"id"`
-	Label   string   `json:"label"`
-	Kind    string   `json:"kind"`
-	Root    string   `json:"root,omitempty"`
-	Host    string   `json:"host,omitempty"`
-	AppName string   `json:"app_name,omitempty"`
-	Runtime string   `json:"runtime,omitempty"`
-	Domains []string `json:"domains,omitempty"`
+// filesDeps adapts admin.Server to the files.Deps interface.
+type filesDeps struct {
+	s *Server
 }
+
+func (d *filesDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	return d.s.requireAdmin(w, r)
+}
+func (d *filesDeps) RequirePin(w http.ResponseWriter, r *http.Request) bool {
+	return d.s.requirePin(w, r)
+}
+func (d *filesDeps) RequireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {
+	return d.s.requireDomainAccess(w, r, domain, action)
+}
+func (d *filesDeps) CanAccessDomain(r *http.Request, domain string) bool {
+	return d.s.canAccessDomain(r, domain)
+}
+func (d *filesDeps) RecordAudit(r *http.Request, action, detail string, success bool) {
+	d.s.recordAuditR(r, action, detail, success)
+}
+func (d *filesDeps) ParsePagination(r *http.Request) (limit, offset int) {
+	return parsePagination(r)
+}
+func (d *filesDeps) LogInfo(msg string, args ...any) { d.s.logger.Info(msg, args...) }
+func (d *filesDeps) Domains() []config.Domain {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	return append([]config.Domain(nil), d.s.config.Domains...)
+}
+func (d *filesDeps) WebRoot() string {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	return d.s.config.Global.WebRoot
+}
+func (d *filesDeps) AppsManager() *apps.Manager { return d.s.appsMgr }
+func (d *filesDeps) AuthEnabled() bool {
+	return d.s.authMgr != nil
+}
+
+// Suppress unused import warnings — auth is used via UserFromContext in the sub-package.
+var _ = auth.RoleAdmin
+
+// filesHandler holds the files admin handler instance.
+var filesHandler *files.Handler
+
+func (s *Server) initFilesHandler() {
+	filesHandler = files.New(&filesDeps{s: s})
+}
+
+// ── Thin wrappers ──
+
+func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) { filesHandler.Workspaces(w, r) }
+func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request)        { filesHandler.List(w, r) }
+func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request)        { filesHandler.Read(w, r) }
+func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request)       { filesHandler.Write(w, r) }
+func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request)      { filesHandler.Delete(w, r) }
+func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request)       { filesHandler.Mkdir(w, r) }
+func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request)      { filesHandler.Upload(w, r) }
+func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request)       { filesHandler.DiskUsage(w, r) }
+func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request)        { filesHandler.CronList(w, r) }
+func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request)         { filesHandler.CronAdd(w, r) }
+func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request)      { filesHandler.CronDelete(w, r) }
+
+// ── Retained helpers for other admin files ──
 
 func (s *Server) domainRoot(domain string) string {
 	root, _ := s.domainRootForFiles(domain)
@@ -36,512 +80,26 @@ func (s *Server) domainRoot(domain string) string {
 }
 
 func (s *Server) domainRootForFiles(domain string) (string, error) {
-	if appName, ok := appFileTargetName(domain); ok {
-		return s.appRootForFiles(appName)
-	}
-
-	s.configMu.RLock()
-	var found *config.Domain
-	for _, d := range s.config.Domains {
-		if d.Host == domain {
-			dd := d
-			found = &dd
-			break
-		}
-	}
-	webRoot := s.config.Global.WebRoot
-	s.configMu.RUnlock()
-
-	if found != nil {
-		var store = (*apps.Store)(nil)
-		var instances []apps.Instance
-		if s.appsMgr != nil {
-			store = s.appsMgr.Store()
-			instances = s.appsMgr.Instances()
-		}
-		return domainroot.ForDomainWithApps(*found, store, instances)
-	}
-	return domainroot.Fallback(webRoot, domain), nil
+	// Delegate to the sub-package's resolution
+	return files.ResolveDomainRoot(&filesDeps{s: s}, domain)
 }
 
 func (s *Server) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, domain, action string) (string, bool) {
-	if _, isApp := appFileTargetName(domain); isApp {
-		if s.authMgr != nil && !s.requireAdmin(w, r) {
-			if action != "" {
-				s.recordAuditR(r, action, "app: "+domain+" (forbidden)", false)
-			}
-			return "", false
-		}
-	} else if !s.requireDomainAccess(w, r, domain, action) {
-		return "", false
-	}
-	root, err := s.domainRootForFiles(domain)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return "", false
-	}
-	if root == "" {
-		jsonError(w, "domain not found", http.StatusNotFound)
-		return "", false
-	}
-	return root, true
-}
-
-func appFileTargetName(target string) (string, bool) {
-	target = strings.TrimSpace(target)
-	for _, prefix := range []string{"app:", "apps://"} {
-		if strings.HasPrefix(strings.ToLower(target), prefix) {
-			name := strings.TrimSpace(target[len(prefix):])
-			if idx := strings.IndexAny(name, "/?#"); idx >= 0 {
-				name = name[:idx]
-			}
-			return name, name != ""
-		}
-	}
-	return "", false
-}
-
-func (s *Server) appRootForFiles(name string) (string, error) {
-	if s.appsMgr == nil {
-		return "", fmt.Errorf("app %q root unavailable: apps manager is not initialized", name)
-	}
-	app, err := s.appsMgr.Store().Get(name)
-	if err != nil {
-		return "", fmt.Errorf("app %q root unavailable: %w", name, err)
-	}
-	if app == nil {
-		return "", fmt.Errorf("app %q root unavailable: app not found", name)
-	}
-	if strings.TrimSpace(app.WorkDir) == "" {
-		return "", fmt.Errorf("app %q root unavailable: work_dir is empty", name)
-	}
-	return app.WorkDir, nil
-}
-
-func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) {
-	s.configMu.RLock()
-	domains := append([]config.Domain(nil), s.config.Domains...)
-	webRoot := s.config.Global.WebRoot
-	s.configMu.RUnlock()
-
-	var instances []apps.Instance
-	var storedApps []*apps.App
-	if s.appsMgr != nil {
-		instances = s.appsMgr.Instances()
-		if loaded, _, err := s.appsMgr.Store().Load(); err == nil {
-			storedApps = loaded
-		}
-	}
-
-	appLinks := make(map[string][]string)
-	items := make([]fileWorkspace, 0, len(domains)+len(storedApps)+len(instances))
-	for _, d := range domains {
-		if !s.canAccessDomain(r, d.Host) {
-			continue
-		}
-		if appName, ok := domainroot.AppName(d); ok {
-			appLinks[appName] = append(appLinks[appName], d.Host)
-			continue
-		}
-		if appName, ok := domainroot.LocalAppName(d, instances); ok {
-			appLinks[appName] = append(appLinks[appName], d.Host)
-			continue
-		}
-		if config.DomainType(d.Type) == config.DomainTypeRedirect {
-			continue
-		}
-		root := strings.TrimSpace(d.Root)
-		if root == "" {
-			root = domainroot.Fallback(webRoot, d.Host)
-		}
-		if root == "" {
-			continue
-		}
-		items = append(items, fileWorkspace{
-			ID:    d.Host,
-			Label: d.Host,
-			Kind:  "domain",
-			Root:  root,
-			Host:  d.Host,
-		})
-	}
-
-	user, hasUser := auth.UserFromContext(r.Context())
-	canSeeApps := s.authMgr == nil || (hasUser && user.Role == auth.RoleAdmin)
-	if canSeeApps {
-		appWorkspaces := make(map[string]fileWorkspace, len(storedApps)+len(instances))
-		for _, app := range storedApps {
-			if app == nil || strings.TrimSpace(app.WorkDir) == "" {
-				continue
-			}
-			appWorkspaces[app.Name] = fileWorkspace{
-				ID:      "app:" + app.Name,
-				Label:   app.Name,
-				Kind:    "application",
-				Root:    app.WorkDir,
-				AppName: app.Name,
-				Runtime: string(app.Runtime),
-			}
-		}
-		for _, inst := range instances {
-			if strings.TrimSpace(inst.WorkDir) == "" {
-				continue
-			}
-			appWorkspaces[inst.Name] = fileWorkspace{
-				ID:      "app:" + inst.Name,
-				Label:   inst.Name,
-				Kind:    "application",
-				Root:    inst.WorkDir,
-				AppName: inst.Name,
-				Runtime: string(inst.Runtime),
-			}
-		}
-		for name, item := range appWorkspaces {
-			domains := append([]string(nil), appLinks[name]...)
-			sort.Strings(domains)
-			item.Domains = domains
-			items = append(items, item)
-		}
-	}
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Kind != items[j].Kind {
-			return items[i].Kind == "domain"
-		}
-		return strings.ToLower(items[i].Label) < strings.ToLower(items[j].Label)
-	})
-	limit, offset := parsePagination(r)
-	paged, total := paginateSlice(items, limit, offset)
-	jsonResponse(w, map[string]any{
-		"items":  paged,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
-	})
+	return filesHandler.AuthorizedDomainRoot(w, r, domain, action)
 }
 
 func (s *Server) siteUserRoot(domain string) (string, error) {
-	if appName, ok := appSFTPTargetName(domain); ok {
-		return s.appRootForFiles(appName)
-	}
-	root, err := s.domainRootForFiles(domain)
-	if err != nil {
-		return "", err
-	}
-	if root != "" {
-		return root, nil
-	}
-	return domainroot.Fallback("/var/www", domain), nil
+	return files.ResolveSiteUserRoot(&filesDeps{s: s}, domain)
 }
 
-func appSFTPIdentity(appName string) string {
-	appName = strings.TrimSpace(strings.ToLower(appName))
-	appName = strings.ReplaceAll(appName, "_", "--u--")
-	return "app-" + appName + ".uwas.local"
-}
+// Compile-time check.
+var _ files.Deps = (*filesDeps)(nil)
 
-func appSFTPTargetName(target string) (string, bool) {
-	target = strings.TrimSpace(target)
-	if appName, ok := appFileTargetName(target); ok {
-		return appName, true
-	}
-	lower := strings.ToLower(target)
-	if strings.HasPrefix(lower, "app-") && strings.HasSuffix(lower, ".uwas.local") {
-		name := strings.TrimSuffix(strings.TrimPrefix(lower, "app-"), ".uwas.local")
-		name = strings.ReplaceAll(name, "--u--", "_")
-		if name != "" {
-			return name, true
-		}
-	}
-	return "", false
-}
+// Retained helpers for other admin files.
+func appSFTPTargetName(target string) (string, bool) { return files.AppSFTPTargetName(target) }
+func appSFTPIdentity(appName string) string           { return files.AppSFTPIdentity(appName) }
+func appFileTargetName(target string) (string, bool)  { return files.AppFileTargetName(target) }
+func formatBytes(b int64) string                      { return files.FormatBytes(b) }
 
-func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.list")
-	if !ok {
-		return
-	}
-	// Auto-create root if it doesn't exist
-	os.MkdirAll(root, 0755)
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "."
-	}
-	entries, err := filemanager.List(root, path)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if entries == nil {
-		entries = []filemanager.Entry{}
-	}
-	limit, offset := parsePagination(r)
-	items, total := paginateSlice(entries, limit, offset)
-	jsonResponse(w, map[string]any{
-		"items":  items,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
-	})
-}
-
-func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.read")
-	if !ok {
-		return
-	}
-	path := r.URL.Query().Get("path")
-	data, err := filemanager.ReadFile(root, path)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Check if file is an image - serve binary with proper content type
-	lowerPath := strings.ToLower(path)
-	if strings.HasSuffix(lowerPath, ".png") ||
-		strings.HasSuffix(lowerPath, ".jpg") ||
-		strings.HasSuffix(lowerPath, ".jpeg") ||
-		strings.HasSuffix(lowerPath, ".gif") ||
-		strings.HasSuffix(lowerPath, ".webp") ||
-		strings.HasSuffix(lowerPath, ".svg") ||
-		strings.HasSuffix(lowerPath, ".ico") {
-
-		// Set appropriate content type
-		contentType := "application/octet-stream"
-		switch {
-		case strings.HasSuffix(lowerPath, ".png"):
-			contentType = "image/png"
-		case strings.HasSuffix(lowerPath, ".jpg") || strings.HasSuffix(lowerPath, ".jpeg"):
-			contentType = "image/jpeg"
-		case strings.HasSuffix(lowerPath, ".gif"):
-			contentType = "image/gif"
-		case strings.HasSuffix(lowerPath, ".webp"):
-			contentType = "image/webp"
-		case strings.HasSuffix(lowerPath, ".svg"):
-			contentType = "image/svg+xml"
-		case strings.HasSuffix(lowerPath, ".ico"):
-			contentType = "image/x-icon"
-		}
-
-		w.Header().Set("Content-Type", contentType)
-		// Never let the browser MIME-sniff a preview into something executable.
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// SVG is an XML document that can carry inline <script>; if it is ever
-		// rendered as a top-level document it would run in the dashboard origin
-		// and exfiltrate the admin token. Force it to download and neuter any
-		// active content via CSP (defense-in-depth; the client also avoids
-		// opening SVG as a document).
-		if strings.HasSuffix(lowerPath, ".svg") {
-			w.Header().Set("Content-Disposition", "attachment")
-			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-		}
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-		w.Write(data)
-		return
-	}
-
-	// For text files, return as JSON
-	jsonResponse(w, map[string]string{"content": string(data), "path": path})
-}
-
-func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.write")
-	if !ok {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
-	var req struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := filemanager.WriteFile(root, req.Path, []byte(req.Content)); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "written", "path": req.Path})
-}
-
-func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.delete")
-	if !ok {
-		return
-	}
-	path := r.URL.Query().Get("path")
-	if err := filemanager.Delete(root, path); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "deleted", "path": path})
-}
-
-func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.mkdir")
-	if !ok {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		Path string `json:"path"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := filemanager.CreateDir(root, req.Path); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "created", "path": req.Path})
-}
-
-func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.upload")
-	if !ok {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 100<<20) // 100MB total request limit
-	if err := r.ParseMultipartForm(100 << 20); err != nil {
-		jsonError(w, "parse form: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	dir := r.FormValue("path")
-	if dir == "" {
-		dir = "."
-	}
-
-	// Enforce per-file size limit (50MB per file)
-	const maxFileSize = 50 << 20
-
-	var uploaded []string
-	for _, fHeaders := range r.MultipartForm.File {
-		for _, fh := range fHeaders {
-			// Reject files that exceed per-file limit
-			if fh.Size > maxFileSize {
-				jsonError(w, fmt.Sprintf("file %q exceeds maximum size of %d MB", fh.Filename, maxFileSize>>20), http.StatusBadRequest)
-				return
-			}
-			src, err := fh.Open()
-			if err != nil {
-				continue
-			}
-			// Use filepath.Base to strip directory components from uploaded filename
-			// (prevents path traversal via filenames like "../../etc/cron.d/x")
-			relPath := filepath.Join(dir, filepath.Base(fh.Filename))
-			_, err = filemanager.SaveUpload(root, relPath, src)
-			src.Close()
-			if err == nil {
-				uploaded = append(uploaded, relPath)
-			}
-		}
-	}
-	jsonResponse(w, map[string]any{"status": "uploaded", "files": uploaded})
-}
-
-func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	root, ok := s.authorizedDomainRoot(w, r, domain, "file.disk_usage")
-	if !ok {
-		return
-	}
-	bytes, err := filemanager.DiskUsage(root)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]any{
-		"domain": domain,
-		"bytes":  bytes,
-		"human":  formatBytes(bytes),
-		"root":   root,
-	})
-}
-
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
-}
-
-// ============ Cron Jobs ============
-
-func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	jobs, err := cronjob.List()
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if jobs == nil {
-		jobs = []cronjob.Job{}
-	}
-	limit, offset := parsePagination(r)
-	items, total := paginateSlice(jobs, limit, offset)
-	jsonResponse(w, map[string]any{
-		"items":  items,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
-	})
-}
-
-func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var job cronjob.Job
-	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if job.Schedule == "" || job.Command == "" {
-		jsonError(w, "schedule and command are required", http.StatusBadRequest)
-		return
-	}
-	if err := cronjob.Add(job); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.logger.Info("cron job added", "schedule", job.Schedule, "command", job.Command)
-	jsonResponse(w, map[string]string{"status": "added"})
-}
-
-func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) || !s.requirePin(w, r) {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		Schedule string `json:"schedule"`
-		Command  string `json:"command"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := cronjob.Remove(req.Schedule, req.Command); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "removed"})
-}
+// fileWorkspace is aliased for test compat.
+type fileWorkspace = files.FileWorkspace
