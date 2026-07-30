@@ -292,6 +292,9 @@ internal/admin/
 ├── domain/                # Domain handler sub-package
 ├── apps/                  # Apps CRUD + lifecycle sub-package
 ├── settings/              # Settings sub-package
+├── backup/                # Backup sub-package
+├── files/                 # File manager + cron sub-package
+├── wordpress/             # WordPress sub-package
 ├── handlers_database.go   # Adapter (dbDeps + thin wrappers)
 ├── handlers_php.go        # Adapter (phpDeps + thin wrappers)
 ├── handlers_cloudflare.go # Adapter (cfDeps + thin wrappers + state types)
@@ -320,6 +323,9 @@ removed entirely once test files are migrated to call the sub-package directly.
 | `admin/domain` | 780 | 15 | Requires `internal/domainutil/` prerequisite (25 pure helpers) |
 | `admin/apps` | 700 | 10 | CRUD + lifecycle extracted; deploy/git/webhook deferred to `internal/deploy/` |
 | `admin/settings` | 630 | 12 | Config get/put, branding, notifications, recovery codes, raw YAML editor |
+| `admin/backup` | 338 | 7 | List, create, domain backup, restore, delete, schedule get/put |
+| `admin/files` | 610 | 11 | File manager + cron: workspaces, list, read, write, delete, mkdir, upload, disk usage |
+| `admin/wordpress` | 400 | 16 | Install, detect, update, security, harden, optimize DB; install state on Handler struct |
 
 ### Special case: admin/domain
 
@@ -340,7 +346,6 @@ from `domain_alias.go`.
 
 | File | LOC | Priority |
 |------|-----|----------|
-| `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` + `handlers_apps_keys.go` | ~1500 | High (deploy pipeline — needs `internal/deploy/`) |
-| `handlers_backup.go` | ~400 | Medium |
-| `handlers_files.go` | ~500 | Medium |
-| `handlers_wordpress.go` | ~400 | Low |
+| `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` + `handlers_apps_keys.go` | ~1500 | Deploy pipeline — needs `internal/deploy/` |
+
+All other admin handler files have been extracted. Only the deploy pipeline remains.
