@@ -5,6 +5,7 @@ package webhook
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -368,9 +369,14 @@ func matchesEvent(configured []EventType, event EventType) bool {
 	return false
 }
 
-// generateID generates a unique event ID.
+// generateID generates a unique event ID using crypto/rand.
 func generateID() string {
-	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), time.Now().Unix())
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// Fallback: should never fail, but keep the server alive.
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 // sign creates an HMAC-SHA256 signature for the payload.

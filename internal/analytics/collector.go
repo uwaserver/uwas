@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,9 +19,9 @@ type Collector struct {
 // DomainStats holds analytics data for a single domain.
 type DomainStats struct {
 	mu          sync.Mutex
-	PageViews   int64            `json:"page_views"`
+	PageViews   atomic.Int64    // hot counter: incremented on every request
 	UniqueIPs   map[string]bool  `json:"unique_ips"`
-	BytesSent   int64            `json:"bytes_sent"`
+	BytesSent   atomic.Int64    // hot counter: incremented on every request
 	StatusCodes map[int]int64    `json:"status_codes"`
 	Paths       map[string]int64 `json:"paths"`
 	HourlyViews [24]int64        `json:"hourly_views"`
@@ -54,6 +55,10 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 	now := time.Now()
 	hour := now.Hour()
 
+	// Hot counters: atomic, no lock needed.
+	stats.PageViews.Add(1)
+	stats.BytesSent.Add(bytesSent)
+
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 
@@ -63,15 +68,12 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 	// past the cap.
 	const maxDistinct = 50000
 
-	stats.PageViews++
 	if stats.UniqueIPs == nil {
 		stats.UniqueIPs = make(map[string]bool)
 	}
 	if stats.UniqueIPs[ip] || len(stats.UniqueIPs) < maxDistinct {
 		stats.UniqueIPs[ip] = true
 	}
-
-	stats.BytesSent += bytesSent
 
 	if stats.StatusCodes == nil {
 		stats.StatusCodes = make(map[int]int64)
@@ -147,7 +149,10 @@ func (c *Collector) advanceBuckets(stats *DomainStats, now time.Time) {
 
 func (c *Collector) getOrCreate(host string) *DomainStats {
 	if v, ok := c.domains.Load(host); ok {
-		return v.(*DomainStats)
+		stats, ok := v.(*DomainStats)
+		if ok {
+			return stats
+		}
 	}
 	stats := &DomainStats{
 		UniqueIPs:   make(map[string]bool),
@@ -157,7 +162,11 @@ func (c *Collector) getOrCreate(host string) *DomainStats {
 		UserAgents:  make(map[string]int64),
 	}
 	actual, _ := c.domains.LoadOrStore(host, stats)
-	return actual.(*DomainStats)
+	s, ok := actual.(*DomainStats)
+	if !ok {
+		return stats // race-loser type mismatch: use our own
+	}
+	return s
 }
 
 // extractRefDomain extracts the hostname from a Referer URL.
@@ -231,8 +240,14 @@ type Snapshot struct {
 func (c *Collector) GetAll() []Snapshot {
 	var snapshots []Snapshot
 	c.domains.Range(func(key, value any) bool {
-		host := key.(string)
-		stats := value.(*DomainStats)
+		host, ok := key.(string)
+		if !ok {
+			return true
+		}
+		stats, ok := value.(*DomainStats)
+		if !ok {
+			return true
+		}
 		snapshots = append(snapshots, c.snapshot(host, stats))
 		return true
 	})
@@ -246,7 +261,11 @@ func (c *Collector) GetHost(host string) *Snapshot {
 	if !ok {
 		return nil
 	}
-	snap := c.snapshot(host, v.(*DomainStats))
+	stats, ok := v.(*DomainStats)
+	if !ok {
+		return nil
+	}
+	snap := c.snapshot(host, stats)
 	return &snap
 }
 
@@ -256,9 +275,9 @@ func (c *Collector) snapshot(host string, stats *DomainStats) Snapshot {
 
 	snap := Snapshot{
 		Host:        host,
-		PageViews:   stats.PageViews,
+		PageViews:   stats.PageViews.Load(),
 		UniqueIPs:   len(stats.UniqueIPs),
-		BytesSent:   stats.BytesSent,
+		BytesSent:   stats.BytesSent.Load(),
 		StatusCodes: make(map[int]int64),
 		TopPaths:    make(map[string]int64),
 		HourlyViews: stats.HourlyViews,
