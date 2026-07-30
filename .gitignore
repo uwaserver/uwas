@@ -94,3 +94,6 @@ commit.bat
 *.bak
 *.orig
 *.rej
+!/.wrongstack/
+/.wrongstack/*
+!/.wrongstack/project.json
