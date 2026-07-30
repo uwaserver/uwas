@@ -113,11 +113,8 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 
 	limit, offset := parsePagination(r)
 	result, total := paginateSlice(result, limit, offset)
-	jsonResponse(w, map[string]any{
-		"items":  result,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+	jsonResponse(w, PaginatedResponse[AuditEntry]{
+		Items: result, Total: total, Limit: limit, Offset: offset,
 	})
 }
 

@@ -1,42 +1,287 @@
 package admin
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	cfadmin "github.com/uwaserver/uwas/internal/admin/cloudflare"
 	cfintegration "github.com/uwaserver/uwas/internal/cloudflare"
+	"github.com/uwaserver/uwas/internal/config"
 )
 
-// --- Cloudflare Integration ---
+// cfDeps adapts admin.Server to the cloudflare.Deps interface.
+type cfDeps struct {
+	s *Server
+}
 
-// cfHTTPClient is used for all outbound Cloudflare API calls. http.DefaultClient
-// has no timeout, so a stalled/hostile API endpoint would hang the goroutine
-// indefinitely; this bounds every call.
-var cfHTTPClient = &http.Client{Timeout: 30 * time.Second}
+func (d *cfDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	return d.s.requireAdmin(w, r)
+}
+
+func (d *cfDeps) LogInfo(msg string, args ...any)  { d.s.logger.Info(msg, args...) }
+func (d *cfDeps) LogWarn(msg string, args ...any)  { d.s.logger.Warn(msg, args...) }
+func (d *cfDeps) LogError(msg string, args ...any) { d.s.logger.Error(msg, args...) }
+
+func (d *cfDeps) RecordAudit(r *http.Request, action, detail string, success bool) {
+	d.s.recordAuditR(r, action, detail, success)
+}
+
+func (d *cfDeps) CloudflareIPRanges() ([]string, string) {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	ranges := append([]string(nil), d.s.config.Global.Cloudflare.IPRanges...)
+	return ranges, d.s.config.Global.Cloudflare.LastSynced
+}
+
+func (d *cfDeps) SetCloudflareIPRanges(ranges []string, lastSynced string) {
+	d.s.configMu.Lock()
+	d.s.config.Global.Cloudflare.IPRanges = ranges
+	if lastSynced != "" {
+		d.s.config.Global.Cloudflare.LastSynced = lastSynced
+	}
+	d.s.configMu.Unlock()
+}
+
+func (d *cfDeps) PersistConfig()      { d.s.persistConfig() }
+func (d *cfDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
+
+func (d *cfDeps) LoadCloudflareState() *cfadmin.State {
+	cloudflareMu.RLock()
+	defer cloudflareMu.RUnlock()
+	if cloudflareConfig == nil {
+		return nil
+	}
+	return toCFState(cloudflareConfig)
+}
+
+func (d *cfDeps) SaveCloudflareState(st *cfadmin.State) error {
+	cloudflareMu.Lock()
+	defer cloudflareMu.Unlock()
+	if st == nil || (!st.Connected && st.Token == "") {
+		cloudflareConfig = nil
+	} else {
+		cloudflareConfig = toAdminState(st)
+	}
+	return d.s.saveCloudflareStateLocked()
+}
+
+func (d *cfDeps) TunnelStatusOf(id string) (bool, int, string) {
+	if d.s.cfRunner == nil {
+		return false, 0, ""
+	}
+	st := d.s.cfRunner.StatusOf(id)
+	return st.Running, st.PID, st.Uptime
+}
+
+func (d *cfDeps) TunnelStart(id, token string) error {
+	if d.s.cfRunner == nil {
+		return nil
+	}
+	return d.s.cfRunner.Start(id, token)
+}
+
+func (d *cfDeps) TunnelStop(id string) error {
+	if d.s.cfRunner == nil {
+		return fmt.Errorf("tunnel runner not initialized")
+	}
+	return d.s.cfRunner.Stop(id)
+}
+
+func (d *cfDeps) TunnelForget(id string) {
+	if d.s.cfRunner != nil {
+		d.s.cfRunner.Forget(id)
+	}
+}
+
+func (d *cfDeps) TunnelTail(id string) string {
+	if d.s.cfRunner == nil {
+		return ""
+	}
+	return d.s.cfRunner.Tail(id)
+}
+
+func (d *cfDeps) AddDomain(dom config.Domain) {
+	d.s.configMu.Lock()
+	d.s.config.Domains = append(d.s.config.Domains, dom)
+	d.s.configMu.Unlock()
+}
+
+func (d *cfDeps) ExistingDomains() map[string]bool {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	existing := make(map[string]bool, len(d.s.config.Domains))
+	for _, d := range d.s.config.Domains {
+		existing[strings.ToLower(d.Host)] = true
+	}
+	return existing
+}
+
+func (d *cfDeps) WebRoot() string {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	return d.s.config.Global.WebRoot
+}
+
+func (d *cfDeps) FetchIPRanges(r *http.Request) ([]string, error) {
+	return cfintegration.FetchIPRanges(r.Context())
+}
+
+// CF API operations — use admin's cfHTTPClient directly (test-mockable).
+func (d *cfDeps) ValidateToken(token, accountID string) (string, error) {
+	return cfValidateTokenImpl(token, accountID)
+}
+
+func (d *cfDeps) FetchZones(token string) ([]cfadmin.Zone, error) {
+	return cfFetchZonesImpl(token)
+}
+
+func (d *cfDeps) FetchDNSRecords(token, zoneID string) ([]cfadmin.DNSRecord, error) {
+	return cfFetchDNSRecordsImpl(token, zoneID)
+}
+
+func (d *cfDeps) PurgeCache(token, url string, everything bool) error {
+	return cfPurgeCacheImpl(token, url, everything)
+}
+
+func (d *cfDeps) NormalizeCIDRs(ranges []string) ([]string, error) {
+	return cfintegration.NormalizeCIDRs(ranges)
+}
+
+func (d *cfDeps) CreateTunnelAPI(token, accountID, name, hostname, localTarget string) (cfadmin.Tunnel, error) {
+	cli := cfintegration.New(token, accountID)
+	zone, err := cli.FindZoneByHostname(hostname)
+	if err != nil {
+		return cfadmin.Tunnel{}, fmt.Errorf("zone lookup: %w", err)
+	}
+	cft, err := cli.CreateTunnel(name)
+	if err != nil {
+		return cfadmin.Tunnel{}, fmt.Errorf("create tunnel: %w", err)
+	}
+	rules := []cfintegration.IngressRule{
+		{Hostname: hostname, Service: localTarget},
+		{Service: "http_status:404"},
+	}
+	if err := cli.PutTunnelConfig(cft.ID, rules); err != nil {
+		_ = cli.DeleteTunnel(cft.ID)
+		return cfadmin.Tunnel{}, fmt.Errorf("put tunnel config: %w", err)
+	}
+	recordID, err := cli.CreateTunnelCNAME(zone.ID, hostname, cft.ID)
+	if err != nil {
+		_ = cli.DeleteTunnel(cft.ID)
+		return cfadmin.Tunnel{}, fmt.Errorf("create DNS CNAME: %w", err)
+	}
+	connectorToken, err := cli.GetTunnelToken(cft.ID)
+	if err != nil {
+		_ = cli.DeleteDNSRecord(zone.ID, recordID)
+		_ = cli.DeleteTunnel(cft.ID)
+		return cfadmin.Tunnel{}, fmt.Errorf("get connector token: %w", err)
+	}
+	return cfadmin.Tunnel{
+		ID: cft.ID, Name: name, Hostname: hostname,
+		LocalTarget: localTarget, ConnectorToken: connectorToken,
+		ZoneID: zone.ID, DNSRecordID: recordID,
+	}, nil
+}
+
+func (d *cfDeps) DeleteTunnelAPI(token, accountID, tunnelID string) error {
+	cli := cfintegration.New(token, accountID)
+	return cli.DeleteTunnel(tunnelID)
+}
+
+// toCFState converts the admin-internal cloudflareState to the sub-package type.
+func toCFState(st *cloudflareState) *cfadmin.State {
+	out := &cfadmin.State{
+		SchemaVersion: st.SchemaVersion,
+		Token:         st.Token,
+		AccountID:     st.AccountID,
+		Email:         st.Email,
+		Connected:     st.Connected,
+		UpdatedAt:     st.UpdatedAt,
+	}
+	out.Tunnels = make([]cfadmin.Tunnel, len(st.Tunnels))
+	for i, t := range st.Tunnels {
+		out.Tunnels[i] = cfadmin.Tunnel{
+			ID:             t.ID,
+			Name:           t.Name,
+			Hostname:       t.Hostname,
+			LocalTarget:    t.LocalTarget,
+			ConnectorToken: t.ConnectorToken,
+			ZoneID:         t.ZoneID,
+			DNSRecordID:    t.DNSRecordID,
+			CreatedAt:      t.CreatedAt,
+			Domain:         t.Domain,
+		}
+	}
+	return out
+}
+
+// (cfHandler is now a Server field)
+
+// toAdminState converts the sub-package state to admin-internal cloudflareState.
+func toAdminState(st *cfadmin.State) *cloudflareState {
+	out := &cloudflareState{
+		SchemaVersion: st.SchemaVersion,
+		Token:         st.Token,
+		AccountID:     st.AccountID,
+		Email:         st.Email,
+		Connected:     st.Connected,
+		UpdatedAt:     st.UpdatedAt,
+	}
+	out.Tunnels = make([]cloudflareTunnel, len(st.Tunnels))
+	for i, t := range st.Tunnels {
+		out.Tunnels[i] = cloudflareTunnel{
+			ID: t.ID, Name: t.Name, Hostname: t.Hostname,
+			LocalTarget: t.LocalTarget, ConnectorToken: t.ConnectorToken,
+			ZoneID: t.ZoneID, DNSRecordID: t.DNSRecordID,
+			CreatedAt: t.CreatedAt, Domain: t.Domain,
+		}
+	}
+	return out
+}
+
+func (s *Server) initCloudflareHandler() {
+	s.cfHandler = cfadmin.New(&cfDeps{s: s})
+}
+
+// ── Thin wrappers ──
+
+func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request)      { s.cfHandler.Status(w, r) }
+func (s *Server) handleCloudflareIPs(w http.ResponseWriter, r *http.Request)         { s.cfHandler.IPs(w, r) }
+func (s *Server) handleCloudflareIPsUpdate(w http.ResponseWriter, r *http.Request)   { s.cfHandler.IPsUpdate(w, r) }
+func (s *Server) handleCloudflareIPsSync(w http.ResponseWriter, r *http.Request)     { s.cfHandler.IPsSync(w, r) }
+func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)     { s.cfHandler.Connect(w, r) }
+func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Request)  { s.cfHandler.Disconnect(w, r) }
+func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request)  { s.cfHandler.CachePurge(w, r) }
+func (s *Server) handleCloudflareTunnels(w http.ResponseWriter, r *http.Request)     { s.cfHandler.Tunnels(w, r) }
+func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Request) { s.cfHandler.TunnelCreate(w, r) }
+func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Request) { s.cfHandler.TunnelDelete(w, r) }
+func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Request)  { s.cfHandler.TunnelStart(w, r) }
+func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Request)   { s.cfHandler.TunnelStop(w, r) }
+func (s *Server) handleCloudflareTunnelLogs(w http.ResponseWriter, r *http.Request)   { s.cfHandler.TunnelLogs(w, r) }
+func (s *Server) handleCloudflaredInstall(w http.ResponseWriter, r *http.Request)     { s.cfHandler.CloudflaredInstall(w, r) }
+func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request)        { s.cfHandler.Zones(w, r) }
+func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Request)   { s.cfHandler.ZoneImport(w, r) }
+
+var _ cfadmin.Deps = (*cfDeps)(nil)
+
+// Keep these types referenced — they're used by cloudflare_state.go and tests.
+// Cloudflare state types and package-level vars (shared with cloudflare_state.go).
 
 type cloudflareTunnel struct {
-	ID             string    `json:"id"` // real Cloudflare tunnel UUID
+	ID             string    `json:"id"`
 	Name           string    `json:"name"`
-	Hostname       string    `json:"hostname"`        // public, e.g. app.example.com
-	LocalTarget    string    `json:"local_target"`    // http://localhost:8080 or tcp://localhost:22
-	ConnectorToken string    `json:"connector_token"` // from Cloudflare API; never returned to client
+	Hostname       string    `json:"hostname"`
+	LocalTarget    string    `json:"local_target"`
+	ConnectorToken string    `json:"connector_token"`
 	ZoneID         string    `json:"zone_id"`
 	DNSRecordID    string    `json:"dns_record_id"`
 	CreatedAt      time.Time `json:"created_at,omitempty"`
-
-	// Legacy v0.1.6 stub field kept only so old state files unmarshal without
-	// dropping the value; migrated to Hostname once on load when SchemaVersion<2.
-	// Slated for removal after v0.5 (refactor.md A21).
-	Domain string `json:"domain,omitempty"`
+	Domain         string    `json:"domain,omitempty"`
 }
 
-// cloudflareStateSchemaCurrent is the current schema version persisted on
-// disk. v0.1.6 wrote no version (treated as 1); v0.2.0+ writes 2.
 const cloudflareStateSchemaCurrent = 2
 
 type cloudflareState struct {
@@ -54,313 +299,8 @@ var (
 	cloudflareConfig *cloudflareState
 )
 
-func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) {
-	// Connected account identity, token mask, and tunnel counts are global
-	// provider state and should not leak to non-admin tenants.
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	cloudflareMu.RLock()
-	cfg := cloudflareConfig
-	cloudflareMu.RUnlock()
-
-	cfd := cfintegration.DetectCloudflared()
-
-	if cfg == nil {
-		jsonResponse(w, map[string]any{
-			"connected":             false,
-			"cloudflared_installed": cfd.Installed,
-			"cloudflared_version":   cfd.Version,
-		})
-		return
-	}
-
-	jsonResponse(w, map[string]any{
-		"connected":             cfg.Connected,
-		"email":                 cfg.Email,
-		"account_id":            cfg.AccountID,
-		"token_mask":            maskCloudflareToken(cfg.Token),
-		"updated_at":            cfg.UpdatedAt,
-		"tunnel_count":          len(cfg.Tunnels),
-		"cloudflared_installed": cfd.Installed,
-		"cloudflared_version":   cfd.Version,
-	})
-}
-
-func (s *Server) handleCloudflareIPs(w http.ResponseWriter, r *http.Request) {
-	s.configMu.RLock()
-	ranges := append([]string(nil), s.config.Global.Cloudflare.IPRanges...)
-	lastSynced := s.config.Global.Cloudflare.LastSynced
-	s.configMu.RUnlock()
-	jsonResponse(w, map[string]any{
-		"ip_ranges":   ranges,
-		"last_synced": lastSynced,
-		"count":       len(ranges),
-	})
-}
-
-func (s *Server) handleCloudflareIPsUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		IPRanges []string `json:"ip_ranges"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.recordAuditR(r, "cloudflare.ips.update", "invalid JSON body", false)
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	ranges, err := cfintegration.NormalizeCIDRs(req.IPRanges)
-	if err != nil {
-		s.recordAuditR(r, "cloudflare.ips.update", err.Error(), false)
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.configMu.Lock()
-	s.config.Global.Cloudflare.IPRanges = ranges
-	s.configMu.Unlock()
-	s.persistConfig()
-	s.recordAuditR(r, "cloudflare.ips.update", fmt.Sprintf("ranges: %d", len(ranges)), true)
-	jsonResponse(w, map[string]any{
-		"status":    "updated",
-		"ip_ranges": ranges,
-		"count":     len(ranges),
-	})
-}
-
-func (s *Server) handleCloudflareIPsSync(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	ranges, err := cfintegration.FetchIPRanges(r.Context())
-	if err != nil {
-		s.recordAuditR(r, "cloudflare.ips.sync", err.Error(), false)
-		jsonError(w, "sync failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	s.configMu.Lock()
-	s.config.Global.Cloudflare.IPRanges = ranges
-	s.config.Global.Cloudflare.LastSynced = now
-	s.configMu.Unlock()
-	s.persistConfig()
-	s.recordAuditR(r, "cloudflare.ips.sync", fmt.Sprintf("ranges: %d", len(ranges)), true)
-	jsonResponse(w, map[string]any{
-		"status":      "synced",
-		"ip_ranges":   ranges,
-		"last_synced": now,
-		"count":       len(ranges),
-	})
-}
-
-func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		Token     string `json:"token"`
-		AccountID string `json:"account_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	if req.Token == "" || req.AccountID == "" {
-		jsonError(w, "token and account_id are required", http.StatusBadRequest)
-		return
-	}
-
-	// Validate token by fetching zones
-	email, err := s.validateCloudflareToken(req.Token, req.AccountID)
-	if err != nil {
-		jsonError(w, "invalid token: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	cloudflareMu.Lock()
-	cloudflareConfig = &cloudflareState{
-		Token:     req.Token,
-		AccountID: req.AccountID,
-		Email:     email,
-		Tunnels:   []cloudflareTunnel{},
-		Connected: true,
-		UpdatedAt: time.Now(),
-	}
-	saveErr := s.saveCloudflareStateLocked()
-	cloudflareMu.Unlock()
-	if saveErr != nil {
-		s.logger.Error("cloudflare state save failed", "error", saveErr.Error())
-	}
-
-	s.recordAuditR(r, "cloudflare.connect", "account: "+req.AccountID, true)
-	jsonResponse(w, map[string]string{"status": "connected"})
-}
-
-func (s *Server) validateCloudflareToken(token, accountID string) (string, error) {
-	// Call Cloudflare API to validate token and get user info
-	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := cfHTTPClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Success bool `json:"success"`
-		Result  struct {
-			ID        string `json:"id"`
-			Status    string `json:"status"`
-			ExpiresOn string `json:"expires_on"`
-		} `json:"result"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	if !result.Success {
-		if len(result.Errors) > 0 {
-			return "", fmt.Errorf("%s", result.Errors[0].Message)
-		}
-		return "", fmt.Errorf("token validation failed")
-	}
-
-	// Get account info
-	req2, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/accounts/"+accountID, nil)
-	if err != nil {
-		return "", err
-	}
-	req2.Header.Set("Authorization", "Bearer "+token)
-	req2.Header.Set("Content-Type", "application/json")
-
-	resp2, err := cfHTTPClient.Do(req2)
-	if err != nil {
-		return "", err
-	}
-	defer resp2.Body.Close()
-
-	var accResult struct {
-		Success bool `json:"success"`
-		Result  struct {
-			Name string `json:"name"`
-		} `json:"result"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if err := json.NewDecoder(resp2.Body).Decode(&accResult); err != nil {
-		return "", err
-	}
-	if !accResult.Success {
-		if len(accResult.Errors) > 0 {
-			return "", fmt.Errorf("%s", accResult.Errors[0].Message)
-		}
-		return "", fmt.Errorf("account validation failed")
-	}
-
-	return accResult.Result.Name, nil
-}
-
-func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	cloudflareMu.Lock()
-	oldCfg := cloudflareConfig
-	cloudflareConfig = nil
-	saveErr := s.saveCloudflareStateLocked()
-	cloudflareMu.Unlock()
-	if saveErr != nil {
-		s.logger.Error("cloudflare state save failed", "error", saveErr.Error())
-	}
-
-	if oldCfg != nil {
-		s.recordAuditR(r, "cloudflare.disconnect", "account: "+oldCfg.AccountID, true)
-	}
-
-	jsonResponse(w, map[string]string{"status": "disconnected"})
-}
-
-func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	cloudflareMu.RLock()
-	cfg := cloudflareConfig
-	cloudflareMu.RUnlock()
-
-	if cfg == nil || !cfg.Connected {
-		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		URL        string `json:"url"`
-		Everything bool   `json:"everything"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Call Cloudflare API to purge cache
-	err := s.purgeCloudflareCache(cfg.Token, req.URL, req.Everything)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	s.recordAuditR(r, "cloudflare.cache.purge", "url: "+req.URL+", everything: "+fmt.Sprintf("%v", req.Everything), true)
-	jsonResponse(w, map[string]string{"status": "purged"})
-}
-
-func (s *Server) purgeCloudflareCache(token, url string, everything bool) error {
-	// Get zones first
-	zones, err := s.fetchCloudflareZones(token)
-	if err != nil {
-		return err
-	}
-
-	for _, zone := range zones {
-		var payload []byte
-		if everything {
-			payload = []byte(`{"purge_everything":true}`)
-		} else if url != "" {
-			payload = []byte(`{"files":["` + url + `"]}`)
-		} else {
-			continue
-		}
-
-		req, err := http.NewRequest("POST", "https://api.cloudflare.com/client/v4/zones/"+zone.ID+"/purge_cache", bytes.NewReader(payload))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := cfHTTPClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		// Read and discard response body to ensure connection reuse
-		io.Copy(io.Discard, resp.Body)
-	}
-
-	return nil
-}
+// cfHTTPClient bounds outbound Cloudflare API calls.
+var cfHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // maskCloudflareToken returns the last 4 chars of the token prefixed with stars.
 func maskCloudflareToken(token string) string {
@@ -369,3 +309,105 @@ func maskCloudflareToken(token string) string {
 	}
 	return "****" + token[len(token)-4:]
 }
+
+// validateLocalTarget enforces a small whitelist of cloudflared service URLs.
+func validateLocalTarget(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return fmt.Errorf("local_target is required (e.g. http://localhost:8080)")
+	}
+	if strings.HasPrefix(target, "http_status:") {
+		return nil
+	}
+	for _, scheme := range []string{"http://", "https://", "tcp://", "ssh://", "rdp://", "unix:"} {
+		if strings.HasPrefix(target, scheme) {
+			return nil
+		}
+	}
+	return fmt.Errorf("local_target must start with one of: http://, https://, tcp://, ssh://, rdp://, unix:, http_status")
+}
+
+// tunnelToView converts a cloudflareTunnel to a tunnelView (for test compat).
+func (s *Server) tunnelToView(t cloudflareTunnel) tunnelView {
+	view := tunnelView{
+		ID: t.ID, Name: t.Name, Hostname: t.Hostname,
+		LocalTarget: t.LocalTarget, CreatedAt: t.CreatedAt,
+	}
+	if s.cfRunner != nil {
+		st := s.cfRunner.StatusOf(t.ID)
+		view.Running = st.Running
+		view.PID = st.PID
+		view.Uptime = st.Uptime
+	}
+	return view
+}
+
+// findTunnel looks up a tunnel by ID.
+func (s *Server) findTunnel(id string) (cloudflareTunnel, bool) {
+	cloudflareMu.RLock()
+	defer cloudflareMu.RUnlock()
+	if cloudflareConfig == nil {
+		return cloudflareTunnel{}, false
+	}
+	for _, t := range cloudflareConfig.Tunnels {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return cloudflareTunnel{}, false
+}
+
+// validateCloudflareToken validates a token against the CF API.
+func (s *Server) validateCloudflareToken(token, accountID string) (string, error) {
+	return cfValidateTokenImpl(token, accountID)
+}
+
+// cfValidateTokenImpl uses the admin's cfHTTPClient.
+func cfValidateTokenImpl(token, accountID string) (string, error) {
+	return cfadmin.ValidateTokenWithClient(cfHTTPClient, token, accountID)
+}
+
+// fetchCloudflareZones fetches all zones from the CF API.
+func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
+	zones, err := cfFetchZonesImpl(token)
+	if err != nil { return nil, err }
+	out := make([]cloudflareZone, len(zones))
+	for i, z := range zones {
+		out[i] = cloudflareZone{ID: z.ID, Name: z.Name, Status: z.Status, Plan: z.Plan}
+	}
+	return out, nil
+}
+
+func cfFetchZonesImpl(token string) ([]cfadmin.Zone, error) {
+	return cfadmin.FetchZonesWithClient(cfHTTPClient, token)
+}
+
+// purgeCloudflareCache purges cache for a URL or everything.
+func (s *Server) purgeCloudflareCache(token, url string, everything bool) error {
+	return cfPurgeCacheImpl(token, url, everything)
+}
+
+func cfPurgeCacheImpl(token, url string, everything bool) error {
+	return cfadmin.PurgeCacheWithClient(cfHTTPClient, token, url, everything)
+}
+
+// fetchCloudflareDNSRecords fetches DNS records for a zone.
+func (s *Server) fetchCloudflareDNSRecords(token, zoneID string) ([]cloudflareDNSRecord, error) {
+	records, err := cfFetchDNSRecordsImpl(token, zoneID)
+	if err != nil { return nil, err }
+	out := make([]cloudflareDNSRecord, len(records))
+	for i, r := range records {
+		out[i] = cloudflareDNSRecord{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Content, TTL: r.TTL, Proxied: r.Proxied, Priority: r.Priority}
+	}
+	return out, nil
+}
+
+func cfFetchDNSRecordsImpl(token, zoneID string) ([]cfadmin.DNSRecord, error) {
+	return cfadmin.FetchDNSRecordsWithClient(cfHTTPClient, token, zoneID)
+}
+
+var (
+	_ cloudflareTunnel          = cloudflareTunnel{}
+	_ cloudflareState           = cloudflareState{}
+	_ *cfintegration.Runner     = (*cfintegration.Runner)(nil)
+)
