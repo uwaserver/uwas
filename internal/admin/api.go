@@ -22,6 +22,7 @@ import (
 	"github.com/uwaserver/uwas/internal/admin/authmw"
 	dbadmin "github.com/uwaserver/uwas/internal/admin/database"
 	cfadmin "github.com/uwaserver/uwas/internal/admin/cloudflare"
+	domainadmin "github.com/uwaserver/uwas/internal/admin/domain"
 	phpadmin "github.com/uwaserver/uwas/internal/admin/php"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
@@ -105,6 +106,7 @@ type Server struct {
 	dbHandler *dbadmin.Handler
 	phpHandler *phpadmin.Handler
 	cfHandler  *cfadmin.Handler
+	domainHandler *domainadmin.Handler
 
 	// Global installation task manager (serializes apt/dpkg operations).
 	// PHP install state lives entirely in taskMgr (queryable via ActiveByType("php")).
@@ -185,6 +187,7 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 	s.initDBHandler()
 	s.initCloudflareHandler()
 	s.initPHPHandler() // initialize with nil manager; SetPHPManager upgrades it
+	s.initDomainHandler()
 	s.initAudit()
 	if err := s.loadAuditLog(); err != nil {
 		log.Warn("audit log restore failed", "error", err.Error())
