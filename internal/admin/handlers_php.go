@@ -1,24 +1,109 @@
 package admin
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 
+	phpadmin "github.com/uwaserver/uwas/internal/admin/php"
 	"github.com/uwaserver/uwas/internal/auth"
-	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/phpmanager"
-	"gopkg.in/yaml.v3"
 )
 
-// SetPHPManager sets the PHP manager for the PHP API endpoints and wires up
-// the domain change callback so that starting a per-domain PHP instance
-// automatically updates the domain's php.fpm_address in the running config.
+// phpDeps adapts admin.Server to the php.Deps interface.
+type phpDeps struct {
+	s *Server
+}
+
+func (d *phpDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	return d.s.requireAdmin(w, r)
+}
+
+func (d *phpDeps) RequireDomainAccess(w http.ResponseWriter, r *http.Request, domain, action string) bool {
+	return d.s.requireDomainAccess(w, r, domain, action)
+}
+
+func (d *phpDeps) CanManageDomain(r *http.Request, domain string) bool {
+	if d.s.authMgr != nil {
+		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
+			return d.s.authMgr.CanManageDomain(user, domain)
+		}
+	}
+	return true
+}
+
+func (d *phpDeps) LogInfo(msg string, args ...any)  { d.s.logger.Info(msg, args...) }
+func (d *phpDeps) LogWarn(msg string, args ...any)  { d.s.logger.Warn(msg, args...) }
+func (d *phpDeps) LogError(msg string, args ...any) { d.s.logger.Error(msg, args...) }
+
+func (d *phpDeps) RecordAudit(r *http.Request, action, detail string, success bool) {
+	d.s.recordAuditR(r, action, detail, success)
+}
+
+func (d *phpDeps) ParsePagination(r *http.Request) (limit, offset int) {
+	return parsePagination(r)
+}
+
+func (d *phpDeps) TaskActive() *phpadmin.TaskInfo {
+	if active := d.s.taskMgr.Active(); active != nil {
+		return &phpadmin.TaskInfo{ID: active.ID, Name: active.Name, Type: active.Type}
+	}
+	return nil
+}
+
+func (d *phpDeps) TaskSubmit(category, name, action string, fn func(appendOutput func(string)) error) *phpadmin.TaskInfo {
+	task := d.s.taskMgr.Submit(category, name, action, fn)
+	return &phpadmin.TaskInfo{ID: task.ID, Name: task.Name, Type: task.Type}
+}
+
+func (d *phpDeps) TaskActiveByType(typ string) *phpadmin.TaskInfo {
+	if t := d.s.taskMgr.ActiveByType(typ); t != nil {
+		return &phpadmin.TaskInfo{ID: t.ID, Name: t.Name, Type: t.Type, Status: string(t.Status), Output: t.Output, Error: t.Error}
+	}
+	return nil
+}
+
+func (d *phpDeps) TaskLatestByType(typ string) *phpadmin.TaskInfo {
+	if t := d.s.taskMgr.LatestByType(typ); t != nil {
+		return &phpadmin.TaskInfo{ID: t.ID, Name: t.Name, Type: t.Type, Status: string(t.Status), Output: t.Output, Error: t.Error}
+	}
+	return nil
+}
+
+func (d *phpDeps) DomainRoot(domain string) string {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	for _, dom := range d.s.config.Domains {
+		if dom.Host == domain {
+			return dom.Root
+		}
+	}
+	return ""
+}
+
+func (d *phpDeps) SetDomainFPMAddress(domain, addr string) {
+	d.s.configMu.Lock()
+	for i, dom := range d.s.config.Domains {
+		if dom.Host == domain {
+			d.s.config.Domains[i].PHP.FPMAddress = addr
+			break
+		}
+	}
+	d.s.configMu.Unlock()
+}
+
+func (d *phpDeps) PersistConfig()     { d.s.persistConfig() }
+func (d *phpDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
+func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
+	d.s.persistDomainPHPOverrides(domain)
+}
+
+func (d *phpDeps) PHPManager() *phpmanager.Manager { return d.s.phpMgr }
+func (d *phpDeps) PhpRunInstall(distro string) (string, error) {
+	return phpRunInstall(distro)
+}
+
+// SetPHPManager sets the PHP manager and initializes the PHP handler.
 func (s *Server) SetPHPManager(m *phpmanager.Manager) {
 	s.phpMgr = m
-
-	// Auto-wire: when a domain PHP starts, update the running config.
 	m.SetDomainChangeFunc(func(domain, fpmAddr string) {
 		s.configMu.Lock()
 		for i, d := range s.config.Domains {
@@ -30,568 +115,111 @@ func (s *Server) SetPHPManager(m *phpmanager.Manager) {
 		s.configMu.Unlock()
 		s.notifyDomainChange()
 	})
+	s.initPHPHandler()
 }
+
+// (phpHandler is now a Server field)
+
+func (s *Server) initPHPHandler() {
+	s.phpHandler = phpadmin.New(&phpDeps{s: s})
+}
+
+// ── Thin wrappers ──
 
 func (s *Server) handlePHPList(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
+	if s.phpHandler == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
 	}
-	statuses := s.phpMgr.Status()
-	limit, offset := parsePagination(r)
-	items, total := paginateSlice(statuses, limit, offset)
-	jsonResponse(w, map[string]any{
-		"items":  items,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
-	})
+	s.phpHandler.List(w, r)
 }
-
 func (s *Server) handlePHPInstallInfo(w http.ResponseWriter, r *http.Request) {
-	version := r.URL.Query().Get("version")
-	if version == "" {
-		version = "8.3"
-	}
-	info := phpmanager.GetInstallInfo(version)
-	jsonResponse(w, info)
+	s.phpHandler.InstallInfo(w, r)
 }
-
 func (s *Server) handlePHPInstall(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req struct {
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	if req.Version == "" {
-		req.Version = "8.3"
-	}
-	// Constrain the version to N.N before it flows into package names / install
-	// commands. exec runs without a shell so this isn't RCE, but it blocks apt
-	// argument injection and bogus values. (Defense in depth; admin-gated.)
-	if !validPHPVersion(req.Version) {
-		jsonError(w, "invalid PHP version (expected N.N, e.g. 8.3)", http.StatusBadRequest)
-		return
-	}
-
-	// Check if any install task is already running
-	if active := s.taskMgr.Active(); active != nil {
-		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
-		return
-	}
-
-	info := phpmanager.GetInstallInfo(req.Version)
-	s.logger.Info("starting PHP install", "version", req.Version, "distro", info.Distro)
-
-	// Task Name carries the bare version (e.g. "8.5") so dashboards rendering
-	// "Installing PHP {version}" don't end up with "PHP PHP 8.5".
-	task := s.taskMgr.Submit("php", req.Version, "install", s.phpInstallTaskFn(req.Version))
-
-	jsonResponse(w, map[string]string{
-		"status":  "started",
-		"task_id": task.ID,
-		"version": req.Version,
-		"distro":  info.Distro,
-	})
+	s.phpHandler.Install(w, r)
 }
-
 func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) {
-	// Active or recently-finished PHP task. ActiveByType only returns running/queued,
-	// so for done/error we fall back to scanning the task list for the latest "php" task.
-	if t := s.taskMgr.ActiveByType("php"); t != nil {
-		jsonResponse(w, map[string]interface{}{
-			"status":  t.Status,
-			"output":  t.Output,
-			"error":   t.Error,
-			"task_id": t.ID,
-			"version": t.Name,
-		})
+	if s.phpHandler == nil {
+		jsonResponse(w, map[string]string{"status": "idle"})
 		return
 	}
-	if t := s.taskMgr.LatestByType("php"); t != nil {
-		jsonResponse(w, map[string]interface{}{
-			"status":  t.Status,
-			"output":  t.Output,
-			"error":   t.Error,
-			"task_id": t.ID,
-			"version": t.Name,
-		})
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "idle"})
+	s.phpHandler.InstallStatus(w, r)
 }
-
 func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-	cfg, err := s.phpMgr.GetConfig(version)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	jsonResponse(w, cfg)
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Config(w, r)
 }
-
 func (s *Server) handlePHPConfigUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	version := r.PathValue("version")
-
-	var req struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	if req.Key == "" {
-		jsonError(w, "key is required", http.StatusBadRequest)
-		return
-	}
-
-	if err := s.phpMgr.SetConfig(version, req.Key, req.Value); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Auto-restart PHP so updated ini takes effect
-	restarted := false
-	if err := s.phpMgr.RestartFPM(version); err == nil {
-		restarted = true
-	}
-	jsonResponse(w, map[string]any{"status": "updated", "key": req.Key, "value": req.Value, "restarted": restarted})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.ConfigUpdate(w, r)
 }
-
 func (s *Server) handlePHPExtensions(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-	exts, err := s.phpMgr.GetExtensions(version)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	jsonResponse(w, exts)
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Extensions(w, r)
 }
-
 func (s *Server) handlePHPStart(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	version := r.PathValue("version")
-
-	var req struct {
-		ListenAddr string `json:"listen_addr"`
-	}
-	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req) // optional body
-	}
-	if req.ListenAddr == "" {
-		req.ListenAddr = "127.0.0.1:9000"
-	}
-
-	if err := s.phpMgr.StartFPM(version, req.ListenAddr); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "started", "version": version, "listen": req.ListenAddr})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Start(w, r)
 }
-
 func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-
-	if err := s.phpMgr.StopFPM(version); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "stopped", "version": version})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Stop(w, r)
 }
-
 func (s *Server) handlePHPRestart(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-
-	if err := s.phpMgr.RestartFPM(version); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "restarted", "version": version})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Restart(w, r)
 }
-
 func (s *Server) handlePHPConfigRawGet(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-	content, err := s.phpMgr.GetConfigRaw(version)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	jsonResponse(w, map[string]string{"content": content, "version": version})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.ConfigRawGet(w, r)
 }
-
 func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 2<<20) // 2MB
-	version := r.PathValue("version")
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	if err := s.phpMgr.SetConfigRaw(version, req.Content); err != nil {
-		s.recordAuditR(r, "php.config_raw_put", fmt.Sprintf("version: %s", version), false)
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.logger.Info("PHP config raw updated", "version", version)
-	// Auto-restart PHP so updated ini takes effect
-	restarted := false
-	if err := s.phpMgr.RestartFPM(version); err == nil {
-		restarted = true
-	}
-	s.recordAuditR(r, "php.config_raw_put", fmt.Sprintf("version: %s, bytes: %d, restarted: %t", version, len(req.Content), restarted), true)
-	jsonResponse(w, map[string]any{"status": "saved", "version": version, "restarted": restarted})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.ConfigRawPut(w, r)
 }
-
 func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-	s.phpMgr.EnableVersion(version)
-	s.logger.Info("PHP version enabled", "version", version)
-	s.recordAuditR(r, "php.enable", fmt.Sprintf("version: %s", version), true)
-	jsonResponse(w, map[string]string{"status": "enabled", "version": version})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Enable(w, r)
 }
-
 func (s *Server) handlePHPDisable(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	version := r.PathValue("version")
-	if err := s.phpMgr.DisableVersion(version); err != nil {
-		s.recordAuditR(r, "php.disable", fmt.Sprintf("version: %s", version), false)
-		jsonError(w, err.Error(), http.StatusConflict)
-		return
-	}
-	s.logger.Info("PHP version disabled", "version", version)
-	s.recordAuditR(r, "php.disable", fmt.Sprintf("version: %s", version), true)
-	jsonResponse(w, map[string]string{"status": "disabled", "version": version})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.Disable(w, r)
 }
-
-// --- Per-domain PHP endpoints ---
-
 func (s *Server) handlePHPDomainsList(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	jsonResponse(w, s.phpMgr.GetDomainInstances())
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainsList(w, r)
 }
-
 func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-
-	var req struct {
-		Domain  string `json:"domain"`
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	if req.Domain == "" {
-		jsonError(w, "domain is required", http.StatusBadRequest)
-		return
-	}
-	if req.Version == "" {
-		jsonError(w, "version is required", http.StatusBadRequest)
-		return
-	}
-	if !s.requireDomainAccess(w, r, req.Domain, "php.assign") {
-		return
-	}
-
-	// Find domain root from config for open_basedir isolation
-	var domRoot string
-	s.configMu.RLock()
-	for _, dom := range s.config.Domains {
-		if dom.Host == req.Domain {
-			domRoot = dom.Root
-			break
-		}
-	}
-	s.configMu.RUnlock()
-	dp, err := s.phpMgr.AssignDomainWithRoot(req.Domain, req.Version, domRoot)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusConflict)
-		return
-	}
-
-	// Persist FPM address to domain config so it survives restart
-	s.configMu.Lock()
-	for i, dom := range s.config.Domains {
-		if dom.Host == req.Domain {
-			s.config.Domains[i].PHP.FPMAddress = dp.ListenAddr
-			break
-		}
-	}
-	s.configMu.Unlock()
-	s.persistConfig()
-	s.notifyDomainChange()
-
-	// Start the PHP process
-	if err := s.phpMgr.StartDomain(req.Domain); err != nil {
-		s.logger.Warn("PHP start after assign failed", "domain", req.Domain, "error", err)
-	}
-
-	s.recordAuditR(r, "php.assign", req.Domain+": PHP "+req.Version+" → "+dp.ListenAddr, true)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(dp)
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainAssign(w, r)
 }
-
 func (s *Server) handlePHPDomainUnassign(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	domain := r.PathValue("domain")
-	if !s.requireDomainAccess(w, r, domain, "php.unassign") {
-		return
-	}
-	s.phpMgr.UnassignDomain(domain)
-	jsonResponse(w, map[string]string{"status": "unassigned", "domain": domain})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainUnassign(w, r)
 }
-
 func (s *Server) handlePHPDomainStart(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	domain := r.PathValue("domain")
-
-	// Check domain permissions for non-admin users
-	if s.authMgr != nil {
-		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			if !s.authMgr.CanManageDomain(user, domain) {
-				s.recordAuditR(r, "php.domain_start", "domain: "+domain+" (forbidden)", false)
-				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
-				return
-			}
-		}
-	}
-
-	if err := s.phpMgr.StartDomain(domain); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "started", "domain": domain})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainStart(w, r)
 }
-
 func (s *Server) handlePHPDomainStop(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	domain := r.PathValue("domain")
-
-	// Check domain permissions for non-admin users
-	if s.authMgr != nil {
-		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			if !s.authMgr.CanManageDomain(user, domain) {
-				s.recordAuditR(r, "php.domain_stop", "domain: "+domain+" (forbidden)", false)
-				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
-				return
-			}
-		}
-	}
-
-	if err := s.phpMgr.StopDomain(domain); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonResponse(w, map[string]string{"status": "stopped", "domain": domain})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainStop(w, r)
 }
-
 func (s *Server) handlePHPDomainConfigGet(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	domain := r.PathValue("domain")
-
-	// Check domain permissions for non-admin users
-	if s.authMgr != nil {
-		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			if !s.authMgr.CanManageDomain(user, domain) {
-				s.recordAuditR(r, "php.domain_config_get", "domain: "+domain+" (forbidden)", false)
-				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
-				return
-			}
-		}
-	}
-
-	cfg := s.phpMgr.GetDomainConfig(domain)
-	if cfg == nil {
-		jsonError(w, "domain not found or no PHP assignment", http.StatusNotFound)
-		return
-	}
-	jsonResponse(w, cfg)
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainConfigGet(w, r)
 }
-
 func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request) {
-	if s.phpMgr == nil {
-		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	domain := r.PathValue("domain")
-
-	// Check domain permissions for non-admin users
-	if s.authMgr != nil {
-		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			if !s.authMgr.CanManageDomain(user, domain) {
-				s.recordAuditR(r, "php.domain_config_put", "domain: "+domain+" (forbidden)", false)
-				jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
-				return
-			}
-		}
-	}
-
-	var req struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	if req.Key == "" {
-		jsonError(w, "key is required", http.StatusBadRequest)
-		return
-	}
-
-	if err := s.phpMgr.SetDomainConfig(domain, req.Key, req.Value); err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	// Persist overrides to domain YAML so they survive restarts
-	s.persistDomainPHPOverrides(domain)
-
-	// Restart domain PHP so updated config takes effect
-	restarted := false
-	if err := s.phpMgr.RestartDomain(domain); err == nil {
-		restarted = true
-	}
-	jsonResponse(w, map[string]any{"status": "updated", "domain": domain, "key": req.Key, "value": req.Value, "restarted": restarted})
+	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	s.phpHandler.DomainConfigPut(w, r)
 }
 
-func (s *Server) persistDomainPHPOverrides(domain string) {
-	overrides := s.phpMgr.GetDomainConfig(domain)
-
-	path, err := s.domainFilePath(domain)
-	if err != nil {
-		s.logger.Warn("cannot persist PHP overrides: bad domain path", "domain", domain, "error", err)
-		return
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		s.logger.Warn("cannot persist PHP overrides: read failed", "domain", domain, "error", err)
-		return
-	}
-
-	var domCfg config.Domain
-	if err := yaml.Unmarshal(data, &domCfg); err != nil {
-		s.logger.Warn("cannot persist PHP overrides: parse failed", "domain", domain, "error", err)
-		return
-	}
-
-	domCfg.PHP.ConfigOverrides = overrides
-
-	out, err := yaml.Marshal(&domCfg)
-	if err != nil {
-		s.logger.Warn("cannot persist PHP overrides: marshal failed", "domain", domain, "error", err)
-		return
-	}
-
-	// Crash-safe write: unique temp file + fsync + rename.
-	if err := atomicWriteFile(path, out, 0600); err != nil {
-		s.logger.Warn("cannot persist PHP overrides: write failed", "domain", domain, "error", err)
-		return
-	}
-
-	s.logger.Info("persisted PHP config overrides", "domain", domain, "count", len(overrides))
-}
-
-// phpRunInstall is a test seam for the PHP install path, which shells out to
-// apt / add-apt-repository. TestMain points it at a no-op.
+// phpRunInstall is a test seam for the PHP install path. TestMain points it
+// at a no-op so `go test` never invokes real apt commands.
 var phpRunInstall = phpmanager.RunInstall
 
-// validPHPVersion reports whether s is a bare PHP version of the form N.N
-// (e.g. "8.3"). Used to sanitize the version before it reaches package names
-// and install commands.
+// validPHPVersion reports whether s is a bare PHP version of the form N.N.
 func validPHPVersion(s string) bool {
 	dot := false
 	before, after := 0, 0
@@ -611,3 +239,5 @@ func validPHPVersion(s string) bool {
 	}
 	return dot && before > 0 && after > 0
 }
+
+var _ phpadmin.Deps = (*phpDeps)(nil)
