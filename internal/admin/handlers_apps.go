@@ -114,21 +114,3 @@ func validateAppEnvMap(env map[string]string) error {
 	}
 	return nil
 }
-
-func appDefinitionForResponse(a *apps.App) *apps.App {
-	if a == nil {
-		return nil
-	}
-	out := *a
-	out.Deploy.GitToken = ""
-	return &out
-}
-
-func (s *Server) maybeReloadForApps() {
-	if s.reloadFn == nil {
-		return
-	}
-	if err := s.reloadFn(); err != nil && s.logger != nil {
-		s.logger.Warn("post-app-change reload failed", "error", err)
-	}
-}

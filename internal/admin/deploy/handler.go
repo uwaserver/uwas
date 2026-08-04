@@ -49,7 +49,7 @@ type AppDeployResponse struct {
 	Message      string `json:"message,omitempty"`
 	CommitSHA    string `json:"commit_sha,omitempty"`
 	Error        string `json:"error,omitempty"`
-	Log          string `json:"log,omitempty"`     // legacy field for test compat
+	Log          string `json:"log,omitempty"` // legacy field for test compat
 	LogTail      string `json:"log_tail,omitempty"`
 	RolledBack   bool   `json:"rolled_back,omitempty"`
 	RollbackSHA  string `json:"rollback_sha,omitempty"`

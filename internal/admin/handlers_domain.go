@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/uwaserver/uwas/internal/auth"
 	domainadmin "github.com/uwaserver/uwas/internal/admin/domain"
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/pathsafe"
@@ -18,9 +18,9 @@ import (
 // filepathBase, dirOf, joinPath, isAbs are thin wrappers to avoid importing
 // path/filepath in every test file that references handlers_domain.
 func filepathBase(p string) string   { return filepath.Base(p) }
-func dirOf(p string) string           { return filepath.Dir(p) }
-func joinPath(elem ...string) string  { return filepath.Join(elem...) }
-func isAbs(p string) bool             { return filepath.IsAbs(p) }
+func dirOf(p string) string          { return filepath.Dir(p) }
+func joinPath(elem ...string) string { return filepath.Join(elem...) }
+func isAbs(p string) bool            { return filepath.IsAbs(p) }
 
 // domainDeps adapts admin.Server to the domain.Deps interface.
 type domainDeps struct {
@@ -161,32 +161,40 @@ func (d *domainDeps) CanManageDomain(user *auth.User, domain string) bool {
 
 // ── Thin wrappers ──
 
-func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request)               { s.domainHandler.List(w, r) }
-func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request)              { s.domainHandler.Add(w, r) }
-func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request)           { s.domainHandler.Delete(w, r) }
-func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request)           { s.domainHandler.Update(w, r) }
-func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request)           { s.domainHandler.Detail(w, r) }
-func (s *Server) handleUnknownDomainsList(w http.ResponseWriter, r *http.Request)     { s.domainHandler.UnknownList(w, r) }
-func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Request)    { s.domainHandler.UnknownAlias(w, r) }
-func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Request)    { s.domainHandler.UnknownBlock(w, r) }
-func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Request)  { s.domainHandler.UnknownUnblock(w, r) }
-func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Request)  { s.domainHandler.UnknownDismiss(w, r) }
-func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request)           { s.domainHandler.RawGet(w, r) }
-func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request)           { s.domainHandler.RawPut(w, r) }
+func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request)   { s.domainHandler.List(w, r) }
+func (s *Server) handleAddDomain(w http.ResponseWriter, r *http.Request) { s.domainHandler.Add(w, r) }
+func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.Delete(w, r)
+}
+func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.Update(w, r)
+}
+func (s *Server) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.Detail(w, r)
+}
+func (s *Server) handleUnknownDomainsList(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.UnknownList(w, r)
+}
+func (s *Server) handleUnknownDomainsAlias(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.UnknownAlias(w, r)
+}
+func (s *Server) handleUnknownDomainsBlock(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.UnknownBlock(w, r)
+}
+func (s *Server) handleUnknownDomainsUnblock(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.UnknownUnblock(w, r)
+}
+func (s *Server) handleUnknownDomainsDismiss(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.UnknownDismiss(w, r)
+}
+func (s *Server) handleDomainRawGet(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.RawGet(w, r)
+}
+func (s *Server) handleDomainRawPut(w http.ResponseWriter, r *http.Request) {
+	s.domainHandler.RawPut(w, r)
+}
 
 // ── Helpers retained for compat with tests + other files ──
-
-func (s *Server) domainTypeForHost(host string) string {
-	host = domainutil.CanonicalDomainHostname(host)
-	s.configMu.RLock()
-	defer s.configMu.RUnlock()
-	for _, d := range s.config.Domains {
-		if domainutil.CanonicalDomainHostname(d.Host) == host {
-			return d.Type
-		}
-	}
-	return ""
-}
 
 func validateDomainConfig(d *config.Domain, s *Server) error {
 	if err := config.ValidateDomain(d); err != nil {
@@ -218,22 +226,6 @@ func validateDomainConfig(d *config.Domain, s *Server) error {
 	return nil
 }
 
-func validateDomainUpdateConfig(d *config.Domain, s *Server) error {
-	if err := config.ValidateDomainPartial(d); err != nil {
-		return err
-	}
-	webRoot := "/var/www"
-	if s.config.Global.WebRoot != "" {
-		webRoot = s.config.Global.WebRoot
-	}
-	if d.Root != "" && d.Type != "redirect" {
-		if !pathsafe.IsWithinBase(webRoot, d.Root) || !pathsafe.IsWithinBaseResolved(webRoot, d.Root) {
-			return errRootNotUnderWebRoot(webRoot, d.Root)
-		}
-	}
-	return nil
-}
-
 var errNoActivePHP = newStrErr("no active PHP versions available — install or enable PHP first")
 
 func errRootNotUnderWebRoot(webRoot, root string) error {
@@ -247,17 +239,14 @@ func (e strErr) Error() string { return string(e) }
 func newStrErr(s string) error { return strErr(s) }
 
 // ── Helper wrappers (for files still referencing admin-local names) ──
-func mainDomainHostname(d config.Domain) string { return domainutil.MainDomainHostname(d) }
-func domainHostnames(d config.Domain) []string  { return domainutil.DomainHostnames(d) }
+func mainDomainHostname(d config.Domain) string  { return domainutil.MainDomainHostname(d) }
+func domainHostnames(d config.Domain) []string   { return domainutil.DomainHostnames(d) }
 func canonicalDomainHostname(host string) string { return domainutil.CanonicalDomainHostname(host) }
 func normalizeDomainHostname(host string) string { return domainutil.NormalizeDomainHostname(host) }
 func isValidHostname(s string) bool              { return domainutil.IsValidHostname(s) }
-func domainTypeUsesWebRoot(t string) bool         { return domainutil.DomainTypeUsesWebRoot(t) }
-func normalizeDomainHostnames(d *config.Domain)  { domainutil.NormalizeDomainHostnames(d) }
 func findDomainHostnameConflict(domains []config.Domain, skip int, host string) string {
 	return domainutil.FindDomainHostnameConflict(domains, skip, host)
 }
-func implicitWWWHostname(host string) string { return domainutil.ImplicitWWWHostname(host) }
 
 // domainFilePath resolves the on-disk path for a domain's YAML file.
 func (s *Server) domainFilePath(host string) (string, error) {

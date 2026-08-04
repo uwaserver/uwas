@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/domainutil"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 	"github.com/uwaserver/uwas/internal/webhook"
 )
@@ -36,7 +37,7 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 	certs := make([]certInfo, 0)
 	for _, d := range s.config.Domains {
 		mainHost := mainDomainHostname(d)
-		canonicalHost := normalizeCanonicalHostPreference(d.CanonicalHost)
+		canonicalHost := domainutil.NormalizeCanonicalHostPreference(d.CanonicalHost)
 		for _, host := range domainHostnames(d) {
 			ci := certInfo{
 				Host:          host,

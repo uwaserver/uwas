@@ -507,10 +507,6 @@ func appDeployPreflight(def *apps.App) []AppPreflightCheck {
 	return checks
 }
 
-func buildCommandTools(command string) []string {
-	return []string{"sh", "-c", command}
-}
-
 func validateDockerGitDeploy(def *apps.App) error {
 	if def == nil {
 		return nil
@@ -593,13 +589,6 @@ func validateDeployConfigImpl(def *apps.App) error {
 		}
 	}
 	return nil
-}
-
-func respond500(w http.ResponseWriter, resp *AppDeployResponse, log string) {
-	resp.LogTail = log
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
-	json.NewEncoder(w).Encode(resp)
 }
 
 func tailString(s string, n int) string {
@@ -724,8 +713,8 @@ func DetectAppBuildCmd(appRoot string) string       { return detectAppBuildCmd(a
 func GitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), error) {
 	return gitAuthEnv(gitURL, sshKeyPath, gitToken)
 }
-func WriteGitAskpass(token string) (string, error)  { return writeGitAskpass(token) }
-func ShellQuote(s string) string                    { return shellQuote(s) }
+func WriteGitAskpass(token string) (string, error) { return writeGitAskpass(token) }
+func ShellQuote(s string) string                   { return shellQuote(s) }
 func RunStep(ctx context.Context, wd, name string, args []string, out *strings.Builder, env []string) error {
 	return runStep(ctx, wd, name, args, out, env)
 }
@@ -735,8 +724,8 @@ func RunOutput(ctx context.Context, wd, name string, args ...string) (string, er
 func RunShell(ctx context.Context, wd, command string, out *strings.Builder, env []string) error {
 	return runShell(ctx, wd, command, out, env)
 }
-func IsWindows() bool                  { return isWindows() }
-func TailString(s string, n int) string { return tailString(s, n) }
+func IsWindows() bool                             { return isWindows() }
+func TailString(s string, n int) string           { return tailString(s, n) }
 func ValidateDockerGitDeploy(def *apps.App) error { return validateDockerGitDeploy(def) }
 func EnsureGitOrigin(ctx context.Context, workDir, gitURL string, logBuf *strings.Builder, env []string) error {
 	return ensureGitOrigin(ctx, workDir, gitURL, logBuf, env)
@@ -761,8 +750,8 @@ func GenerateAppDeployKey(storeDir, appName string) (string, string, error) {
 	return generateAppDeployKey(storeDir, appName)
 }
 func AppDeployPreflight(def *apps.App) []AppPreflightCheck { return appDeployPreflight(def) }
-func ValidateHealthPath(path string) error               { return validateHealthPath(path) }
-func DeployHistoryPath(root, name string) string          { return deployHistoryPath(root, name) }
+func ValidateHealthPath(path string) error                 { return validateHealthPath(path) }
+func DeployHistoryPath(root, name string) string           { return deployHistoryPath(root, name) }
 
 func generateAppDeployKey(storeDir, appName string) (string, string, error) {
 	return generateDeployKeyImpl(storeDir, appName)

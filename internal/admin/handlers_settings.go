@@ -43,10 +43,10 @@ func (d *settingsDeps) Reload() error {
 	}
 	return d.s.reloadFn()
 }
-func (d *settingsDeps) ToInt(v any) int                    { return toInt(v) }
-func (d *settingsDeps) ParseDur(s string) config.Duration   { return parseDur(s) }
+func (d *settingsDeps) ToInt(v any) int                      { return toInt(v) }
+func (d *settingsDeps) ParseDur(s string) config.Duration    { return parseDur(s) }
 func (d *settingsDeps) ByteSizeStr(b config.ByteSize) string { return byteSizeStr(b) }
-func (d *settingsDeps) ParseBS(s string) config.ByteSize    { return parseBS(s) }
+func (d *settingsDeps) ParseBS(s string) config.ByteSize     { return parseBS(s) }
 
 // settingsHandler holds the settings admin handler instance.
 var settingsHandler *settings.Handler

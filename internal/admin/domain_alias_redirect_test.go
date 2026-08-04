@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 )
 
 func TestAddDomainDropsSameSiteWWWAlias(t *testing.T) {
@@ -101,7 +102,7 @@ func TestAddDomainRemovesLegacyImplicitWWWRedirectWhenAlreadyConfigured(t *testi
 	s := testServer()
 	s.config.Global.WebRoot = t.TempDir()
 	s.config.Domains = []config.Domain{
-		newCanonicalRedirectAliasDomain("www.example.test", "example.test", http.StatusMovedPermanently, true),
+		domainutil.NewCanonicalRedirectAliasDomain("www.example.test", "example.test", http.StatusMovedPermanently, true),
 	}
 
 	body := strings.NewReader(`{"host":"example.test","type":"static","ssl":{"mode":"auto"}}`)
@@ -212,7 +213,7 @@ func TestUpdateDomainDropsSameSiteWWWAlias(t *testing.T) {
 	}
 
 	if len(s.config.Domains) != 1 {
-		t.Fatalf("domains len = %d, want 1", len(s.config.Domains))
+		t.Fatalf("domains len = %d, want 1 (same-site www alias dropped, no redirect added)", len(s.config.Domains))
 	}
 	if len(s.config.Domains[0].Aliases) != 0 {
 		t.Fatalf("primary aliases = %#v, want none after same-site www cleanup", s.config.Domains[0].Aliases)

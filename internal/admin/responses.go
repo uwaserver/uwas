@@ -46,17 +46,17 @@ type HealthResponse struct {
 
 // MetricsResponse is returned by GET /api/v1/stats.
 type MetricsResponse struct {
-	RequestsTotal int64   `json:"requests_total"`
-	CacheHits     int64   `json:"cache_hits"`
-	CacheMisses   int64   `json:"cache_misses"`
-	ActiveConns   int64   `json:"active_conns"`
-	BytesSent     int64   `json:"bytes_sent"`
-	Uptime        string  `json:"uptime"`
-	SlowRequests  int64   `json:"slow_requests"`
-	LatencyP50Ms  float64 `json:"latency_p50_ms"`
-	LatencyP95Ms  float64 `json:"latency_p95_ms"`
-	LatencyP99Ms  float64 `json:"latency_p99_ms"`
-	LatencyMaxMs  float64 `json:"latency_max_ms"`
+	RequestsTotal  int64                     `json:"requests_total"`
+	CacheHits      int64                     `json:"cache_hits"`
+	CacheMisses    int64                     `json:"cache_misses"`
+	ActiveConns    int64                     `json:"active_conns"`
+	BytesSent      int64                     `json:"bytes_sent"`
+	Uptime         string                    `json:"uptime"`
+	SlowRequests   int64                     `json:"slow_requests"`
+	LatencyP50Ms   float64                   `json:"latency_p50_ms"`
+	LatencyP95Ms   float64                   `json:"latency_p95_ms"`
+	LatencyP99Ms   float64                   `json:"latency_p99_ms"`
+	LatencyMaxMs   float64                   `json:"latency_max_ms"`
 	HandlerLatency map[string]HandlerLatency `json:"handler_latency,omitempty"`
 }
 
@@ -70,14 +70,14 @@ type HandlerLatency struct {
 
 // CacheStatsResponse is returned by GET /api/v1/cache/stats.
 type CacheStatsResponse struct {
-	Enabled   bool                 `json:"enabled"`
-	Hits      int64                `json:"hits"`
-	Misses    int64                `json:"misses"`
-	Stales    int64                `json:"stales"`
-	Entries   int64                `json:"entries"`
-	UsedBytes int64                `json:"used_bytes"`
-	HitRate   string               `json:"hit_rate"`
-	Domains   []CacheDomainInfo    `json:"domains,omitempty"`
+	Enabled   bool              `json:"enabled"`
+	Hits      int64             `json:"hits"`
+	Misses    int64             `json:"misses"`
+	Stales    int64             `json:"stales"`
+	Entries   int64             `json:"entries"`
+	UsedBytes int64             `json:"used_bytes"`
+	HitRate   string            `json:"hit_rate"`
+	Domains   []CacheDomainInfo `json:"domains,omitempty"`
 }
 
 // CacheDomainInfo is per-domain cache configuration shown in cache stats.
@@ -98,8 +98,8 @@ type CacheRuleSummary struct {
 
 // ConfigSummaryResponse is returned by GET /api/v1/config (sanitized).
 type ConfigSummaryResponse struct {
-	Global       ConfigGlobalSummary `json:"global"`
-	DomainCount  int                 `json:"domain_count"`
+	Global      ConfigGlobalSummary `json:"global"`
+	DomainCount int                 `json:"domain_count"`
 }
 
 // ConfigGlobalSummary is the sanitized global config shown to clients.
@@ -112,14 +112,14 @@ type ConfigGlobalSummary struct {
 
 // CloudflareStatusResponse is returned by GET /api/v1/cloudflare/status.
 type CloudflareStatusResponse struct {
-	Connected         bool      `json:"connected"`
-	Email             string    `json:"email,omitempty"`
-	AccountID         string    `json:"account_id,omitempty"`
-	TokenMask         string    `json:"token_mask,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at,omitempty"`
-	TunnelCount       int       `json:"tunnel_count,omitempty"`
-	CloudflaredInstalled bool   `json:"cloudflared_installed"`
-	CloudflaredVersion   string `json:"cloudflared_version,omitempty"`
+	Connected            bool      `json:"connected"`
+	Email                string    `json:"email,omitempty"`
+	AccountID            string    `json:"account_id,omitempty"`
+	TokenMask            string    `json:"token_mask,omitempty"`
+	UpdatedAt            time.Time `json:"updated_at,omitempty"`
+	TunnelCount          int       `json:"tunnel_count,omitempty"`
+	CloudflaredInstalled bool      `json:"cloudflared_installed"`
+	CloudflaredVersion   string    `json:"cloudflared_version,omitempty"`
 }
 
 // CloudflareIPsResponse is returned by GET /api/v1/cloudflare/ips.
@@ -131,14 +131,14 @@ type CloudflareIPsResponse struct {
 
 // LoginResponse is returned by POST /api/v1/auth/login and /auth/bootstrap.
 type LoginResponse struct {
-	Status    string   `json:"status"`
-	Token     string   `json:"token"`
-	UserID    string   `json:"user_id"`
-	Username  string   `json:"username"`
-	Role      string   `json:"role"`
-	Domains   []string `json:"domains,omitempty"`
+	Status    string    `json:"status"`
+	Token     string    `json:"token"`
+	UserID    string    `json:"user_id"`
+	Username  string    `json:"username"`
+	Role      string    `json:"role"`
+	Domains   []string  `json:"domains,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
-	APIKey    string   `json:"api_key,omitempty"`
+	APIKey    string    `json:"api_key,omitempty"`
 }
 
 // TicketResponse is returned by POST /api/v1/auth/ticket.

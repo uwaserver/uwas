@@ -33,8 +33,8 @@ type Deps interface {
 
 // Handler holds WordPress admin API handlers.
 type Handler struct {
-	deps Deps
-	mu   sync.Mutex
+	deps   Deps
+	mu     sync.Mutex
 	result *wp.InstallResult
 }
 
@@ -44,7 +44,7 @@ func New(deps Deps) *Handler { return &Handler{deps: deps} }
 // Package-level install state (shared across requests).
 var (
 	// InstallMu is exported for admin adapter test compat.
-	InstallMu     sync.Mutex
+	InstallMu sync.Mutex
 	// InstallResult is exported for admin adapter test compat.
 	InstallResult *wp.InstallResult
 )

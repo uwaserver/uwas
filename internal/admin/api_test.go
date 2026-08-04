@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/admin/authmw"
+	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
