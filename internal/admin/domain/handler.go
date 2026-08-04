@@ -526,17 +526,15 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "redirect domains cannot have aliases; create separate redirect domains instead", http.StatusBadRequest)
 		return
 	}
+	if d.Host == "" {
+		d.Host = host
+	}
 	domainutil.NormalizeDomainHostnames(&d)
 	var redirectAliases []string
 	if aliasOpts.redirect {
 		redirectAliases = append(redirectAliases, d.Aliases...)
 		d.Aliases = nil
 	}
-
-	if d.Host == "" {
-		d.Host = host
-	}
-	domainutil.NormalizeDomainHostnames(&d)
 	if d.Host != "" && !domainutil.IsValidHostname(d.Host) {
 		jsonError(w, "invalid hostname", http.StatusBadRequest)
 		return
@@ -577,6 +575,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			domainutil.NormalizeDomainHostnames(&merged)
 			// Redirect domains cannot have aliases
 			if merged.Type == string(config.DomainTypeRedirect) {
+				if len(redirectAliases) > 0 {
+					h.deps.UnlockConfig()
+					h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (redirect aliases rejected)", false)
+					jsonError(w, "redirect domains cannot have aliases; create separate redirect domains instead", http.StatusBadRequest)
+					return
+				}
 				if len(merged.Aliases) > 0 {
 					merged.Aliases = nil
 				}
@@ -611,7 +615,19 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+			for _, alias := range redirectAliases {
+				if conflict := domainutil.FindDomainHostnameConflictAllowingRedirect(cfg.Domains, i, alias, merged.Host); conflict != "" {
+					h.deps.UnlockConfig()
+					h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (duplicate redirect alias)", false)
+					jsonError(w, fmt.Sprintf("alias %q is already configured on %s", alias, conflict), http.StatusConflict)
+					return
+				}
+			}
 			cfg.Domains[i] = merged
+			domainutil.RemoveImplicitWWWRedirectDomains(&cfg.Domains, merged.Host, i)
+			if len(redirectAliases) > 0 {
+				domainutil.UpsertCanonicalRedirectAliasDomains(&cfg.Domains, i, redirectAliases, merged.Host, aliasOpts.redirectCode, aliasOpts.preservePath)
+			}
 			d = merged
 			found = true
 			break
@@ -923,8 +939,8 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tmpCfg := config.Config{
-		Global:   config.GlobalConfig{LogLevel: "info", LogFormat: "json", Admin: config.AdminConfig{Listen: "127.0.0.1:9443"}, WebRoot: "/var/www"},
-		Domains:  []config.Domain{probe},
+		Global:  config.GlobalConfig{LogLevel: "info", LogFormat: "json", Admin: config.AdminConfig{Listen: "127.0.0.1:9443"}, WebRoot: "/var/www"},
+		Domains: []config.Domain{probe},
 	}
 	if err := config.Validate(&tmpCfg); err != nil {
 		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
