@@ -16,14 +16,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/uwaserver/uwas/internal/admin/authmw"
+	cfadmin "github.com/uwaserver/uwas/internal/admin/cloudflare"
+	dbadmin "github.com/uwaserver/uwas/internal/admin/database"
+	domainadmin "github.com/uwaserver/uwas/internal/admin/domain"
+	phpadmin "github.com/uwaserver/uwas/internal/admin/php"
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/apps"
-	"github.com/uwaserver/uwas/internal/admin/authmw"
-	dbadmin "github.com/uwaserver/uwas/internal/admin/database"
-	cfadmin "github.com/uwaserver/uwas/internal/admin/cloudflare"
-	domainadmin "github.com/uwaserver/uwas/internal/admin/domain"
-	phpadmin "github.com/uwaserver/uwas/internal/admin/php"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
@@ -103,9 +103,9 @@ type Server struct {
 	cfRunner      *cfintegration.Runner
 
 	// Sub-package handler instances (per-Server for test isolation).
-	dbHandler *dbadmin.Handler
-	phpHandler *phpadmin.Handler
-	cfHandler  *cfadmin.Handler
+	dbHandler     *dbadmin.Handler
+	phpHandler    *phpadmin.Handler
+	cfHandler     *cfadmin.Handler
 	domainHandler *domainadmin.Handler
 
 	// Global installation task manager (serializes apt/dpkg operations).

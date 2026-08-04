@@ -17,6 +17,7 @@ import (
 	"github.com/uwaserver/uwas/internal/alerting"
 	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
 )
@@ -653,192 +654,29 @@ func TestWPChangePasswordBadJSON(t *testing.T) {
 
 // ── 11. Utility functions: domain_alias.go ──────────────────────────────
 
-func TestRemoveDomainAlias(t *testing.T) {
-	aliases := []string{"example.com", "test.com", "example.com"}
-	result := removeDomainAlias(aliases, "example.com")
-	if len(result) != 1 || result[0] != "test.com" {
-		t.Errorf("got %v, want [test.com]", result)
-	}
-}
-
-func TestRemoveDomainAliasEmpty(t *testing.T) {
-	result := removeDomainAlias([]string{}, "example.com")
-	if result == nil {
-		t.Error("expected empty slice, got nil")
-	}
-	if len(result) != 0 {
-		t.Errorf("len = %d, want 0", len(result))
-	}
-}
-
-func TestParseDomainAliasOptionsBadJSON(t *testing.T) {
-	_, err := parseDomainAliasOptions([]byte("not json"))
-	if err == nil {
-		t.Error("expected error for bad JSON")
-	}
-}
-
-func TestParseDomainAliasOptionsDefault(t *testing.T) {
-	opts, err := parseDomainAliasOptions([]byte(`{}`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !opts.redirect {
-		t.Error("expected redirect=true by default")
-	}
-	if opts.redirectCode != http.StatusMovedPermanently {
-		t.Errorf("redirectCode = %d, want 301", opts.redirectCode)
-	}
-	if !opts.preservePath {
-		t.Error("expected preservePath=true by default")
-	}
-}
-
-func TestParseDomainAliasOptionsBadMode(t *testing.T) {
-	_, err := parseDomainAliasOptions([]byte(`{"alias_mode":"invalid"}`))
-	if err == nil {
-		t.Error("expected error for invalid mode")
-	}
-}
-
-func TestParseDomainAliasOptionsBadCode(t *testing.T) {
-	_, err := parseDomainAliasOptions([]byte(`{"alias_redirect_code":999}`))
-	if err == nil {
-		t.Error("expected error for invalid redirect code")
-	}
-}
-
-func TestParseDomainAliasOptionsExplicit(t *testing.T) {
-	preserve := false
-	opts, err := parseDomainAliasOptions(mustJSON(map[string]any{
-		"alias_mode":          "redirect",
-		"alias_redirect_code": 302,
-		"alias_preserve_path": &preserve,
-		"canonical_host":      "www",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if opts.redirectCode != http.StatusFound {
-		t.Errorf("redirectCode = %d, want 302", opts.redirectCode)
-	}
-	if opts.preservePath {
-		t.Error("expected preservePath=false")
-	}
-	if !opts.canonicalHostSet {
-		t.Error("expected canonicalHostSet=true")
-	}
-	if opts.canonicalHost != "www" {
-		t.Errorf("canonicalHost = %q, want www", opts.canonicalHost)
-	}
-}
-
-func TestParseDomainAliasOptionsCanonicalApex(t *testing.T) {
-	opts, err := parseDomainAliasOptions([]byte(`{"canonical_host":"apex"}`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !opts.canonicalHostSet {
-		t.Error("expected canonicalHostSet=true")
-	}
-}
-
-func TestNormalizeRequestedCanonicalHost(t *testing.T) {
-	tests := []struct {
-		input   string
-		want    string
-		wantErr bool
-	}{
-		{"", "apex", false},
-		{"apex", "apex", false},
-		{"root", "apex", false},
-		{"naked", "apex", false},
-		{"domain", "apex", false},
-		{"www", "www", false},
-		{"both", "apex", false},
-		{"none", "apex", false},
-		{"no-redirect", "apex", false},
-		{"invalid", "", true},
-	}
-	for _, tt := range tests {
-		got, err := normalizeRequestedCanonicalHost(tt.input)
-		if tt.wantErr {
-			if err == nil {
-				t.Errorf("normalizeRequestedCanonicalHost(%q): want error", tt.input)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("normalizeRequestedCanonicalHost(%q): unexpected error: %v", tt.input, err)
-		}
-		if got != tt.want {
-			t.Errorf("normalizeRequestedCanonicalHost(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestNormalizeCanonicalHostPreference(t *testing.T) {
-	if got := normalizeCanonicalHostPreference("www"); got != "www" {
+	if got := domainutil.NormalizeCanonicalHostPreference("www"); got != "www" {
 		t.Errorf("got %q, want www", got)
 	}
-	if got := normalizeCanonicalHostPreference("invalid"); got != "apex" {
+	if got := domainutil.NormalizeCanonicalHostPreference("invalid"); got != "apex" {
 		t.Errorf("got %q, want apex (fallback)", got)
 	}
-	if got := normalizeCanonicalHostPreference(""); got != "apex" {
+	if got := domainutil.NormalizeCanonicalHostPreference(""); got != "apex" {
 		t.Errorf("got %q, want apex", got)
-	}
-}
-
-func TestUniqueNormalizedHostnames(t *testing.T) {
-	input := []string{"example.com", "EXAMPLE.COM", "test.com", "", "test.com"}
-	got := uniqueNormalizedHostnames(input)
-	if len(got) != 2 {
-		t.Errorf("len = %d, want 2", len(got))
-	}
-}
-
-func TestFirstNonEmpty(t *testing.T) {
-	if got := firstNonEmpty("", "a", "b"); got != "a" {
-		t.Errorf("got %q, want a", got)
-	}
-	if got := firstNonEmpty("", "", ""); got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-	if got := firstNonEmpty("x"); got != "x" {
-		t.Errorf("got %q, want x", got)
-	}
-}
-
-func TestApexAndWWWHost(t *testing.T) {
-	apex, www, ok := apexAndWWWHost("example.com")
-	if !ok || apex != "example.com" || www != "www.example.com" {
-		t.Errorf("got %q, %q, %v", apex, www, ok)
-	}
-	apex, www, ok = apexAndWWWHost("www.example.com")
-	if !ok || apex != "example.com" || www != "www.example.com" {
-		t.Errorf("got %q, %q, %v", apex, www, ok)
-	}
-	_, _, ok = apexAndWWWHost("")
-	if ok {
-		t.Error("expected false for empty host")
-	}
-	_, _, ok = apexAndWWWHost("*.")
-	if ok {
-		t.Error("expected false for wildcard")
 	}
 }
 
 func TestAutoWWWRedirectHost(t *testing.T) {
 	d := config.Domain{Host: "example.com", Type: "static"}
-	if got := autoWWWRedirectHost(d); got != "www.example.com" {
+	if got := domainutil.AutoWWWRedirectHost(d); got != "www.example.com" {
 		t.Errorf("got %q, want www.example.com", got)
 	}
 	d2 := config.Domain{Host: "www.example.com", Type: "static"}
-	if got := autoWWWRedirectHost(d2); got != "" {
+	if got := domainutil.AutoWWWRedirectHost(d2); got != "" {
 		t.Errorf("got %q, want empty (already www)", got)
 	}
 	d3 := config.Domain{Host: "example.com", Type: "redirect"}
-	if got := autoWWWRedirectHost(d3); got != "" {
+	if got := domainutil.AutoWWWRedirectHost(d3); got != "" {
 		t.Errorf("got %q, want empty (redirect type)", got)
 	}
 }
@@ -1442,19 +1280,19 @@ func TestValidateLocalTargetAllSchemes(t *testing.T) {
 // ── 29. domain_alias: validateRequestedDomainAliases ────────────────────
 
 func TestValidateRequestedDomainAliases(t *testing.T) {
-	err := validateRequestedDomainAliases("example.com", []string{"www.example.com"})
+	err := domainutil.ValidateRequestedDomainAliases("example.com", []string{"www.example.com"})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	err = validateRequestedDomainAliases("example.com", []string{"example.com"})
+	err = domainutil.ValidateRequestedDomainAliases("example.com", []string{"example.com"})
 	if err == nil {
 		t.Error("expected error for same host")
 	}
-	err = validateRequestedDomainAliases("example.com", []string{"alias1.com", "alias1.com"})
+	err = domainutil.ValidateRequestedDomainAliases("example.com", []string{"alias1.com", "alias1.com"})
 	if err == nil {
 		t.Error("expected error for duplicates")
 	}
-	err = validateRequestedDomainAliases("example.com", []string{""})
+	err = domainutil.ValidateRequestedDomainAliases("example.com", []string{""})
 	if err != nil {
 		t.Errorf("unexpected error for empty alias: %v", err)
 	}
@@ -1467,7 +1305,7 @@ func TestRemoveImplicitWWWRedirectDomains(t *testing.T) {
 		{Host: "example.com", Type: "static"},
 		{Host: "www.example.com", Type: "redirect", Redirect: config.RedirectConfig{Target: "https://example.com", Status: 301}},
 	}
-	removeImplicitWWWRedirectDomains(&domains, "example.com", 0)
+	domainutil.RemoveImplicitWWWRedirectDomains(&domains, "example.com", 0)
 	if len(domains) != 1 {
 		t.Errorf("len = %d, want 1 after removal", len(domains))
 	}

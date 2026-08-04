@@ -62,12 +62,12 @@ type Deps interface {
 // State mirrors the admin package's cloudflareState (kept here to avoid
 // importing admin). The admin adapter translates between the two.
 type State struct {
-	SchemaVersion int      `json:"schema_version,omitempty"`
-	Token         string   `json:"token"`
-	AccountID     string   `json:"account_id"`
-	Email         string   `json:"email"`
-	Tunnels       []Tunnel `json:"tunnels"`
-	Connected     bool     `json:"connected"`
+	SchemaVersion int       `json:"schema_version,omitempty"`
+	Token         string    `json:"token"`
+	AccountID     string    `json:"account_id"`
+	Email         string    `json:"email"`
+	Tunnels       []Tunnel  `json:"tunnels"`
+	Connected     bool      `json:"connected"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
@@ -174,11 +174,11 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]any{
-		"connected":  st.Connected,
-		"email":      st.Email,
-		"account_id": st.AccountID,
-		"token_mask": maskToken(st.Token),
-		"updated_at": st.UpdatedAt,
+		"connected":    st.Connected,
+		"email":        st.Email,
+		"account_id":   st.AccountID,
+		"token_mask":   maskToken(st.Token),
+		"updated_at":   st.UpdatedAt,
 		"tunnel_count": len(st.Tunnels),
 	})
 }

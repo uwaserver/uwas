@@ -54,13 +54,25 @@ func (s *Server) SetBackupManager(m *backup.BackupManager) { s.backupMgr = m }
 
 // ── Thin wrappers ──
 
-func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request)         { backupHandler.List(w, r) }
-func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request)        { backupHandler.Create(w, r) }
-func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request)        { backupHandler.DomainBackup(w, r) }
-func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request)       { backupHandler.Restore(w, r) }
-func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request)        { backupHandler.Delete(w, r) }
-func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request)   { backupHandler.ScheduleGet(w, r) }
-func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request)   { backupHandler.SchedulePut(w, r) }
+func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) { backupHandler.List(w, r) }
+func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
+	backupHandler.Create(w, r)
+}
+func (s *Server) handleBackupDomain(w http.ResponseWriter, r *http.Request) {
+	backupHandler.DomainBackup(w, r)
+}
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	backupHandler.Restore(w, r)
+}
+func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
+	backupHandler.Delete(w, r)
+}
+func (s *Server) handleBackupScheduleGet(w http.ResponseWriter, r *http.Request) {
+	backupHandler.ScheduleGet(w, r)
+}
+func (s *Server) handleBackupSchedulePut(w http.ResponseWriter, r *http.Request) {
+	backupHandler.SchedulePut(w, r)
+}
 
 // Compile-time check.
 var _ backupadmin.Deps = (*backupDeps)(nil)

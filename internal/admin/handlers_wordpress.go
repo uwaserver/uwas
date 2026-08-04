@@ -2,7 +2,6 @@ package admin
 
 import (
 	"net/http"
-	"sync"
 
 	wpadmin "github.com/uwaserver/uwas/internal/admin/wordpress"
 	"github.com/uwaserver/uwas/internal/wordpress"
@@ -60,27 +59,42 @@ func (s *Server) initWPHandler() {
 
 // ── Thin wrappers ──
 
-func (s *Server) handleWPInstall(w http.ResponseWriter, r *http.Request)          { wpHandler.Install(w, r) }
-func (s *Server) handleWPInstallStatus(w http.ResponseWriter, r *http.Request)     { wpHandler.InstallStatus(w, r) }
-func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request)             { wpHandler.Sites(w, r) }
-func (s *Server) handleWPSiteDetail(w http.ResponseWriter, r *http.Request)        { wpHandler.SiteDetail(w, r) }
-func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request)        { wpHandler.UpdateCore(w, r) }
-func (s *Server) handleWPUpdatePlugins(w http.ResponseWriter, r *http.Request)     { wpHandler.UpdatePlugins(w, r) }
-func (s *Server) handleWPPluginAction(w http.ResponseWriter, r *http.Request)      { wpHandler.PluginAction(w, r) }
-func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request)    { wpHandler.FixPermissions(w, r) }
-func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request)         { wpHandler.Reinstall(w, r) }
-func (s *Server) handleWPToggleDebug(w http.ResponseWriter, r *http.Request)       { wpHandler.ToggleDebug(w, r) }
-func (s *Server) handleWPErrorLog(w http.ResponseWriter, r *http.Request)          { wpHandler.ErrorLog(w, r) }
-func (s *Server) handleWPUsers(w http.ResponseWriter, r *http.Request)             { wpHandler.Users(w, r) }
-func (s *Server) handleWPChangePassword(w http.ResponseWriter, r *http.Request)    { wpHandler.ChangePassword(w, r) }
-func (s *Server) handleWPSecurityStatus(w http.ResponseWriter, r *http.Request)    { wpHandler.SecurityStatus(w, r) }
-func (s *Server) handleWPHarden(w http.ResponseWriter, r *http.Request)            { wpHandler.Harden(w, r) }
-func (s *Server) handleWPOptimizeDB(w http.ResponseWriter, r *http.Request)        { wpHandler.OptimizeDB(w, r) }
+func (s *Server) handleWPInstall(w http.ResponseWriter, r *http.Request) { wpHandler.Install(w, r) }
+func (s *Server) handleWPInstallStatus(w http.ResponseWriter, r *http.Request) {
+	wpHandler.InstallStatus(w, r)
+}
+func (s *Server) handleWPSites(w http.ResponseWriter, r *http.Request) { wpHandler.Sites(w, r) }
+func (s *Server) handleWPSiteDetail(w http.ResponseWriter, r *http.Request) {
+	wpHandler.SiteDetail(w, r)
+}
+func (s *Server) handleWPUpdateCore(w http.ResponseWriter, r *http.Request) {
+	wpHandler.UpdateCore(w, r)
+}
+func (s *Server) handleWPUpdatePlugins(w http.ResponseWriter, r *http.Request) {
+	wpHandler.UpdatePlugins(w, r)
+}
+func (s *Server) handleWPPluginAction(w http.ResponseWriter, r *http.Request) {
+	wpHandler.PluginAction(w, r)
+}
+func (s *Server) handleWPFixPermissions(w http.ResponseWriter, r *http.Request) {
+	wpHandler.FixPermissions(w, r)
+}
+func (s *Server) handleWPReinstall(w http.ResponseWriter, r *http.Request) { wpHandler.Reinstall(w, r) }
+func (s *Server) handleWPToggleDebug(w http.ResponseWriter, r *http.Request) {
+	wpHandler.ToggleDebug(w, r)
+}
+func (s *Server) handleWPErrorLog(w http.ResponseWriter, r *http.Request) { wpHandler.ErrorLog(w, r) }
+func (s *Server) handleWPUsers(w http.ResponseWriter, r *http.Request)    { wpHandler.Users(w, r) }
+func (s *Server) handleWPChangePassword(w http.ResponseWriter, r *http.Request) {
+	wpHandler.ChangePassword(w, r)
+}
+func (s *Server) handleWPSecurityStatus(w http.ResponseWriter, r *http.Request) {
+	wpHandler.SecurityStatus(w, r)
+}
+func (s *Server) handleWPHarden(w http.ResponseWriter, r *http.Request) { wpHandler.Harden(w, r) }
+func (s *Server) handleWPOptimizeDB(w http.ResponseWriter, r *http.Request) {
+	wpHandler.OptimizeDB(w, r)
+}
 
 // Compile-time check.
 var _ wpadmin.Deps = (*wpDeps)(nil)
-
-// Retained vars for test compat.
-// These shadow the sub-package's exported vars for backward compat.
-var wpInstallMu sync.Mutex
-var wpInstallResult *wordpress.InstallResult

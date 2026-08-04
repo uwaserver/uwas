@@ -25,7 +25,6 @@ import (
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/webhook"
-	"github.com/uwaserver/uwas/internal/wordpress"
 )
 
 // =============================================================================
@@ -4318,23 +4317,10 @@ func TestWPInstallWithDomain(t *testing.T) {
 	}
 	// Wait briefly for goroutine to start
 	time.Sleep(100 * time.Millisecond)
-	// Reset state
-	wpInstallMu.Lock()
-	wpInstallResult = nil
-	wpInstallMu.Unlock()
 }
 
 func TestWPInstallDuplicateRunning(t *testing.T) {
 	s := testServer()
-	wpInstallMu.Lock()
-	wpInstallResult = &wordpress.InstallResult{Status: "running", Domain: "other.com"}
-	wpInstallMu.Unlock()
-	defer func() {
-		wpInstallMu.Lock()
-		wpInstallResult = nil
-		wpInstallMu.Unlock()
-	}()
-
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/wordpress/install", strings.NewReader(`{"domain":"test.com","web_root":"/tmp/test"}`))
 	s.handleWPInstall(rec, req)

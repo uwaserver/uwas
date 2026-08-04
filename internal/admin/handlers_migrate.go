@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/migrate"
 )
 
@@ -413,8 +414,8 @@ func (s *Server) handleBulkDomainImport(w http.ResponseWriter, r *http.Request) 
 		s.config.Domains = append(s.config.Domains, domain)
 		added = append(added, host)
 		existing[host] = true
-		if autoHost := autoWWWRedirectHost(domain); autoHost != "" && !existing[autoHost] {
-			s.config.Domains = append(s.config.Domains, newCanonicalRedirectAliasDomain(autoHost, host, http.StatusMovedPermanently, true))
+		if autoHost := domainutil.AutoWWWRedirectHost(domain); autoHost != "" && !existing[autoHost] {
+			s.config.Domains = append(s.config.Domains, domainutil.NewCanonicalRedirectAliasDomain(autoHost, host, http.StatusMovedPermanently, true))
 			existing[autoHost] = true
 		}
 	}

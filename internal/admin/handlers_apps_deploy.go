@@ -65,12 +65,22 @@ func (s *Server) initDeployHandler() {
 
 // ── Thin wrappers ──
 
-func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request)           { deployHandler.Deploy(w, r) }
-func (s *Server) handleAppDeployPreflight(w http.ResponseWriter, r *http.Request)   { deployHandler.DeployPreflight(w, r) }
-func (s *Server) handleAppWebhook(w http.ResponseWriter, r *http.Request)           { deployHandler.Webhook(w, r) }
-func (s *Server) handleAppWebhookStatus(w http.ResponseWriter, r *http.Request)     { deployHandler.WebhookStatus(w, r) }
-func (s *Server) handleAppDeployHistory(w http.ResponseWriter, r *http.Request)     { deployHandler.DeployHistory(w, r) }
-func (s *Server) handleAppGenerateDeployKey(w http.ResponseWriter, r *http.Request) { deployHandler.GenerateDeployKey(w, r) }
+func (s *Server) handleAppDeploy(w http.ResponseWriter, r *http.Request) { deployHandler.Deploy(w, r) }
+func (s *Server) handleAppDeployPreflight(w http.ResponseWriter, r *http.Request) {
+	deployHandler.DeployPreflight(w, r)
+}
+func (s *Server) handleAppWebhook(w http.ResponseWriter, r *http.Request) {
+	deployHandler.Webhook(w, r)
+}
+func (s *Server) handleAppWebhookStatus(w http.ResponseWriter, r *http.Request) {
+	deployHandler.WebhookStatus(w, r)
+}
+func (s *Server) handleAppDeployHistory(w http.ResponseWriter, r *http.Request) {
+	deployHandler.DeployHistory(w, r)
+}
+func (s *Server) handleAppGenerateDeployKey(w http.ResponseWriter, r *http.Request) {
+	deployHandler.GenerateDeployKey(w, r)
+}
 
 // Compile-time check.
 var _ deployadmin.Deps = (*deployDeps)(nil)
@@ -116,23 +126,10 @@ func writeGitAskpass(token string) (string, error) { return deployadmin.WriteGit
 // shellQuote delegates to the deploy sub-package.
 func shellQuote(s string) string { return deployadmin.ShellQuote(s) }
 
-// runStep delegates to the deploy sub-package.
-func runStep(ctx context.Context, wd, name string, args []string, out *strings.Builder, env []string) error {
-	return deployadmin.RunStep(ctx, wd, name, args, out, env)
-}
-
 // runOutput delegates to the deploy sub-package.
 func runOutput(ctx context.Context, wd, name string, args ...string) (string, error) {
 	return deployadmin.RunOutput(ctx, wd, name, args...)
 }
-
-// runShell delegates to the deploy sub-package.
-func runShell(ctx context.Context, wd, command string, out *strings.Builder, env []string) error {
-	return deployadmin.RunShell(ctx, wd, command, out, env)
-}
-
-// isWindows delegates to the deploy sub-package.
-func isWindows() bool { return deployadmin.IsWindows() }
 
 // tailString delegates to the deploy sub-package.
 func tailString(s string, n int) string { return deployadmin.TailString(s, n) }
@@ -281,11 +278,6 @@ func verifyWebhookSignature(r *http.Request, body []byte, secret string) bool {
 
 // extractPushRef delegates to the sub-package.
 func extractPushRef(body []byte) string { return deployadmin.ExtractPushRef(body) }
-
-// generateAppDeployKeyFn delegates to the sub-package.
-func generateAppDeployKeyFn(storeDir, appName string) (string, string, error) {
-	return deployadmin.GenerateAppDeployKey(storeDir, appName)
-}
 
 // execLookPath delegates to os/exec for test compat.
 var execLookPath = exec.LookPath

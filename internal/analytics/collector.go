@@ -19,9 +19,9 @@ type Collector struct {
 // DomainStats holds analytics data for a single domain.
 type DomainStats struct {
 	mu          sync.Mutex
-	PageViews   atomic.Int64    // hot counter: incremented on every request
+	PageViews   atomic.Int64     // hot counter: incremented on every request
 	UniqueIPs   map[string]bool  `json:"unique_ips"`
-	BytesSent   atomic.Int64    // hot counter: incremented on every request
+	BytesSent   atomic.Int64     // hot counter: incremented on every request
 	StatusCodes map[int]int64    `json:"status_codes"`
 	Paths       map[string]int64 `json:"paths"`
 	HourlyViews [24]int64        `json:"hourly_views"`

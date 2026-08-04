@@ -60,17 +60,23 @@ func (s *Server) initFilesHandler() {
 
 // ── Thin wrappers ──
 
-func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) { filesHandler.Workspaces(w, r) }
-func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request)        { filesHandler.List(w, r) }
-func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request)        { filesHandler.Read(w, r) }
-func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request)       { filesHandler.Write(w, r) }
-func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request)      { filesHandler.Delete(w, r) }
-func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request)       { filesHandler.Mkdir(w, r) }
-func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request)      { filesHandler.Upload(w, r) }
-func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request)       { filesHandler.DiskUsage(w, r) }
-func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request)        { filesHandler.CronList(w, r) }
-func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request)         { filesHandler.CronAdd(w, r) }
-func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request)      { filesHandler.CronDelete(w, r) }
+func (s *Server) handleFileWorkspaces(w http.ResponseWriter, r *http.Request) {
+	filesHandler.Workspaces(w, r)
+}
+func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request)   { filesHandler.List(w, r) }
+func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request)   { filesHandler.Read(w, r) }
+func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request)  { filesHandler.Write(w, r) }
+func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) { filesHandler.Delete(w, r) }
+func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request)  { filesHandler.Mkdir(w, r) }
+func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) { filesHandler.Upload(w, r) }
+func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
+	filesHandler.DiskUsage(w, r)
+}
+func (s *Server) handleCronList(w http.ResponseWriter, r *http.Request) { filesHandler.CronList(w, r) }
+func (s *Server) handleCronAdd(w http.ResponseWriter, r *http.Request)  { filesHandler.CronAdd(w, r) }
+func (s *Server) handleCronDelete(w http.ResponseWriter, r *http.Request) {
+	filesHandler.CronDelete(w, r)
+}
 
 // ── Retained helpers for other admin files ──
 
@@ -97,9 +103,8 @@ var _ files.Deps = (*filesDeps)(nil)
 
 // Retained helpers for other admin files.
 func appSFTPTargetName(target string) (string, bool) { return files.AppSFTPTargetName(target) }
-func appSFTPIdentity(appName string) string           { return files.AppSFTPIdentity(appName) }
-func appFileTargetName(target string) (string, bool)  { return files.AppFileTargetName(target) }
-func formatBytes(b int64) string                      { return files.FormatBytes(b) }
+func appSFTPIdentity(appName string) string          { return files.AppSFTPIdentity(appName) }
+func formatBytes(b int64) string                     { return files.FormatBytes(b) }
 
 // fileWorkspace is aliased for test compat.
 type fileWorkspace = files.FileWorkspace

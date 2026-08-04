@@ -248,22 +248,52 @@ func (s *Server) initCloudflareHandler() {
 
 // ── Thin wrappers ──
 
-func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request)      { s.cfHandler.Status(w, r) }
-func (s *Server) handleCloudflareIPs(w http.ResponseWriter, r *http.Request)         { s.cfHandler.IPs(w, r) }
-func (s *Server) handleCloudflareIPsUpdate(w http.ResponseWriter, r *http.Request)   { s.cfHandler.IPsUpdate(w, r) }
-func (s *Server) handleCloudflareIPsSync(w http.ResponseWriter, r *http.Request)     { s.cfHandler.IPsSync(w, r) }
-func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request)     { s.cfHandler.Connect(w, r) }
-func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Request)  { s.cfHandler.Disconnect(w, r) }
-func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request)  { s.cfHandler.CachePurge(w, r) }
-func (s *Server) handleCloudflareTunnels(w http.ResponseWriter, r *http.Request)     { s.cfHandler.Tunnels(w, r) }
-func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Request) { s.cfHandler.TunnelCreate(w, r) }
-func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Request) { s.cfHandler.TunnelDelete(w, r) }
-func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Request)  { s.cfHandler.TunnelStart(w, r) }
-func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Request)   { s.cfHandler.TunnelStop(w, r) }
-func (s *Server) handleCloudflareTunnelLogs(w http.ResponseWriter, r *http.Request)   { s.cfHandler.TunnelLogs(w, r) }
-func (s *Server) handleCloudflaredInstall(w http.ResponseWriter, r *http.Request)     { s.cfHandler.CloudflaredInstall(w, r) }
-func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request)        { s.cfHandler.Zones(w, r) }
-func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Request)   { s.cfHandler.ZoneImport(w, r) }
+func (s *Server) handleCloudflareStatus(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.Status(w, r)
+}
+func (s *Server) handleCloudflareIPs(w http.ResponseWriter, r *http.Request) { s.cfHandler.IPs(w, r) }
+func (s *Server) handleCloudflareIPsUpdate(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.IPsUpdate(w, r)
+}
+func (s *Server) handleCloudflareIPsSync(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.IPsSync(w, r)
+}
+func (s *Server) handleCloudflareConnect(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.Connect(w, r)
+}
+func (s *Server) handleCloudflareDisconnect(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.Disconnect(w, r)
+}
+func (s *Server) handleCloudflareCachePurge(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.CachePurge(w, r)
+}
+func (s *Server) handleCloudflareTunnels(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.Tunnels(w, r)
+}
+func (s *Server) handleCloudflareTunnelCreate(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.TunnelCreate(w, r)
+}
+func (s *Server) handleCloudflareTunnelDelete(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.TunnelDelete(w, r)
+}
+func (s *Server) handleCloudflareTunnelStart(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.TunnelStart(w, r)
+}
+func (s *Server) handleCloudflareTunnelStop(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.TunnelStop(w, r)
+}
+func (s *Server) handleCloudflareTunnelLogs(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.TunnelLogs(w, r)
+}
+func (s *Server) handleCloudflaredInstall(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.CloudflaredInstall(w, r)
+}
+func (s *Server) handleCloudflareZones(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.Zones(w, r)
+}
+func (s *Server) handleCloudflareZoneImport(w http.ResponseWriter, r *http.Request) {
+	s.cfHandler.ZoneImport(w, r)
+}
 
 var _ cfadmin.Deps = (*cfDeps)(nil)
 
@@ -342,26 +372,6 @@ func (s *Server) tunnelToView(t cloudflareTunnel) tunnelView {
 	return view
 }
 
-// findTunnel looks up a tunnel by ID.
-func (s *Server) findTunnel(id string) (cloudflareTunnel, bool) {
-	cloudflareMu.RLock()
-	defer cloudflareMu.RUnlock()
-	if cloudflareConfig == nil {
-		return cloudflareTunnel{}, false
-	}
-	for _, t := range cloudflareConfig.Tunnels {
-		if t.ID == id {
-			return t, true
-		}
-	}
-	return cloudflareTunnel{}, false
-}
-
-// validateCloudflareToken validates a token against the CF API.
-func (s *Server) validateCloudflareToken(token, accountID string) (string, error) {
-	return cfValidateTokenImpl(token, accountID)
-}
-
 // cfValidateTokenImpl uses the admin's cfHTTPClient.
 func cfValidateTokenImpl(token, accountID string) (string, error) {
 	return cfadmin.ValidateTokenWithClient(cfHTTPClient, token, accountID)
@@ -370,7 +380,9 @@ func cfValidateTokenImpl(token, accountID string) (string, error) {
 // fetchCloudflareZones fetches all zones from the CF API.
 func (s *Server) fetchCloudflareZones(token string) ([]cloudflareZone, error) {
 	zones, err := cfFetchZonesImpl(token)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	out := make([]cloudflareZone, len(zones))
 	for i, z := range zones {
 		out[i] = cloudflareZone{ID: z.ID, Name: z.Name, Status: z.Status, Plan: z.Plan}
@@ -394,7 +406,9 @@ func cfPurgeCacheImpl(token, url string, everything bool) error {
 // fetchCloudflareDNSRecords fetches DNS records for a zone.
 func (s *Server) fetchCloudflareDNSRecords(token, zoneID string) ([]cloudflareDNSRecord, error) {
 	records, err := cfFetchDNSRecordsImpl(token, zoneID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	out := make([]cloudflareDNSRecord, len(records))
 	for i, r := range records {
 		out[i] = cloudflareDNSRecord{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Content, TTL: r.TTL, Proxied: r.Proxied, Priority: r.Priority}
@@ -407,7 +421,7 @@ func cfFetchDNSRecordsImpl(token, zoneID string) ([]cfadmin.DNSRecord, error) {
 }
 
 var (
-	_ cloudflareTunnel          = cloudflareTunnel{}
-	_ cloudflareState           = cloudflareState{}
-	_ *cfintegration.Runner     = (*cfintegration.Runner)(nil)
+	_ cloudflareTunnel      = cloudflareTunnel{}
+	_ cloudflareState       = cloudflareState{}
+	_ *cfintegration.Runner = (*cfintegration.Runner)(nil)
 )

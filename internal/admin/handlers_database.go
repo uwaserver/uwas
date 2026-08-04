@@ -69,12 +69,12 @@ var (
 	databaseDropDatabase   = database.DropDatabase
 )
 
-func (d *dbDeps) StartService() error                        { return databaseStartService() }
-func (d *dbDeps) StopService() error                         { return databaseStopService() }
-func (d *dbDeps) RestartService() error                      { return databaseRestartService() }
-func (d *dbDeps) RepairService() (string, error)             { return databaseRepairService() }
-func (d *dbDeps) Uninstall() (string, error)                 { return databaseUninstall() }
-func (d *dbDeps) ForceUninstall() (string, error)            { return databaseForceUninstall() }
+func (d *dbDeps) StartService() error             { return databaseStartService() }
+func (d *dbDeps) StopService() error              { return databaseStopService() }
+func (d *dbDeps) RestartService() error           { return databaseRestartService() }
+func (d *dbDeps) RepairService() (string, error)  { return databaseRepairService() }
+func (d *dbDeps) Uninstall() (string, error)      { return databaseUninstall() }
+func (d *dbDeps) ForceUninstall() (string, error) { return databaseForceUninstall() }
 func (d *dbDeps) CreateDB(name, user, password, host string) (*database.CreateResult, error) {
 	return databaseCreateDatabase(name, user, password, host)
 }
@@ -89,11 +89,11 @@ func (s *Server) initDBHandler() {
 // Preserved so the 20+ test files that call s.handleDB* directly still compile.
 // Once tests are migrated to the sub-package, these can be removed.
 
-func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request)   { s.dbHandler.Status(w, r) }
-func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request)     { s.dbHandler.List(w, r) }
-func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request)   { s.dbHandler.Create(w, r) }
-func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request)     { s.dbHandler.Drop(w, r) }
-func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request)  { s.dbHandler.Install(w, r) }
+func (s *Server) handleDBStatus(w http.ResponseWriter, r *http.Request)  { s.dbHandler.Status(w, r) }
+func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request)    { s.dbHandler.List(w, r) }
+func (s *Server) handleDBCreate(w http.ResponseWriter, r *http.Request)  { s.dbHandler.Create(w, r) }
+func (s *Server) handleDBDrop(w http.ResponseWriter, r *http.Request)    { s.dbHandler.Drop(w, r) }
+func (s *Server) handleDBInstall(w http.ResponseWriter, r *http.Request) { s.dbHandler.Install(w, r) }
 func (s *Server) handleDBUninstall(w http.ResponseWriter, r *http.Request) {
 	s.dbHandler.Uninstall(w, r)
 }
@@ -109,11 +109,11 @@ func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleDBRemoteAccess(w http.ResponseWriter, r *http.Request) {
 	s.dbHandler.RemoteAccess(w, r)
 }
-func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request)   { s.dbHandler.Export(w, r) }
-func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request)   { s.dbHandler.Import(w, r) }
-func (s *Server) handleDBStart(w http.ResponseWriter, r *http.Request)    { s.dbHandler.Start(w, r) }
-func (s *Server) handleDBStop(w http.ResponseWriter, r *http.Request)     { s.dbHandler.Stop(w, r) }
-func (s *Server) handleDBRestart(w http.ResponseWriter, r *http.Request)  { s.dbHandler.Restart(w, r) }
+func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request)  { s.dbHandler.Export(w, r) }
+func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request)  { s.dbHandler.Import(w, r) }
+func (s *Server) handleDBStart(w http.ResponseWriter, r *http.Request)   { s.dbHandler.Start(w, r) }
+func (s *Server) handleDBStop(w http.ResponseWriter, r *http.Request)    { s.dbHandler.Stop(w, r) }
+func (s *Server) handleDBRestart(w http.ResponseWriter, r *http.Request) { s.dbHandler.Restart(w, r) }
 
 func (s *Server) handleDockerDBList(w http.ResponseWriter, r *http.Request) {
 	s.dbHandler.DockerList(w, r)

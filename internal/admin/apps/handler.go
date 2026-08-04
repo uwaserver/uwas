@@ -126,38 +126,6 @@ func paginateSlice[T any](items []T, limit, offset int) ([]T, int) {
 	return items[offset:end], total
 }
 
-func parsePagination(r *http.Request) (limit, offset int) {
-	limit = 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := parseInt(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	offset = 0
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := parseInt(v); err == nil && n >= 0 {
-			offset = n
-		}
-	}
-	return
-}
-
-func parseInt(s string) (int, error) {
-	var n int
-	_, err := fmt.Sscanf(s, "%d", &n)
-	return n, err
-}
-
-func tailString(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
-}
-
 // maybeReload triggers a config reload so proxy pools re-resolve.
 func (h *Handler) maybeReload() {
 	if err := h.deps.Reload(); err != nil {
@@ -685,4 +653,3 @@ func (h *Handler) Logs(w http.ResponseWriter, r *http.Request) {
 func listenTimeout() time.Duration {
 	return time.Duration(listeningProbeTimeout)
 }
-

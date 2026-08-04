@@ -90,7 +90,7 @@ func (d *phpDeps) SetDomainFPMAddress(domain, addr string) {
 	d.s.configMu.Unlock()
 }
 
-func (d *phpDeps) PersistConfig()     { d.s.persistConfig() }
+func (d *phpDeps) PersistConfig()      { d.s.persistConfig() }
 func (d *phpDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
 func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 	d.s.persistDomainPHPOverrides(domain)
@@ -147,71 +147,122 @@ func (s *Server) handlePHPInstallStatus(w http.ResponseWriter, r *http.Request) 
 	s.phpHandler.InstallStatus(w, r)
 }
 func (s *Server) handlePHPConfig(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Config(w, r)
 }
 func (s *Server) handlePHPConfigUpdate(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.ConfigUpdate(w, r)
 }
 func (s *Server) handlePHPExtensions(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Extensions(w, r)
 }
 func (s *Server) handlePHPStart(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Start(w, r)
 }
 func (s *Server) handlePHPStop(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Stop(w, r)
 }
 func (s *Server) handlePHPRestart(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Restart(w, r)
 }
 func (s *Server) handlePHPConfigRawGet(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.ConfigRawGet(w, r)
 }
 func (s *Server) handlePHPConfigRawPut(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.ConfigRawPut(w, r)
 }
 func (s *Server) handlePHPEnable(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Enable(w, r)
 }
 func (s *Server) handlePHPDisable(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.Disable(w, r)
 }
 func (s *Server) handlePHPDomainsList(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainsList(w, r)
 }
 func (s *Server) handlePHPDomainAssign(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainAssign(w, r)
 }
 func (s *Server) handlePHPDomainUnassign(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainUnassign(w, r)
 }
 func (s *Server) handlePHPDomainStart(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainStart(w, r)
 }
 func (s *Server) handlePHPDomainStop(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainStop(w, r)
 }
 func (s *Server) handlePHPDomainConfigGet(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainConfigGet(w, r)
 }
 func (s *Server) handlePHPDomainConfigPut(w http.ResponseWriter, r *http.Request) {
-	if s.phpHandler == nil { jsonError(w, "PHP manager not enabled", http.StatusNotImplemented); return }
+	if s.phpHandler == nil {
+		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
+		return
+	}
 	s.phpHandler.DomainConfigPut(w, r)
 }
 

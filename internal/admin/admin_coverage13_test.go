@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainutil"
 )
 
 // ── Additional Database handler coverage ───────────────────────────────
@@ -415,31 +416,31 @@ func TestFindDomainHostnameConflictAllowingRedirect(t *testing.T) {
 	}
 
 	// www.example.com canonicalizes to "example.com" which IS the existing static domain → conflict
-	result := findDomainHostnameConflictAllowingRedirect(domains, -1, "www.example.com", "example.com")
+	result := domainutil.FindDomainHostnameConflictAllowingRedirect(domains, -1, "www.example.com", "example.com")
 	if result == "" {
 		t.Error("expected conflict: www.example.com canonicalizes to example.com which exists as static")
 	}
 
 	// Should find conflict for existing domain
-	result = findDomainHostnameConflictAllowingRedirect(domains, -1, "example.com", "")
+	result = domainutil.FindDomainHostnameConflictAllowingRedirect(domains, -1, "example.com", "")
 	if result == "" {
 		t.Error("expected conflict for existing domain")
 	}
 
 	// Empty host returns empty
-	result = findDomainHostnameConflictAllowingRedirect(domains, -1, "", "")
+	result = domainutil.FindDomainHostnameConflictAllowingRedirect(domains, -1, "", "")
 	if result != "" {
 		t.Errorf("got %q, want empty", result)
 	}
 
 	// Checking for nonexistent host
-	result = findDomainHostnameConflictAllowingRedirect(domains, -1, "nonexistent.com", "")
+	result = domainutil.FindDomainHostnameConflictAllowingRedirect(domains, -1, "nonexistent.com", "")
 	if result != "" {
 		t.Errorf("got %q, want empty", result)
 	}
 
 	// Skip index 0 (the static example.com) → should find conflict at index 1 (www redirect)
-	result = findDomainHostnameConflictAllowingRedirect(domains, 0, "example.com", "")
+	result = domainutil.FindDomainHostnameConflictAllowingRedirect(domains, 0, "example.com", "")
 	if result == "" {
 		t.Error("expected conflict from www redirect after skipping index 0")
 	}
@@ -448,7 +449,7 @@ func TestFindDomainHostnameConflictAllowingRedirect(t *testing.T) {
 	domains2 := []config.Domain{
 		{Host: "other.com", Type: "static", Aliases: []string{"alias.com"}},
 	}
-	result = findDomainHostnameConflictAllowingRedirect(domains2, -1, "alias.com", "")
+	result = domainutil.FindDomainHostnameConflictAllowingRedirect(domains2, -1, "alias.com", "")
 	if result != "other.com" {
 		t.Errorf("got %q, want other.com", result)
 	}
@@ -465,15 +466,15 @@ func TestIsCanonicalRedirectAliasDomain(t *testing.T) {
 			Status: 301,
 		},
 	}
-	if !isCanonicalRedirectAliasDomain(d, "www.example.com", "example.com") {
+	if !domainutil.IsCanonicalRedirectAliasDomain(d, "www.example.com", "example.com") {
 		t.Error("expected true for matching redirect alias")
 	}
-	if isCanonicalRedirectAliasDomain(d, "other.com", "example.com") {
+	if domainutil.IsCanonicalRedirectAliasDomain(d, "other.com", "example.com") {
 		t.Error("expected false for non-matching host")
 	}
 	// Non-redirect type
 	d2 := config.Domain{Host: "example.com", Type: "static"}
-	if isCanonicalRedirectAliasDomain(d2, "example.com", "") {
+	if domainutil.IsCanonicalRedirectAliasDomain(d2, "example.com", "") {
 		t.Error("expected false for non-redirect type")
 	}
 }
@@ -486,7 +487,7 @@ func TestPublicDomainAliases(t *testing.T) {
 		Type:    "static",
 		Aliases: []string{"www.example.com", "alias.com", "www.example.com", ""},
 	}
-	result := publicDomainAliases(d)
+	result := domainutil.PublicDomainAliases(d)
 	// www.example.com canonicalizes to example.com which equals d.Host, so it's skipped.
 	// Only "alias.com" remains.
 	if len(result) != 1 {
@@ -508,12 +509,12 @@ func TestIsImplicitWWWRedirectForDomains(t *testing.T) {
 			Status: 301,
 		},
 	}
-	if !isImplicitWWWRedirectForDomains(d, domains) {
+	if !domainutil.IsImplicitWWWRedirectForDomains(d, domains) {
 		t.Error("expected true for implicit WWW redirect")
 	}
 	// Non-redirect type
 	d2 := config.Domain{Host: "www.example.com", Type: "static"}
-	if isImplicitWWWRedirectForDomains(d2, domains) {
+	if domainutil.IsImplicitWWWRedirectForDomains(d2, domains) {
 		t.Error("expected false for non-redirect")
 	}
 }
@@ -531,7 +532,7 @@ func TestNormalizeDomainHostname(t *testing.T) {
 		{"www.example.com", "www.example.com"},
 	}
 	for _, tc := range tests {
-		got := normalizeDomainHostname(tc.input)
+		got := domainutil.NormalizeDomainHostname(tc.input)
 		if got != tc.want {
 			t.Errorf("normalizeDomainHostname(%q) = %q, want %q", tc.input, got, tc.want)
 		}
@@ -569,7 +570,7 @@ func TestIsValidHostnameV2(t *testing.T) {
 // ── newCanonicalRedirectAliasDomain uncovered branches ─────────────────
 
 func TestNewCanonicalRedirectAliasDomain(t *testing.T) {
-	d := newCanonicalRedirectAliasDomain("www.example.com", "example.com", 0, true)
+	d := domainutil.NewCanonicalRedirectAliasDomain("www.example.com", "example.com", 0, true)
 	if d.Type != "redirect" {
 		t.Errorf("type = %q, want redirect", d.Type)
 	}
@@ -583,7 +584,7 @@ func TestNewCanonicalRedirectAliasDomain(t *testing.T) {
 		t.Error("expected preservePath=true")
 	}
 	// Test explicit status
-	d2 := newCanonicalRedirectAliasDomain("www.example.com", "example.com", http.StatusFound, false)
+	d2 := domainutil.NewCanonicalRedirectAliasDomain("www.example.com", "example.com", http.StatusFound, false)
 	if d2.Redirect.Status != http.StatusFound {
 		t.Errorf("status = %d, want 302", d2.Redirect.Status)
 	}

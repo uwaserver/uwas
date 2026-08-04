@@ -24,9 +24,6 @@ type authTicket struct {
 	pinVerified bool      // a valid admin PIN was presented when the ticket was minted
 }
 
-// adminCtxKey is the private context-key type for admin-middleware values.
-type adminCtxKey int
-
 // handleAuthTicket issues a short-lived, single-use ticket that can be passed
 // as a query parameter for SSE/WebSocket connections. This avoids putting the
 // real token in the URL (which leaks into logs, Referer, browser history).
