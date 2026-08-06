@@ -838,7 +838,7 @@ func TestUserCreateAuthInvalidRole(t *testing.T) {
 func TestUserCreateAuthSuccess(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
-	s.config.Global.Users.AllowResller = true
+	s.config.Global.Users.AllowReseller = true
 	rec := httptest.NewRecorder()
 	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users", strings.NewReader(`{"username":"newuser","email":"a@b.com","password":"S3cure-Passw0rd!","role":"user","domains":["test.com"]}`)))
 	req.RemoteAddr = "10.0.0.1:1234"
@@ -851,7 +851,7 @@ func TestUserCreateAuthSuccess(t *testing.T) {
 func TestUserCreateAuthResellerNotAllowed(t *testing.T) {
 	s := testServer()
 	s.SetAuthManager(newMockAuthManager())
-	s.config.Global.Users.AllowResller = false
+	s.config.Global.Users.AllowReseller = false
 	rec := httptest.NewRecorder()
 	req := withAdminContext(httptest.NewRequest("POST", "/api/v1/auth/users", strings.NewReader(`{"username":"newreseller","email":"a@b.com","password":"pass","role":"reseller","domains":["test.com"]}`)))
 	req.RemoteAddr = "10.0.0.1:1234"

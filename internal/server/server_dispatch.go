@@ -47,7 +47,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		uptimeSecs := int64(time.Since(s.metrics.StartTime).Seconds())
 		resp := `{"status":"ok","uptime_secs":` + strconv.FormatInt(uptimeSecs, 10) + `,"domains":` + strconv.Itoa(domainCount) + `}`
-		w.Write([]byte(resp))
+		_, _ = w.Write([]byte(resp))
 		return
 	}
 
