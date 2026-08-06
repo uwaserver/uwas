@@ -873,7 +873,7 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 
 	// Check if reseller role is allowed
 	s.configMu.RLock()
-	allowReseller := s.config.Global.Users.AllowResller
+	allowReseller := s.config.Global.Users.AllowReseller
 	s.configMu.RUnlock()
 	if role == auth.RoleReseller && !allowReseller {
 		jsonError(w, "reseller role not allowed", http.StatusBadRequest)

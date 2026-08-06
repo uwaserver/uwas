@@ -387,7 +387,7 @@ func (h *Handler) SettingsGet(w http.ResponseWriter, r *http.Request) {
 		"global.admin.listen":              g.Admin.Listen,
 		"global.admin.api_key":             maskSecret(g.Admin.APIKey),
 		"global.users.enabled":             g.Users.Enabled,
-		"global.users.allow_reseller":      g.Users.AllowResller,
+		"global.users.allow_reseller":      g.Users.AllowReseller,
 		"global.mcp.enabled":               g.MCP.Enabled,
 		"global.acme.email":                g.ACME.Email,
 		"global.acme.ca_url":               g.ACME.CAURL,
@@ -471,7 +471,7 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 		case "global.users.enabled":
 			g.Users.Enabled = sv == "true"
 		case "global.users.allow_reseller":
-			g.Users.AllowResller = sv == "true"
+			g.Users.AllowReseller = sv == "true"
 		case "global.mcp.enabled":
 			g.MCP.Enabled = sv == "true"
 		case "global.mcp.listen":

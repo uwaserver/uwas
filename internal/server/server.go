@@ -288,7 +288,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			s.authMgr.SetSessionTTL(cfg.Global.Users.SessionTTL)
 			s.admin.SetAuthManager(s.authMgr)
 			log.Info("multi-user auth enabled",
-				"allow_reseller", cfg.Global.Users.AllowResller,
+				"allow_reseller", cfg.Global.Users.AllowReseller,
 				"allow_legacy_plaintext_api_key", cfg.Global.Users.AllowLegacyPlaintextAPIKey,
 			)
 		}
