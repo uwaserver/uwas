@@ -2,9 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**⚠️ MANDATORY:** Before any work, read and obey `AGENT_DIRECTIVES.md` in the project root. Key rules summarized below.
-
-### Critical Directives (from AGENT_DIRECTIVES.md)
+### Critical Directives
 
 - **Forced verification**: Never report task complete without running compiler/linter/tests. For Go: `go build ./...` → `go vet ./...` → `go test ./... -count=1 -short`. For dashboard: `cd web/dashboard && npx tsc -b`.
 - **Phased execution**: Multi-file refactors must be broken into phases (≤5 files each). State plan before starting, verify after each phase.
@@ -18,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 42-page React dashboard.
 
-**Current Stats (v0.8.8 + current main):**
+**Current Stats (v0.8.10 + current main):**
 - 55 Go packages from `go list ./... | grep -v /node_modules/`
 - 42 dashboard pages and 251 explicit admin route registrations
 - 19 CLI commands
