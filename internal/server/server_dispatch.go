@@ -498,8 +498,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			cacheEnabled = false
 		}
 	}
+	// TTL of the last matching cache rule, in seconds. Zero means no rule set
+	// one and the domain/global value applies. Rules are evaluated in order and
+	// the last match wins, matching how Cache-Control is applied just below.
+	ruleTTL := 0
 	if cacheEnabled {
-		// Check per-domain cache bypass rules + set Cache-Control from rules
+		// Check per-domain cache bypass rules + set Cache-Control and TTL from rules
 		for _, rule := range domain.Cache.Rules {
 			if matchPath(r.URL.Path, rule.Match) {
 				if rule.Bypass {
@@ -508,6 +512,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 				if rule.CacheControl != "" {
 					ctx.Response.Header().Set("Cache-Control", rule.CacheControl)
+				}
+				if rule.TTL > 0 {
+					ruleTTL = rule.TTL
 				}
 			}
 		}
@@ -618,10 +625,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// hit brotli-compresses the already-brotli body while advertising one
 		// Content-Encoding layer.
 		if !capture.overflow && !capture.upstreamEncoded && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
-			ttl := time.Duration(domain.Cache.TTL) * time.Second
-			if ttl <= 0 {
-				ttl = 60 * time.Second
-			}
+			ttl := cacheTTLFor(ruleTTL, domain.Cache.TTL, s.config.Global.Cache.DefaultTTL)
 			capturedBody := capture.body.Bytes()
 			isESI := domain.Cache.ESI && s.esiProcessor != nil &&
 				strings.Contains(hdrs.Get("Content-Type"), "text/html") &&
@@ -899,4 +903,26 @@ func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domai
 		status = http.StatusMovedPermanently
 	}
 	http.Redirect(ctx.Response, ctx.Request, target, status)
+}
+
+// cacheTTLFor resolves how long a cache entry should live, in precedence order:
+// the matching cache rule's ttl, then the domain's cache.ttl, then
+// global.cache.default_ttl, and finally a one minute floor.
+//
+// Both the rule ttl and the global default used to be dead configuration: the
+// store path hardcoded a 60 second fallback and read neither. Operators could
+// set them in the dashboard, see them echoed back by the API, and get no
+// change in behaviour.
+//
+// NOTE: this changes the effective TTL of existing installs. A domain that
+// leaves cache.ttl at 0 previously got 60s; it now gets global.cache.default_ttl,
+// which defaults to 3600. Operators relying on the old implicit minute should
+// set cache.ttl explicitly.
+func cacheTTLFor(ruleTTL, domainTTL, globalDefaultTTL int) time.Duration {
+	for _, secs := range []int{ruleTTL, domainTTL, globalDefaultTTL} {
+		if secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 60 * time.Second
 }
