@@ -4320,12 +4320,29 @@ func TestWPInstallWithDomain(t *testing.T) {
 }
 
 func TestWPInstallDuplicateRunning(t *testing.T) {
+	// The handler answers 409 while an install is in flight. That state lives on
+	// the package-level wpHandler, so this test used to depend on some earlier
+	// test having left an install running — order- and timing-dependent, and it
+	// failed under -race when the earlier goroutine had already finished.
+	//
+	// The precondition is now set up here: the first request marks an install
+	// running, the second is the duplicate under test.
 	s := testServer()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/wordpress/install", strings.NewReader(`{"domain":"test.com","web_root":"/tmp/test"}`))
-	s.handleWPInstall(rec, req)
-	if rec.Code != 409 {
-		t.Errorf("status = %d, want 409", rec.Code)
+	root := t.TempDir()
+	body := func() *strings.Reader {
+		return strings.NewReader(`{"domain":"test.com","web_root":"` + filepath.ToSlash(root) + `"}`)
+	}
+
+	first := httptest.NewRecorder()
+	s.handleWPInstall(first, httptest.NewRequest("POST", "/api/v1/wordpress/install", body()))
+	if first.Code != 200 {
+		t.Fatalf("first install: status = %d, want 200, body: %s", first.Code, first.Body.String())
+	}
+
+	second := httptest.NewRecorder()
+	s.handleWPInstall(second, httptest.NewRequest("POST", "/api/v1/wordpress/install", body()))
+	if second.Code != 409 {
+		t.Errorf("duplicate install: status = %d, want 409, body: %s", second.Code, second.Body.String())
 	}
 }
 
