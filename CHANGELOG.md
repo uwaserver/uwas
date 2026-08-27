@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-08-27
+
+### Fixed
+
+- Accept `apps://` as a proxy upstream scheme. It is a first-class scheme in this project — `resolveAppsUpstream` turns `apps://<name>` into the live `127.0.0.1:port` the supervisor assigned, and the dashboard writes exactly that form whenever an app is picked for a proxy domain — but upstream validation only allowed `http`, `https`, `ws` and `wss`. The server therefore refused to start on a configuration its own dashboard had written, and because validation aborts the load, a single app-backed domain took down every other domain on the host.
+- Restore the `{ok, checks, app}` shape of the app deploy-preflight endpoint. A sub-package extraction had replaced the wrapper with the bare check slice, so the Apps page read `.checks` off an array and crashed the dashboard with "undefined is not an object". The readiness badge was wrong for the same reason and always showed "needs attention". The preflight payload also clears the stored git token again before it reaches the browser.
+
+
 ## [0.8.11] - 2026-08-27
 
 ### Fixed
