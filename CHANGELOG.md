@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-08-27
+
+### Fixed
+
+- Report the real health of domains backed by an `apps://` upstream. The probe target for such a domain is resolved through the supervisor to the loopback address it assigned, and that URL was then run through the SSRF guard whose purpose is to refuse loopback and private addresses — so the check rejected its own target and recorded every app-backed domain as `down`, however healthy the app was. The dashboard renders that value as "Inactive". The guard still applies to targets built from a domain's `Host` field, which an operator can point anywhere; it no longer applies to addresses this process resolved itself.
+
+### Changed
+
+- Build with Go 1.27.0 (image pinned by digest).
+- Update quic-go to 0.61.0 and golang.org/x/crypto to 0.55.0.
+- Update the pinned GitHub Actions and the dashboard dependency set, and rebuild the embedded dashboard bundle. TypeScript stays on 5.9 — `typescript-eslint` declares a peer range of `>=4.8.4 <6.1.0`, so TypeScript 7 cannot be installed until that project supports it.
+
 ## [0.8.13] - 2026-08-27
 
 ### Fixed
