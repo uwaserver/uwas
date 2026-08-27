@@ -880,3 +880,66 @@ func TestValidateMinimalConfig(t *testing.T) {
 	cfg := minimalValidConfig()
 	expectNoValidationError(t, cfg)
 }
+
+// --- apps:// upstream scheme ---
+
+// The dashboard writes `apps://<name>` whenever an app is picked for a proxy
+// domain, and resolveAppsUpstream turns that into the supervisor's live
+// 127.0.0.1:port at pool-build time. Rejecting the scheme here made the server
+// refuse to start on a configuration it had written itself.
+func TestValidateProxyUpstreams_AppsSchemeAccepted(t *testing.T) {
+	for _, address := range []string{
+		"apps://dgn-git",
+		"apps://dgn-git:3001",
+		"apps://my-app/health",
+	} {
+		cfg := minimalValidConfig()
+		cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: address, Weight: 1}})}
+		t.Run(address, func(t *testing.T) {
+			expectNoValidationError(t, cfg)
+		})
+	}
+}
+
+// An app name that happens to look like a link-local address still routes
+// through the supervisor, so the metadata guard must not fire on it. The guard
+// stays in force for real network upstreams.
+func TestValidateProxyUpstreams_AppsSchemeSkipsMetadataGuard(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: "apps://169.254.169.254", Weight: 1}})}
+	expectNoValidationError(t, cfg)
+
+	cfg = minimalValidConfig()
+	cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: "http://169.254.169.254", Weight: 1}})}
+	expectValidationError(t, cfg, "cloud metadata endpoint blocked")
+}
+
+// Only the schemes the proxy can actually consume are allowed. h2c and grpc
+// appear in comments as future work but nothing resolves them today, so a
+// config using them must still be rejected rather than failing at request time.
+func TestValidateProxyUpstreams_UnknownSchemesStillRejected(t *testing.T) {
+	for _, address := range []string{
+		"app://dgn-git", // singular: a plausible typo for apps://
+		"h2c://127.0.0.1:3000",
+		"grpc://127.0.0.1:3000",
+	} {
+		cfg := minimalValidConfig()
+		cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: address, Weight: 1}})}
+		t.Run(address, func(t *testing.T) {
+			expectValidationError(t, cfg, "unsupported URL scheme")
+		})
+	}
+
+	// A scheme with no host never reaches the scheme check — it is rejected
+	// earlier as an unusable URL. Asserted separately so the message is right.
+	cfg := minimalValidConfig()
+	cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: "file:///etc/passwd", Weight: 1}})}
+	expectValidationError(t, cfg, "invalid URL")
+}
+
+// apps:// with no name has no host for the resolver to look up.
+func TestValidateProxyUpstreams_AppsSchemeRequiresName(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Domains = []Domain{proxyDomain([]Upstream{{Address: "apps://", Weight: 1}})}
+	expectValidationError(t, cfg, "invalid URL")
+}

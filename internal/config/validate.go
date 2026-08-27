@@ -739,6 +739,18 @@ func validateProxyUpstreamAddress(prefix, address string, errs *[]string) {
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https", "ws", "wss":
+		// Network upstreams: the address is dialled as written.
+	case "apps":
+		// Managed app upstream. The host part is an app NAME, not a network
+		// address — resolveAppsUpstream turns it into the live 127.0.0.1:port
+		// the supervisor assigned, at pool-build time (see
+		// internal/server/apps_upstream.go). The dashboard writes this form
+		// whenever an app is picked for a proxy domain.
+		//
+		// The metadata guard below is skipped for the same reason: it compares
+		// against link-local addresses, and an app named like one still routes
+		// through the supervisor, never to the metadata service.
+		return
 	default:
 		*errs = append(*errs, fmt.Sprintf("%s: unsupported URL scheme %q", prefix, parsed.Scheme))
 	}
