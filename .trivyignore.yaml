@@ -1,0 +1,21 @@
+# Süreli istisnalar. Her kaydın bir gerekçesi ve son kullanma tarihi olmalı;
+# tarih geçince Trivy istisnayı yok sayar ve bulgu yeniden görünür.
+#
+# Buraya yalnız YUKARI AKIŞTA DÜZELTMESİ OLMAYAN bulgular girer. Düzeltmesi
+# yayımlanmış bir paket için doğru hamle burayı büyütmek değil, paketi
+# yükseltmektir.
+vulnerabilities:
+  - id: CVE-2026-14456
+    # openssl: QUIC sunucusunda sınırsız bellek büyümesiyle hizmet reddi.
+    # libcrypto3 / libssl3 3.5.7-r0, düzeltme 3.5.8-r0.
+    #
+    # 27.08.2026 itibarıyla 3.5.8-r0 Alpine'ın HİÇBİR dalında yok — 3.24 de
+    # edge de 3.5.7-r0 veriyor. Yani yükseltilecek bir paket yok; imaj
+    # yeniden derlense de sonuç değişmiyor.
+    #
+    # Etkisi bu imaj için sınırlı: uwas QUIC'i kendi Go yığınıyla konuşur
+    # (quic-go), openssl'in QUIC sunucu tarafını kullanmaz.
+    #
+    # Tarih geldiğinde: Alpine 3.24'te libcrypto3 3.5.8-r0 çıktıysa temel
+    # imajı tazeleyip bu kaydı silin.
+    expired_at: 2026-10-15
