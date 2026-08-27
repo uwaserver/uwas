@@ -97,3 +97,37 @@ func TestStripBOM(t *testing.T) {
 		t.Errorf("short data altered: %q", got)
 	}
 }
+
+// cache.rules[].match is a REGEX, not a glob. An uncompilable pattern used to
+// be swallowed at request time — matchPath compiles it, fails, and returns
+// false — so a rule written the glob way silently never matched: no bypass, no
+// Cache-Control, no ttl, and nothing in the logs to explain it.
+func TestValidate_CacheRuleMatchMustCompile(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Domains[0].Cache = DomainCache{
+		Enabled: true,
+		Rules:   []CacheRule{{Match: "*.html", TTL: 60}},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("glob-shaped pattern should be rejected")
+	}
+	// The message has to say what to write instead; "invalid regexp" alone
+	// leaves the operator guessing why their glob is wrong.
+	if !strings.Contains(err.Error(), "regex, not a glob") {
+		t.Errorf("error should explain the field is a regex, got: %v", err)
+	}
+}
+
+func TestValidate_CacheRuleValidRegexAccepted(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Domains[0].Cache = DomainCache{
+		Enabled: true,
+		Rules:   []CacheRule{{Match: `\.html$`, TTL: 60}},
+	}
+
+	if err := Validate(cfg); err != nil {
+		t.Errorf("valid regex rejected: %v", err)
+	}
+}
