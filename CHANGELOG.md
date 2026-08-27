@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-08-27
+
+### Fixed
+
+- Re-resolve `apps://` proxy upstreams once the app supervisor has started them. The pools are built during server construction, while every app is still stopped, so each `apps://<name>` upstream resolved to the `http://127.0.0.1:0` placeholder — and nothing re-resolved them after `StartAll`. The upstream stayed pinned to port 0 for the process lifetime and every request to an app-backed domain failed with "502 Bad Gateway, upstream refused connection" even though the app itself was healthy. Any unrelated config reload rebuilt the pools, so the failure looked intermittent and self-healing while in fact it returned on every restart.
+
+### Changed
+
+- Two signal tests no longer race the `signal.Notify` registration inside `handleSignals`. They sent their signal before the handler had registered its channel, which timed out the run and — with no registration anywhere in the process — risked the default action terminating the test binary outright.
+
 ## [0.8.12] - 2026-08-27
 
 ### Fixed
