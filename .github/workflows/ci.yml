@@ -156,8 +156,10 @@ jobs:
             uwas-wordpress-php:7.0.1 uwas-wordpress-cli:2.12.0; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp/trivy-cache:/root/.cache \
+              -v "$PWD/.trivyignore.yaml:/.trivyignore.yaml:ro" \
               aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f \
               image --exit-code 1 --severity HIGH,CRITICAL \
+              --ignorefile /.trivyignore.yaml \
               --scanners vuln,secret "$image"
           done
 
