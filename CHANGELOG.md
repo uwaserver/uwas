@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-08-27
+
+### Fixed
+
+- Stop cached responses being compressed twice. A handler that serves an already-encoded body and declares it with `Content-Encoding` — the static handler's `.br`/`.gz` sibling, or a reverse-proxy upstream — had that header stripped when the entry was stored, so every later cache hit handed the compress middleware what looked like a plaintext body and it encoded it again while the response still advertised a single layer. Clients decoded once and rendered compressed bytes as text. Such responses are now kept out of the plaintext cache.
+- Stop UWAS duplicating security headers that the origin already sent, which produced two conflicting `Referrer-Policy` values on proxied responses.
+- Restore the alias-redirect logic in the admin domain Update path, lost in an earlier refactor.
+- Correct an `AllowResller` typo and several unchecked `Write` errors.
+- Repair the production image build: the runtime stage pinned `tzdata=2026b-r0` while Alpine had moved to `2026c-r0`, so `apk` could no longer resolve it. The base image is pinned by digest but `apk` resolves against the live repository, so a package moving on breaks the build with no change in this repository.
+- Align the Docker builder and the MariaDB `gosu` builder with the `go` directive in `go.mod`. The MariaDB image rebuilds `gosu` precisely to avoid a vulnerable prebuilt binary, but its builder had drifted to an older toolchain and reintroduced the stdlib CVEs the project had just cleared.
+
+### Security
+
+- Raise the `go` directive to 1.26.6, clearing seven standard-library vulnerabilities reachable from request-serving paths, including `encoding/asn1` unbounded recursion (reached from the ACME client), a `net` DNS message parse panic (from the DNS checker), and `net/http` IDNA handling (from the proxy handler's `RoundTrip`).
+- Upgrade ImageMagick to 7.1.2.27-r0 in the WordPress example images, clearing CVE-2026-53460 and CVE-2026-53461.
+- Bump `nanoid` to 3.3.18 in the dashboard and docs lockfiles (GHSA-2v37-7h3g-55p8).
+- Record a time-boxed exception for CVE-2026-14456 (openssl QUIC denial of service). No fix is published in any Alpine branch as of this release; the entry in `.trivyignore.yaml` expires on 2026-10-15, after which the finding returns on its own.
+
+### Changed
+
+- The CI `test` job now actually runs. `Lint workflows` failed first in the job and every step after it was skipped — `go vet`, `staticcheck`, the vulnerability scan, the tests, and with them the `docker-integration`, `race` and `e2e` jobs. CI reported red without compiling or testing anything. Go package lists are now passed as arrays, which satisfies ShellCheck without weakening the word split.
+- Cover the static pre-compressed path against double encoding, and make the WordPress duplicate-install test set up its own precondition instead of depending on state left behind by another test.
+
+
 ## [0.8.10] - 2026-07-30
 
 ### Changed
