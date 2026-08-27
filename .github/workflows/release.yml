@@ -25,18 +25,18 @@ jobs:
 
       - name: Vet
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go vet $GO_PACKAGES
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          go vet "${GO_PACKAGES[@]}"
 
       - name: Vulnerability scan
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 $GO_PACKAGES
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 "${GO_PACKAGES[@]}"
 
       - name: Test
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go test -v -count=1 -timeout 600s -p 1 $GO_PACKAGES 2>&1 | tee /tmp/test-output.log
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          go test -v -count=1 -timeout 600s -p 1 "${GO_PACKAGES[@]}" 2>&1 | tee /tmp/test-output.log
 
       - name: Upload test output
         if: always()

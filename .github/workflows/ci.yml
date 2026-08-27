@@ -68,19 +68,19 @@ jobs:
 
       - name: Lint (go vet + staticcheck)
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go vet $GO_PACKAGES
-          staticcheck $GO_PACKAGES
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          go vet "${GO_PACKAGES[@]}"
+          staticcheck "${GO_PACKAGES[@]}"
 
       - name: Vulnerability scan
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          govulncheck $GO_PACKAGES
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          govulncheck "${GO_PACKAGES[@]}"
 
       - name: Test
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go test -v -count=1 -timeout 600s $GO_PACKAGES 2>&1 | tee /tmp/test-output.log
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          go test -v -count=1 -timeout 600s "${GO_PACKAGES[@]}" 2>&1 | tee /tmp/test-output.log
 
       - name: Upload test output
         if: always()
@@ -108,7 +108,7 @@ jobs:
           docker run --detach --rm --name uwas-race-mysql \
             -e MARIADB_ROOT_PASSWORD=root -e MARIADB_ROOT_HOST=% \
             -p 127.0.0.1:3306:3306 uwas-mariadb:ci
-          for attempt in {1..60}; do
+          for _ in {1..60}; do
             if docker exec uwas-race-mysql \
               healthcheck.sh --connect --innodb_initialized; then
               exit 0
@@ -123,8 +123,8 @@ jobs:
 
       - name: Race detector
         run: |
-          GO_PACKAGES="$(go list ./... | grep -v '/node_modules/')"
-          go test -race -count=1 -timeout 900s $GO_PACKAGES
+          mapfile -t GO_PACKAGES < <(go list ./... | grep -v '/node_modules/')
+          go test -race -count=1 -timeout 900s "${GO_PACKAGES[@]}"
         env:
           UWAS_DB_HOST: "127.0.0.1"
           UWAS_DB_PORT: "3306"
