@@ -196,6 +196,24 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	// Domains backed by an apps:// upstream are probed at the loopback
+	// address the supervisor assigned them, which the guarded client above
+	// is built to refuse. That address is not attacker-influenced: it is
+	// always 127.0.0.1 on a port this process allocated or verified the app
+	// exposes, so it gets its own client with a plain dialer.
+	internalClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: (&net.Dialer{
+				Timeout: 5 * time.Second,
+			}).DialContext,
+		},
+	}
+
 	var wg sync.WaitGroup
 	for i, target := range targets {
 		wg.Add(1)
@@ -207,7 +225,7 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 				ParentHost: target.ParentHost,
 				Kind:       target.Kind,
 			}
-			url, appErr := s.domainHealthURL(dom)
+			url, appErr, internal := s.domainHealthURL(dom)
 			hr.Target = url
 			if appErr != "" {
 				hr.Status = "down"
@@ -215,9 +233,17 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 				results[idx] = hr
 				return
 			}
-			// Reject targets that resolve to internal/metadata addresses before
-			// dialing (defense-in-depth alongside SafeDialControl above).
-			if err := config.IsWebhookURLSafe(url); err != nil {
+
+			probe := client
+			if internal {
+				// Address came from the apps supervisor, not from the
+				// domain's Host field — the SSRF guard below would reject
+				// its own loopback target and report every app-backed
+				// domain as down.
+				probe = internalClient
+			} else if err := config.IsWebhookURLSafe(url); err != nil {
+				// Reject targets that resolve to internal/metadata addresses
+				// before dialing (defense-in-depth alongside SafeDialControl).
 				hr.Status = "down"
 				hr.Error = "blocked: " + err.Error()
 				results[idx] = hr
@@ -225,7 +251,7 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 			}
 
 			start := time.Now()
-			resp, err := client.Get(url)
+			resp, err := probe.Get(url)
 			hr.Ms = time.Since(start).Milliseconds()
 
 			if err != nil {
@@ -261,15 +287,19 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) domainHealthURL(dom config.Domain) (string, string) {
+// domainHealthURL returns the URL to probe, an error string when an
+// apps:// upstream is configured but not listening, and whether the URL
+// is an internally-resolved loopback address rather than the domain's
+// public hostname. Callers must not run the SSRF guard on internal URLs.
+func (s *Server) domainHealthURL(dom config.Domain) (string, string, bool) {
 	if appURL, appErr := s.appDomainHealthURL(dom); appURL != "" || appErr != "" {
-		return appURL, appErr
+		return appURL, appErr, appURL != ""
 	}
 	scheme := "http"
 	if dom.SSL.Mode == "auto" || dom.SSL.Mode == "manual" {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/", scheme, dom.Host), ""
+	return fmt.Sprintf("%s://%s/", scheme, dom.Host), "", false
 }
 
 func (s *Server) appDomainHealthURL(dom config.Domain) (string, string) {
