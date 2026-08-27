@@ -1456,7 +1456,7 @@ export default function Apps() {
                   )}
                 </div>
                 <div className="space-y-1">
-                  {deployPreflight?.checks.length ? deployPreflight.checks.map(check => (
+                  {deployPreflight?.checks?.length ? deployPreflight.checks.map(check => (
                     <div key={`${check.name}-${check.message}`} className="flex items-start gap-2">
                       {check.ok ? (
                         <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-400" />

@@ -57,6 +57,15 @@ type AppDeployResponse struct {
 }
 
 // AppPreflightCheck is a single preflight check result.
+// AppDeployPreflightResponse is the shape the dashboard consumes: a readiness
+// flag plus the individual checks. Returning the bare check slice instead makes
+// the Apps page read `.checks` off an array and crash on undefined.
+type AppDeployPreflightResponse struct {
+	OK     bool                `json:"ok"`
+	Checks []AppPreflightCheck `json:"checks"`
+	App    *apps.App           `json:"app,omitempty"`
+}
+
 type AppPreflightCheck struct {
 	Name     string `json:"name,omitempty"`
 	Label    string `json:"label"`
@@ -293,7 +302,33 @@ func (h *Handler) DeployPreflight(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "app not found: "+name, http.StatusNotFound)
 		return
 	}
-	jsonResponse(w, appDeployPreflight(def))
+	checks := appDeployPreflight(def)
+	// Ready only when every REQUIRED check passes; optional ones are advisory
+	// and must not block a deploy.
+	ok := true
+	for _, check := range checks {
+		if check.Required && !check.OK {
+			ok = false
+			break
+		}
+	}
+	jsonResponse(w, AppDeployPreflightResponse{
+		OK:     ok,
+		Checks: checks,
+		App:    appForPreflightResponse(def),
+	})
+}
+
+// appForPreflightResponse copies the definition with the git token cleared.
+// The preflight payload goes to the browser, and the stored token is a
+// credential that must not leave the server.
+func appForPreflightResponse(a *apps.App) *apps.App {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	out.Deploy.GitToken = ""
+	return &out
 }
 
 // ── Webhook handler ──
