@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/middleware"
 )
 
 // newCacheTestServer builds a Server with the in-memory cache + ESI enabled.
@@ -368,4 +372,61 @@ func TestCompressFile(t *testing.T) {
 
 	// Error path: compressing a missing file is a no-op.
 	compressFile(filepath.Join(dir, "missing.log"))
+}
+
+// A pre-compressed upstream/static representation must never enter the
+// plaintext cache. Otherwise the global compressor encodes the stored br bytes
+// again on a cache hit while emitting only one Content-Encoding header.
+func TestPrecompressedResponseIsNotCachedOrDoubleCompressed(t *testing.T) {
+	body := bytes.Repeat([]byte("<p>cached precompressed content</p>"), 80)
+	var compressed bytes.Buffer
+	br := brotli.NewWriter(&compressed)
+	if _, err := br.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := br.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Encoding", "br")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		_, _ = w.Write(compressed.Bytes())
+	}))
+	defer backend.Close()
+
+	s := newCacheTestServer(t, []config.Domain{{
+		Host: "precompressed.test", Type: "proxy", SSL: config.SSLConfig{Mode: "off"},
+		Cache: config.DomainCache{Enabled: true, TTL: 60},
+		Proxy: config.ProxyConfig{
+			Upstreams:             []config.Upstream{{Address: backend.URL}},
+			AllowPrivateUpstreams: true,
+		},
+	}})
+	chain := middleware.SecurityHeaders()(middleware.Gzip(1024)(http.HandlerFunc(s.handleRequest)))
+
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/page.html", nil)
+		req.Host = "precompressed.test"
+		req.Header.Set("Accept-Encoding", "br")
+		chain.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("Content-Encoding"); got != "br" {
+			t.Fatalf("request %d status=%d Content-Encoding = %q, want br; body=%q", i+1, rec.Code, got, rec.Body.String())
+		}
+		if got := rec.Header().Get("X-Cache"); got != "" {
+			t.Fatalf("request %d X-Cache = %q; encoded response must not be cached", i+1, got)
+		}
+		if got := rec.Header().Values("Referrer-Policy"); len(got) != 1 || got[0] != "no-referrer" {
+			t.Fatalf("request %d Referrer-Policy = %q, want one upstream value", i+1, got)
+		}
+		decoded, err := io.ReadAll(brotli.NewReader(bytes.NewReader(rec.Body.Bytes())))
+		if err != nil {
+			t.Fatalf("request %d brotli decode: %v", i+1, err)
+		}
+		if !bytes.Equal(decoded, body) {
+			t.Fatalf("request %d decoded body differs; response was encoded more than once", i+1)
+		}
+	}
 }

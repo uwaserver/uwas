@@ -348,9 +348,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				if isHopByHopHeader(k) {
 					continue
 				}
-				for _, v := range vv {
-					ctx.Response.Header().Add(k, v)
-				}
+				// Preserve all upstream values (e.g. Set-Cookie) but replace the
+				// middleware default so security headers are never duplicated.
+				ctx.Response.Header()[k] = append([]string(nil), vv...)
 			}
 			ctx.Response.WriteHeader(resp.StatusCode)
 			if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
@@ -612,7 +612,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// encoding/length on each hit.
 		hdrs.Del("Content-Encoding")
 		hdrs.Del("Content-Length")
-		if !capture.overflow && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
+		// A pre-encoded upstream response cannot be safely represented by this
+		// cache, whose entries are always uncompressed and are encoded by the
+		// outer compression middleware when served. Do not cache it: otherwise a
+		// hit brotli-compresses the already-brotli body while advertising one
+		// Content-Encoding layer.
+		if !capture.overflow && !capture.upstreamEncoded && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
 			ttl := time.Duration(domain.Cache.TTL) * time.Second
 			if ttl <= 0 {
 				ttl = 60 * time.Second
