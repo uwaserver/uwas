@@ -753,10 +753,9 @@ func (s *Server) Start() error {
 		s.logger.Warn("failed to write pid file", "error", err)
 	}
 
-	// Start every registered app from /etc/uwas/apps.d/.
-	if s.appsMgr != nil {
-		s.appsMgr.StartAll()
-	}
+	// Start every registered app from /etc/uwas/apps.d/, then re-resolve
+	// the proxy pools that reference them.
+	s.startRegisteredApps()
 
 	s.tlsMgr.AllowSelfSigned = true
 	s.tlsMgr.LoadExistingCerts()
