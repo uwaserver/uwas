@@ -175,7 +175,7 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 		if fields.HasSecurity {
 			merged.Security = patch.Security
 		}
-		if fields.HasCompression || patch.Compression.Enabled || len(patch.Compression.Algorithms) > 0 {
+		if fields.HasCompression || patch.Compression.Enabled != nil || len(patch.Compression.Algorithms) > 0 || patch.Compression.MinSize > 0 || len(patch.Compression.Types) > 0 {
 			merged.Compression = patch.Compression
 		}
 	}

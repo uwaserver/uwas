@@ -696,7 +696,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 		middleware.RequestID(),
 		middleware.RealIP(s.realIPTrustedProxies()),
 		middleware.SecurityHeaders(),
-		middleware.Gzip(1024), // compress responses > 1KB
+		middleware.CompressWith(1024, s.compressionPolicyFor),
 	}
 
 	// Global rate limiting (fallback for unknown domains and admin API)
@@ -1443,4 +1443,32 @@ func enforceBasicAuth(w http.ResponseWriter, r *http.Request, host string, cfg c
 	})).ServeHTTP(w, r)
 
 	return passed
+}
+
+// compressionPolicyFor resolves the compression policy for a request from the
+// domain it targets.
+//
+// The compression middleware sits above domain dispatch, so it cannot be given
+// the domain up front; it looks it up by Host here instead. Requests that match
+// no domain (admin API, health checks, unknown hosts) get the zero policy,
+// which means the middleware defaults.
+//
+// domain.Compression used to be dead configuration: it was merged, validated
+// and defaulted, but the chain hardcoded middleware.Gzip(1024) and read none of
+// it. An operator could set min_size, algorithms or types and see no change.
+func (s *Server) compressionPolicyFor(r *http.Request) middleware.CompressionPolicy {
+	if s.vhosts == nil {
+		return middleware.CompressionPolicy{}
+	}
+	domain := s.vhosts.Lookup(r.Host)
+	if domain == nil {
+		return middleware.CompressionPolicy{}
+	}
+	c := domain.Compression
+	return middleware.CompressionPolicy{
+		Disabled:   !c.CompressionEnabled(),
+		MinSize:    c.MinSize,
+		Types:      c.Types,
+		Algorithms: c.Algorithms,
+	}
 }
