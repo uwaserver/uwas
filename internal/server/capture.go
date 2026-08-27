@@ -20,6 +20,11 @@ type responseCapture struct {
 	body       bytes.Buffer
 	written    bool
 	overflow   bool // true if body exceeded maxCacheableBody
+	// upstreamEncoded is captured before the outer compression middleware can
+	// add its own Content-Encoding. Cache entries contain canonical plaintext;
+	// storing an upstream-encoded body as though it were plaintext makes a
+	// later cache hit compress those bytes again.
+	upstreamEncoded bool
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
@@ -36,6 +41,7 @@ func (rc *responseCapture) WriteHeader(code int) {
 	}
 	rc.statusCode = code
 	rc.written = true
+	rc.upstreamEncoded = rc.Header().Get("Content-Encoding") != ""
 	rc.ResponseWriter.WriteHeader(code)
 }
 

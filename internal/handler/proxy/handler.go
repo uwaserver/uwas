@@ -330,11 +330,11 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		// canceled context closes the underlying connection mid-stream.
 		backend.ActiveConns.Add(-1)
 
-		// Copy response headers
+		// Copy response headers. Assignment replaces UWAS defaults when the
+		// upstream owns a header (notably security headers), while preserving
+		// multi-value headers such as Set-Cookie.
 		for key, vals := range resp.Header {
-			for _, v := range vals {
-				ctx.Response.Header().Add(key, v)
-			}
+			ctx.Response.Header()[key] = append([]string(nil), vals...)
 		}
 		removeHopByHop(ctx.Response.Header())
 
