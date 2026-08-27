@@ -69,3 +69,26 @@ func splitAppsTarget(target string) (string, int) {
 	}
 	return strings.TrimSpace(name), port
 }
+
+// startRegisteredApps launches every enabled app and then rebuilds the
+// proxy pools that point at them.
+//
+// The rebuild is not optional. New() builds the pools while every app is
+// still stopped, so ListenAddrForPort returns "" for each `apps://<name>`
+// upstream and resolveAppsUpstream substitutes the http://127.0.0.1:0
+// placeholder. StartAll() then launches the apps and assigns them real
+// ports, but the pools already hold :0 and nothing re-resolves them —
+// so every request to such a domain fails with ECONNREFUSED and the
+// operator sees "502 Bad Gateway — upstream refused connection" for the
+// entire process lifetime. The only escape was an unrelated config
+// reload, which happens to call rebuildProxyPools.
+//
+// Rebuilding here is safe at boot: no listener is accepting yet, so
+// ResetTransports has no in-flight traffic to disturb.
+func (s *Server) startRegisteredApps() {
+	if s.appsMgr == nil {
+		return
+	}
+	s.appsMgr.StartAll()
+	s.rebuildProxyPools(s.config.Domains)
+}
