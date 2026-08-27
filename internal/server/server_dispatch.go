@@ -601,16 +601,31 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// Store the response in cache if it is cacheable and not too large.
 		hdrs := capture.capturedHeaders()
-		// The capture records the pre-compression body, but the global compress
-		// middleware sits below it and, for bodies >= 1KB, sets Content-Encoding:
-		// br|gzip (and drops Content-Length) on the shared header map before we
-		// snapshot it. Storing that encoding header with the uncompressed body
-		// would make every cache hit serve plaintext mislabeled as br/gzip (the
-		// compress writer skips re-compressing when Content-Encoding is already
-		// set), so the client fails to decode. Strip both: the cached body is
-		// canonical uncompressed bytes, and the compress middleware re-derives
-		// encoding/length on each hit.
-		hdrs.Del("Content-Encoding")
+		// Content-Encoding on the snapshot can have two very different meanings,
+		// and storing the wrong one corrupts every subsequent hit.
+		//
+		// When the compress middleware encoded a plaintext body on the way out,
+		// the captured bytes are NOT encoded: keeping the header would serve
+		// plaintext mislabeled as br/gzip, because the compress writer skips a
+		// body that already declares an encoding. Strip it and let compress
+		// re-derive encoding and length on each hit.
+		//
+		// When the HANDLER served an already-encoded body (the static handler's
+		// .br/.gz sibling, a reverse-proxy upstream), the captured bytes ARE
+		// encoded. Stripping the header there hands compress what looks like a
+		// plaintext body, so every hit gets compressed a second time while the
+		// response still advertises a single layer — the client decodes once and
+		// is left holding compressed bytes. Keep the header so the encoding
+		// travels with the body it describes.
+		//
+		// Content-Length is dropped either way: compress removes it when it
+		// encodes, and a stored length can go stale (ESI assembly rewrites the
+		// body on hit).
+		if capture.bodyIsEncoded() {
+			hdrs.Set("Content-Encoding", capture.handlerEncoding)
+		} else {
+			hdrs.Del("Content-Encoding")
+		}
 		hdrs.Del("Content-Length")
 		if !capture.overflow && cache.IsCacheable(r, ctx.Response.StatusCode(), hdrs) {
 			ttl := time.Duration(domain.Cache.TTL) * time.Second
