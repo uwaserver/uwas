@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -26,6 +27,14 @@ func TestHandleSignalsSIGINT(t *testing.T) {
 	log := logger.New("error", "text")
 	s := New(cfg, log)
 
+	// Trap SIGINT for the whole process before any is sent. signal.Notify is
+	// process-wide, and without a registration in place the default action for
+	// SIGINT terminates the test binary — the send below races the handler's
+	// own Notify call.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGINT)
+	defer signal.Stop(guard)
+
 	// Override the wg so handleSignals uses ours
 	s.wg.Add(1)
 	done := make(chan struct{})
@@ -34,14 +43,28 @@ func TestHandleSignalsSIGINT(t *testing.T) {
 		close(done)
 	}()
 
-	// Send SIGINT
-	syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	// The goroutine registers its channel inside handleSignals, so a single
+	// send can land before it is listening and be delivered only to `guard`.
+	// Go does not expose "is this channel registered yet", so the signal is
+	// re-sent until the handler reacts.
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
 
-	select {
-	case <-done:
-		// handleSignals returned after cancel()
-	case <-time.After(2 * time.Second):
-		t.Fatal("handleSignals did not return after SIGINT")
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("send SIGINT: %v", err)
+	}
+	for {
+		select {
+		case <-done:
+			return // handleSignals returned after cancel()
+		case <-tick.C:
+			if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+				t.Fatalf("send SIGINT: %v", err)
+			}
+		case <-deadline:
+			t.Fatal("handleSignals did not return after SIGINT")
+		}
 	}
 }
 
@@ -74,6 +97,14 @@ func TestHandleSignalsSIGHUPWithoutConfigPath(t *testing.T) {
 	}
 	s := New(cfg, log)
 
+	// Trap SIGHUP for the process before sending one. The default action for
+	// SIGHUP terminates the binary, and the send below races the handler's own
+	// Notify call — with no registration in place a mistimed signal would take
+	// the whole test run down.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGHUP)
+	defer signal.Stop(guard)
+
 	s.wg.Add(1)
 	done := make(chan struct{})
 	go func() {
@@ -81,11 +112,17 @@ func TestHandleSignalsSIGHUPWithoutConfigPath(t *testing.T) {
 		close(done)
 	}()
 
-	// Send SIGHUP — config path is empty, reload will log an error
-	syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
-
-	// Wait a moment for the signal to be processed, then cancel
-	time.Sleep(100 * time.Millisecond)
+	// Send SIGHUP — config path is empty, reload will log an error.
+	// Re-sent over a short window because the handler may not have registered
+	// its channel yet. This test does not assert the signal was received (it
+	// only requires handleSignals to return on cancellation), so a lost signal
+	// costs coverage of the reload branch rather than failing the run.
+	for i := 0; i < 5; i++ {
+		if err := syscall.Kill(syscall.Getpid(), syscall.SIGHUP); err != nil {
+			t.Fatalf("send SIGHUP: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	s.cancel()
 
 	select {
