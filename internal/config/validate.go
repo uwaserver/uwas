@@ -351,6 +351,18 @@ func Validate(cfg *Config) error {
 			if rule.TTL < 0 {
 				errs = append(errs, fmt.Sprintf("%s.cache.rules[%d]: ttl must be >= 0, got %d", prefix, j, rule.TTL))
 			}
+			// match is a REGEX, not a glob. An uncompilable pattern used to be
+			// swallowed at request time (matchPath returns false), so a rule
+			// written as "*.html" silently never matched and the operator got
+			// no bypass, no Cache-Control and no ttl — with nothing to explain
+			// why. Report it here instead.
+			if rule.Match != "" {
+				if _, err := regexp.Compile(rule.Match); err != nil {
+					errs = append(errs, fmt.Sprintf(
+						"%s.cache.rules[%d].match: not a valid regular expression (%v) — this field is a regex, not a glob; use \\.html$ rather than *.html",
+						prefix, j, err))
+				}
+			}
 		}
 	}
 
