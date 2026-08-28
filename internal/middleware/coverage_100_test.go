@@ -806,7 +806,7 @@ func TestEnqueueGeoLookupSkipsWhenInflight(t *testing.T) {
 func TestDomainWAFGuardURLBlockedExpectHeader(t *testing.T) {
 	log := logger.New("error", "text")
 	stats := NewSecurityStats()
-	guard := DomainWAFGuard(log, nil, stats)
+	guard := DomainWAFGuard(log, nil, nil, stats)
 	r := httptest.NewRequest(http.MethodGet, "http://x.test/?q=<script>alert(1)</script>", nil)
 	r.Header.Set("Expect", "100-continue")
 	rec := httptest.NewRecorder()
@@ -821,7 +821,7 @@ func TestDomainWAFGuardURLBlockedExpectHeader(t *testing.T) {
 func TestDomainWAFGuardBodyBlockedRestoresStream(t *testing.T) {
 	log := logger.New("error", "text")
 	stats := NewSecurityStats()
-	guard := DomainWAFGuard(log, nil, stats)
+	guard := DomainWAFGuard(log, nil, nil, stats)
 	r := httptest.NewRequest(http.MethodPost, "http://x.test/submit",
 		strings.NewReader("name=1' UNION SELECT password FROM users--"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -836,7 +836,7 @@ func TestDomainWAFGuardBodyBlockedRestoresStream(t *testing.T) {
 
 func TestDomainWAFGuardSafeBodyPassesAndPreserved(t *testing.T) {
 	log := logger.New("error", "text")
-	guard := DomainWAFGuard(log, nil, nil)
+	guard := DomainWAFGuard(log, nil, nil, nil)
 	r := httptest.NewRequest(http.MethodPost, "http://x.test/submit",
 		strings.NewReader("name=alice&age=30"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -852,7 +852,7 @@ func TestDomainWAFGuardSafeBodyPassesAndPreserved(t *testing.T) {
 
 func TestDomainWAFGuardBypassPath(t *testing.T) {
 	log := logger.New("error", "text")
-	guard := DomainWAFGuard(log, []string{"/health"}, nil)
+	guard := DomainWAFGuard(log, []string{"/health"}, nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "http://x.test/health?q=<script>", nil)
 	if !guard(httptest.NewRecorder(), r) {
 		t.Fatal("bypass path should always proceed")
