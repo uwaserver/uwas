@@ -183,6 +183,16 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 		mux:     http.NewServeMux(),
 		taskMgr: install.New(),
 	}
+	// admin.oauth is stored, merged and returned by the settings API, and no
+	// OAuth login flow exists. Enabling it adds no sign-in method, and
+	// allowed_emails restricts nothing — an operator who set both could
+	// reasonably believe the panel is limited to those addresses. Say so.
+	if cfg != nil && cfg.Global.Admin.OAuth.Enabled {
+		log.Warn("admin.oauth.enabled is set but OAuth login is not implemented; " +
+			"no OAuth sign-in is offered and allowed_emails does not restrict access — " +
+			"the panel is protected by its existing authentication only")
+	}
+
 	s.cfRunner = cfintegration.NewRunner(log)
 	s.initDBHandler()
 	s.initCloudflareHandler()
