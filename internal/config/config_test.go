@@ -1191,8 +1191,12 @@ domains:
 	if len(d.PHP.IndexFiles) != 2 || d.PHP.IndexFiles[0] != "index.php" {
 		t.Errorf("PHP.IndexFiles = %v, want [index.php index.html]", d.PHP.IndexFiles)
 	}
-	if d.PHP.MaxUpload != 64*MB {
-		t.Errorf("PHP.MaxUpload = %d, want %d", d.PHP.MaxUpload, 64*MB)
+	// max_upload is deliberately not defaulted: it reaches PHP_ADMIN_VALUE
+	// now, and a filled-in 64MB would cap every domain that never asked for
+	// one — including sites that currently upload more, since a site cannot
+	// raise PHP_ADMIN_VALUE from its own .user.ini.
+	if d.PHP.MaxUpload != 0 {
+		t.Errorf("PHP.MaxUpload = %d, want 0 (ayarsız)", d.PHP.MaxUpload)
 	}
 	if d.PHP.Timeout.Duration != 300*time.Second {
 		t.Errorf("PHP.Timeout = %v, want 300s", d.PHP.Timeout.Duration)
@@ -1438,5 +1442,51 @@ global:
 	}
 	if cfg.Domains[0].Host != "env.example.com" {
 		t.Errorf("host = %q, want env.example.com", cfg.Domains[0].Host)
+	}
+}
+
+// A domain that never mentions max_upload must reach the runtime with 0, so
+// the FastCGI layer sends no upload directives and the system php.ini stays
+// in charge. Defaulting it to 64MB would cap every existing site — including
+// ones currently uploading more, since PHP_ADMIN_VALUE cannot be raised from
+// a site's own .user.ini.
+func TestMaxUploadNotDefaulted(t *testing.T) {
+	cfg := &Config{
+		Global: GlobalConfig{LogLevel: "info", LogFormat: "text"},
+		Domains: []Domain{{
+			Host: "php.test",
+			Type: "php",
+			Root: "/srv/www",
+			SSL:  SSLConfig{Mode: "off"},
+		}},
+	}
+	applyDefaults(cfg)
+
+	if got := cfg.Domains[0].PHP.MaxUpload; got != 0 {
+		t.Errorf("PHP.MaxUpload = %d, want 0 — varsayılan dolgu mevcut siteleri sınırlar", got)
+	}
+	// The other PHP defaults must still be applied.
+	if len(cfg.Domains[0].PHP.IndexFiles) == 0 {
+		t.Error("index_files varsayılanı kayboldu")
+	}
+	if cfg.Domains[0].PHP.Timeout.Duration == 0 {
+		t.Error("timeout varsayılanı kayboldu")
+	}
+}
+
+// An explicit value must survive untouched.
+func TestMaxUploadExplicitPreserved(t *testing.T) {
+	cfg := &Config{
+		Global: GlobalConfig{LogLevel: "info", LogFormat: "text"},
+		Domains: []Domain{{
+			Host: "php.test", Type: "php", Root: "/srv/www",
+			SSL: SSLConfig{Mode: "off"},
+			PHP: PHPConfig{MaxUpload: 128 * MB},
+		}},
+	}
+	applyDefaults(cfg)
+
+	if got := cfg.Domains[0].PHP.MaxUpload; got != 128*MB {
+		t.Errorf("PHP.MaxUpload = %d, want %d", got, 128*MB)
 	}
 }

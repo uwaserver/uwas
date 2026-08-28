@@ -544,8 +544,7 @@ func TestShutdownWithAppsAndWebhook(t *testing.T) {
 
 func TestDomainLogWriteBadDir(t *testing.T) {
 	m := newDomainLogManager()
-	m.Write("h", "/dev/null/nope/access.log",
-		config.RotateConfig{}, "GET", "/", "ip", "agent",
+	m.Write("h", config.AccessLogConfig{Path: "/dev/null/nope/access.log", Rotate: config.RotateConfig{}}, "GET", "/", "ip", "agent",
 		200, 0, 0)
 	// No panic
 }

@@ -228,9 +228,15 @@ func TestGetTransportTimeoutOverrides(t *testing.T) {
 	domain.Proxy.Timeouts.Write = config.Duration{Duration: 11 * time.Second}
 	domain.Proxy.InsecureSkipVerify = true
 
-	tr := h.getTransport(domain)
-	if tr == nil {
+	rt := h.getTransport(domain)
+	if rt == nil {
 		t.Fatal("getTransport returned nil")
+	}
+	// getTransport returns an http.RoundTripper now: a domain with
+	// proxy.grpc gets an h2c wrapper instead. This one does not.
+	tr, ok := rt.(*http.Transport)
+	if !ok {
+		t.Fatalf("getTransport = %T, want *http.Transport", rt)
 	}
 	if tr.ResponseHeaderTimeout != 7*time.Second {
 		t.Errorf("ResponseHeaderTimeout = %v, want 7s", tr.ResponseHeaderTimeout)
@@ -243,7 +249,7 @@ func TestGetTransportTimeoutOverrides(t *testing.T) {
 	}
 
 	// Cached on second call (same pointer).
-	if h.getTransport(domain) != tr {
+	if h.getTransport(domain) != rt {
 		t.Error("getTransport should cache the transport per domain")
 	}
 }
@@ -264,7 +270,11 @@ func TestGetTransportChangesWithDomainPolicy(t *testing.T) {
 	if insecure == privateAllowed {
 		t.Fatal("TLS verification policy change reused stale transport")
 	}
-	if insecure.TLSClientConfig == nil || !insecure.TLSClientConfig.InsecureSkipVerify {
+	insecureTr, ok := insecure.(*http.Transport)
+	if !ok {
+		t.Fatalf("getTransport = %T, want *http.Transport", insecure)
+	}
+	if insecureTr.TLSClientConfig == nil || !insecureTr.TLSClientConfig.InsecureSkipVerify {
 		t.Fatal("updated transport did not apply TLS verification policy")
 	}
 

@@ -409,7 +409,7 @@ func TestRunShellFailure(t *testing.T) {
 func TestRunShellNullByte(t *testing.T) {
 	_, err := runShell("", nil, "echo hello\x00world")
 	if err == nil {
-		t.Error("expected error for command with null byte")
+		t.Fatal("expected error for command with null byte")
 	}
 	if !strings.Contains(err.Error(), "null byte") {
 		t.Errorf("expected null byte error, got: %v", err)
@@ -606,7 +606,7 @@ func TestDeployGit_CloneFails(t *testing.T) {
 	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
-		t.Error("deployGit() expected error for failed clone")
+		t.Fatal("deployGit() expected error for failed clone")
 	}
 	if !strings.Contains(err.Error(), "git clone") {
 		t.Errorf("error = %v, expected 'git clone' in error", err)
@@ -635,7 +635,7 @@ func TestDeployGit_NoGitURL(t *testing.T) {
 	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
-		t.Error("deployGit() expected error for empty GitURL")
+		t.Fatal("deployGit() expected error for empty GitURL")
 	}
 	if !strings.Contains(err.Error(), "no git URL") {
 		t.Errorf("error = %v, expected 'no git URL' in error", err)
@@ -775,7 +775,7 @@ func TestDeployGit_BuildFails(t *testing.T) {
 	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
-		t.Error("deployGit() expected error for failed build")
+		t.Fatal("deployGit() expected error for failed build")
 	}
 	if !strings.Contains(err.Error(), "build failed") {
 		t.Errorf("error = %v, expected 'build failed' in error", err)
@@ -877,7 +877,7 @@ func TestDeployDocker_BuildFails(t *testing.T) {
 	err := m.deployDocker(req, appRoot, status, &log)
 
 	if err == nil {
-		t.Error("deployDocker() expected error for failed build")
+		t.Fatal("deployDocker() expected error for failed build")
 	}
 	if !strings.Contains(err.Error(), "docker build") {
 		t.Errorf("error = %v, expected 'docker build' in error", err)
@@ -921,7 +921,7 @@ func TestDeployDocker_RunFails(t *testing.T) {
 	err := m.deployDocker(req, appRoot, status, &log)
 
 	if err == nil {
-		t.Error("deployDocker() expected error for failed run")
+		t.Fatal("deployDocker() expected error for failed run")
 	}
 	if !strings.Contains(err.Error(), "docker run") {
 		t.Errorf("error = %v, expected 'docker run' in error", err)
@@ -958,7 +958,7 @@ func TestDeployDocker_InvalidDockerfilePath(t *testing.T) {
 	err := m.deployDocker(req, t.TempDir(), status, &log)
 
 	if err == nil {
-		t.Error("deployDocker() expected error for absolute Dockerfile path")
+		t.Fatal("deployDocker() expected error for absolute Dockerfile path")
 	}
 	if !strings.Contains(err.Error(), "must be relative") {
 		t.Errorf("error = %v, expected 'must be relative' in error", err)
@@ -971,7 +971,7 @@ func TestDeployDocker_InvalidDockerfilePath(t *testing.T) {
 	err = m.deployDocker(req, t.TempDir(), status, &log)
 
 	if err == nil {
-		t.Error("deployDocker() expected error for traversal Dockerfile path")
+		t.Fatal("deployDocker() expected error for traversal Dockerfile path")
 	}
 	if !strings.Contains(err.Error(), "must be relative") {
 		t.Errorf("error = %v, expected 'must be relative' in error", err)
@@ -1136,7 +1136,7 @@ func TestDeployGit_FetchFails(t *testing.T) {
 	err := m.deployGit(req, appRoot, "main", nil, status, &log)
 
 	if err == nil {
-		t.Error("deployGit() expected error for failed fetch")
+		t.Fatal("deployGit() expected error for failed fetch")
 	}
 	if !strings.Contains(err.Error(), "git fetch") {
 		t.Errorf("error = %v, expected 'git fetch' in error", err)
@@ -1178,7 +1178,7 @@ func TestDeployGit_ResetFails(t *testing.T) {
 	err := m.deployGit(req, appRoot, "nonexistent", nil, status, &log)
 
 	if err == nil {
-		t.Error("deployGit() expected error for failed reset")
+		t.Fatal("deployGit() expected error for failed reset")
 	}
 	if !strings.Contains(err.Error(), "git reset") {
 		t.Errorf("error = %v, expected 'git reset' in error", err)

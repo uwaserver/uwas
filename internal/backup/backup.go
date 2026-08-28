@@ -368,7 +368,11 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			var ok bool
 			outPath, ok = safeRestorePath(domainsDir, rel)
 			if !ok {
-				continue // path traversal or symlink escape attempt
+				// Say so. A silently dropped entry means the operator is
+				// told the restore succeeded while files are missing.
+				m.logger.Warn("backup restore: entry rejected as unsafe, not restored",
+					"name", hdr.Name)
+				continue
 			}
 		case strings.HasPrefix(hdr.Name, "certs/"):
 			if certsDir == "" {
@@ -381,7 +385,11 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			var ok bool
 			outPath, ok = safeRestorePath(certsDir, rel)
 			if !ok {
-				continue // path traversal or symlink escape attempt
+				// Say so. A silently dropped entry means the operator is
+				// told the restore succeeded while files are missing.
+				m.logger.Warn("backup restore: entry rejected as unsafe, not restored",
+					"name", hdr.Name)
+				continue
 			}
 		case strings.HasPrefix(hdr.Name, "sites/"):
 			// Restore domain web content to web root
@@ -395,7 +403,11 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			var ok bool
 			outPath, ok = safeRestorePath(webRoot, rel)
 			if !ok {
-				continue // path traversal or symlink escape attempt
+				// Say so. A silently dropped entry means the operator is
+				// told the restore succeeded while files are missing.
+				m.logger.Warn("backup restore: entry rejected as unsafe, not restored",
+					"name", hdr.Name)
+				continue
 			}
 		case hdr.Name == "databases/all-databases.sql" || hdr.Name == "databases/native-all-databases.sql":
 			// Import database dump via mysql
@@ -1035,45 +1047,63 @@ func safeRestorePath(base, rel string) (string, bool) {
 		return "", false
 	}
 
-	baseAbs, err := filepath.Abs(base)
-	if err != nil {
-		return "", false
-	}
-	baseReal, err := filepath.EvalSymlinks(base)
-	if err != nil {
-		baseReal = baseAbs
-	}
-
+	// The target must not already be a symlink: writing through it would land
+	// wherever it points, not inside the restore root.
 	if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return "", false
 	}
 
-	existing := target
+	// Compare base and target with every symlink resolved on BOTH sides.
+	// Resolving only one of them rejected any restore root reached through a
+	// symlink — a web root on a second volume, or simply a destination
+	// directory that does not exist yet, where EvalSymlinks(base) failed and
+	// left the base unresolved while the target's existing ancestor came back
+	// resolved. RestoreBackup answers a rejected path with `continue`, so
+	// those entries were dropped and the restore still reported success.
+	baseReal, err := resolveExistingPrefix(base)
+	if err != nil {
+		return "", false
+	}
+	targetReal, err := resolveExistingPrefix(target)
+	if err != nil {
+		return "", false
+	}
+	if !IsInsideDir(targetReal, baseReal) {
+		return "", false
+	}
+
+	return target, true
+}
+
+// resolveExistingPrefix resolves the symlinks in the part of path that exists
+// and appends the components that do not exist yet unchanged, so a directory
+// the restore has not created can still be compared against its eventual
+// location. It is the containment check's notion of "where this really is".
+func resolveExistingPrefix(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	existing := abs
+	var missing []string
 	for {
 		if _, err := os.Lstat(existing); err == nil {
 			break
 		}
 		parent := filepath.Dir(existing)
 		if parent == existing {
-			return "", false
+			return "", fmt.Errorf("no existing ancestor for %s", path)
 		}
+		missing = append([]string{filepath.Base(existing)}, missing...)
 		existing = parent
 	}
 
-	existingReal, err := filepath.EvalSymlinks(existing)
+	real, err := filepath.EvalSymlinks(existing)
 	if err != nil {
-		return "", false
+		return "", err
 	}
-
-	if IsInsideDir(existing, baseAbs) {
-		if !IsInsideDir(existingReal, baseReal) {
-			return "", false
-		}
-	} else if !IsInsideDir(baseAbs, existingReal) {
-		return "", false
-	}
-
-	return target, true
+	return filepath.Join(append([]string{real}, missing...)...), nil
 }
 
 // ScheduleDetail returns the current backup schedule details for the admin UI.

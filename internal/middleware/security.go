@@ -24,26 +24,63 @@ var defaultBlockedPaths = []string{
 	".editorconfig", ".gitignore",
 }
 
+// WAF rule families. security.waf.rules names these; an empty list means all
+// of them, which is what the WAF has always done.
+const (
+	WAFSQLInjection   = "sql_injection"
+	WAFXSS            = "xss"
+	WAFPathTraversal  = "path_traversal"
+	WAFShellInjection = "shell_injection"
+	WAFPHP            = "php"
+)
+
+// wafFamilies lists every family in a stable order, for reporting.
+var wafFamilies = []string{
+	WAFSQLInjection, WAFXSS, WAFPathTraversal, WAFShellInjection, WAFPHP,
+}
+
+// WAFRuleNames returns every family name, for error messages.
+func WAFRuleNames() []string {
+	out := make([]string, len(wafFamilies))
+	copy(out, wafFamilies)
+	return out
+}
+
+// KnownWAFRule reports whether a configured rule names a family this WAF has.
+func KnownWAFRule(name string) bool {
+	for _, f := range wafFamilies {
+		if strings.EqualFold(strings.TrimSpace(name), f) {
+			return true
+		}
+	}
+	return false
+}
+
+type wafRule struct {
+	family string
+	re     *regexp.Regexp
+}
+
 // wafURLPatterns are checked against URL + query string only.
-var wafURLPatterns = []*regexp.Regexp{
+var wafURLPatterns = []wafRule{
 	// SQL injection
-	regexp.MustCompile(`(?i)(union\s+select|insert\s+into|delete\s+from|drop\s+table|alter\s+table)`),
-	regexp.MustCompile(`(?i)(--|;)\s+(drop|alter|delete|insert|update)`),
-	regexp.MustCompile(`(?i)(sleep\s*\(|benchmark\s*\(|load_file\s*\(|into\s+outfile)`),
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(union\s+select|insert\s+into|delete\s+from|drop\s+table|alter\s+table)`)},
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(--|;)\s+(drop|alter|delete|insert|update)`)},
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(sleep\s*\(|benchmark\s*\(|load_file\s*\(|into\s+outfile)`)},
 	// XSS in URL
-	regexp.MustCompile(`(?i)<script[^>]*>`),
-	regexp.MustCompile(`(?i)(javascript|vbscript)\s*:`),
-	regexp.MustCompile(`(?i)on(error|load|click|mouseover)\s*=`),
+	{WAFXSS, regexp.MustCompile(`(?i)<script[^>]*>`)},
+	{WAFXSS, regexp.MustCompile(`(?i)(javascript|vbscript)\s*:`)},
+	{WAFXSS, regexp.MustCompile(`(?i)on(error|load|click|mouseover)\s*=`)},
 	// Path traversal
-	regexp.MustCompile(`\.\./`),
-	regexp.MustCompile(`\.\.\\`),
+	{WAFPathTraversal, regexp.MustCompile(`\.\./`)},
+	{WAFPathTraversal, regexp.MustCompile(`\.\.\\`)},
 	// Shell injection
-	regexp.MustCompile("(?i)(;|\\||`|\\$\\(|\\$\\{)\\s*(cat|ls|rm|wget|curl|nc|bash|sh|python|perl|ruby|php)"),
-	regexp.MustCompile(`(?i)/etc/(passwd|shadow|hosts)`),
-	regexp.MustCompile(`(?i)/proc/self/`),
+	{WAFShellInjection, regexp.MustCompile("(?i)(;|\\||`|\\$\\(|\\$\\{)\\s*(cat|ls|rm|wget|curl|nc|bash|sh|python|perl|ruby|php)")},
+	{WAFShellInjection, regexp.MustCompile(`(?i)/etc/(passwd|shadow|hosts)`)},
+	{WAFShellInjection, regexp.MustCompile(`(?i)/proc/self/`)},
 	// PHP specific
-	regexp.MustCompile(`(?i)(eval|assert|system|exec|passthru|shell_exec|popen)\s*\(`),
-	regexp.MustCompile(`(?i)php://(input|filter|data)`),
+	{WAFPHP, regexp.MustCompile(`(?i)(eval|assert|system|exec|passthru|shell_exec|popen)\s*\(`)},
+	{WAFPHP, regexp.MustCompile(`(?i)php://(input|filter|data)`)},
 }
 
 // wafBodyPatterns are checked against POST body only.
@@ -51,13 +88,39 @@ var wafURLPatterns = []*regexp.Regexp{
 //   - No <script> check; CMS editors and email templates submit HTML.
 //   - No sleep()/benchmark(); code playgrounds and JS snippets are legitimate.
 //   - Only patterns that are almost certainly attacks in form data.
-var wafBodyPatterns = []*regexp.Regexp{
+var wafBodyPatterns = []wafRule{
 	// XSS protocol execution is never legitimate in form data.
-	regexp.MustCompile(`(?i)(javascript|vbscript)\s*:\s*[a-z]`),
+	{WAFXSS, regexp.MustCompile(`(?i)(javascript|vbscript)\s*:\s*[a-z]`)},
 	// SQL injection multi-word patterns have very low false positive rate.
-	regexp.MustCompile(`(?i)(union\s+select|drop\s+table|alter\s+table)`),
+	{WAFSQLInjection, regexp.MustCompile(`(?i)(union\s+select|drop\s+table|alter\s+table)`)},
 	// PHP stream wrappers are never legitimate in form submissions.
-	regexp.MustCompile(`(?i)php://(input|filter|data)`),
+	{WAFPHP, regexp.MustCompile(`(?i)php://(input|filter|data)`)},
+}
+
+// wafFamilySet turns a configured rule list into a lookup. A nil result means
+// "every family", which is what an empty list has always meant in practice —
+// the list was never read, so every deployment has been getting all of them.
+func wafFamilySet(rules []string) map[string]bool {
+	if len(rules) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(rules))
+	for _, r := range rules {
+		r = strings.ToLower(strings.TrimSpace(r))
+		// Unrecognised names are dropped rather than kept: a set that names
+		// only families this WAF does not have matches nothing, and every
+		// request would pass. A typo in the rule list must not be a way to
+		// turn the WAF off.
+		if r != "" && KnownWAFRule(r) {
+			set[r] = true
+		}
+	}
+	if len(set) == 0 {
+		// Nothing usable was configured. Fall back to every family — the
+		// behaviour before the list was read — instead of enforcing none.
+		return nil
+	}
+	return set
 }
 
 // SecurityGuard blocks access to sensitive paths (global middleware).
@@ -92,7 +155,13 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 
 // DomainWAFGuard returns a predicate closure for per-domain WAF checks.
 // It returns true when the request should proceed.
-func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecurityStats) func(w http.ResponseWriter, r *http.Request) bool {
+// rules names the families to enforce; empty means all of them.
+//
+// security.waf.rules was dead configuration: documented as
+// `sql_injection | xss | path_traversal` and never read, so every WAF-enabled
+// domain got every family whatever it listed.
+func DomainWAFGuard(log *logger.Logger, bypassPaths []string, rules []string, stats *SecurityStats) func(w http.ResponseWriter, r *http.Request) bool {
+	families := wafFamilySet(rules)
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		path := r.URL.Path
 		for _, prefix := range bypassPaths {
@@ -106,7 +175,7 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecuritySta
 			fullURI += "?" + r.URL.RawQuery
 		}
 		decodedURI, _ := url.QueryUnescape(fullURI)
-		if matchWAFURL(fullURI, decodedURI) {
+		if matchWAF(wafURLPatterns, families, fullURI, decodedURI) {
 			if stats != nil {
 				stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 			}
@@ -134,7 +203,7 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, stats *SecuritySta
 				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), r.Body))
 				body := string(bodyBytes)
 				decodedBody, _ := url.QueryUnescape(body)
-				if matchWAFBody(body, decodedBody) {
+				if matchWAF(wafBodyPatterns, families, body, decodedBody) {
 					if stats != nil {
 						stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 					}
@@ -172,20 +241,24 @@ func isAPContentType(ct string) bool {
 	return strings.HasSuffix(ct, "+json") || strings.HasSuffix(ct, "+xml")
 }
 
-func matchWAFURL(raw, decoded string) bool {
-	for _, pattern := range wafURLPatterns {
-		if pattern.MatchString(raw) || (decoded != raw && pattern.MatchString(decoded)) {
+// matchWAF reports whether any enabled rule matches. families nil means every
+// family, which is what an empty security.waf.rules has always meant.
+func matchWAF(rules []wafRule, families map[string]bool, raw, decoded string) bool {
+	for _, r := range rules {
+		if families != nil && !families[r.family] {
+			continue
+		}
+		if r.re.MatchString(raw) || (decoded != raw && r.re.MatchString(decoded)) {
 			return true
 		}
 	}
 	return false
 }
 
+func matchWAFURL(raw, decoded string) bool {
+	return matchWAF(wafURLPatterns, nil, raw, decoded)
+}
+
 func matchWAFBody(raw, decoded string) bool {
-	for _, pattern := range wafBodyPatterns {
-		if pattern.MatchString(raw) || (decoded != raw && pattern.MatchString(decoded)) {
-			return true
-		}
-	}
-	return false
+	return matchWAF(wafBodyPatterns, nil, raw, decoded)
 }

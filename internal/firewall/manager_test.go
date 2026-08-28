@@ -374,7 +374,7 @@ func TestAllowPort_NoUFW(t *testing.T) {
 
 	err := AllowPort("80", "tcp")
 	if err == nil {
-		t.Error("AllowPort() expected error for missing ufw, got nil")
+		t.Fatal("AllowPort() expected error for missing ufw, got nil")
 	}
 	if err.Error() != "ufw not installed" {
 		t.Errorf("error = %q, want %q", err.Error(), "ufw not installed")
@@ -478,7 +478,7 @@ func TestDenyPort_NoUFW(t *testing.T) {
 
 	err := DenyPort("3306", "tcp")
 	if err == nil {
-		t.Error("DenyPort() expected error for missing ufw, got nil")
+		t.Fatal("DenyPort() expected error for missing ufw, got nil")
 	}
 	if err.Error() != "ufw not installed" {
 		t.Errorf("error = %q, want %q", err.Error(), "ufw not installed")
@@ -520,7 +520,7 @@ func TestDeleteRule_NoUFW(t *testing.T) {
 
 	err := DeleteRule(1)
 	if err == nil {
-		t.Error("DeleteRule() expected error for missing ufw, got nil")
+		t.Fatal("DeleteRule() expected error for missing ufw, got nil")
 	}
 	if err.Error() != "ufw not installed" {
 		t.Errorf("error = %q, want %q", err.Error(), "ufw not installed")
@@ -720,7 +720,7 @@ func TestDenyPortProtectedAdminPort(t *testing.T) {
 func TestParsePortSpecInvertedRange(t *testing.T) {
 	_, _, err := parsePortSpec("80:20")
 	if err == nil {
-		t.Error("expected error for inverted port range")
+		t.Fatal("expected error for inverted port range")
 	}
 	if !strings.Contains(err.Error(), "invalid port range") {
 		t.Errorf("unexpected error: %v", err)

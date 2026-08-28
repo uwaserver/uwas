@@ -51,6 +51,7 @@ import (
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
+	"github.com/uwaserver/uwas/internal/rlimit"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/sftpserver"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
@@ -209,6 +210,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			log,
 		)
 		cacheEngine.SetVaryHeaders(cfg.Global.Cache.VaryByHeaders)
+		cacheEngine.SetVaryByQuery(cfg.Global.Cache.QueryVaries())
 
 		// L3: Redis cache
 		if cfg.Global.Cache.Redis.Enabled {
@@ -513,7 +515,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			ups = append(ups, proxyhandler.UpstreamConfig{Address: s.resolveAppsUpstream(u.Address), Weight: u.Weight})
 		}
 		s.proxyPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
-		s.proxyBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
+		s.proxyBalancers[d.Host] = proxyhandler.NewBalancerFor(d.Proxy, s.logger)
 
 		if d.Proxy.HealthCheck.Path != "" {
 			hc := proxyhandler.NewHealthChecker(s.proxyPools[d.Host], proxyhandler.HealthConfig{
@@ -598,23 +600,62 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			})
 		}
 		if d.Security.WAF.Enabled {
-			s.wafGuards[d.Host] = middleware.DomainWAFGuard(log, d.Security.WAF.BypassPaths, s.securityStats)
+			// security.waf.rules was never read, so every WAF-enabled domain
+			// has been getting every family whatever it listed. Honouring the
+			// list now narrows coverage for anyone who set one — say which
+			// families are left rather than letting protection shrink
+			// silently on upgrade.
+			if len(d.Security.WAF.Rules) > 0 {
+				s.logger.Warn("security.waf.rules now selects which WAF families run; the others are no longer checked for this domain",
+					"domain", d.Host, "enabled", d.Security.WAF.Rules)
+				for _, r := range d.Security.WAF.Rules {
+					if !middleware.KnownWAFRule(r) {
+						s.logger.Warn("unknown security.waf.rules entry ignored",
+							"domain", d.Host, "rule", r, "known", middleware.WAFRuleNames())
+					}
+				}
+			}
+			s.wafGuards[d.Host] = middleware.DomainWAFGuard(log, d.Security.WAF.BypassPaths, d.Security.WAF.Rules, s.securityStats)
+		}
+	}
+
+	// access_log.format was ignored until now, so a config may carry a value
+	// this writer does not render. Say so once, here, instead of rejecting it
+	// at load: Load() calls Validate and serve refuses to start on the error,
+	// which would take a running site down over a field that did nothing.
+	for _, d := range cfg.Domains {
+		if d.AccessLog.Path != "" && !KnownAccessLogFormat(d.AccessLog.Format) {
+			s.logger.Warn("unknown access_log.format; writing the default clf line",
+				"domain", d.Host, "format", d.AccessLog.Format)
+		}
+		if d.AccessLog.BufferSize < 0 {
+			s.logger.Warn("negative access_log.buffer_size ignored; the log is unbuffered",
+				"domain", d.Host, "buffer_size", d.AccessLog.BufferSize)
+		}
+	}
+
+	// type=app is deprecated: dispatchHandler answers it with a 502 naming
+	// the replacement. Validation still accepts it — removing it would stop
+	// an existing config from loading — so without this the operator only
+	// finds out when traffic arrives. The app: block goes with it: nothing
+	// starts a process from a domain's own app config, and merge.go copying
+	// the fields around is not the same as using them.
+	for _, d := range cfg.Domains {
+		if d.Type == string(config.DomainTypeApp) {
+			s.logger.Warn("domain type=app is no longer supported and will answer 502; "+
+				"create an app under /api/v1/apps and route this domain with type=proxy and an apps://<name> upstream",
+				"domain", d.Host)
+			continue
+		}
+		if d.App.Command != "" || d.App.Runtime != "" || d.App.WorkDir != "" {
+			s.logger.Warn("domain app: block is ignored — no process is started from it; "+
+				"use /api/v1/apps and an apps://<name> upstream instead",
+				"domain", d.Host)
 		}
 	}
 
 	// Per-domain rate limiters
-	s.domainRateLimiters = make(map[string]*middleware.RateLimiter)
-	for _, d := range cfg.Domains {
-		if d.Security.RateLimit.Requests > 0 {
-			window := d.Security.RateLimit.Window.Duration
-			if window == 0 {
-				window = time.Minute
-			}
-			rl := middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
-			rl.SetTrustedProxies(s.config.Global.TrustedProxies)
-			s.domainRateLimiters[d.Host] = rl
-		}
-	}
+	s.domainRateLimiters = buildDomainRateLimiters(ctx, cfg.Domains, s.config.Global.TrustedProxies, s.logger)
 
 	// Per-domain image optimization
 	s.imageOptChains = make(map[string]middleware.Middleware)
@@ -760,6 +801,12 @@ func (s *Server) Start() error {
 	s.tlsMgr.AllowSelfSigned = true
 	s.tlsMgr.LoadExistingCerts()
 	s.tlsMgr.LoadManualCerts()
+
+	// ssl.client_ca / ssl.client_auth were never read at runtime; nothing
+	// called into the TLS manager to parse them.
+	if err := s.tlsMgr.LoadClientCAs(); err != nil {
+		s.logger.Error("some client CAs could not be loaded", "error", err)
+	}
 
 	// Start HTTPS if any domain has SSL or HTTPS listen is explicitly configured.
 	hasSSL := false
@@ -1221,6 +1268,13 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		if d.PHP.FPMAddress != "" && isAddrReachable(d.PHP.FPMAddress) {
 			// Register in phpMgr so it shows in PHP page domain list
 			phpMgr.RegisterExistingDomain(d.Host, defaultVer, d.PHP.FPMAddress, d.Root, d.PHP.ConfigOverrides)
+			// The pool belongs to systemd, not to UWAS, so its workers cannot
+			// be moved into a UWAS cgroup. Say so rather than leaving the
+			// operator to believe domain.resources is in force.
+			if hasResourceLimits(d.Resources) {
+				s.logger.Warn("domain.resources cannot be enforced for a domain served by an external PHP-FPM pool",
+					"domain", d.Host, "address", d.PHP.FPMAddress)
+			}
 			s.logger.Info("using configured PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
 			continue
 		}
@@ -1228,13 +1282,9 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 			s.logger.Warn("configured PHP address unreachable, re-assigning", "domain", d.Host, "address", d.PHP.FPMAddress)
 		}
 
-		inst, err := phpMgr.AssignDomain(d.Host, defaultVer)
+		inst, err := assignPHPForDomain(phpMgr, d, defaultVer, s.logger)
 		if err != nil {
-			continue // already assigned
-		}
-		if err := phpMgr.StartDomain(d.Host); err != nil {
-			s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
-			continue
+			continue // already assigned, or start failed (logged)
 		}
 		// Sync FPM address in config.
 		for i := range cfg.Domains {
@@ -1245,6 +1295,109 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		}
 		s.logger.Info("PHP assigned to domain", "domain", d.Host, "version", defaultVer, "listen", inst.ListenAddr)
 	}
+}
+
+// buildDomainRateLimiters constructs the per-domain limiters.
+//
+// One function for both the startup and the reload path: they used to carry
+// separate copies of this loop, which is how a limiter setting can be applied
+// in one and forgotten in the other — and reappear on the first reload.
+func buildDomainRateLimiters(ctx context.Context, domains []config.Domain, trustedProxies []string, log *logger.Logger) map[string]*middleware.RateLimiter {
+	out := make(map[string]*middleware.RateLimiter)
+	for _, d := range domains {
+		if d.Security.RateLimit.Requests <= 0 {
+			continue
+		}
+		window := d.Security.RateLimit.Window.Duration
+		if window == 0 {
+			window = time.Minute
+		}
+		rl := middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
+		rl.SetTrustedProxies(trustedProxies)
+		rl.SetKeyBy(d.Security.RateLimit.By)
+		if !middleware.KnownRateLimitKey(d.Security.RateLimit.By) && log != nil {
+			// Reported here rather than rejected at load: the field was
+			// ignored until now, so a config carrying an odd value has been
+			// running fine, and Load() failing would stop the server.
+			log.Warn("unknown security.rate_limit.by; counting per client address",
+				"domain", d.Host, "by", d.Security.RateLimit.By)
+		}
+		out[d.Host] = rl
+	}
+	return out
+}
+
+// phpAssigner is the slice of the PHP manager that autoAssignPHP needs. It
+// exists so the wiring below can be tested: the real manager only reports PHP
+// versions it detected on the host, which a test cannot supply.
+type phpAssigner interface {
+	AssignDomainWithRoot(domain, version, webRoot string) (*phpmanager.DomainPHP, error)
+	SetDomainConfig(domain, key, value string) error
+	SetDomainLimits(domain string, limits rlimit.Limits) bool
+	StartDomain(domain string) error
+}
+
+// assignPHPForDomain assigns PHP to one domain and starts it.
+//
+// The web root, the domain's php.ini overrides and its resource limits must
+// all be handed over before the process starts: buildDomainINI reads the
+// first two when it writes the per-domain ini, and a cgroup has to exist
+// before a process can be moved into it.
+//
+// This path used to call AssignDomain, which leaves the web root empty, and
+// buildDomainINI gates upload_tmp_dir, session.save_path and sys_temp_dir on
+// a non-empty web root. (open_basedir has a second source: fastcgi/env.go
+// writes it per request.) A domain started at boot therefore kept the shared
+// system temp directory for sessions and uploads, which the open_basedir list
+// permits — so one domain could read another's session files. The same domain
+// re-assigned through the admin panel got the isolation. The domain's
+// ConfigOverrides were dropped here too, and its resource limits were never
+// recorded at all.
+func assignPHPForDomain(phpMgr phpAssigner, d config.Domain, version string, log *logger.Logger) (*phpmanager.DomainPHP, error) {
+	inst, err := phpMgr.AssignDomainWithRoot(d.Host, version, d.Root)
+	if err != nil {
+		return nil, err
+	}
+	if d.Root == "" {
+		log.Warn("PHP domain has no root; session and upload directories cannot be isolated",
+			"domain", d.Host)
+	}
+
+	// SetDomainConfig validates each key, so a rejected override is reported
+	// rather than silently dropped — and does not stop the others.
+	for key, value := range d.PHP.ConfigOverrides {
+		if err := phpMgr.SetDomainConfig(d.Host, key, value); err != nil {
+			log.Warn("per-domain php.ini override rejected",
+				"domain", d.Host, "key", key, "error", err)
+		}
+	}
+
+	phpMgr.SetDomainLimits(d.Host, limitsFor(d.Resources))
+
+	if err := phpMgr.StartDomain(d.Host); err != nil {
+		log.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
+		return nil, err
+	}
+	return inst, nil
+}
+
+// limitsFor converts a domain's resource block into the rlimit form.
+//
+// domain.resources was dead configuration: internal/rlimit implemented cgroup
+// v2 limits in full — Apply, AssignPID, Remove, with tests — and no package
+// ever imported it. cpu_percent, memory_mb and pid_max were defaulted,
+// merged, echoed back by the admin API, and never enforced.
+func limitsFor(r config.ResourceLimits) rlimit.Limits {
+	return rlimit.Limits{
+		CPUPercent: r.CPUPercent,
+		MemoryMB:   r.MemoryMB,
+		PIDMax:     r.PIDMax,
+	}
+}
+
+// hasResourceLimits reports whether the operator asked for any limit.
+func hasResourceLimits(r config.ResourceLimits) bool {
+	return r.CPUPercent > 0 || r.MemoryMB > 0 || r.PIDMax > 0
 }
 
 func configHasPHPDomains(cfg *config.Config) bool {

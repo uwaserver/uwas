@@ -381,7 +381,7 @@ func TestRedisRespCommandLockedNilConn(t *testing.T) {
 	_, err := c.commandLocked("PING")
 	c.mu.Unlock()
 	if err == nil {
-		t.Error("expected error for nil connection")
+		t.Fatal("expected error for nil connection")
 	}
 	if err.Error() != "redis: not connected" {
 		t.Errorf("unexpected error: %v", err)
