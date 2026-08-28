@@ -231,3 +231,17 @@ describe('Sidebar', () => {
     expect(document.querySelector('aside')?.className).toContain('-translate-x-full');
   });
 });
+
+// branding.footer_text was editable in Settings and typed in the API client,
+// and nothing ever rendered it — the one branding field that did nothing.
+describe('branding.footer_text', () => {
+  it('renders the configured footer text', async () => {
+    await renderSidebar({ branding: { footer_text: 'Powered by DGN Teknoloji' } });
+    expect(screen.getByText('Powered by DGN Teknoloji')).toBeInTheDocument();
+  });
+
+  it('renders nothing when unset', async () => {
+    await renderSidebar({ branding: {} });
+    expect(screen.queryByText(/Powered by/)).not.toBeInTheDocument();
+  });
+});

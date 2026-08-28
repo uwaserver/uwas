@@ -303,6 +303,13 @@ export default function Sidebar() {
             <LogOut size={18} />
             Logout
           </button>
+          {/* branding.footer_text was editable in Settings and typed in the
+              API client, but nothing ever rendered it. */}
+          {branding.footer_text && (
+            <p className="px-3 pt-2 text-xs text-muted-foreground break-words">
+              {branding.footer_text}
+            </p>
+          )}
         </div>
       </aside>
     </>
