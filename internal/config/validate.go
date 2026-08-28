@@ -242,22 +242,6 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		// access_log applies to every domain type, so this sits outside the
-		// proxy block. The field used to be ignored, so a typo produced no
-		// error and no change; now that it is read, an unrecognised value is
-		// caught at load rather than quietly falling back to clf on every
-		// request.
-		if f := strings.ToLower(strings.TrimSpace(d.AccessLog.Format)); f != "" {
-			switch f {
-			case "clf", "json", "custom":
-			default:
-				errs = append(errs, fmt.Sprintf("%s: invalid access_log.format %q (must be clf, json or custom)", prefix, d.AccessLog.Format))
-			}
-		}
-		if d.AccessLog.BufferSize < 0 {
-			errs = append(errs, fmt.Sprintf("%s: access_log.buffer_size must not be negative, got %d", prefix, d.AccessLog.BufferSize))
-		}
-
 		// Proxy validation
 		if dt == DomainTypeProxy {
 			if len(d.Proxy.Upstreams) == 0 {

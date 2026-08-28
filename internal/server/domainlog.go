@@ -401,3 +401,16 @@ func accessLogLine(format string, now time.Time, method, path, remoteIP, userAge
 		userAgent,
 	)
 }
+
+// KnownAccessLogFormat reports whether a configured format is one this writer
+// renders. An unknown value falls back to clf; the caller warns once at
+// startup rather than per request, and never blocks the server from booting
+// over a field that did nothing until now.
+func KnownAccessLogFormat(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "clf", "json", "custom":
+		return true
+	default:
+		return false
+	}
+}

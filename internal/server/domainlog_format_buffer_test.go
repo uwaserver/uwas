@@ -216,3 +216,16 @@ func TestAccessLogBufferFlushesOnTimer(t *testing.T) {
 	}
 	t.Error("tamponlanan satır zamanlayıcıyla diske inmedi")
 }
+
+func TestKnownAccessLogFormat(t *testing.T) {
+	for _, ok := range []string{"", "clf", "CLF", "json", " json ", "custom"} {
+		if !KnownAccessLogFormat(ok) {
+			t.Errorf("%q tanınmadı", ok)
+		}
+	}
+	for _, kotu := range []string{"combined", "json_lines", "saçmalık"} {
+		if KnownAccessLogFormat(kotu) {
+			t.Errorf("%q tanındı", kotu)
+		}
+	}
+}
