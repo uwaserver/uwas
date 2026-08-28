@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-28
+
+Nineteen fixes. Most of them are settings the dashboard offered, the API echoed
+back and the runtime ignored — configuration that looked applied and was not.
+Several change behaviour on upgrade; those are listed under Changed.
+
+### Fixed
+
+- Apply `ssl.min_version`. `TLSConfig` hardcoded TLS 1.2, so a domain asking for 1.3 was served 1.2 with no way to tell. It is now resolved per domain and applied through the SNI path. Values below 1.2 are raised to 1.2 with a warning rather than honoured: validation has always accepted `"1.0"`/`"1.1"` while the field was ignored, so applying them now would weaken deployments that never chose to.
+- Apply `ssl.client_ca` and `ssl.client_auth`. `SetClientAuth` existed and nothing called it, so a domain configured to require client certificates accepted anonymous clients. CA pools are kept per domain: a shared pool would make one domain's CA valid for another's clients, and a listener-wide `ClientAuth` would demand certificates from domains that never asked for mTLS.
+- Restore backups into a directory reached through a symlink. `safeRestorePath` compared a resolved path against an unresolved one, so the containment check failed and `RestoreBackup` skipped the entry and still reported success — the operator was told the backup was restored while the files were not there. It also fired on any destination directory that did not exist yet. Rejected entries are now logged instead of dropped silently.
+- Apply the `proxy.sticky` block. Session affinity was reachable only through the undocumented `algorithm: sticky`, and the cookie name and TTL were hardcoded. `type`, `cookie_name` and `ttl` now take effect, and affinity layers over the configured algorithm instead of replacing it.
+- Apply `php.max_upload`. It was the one field in `PHPConfig` nothing read; a domain configured for 64MB uploads got whatever the system `php.ini` said. `post_max_size` gets headroom over `upload_max_filesize`, since PHP measures the whole request body against it.
+- Isolate session and upload directories for PHP domains started at boot. `autoAssignPHP` left the web root empty, so `upload_tmp_dir`, `session.save_path` and `sys_temp_dir` were never set and sessions landed in the shared system temp directory — which the `open_basedir` list permits, so one domain could read another's session files. The domain's `php.config_overrides` were dropped on that path too. (`open_basedir` itself was unaffected; it has a second source.)
+- Enforce `domain.resources`. `internal/rlimit` implemented cgroup v2 limits in full and no package imported it. Wiring alone was not enough: `Apply` never delegated the controllers through the parent's `cgroup.subtree_control`, so the child cgroup had no `cpu.max`, `memory.max` or `pids.max` in it and every write failed.
+- Apply `global.cache.vary_by_query`. The cache key always folded the query string in, so `/page?utm_source=a` and `?utm_source=b` could not be collapsed onto one entry.
+- Apply `access_log.format` and `access_log.buffer_size`. The writer emitted an unbuffered CLF line and read neither. `format: json` now writes one JSON object per line; a buffered log is flushed before rotation, on close, and on a one-second timer.
+- Apply `locations[].request_timeout`. A path configured to give up after 100ms waited as long as the upstream took. A deadline that fires on a location proxy answers 504 rather than 502.
+- Apply `security.rate_limit.by`. Every limiter counted per client address whatever the domain asked for. `X-Forwarded-For` and `X-Real-IP` route through the address path rather than being read raw, and a request missing the keying header falls back to its address rather than sharing one bucket with every other header-less request.
+- Set up h2c so `proxy.grpc` proxies gRPC. `ForceAttemptHTTP2` only negotiates h2 over TLS, so a cleartext upstream got HTTP/1.1 — which gRPC does not run on.
+- Apply `security.waf.rules`. Every WAF-enabled domain ran every pattern whatever it listed. An unrecognised name is dropped rather than producing a rule set that matches nothing, which would have turned the WAF off on a typo.
+- Render `branding.footer_text`, and apply `branding.primary_color` to the panel theme. The footer text was editable in Settings and nothing displayed it; the colour only tinted the sidebar's fallback avatar, so a deployment with a logo saw no effect.
+- Report a failure when a Cloudflare tunnel is started with no runner. The endpoint answered `{"status":"started"}` and wrote an audit entry saying so.
+- Resolve the git no-op askpass instead of hardcoding `/bin/true`, which does not exist on macOS or in some minimal images — git answers a missing `GIT_ASKPASS` with an error, so the guard against a credential prompt was itself failing.
+
+### Changed
+
+- **`php.max_upload` is no longer defaulted.** It reaches `PHP_ADMIN_VALUE` now, and a filled-in 64MB would cap every domain that never asked for one — including sites currently uploading more, since a site cannot raise `PHP_ADMIN_VALUE` from its own `.user.ini`. Unset means the system `php.ini` stays in charge. The admin API reports it as absent rather than claiming a limit nothing enforced.
+- **PHP sessions move to the domain's own `.tmp`.** Everyone logged in to a PHP site is signed out once, on the restart that first applies it. Announced in the log when the directory is created.
+- **A `security.waf.rules` list now narrows coverage.** Domains that set one have been getting every family; the server warns at startup naming the families that remain.
+- **A `proxy.sticky` block now changes routing** for domains that set one alongside an algorithm.
+- **`ssl.client_auth: require` now takes effect.** A domain carrying it — possibly forgotten, since it never did anything — will start demanding client certificates.
+- `type: app` and the domain-level `app:` block are reported at startup as doing nothing. The type already answered 502 at request time; validation still accepts it, so removing it would stop an existing config from loading.
+- `admin.oauth` is labelled as not implemented, in the panel and in a startup warning. The Settings page told the operator that Allowed Emails restricts who can reach the panel. It restricts nothing.
+- Unrecognised values for `proxy.sticky.type`, `access_log.format` and `security.rate_limit.by` are warned about at startup rather than rejected. These fields were ignored until now, so a config carrying an odd value has been running fine — rejecting it would turn an upgrade into a server that will not start.
+
+### Internal
+
+- The test suite runs on macOS again. Twenty-one process mocks used Windows `ping` syntax that only worked on Linux by accident, and seventy-one nil checks reported with `t.Error` then dereferenced the value — turning a failing assertion into a panic that hid every other failure in the package.
+- `TestDomainLogWriteTriggersRotation` and the WordPress duplicate-install test are deterministic; both were waiting on time rather than on the thing they needed.
+
 ## [0.8.15] - 2026-08-28
 
 Three settings that the dashboard offered, the API echoed back and the runtime
