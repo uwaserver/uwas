@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-28
+
+Follow-up to 0.9.0. Two settings the panel offered but silently discarded, a
+control that covered the page, and an unbounded shell-out that could hold a
+request open indefinitely.
+
+### Fixed
+
+- Stop the domain form deleting `compression.types`. The section offered `enabled`, `min_size` and `algorithms`, never `types` — and did not carry the configured list back either. `MergeDomain` treats compression as a unit, so any patch touching the block replaces the whole thing; the form always sends `min_size`, so editing a domain for any reason returned it without its types list. Harmless until the block started being read in 0.9.0; now it changes what gets compressed.
+- Bound every `crontab` invocation. The three calls ran with no deadline inside an admin HTTP handler, so a `crontab` that blocks — on a lock, on a filesystem that is not answering, or where installing a crontab needs a permission the process lacks — held the request open with nothing to interrupt it.
+- Move the debug control out of the page's top-right corner. Pinned at `right-3 top-3` with `z-50`, it floated over the fixed system stats bar and covered the version number at that bar's right end on every page. It now sits in the sidebar footer beside the theme toggle and logout.
+
+### Changed
+
+- A request line takes its level from the response status: 5xx logs at error, everything else at info. Every request used to be Info, so lowering `global.log_level` to quieten the stream also hid the failures. 4xx deliberately stays at info — scanner 404s are constant on a public site, and blocked requests are already reported at warn by the security and WAF guards.
+- `global.access_log.enabled` turns the request stream off entirely, for a deployment that already writes per-domain `access_log` files and does not want the same data twice. Absent means on.
+- `global.log_level` applies on reload. The level lives in a `slog.LevelVar` precisely so it can move, and nothing called into it: a reload accepted a new value, wrote it to the config, showed it in the panel, and kept logging at the old threshold until the process restarted.
+
+### Internal
+
+- The tests added across 0.9.0 are written in English, like the rest of the repository. Thirty files: identifiers, assertion messages and comments. No assertion changed.
+- README and SPECIFICATION brought back in line. The snapshot said v0.8.9 and the counts had drifted — 42 dashboard pages (43), 251 admin routes (253), 55 Go packages (69), 54 test packages (56), 5 load balancer algorithms (6) — and it claimed the domain-keyed `type=app` config was removed, which it is not.
+- `TestCronAddSuccess` no longer shells out to the host's crontab. It posted a valid job, accepted "200 or 500" and asked the machine which — asserting nothing while hanging `internal/admin` for the full 10 minute package timeout wherever `crontab <file>` blocks.
+
 ## [0.9.0] - 2026-08-28
 
 Nineteen fixes. Most of them are settings the dashboard offered, the API echoed

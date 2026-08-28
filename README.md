@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.9.0)
+## Current Snapshot (v0.9.1)
 
 - **Dashboard pages:** 43 (`web/dashboard/src/pages`)
 - **Admin API routes:** 253 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
