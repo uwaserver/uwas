@@ -2,8 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -208,6 +210,25 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Per-path request timeout. locations[].request_timeout was dead
+		// configuration: defined, merged and echoed back by the API, and no
+		// runtime path read it.
+		//
+		// The deadline goes on the request context, so everything downstream
+		// inherits it — the location proxy below, PHP dispatch (which builds
+		// its FastCGI deadline from ctx.Request's context), and any handler
+		// that honours cancellation. The loop breaks after this iteration
+		// (first match wins, as in nginx), so exactly one location's timeout
+		// can ever apply.
+		if loc.RequestTimeout.Duration > 0 {
+			timedCtx, cancel := context.WithTimeout(r.Context(), loc.RequestTimeout.Duration)
+			// handleRequest returns when the request is done, so this releases
+			// the timer at the right moment.
+			defer cancel()
+			r = r.WithContext(timedCtx)
+			ctx.Request = r
+		}
+
 		// Apply headers + cache-control
 		for k, v := range loc.Headers {
 			ctx.Response.Header().Set(k, v)
@@ -339,8 +360,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			proxyReq.Header.Set("X-Forwarded-Host", r.Host)
 			resp, err := locationProxyHTTPClient.Do(proxyReq)
 			if err != nil {
-				s.logger.Error("location proxy error", "match", loc.Match, "target", loc.ProxyPass, "error", err)
-				renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+				// A request_timeout that fired is a gateway timeout, not a bad
+				// gateway: the upstream was reachable, UWAS gave up waiting.
+				status := http.StatusBadGateway
+				if isDeadline(err) {
+					status = http.StatusGatewayTimeout
+				}
+				s.logger.Error("location proxy error", "match", loc.Match, "target", loc.ProxyPass,
+					"status", status, "error", err)
+				renderDomainError(ctx.Response, status, domain)
 				return
 			}
 			defer resp.Body.Close()
@@ -925,4 +953,10 @@ func cacheTTLFor(ruleTTL, domainTTL, globalDefaultTTL int) time.Duration {
 		}
 	}
 	return 60 * time.Second
+}
+
+// isDeadline reports whether an error is a context deadline, which for a
+// location proxy means request_timeout fired rather than the upstream failing.
+func isDeadline(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded)
 }
