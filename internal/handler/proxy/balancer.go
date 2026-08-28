@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+
+	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/logger"
 )
 
 // Balancer selects a backend from the pool.
@@ -97,11 +100,17 @@ func (rn *Random) Select(backends []*Backend, _ *http.Request) *Backend {
 
 // StickyBalancer provides cookie-based session affinity.
 // If a client has a sticky cookie, it routes to the same backend.
-// Otherwise it falls back to round-robin and sets the cookie.
+// Otherwise it defers to the underlying algorithm and sets the cookie.
 type StickyBalancer struct {
 	CookieName string
 	TTL        int // seconds
-	fallback   RoundRobin
+	// Fallback picks the backend for a request with no usable cookie. sticky
+	// is a layer over the domain's algorithm, not a replacement for it: a
+	// domain running least_conn with sticky sessions must still balance new
+	// sessions by least_conn. Nil means round-robin.
+	Fallback Balancer
+
+	roundRobin RoundRobin
 }
 
 func (sb *StickyBalancer) Select(backends []*Backend, r *http.Request) *Backend {
@@ -116,8 +125,11 @@ func (sb *StickyBalancer) Select(backends []*Backend, r *http.Request) *Backend 
 			}
 		}
 	}
-	// No cookie or backend gone — fall back to round-robin
-	return sb.fallback.Select(backends, r)
+	// No cookie, or the pinned backend is gone.
+	if sb.Fallback != nil {
+		return sb.Fallback.Select(backends, r)
+	}
+	return sb.roundRobin.Select(backends, r)
 }
 
 // SetStickyCookie sets the sticky session cookie on the response after backend selection.
@@ -147,11 +159,91 @@ func NewBalancer(algorithm string) Balancer {
 	case "random":
 		return &Random{}
 	case "sticky":
-		return &StickyBalancer{CookieName: "uwas_sticky", TTL: 3600}
+		// Historical spelling: `algorithm: sticky` with no sticky block.
+		return &StickyBalancer{CookieName: DefaultStickyCookieName, TTL: DefaultStickyTTL}
 	default:
 		// "round_robin", "round-robin", "weighted", "" all map here. The
 		// weighted variant of round-robin is built-in, so a plain RoundRobin
 		// is the correct choice for "weighted" too.
 		return &RoundRobin{}
+	}
+}
+
+// Defaults for proxy.sticky when the domain sets the block but leaves a field
+// empty. They match the values NewBalancer has always hardcoded, so a config
+// that names sticky without tuning it keeps behaving as before.
+const (
+	DefaultStickyCookieName = "uwas_sticky"
+	DefaultStickyTTL        = 3600
+)
+
+// NewBalancerFor builds the balancer for a domain's proxy block.
+//
+// proxy.sticky was dead configuration. The whole block — type, cookie_name,
+// ttl — was documented as sitting alongside `algorithm`, but nothing read it:
+// affinity was reachable only through the undocumented `algorithm: sticky`,
+// and the cookie name and TTL were hardcoded to "uwas_sticky"/3600. An
+// operator could set `sticky: {type: cookie, cookie_name: UWAS_UPSTREAM, ttl:
+// 600}`, see the API echo it back, and get no cookie by that name at all.
+//
+// Affinity now layers over the configured algorithm rather than replacing it,
+// which is what the documented shape means: least_conn plus sticky must still
+// place new sessions by least_conn.
+func NewBalancerFor(p config.ProxyConfig, log *logger.Logger) Balancer {
+	base := NewBalancer(p.Algorithm)
+
+	stickyType := strings.ToLower(strings.TrimSpace(p.Sticky.Type))
+	if stickyType == "" {
+		// No sticky block. `algorithm: sticky` still yields a StickyBalancer
+		// from NewBalancer above; give it the configured cookie/ttl if any.
+		applyStickyOptions(base, p.Sticky)
+		return base
+	}
+
+	switch stickyType {
+	case "cookie":
+		sb := &StickyBalancer{CookieName: DefaultStickyCookieName, TTL: DefaultStickyTTL}
+		// Do not nest a sticky balancer inside itself when the operator wrote
+		// both `algorithm: sticky` and `sticky: {type: cookie}`.
+		if _, alreadySticky := base.(*StickyBalancer); !alreadySticky {
+			sb.Fallback = base
+		}
+		applyStickyOptions(sb, p.Sticky)
+		return sb
+
+	case "ip":
+		// Affinity by client address is exactly what IPHash does.
+		return &IPHash{}
+
+	case "header":
+		// Documented, but the config carries no header name to key on.
+		// Say so rather than silently serving unstickied traffic.
+		if log != nil {
+			log.Warn("proxy.sticky.type: header is not implemented; falling back to the configured algorithm",
+				"algorithm", p.Algorithm)
+		}
+		return base
+
+	default:
+		if log != nil {
+			log.Warn("unknown proxy.sticky.type; falling back to the configured algorithm",
+				"type", p.Sticky.Type, "algorithm", p.Algorithm)
+		}
+		return base
+	}
+}
+
+// applyStickyOptions copies cookie_name/ttl onto a sticky balancer, leaving
+// the defaults in place for fields the operator did not set.
+func applyStickyOptions(b Balancer, s config.StickyConfig) {
+	sb, ok := b.(*StickyBalancer)
+	if !ok {
+		return
+	}
+	if name := strings.TrimSpace(s.CookieName); name != "" {
+		sb.CookieName = name
+	}
+	if s.TTL > 0 {
+		sb.TTL = s.TTL
 	}
 }

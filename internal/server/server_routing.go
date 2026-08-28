@@ -118,7 +118,7 @@ func (s *Server) rebuildProxyPools(domains []config.Domain) {
 			})
 		}
 		newPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
-		newBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
+		newBalancers[d.Host] = proxyhandler.NewBalancerFor(d.Proxy, s.logger)
 
 		if d.Proxy.HealthCheck.Path != "" {
 			hc := proxyhandler.NewHealthChecker(newPools[d.Host], proxyhandler.HealthConfig{

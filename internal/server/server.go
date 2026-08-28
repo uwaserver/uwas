@@ -514,7 +514,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			ups = append(ups, proxyhandler.UpstreamConfig{Address: s.resolveAppsUpstream(u.Address), Weight: u.Weight})
 		}
 		s.proxyPools[d.Host] = proxyhandler.NewUpstreamPool(ups)
-		s.proxyBalancers[d.Host] = proxyhandler.NewBalancer(d.Proxy.Algorithm)
+		s.proxyBalancers[d.Host] = proxyhandler.NewBalancerFor(d.Proxy, s.logger)
 
 		if d.Proxy.HealthCheck.Path != "" {
 			hc := proxyhandler.NewHealthChecker(s.proxyPools[d.Host], proxyhandler.HealthConfig{
