@@ -7,12 +7,52 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var (
 	execCommandFn = exec.Command
 	runtimeGOOS   = runtime.GOOS
+
+	// crontabTimeout bounds every crontab invocation.
+	//
+	// These run inside an admin HTTP handler and had no deadline. crontab can
+	// block — waiting on a lock, on a filesystem that is not answering, or on
+	// a host where installing a crontab needs a permission the process does
+	// not have — and a blocked call held the request open with nothing to
+	// interrupt it. It also hung the test suite for the full 10 minute
+	// package timeout on any machine where that happens.
+	crontabTimeout = 10 * time.Second
 )
+
+// runCrontab runs a crontab invocation with a deadline, killing it if it
+// overruns. It reports the timeout as an error rather than waiting.
+func runCrontab(cmd *exec.Cmd, capture bool) ([]byte, error) {
+	var (
+		out []byte
+		err error
+	)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if capture {
+			out, err = cmd.Output()
+			return
+		}
+		err = cmd.Run()
+	}()
+
+	select {
+	case <-done:
+		return out, err
+	case <-time.After(crontabTimeout):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done // let the goroutine finish with the killed process
+		return nil, fmt.Errorf("crontab did not respond within %s", crontabTimeout)
+	}
+}
 
 // Job represents a cron job entry.
 type Job struct {
@@ -31,7 +71,7 @@ const uwasMarker = "# UWAS managed"
 // overwriting an existing crontab with only their own entry — which would
 // destroy every unrelated cron job on the system.
 func readCrontab() (string, error) {
-	out, err := execCommandFn("crontab", "-l").Output()
+	out, err := runCrontab(execCommandFn("crontab", "-l"), true)
 	if err == nil {
 		return string(out), nil
 	}
@@ -50,7 +90,7 @@ func List() ([]Job, error) {
 	if runtimeGOOS == "windows" {
 		return nil, nil
 	}
-	out, err := execCommandFn("crontab", "-l").Output()
+	out, err := runCrontab(execCommandFn("crontab", "-l"), true)
 	if err != nil {
 		return nil, nil // no crontab
 	}
@@ -173,7 +213,8 @@ func writeCrontab(content string) error {
 		return fmt.Errorf("write crontab temp file: %w", err)
 	}
 	tmp.Close()
-	return execCommandFn("crontab", tmp.Name()).Run()
+	_, err = runCrontab(execCommandFn("crontab", tmp.Name()), false)
+	return err
 }
 
 func parseCronLine(line string) Job {
