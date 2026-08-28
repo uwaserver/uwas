@@ -95,7 +95,7 @@ func (s *Server) reload() error {
 			})
 		}
 		if d.Security.WAF.Enabled {
-			newWAFGuards[d.Host] = middleware.DomainWAFGuard(s.logger, d.Security.WAF.BypassPaths, s.securityStats)
+			newWAFGuards[d.Host] = middleware.DomainWAFGuard(s.logger, d.Security.WAF.BypassPaths, d.Security.WAF.Rules, s.securityStats)
 		}
 	}
 

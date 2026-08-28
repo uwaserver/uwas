@@ -600,7 +600,22 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			})
 		}
 		if d.Security.WAF.Enabled {
-			s.wafGuards[d.Host] = middleware.DomainWAFGuard(log, d.Security.WAF.BypassPaths, s.securityStats)
+			// security.waf.rules was never read, so every WAF-enabled domain
+			// has been getting every family whatever it listed. Honouring the
+			// list now narrows coverage for anyone who set one — say which
+			// families are left rather than letting protection shrink
+			// silently on upgrade.
+			if len(d.Security.WAF.Rules) > 0 {
+				s.logger.Warn("security.waf.rules now selects which WAF families run; the others are no longer checked for this domain",
+					"domain", d.Host, "enabled", d.Security.WAF.Rules)
+				for _, r := range d.Security.WAF.Rules {
+					if !middleware.KnownWAFRule(r) {
+						s.logger.Warn("unknown security.waf.rules entry ignored",
+							"domain", d.Host, "rule", r, "known", middleware.WAFRuleNames())
+					}
+				}
+			}
+			s.wafGuards[d.Host] = middleware.DomainWAFGuard(log, d.Security.WAF.BypassPaths, d.Security.WAF.Rules, s.securityStats)
 		}
 	}
 
