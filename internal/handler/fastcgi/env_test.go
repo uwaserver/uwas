@@ -19,7 +19,7 @@ func TestBuildEnv(t *testing.T) {
 
 	ctx.DocumentRoot = "/var/www/html"
 
-	env := BuildEnv(ctx, "/var/www/html/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/html/index.php", "/index.php", "", nil, 0)
 
 	checks := map[string]string{
 		"REQUEST_METHOD":  "GET",
@@ -50,7 +50,7 @@ func TestBuildEnvStripsProxyHeader(t *testing.T) {
 	ctx := router.AcquireContext(w, r)
 	defer router.ReleaseContext(ctx)
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if v, ok := env["HTTP_PROXY"]; ok {
 		t.Errorf("HTTP_PROXY should not be set from a client Proxy header, got %q", v)
@@ -69,7 +69,7 @@ func TestBuildEnvHTTPS(t *testing.T) {
 	ctx.IsHTTPS = true
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if env["HTTPS"] != "on" {
 		t.Errorf("HTTPS = %q, want on", env["HTTPS"])
@@ -91,7 +91,7 @@ func TestBuildEnvCustom(t *testing.T) {
 		"DB_HOST": "localhost",
 	}
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", custom)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", custom, 0)
 
 	if env["APP_ENV"] != "production" {
 		t.Errorf("APP_ENV = %q, want production", env["APP_ENV"])
@@ -110,7 +110,7 @@ func TestBuildEnvPOST(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/submit.php", "/submit.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/submit.php", "/submit.php", "", nil, 0)
 
 	if env["REQUEST_METHOD"] != "POST" {
 		t.Errorf("REQUEST_METHOD = %q, want POST", env["REQUEST_METHOD"])
@@ -176,7 +176,7 @@ func TestBuildEnvRemoteIPOverride(t *testing.T) {
 	ctx.DocumentRoot = "/var/www"
 	ctx.RemoteIP = "10.0.0.1" // override from trusted proxy header
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if env["REMOTE_ADDR"] != "10.0.0.1" {
 		t.Errorf("REMOTE_ADDR = %q, want 10.0.0.1", env["REMOTE_ADDR"])
@@ -242,7 +242,7 @@ func TestBuildEnvOpenBasedirIncludesParent(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = "/var/www/site/public"
 
-	env := BuildEnv(ctx, "/var/www/site/public/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/site/public/index.php", "/index.php", "", nil, 0)
 
 	adminValue, ok := env["PHP_ADMIN_VALUE"]
 	if !ok {
@@ -267,7 +267,7 @@ func TestBuildEnvMalformedRemoteAddr(t *testing.T) {
 
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	// With malformed addr, REMOTE_ADDR should be the raw string
 	if env["REMOTE_ADDR"] != "malformed-addr" {

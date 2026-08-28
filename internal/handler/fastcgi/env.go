@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
 )
 
 // BuildEnv constructs the CGI/FastCGI environment variables for a request.
-func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo string, customEnv map[string]string) map[string]string {
+func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo string, customEnv map[string]string, maxUpload config.ByteSize) map[string]string {
 	r := ctx.Request
 
 	env := map[string]string{
@@ -102,11 +103,20 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		adminValues := []string{
 			"open_basedir = " + basedirPaths,
 		}
+		adminValues = append(adminValues, uploadLimitDirectives(maxUpload)...)
 		// Merge with existing PHP_ADMIN_VALUE if set
 		if existing := env["PHP_ADMIN_VALUE"]; existing != "" {
 			adminValues = append(adminValues, existing)
 		}
 		env["PHP_ADMIN_VALUE"] = strings.Join(adminValues, "\n")
+	}
+
+	// php.max_upload applies even without a document root, where the
+	// open_basedir block above does not run.
+	if _, hasRoot := env["PHP_ADMIN_VALUE"]; !hasRoot {
+		if limits := uploadLimitDirectives(maxUpload); len(limits) > 0 {
+			env["PHP_ADMIN_VALUE"] = strings.Join(limits, "\n")
+		}
 	}
 
 	// Remove empty values
@@ -220,4 +230,27 @@ func ScriptFilenameFromResolved(resolvedPath, docRoot, scriptName string) string
 		}
 	}
 	return fmt.Sprintf("%s%s", strings.TrimRight(docRoot, "/"), scriptName)
+}
+
+// uploadLimitDirectives renders php.max_upload as php.ini directives.
+//
+// max_upload was the one field in PHPConfig that nothing read: defaulted in
+// defaults.go, merged, documented in SPECIFICATION.md, and never applied. A
+// domain configured for 64MB uploads got whatever the system php.ini said,
+// which is 2M by PHP's own default.
+//
+// post_max_size gets headroom over upload_max_filesize because PHP measures
+// the whole request body against it: multipart boundaries and the other form
+// fields ride along with the file, so setting the two equal would reject an
+// upload of exactly the configured size — repeating in miniature the bug this
+// fixes.
+func uploadLimitDirectives(maxUpload config.ByteSize) []string {
+	if maxUpload <= 0 {
+		return nil
+	}
+	postMax := maxUpload + config.MB
+	return []string{
+		fmt.Sprintf("upload_max_filesize = %d", int64(maxUpload)),
+		fmt.Sprintf("post_max_size = %d", int64(postMax)),
+	}
 }
