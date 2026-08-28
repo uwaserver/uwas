@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore, useState } from 'react';
-import { Activity, Bug, ChevronDown, Copy, Trash2 } from 'lucide-react';
+import { Bug, ChevronDown, Copy, Trash2 } from 'lucide-react';
 import {
   addDebugLog,
   clearDebugLog,
@@ -84,12 +84,27 @@ export default function DebugLogDrawer() {
 
   return (
     <>
-      <div className="fixed right-3 top-3 z-50 flex items-center gap-2 rounded-md border border-border bg-card/95 px-2.5 py-1.5 shadow-sm backdrop-blur">
-        <Bug size={14} className={snapshot.enabled ? 'text-emerald-400' : 'text-muted-foreground'} />
+      {/* Lives in the sidebar footer, beside the theme toggle and logout.
+          It used to float at right-3 top-3, on top of the fixed system stats
+          bar, covering the version number at that bar's right end on every
+          page. A control that is always present belongs in the chrome. */}
+      <div className="flex items-center gap-2 rounded-md px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          title="Open debug log"
+        >
+          <Bug size={18} className={snapshot.enabled ? 'text-emerald-400' : ''} />
+          <span className="truncate">Debug log</span>
+          <span className="ml-auto rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+            {entries.length}
+          </span>
+        </button>
         <button
           type="button"
           onClick={() => setDebugLogEnabled(!snapshot.enabled)}
-          className={`relative h-5 w-9 rounded-full transition ${snapshot.enabled ? 'bg-emerald-500' : 'bg-muted'}`}
+          className={`relative h-5 w-9 shrink-0 rounded-full transition ${snapshot.enabled ? 'bg-emerald-500' : 'bg-muted'}`}
           title="Toggle debug log"
           aria-label="Toggle debug log"
         >
@@ -98,15 +113,6 @@ export default function DebugLogDrawer() {
               snapshot.enabled ? 'translate-x-4' : 'translate-x-0'
             }`}
           />
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          title="Open debug log"
-        >
-          <Activity size={13} />
-          {entries.length}
         </button>
       </div>
 
