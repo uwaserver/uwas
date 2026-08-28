@@ -1228,13 +1228,9 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 			s.logger.Warn("configured PHP address unreachable, re-assigning", "domain", d.Host, "address", d.PHP.FPMAddress)
 		}
 
-		inst, err := phpMgr.AssignDomain(d.Host, defaultVer)
+		inst, err := assignPHPForDomain(phpMgr, d, defaultVer, s.logger)
 		if err != nil {
-			continue // already assigned
-		}
-		if err := phpMgr.StartDomain(d.Host); err != nil {
-			s.logger.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
-			continue
+			continue // already assigned, or start failed (logged)
 		}
 		// Sync FPM address in config.
 		for i := range cfg.Domains {
@@ -1245,6 +1241,52 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		}
 		s.logger.Info("PHP assigned to domain", "domain", d.Host, "version", defaultVer, "listen", inst.ListenAddr)
 	}
+}
+
+// phpAssigner is the slice of the PHP manager that autoAssignPHP needs. It
+// exists so the wiring below can be tested: the real manager only reports PHP
+// versions it detected on the host, which a test cannot supply.
+type phpAssigner interface {
+	AssignDomainWithRoot(domain, version, webRoot string) (*phpmanager.DomainPHP, error)
+	SetDomainConfig(domain, key, value string) error
+	StartDomain(domain string) error
+}
+
+// assignPHPForDomain assigns PHP to one domain and starts it.
+//
+// The web root and the domain's php.ini overrides must be handed over before
+// the process starts, because buildDomainINI reads both when it writes the
+// per-domain ini. This path used to call AssignDomain, which leaves the web
+// root empty — and buildDomainINI gates the whole open_basedir /
+// upload_tmp_dir / session.save_path block on a non-empty web root. Every PHP
+// domain started at boot therefore ran with no filesystem isolation and
+// shared the system temp directory for sessions and uploads, while the same
+// domain re-assigned through the admin panel (which calls
+// AssignDomainWithRoot) got both. The domain's ConfigOverrides were dropped
+// on this path too.
+func assignPHPForDomain(phpMgr phpAssigner, d config.Domain, version string, log *logger.Logger) (*phpmanager.DomainPHP, error) {
+	inst, err := phpMgr.AssignDomainWithRoot(d.Host, version, d.Root)
+	if err != nil {
+		return nil, err
+	}
+	if d.Root == "" {
+		log.Warn("PHP domain has no root; open_basedir cannot be enforced", "domain", d.Host)
+	}
+
+	// SetDomainConfig validates each key, so a rejected override is reported
+	// rather than silently dropped — and does not stop the others.
+	for key, value := range d.PHP.ConfigOverrides {
+		if err := phpMgr.SetDomainConfig(d.Host, key, value); err != nil {
+			log.Warn("per-domain php.ini override rejected",
+				"domain", d.Host, "key", key, "error", err)
+		}
+	}
+
+	if err := phpMgr.StartDomain(d.Host); err != nil {
+		log.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
+		return nil, err
+	}
+	return inst, nil
 }
 
 func configHasPHPDomains(cfg *config.Config) bool {
