@@ -761,6 +761,12 @@ func (s *Server) Start() error {
 	s.tlsMgr.LoadExistingCerts()
 	s.tlsMgr.LoadManualCerts()
 
+	// ssl.client_ca / ssl.client_auth were never read at runtime; nothing
+	// called into the TLS manager to parse them.
+	if err := s.tlsMgr.LoadClientCAs(); err != nil {
+		s.logger.Error("some client CAs could not be loaded", "error", err)
+	}
+
 	// Start HTTPS if any domain has SSL or HTTPS listen is explicitly configured.
 	hasSSL := false
 	for _, d := range s.config.Domains {
