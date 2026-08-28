@@ -247,7 +247,7 @@ func TestSecurityGuardWAFEncodedAttacks(t *testing.T) {
 func TestAccessLogOutputFormat(t *testing.T) {
 	log := logger.New("info", "text")
 
-	handler := AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AccessLog(log, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(201)
 		w.Write([]byte("created"))
@@ -269,7 +269,7 @@ func TestAccessLogOutputFormat(t *testing.T) {
 func TestAccessLogCapturesStatusAndBytes(t *testing.T) {
 	log := logger.New("debug", "text")
 
-	handler := AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AccessLog(log, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		w.Write([]byte("not found"))
 	}))

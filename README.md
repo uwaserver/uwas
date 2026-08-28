@@ -24,15 +24,35 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.8.9)
+## Current Snapshot (v0.9.0)
 
-- **Dashboard pages:** 42 (`web/dashboard/src/pages`)
-- **Admin API routes:** 251 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
-- **Go packages:** 55 (from `go list ./... | grep -v '/node_modules/'`)
+- **Dashboard pages:** 43 (`web/dashboard/src/pages`)
+- **Admin API routes:** 253 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
+- **Go packages:** 69 (`go list ./...`), 56 of them with tests
 - **CLI commands:** 19
-- **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test` (54/54 packages), `go test -race` (0 data races), dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
+- **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test` (56/56 packages with tests), `go test -race` (0 data races), dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.8.8 resolved all 5 CRITICAL/HIGH and 11 MEDIUM findings from the June security audit; includes admin RBAC hardening, PHP sandbox-escape closure, SVG XSS prevention, docker-compose credential fail-fast, crontab data-loss guard, cron job timeout, Cloudflare pagination, Route53 signing fix, compress middleware WebSocket/Flush/Unwrap, TOTP replay protection, brute-force lockout serialization, and checked I/O paths
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.9.0 highlights (configuration that now takes effect):**
+- Nineteen settings the dashboard offered, the API echoed back and the runtime
+  ignored now apply: TLS minimum version, mTLS client CAs, per-domain resource
+  limits, sticky sessions, PHP upload limits, cache key composition, access log
+  format and buffering, per-path timeouts, rate-limit keying, gRPC over h2c,
+  and WAF rule families
+- Backup restore into a directory reached through a symlink wrote nothing and
+  reported success; PHP domains started at boot shared the system temp
+  directory for sessions and uploads
+- `admin.oauth` is labelled as not implemented, in the panel and in a startup
+  warning — the Settings page told operators that Allowed Emails restricts who
+  can reach the panel, and it restricts nothing
+- Request lines take their level from the response status, so lowering
+  `global.log_level` quietens the stream without hiding the failures;
+  `global.access_log.enabled` turns the stream off entirely
+- `global.log_level` applies on reload instead of needing a restart
+- Settings that were previously ignored are warned about at startup rather
+  than rejected: a config carrying an odd value has been running fine, and
+  refusing to load it would turn an upgrade into a server that will not start
 
 **v0.8.x highlights (security hardening + release integrity):**
 - v0.8.9 follow-up hardening: DB/root passwords kept off process command lines (`MYSQL_PWD`/stdin, `docker -e` by name), php-fpm pool user/group when root, webhook delivery worker pool, provider DNS pagination + multi-label TLD zone lookup, streaming SFTP backups, and Go 1.26.5 toolchain (`crypto/tls` GO-2026-5856 fix)
@@ -67,7 +87,10 @@ One binary. Zero hassle.
   keep old ports bound
 - The Applications dashboard uses an inline app builder instead of a creation
   overlay
-- Legacy domain-keyed `type=app` config and migration endpoints are removed
+- Apps replaced the domain-keyed `type=app` config. The type still loads —
+  removing it would stop an existing config from starting — but it answers
+  502 with the replacement named, and both it and a leftover `app:` block
+  are reported at startup
 - Docker apps support image or BuildKit build context workflows
 
 **v0.5.0 highlights (refactor + perf + observability sweep, 43 commits):**
@@ -87,14 +110,14 @@ One binary. Zero hassle.
 - **Built-in Cache** — Varnish-level caching with grace mode, tag-based purge, ESI (Edge Side Includes)
 - **PHP Ready** — FastCGI with connection pooling and .htaccess support
 - **Per-domain PHP** — Multiple PHP versions per domain with auto-port assignment, crash auto-restart
-- **Load Balancer** — 5 algorithms, health checks, circuit breaker, canary routing
+- **Load Balancer** — 6 algorithms (round-robin, least-conn, ip-hash, uri-hash, random, sticky), health checks, circuit breaker, canary routing
 - **WebSocket Proxy** — Transparent TCP tunnel with hijack + bidirectional pipe
 - **URL Rewrite** — Apache mod_rewrite compatible engine
 - **Brotli + Gzip** — Dual compression with Accept-Encoding negotiation
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **42-page Dashboard** — React 19 admin panel with dark/light theme
+- **43-page Dashboard** — React 19 admin panel with dark/light theme
 - **Applications** — Deploy and supervise Node.js, Python, Ruby, Go, custom, and Docker apps
 - **Web Terminal** — Browser-based shell via WebSocket-to-PTY bridge
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA

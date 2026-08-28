@@ -2,6 +2,7 @@
 package cronjob
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,29 +28,39 @@ var (
 
 // runCrontab runs a crontab invocation with a deadline, killing it if it
 // overruns. It reports the timeout as an error rather than waiting.
+//
+// Start is called on this goroutine on purpose. Running cmd.Run in a
+// goroutine and reaching for cmd.Process from here races: Run sets Process
+// while this side reads it. After Start returns, Process is set and stable,
+// and killing it while Wait runs is the documented pattern.
+//
+// stderr is captured and attached to an ExitError the way cmd.Output does,
+// because readCrontab tells "no crontab for user" — an empty crontab, not a
+// failure — from a real error by reading it.
 func runCrontab(cmd *exec.Cmd, capture bool) ([]byte, error) {
-	var (
-		out []byte
-		err error
-	)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if capture {
-			out, err = cmd.Output()
-			return
-		}
-		err = cmd.Run()
-	}()
+	var stdout, stderr bytes.Buffer
+	if capture {
+		cmd.Stdout = &stdout
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = &stderr
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
 
 	select {
-	case <-done:
-		return out, err
-	case <-time.After(crontabTimeout):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+	case err := <-done:
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) == 0 {
+			ee.Stderr = stderr.Bytes()
 		}
-		<-done // let the goroutine finish with the killed process
+		return stdout.Bytes(), err
+	case <-time.After(crontabTimeout):
+		_ = cmd.Process.Kill()
+		<-done // reap the killed process
 		return nil, fmt.Errorf("crontab did not respond within %s", crontabTimeout)
 	}
 }
