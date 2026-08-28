@@ -101,7 +101,7 @@ func (s *Server) reload() error {
 	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
 	// before swapping the map; otherwise each reload leaks N goroutines bound
 	// to s.ctx (server lifetime).
-	newRateLimiters := buildDomainRateLimiters(s.ctx, newCfg.Domains, newCfg.Global.TrustedProxies)
+	newRateLimiters := buildDomainRateLimiters(s.ctx, newCfg.Domains, newCfg.Global.TrustedProxies, s.logger)
 
 	// Rebuild image optimization chains
 	newImageOpt := make(map[string]middleware.Middleware)

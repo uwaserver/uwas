@@ -125,6 +125,22 @@ func (rl *RateLimiter) SetKeyBy(by string) {
 	rl.keyBy = strings.TrimSpace(by)
 }
 
+// KnownRateLimitKey reports whether a security.rate_limit.by value is one the
+// limiter understands. An unrecognised form falls back to the client address;
+// the caller warns once at startup rather than blocking the boot over a field
+// that did nothing until now.
+func KnownRateLimitKey(by string) bool {
+	by = strings.TrimSpace(by)
+	if by == "" || strings.EqualFold(by, "ip") {
+		return true
+	}
+	name, ok := strings.CutPrefix(by, "header:")
+	if !ok {
+		name, ok = strings.CutPrefix(by, "HEADER:")
+	}
+	return ok && strings.TrimSpace(name) != ""
+}
+
 // Key returns the bucket key for a request, applying security.rate_limit.by.
 //
 // X-Forwarded-For and X-Real-IP route through the client-address path rather

@@ -9,6 +9,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/middleware"
 )
 
 // security.rate_limit.by was dead configuration: SPECIFICATION.md documents
@@ -146,7 +147,7 @@ func TestBuildDomainRateLimitersCarriesKeyBy(t *testing.T) {
 	limiters := buildDomainRateLimiters(t.Context(), []config.Domain{{
 		Host:     "rl.test",
 		Security: config.SecurityConfig{RateLimit: config.RateLimitConfig{Requests: 2, By: "header:X-API-Key"}},
-	}}, nil)
+	}}, nil, logger.New("error", "text"))
 
 	rl := limiters["rl.test"]
 	if rl == nil {
@@ -167,8 +168,39 @@ func TestBuildDomainRateLimitersCarriesKeyBy(t *testing.T) {
 
 // A domain with no rate limit must produce no limiter.
 func TestBuildDomainRateLimitersSkipsUnlimited(t *testing.T) {
-	limiters := buildDomainRateLimiters(t.Context(), []config.Domain{{Host: "plain.test"}}, nil)
+	limiters := buildDomainRateLimiters(t.Context(), []config.Domain{{Host: "plain.test"}}, nil, logger.New("error", "text"))
 	if len(limiters) != 0 {
 		t.Errorf("sınırsız domain için limiter kuruldu: %v", limiters)
+	}
+}
+
+func TestKnownRateLimitKey(t *testing.T) {
+	for _, ok := range []string{"", "ip", "IP", " ip ", "header:X-API-Key", "HEADER:X-Api-Key"} {
+		if !middleware.KnownRateLimitKey(ok) {
+			t.Errorf("%q tanınmadı", ok)
+		}
+	}
+	for _, kotu := range []string{"header:", "header", "cookie:sid", "saçmalık"} {
+		if middleware.KnownRateLimitKey(kotu) {
+			t.Errorf("%q tanındı", kotu)
+		}
+	}
+}
+
+// An unrecognised value must still produce a working limiter, keyed per
+// client address — not a nil limiter or a shared bucket.
+func TestUnknownKeyByStillLimitsPerAddress(t *testing.T) {
+	h := rateFixture(t, config.RateLimitConfig{Requests: 2, By: "cookie:sid"}, nil)
+
+	for i := 0; i < 2; i++ {
+		if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusOK {
+			t.Fatalf("istek %d: durum %d", i+1, code)
+		}
+	}
+	if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
+		t.Errorf("tanınmayan by ile sınır uygulanmadı: durum %d", code)
+	}
+	if code := rlIstek(h, "203.0.113.2:5000", nil); code != http.StatusOK {
+		t.Errorf("başka IP engellendi: durum %d — tek kovaya düşülmüş", code)
 	}
 }

@@ -242,19 +242,6 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		// security.rate_limit.by validation. The field used to be ignored, so
-		// a typo produced no error and silent per-IP keying; now that it is
-		// read, an unrecognised form is caught at load.
-		if by := strings.TrimSpace(d.Security.RateLimit.By); by != "" {
-			lower := strings.ToLower(by)
-			switch {
-			case lower == "ip":
-			case strings.HasPrefix(lower, "header:") && strings.TrimSpace(by[len("header:"):]) != "":
-			default:
-				errs = append(errs, fmt.Sprintf("%s: invalid security.rate_limit.by %q (must be \"ip\" or \"header:<Name>\")", prefix, d.Security.RateLimit.By))
-			}
-		}
-
 		// Proxy validation
 		if dt == DomainTypeProxy {
 			if len(d.Proxy.Upstreams) == 0 {
