@@ -79,15 +79,66 @@ func selectEncoding(acceptEncoding string) encodingType {
 	return encodingNone
 }
 
+// CompressionPolicy is the per-request compression policy, resolved from the
+// domain the request is for.
+//
+// Zero value means "use the middleware defaults": compression on, the
+// middleware's minimum size, and the built-in content-type list.
+type CompressionPolicy struct {
+	// Disabled turns compression off for this request entirely.
+	Disabled bool
+	// MinSize overrides the middleware default when > 0.
+	MinSize int
+	// Types replaces the built-in compressible content-type prefixes when
+	// non-empty. Matching is by prefix, same as the built-in list.
+	Types []string
+	// Algorithms restricts which encodings may be used ("br", "gzip"). Empty
+	// means both, brotli preferred.
+	Algorithms []string
+}
+
+// allows reports whether enc may be used under this policy.
+func (p CompressionPolicy) allows(enc encodingType) bool {
+	if len(p.Algorithms) == 0 {
+		return true
+	}
+	want := "gzip"
+	if enc == encodingBrotli {
+		want = "br"
+	}
+	for _, a := range p.Algorithms {
+		if strings.EqualFold(strings.TrimSpace(a), want) {
+			return true
+		}
+	}
+	return false
+}
+
 // Compress returns middleware that compresses responses with brotli or gzip.
 // Brotli is preferred when the client supports it; gzip is used as fallback.
 func Compress(minSize int) Middleware {
+	return CompressWith(minSize, nil)
+}
+
+// CompressWith is Compress with a per-request policy resolver.
+//
+// The resolver runs before the domain handler, so it looks the domain up by
+// Host itself. Passing nil keeps the previous fixed behaviour.
+func CompressWith(minSize int, policyFor func(*http.Request) CompressionPolicy) Middleware {
 	if minSize <= 0 {
 		minSize = 1024
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			policy := CompressionPolicy{}
+			if policyFor != nil {
+				policy = policyFor(r)
+			}
+			if policy.Disabled {
+				next.ServeHTTP(w, r)
+				return
+			}
 			// Skip compression for conditional requests (let ServeContent handle 304)
 			if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
 				next.ServeHTTP(w, r)
@@ -113,15 +164,25 @@ func Compress(minSize int) Middleware {
 			}
 
 			enc := selectEncoding(r.Header.Get("Accept-Encoding"))
-			if enc == encodingNone {
+			// Fall back to the other encoding when the policy rules one out.
+			if enc == encodingBrotli && !policy.allows(enc) && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				enc = encodingGzip
+			}
+			if enc == encodingNone || !policy.allows(enc) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
+			etkinMinSize := minSize
+			if policy.MinSize > 0 {
+				etkinMinSize = policy.MinSize
+			}
+
 			cw := &compressResponseWriter{
 				ResponseWriter: w,
-				minSize:        minSize,
+				minSize:        etkinMinSize,
 				encoding:       enc,
+				types:          policy.Types,
 			}
 			defer cw.Close()
 
@@ -144,6 +205,7 @@ type compressResponseWriter struct {
 	writer      io.WriteCloser // brotli or gzip writer (nil until compression starts)
 	encoding    encodingType
 	minSize     int
+	types       []string // nil = built-in compressible list
 	buf         []byte
 	wroteHeader bool
 	statusCode  int
@@ -201,7 +263,7 @@ func (w *compressResponseWriter) Write(b []byte) (int, error) {
 		case w.Header().Get("Content-Encoding") != "":
 			// Already compressed by upstream (PHP ob_gzip_handler, etc.)
 			_, err = w.flushUncompressed()
-		case isCompressible(ct):
+		case w.compressible(ct):
 			_, err = w.startCompression()
 		default:
 			_, err = w.flushUncompressed()
@@ -290,7 +352,7 @@ func (w *compressResponseWriter) Close() {
 		if ct == "" {
 			ct = http.DetectContentType(w.buf)
 		}
-		if isCompressible(ct) && len(w.buf) >= w.minSize && w.statusCode == http.StatusOK {
+		if w.compressible(ct) && len(w.buf) >= w.minSize && w.statusCode == http.StatusOK {
 			w.startCompression()
 		} else {
 			w.flushUncompressed()
@@ -315,6 +377,21 @@ func (w *compressResponseWriter) Close() {
 	} else if !w.wroteHeader {
 		w.ResponseWriter.WriteHeader(http.StatusOK)
 	}
+}
+
+// compressible applies the policy's content-type list when it has one,
+// otherwise the built-in list.
+func (w *compressResponseWriter) compressible(ct string) bool {
+	if len(w.types) == 0 {
+		return isCompressible(ct)
+	}
+	ct = strings.ToLower(ct)
+	for _, prefix := range w.types {
+		if strings.HasPrefix(ct, strings.ToLower(strings.TrimSpace(prefix))) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCompressible(ct string) bool {

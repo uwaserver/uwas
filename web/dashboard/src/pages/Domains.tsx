@@ -6,6 +6,7 @@ import {
   X, Plus, Trash2, CheckCircle, XCircle, ChevronDown, ChevronRight,
   Shield, Lock, Database, Server, ArrowRight, FileCode, Zap, RefreshCw,
   AlertTriangle, Layers, Settings, Link, Pencil, ExternalLink, Box, Code, Upload, Cloud,
+  Archive,
 } from 'lucide-react';
 import {
   fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
@@ -29,6 +30,9 @@ interface DomainFormState {
   forceSSL: boolean;
   cacheEnabled: boolean;
   cacheTTL: string;
+  compressionEnabled: boolean;
+  compressionMinSize: string;
+  compressionAlgorithms: string;
   phpFpmAddress: string;
   phpIndexFiles: string;
   proxyUpstreams: string;
@@ -72,6 +76,11 @@ const emptyForm: DomainFormState = {
   forceSSL: false,
   cacheEnabled: false,
   cacheTTL: '3600',
+  // Compression is on unless the operator turns it off, so the form starts
+  // checked and an untouched form sends no compression block at all.
+  compressionEnabled: true,
+  compressionMinSize: '1024',
+  compressionAlgorithms: '',
   phpFpmAddress: '',
   phpIndexFiles: 'index.php,index.html',
   proxyUpstreams: '',
@@ -566,6 +575,9 @@ export default function Domains() {
         forceSSL: d.ssl?.force_ssl ?? false,
         cacheEnabled: d.cache?.enabled ?? false,
         cacheTTL: String(d.cache?.ttl ?? 3600),
+        compressionEnabled: d.compression?.enabled ?? true,
+        compressionMinSize: String(d.compression?.min_size ?? 1024),
+        compressionAlgorithms: (d.compression?.algorithms ?? []).join(', '),
         phpFpmAddress: d.php?.fpm_address ?? '',
         phpIndexFiles: d.php?.index_files?.join(', ') ?? 'index.php,index.html',
         proxyUpstreams: d.proxy?.upstreams?.map(u => typeof u === 'string' ? u : u.address).join(', ') ?? '',
@@ -603,6 +615,9 @@ export default function Domains() {
         ...prev,
         type: value,
         cacheEnabled: false,
+        compressionEnabled: true,
+        compressionMinSize: '1024',
+        compressionAlgorithms: '',
         wafEnabled: false,
         cloudflareOnly: false,
         htaccessEnabled: false,
@@ -659,6 +674,19 @@ export default function Domains() {
       payload.cache = {
         enabled: form.cacheEnabled,
         ttl: parseInt(form.cacheTTL, 10) || 3600,
+      };
+    }
+
+    // Compression settings. Only sent when the operator moved away from the
+    // defaults — an untouched form leaves the block absent, which the server
+    // reads as "compression on with built-in defaults".
+    const algorithms = form.compressionAlgorithms.split(',').map(s => s.trim()).filter(Boolean);
+    const minSize = parseInt(form.compressionMinSize, 10) || 1024;
+    if (form.type !== 'redirect' && (!form.compressionEnabled || minSize !== 1024 || algorithms.length > 0)) {
+      payload.compression = {
+        enabled: form.compressionEnabled,
+        min_size: minSize,
+        algorithms: algorithms.length > 0 ? algorithms : undefined,
       };
     }
 
@@ -1015,6 +1043,34 @@ export default function Domains() {
                       <FormField label="TTL (seconds)" htmlFor="add-cache-ttl">
                         <input id="add-cache-ttl" type="number" min="0" value={form.cacheTTL} onChange={e => patchField('cacheTTL', e.target.value)} className={inputCls} />
                       </FormField>
+                    </div>
+                  )}
+                </div>
+                )}
+
+                {/* Compression. On by default — the toggle starts checked and an
+                    untouched form sends no compression block at all. */}
+                {form.type !== 'redirect' && (
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-sm font-medium text-card-foreground"><Archive size={14} /> Compression</span>
+                    <label className="relative inline-flex cursor-pointer items-center">
+                      <input type="checkbox" checked={form.compressionEnabled} onChange={e => patchField('compressionEnabled', e.target.checked)} className="peer sr-only" />
+                      <div className="peer h-5 w-9 rounded-full bg-accent after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-slate-400 after:transition-all peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:bg-white" />
+                    </label>
+                  </div>
+                  {form.compressionEnabled && (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <FormField label="Min size (bytes)" htmlFor="add-compression-min">
+                        <input id="add-compression-min" type="number" min="0" value={form.compressionMinSize} onChange={e => patchField('compressionMinSize', e.target.value)} className={inputCls} />
+                      </FormField>
+                      <FormField label="Algorithms" htmlFor="add-compression-alg">
+                        <input id="add-compression-alg" type="text" placeholder="br, gzip" value={form.compressionAlgorithms} onChange={e => patchField('compressionAlgorithms', e.target.value)} className={inputCls} />
+                      </FormField>
+                      <p className="sm:col-span-2 text-xs text-muted-foreground">
+                        Leave algorithms empty for both (brotli preferred). Responses
+                        smaller than the minimum size are sent uncompressed.
+                      </p>
                     </div>
                   )}
                 </div>

@@ -81,9 +81,9 @@ type WebhookConfig struct {
 
 // UsersConfig controls the multi-user RBAC subsystem.
 type UsersConfig struct {
-	Enabled      bool `yaml:"enabled"`        // Enable multi-user mode
+	Enabled       bool `yaml:"enabled"`        // Enable multi-user mode
 	AllowReseller bool `yaml:"allow_reseller"` // Allow reseller role
-	SessionTTL   int  `yaml:"session_ttl"`    // Session TTL in hours (default 24)
+	SessionTTL    int  `yaml:"session_ttl"`    // Session TTL in hours (default 24)
 
 	// AllowLegacyPlaintextAPIKey enables the v0.1 plaintext-comparison
 	// fallback for users whose stored APIKey has not yet been rehashed

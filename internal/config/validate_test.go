@@ -527,21 +527,21 @@ func TestValidateRewriteRules_EmptyMatchIsOk(t *testing.T) {
 
 func TestValidateCompression_ValidAlgorithms(t *testing.T) {
 	cfg := minimalValidConfig()
-	cfg.Domains[0].Compression.Enabled = true
+	cfg.Domains[0].Compression.Enabled = BoolPtr(true)
 	cfg.Domains[0].Compression.Algorithms = []string{"gzip", "br"}
 	expectNoValidationError(t, cfg)
 }
 
 func TestValidateCompression_InvalidAlgorithm(t *testing.T) {
 	cfg := minimalValidConfig()
-	cfg.Domains[0].Compression.Enabled = true
+	cfg.Domains[0].Compression.Enabled = BoolPtr(true)
 	cfg.Domains[0].Compression.Algorithms = []string{"gzip", "deflate"}
 	expectValidationError(t, cfg, "invalid algorithm \"deflate\"")
 }
 
 func TestValidateCompression_DisabledSkipsValidation(t *testing.T) {
 	cfg := minimalValidConfig()
-	cfg.Domains[0].Compression.Enabled = false
+	cfg.Domains[0].Compression.Enabled = BoolPtr(false)
 	cfg.Domains[0].Compression.Algorithms = []string{"invalid"}
 	expectNoValidationError(t, cfg)
 }

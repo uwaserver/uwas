@@ -414,6 +414,9 @@ export interface DomainDetail {
   redirect?: { target: string; status: number; preserve_path: boolean };
   app?: { runtime: string; command: string; port: number; auto_restart: boolean };
   htaccess?: { mode: string };
+  // enabled is optional on purpose: absent means "on", matching the server,
+  // where CompressionConfig.Enabled is a pointer.
+  compression?: { enabled?: boolean; min_size?: number; algorithms?: string[]; types?: string[] };
 }
 
 export interface CertInfo {

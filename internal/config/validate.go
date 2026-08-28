@@ -321,8 +321,12 @@ func Validate(cfg *Config) error {
 			}
 		}
 
-		// Compression algorithm validation
-		if d.Compression.Enabled {
+		// Compression algorithm validation. Runs when compression is in effect,
+		// which now includes domains that never mention it (Enabled is a
+		// pointer and nil means on). A block the operator explicitly disabled
+		// is left alone: rejecting a typo there would refuse to start on a
+		// setting that does nothing.
+		if d.Compression.CompressionEnabled() {
 			for j, alg := range d.Compression.Algorithms {
 				switch alg {
 				case "gzip", "br":

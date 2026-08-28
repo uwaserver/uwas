@@ -37,7 +37,7 @@ func TestMergeDomain_AllScalarAndBlockFields(t *testing.T) {
 		Redirect:  RedirectConfig{Target: "https://x"},
 	}
 	patch.Security.RateLimit.Requests = 99
-	patch.Compression.Enabled = true
+	patch.Compression.Enabled = BoolPtr(true)
 	patch.Compression.Algorithms = []string{"gzip"}
 
 	fields := DomainPatchFields{
@@ -72,7 +72,7 @@ func TestMergeDomain_AllScalarAndBlockFields(t *testing.T) {
 	if got.Security.RateLimit.Requests != 99 {
 		t.Errorf("security not merged: %+v", got.Security)
 	}
-	if !got.Compression.Enabled {
+	if got.Compression.Enabled == nil || !*got.Compression.Enabled {
 		t.Errorf("compression not merged: %+v", got.Compression)
 	}
 }
