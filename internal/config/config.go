@@ -13,15 +13,18 @@ type Config struct {
 // GlobalConfig is the server-wide configuration: listeners, log shape, ACME
 // account, cache + backup defaults, admin API, alerting fan-out.
 type GlobalConfig struct {
-	WorkerCount    string           `yaml:"worker_count"`
-	MaxConnections int              `yaml:"max_connections"`
-	HTTPListen     string           `yaml:"http_listen"`
-	HTTPSListen    string           `yaml:"https_listen"`
-	SFTPListen     string           `yaml:"sftp_listen"` // e.g. ":2222", empty = disabled
-	HTTP3Enabled   bool             `yaml:"http3"`
-	PIDFile        string           `yaml:"pid_file"`
-	WebRoot        string           `yaml:"web_root"`
-	LogLevel       string           `yaml:"log_level"`
+	WorkerCount    string `yaml:"worker_count"`
+	MaxConnections int    `yaml:"max_connections"`
+	HTTPListen     string `yaml:"http_listen"`
+	HTTPSListen    string `yaml:"https_listen"`
+	SFTPListen     string `yaml:"sftp_listen"` // e.g. ":2222", empty = disabled
+	HTTP3Enabled   bool   `yaml:"http3"`
+	PIDFile        string `yaml:"pid_file"`
+	WebRoot        string `yaml:"web_root"`
+	LogLevel       string `yaml:"log_level"`
+	// AccessLog controls the per-request line the main log emits. It is
+	// separate from a domain's access_log, which writes its own file.
+	AccessLog      GlobalAccessLog  `yaml:"access_log,omitempty" json:"access_log,omitempty"`
 	LogFormat      string           `yaml:"log_format"`
 	TrustedProxies []string         `yaml:"trusted_proxies"`
 	Timeouts       TimeoutConfig    `yaml:"timeouts"`
@@ -91,4 +94,22 @@ type UsersConfig struct {
 	// rotate via RegenerateAPIKey before this flag can stay off.
 	// Removed in a future release. Refs: refactor.md A16.
 	AllowLegacyPlaintextAPIKey bool `yaml:"allow_legacy_plaintext_api_key"`
+}
+
+// GlobalAccessLog controls the request line written to the main log.
+//
+// The access-log middleware wrote one Info line per request unconditionally,
+// and the only way to stop it was to lower global.log_level — which also
+// silenced startup, reload, certificate and process events, and silenced
+// failed requests along with successful ones.
+type GlobalAccessLog struct {
+	// Enabled is a pointer so an absent block is distinguishable from an
+	// explicit false. Absent means on: that is what has always happened, and
+	// a config that never mentions it must not lose its request log.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// RequestLogEnabled reports whether the main log should carry request lines.
+func (g GlobalAccessLog) RequestLogEnabled() bool {
+	return g.Enabled == nil || *g.Enabled
 }

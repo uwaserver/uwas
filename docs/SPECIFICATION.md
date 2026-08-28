@@ -213,6 +213,18 @@ global:
   log_level: info             # debug, info, warn, error
   log_format: json            # json, clf (Combined Log Format)
 
+  # The per-request line written to the main log. Separate from a domain's
+  # access_log, which writes its own file — leave this off when you already
+  # collect that file and do not want the same data twice.
+  access_log:
+    enabled: true             # default: on
+
+  # A request line takes its level from the response status: 5xx is logged at
+  # error, everything else at info. log_level: warn therefore keeps the failed
+  # requests and drops the rest. 4xx stays at info on purpose — scanner 404s
+  # are constant on a public site; blocked requests are reported at warn by the
+  # security and WAF guards.
+
   timeouts:
     read: 30s
     write: 60s
@@ -395,6 +407,8 @@ domains:
         threshold: 5             # how many errors before open
         timeout: 30s             # wait time from open → half-open
       websocket: true
+      grpc: true                 # unencrypted HTTP/2 to cleartext upstreams;
+                                 # gRPC does not run on HTTP/1.1
       timeouts:
         connect: 5s
         read: 60s
