@@ -634,6 +634,26 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 	}
 
+	// type=app is deprecated: dispatchHandler answers it with a 502 naming
+	// the replacement. Validation still accepts it — removing it would stop
+	// an existing config from loading — so without this the operator only
+	// finds out when traffic arrives. The app: block goes with it: nothing
+	// starts a process from a domain's own app config, and merge.go copying
+	// the fields around is not the same as using them.
+	for _, d := range cfg.Domains {
+		if d.Type == string(config.DomainTypeApp) {
+			s.logger.Warn("domain type=app is no longer supported and will answer 502; "+
+				"create an app under /api/v1/apps and route this domain with type=proxy and an apps://<name> upstream",
+				"domain", d.Host)
+			continue
+		}
+		if d.App.Command != "" || d.App.Runtime != "" || d.App.WorkDir != "" {
+			s.logger.Warn("domain app: block is ignored — no process is started from it; "+
+				"use /api/v1/apps and an apps://<name> upstream instead",
+				"domain", d.Host)
+		}
+	}
+
 	// Per-domain rate limiters
 	s.domainRateLimiters = make(map[string]*middleware.RateLimiter)
 	for _, d := range cfg.Domains {
