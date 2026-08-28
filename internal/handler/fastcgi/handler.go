@@ -53,7 +53,7 @@ func (h *Handler) ServeWith(ctx *router.RequestContext, domain *config.Domain, f
 	scriptFilename := ScriptFilenameFromResolved(ctx.ResolvedPath, domain.Root, scriptName)
 
 	// Build CGI environment from the explicit env (not domain.PHP.Env, which may be stale)
-	cgiEnv := BuildEnv(ctx, scriptFilename, scriptName, pathInfo, env)
+	cgiEnv := BuildEnv(ctx, scriptFilename, scriptName, pathInfo, env, domain.PHP.MaxUpload)
 
 	// Forward request body for non-GET/HEAD methods
 	var stdin io.Reader

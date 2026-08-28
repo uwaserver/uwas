@@ -32,7 +32,7 @@ func TestBuildEnvDropsPHPHeaderInjection(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = ""
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if _, ok := env["HTTP_PHP_VALUE"]; ok {
 		t.Error("PHP_VALUE header must not be forwarded as HTTP_PHP_VALUE")
@@ -57,7 +57,7 @@ func TestBuildEnvMergesExistingPHPAdminValue(t *testing.T) {
 	custom := map[string]string{
 		"PHP_ADMIN_VALUE": "memory_limit = 256M",
 	}
-	env := BuildEnv(ctx, "/var/www/site/public/index.php", "/index.php", "", custom)
+	env := BuildEnv(ctx, "/var/www/site/public/index.php", "/index.php", "", custom, 0)
 
 	val := env["PHP_ADMIN_VALUE"]
 	if !strings.Contains(val, "open_basedir = ") {

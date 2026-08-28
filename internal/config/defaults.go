@@ -112,9 +112,13 @@ func applyDefaults(cfg *Config) {
 			if len(d.PHP.IndexFiles) == 0 {
 				d.PHP.IndexFiles = []string{"index.php", "index.html"}
 			}
-			if d.PHP.MaxUpload == 0 {
-				d.PHP.MaxUpload = 64 * MB
-			}
+			// php.max_upload is deliberately NOT defaulted. Nothing read it
+			// until it was wired into PHP_ADMIN_VALUE, so filling in 64MB
+			// here would now impose a cap on every domain that never asked
+			// for one — and PHP_ADMIN_VALUE cannot be raised by a site's
+			// .user.ini, so a site currently uploading more than 64MB would
+			// break on upgrade. Unset means "leave the system php.ini in
+			// charge", which is what has always actually happened.
 			if d.PHP.Timeout.Duration == 0 {
 				d.PHP.Timeout.Duration = 300 * time.Second
 			}
