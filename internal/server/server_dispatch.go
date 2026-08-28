@@ -657,7 +657,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain access log file
 	if domain.AccessLog.Path != "" {
 		s.domainLogs.Write(
-			r.Host, domain.AccessLog.Path, domain.AccessLog.Rotate,
+			r.Host, domain.AccessLog,
 			r.Method, r.URL.RequestURI(),
 			r.RemoteAddr, r.UserAgent(),
 			ctx.Response.StatusCode(), int(ctx.Response.BytesWritten()),
