@@ -22,7 +22,7 @@ import (
 // Handler handles reverse proxy requests with load balancing.
 type Handler struct {
 	logger     *logger.Logger
-	transports sync.Map // proxyTransportKey -> *http.Transport
+	transports sync.Map // proxyTransportKey -> http.RoundTripper
 }
 
 type proxyTransportKey struct {
@@ -32,6 +32,7 @@ type proxyTransportKey struct {
 	writeTimeout       time.Duration
 	allowPrivate       bool
 	insecureSkipVerify bool
+	grpc               bool
 }
 
 const maxBufferedResponseBytes int64 = 16 << 20 // 16MB cap for buffer_response mode
@@ -41,7 +42,7 @@ func New(log *logger.Logger) *Handler {
 }
 
 // getTransport returns a per-domain transport with configured timeouts.
-func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
+func (h *Handler) getTransport(domain *config.Domain) http.RoundTripper {
 	connectTimeout := 5 * time.Second
 	if domain.Proxy.Timeouts.Connect.Duration > 0 {
 		connectTimeout = domain.Proxy.Timeouts.Connect.Duration
@@ -64,9 +65,10 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 		writeTimeout:       writeTimeout,
 		allowPrivate:       domain.Proxy.AllowPrivateUpstreams,
 		insecureSkipVerify: domain.Proxy.InsecureSkipVerify,
+		grpc:               domain.Proxy.GRPC,
 	}
 	if t, ok := h.transports.Load(key); ok {
-		return t.(*http.Transport)
+		return t.(http.RoundTripper)
 	}
 
 	dialer := &net.Dialer{
@@ -104,8 +106,52 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 		}
 	}
 
-	actual, _ := h.transports.LoadOrStore(key, t)
-	return actual.(*http.Transport)
+	var rt http.RoundTripper = t
+
+	// proxy.grpc was dead configuration: nothing read the field. The comment
+	// above claims "gRPC/h2c still relies on the same flag", but
+	// ForceAttemptHTTP2 only negotiates h2 over TLS via ALPN. A cleartext
+	// http:// upstream still gets HTTP/1.1, and gRPC does not run on
+	// HTTP/1.1 — so a domain configured for gRPC could not proxy it.
+	//
+	// h2c has no negotiation: the client must decide to speak HTTP/2 on a
+	// plaintext connection. That is what the flag now selects, for cleartext
+	// upstreams only; https:// keeps the standard transport, which already
+	// reaches h2 through ALPN.
+	if domain.Proxy.GRPC {
+		// A clone keeps the dialer (with its SSRF Control) and the timeouts.
+		// net/http uses unencrypted HTTP/2 for http:// URLs when the protocol
+		// set includes UnencryptedHTTP2 and excludes HTTP1, so this transport
+		// is h2c-only and is used only for cleartext upstreams.
+		h2c := t.Clone()
+		var protos http.Protocols
+		protos.SetUnencryptedHTTP2(true)
+		h2c.Protocols = &protos
+		rt = &grpcRoundTripper{std: t, h2c: h2c}
+	}
+
+	actual, _ := h.transports.LoadOrStore(key, rt)
+	return actual.(http.RoundTripper)
+}
+
+// grpcRoundTripper sends cleartext requests over h2c and everything else over
+// the standard transport, so a domain with both http:// and https:// upstreams
+// keeps working when proxy.grpc is on.
+type grpcRoundTripper struct {
+	std *http.Transport
+	h2c *http.Transport
+}
+
+func (g *grpcRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL != nil && r.URL.Scheme == "http" {
+		return g.h2c.RoundTrip(r)
+	}
+	return g.std.RoundTrip(r)
+}
+
+func (g *grpcRoundTripper) CloseIdleConnections() {
+	g.std.CloseIdleConnections()
+	g.h2c.CloseIdleConnections()
 }
 
 // ResetTransports closes idle upstream connections and removes cached
@@ -113,7 +159,9 @@ func (h *Handler) getTransport(domain *config.Domain) *http.Transport {
 // subsequent requests rebuild one from the current domain policy.
 func (h *Handler) ResetTransports() {
 	h.transports.Range(func(key, value any) bool {
-		value.(*http.Transport).CloseIdleConnections()
+		if c, ok := value.(interface{ CloseIdleConnections() }); ok {
+			c.CloseIdleConnections()
+		}
 		h.transports.Delete(key)
 		return true
 	})
