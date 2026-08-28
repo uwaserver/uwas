@@ -1709,9 +1709,9 @@ func TestDomainLogCleanupOld(t *testing.T) {
 	defer m.Close()
 
 	// Write a log entry to populate the manager's files map
-	m.Write("test.com", logPath, config.RotateConfig{
+	m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{
 		MaxAge: config.Duration{Duration: 1 * time.Millisecond},
-	}, "GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
+	}}, "GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Create a fake rotated file with an old mod time
 	rotatedPath := logPath + ".20200101-120000.gz"
@@ -1741,9 +1741,9 @@ func TestDomainLogCleanupOldKeepsRecent(t *testing.T) {
 	defer m.Close()
 
 	// Write a log entry
-	m.Write("test.com", logPath, config.RotateConfig{
+	m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{
 		MaxAge: config.Duration{Duration: 365 * 24 * time.Hour}, // 1 year
-	}, "GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
+	}}, "GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Create a rotated file (recent)
 	rotatedPath := logPath + ".20260101-120000.gz"
@@ -1821,9 +1821,9 @@ func TestDomainLogWriteNewDomainTwice(t *testing.T) {
 	defer m.Close()
 
 	// Two concurrent-like writes for same domain
-	m.Write("test.com", logPath, config.RotateConfig{},
+	m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{}},
 		"GET", "/a", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
-	m.Write("test.com", logPath, config.RotateConfig{},
+	m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{}},
 		"GET", "/b", "127.0.0.1", "Agent", 200, 200, time.Millisecond)
 
 	data, err := os.ReadFile(logPath)
@@ -1848,7 +1848,7 @@ func TestDomainLogRotateDefaultMaxSize(t *testing.T) {
 	defer m.Close()
 
 	// Write with MaxSize = 0 (uses defaultMaxLogSize of 50MB)
-	m.Write("big.com", logPath, config.RotateConfig{MaxSize: 0},
+	m.Write("big.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{MaxSize: 0}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Should work without error
@@ -2018,7 +2018,7 @@ func TestShutdownWithDomainLogs(t *testing.T) {
 	s := New(cfg, log)
 
 	// Write to domain log first
-	s.domainLogs.Write("logshut.com", logPath, config.RotateConfig{},
+	s.domainLogs.Write("logshut.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Shutdown should close domain logs
@@ -2738,7 +2738,7 @@ func TestDomainLogWriteInvalidPath(t *testing.T) {
 	defer m.Close()
 
 	// Try to write to an impossible path — should not panic
-	m.Write("test.com", "", config.RotateConfig{},
+	m.Write("test.com", config.AccessLogConfig{Path: "", Rotate: config.RotateConfig{}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 0, time.Millisecond)
 }
 
@@ -2761,7 +2761,7 @@ func TestDomainLogRotateAndReopen(t *testing.T) {
 
 	// Write enough data to trigger multiple rotations
 	for i := 0; i < 20; i++ {
-		m.Write("rot.com", logPath, rotate,
+		m.Write("rot.com", config.AccessLogConfig{Path: logPath, Rotate: rotate},
 			"GET", "/page", "10.0.0.1", "TestAgent",
 			200, 100, time.Millisecond)
 	}
@@ -2940,7 +2940,7 @@ func TestShutdownFullPaths(t *testing.T) {
 	s := New(cfg, log)
 
 	// Write a log entry so domainLogs has open files
-	s.domainLogs.Write("shutfull.com", filepath.Join(dir, "access.log"), config.RotateConfig{},
+	s.domainLogs.Write("shutfull.com", config.AccessLogConfig{Path: filepath.Join(dir, "access.log"), Rotate: config.RotateConfig{}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Start HTTP so we can test shutdown with it

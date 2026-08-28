@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bufio"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +21,10 @@ const (
 	defaultMaxBackups = 5
 	defaultMaxAge     = 30 * 24 * time.Hour // 30 days
 	cleanupInterval   = 1 * time.Hour
+	// A buffered log must not sit unwritten while traffic is light: a domain
+	// with a request a minute and a 64KB buffer would show nothing to
+	// `tail -f` until shutdown.
+	logFlushInterval  = 1 * time.Second
 	rotatedTimeFormat = "20060102-150405.000000000"
 )
 
@@ -42,6 +48,25 @@ type domainLogFile struct {
 	path    string
 	written int64
 	rotate  config.RotateConfig
+	// buf wraps f when access_log.buffer_size is set. nil means unbuffered,
+	// which stays the default: a buffered log loses its tail if the process
+	// dies, so the operator has to ask for it.
+	buf *bufio.Writer
+}
+
+// writer returns the sink for a line: the buffer when one is configured.
+func (d *domainLogFile) writer() io.Writer {
+	if d.buf != nil {
+		return d.buf
+	}
+	return d.f
+}
+
+// flushLocked empties the buffer. Caller must hold d.mu.
+func (d *domainLogFile) flushLocked() {
+	if d.buf != nil {
+		_ = d.buf.Flush()
+	}
 }
 
 func newDomainLogManager() *domainLogManager {
@@ -55,13 +80,47 @@ func newDomainLogManager() *domainLogManager {
 // Should be called once after server initialization.
 func (m *domainLogManager) StartCleanup() {
 	go m.cleanupLoop()
+	go m.flushLoop()
+}
+
+// flushLoop empties buffered logs on a timer. Files with no buffer are
+// untouched, so this costs nothing for the default configuration.
+func (m *domainLogManager) flushLoop() {
+	t := time.NewTicker(logFlushInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-t.C:
+			m.flushAll()
+		}
+	}
+}
+
+// FlushAll empties every buffered log immediately.
+func (m *domainLogManager) flushAll() {
+	m.mu.RLock()
+	files := make([]*domainLogFile, 0, len(m.files))
+	for _, dlf := range m.files {
+		files = append(files, dlf)
+	}
+	m.mu.RUnlock()
+
+	for _, dlf := range files {
+		dlf.mu.Lock()
+		dlf.flushLocked()
+		dlf.mu.Unlock()
+	}
 }
 
 // Write writes an access log entry for the given domain.
-func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfig, method, path, remoteIP, userAgent string, status, bytes int, duration time.Duration) {
+func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method, path, remoteIP, userAgent string, status, bytes int, duration time.Duration) {
+	logPath := cfg.Path
 	if logPath == "" {
 		return
 	}
+	rotate := cfg.Rotate
 
 	m.mu.RLock()
 	dlf, ok := m.files[host]
@@ -86,25 +145,20 @@ func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfi
 				written = info.Size()
 			}
 			dlf = &domainLogFile{f: f, path: logPath, written: written, rotate: rotate}
+			if cfg.BufferSize > 0 {
+				dlf.buf = bufio.NewWriterSize(f, cfg.BufferSize)
+			}
 			m.files[host] = dlf
 		}
 		m.mu.Unlock()
 	}
 
-	// CLF-like format
-	line := fmt.Sprintf("%s - - [%s] \"%s %s\" %d %d %dms \"%s\"\n",
-		remoteIP,
-		time.Now().Format("02/Jan/2006:15:04:05 -0700"),
-		method, path,
-		status, bytes,
-		duration.Milliseconds(),
-		userAgent,
-	)
+	line := accessLogLine(cfg.Format, time.Now(), method, path, remoteIP, userAgent, status, bytes, duration)
 
 	// Per-host lock: writes for different domains run in parallel; only
 	// the same domain's writes serialize (needed for correct line order).
 	dlf.mu.Lock()
-	_, _ = dlf.f.WriteString(line)
+	_, _ = io.WriteString(dlf.writer(), line)
 	dlf.written += int64(len(line))
 
 	maxSize := int64(dlf.rotate.MaxSize)
@@ -113,6 +167,9 @@ func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfi
 	}
 	needsRotate := dlf.written >= maxSize
 	if needsRotate {
+		// Flush first: rotation renames the file out from under the buffer,
+		// and anything still pending would be written into the new one.
+		dlf.flushLocked()
 		m.rotateLocked(host, dlf)
 	}
 	dlf.mu.Unlock()
@@ -124,6 +181,7 @@ func (m *domainLogManager) Write(host, logPath string, rotate config.RotateConfi
 // (briefly acquiring m.mu) so a subsequent Write reinitializes from
 // scratch.
 func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
+	dlf.flushLocked()
 	dlf.f.Close()
 
 	// Rename current → timestamped .gz
@@ -215,6 +273,7 @@ func (m *domainLogManager) Close() {
 	m.mu.Lock()
 	for _, dlf := range m.files {
 		dlf.mu.Lock()
+		dlf.flushLocked()
 		dlf.f.Close()
 		dlf.mu.Unlock()
 	}
@@ -292,4 +351,66 @@ func findRotatedFiles(basePath string) []string {
 		}
 	}
 	return rotated
+}
+
+// accessLogLine renders one entry in the configured format.
+//
+// access_log.format and access_log.buffer_size were dead configuration: the
+// writer always emitted an unbuffered CLF-like line and read neither field,
+// while SPECIFICATION.md documents `format: json | clf | custom` and a
+// buffer size. Only path and rotate ever reached this code.
+//
+// "custom" is documented but there is no format-string field to carry a
+// template, so it falls back to clf rather than pretending. An unrecognised
+// value does the same: a log is not the place to fail a request over a typo.
+func accessLogLine(format string, now time.Time, method, path, remoteIP, userAgent string, status, bytes int, duration time.Duration) string {
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
+		entry := struct {
+			Time       string `json:"time"`
+			RemoteIP   string `json:"remote_ip"`
+			Method     string `json:"method"`
+			Path       string `json:"path"`
+			Status     int    `json:"status"`
+			Bytes      int    `json:"bytes"`
+			DurationMS int64  `json:"duration_ms"`
+			UserAgent  string `json:"user_agent"`
+		}{
+			Time:       now.Format(time.RFC3339Nano),
+			RemoteIP:   remoteIP,
+			Method:     method,
+			Path:       path,
+			Status:     status,
+			Bytes:      bytes,
+			DurationMS: duration.Milliseconds(),
+			UserAgent:  userAgent,
+		}
+		// Marshal cannot fail for this struct; fall through to clf if it ever
+		// does rather than dropping the line.
+		if data, err := json.Marshal(entry); err == nil {
+			return string(data) + "\n"
+		}
+	}
+
+	// CLF-like format: the default, and the fallback for clf/custom/unknown.
+	return fmt.Sprintf("%s - - [%s] \"%s %s\" %d %d %dms \"%s\"\n",
+		remoteIP,
+		now.Format("02/Jan/2006:15:04:05 -0700"),
+		method, path,
+		status, bytes,
+		duration.Milliseconds(),
+		userAgent,
+	)
+}
+
+// KnownAccessLogFormat reports whether a configured format is one this writer
+// renders. An unknown value falls back to clf; the caller warns once at
+// startup rather than per request, and never blocks the server from booting
+// over a field that did nothing until now.
+func KnownAccessLogFormat(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "clf", "json", "custom":
+		return true
+	default:
+		return false
+	}
 }

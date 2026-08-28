@@ -619,6 +619,21 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		}
 	}
 
+	// access_log.format was ignored until now, so a config may carry a value
+	// this writer does not render. Say so once, here, instead of rejecting it
+	// at load: Load() calls Validate and serve refuses to start on the error,
+	// which would take a running site down over a field that did nothing.
+	for _, d := range cfg.Domains {
+		if d.AccessLog.Path != "" && !KnownAccessLogFormat(d.AccessLog.Format) {
+			s.logger.Warn("unknown access_log.format; writing the default clf line",
+				"domain", d.Host, "format", d.AccessLog.Format)
+		}
+		if d.AccessLog.BufferSize < 0 {
+			s.logger.Warn("negative access_log.buffer_size ignored; the log is unbuffered",
+				"domain", d.Host, "buffer_size", d.AccessLog.BufferSize)
+		}
+	}
+
 	// Per-domain rate limiters
 	s.domainRateLimiters = make(map[string]*middleware.RateLimiter)
 	for _, d := range cfg.Domains {

@@ -1087,7 +1087,7 @@ func TestDomainLogWriteMkdirError(t *testing.T) {
 	defer m.Close()
 
 	// Write with an invalid path that can't have directories created
-	m.Write("test.com", string([]byte{0})+"/access.log", config.RotateConfig{},
+	m.Write("test.com", config.AccessLogConfig{Path: string([]byte{0}) + "/access.log", Rotate: config.RotateConfig{}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 0, time.Millisecond)
 	// Should not panic
 }
@@ -1099,8 +1099,7 @@ func TestDomainLogWriteOpenFileError(t *testing.T) {
 	// On Windows, NUL path should cause an error
 	// Try with a very long path that exceeds OS limits
 	longPath := strings.Repeat("a", 500)
-	m.Write("test.com", filepath.Join(t.TempDir(), longPath, "access.log"),
-		config.RotateConfig{},
+	m.Write("test.com", config.AccessLogConfig{Path: filepath.Join(t.TempDir(), longPath, "access.log"), Rotate: config.RotateConfig{}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 0, time.Millisecond)
 	// Should not panic
 }
@@ -1113,12 +1112,12 @@ func TestDomainLogRotateReopenFail(t *testing.T) {
 	defer m.Close()
 
 	// Write to create the file
-	m.Write("test.com", logPath, config.RotateConfig{MaxSize: config.ByteSize(50)},
+	m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{MaxSize: config.ByteSize(50)}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Write enough to trigger rotation
 	for i := 0; i < 5; i++ {
-		m.Write("test.com", logPath, config.RotateConfig{MaxSize: config.ByteSize(50)},
+		m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{MaxSize: config.ByteSize(50)}},
 			"GET", "/verylong/path/that/exceeds", "127.0.0.1", "Agent",
 			200, 100, time.Millisecond)
 	}
@@ -1142,9 +1141,9 @@ func TestDomainLogCleanupOldRemovesExpired(t *testing.T) {
 	defer m.Close()
 
 	// Write to create the domain entry
-	m.Write("test.com", logPath, config.RotateConfig{
+	m.Write("test.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{
 		MaxAge: config.Duration{Duration: 1 * time.Nanosecond},
-	},
+	}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 100, time.Millisecond)
 
 	// Create a fake rotated file and set its mod time to the past

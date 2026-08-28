@@ -340,7 +340,7 @@ func TestDomainLogCleanupOldCov2(t *testing.T) {
 	defer m.Close()
 
 	// Register the domain so cleanupOld sees it (short MaxAge).
-	m.Write("clean.test", logPath, config.RotateConfig{MaxAge: config.Duration{Duration: time.Nanosecond}},
+	m.Write("clean.test", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{MaxAge: config.Duration{Duration: time.Nanosecond}}},
 		"GET", "/", "127.0.0.1", "A", 200, 10, time.Millisecond)
 
 	// Create an old rotated file with an old mtime.
