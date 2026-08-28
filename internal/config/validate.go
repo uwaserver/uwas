@@ -267,20 +267,6 @@ func Validate(cfg *Config) error {
 				errs = append(errs, fmt.Sprintf("%s: invalid proxy.algorithm %q (must be round-robin, least-conn, weighted, ip-hash, uri-hash, random, sticky)", prefix, d.Proxy.Algorithm))
 			}
 
-			// proxy.sticky.type validation. The block used to be ignored
-			// entirely, so a typo produced no error and no stickiness; now
-			// that it is read, an unrecognised value is caught at load.
-			if t := strings.ToLower(strings.TrimSpace(d.Proxy.Sticky.Type)); t != "" {
-				switch t {
-				case "cookie", "ip", "header":
-				default:
-					errs = append(errs, fmt.Sprintf("%s: invalid proxy.sticky.type %q (must be cookie, ip or header)", prefix, d.Proxy.Sticky.Type))
-				}
-			}
-			if d.Proxy.Sticky.TTL < 0 {
-				errs = append(errs, fmt.Sprintf("%s: proxy.sticky.ttl must not be negative, got %d", prefix, d.Proxy.Sticky.TTL))
-			}
-
 			// Canary weight validation
 			if d.Proxy.Canary.Enabled {
 				if d.Proxy.Canary.Weight < 0 || d.Proxy.Canary.Weight > 100 {
