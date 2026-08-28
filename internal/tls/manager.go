@@ -72,6 +72,10 @@ type Manager struct {
 	// mTLS fields
 	clientCA       *x509.CertPool
 	clientAuthMode tls.ClientAuthType
+	// Per-domain client CA pools, keyed by domain host. A single shared
+	// pool would let one mTLS domain force client certificates onto every
+	// other domain on the same listener.
+	clientCAs map[string]*x509.CertPool
 
 	// AllowSelfSigned enables auto-generated self-signed certs as fallback.
 	// Set to true in production server; false in tests.
@@ -838,7 +842,116 @@ func (m *Manager) stapleOCSP(cert *tls.Certificate, host string) {
 	}
 }
 
+// minTLSVersionFor maps a domain's ssl.min_version to a tls constant.
+//
+// Values below 1.2 are CLAMPED to 1.2 rather than honoured. The setting was
+// dead until now and validation has always accepted "1.0" and "1.1", so a
+// config carrying either has been served at 1.2 regardless. Honouring them
+// literally would silently downgrade those deployments the moment this field
+// started being read — a fix that weakens security is not a fix.
+//
+// Hardening upwards works: "1.3" now means 1.3.
+func minTLSVersionFor(v string, log *logger.Logger, host string) uint16 {
+	switch v {
+	case "1.3":
+		return tls.VersionTLS13
+	case "1.2", "":
+		return tls.VersionTLS12
+	case "1.0", "1.1":
+		if log != nil {
+			log.Warn("ssl.min_version below 1.2 ignored; serving TLS 1.2",
+				"domain", host, "requested", v)
+		}
+		return tls.VersionTLS12
+	default:
+		return tls.VersionTLS12
+	}
+}
+
+// configForHost builds the per-domain TLS settings for an SNI name. Returns
+// nil when the host matches no configured domain, so the caller keeps the
+// base config.
+func (m *Manager) configForHost(base *tls.Config, host string) *tls.Config {
+	m.domainsMu.RLock()
+	domains := m.domains
+	m.domainsMu.RUnlock()
+
+	for i := range domains {
+		d := &domains[i]
+		if !domainMatchesHost(d, host) {
+			continue
+		}
+		if d.SSL.MinVersion == "" && d.SSL.ClientCA == "" {
+			return nil
+		}
+
+		out := base.Clone()
+		out.MinVersion = minTLSVersionFor(d.SSL.MinVersion, m.logger, d.Host)
+
+		// Per-domain mTLS, using the pool LoadClientCAs parsed for this
+		// domain. Falling back to the listener-wide pool here would apply
+		// one domain's CA to another's clients.
+		if pool := m.clientCAFor(d.Host); pool != nil {
+			out.ClientCAs = pool
+			out.ClientAuth = clientAuthModeFor(d.SSL.ClientAuth)
+		}
+		return out
+	}
+	return nil
+}
+
+// domainMatchesHost reports whether an SNI name belongs to this domain.
+//
+// Mirrors buildDomainAllowlist: exact host, its implicit www form, wildcard
+// hosts and aliases. Kept next to it so the two cannot drift into disagreeing
+// about which names a domain owns.
+func domainMatchesHost(d *config.Domain, host string) bool {
+	host = canonicalTLSHostname(host)
+	if host == "" {
+		return false
+	}
+
+	h := strings.ToLower(d.Host)
+	if strings.HasPrefix(h, "*.") {
+		suffix := h[2:]
+		return host == suffix || strings.HasSuffix(host, "."+suffix)
+	}
+
+	for _, name := range []string{canonicalTLSHostname(h), implicitTLSWWWHostname(h)} {
+		if name != "" && name == host {
+			return true
+		}
+	}
+	for _, alias := range d.Aliases {
+		a := canonicalTLSHostname(alias)
+		if a == "" {
+			continue
+		}
+		if a == host || implicitTLSWWWHostname(a) == host {
+			return true
+		}
+	}
+	return false
+}
+
+// clientAuthModeFor maps ssl.client_auth to a tls.ClientAuthType.
+func clientAuthModeFor(mode string) tls.ClientAuthType {
+	switch mode {
+	case "require":
+		return tls.RequireAndVerifyClientCert
+	case "request":
+		return tls.VerifyClientCertIfGiven
+	default:
+		return tls.NoClientCert
+	}
+}
+
 // TLSConfig returns a tls.Config with best-practice settings.
+//
+// MinVersion here is the floor for hosts that set nothing; GetConfigForClient
+// raises it per domain. Before this, ssl.min_version was dead configuration:
+// defaulted, validated and merged, but never read — a domain asking for 1.3
+// was served 1.2.
 func (m *Manager) TLSConfig() *tls.Config {
 	cfg := &tls.Config{
 		GetCertificate: m.GetCertificate,
@@ -865,10 +978,81 @@ func (m *Manager) TLSConfig() *tls.Config {
 		cfg.ClientAuth = m.clientAuthMode
 	}
 
+	// Per-domain overrides are resolved from the ClientHello, where SNI is
+	// available. Returning nil keeps this base config.
+	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		return m.configForHost(cfg, hello.ServerName), nil
+	}
+
 	return cfg
 }
 
 // SetClientAuth configures mutual TLS (mTLS) with client certificate verification.
+// LoadClientCAs parses the client CA file of every domain that configures one.
+//
+// ssl.client_ca and ssl.client_auth were dead configuration: SetClientAuth
+// existed but nothing ever called it, so the pool stayed nil, the mTLS branch
+// in TLSConfig was unreachable, and a domain asking for client certificates
+// silently accepted anonymous clients.
+//
+// Pools are kept per domain rather than merged: a merged pool would make one
+// domain's CA acceptable for clients of every other domain on the listener,
+// and setting ClientAuth listener-wide would force certificates onto domains
+// that never asked for them. The per-SNI path in configForHost applies them.
+func (m *Manager) LoadClientCAs() error {
+	m.domainsMu.RLock()
+	domains := m.domains
+	m.domainsMu.RUnlock()
+
+	pools := make(map[string]*x509.CertPool)
+	var firstErr error
+
+	for i := range domains {
+		d := &domains[i]
+		if d.SSL.ClientCA == "" {
+			continue
+		}
+		pool, err := clientCAPool(d.SSL.ClientCA)
+		if err != nil {
+			// One unreadable CA must not stop the others from loading; the
+			// domain simply keeps requesting no client certificate.
+			m.logger.Error("client CA could not be loaded; client certificates will not be requested",
+				"domain", d.Host, "ca", d.SSL.ClientCA, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		pools[d.Host] = pool
+		m.logger.Info("mTLS configured", "domain", d.Host, "ca", d.SSL.ClientCA, "mode", d.SSL.ClientAuth)
+	}
+
+	m.domainsMu.Lock()
+	m.clientCAs = pools
+	m.domainsMu.Unlock()
+	return firstErr
+}
+
+// clientCAFor returns the CA pool loaded for a domain, or nil if it has none.
+func (m *Manager) clientCAFor(host string) *x509.CertPool {
+	m.domainsMu.RLock()
+	defer m.domainsMu.RUnlock()
+	return m.clientCAs[host]
+}
+
+// clientCAPool reads a PEM bundle into a pool.
+func clientCAPool(caPath string) (*x509.CertPool, error) {
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read client CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no valid certs in client CA file: %s", caPath)
+	}
+	return pool, nil
+}
+
 func (m *Manager) SetClientAuth(caPath, mode string) error {
 	if caPath == "" {
 		return nil
