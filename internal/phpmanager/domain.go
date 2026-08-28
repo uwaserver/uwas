@@ -619,7 +619,22 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 		if domainInst.webRoot != "" {
 			// Per-domain tmp directory for session/upload isolation
 			domainTmp := filepath.Join(domainInst.webRoot, ".tmp")
-			os.MkdirAll(domainTmp, 0770)
+			// Sessions move here from wherever the base php.ini kept them
+			// (PHP's default is the shared system temp directory). Everyone
+			// logged in to this site is signed out once, on the restart that
+			// first applies it — say so rather than leaving the operator to
+			// discover it from support tickets.
+			if _, err := os.Stat(domainTmp); os.IsNotExist(err) {
+				m.logger.Info("isolating PHP sessions and uploads for this domain; existing sessions elsewhere will not be visible and users will be signed out once",
+					"domain", domain, "dir", domainTmp)
+			}
+			if err := os.MkdirAll(domainTmp, 0770); err != nil {
+				// Without a writable directory PHP cannot write sessions at
+				// all, which is worse than sharing one — the ini below points
+				// session.save_path at it regardless, so this must be loud.
+				m.logger.Error("per-domain session directory could not be created; PHP sessions will fail for this domain",
+					"domain", domain, "dir", domainTmp, "error", err)
+			}
 			// open_basedir paths:
 			// - domain web root (site files)
 			// - domain .tmp (sessions, uploads, temp)
