@@ -1,0 +1,174 @@
+package server
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/logger"
+)
+
+// security.rate_limit.by was dead configuration: SPECIFICATION.md documents
+// `by: ip | header:X-Forwarded-For` and nothing read it, so every limiter
+// keyed on the client address whatever the domain asked for.
+
+func rateFixture(t *testing.T, rl config.RateLimitConfig, trusted []string) http.Handler {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("yaz: %v", err)
+	}
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1", LogLevel: "error", LogFormat: "text",
+			TrustedProxies: trusted,
+		},
+		Domains: []config.Domain{{
+			Host:     "rl.test",
+			Type:     "static",
+			Root:     root,
+			SSL:      config.SSLConfig{Mode: "off"},
+			Security: config.SecurityConfig{RateLimit: rl},
+		}},
+	}
+	s := New(cfg, logger.New("error", "text"))
+	t.Cleanup(func() { s.cancel() })
+	return s.buildMiddlewareChain()
+}
+
+// rlIstek sends one request with a given RemoteAddr and headers.
+func rlIstek(h http.Handler, remoteAddr string, headers map[string]string) int {
+	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	req.Host = "rl.test"
+	req.RemoteAddr = remoteAddr
+	req.Header.Set("User-Agent", "uwas-test")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// Behind a trusted proxy, two different clients must get their own budgets.
+// This already works — the real-IP middleware rewrites r.RemoteAddr from
+// X-Forwarded-For before dispatch, so the limiter's key is the client, not
+// the proxy. Pinned here because the `by` work below moves key construction,
+// and this is the property that must survive the move.
+func TestRateLimitHonoursTrustedProxies(t *testing.T) {
+	h := rateFixture(t,
+		config.RateLimitConfig{Requests: 2, Window: config.Duration{}},
+		[]string{"10.0.0.1/32"})
+
+	// Client A exhausts its budget through the proxy.
+	for i := 0; i < 2; i++ {
+		if code := rlIstek(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.10"}); code != http.StatusOK {
+			t.Fatalf("A isteği %d: durum %d", i+1, code)
+		}
+	}
+	if code := rlIstek(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.10"}); code != http.StatusTooManyRequests {
+		t.Fatalf("A sınırı aşmadı: durum %d", code)
+	}
+
+	// Client B, through the same proxy, must still be served.
+	if code := rlIstek(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.99"}); code != http.StatusOK {
+		t.Errorf("B durumu = %d, want 200 — sınır proxy IP'sine göre anahtarlanıyor, tüm ziyaretçiler tek kovayı paylaşıyor", code)
+	}
+}
+
+// by: header:<name> must key on that header.
+func TestRateLimitByHeader(t *testing.T) {
+	h := rateFixture(t,
+		config.RateLimitConfig{Requests: 2, By: "header:X-API-Key"},
+		nil)
+
+	for i := 0; i < 2; i++ {
+		if code := rlIstek(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-a"}); code != http.StatusOK {
+			t.Fatalf("A isteği %d: durum %d", i+1, code)
+		}
+	}
+	if code := rlIstek(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-a"}); code != http.StatusTooManyRequests {
+		t.Fatalf("A sınırı aşmadı: durum %d", code)
+	}
+
+	// Same IP, different key: its own budget.
+	if code := rlIstek(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-b"}); code != http.StatusOK {
+		t.Errorf("B durumu = %d, want 200 — by: header uygulanmıyor", code)
+	}
+}
+
+// by: ip (and an unset by) must keep keying on the client address.
+func TestRateLimitByIPIsDefault(t *testing.T) {
+	for _, by := range []string{"", "ip"} {
+		h := rateFixture(t, config.RateLimitConfig{Requests: 2, By: by}, nil)
+
+		for i := 0; i < 2; i++ {
+			if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusOK {
+				t.Fatalf("by=%q istek %d: durum %d", by, i+1, code)
+			}
+		}
+		if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
+			t.Errorf("by=%q sınır uygulanmadı: durum %d", by, code)
+		}
+		if code := rlIstek(h, "203.0.113.2:5000", nil); code != http.StatusOK {
+			t.Errorf("by=%q başka IP engellendi: durum %d", by, code)
+		}
+	}
+}
+
+// A request missing the keying header must not share one bucket with every
+// other header-less request: that would be a trivial way to exhaust the limit
+// for everyone. It falls back to the client address.
+func TestRateLimitMissingHeaderFallsBackToIP(t *testing.T) {
+	h := rateFixture(t, config.RateLimitConfig{Requests: 2, By: "header:X-API-Key"}, nil)
+
+	for i := 0; i < 2; i++ {
+		if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusOK {
+			t.Fatalf("istek %d: durum %d", i+1, code)
+		}
+	}
+	if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
+		t.Fatalf("başlıksız istek sınırlanmadı: durum %d", code)
+	}
+	if code := rlIstek(h, "203.0.113.2:5000", nil); code != http.StatusOK {
+		t.Errorf("başka IP engellendi: durum %d — başlıksız istekler tek kovayı paylaşıyor", code)
+	}
+}
+
+// Startup and reload share buildDomainRateLimiters, so `by` cannot be applied
+// in one path and forgotten in the other — which would make it work until the
+// first config reload.
+func TestBuildDomainRateLimitersCarriesKeyBy(t *testing.T) {
+	limiters := buildDomainRateLimiters(t.Context(), []config.Domain{{
+		Host:     "rl.test",
+		Security: config.SecurityConfig{RateLimit: config.RateLimitConfig{Requests: 2, By: "header:X-API-Key"}},
+	}}, nil)
+
+	rl := limiters["rl.test"]
+	if rl == nil {
+		t.Fatal("limiter kurulmadı")
+	}
+
+	a := httptest.NewRequest(http.MethodGet, "/", nil)
+	a.RemoteAddr = "203.0.113.1:5000"
+	a.Header.Set("X-API-Key", "anahtar-a")
+	b := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.RemoteAddr = "203.0.113.1:5000"
+	b.Header.Set("X-API-Key", "anahtar-b")
+
+	if rl.Key(a) == rl.Key(b) {
+		t.Error("by: header taşınmadı — aynı IP'den iki anahtar tek kovada")
+	}
+}
+
+// A domain with no rate limit must produce no limiter.
+func TestBuildDomainRateLimitersSkipsUnlimited(t *testing.T) {
+	limiters := buildDomainRateLimiters(t.Context(), []config.Domain{{Host: "plain.test"}}, nil)
+	if len(limiters) != 0 {
+		t.Errorf("sınırsız domain için limiter kuruldu: %v", limiters)
+	}
+}

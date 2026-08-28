@@ -603,18 +603,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	}
 
 	// Per-domain rate limiters
-	s.domainRateLimiters = make(map[string]*middleware.RateLimiter)
-	for _, d := range cfg.Domains {
-		if d.Security.RateLimit.Requests > 0 {
-			window := d.Security.RateLimit.Window.Duration
-			if window == 0 {
-				window = time.Minute
-			}
-			rl := middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
-			rl.SetTrustedProxies(s.config.Global.TrustedProxies)
-			s.domainRateLimiters[d.Host] = rl
-		}
-	}
+	s.domainRateLimiters = buildDomainRateLimiters(ctx, cfg.Domains, s.config.Global.TrustedProxies)
 
 	// Per-domain image optimization
 	s.imageOptChains = make(map[string]middleware.Middleware)
@@ -1245,6 +1234,29 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		}
 		s.logger.Info("PHP assigned to domain", "domain", d.Host, "version", defaultVer, "listen", inst.ListenAddr)
 	}
+}
+
+// buildDomainRateLimiters constructs the per-domain limiters.
+//
+// One function for both the startup and the reload path: they used to carry
+// separate copies of this loop, which is how a limiter setting can be applied
+// in one and forgotten in the other — and reappear on the first reload.
+func buildDomainRateLimiters(ctx context.Context, domains []config.Domain, trustedProxies []string) map[string]*middleware.RateLimiter {
+	out := make(map[string]*middleware.RateLimiter)
+	for _, d := range domains {
+		if d.Security.RateLimit.Requests <= 0 {
+			continue
+		}
+		window := d.Security.RateLimit.Window.Duration
+		if window == 0 {
+			window = time.Minute
+		}
+		rl := middleware.NewRateLimiter(ctx, d.Security.RateLimit.Requests, window)
+		rl.SetTrustedProxies(trustedProxies)
+		rl.SetKeyBy(d.Security.RateLimit.By)
+		out[d.Host] = rl
+	}
+	return out
 }
 
 func configHasPHPDomains(cfg *config.Config) bool {

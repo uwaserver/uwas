@@ -20,7 +20,10 @@ type RateLimiter struct {
 	window         time.Duration
 	cleanup        atomic.Bool
 	trustedProxies []*net.IPNet
-	cancel         context.CancelFunc // stops the background cleanup goroutine
+	// keyBy mirrors security.rate_limit.by: "" or "ip" keys on the client
+	// address, "header:<Name>" on that request header.
+	keyBy  string
+	cancel context.CancelFunc // stops the background cleanup goroutine
 }
 
 type rateShard struct {
@@ -103,8 +106,7 @@ func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware 
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := clientIP(rl, r)
-			if !rl.Allow(ip) {
+			if !rl.Allow(rl.Key(r)) {
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(rl.window.Seconds())))
 				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
 				return
@@ -112,6 +114,51 @@ func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// SetKeyBy configures what the limiter counts against.
+//
+// security.rate_limit.by was dead configuration: SPECIFICATION.md documents
+// `by: ip | header:X-Forwarded-For` and nothing read it, so every limiter
+// keyed on the client address whatever the domain asked for.
+func (rl *RateLimiter) SetKeyBy(by string) {
+	rl.keyBy = strings.TrimSpace(by)
+}
+
+// Key returns the bucket key for a request, applying security.rate_limit.by.
+//
+// X-Forwarded-For and X-Real-IP route through the client-address path rather
+// than being read raw: the real-IP middleware has already resolved them
+// against trusted_proxies, and taking the raw header would let any client set
+// its own bucket. That is what `by: header:X-Forwarded-For` means in the docs.
+func (rl *RateLimiter) Key(r *http.Request) string {
+	by := rl.keyBy
+	if by == "" || strings.EqualFold(by, "ip") {
+		return clientIP(rl, r)
+	}
+
+	name, ok := strings.CutPrefix(by, "header:")
+	if !ok {
+		name, ok = strings.CutPrefix(by, "HEADER:")
+	}
+	if !ok {
+		// Unrecognised form: fall back to the address rather than putting
+		// every request in one bucket.
+		return clientIP(rl, r)
+	}
+
+	name = strings.TrimSpace(name)
+	if strings.EqualFold(name, "X-Forwarded-For") || strings.EqualFold(name, "X-Real-IP") {
+		return clientIP(rl, r)
+	}
+	if v := strings.TrimSpace(r.Header.Get(name)); v != "" {
+		// Namespaced so a header value cannot collide with an IP key.
+		return "h:" + strings.ToLower(name) + ":" + v
+	}
+	// A request without the header falls back to its address. One shared
+	// bucket for every header-less request would be a trivial way to exhaust
+	// the limit for everyone.
+	return clientIP(rl, r)
 }
 
 // Allow checks if the IP is within the rate limit.
