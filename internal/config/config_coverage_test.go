@@ -535,7 +535,7 @@ func TestDomainMarshalYAML_Security(t *testing.T) {
 }
 
 func TestDomainMarshalYAML_Compression(t *testing.T) {
-	d := Domain{Host: "c.com", Type: "static", SSL: SSLConfig{Mode: "off"}, Compression: CompressionConfig{Enabled: true}}
+	d := Domain{Host: "c.com", Type: "static", SSL: SSLConfig{Mode: "off"}, Compression: CompressionConfig{Enabled: BoolPtr(true)}}
 	val, err := d.MarshalYAML()
 	if err != nil {
 		t.Fatal(err)

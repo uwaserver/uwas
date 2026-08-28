@@ -230,12 +230,26 @@ type BasicAuthConfig struct {
 }
 
 // CompressionConfig controls per-domain response compression.
+//
+// Enabled is a POINTER on purpose. Compression is on by default, so a plain
+// bool could not tell "not configured" from "explicitly disabled": every
+// domain that never mentions compression would zero-value to false and lose
+// it. nil means "leave it on", false means the operator turned it off.
 type CompressionConfig struct {
-	Enabled    bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Enabled    *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Algorithms []string `yaml:"algorithms,omitempty" json:"algorithms,omitempty"`
 	MinSize    int      `yaml:"min_size,omitempty" json:"min_size,omitempty"`
 	Types      []string `yaml:"types,omitempty" json:"types,omitempty"`
 }
+
+// CompressionEnabled reports whether responses for this domain should be
+// compressed. Absent configuration means yes.
+func (c CompressionConfig) CompressionEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// BoolPtr is a helper for building optional booleans in config literals.
+func BoolPtr(v bool) *bool { return &v }
 
 // ImageOptimizationConfig enables on-the-fly WebP/AVIF.
 type ImageOptimizationConfig struct {
