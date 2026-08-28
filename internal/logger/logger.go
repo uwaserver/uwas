@@ -35,6 +35,23 @@ func New(level, format string) *Logger {
 	}
 }
 
+// SetLevel changes the threshold on a running logger.
+//
+// The level lives in a slog.LevelVar precisely so it can move, but nothing
+// called this: global.log_level was read once in New and never again, so a
+// reload accepted a new value, wrote it to the config, showed it in the panel
+// and kept logging at the old threshold until the process restarted.
+//
+// An unrecognised value is treated as info, matching New.
+func (l *Logger) SetLevel(level string) {
+	l.level.Set(parseLevel(level))
+}
+
+// Level reports the current threshold.
+func (l *Logger) Level() slog.Level {
+	return l.level.Level()
+}
+
 // StdLogger returns a *log.Logger compatible with net/http.Server.ErrorLog.
 func (l *Logger) StdLogger() *log.Logger {
 	return slog.NewLogLogger(l.Logger.Handler(), slog.LevelError)

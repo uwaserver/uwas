@@ -33,6 +33,7 @@ interface DomainFormState {
   compressionEnabled: boolean;
   compressionMinSize: string;
   compressionAlgorithms: string;
+  compressionTypes: string;
   phpFpmAddress: string;
   phpIndexFiles: string;
   proxyUpstreams: string;
@@ -81,6 +82,7 @@ const emptyForm: DomainFormState = {
   compressionEnabled: true,
   compressionMinSize: '1024',
   compressionAlgorithms: '',
+  compressionTypes: '',
   phpFpmAddress: '',
   phpIndexFiles: 'index.php,index.html',
   proxyUpstreams: '',
@@ -578,6 +580,10 @@ export default function Domains() {
         compressionEnabled: d.compression?.enabled ?? true,
         compressionMinSize: String(d.compression?.min_size ?? 1024),
         compressionAlgorithms: (d.compression?.algorithms ?? []).join(', '),
+        // Round-tripped so editing any other field does not drop it:
+        // the server replaces the whole compression block on a patch
+        // that touches it, so a list left out of the form is lost.
+        compressionTypes: (d.compression?.types ?? []).join(', '),
         phpFpmAddress: d.php?.fpm_address ?? '',
         phpIndexFiles: d.php?.index_files?.join(', ') ?? 'index.php,index.html',
         proxyUpstreams: d.proxy?.upstreams?.map(u => typeof u === 'string' ? u : u.address).join(', ') ?? '',
@@ -618,6 +624,7 @@ export default function Domains() {
         compressionEnabled: true,
         compressionMinSize: '1024',
         compressionAlgorithms: '',
+        compressionTypes: '',
         wafEnabled: false,
         cloudflareOnly: false,
         htaccessEnabled: false,
@@ -681,12 +688,17 @@ export default function Domains() {
     // defaults — an untouched form leaves the block absent, which the server
     // reads as "compression on with built-in defaults".
     const algorithms = form.compressionAlgorithms.split(',').map(s => s.trim()).filter(Boolean);
+    const types = form.compressionTypes.split(',').map(s => s.trim()).filter(Boolean);
     const minSize = parseInt(form.compressionMinSize, 10) || 1024;
-    if (form.type !== 'redirect' && (!form.compressionEnabled || minSize !== 1024 || algorithms.length > 0)) {
+    if (form.type !== 'redirect' && (!form.compressionEnabled || minSize !== 1024 || algorithms.length > 0 || types.length > 0)) {
+      // types must be sent even when the operator did not touch it: the server
+      // replaces the whole compression block on any patch that touches it, so
+      // omitting a configured list deletes it.
       payload.compression = {
         enabled: form.compressionEnabled,
         min_size: minSize,
         algorithms: algorithms.length > 0 ? algorithms : undefined,
+        types: types.length > 0 ? types : undefined,
       };
     }
 
@@ -1066,6 +1078,9 @@ export default function Domains() {
                       </FormField>
                       <FormField label="Algorithms" htmlFor="add-compression-alg">
                         <input id="add-compression-alg" type="text" placeholder="br, gzip" value={form.compressionAlgorithms} onChange={e => patchField('compressionAlgorithms', e.target.value)} className={inputCls} />
+                      </FormField>
+                      <FormField label="Types" htmlFor="add-compression-types">
+                        <input id="add-compression-types" type="text" placeholder="text/html, text/css, application/javascript" value={form.compressionTypes} onChange={e => patchField('compressionTypes', e.target.value)} className={inputCls} />
                       </FormField>
                       <p className="sm:col-span-2 text-xs text-muted-foreground">
                         Leave algorithms empty for both (brotli preferred). Responses

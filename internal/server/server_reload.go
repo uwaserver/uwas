@@ -20,6 +20,11 @@ func (s *Server) reload() error {
 		return fmt.Errorf("reload config: %w", err)
 	}
 
+	// global.log_level was read once at startup and never again: a reload
+	// accepted a new value, wrote it to the config and showed it in the panel
+	// while the process kept logging at the old threshold until restarted.
+	s.logger.SetLevel(newCfg.Global.LogLevel)
+
 	// Update vhosts
 	s.vhosts.Update(newCfg.Domains)
 
