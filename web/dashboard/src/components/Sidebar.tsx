@@ -47,6 +47,7 @@ import {
   Cloud,
 } from 'lucide-react';
 import { logout } from '@/lib/api';
+import DebugLogDrawer from '@/components/DebugLogDrawer';
 import { useTheme } from '@/hooks/useTheme';
 
 interface NavItem {
@@ -303,6 +304,7 @@ export default function Sidebar() {
             <LogOut size={18} />
             Logout
           </button>
+          <DebugLogDrawer />
           {/* branding.footer_text was editable in Settings and typed in the
               API client, but nothing ever rendered it. */}
           {branding.footer_text && (
