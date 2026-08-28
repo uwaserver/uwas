@@ -35,7 +35,7 @@ func TestValidateAppEnvMap_ReservedVars(t *testing.T) {
 		env := map[string]string{name: "value"}
 		err := validateAppEnvMap(env)
 		if err == nil {
-			t.Errorf("expected error for reserved env var %q", name)
+			t.Fatalf("expected error for reserved env var %q", name)
 		}
 		if !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("error for %q should mention 'reserved', got: %v", name, err)

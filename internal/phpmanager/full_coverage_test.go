@@ -411,7 +411,7 @@ func TestRunInstallFailure(t *testing.T) {
 
 	_, err := RunInstall("8.3")
 	if err == nil {
-		t.Error("expected error from failing install command")
+		t.Fatal("expected error from failing install command")
 	}
 	if !strings.Contains(err.Error(), "command failed") {
 		t.Errorf("unexpected error: %v", err)
@@ -503,7 +503,7 @@ func TestSetDomainConfigBlockedDirective(t *testing.T) {
 
 	err := m.SetDomainConfig("blog.com", "disable_functions", "exec")
 	if err == nil {
-		t.Error("expected error for blocked directive")
+		t.Fatal("expected error for blocked directive")
 	}
 	if !strings.Contains(err.Error(), "blocked for security") {
 		t.Errorf("unexpected error: %v", err)
@@ -717,7 +717,7 @@ func TestDisableVersionWithAttachedDomains(t *testing.T) {
 
 	err := m.DisableVersion("8.4")
 	if err == nil {
-		t.Error("expected error when domain is attached")
+		t.Fatal("expected error when domain is attached")
 	}
 	if !strings.Contains(err.Error(), "cannot disable") {
 		t.Errorf("unexpected error: %v", err)
@@ -752,7 +752,7 @@ func TestStartFPMDaemonSuccess(t *testing.T) {
 
 	// Mock exec command to use a long-running process
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	err := m.startFPMDaemon("8.4.19", "/usr/sbin/php-fpm8.4", "127.0.0.1:9000")
@@ -795,7 +795,7 @@ func TestStartFPMDaemonPoolUser(t *testing.T) {
 
 	m := New(testLogger())
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 	killFPM := func(version string) {
 		if val, ok := m.processes.Load(version); ok {
@@ -837,7 +837,7 @@ func TestStartFPMDaemonExecFailure(t *testing.T) {
 
 	err := m.startFPMDaemon("8.4.19", "/nonexistent/php-fpm", "127.0.0.1:9000")
 	if err == nil {
-		t.Error("expected error when exec fails")
+		t.Fatal("expected error when exec fails")
 	}
 	if !strings.Contains(err.Error(), "start php-fpm") {
 		t.Errorf("unexpected error: %v", err)
@@ -855,7 +855,7 @@ func TestStartFPMWithFPMSAPI(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	err := m.StartFPM("8.4.19", "127.0.0.1:9000")
@@ -875,7 +875,7 @@ func TestStartFPMWrongSAPI(t *testing.T) {
 
 	err := m.StartFPM("8.4.19", "127.0.0.1:9000")
 	if err == nil {
-		t.Error("expected error for CLI SAPI")
+		t.Fatal("expected error for CLI SAPI")
 	}
 	if !strings.Contains(err.Error(), "not cgi-fcgi") {
 		t.Errorf("unexpected error: %v", err)
@@ -962,7 +962,7 @@ func TestStartDomainWrongSAPI(t *testing.T) {
 
 	err := m.StartDomain("sapi-test.com")
 	if err == nil {
-		t.Error("expected error for CLI SAPI")
+		t.Fatal("expected error for CLI SAPI")
 	}
 	if !strings.Contains(err.Error(), "not cgi-fcgi") {
 		t.Errorf("unexpected error: %v", err)
@@ -1509,7 +1509,7 @@ func TestStopDomainCleansUpTmpINI(t *testing.T) {
 	os.WriteFile(tmpFile, []byte("test"), 0644)
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	m.AssignDomain("stop-cleanup.com", "8.4")
@@ -1743,12 +1743,12 @@ func TestAutoRestartOnCrash(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			// First call: process that exits with error (simulates crash).
-			// Use a command guaranteed to fail with non-zero exit.
-			cmd := exec.Command("ping", "-n", "1", "0.0.0.0.0.0.invalid.host.test")
+			// false(1) exits non-zero on every POSIX platform.
+			cmd := exec.Command("false")
 			return cmd
 		}
 		// Subsequent calls: long-running process (auto-restart succeeds)
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	m.AssignDomain("crash.com", "8.4")
@@ -1784,7 +1784,7 @@ func TestStopDomainDoesNotAutoRestart(t *testing.T) {
 	var startCount atomic.Int32
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
 		startCount.Add(1)
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	if _, err := m.AssignDomain("manual-stop.com", "8.4"); err != nil {
@@ -2108,7 +2108,7 @@ func TestStartDomainBuildINIError(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	m.AssignDomain("buildini-err.com", "8.4")
@@ -2178,7 +2178,7 @@ func TestStartDomainAutoRestartCleansUpTmpINI(t *testing.T) {
 			return exec.Command("echo", "exit-quick")
 		}
 		// Subsequent: long-running for auto-restart
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	m.AssignDomain("tmpini-goroutine.com", "8.4")
@@ -2490,7 +2490,7 @@ func TestStartDomainAutoRestartNormalExit(t *testing.T) {
 			// Normal exit (exit code 0) — no crash
 			return exec.Command("echo", "normal-exit")
 		}
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	m.AssignDomain("normalexit.com", "8.4")
@@ -2939,7 +2939,7 @@ func TestBuildDomainINICreateTempFailure(t *testing.T) {
 
 	_, err := m.buildDomainINI("test.com", inst, map[string]string{"memory_limit": "256M"})
 	if err == nil {
-		t.Error("expected error when CreateTemp fails")
+		t.Fatal("expected error when CreateTemp fails")
 	}
 	if !strings.Contains(err.Error(), "no space left") {
 		t.Errorf("unexpected error: %v", err)
@@ -3006,7 +3006,7 @@ func TestSetConfigRawCreateConfigFails(t *testing.T) {
 
 	err := m.SetConfigRaw("8.4.19", "content")
 	if err == nil {
-		t.Error("expected error when config creation fails")
+		t.Fatal("expected error when config creation fails")
 	}
 	if !strings.Contains(err.Error(), "cannot create") {
 		t.Errorf("unexpected error: %v", err)
@@ -3045,7 +3045,7 @@ func TestSetConfigCreateConfigFails(t *testing.T) {
 
 	err := m.SetConfig("8.4.19", "memory_limit", "512M")
 	if err == nil {
-		t.Error("expected error when config creation fails")
+		t.Fatal("expected error when config creation fails")
 	}
 	if !strings.Contains(err.Error(), "cannot create") {
 		t.Errorf("unexpected error: %v", err)
@@ -3070,7 +3070,7 @@ func TestStartFPMDaemonWriteConfigFailure(t *testing.T) {
 	m := New(testLogger())
 	err := m.startFPMDaemon("8.4.19", "/usr/bin/php-fpm8.4", "127.0.0.1:9000")
 	if err == nil {
-		t.Error("expected error when write config fails")
+		t.Fatal("expected error when write config fails")
 	}
 	if !strings.Contains(err.Error(), "write fpm config") {
 		t.Errorf("unexpected error: %v", err)
@@ -3080,7 +3080,7 @@ func TestStartFPMDaemonWriteConfigFailure(t *testing.T) {
 func TestStartFPMDaemonBackgroundCleanup(t *testing.T) {
 	m := New(testLogger())
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	err := m.startFPMDaemon("8.4.19", "/usr/bin/php-fpm8.4", "127.0.0.1:9000")

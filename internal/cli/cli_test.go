@@ -197,7 +197,7 @@ func TestHelpCommandRunWithUnknownCommand(t *testing.T) {
 
 	err := helpCmd.Run([]string{"nonexistent"})
 	if err == nil {
-		t.Error("expected error for unknown command")
+		t.Fatal("expected error for unknown command")
 	}
 	if !strings.Contains(err.Error(), "unknown command") {
 		t.Errorf("error = %q, should mention unknown command", err.Error())

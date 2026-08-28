@@ -25,7 +25,7 @@ func TestStartFPMInvalidBinary(t *testing.T) {
 
 	err := m.StartFPM("8.4.19", "127.0.0.1:9000")
 	if err == nil {
-		t.Error("expected error when starting FPM with invalid binary path")
+		t.Fatal("expected error when starting FPM with invalid binary path")
 	}
 	if !strings.Contains(err.Error(), "start php-cgi") {
 		t.Errorf("unexpected error: %v", err)
@@ -42,7 +42,7 @@ func TestStopFPMForNonRunningVersion(t *testing.T) {
 
 	err := m.StopFPM("8.4.19")
 	if err == nil {
-		t.Error("expected error when stopping FPM that is not running")
+		t.Fatal("expected error when stopping FPM that is not running")
 	}
 	if !strings.Contains(err.Error(), "not running") {
 		t.Errorf("unexpected error: %v", err)
@@ -66,7 +66,7 @@ func TestAssignDomainAlreadyAssignedDifferentVersion(t *testing.T) {
 	// Try to assign same domain with different version - should still fail.
 	_, err = m.AssignDomain("blog.com", "8.3")
 	if err == nil {
-		t.Error("expected error for already-assigned domain")
+		t.Fatal("expected error for already-assigned domain")
 	}
 	if !strings.Contains(err.Error(), "already has") {
 		t.Errorf("unexpected error: %v", err)
@@ -400,7 +400,7 @@ func TestStopDomainNotAssigned(t *testing.T) {
 
 	err := m.StopDomain("noexist.com")
 	if err == nil {
-		t.Error("expected error for stopping unassigned domain")
+		t.Fatal("expected error for stopping unassigned domain")
 	}
 	if !strings.Contains(err.Error(), "no PHP assignment") {
 		t.Errorf("unexpected error: %v", err)
@@ -422,7 +422,7 @@ func TestStopDomainNotRunningCov(t *testing.T) {
 
 	err = m.StopDomain("stop-notrunning.com")
 	if err == nil {
-		t.Error("expected error for stopping domain that is not running")
+		t.Fatal("expected error for stopping domain that is not running")
 	}
 	if !strings.Contains(err.Error(), "not running") {
 		t.Errorf("unexpected error: %v", err)
@@ -439,7 +439,7 @@ func TestStopDomainRunning(t *testing.T) {
 
 	// Use a long-running mock process (sleep)
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	_, err := m.AssignDomain("stop-running.com", "8.4")
@@ -470,7 +470,7 @@ func TestStartDomainAlreadyRunningCov(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	_, err := m.AssignDomain("already-running.com", "8.4")
@@ -487,7 +487,8 @@ func TestStartDomainAlreadyRunningCov(t *testing.T) {
 	// Try starting again - should fail
 	err = m.StartDomain("already-running.com")
 	if err == nil {
-		t.Error("expected error for already running domain")
+		// Fatal, not Error: the next line dereferences err.
+		t.Fatal("expected error for already running domain")
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("unexpected error: %v", err)
@@ -504,7 +505,7 @@ func TestStartDomainNotAssigned(t *testing.T) {
 
 	err := m.StartDomain("notassigned.com")
 	if err == nil {
-		t.Error("expected error for starting unassigned domain")
+		t.Fatal("expected error for starting unassigned domain")
 	}
 	if !strings.Contains(err.Error(), "no PHP assignment") {
 		t.Errorf("unexpected error: %v", err)
@@ -530,7 +531,7 @@ func TestStartDomainExecFailure(t *testing.T) {
 
 	err = m.StartDomain("exec-fail.com")
 	if err == nil {
-		t.Error("expected error when exec fails")
+		t.Fatal("expected error when exec fails")
 	}
 	if !strings.Contains(err.Error(), "start php-cgi") {
 		t.Errorf("unexpected error: %v", err)
@@ -546,7 +547,7 @@ func TestStartDomainWithChangeCallback(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	var callbackDomain, callbackAddr string
@@ -586,7 +587,7 @@ func TestUnassignDomainWithRunningProcess(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	_, err := m.AssignDomain("unassign-running.com", "8.4")
@@ -627,7 +628,7 @@ func TestStopFPMRunningProcess(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	err := m.StartFPM("8.4.19", "127.0.0.1:9000")
@@ -668,7 +669,7 @@ func TestStartFPMAlreadyRunningCov(t *testing.T) {
 	// Try again - should fail
 	err = m.StartFPM("8.4.19", "127.0.0.1:9001")
 	if err == nil {
-		t.Error("expected error for already running version")
+		t.Fatal("expected error for already running version")
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Errorf("unexpected error: %v", err)
@@ -682,7 +683,7 @@ func TestStartFPMVersionNotFound(t *testing.T) {
 
 	err := m.StartFPM("9.9.9", "127.0.0.1:9000")
 	if err == nil {
-		t.Error("expected error for unknown version")
+		t.Fatal("expected error for unknown version")
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("unexpected error: %v", err)
@@ -699,7 +700,7 @@ func TestStatusWithRunningProcess(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	err := m.StartFPM("8.4.19", "127.0.0.1:9000")
@@ -768,7 +769,7 @@ func TestStopAllWithProcesses(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	// Start a global FPM process
@@ -939,7 +940,7 @@ func TestProbeVersionParseFailure(t *testing.T) {
 
 	_, err := m.probe("/fake/php")
 	if err == nil {
-		t.Error("expected error when version cannot be parsed")
+		t.Fatal("expected error when version cannot be parsed")
 	}
 	if !strings.Contains(err.Error(), "could not parse version") {
 		t.Errorf("unexpected error: %v", err)
@@ -956,7 +957,7 @@ func TestProbeExecFailure(t *testing.T) {
 
 	_, err := m.probe("/fake/php")
 	if err == nil {
-		t.Error("expected error when exec fails")
+		t.Fatal("expected error when exec fails")
 	}
 	if !strings.Contains(err.Error(), "version check") {
 		t.Errorf("unexpected error: %v", err)
@@ -1033,7 +1034,7 @@ func TestAutoStartAllWithError(t *testing.T) {
 
 	err = m.AutoStartAll()
 	if err == nil {
-		t.Error("expected error from AutoStartAll when StartDomain fails")
+		t.Fatal("expected error from AutoStartAll when StartDomain fails")
 	}
 	if !strings.Contains(err.Error(), "auto-start errors") {
 		t.Errorf("unexpected error: %v", err)
@@ -1049,7 +1050,7 @@ func TestAutoStartAllSuccess(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	_, err := m.AssignDomain("autostart-ok.com", "8.4")
@@ -1076,7 +1077,7 @@ func TestGetDomainInstancesWithRunning(t *testing.T) {
 	}
 
 	m.execCommand = func(name string, args ...string) *exec.Cmd {
-		return exec.Command("ping", "-n", "100", "127.0.0.1")
+		return exec.Command("sleep", "100")
 	}
 
 	_, err := m.AssignDomain("running-inst.com", "8.4")
