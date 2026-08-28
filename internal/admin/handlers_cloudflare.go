@@ -78,7 +78,10 @@ func (d *cfDeps) TunnelStatusOf(id string) (bool, int, string) {
 
 func (d *cfDeps) TunnelStart(id, token string) error {
 	if d.s.cfRunner == nil {
-		return nil
+		// Returning nil made the handler answer {"status":"started"} and write
+		// an audit entry saying the tunnel started, with no runner to start
+		// it. TunnelStop below has always reported this correctly.
+		return fmt.Errorf("tunnel runner not initialized")
 	}
 	return d.s.cfRunner.Start(id, token)
 }
