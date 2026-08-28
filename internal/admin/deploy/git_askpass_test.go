@@ -27,21 +27,21 @@ func envValue(env []string, key string) (string, int) {
 func TestDefaultGitEnvAskpassExists(t *testing.T) {
 	path, count := envValue(defaultGitEnv(), "GIT_ASKPASS")
 	if count > 1 {
-		t.Errorf("GIT_ASKPASS %d kez ayarlandı", count)
+		t.Errorf("GIT_ASKPASS set %d times", count)
 	}
 	if path == "" {
-		t.Skip("bu hostta no-op ikili bulunamadı; GIT_ASKPASS bilinçli olarak atlandı")
+		t.Skip("no no-op binary on this host; GIT_ASKPASS is deliberately unset")
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("GIT_ASKPASS=%s mevcut değil: %v — git \"cannot run\" hatası verir", path, err)
+		t.Fatalf("GIT_ASKPASS=%s does not exist: %v — git answers with a \"cannot run\" error", path, err)
 	}
 	if info.IsDir() {
 		t.Fatalf("GIT_ASKPASS=%s bir dizin", path)
 	}
 	if info.Mode()&0o111 == 0 {
-		t.Errorf("GIT_ASKPASS=%s çalıştırılabilir değil (mod %v)", path, info.Mode())
+		t.Errorf("GIT_ASKPASS=%s is not executable (mode %v)", path, info.Mode())
 	}
 }
 
@@ -70,21 +70,21 @@ func TestGitAuthEnvReplacesAskpass(t *testing.T) {
 
 	path, count := envValue(env, "GIT_ASKPASS")
 	if count != 1 {
-		t.Errorf("GIT_ASKPASS %d kez var, 1 bekleniyordu — no-op yardımcı ortamda kaldı", count)
+		t.Errorf("GIT_ASKPASS present %d times, want 1 — the no-op helper was left in the environment", count)
 	}
 	if path == "" {
-		t.Fatal("token varken GIT_ASKPASS ayarlanmadı")
+		t.Fatal("GIT_ASKPASS was not set with a token present")
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("askpass yardımcısı mevcut değil: %v", err)
+		t.Fatalf("the askpass helper does not exist: %v", err)
 	}
 	if !strings.Contains(path, "uwas-git-askpass") {
-		t.Errorf("GIT_ASKPASS=%s token yardımcısına işaret etmiyor", path)
+		t.Errorf("GIT_ASKPASS=%s does not point at the token helper", path)
 	}
 
 	cleanup()
 	if _, err := os.Stat(path); err == nil {
-		t.Error("cleanup askpass yardımcısını silmedi — token diskte kaldı")
+		t.Error("cleanup did not remove the askpass helper — the token stayed on disk")
 	}
 }
 
@@ -101,7 +101,7 @@ func TestGitAuthEnvWithoutTokenKeepsNoop(t *testing.T) {
 		t.Errorf("GIT_ASKPASS %d kez var", count)
 	}
 	if path != "" && strings.Contains(path, "uwas-git-askpass") {
-		t.Error("token yokken token yardımcısı ayarlandı")
+		t.Error("the token helper was set with no token")
 	}
 }
 
@@ -109,7 +109,7 @@ func TestSetEnvReplacesAndAppends(t *testing.T) {
 	env := []string{"A=1", "GIT_ASKPASS=/eski", "B=2"}
 	env = setEnv(env, "GIT_ASKPASS", "/yeni")
 	if v, count := envValue(env, "GIT_ASKPASS"); v != "/yeni" || count != 1 {
-		t.Errorf("değiştirme başarısız: %q x%d", v, count)
+		t.Errorf("replacement failed: %q x%d", v, count)
 	}
 	if len(env) != 3 {
 		t.Errorf("uzunluk = %d, want 3", len(env))
@@ -117,6 +117,6 @@ func TestSetEnvReplacesAndAppends(t *testing.T) {
 
 	env = setEnv([]string{"A=1"}, "YOK", "x")
 	if v, _ := envValue(env, "YOK"); v != "x" {
-		t.Errorf("ekleme başarısız: %q", v)
+		t.Errorf("append failed: %q", v)
 	}
 }

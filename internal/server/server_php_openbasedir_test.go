@@ -18,62 +18,62 @@ import (
 // the admin panel went through AssignDomainWithRoot and got the isolation —
 // it depended on which code path happened to start the process.
 
-type sahtePHPYonetici struct {
-	atananKok  map[string]string
-	ayarlar    map[string]map[string]string
-	limitler   map[string]rlimit.Limits
-	baslatilan []string
-	// sıra: SetDomainConfig çağrılarının StartDomain'den önce gelmesi şart,
-	// çünkü ini süreç başlarken yazılıyor.
-	baslatildiktanSonraAyar bool
-	atamaHatasi             error
-	ayarHatasi              error
+type fakePHPManager struct {
+	assignedRoot map[string]string
+	overrides    map[string]map[string]string
+	limits       map[string]rlimit.Limits
+	started      []string
+	// Ordering: SetDomainConfig must be called before StartDomain, because
+	// the ini is written as the process starts.
+	configuredAfterStart bool
+	assignErr            error
+	configErr            error
 }
 
-func yeniSahte() *sahtePHPYonetici {
-	return &sahtePHPYonetici{
-		atananKok: map[string]string{},
-		ayarlar:   map[string]map[string]string{},
-		limitler:  map[string]rlimit.Limits{},
+func newFakePHPManager() *fakePHPManager {
+	return &fakePHPManager{
+		assignedRoot: map[string]string{},
+		overrides:    map[string]map[string]string{},
+		limits:       map[string]rlimit.Limits{},
 	}
 }
 
-func (f *sahtePHPYonetici) AssignDomainWithRoot(domain, version, webRoot string) (*phpmanager.DomainPHP, error) {
-	if f.atamaHatasi != nil {
-		return nil, f.atamaHatasi
+func (f *fakePHPManager) AssignDomainWithRoot(domain, version, webRoot string) (*phpmanager.DomainPHP, error) {
+	if f.assignErr != nil {
+		return nil, f.assignErr
 	}
-	f.atananKok[domain] = webRoot
+	f.assignedRoot[domain] = webRoot
 	return &phpmanager.DomainPHP{Domain: domain, Version: version, ListenAddr: "127.0.0.1:9001"}, nil
 }
 
-func (f *sahtePHPYonetici) SetDomainConfig(domain, key, value string) error {
-	for _, d := range f.baslatilan {
+func (f *fakePHPManager) SetDomainConfig(domain, key, value string) error {
+	for _, d := range f.started {
 		if d == domain {
-			f.baslatildiktanSonraAyar = true
+			f.configuredAfterStart = true
 		}
 	}
-	if f.ayarHatasi != nil {
-		return f.ayarHatasi
+	if f.configErr != nil {
+		return f.configErr
 	}
-	if f.ayarlar[domain] == nil {
-		f.ayarlar[domain] = map[string]string{}
+	if f.overrides[domain] == nil {
+		f.overrides[domain] = map[string]string{}
 	}
-	f.ayarlar[domain][key] = value
+	f.overrides[domain][key] = value
 	return nil
 }
 
-func (f *sahtePHPYonetici) SetDomainLimits(domain string, l rlimit.Limits) bool {
-	for _, d := range f.baslatilan {
+func (f *fakePHPManager) SetDomainLimits(domain string, l rlimit.Limits) bool {
+	for _, d := range f.started {
 		if d == domain {
-			f.baslatildiktanSonraAyar = true
+			f.configuredAfterStart = true
 		}
 	}
-	f.limitler[domain] = l
+	f.limits[domain] = l
 	return true
 }
 
-func (f *sahtePHPYonetici) StartDomain(domain string) error {
-	f.baslatilan = append(f.baslatilan, domain)
+func (f *fakePHPManager) StartDomain(domain string) error {
+	f.started = append(f.started, domain)
 	return nil
 }
 
@@ -81,24 +81,24 @@ func testLog() *logger.Logger { return logger.New("error", "text") }
 
 // The web root must reach the PHP manager, or open_basedir is never written.
 func TestAssignPHPForDomainPassesWebRoot(t *testing.T) {
-	f := yeniSahte()
+	f := newFakePHPManager()
 	d := config.Domain{Host: "php.test", Type: "php", Root: "/srv/www/php.test"}
 
 	if _, err := assignPHPForDomain(f, d, "8.4", testLog()); err != nil {
 		t.Fatalf("assignPHPForDomain: %v", err)
 	}
 
-	if got := f.atananKok["php.test"]; got != "/srv/www/php.test" {
-		t.Errorf("web root = %q, want %q — boş kök oturum/yükleme izolasyonunu kapatır", got, "/srv/www/php.test")
+	if got := f.assignedRoot["php.test"]; got != "/srv/www/php.test" {
+		t.Errorf("web root = %q, want %q — an empty root turns session and upload isolation off", got, "/srv/www/php.test")
 	}
-	if len(f.baslatilan) != 1 || f.baslatilan[0] != "php.test" {
-		t.Errorf("StartDomain çağrıları = %v", f.baslatilan)
+	if len(f.started) != 1 || f.started[0] != "php.test" {
+		t.Errorf("StartDomain calls = %v", f.started)
 	}
 }
 
 // The domain's php.ini overrides were dropped on this path entirely.
 func TestAssignPHPForDomainAppliesConfigOverrides(t *testing.T) {
-	f := yeniSahte()
+	f := newFakePHPManager()
 	d := config.Domain{
 		Host: "php.test",
 		Type: "php",
@@ -115,21 +115,21 @@ func TestAssignPHPForDomainAppliesConfigOverrides(t *testing.T) {
 		t.Fatalf("assignPHPForDomain: %v", err)
 	}
 
-	got := f.ayarlar["php.test"]
+	got := f.overrides["php.test"]
 	if got["memory_limit"] != "256M" || got["upload_max_filesize"] != "32M" {
 		t.Errorf("uygulanan override'lar = %v", got)
 	}
-	// buildDomainINI ini'yi süreç başlarken yazıyor; sonradan set edilen bir
-	// override o sürece hiç ulaşmaz.
-	if f.baslatildiktanSonraAyar {
-		t.Error("override StartDomain'den sonra set edildi — çalışan sürece ulaşmaz")
+	// buildDomainINI writes the ini as the process starts; an override set
+	// after that never reaches it.
+	if f.configuredAfterStart {
+		t.Error("the override was set after StartDomain — it never reaches the running process")
 	}
 }
 
 // A rejected override must not take the rest, or the start, down with it.
 func TestAssignPHPForDomainSurvivesRejectedOverride(t *testing.T) {
-	f := yeniSahte()
-	f.ayarHatasi = errors.New("disallowed key")
+	f := newFakePHPManager()
+	f.configErr = errors.New("disallowed key")
 	d := config.Domain{
 		Host: "php.test",
 		Type: "php",
@@ -138,30 +138,30 @@ func TestAssignPHPForDomainSurvivesRejectedOverride(t *testing.T) {
 	}
 
 	if _, err := assignPHPForDomain(f, d, "8.4", testLog()); err != nil {
-		t.Fatalf("reddedilen override atamayı düşürdü: %v", err)
+		t.Fatalf("a rejected override took the assignment down: %v", err)
 	}
-	if len(f.baslatilan) != 1 {
+	if len(f.started) != 1 {
 		t.Error("reddedilen override StartDomain'i engelledi")
 	}
 }
 
 // An already-assigned domain must not be started a second time.
 func TestAssignPHPForDomainStopsOnAssignError(t *testing.T) {
-	f := yeniSahte()
-	f.atamaHatasi = errors.New("domain already has a PHP assignment")
+	f := newFakePHPManager()
+	f.assignErr = errors.New("domain already has a PHP assignment")
 
 	if _, err := assignPHPForDomain(f, config.Domain{Host: "php.test"}, "8.4", testLog()); err == nil {
-		t.Fatal("atama hatası yutuldu")
+		t.Fatal("the assignment error was swallowed")
 	}
-	if len(f.baslatilan) != 0 {
-		t.Errorf("atama başarısızken StartDomain çağrıldı: %v", f.baslatilan)
+	if len(f.started) != 0 {
+		t.Errorf("StartDomain was called after the assignment failed: %v", f.started)
 	}
 }
 
 // domain.resources must reach the manager, and before the worker starts: a
 // cgroup has to exist before a process can be moved into it.
 func TestAssignPHPForDomainRecordsResourceLimits(t *testing.T) {
-	f := yeniSahte()
+	f := newFakePHPManager()
 	d := config.Domain{
 		Host:      "php.test",
 		Type:      "php",
@@ -174,11 +174,11 @@ func TestAssignPHPForDomainRecordsResourceLimits(t *testing.T) {
 	}
 
 	want := rlimit.Limits{CPUPercent: 40, MemoryMB: 512, PIDMax: 80}
-	if got := f.limitler["php.test"]; got != want {
-		t.Errorf("kaydedilen limitler = %+v, want %+v — domain.resources yöneticiye ulaşmıyor", got, want)
+	if got := f.limits["php.test"]; got != want {
+		t.Errorf("recorded limits = %+v, want %+v — domain.resources does not reach the manager", got, want)
 	}
-	if f.baslatildiktanSonraAyar {
-		t.Error("limitler StartDomain'den sonra kaydedildi — cgroup süreçten sonra kurulur")
+	if f.configuredAfterStart {
+		t.Error("limits were recorded after StartDomain — the cgroup would be built after the process")
 	}
 }
 
@@ -188,7 +188,7 @@ func TestLimitsForCarriesEveryField(t *testing.T) {
 		t.Errorf("limitsFor = %+v, want %+v", got, want)
 	}
 	if got := limitsFor(config.ResourceLimits{}); got != (rlimit.Limits{}) {
-		t.Errorf("limitsFor(boş) = %+v", got)
+		t.Errorf("limitsFor(empty) = %+v", got)
 	}
 }
 

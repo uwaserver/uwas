@@ -26,10 +26,10 @@ func requireCgroup2Root(t *testing.T) {
 	t.Helper()
 
 	if os.Geteuid() != 0 {
-		t.Skip("cgroup v2 yazımı root gerektirir")
+		t.Skip("writing cgroup v2 requires root")
 	}
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err != nil {
-		t.Skip("cgroup v2 bağlı değil")
+		t.Skip("cgroup v2 is not mounted")
 	}
 }
 
@@ -44,7 +44,7 @@ func TestKernelApplyEnforcesLimits(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	if path == "" {
-		t.Fatal("Apply boş yol döndürdü")
+		t.Fatal("Apply returned an empty path")
 	}
 
 	// Read the values back from the kernel, not from a recording hook.
@@ -56,7 +56,7 @@ func TestKernelApplyEnforcesLimits(t *testing.T) {
 	for file, expected := range want {
 		data, err := os.ReadFile(filepath.Join(path, file))
 		if err != nil {
-			t.Errorf("%s okunamadı: %v — denetleyici üst cgroup'a devredilmemiş", file, err)
+			t.Errorf("%s unreadable: %v — the controller was not delegated to the parent cgroup", file, err)
 			continue
 		}
 		if got := strings.TrimSpace(string(data)); got != expected {
@@ -79,7 +79,7 @@ func TestKernelAssignPIDMovesProcess(t *testing.T) {
 
 	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("süreç başlatılamadı: %v", err)
+		t.Fatalf("the process would not start: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
@@ -92,7 +92,7 @@ func TestKernelAssignPIDMovesProcess(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(path, "cgroup.procs"))
 	if err != nil {
-		t.Fatalf("cgroup.procs okunamadı: %v", err)
+		t.Fatalf("cgroup.procs unreadable: %v", err)
 	}
 	found := false
 	for _, line := range strings.Fields(string(data)) {
@@ -101,7 +101,7 @@ func TestKernelAssignPIDMovesProcess(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("PID %d cgroup'ta yok; üyeler: %q", cmd.Process.Pid, strings.TrimSpace(string(data)))
+		t.Errorf("PID %d is not in the cgroup; members: %q", cmd.Process.Pid, strings.TrimSpace(string(data)))
 	}
 }
 
@@ -119,31 +119,31 @@ func TestKernelMemoryLimitIsEnforced(t *testing.T) {
 	}
 	// Without this the kernel swaps instead of killing, and the test hangs.
 	if err := os.WriteFile(filepath.Join(path, "memory.swap.max"), []byte("0"), 0o644); err != nil {
-		t.Skipf("memory.swap.max ayarlanamadı: %v", err)
+		t.Skipf("memory.swap.max could not be set: %v", err)
 	}
 
 	// Allocate well past the cap. sh reads the whole string into memory.
 	cmd := exec.Command("sh", "-c", `exec sh -c 'A=""; while :; do A="$A$(head -c 1000000 /dev/zero | tr "\0" "x")"; done'`)
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("süreç başlatılamadı: %v", err)
+		t.Fatalf("the process would not start: %v", err)
 	}
 	if err := AssignPID(path, cmd.Process.Pid); err != nil {
 		_ = cmd.Process.Kill()
 		t.Fatalf("AssignPID: %v", err)
 	}
 
-	bitti := make(chan error, 1)
-	go func() { bitti <- cmd.Wait() }()
+	finished := make(chan error, 1)
+	go func() { finished <- cmd.Wait() }()
 
 	select {
-	case err := <-bitti:
+	case err := <-finished:
 		// Killed by the OOM killer, or the shell died trying. Either way the
 		// cap held; an unlimited process would still be running.
-		t.Logf("süreç sonlandı: %v", err)
+		t.Logf("the process ended: %v", err)
 	case <-time.After(20 * time.Second):
 		_ = cmd.Process.Kill()
-		<-bitti
-		t.Error("16MB sınırı altındaki süreç sınırsız bellek ayırmaya devam etti")
+		<-finished
+		t.Error("a process under a 16MB cap kept allocating without limit")
 	}
 }
 

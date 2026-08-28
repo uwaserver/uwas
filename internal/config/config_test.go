@@ -1196,7 +1196,7 @@ domains:
 	// one — including sites that currently upload more, since a site cannot
 	// raise PHP_ADMIN_VALUE from its own .user.ini.
 	if d.PHP.MaxUpload != 0 {
-		t.Errorf("PHP.MaxUpload = %d, want 0 (ayarsız)", d.PHP.MaxUpload)
+		t.Errorf("PHP.MaxUpload = %d, want 0 (unset)", d.PHP.MaxUpload)
 	}
 	if d.PHP.Timeout.Duration != 300*time.Second {
 		t.Errorf("PHP.Timeout = %v, want 300s", d.PHP.Timeout.Duration)
@@ -1463,14 +1463,14 @@ func TestMaxUploadNotDefaulted(t *testing.T) {
 	applyDefaults(cfg)
 
 	if got := cfg.Domains[0].PHP.MaxUpload; got != 0 {
-		t.Errorf("PHP.MaxUpload = %d, want 0 — varsayılan dolgu mevcut siteleri sınırlar", got)
+		t.Errorf("PHP.MaxUpload = %d, want 0 — a filled-in default caps existing sites", got)
 	}
 	// The other PHP defaults must still be applied.
 	if len(cfg.Domains[0].PHP.IndexFiles) == 0 {
-		t.Error("index_files varsayılanı kayboldu")
+		t.Error("the index_files default was lost")
 	}
 	if cfg.Domains[0].PHP.Timeout.Duration == 0 {
-		t.Error("timeout varsayılanı kayboldu")
+		t.Error("the timeout default was lost")
 	}
 }
 

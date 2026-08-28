@@ -15,33 +15,33 @@ import (
 // collapse /page?utm_source=a and /page?utm_source=b onto one entry however
 // they set it.
 
-func istek(path string) *http.Request {
+func newRequest(path string) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, path, nil)
 	r.Host = "cache.test"
 	return r
 }
 
 func TestGenerateKeyWithoutQueryCollapsesQueries(t *testing.T) {
-	a := GenerateKeyWithoutQuery(istek("/p?utm_source=a"), nil)
-	b := GenerateKeyWithoutQuery(istek("/p?utm_source=b"), nil)
+	a := GenerateKeyWithoutQuery(newRequest("/p?utm_source=a"), nil)
+	b := GenerateKeyWithoutQuery(newRequest("/p?utm_source=b"), nil)
 	if a != b {
-		t.Errorf("sorgular ayrı anahtar üretti:\n  %q\n  %q", a, b)
+		t.Errorf("the queries produced different keys:\n  %q\n  %q", a, b)
 	}
-	if plain := GenerateKeyWithoutQuery(istek("/p"), nil); a != plain {
-		t.Errorf("sorgusuz istek farklı anahtar aldı:\n  %q\n  %q", a, plain)
+	if plain := GenerateKeyWithoutQuery(newRequest("/p"), nil); a != plain {
+		t.Errorf("a request with no query got a different key:\n  %q\n  %q", a, plain)
 	}
 	// Different paths must still be different.
-	if other := GenerateKeyWithoutQuery(istek("/q?utm_source=a"), nil); a == other {
-		t.Error("farklı yollar aynı anahtara çöktü")
+	if other := GenerateKeyWithoutQuery(newRequest("/q?utm_source=a"), nil); a == other {
+		t.Error("different paths collapsed onto one key")
 	}
 }
 
 // The default must not change: the query has always been part of the key.
 func TestGenerateKeyKeepsQueryByDefault(t *testing.T) {
-	a := GenerateKey(istek("/p?q=cats"), nil)
-	b := GenerateKey(istek("/p?q=dogs"), nil)
+	a := GenerateKey(newRequest("/p?q=cats"), nil)
+	b := GenerateKey(newRequest("/p?q=dogs"), nil)
 	if a == b {
-		t.Fatal("varsayılan anahtar sorguyu yok saydı — /p?q=kedi ile /p?q=köpek aynı girdiyi paylaşır")
+		t.Fatal("the default key ignored the query — /p?q=cats and /p?q=dogs would share one entry")
 	}
 }
 
@@ -50,10 +50,10 @@ func testEngine(t *testing.T) *Engine {
 	return NewEngine(context.Background(), 8<<20, "", 0, logger.New("error", "text"))
 }
 
-// girdi builds a live entry. Created must be set: a zero Created puts the
+// liveEntry builds a live entry. Created must be set: a zero Created puts the
 // expiry in year 1, the entry is never returned, and every "expected a miss"
 // assertion below would pass without testing anything.
-func girdi(body string) *CachedResponse {
+func liveEntry(body string) *CachedResponse {
 	return &CachedResponse{
 		StatusCode: 200,
 		Body:       []byte(body),
@@ -62,16 +62,16 @@ func girdi(body string) *CachedResponse {
 	}
 }
 
-// saklandiMi guards against exactly that: prove the entry is retrievable
+// assertStored guards against exactly that: prove the entry is retrievable
 // before asserting anything about a different request missing it.
-func saklandiMi(t *testing.T, e *Engine, r *http.Request, want string) {
+func assertStored(t *testing.T, e *Engine, r *http.Request, want string) {
 	t.Helper()
 	got, _ := e.Get(r)
 	if got == nil {
-		t.Fatalf("%s önbelleğe yazılmadı — test boşa geçemez", r.URL)
+		t.Fatalf("%s was not cached — the test must not pass vacuously", r.URL)
 	}
 	if string(got.Body) != want {
-		t.Fatalf("gövde = %q, want %q", got.Body, want)
+		t.Fatalf("body = %q, want %q", got.Body, want)
 	}
 }
 
@@ -79,11 +79,11 @@ func saklandiMi(t *testing.T, e *Engine, r *http.Request, want string) {
 func TestEngineVariesByQueryByDefault(t *testing.T) {
 	e := testEngine(t)
 
-	e.Set(istek("/p?q=cats"), girdi("cats"))
-	saklandiMi(t, e, istek("/p?q=cats"), "cats")
+	e.Set(newRequest("/p?q=cats"), liveEntry("cats"))
+	assertStored(t, e, newRequest("/p?q=cats"), "cats")
 
-	if got, _ := e.Get(istek("/p?q=dogs")); got != nil {
-		t.Errorf("?q=dogs, ?q=cats'in girdisini aldı: %q", got.Body)
+	if got, _ := e.Get(newRequest("/p?q=dogs")); got != nil {
+		t.Errorf("?q=dogs served ?q=cats' entry: %q", got.Body)
 	}
 }
 
@@ -91,21 +91,21 @@ func TestEngineCollapsesQueriesWhenDisabled(t *testing.T) {
 	e := testEngine(t)
 	e.SetVaryByQuery(false)
 
-	e.Set(istek("/p?utm_source=a"), girdi("sayfa"))
-	saklandiMi(t, e, istek("/p?utm_source=a"), "sayfa")
+	e.Set(newRequest("/p?utm_source=a"), liveEntry("sayfa"))
+	assertStored(t, e, newRequest("/p?utm_source=a"), "sayfa")
 
-	got, _ := e.Get(istek("/p?utm_source=b"))
+	got, _ := e.Get(newRequest("/p?utm_source=b"))
 	if got == nil {
-		t.Fatal("vary_by_query=false iken sorgular ayrı girdilerde kaldı")
+		t.Fatal("the queries stayed in separate entries with vary_by_query=false")
 	}
 	if string(got.Body) != "sayfa" {
-		t.Errorf("gövde = %q", got.Body)
+		t.Errorf("body = %q", got.Body)
 	}
 
 	// Key() must agree with Get/Set, or the store path and the lookup path
 	// would use different keys.
-	if e.Key(istek("/p?utm_source=a")) != e.Key(istek("/p?utm_source=b")) {
-		t.Error("Key() Get/Set ile aynı fikirde değil")
+	if e.Key(newRequest("/p?utm_source=a")) != e.Key(newRequest("/p?utm_source=b")) {
+		t.Error("Key() disagrees with Get/Set")
 	}
 }
 
@@ -113,11 +113,11 @@ func TestEngineDisabledStillSeparatesPaths(t *testing.T) {
 	e := testEngine(t)
 	e.SetVaryByQuery(false)
 
-	e.Set(istek("/a?x=1"), girdi("a"))
-	saklandiMi(t, e, istek("/a?x=1"), "a")
+	e.Set(newRequest("/a?x=1"), liveEntry("a"))
+	assertStored(t, e, newRequest("/a?x=1"), "a")
 
-	if got, _ := e.Get(istek("/b?x=1")); got != nil {
-		t.Errorf("/b, /a'nın girdisini aldı: %q", got.Body)
+	if got, _ := e.Get(newRequest("/b?x=1")); got != nil {
+		t.Errorf("/b served /a's entry: %q", got.Body)
 	}
 }
 
@@ -127,10 +127,10 @@ func TestEngineVaryByQueryTogglesBack(t *testing.T) {
 	e.SetVaryByQuery(false)
 	e.SetVaryByQuery(true)
 
-	e.Set(istek("/p?q=cats"), girdi("cats"))
-	saklandiMi(t, e, istek("/p?q=cats"), "cats")
+	e.Set(newRequest("/p?q=cats"), liveEntry("cats"))
+	assertStored(t, e, newRequest("/p?q=cats"), "cats")
 
-	if got, _ := e.Get(istek("/p?q=dogs")); got != nil {
-		t.Errorf("tekrar açıldıktan sonra da çöktü: %q", got.Body)
+	if got, _ := e.Get(newRequest("/p?q=dogs")); got != nil {
+		t.Errorf("still collapsed after being turned back on: %q", got.Body)
 	}
 }

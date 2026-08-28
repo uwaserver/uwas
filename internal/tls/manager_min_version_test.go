@@ -20,15 +20,15 @@ func TestMinTLSVersionFor(t *testing.T) {
 		beklenen uint16
 		ad       string
 	}{
-		{"1.3", tls.VersionTLS13, "1.3 yükseltiyor"},
-		{"1.2", tls.VersionTLS12, "1.2 aynı"},
-		{"", tls.VersionTLS12, "boş varsayılan"},
+		{"1.3", tls.VersionTLS13, "1.3 raises the floor"},
+		{"1.2", tls.VersionTLS12, "1.2 unchanged"},
+		{"", tls.VersionTLS12, "empty default"},
 		// Below 1.2 is clamped, not honoured: validation has always accepted
 		// these and the field was ignored, so honouring them literally would
 		// downgrade existing deployments.
-		{"1.1", tls.VersionTLS12, "1.1 sıkıştırılıyor"},
-		{"1.0", tls.VersionTLS12, "1.0 sıkıştırılıyor"},
-		{"çöp", tls.VersionTLS12, "tanınmayan değer güvenli tabana düşer"},
+		{"1.1", tls.VersionTLS12, "1.1 is clamped"},
+		{"1.0", tls.VersionTLS12, "1.0 is clamped"},
+		{"garbage", tls.VersionTLS12, "an unrecognised value falls back to the safe floor"},
 	}
 
 	for _, c := range cases {
@@ -58,7 +58,7 @@ func TestGetConfigForClientRaisesMinVersion(t *testing.T) {
 		t.Fatalf("taban MinVersion 0x%04x, 1.2 bekleniyordu", base.MinVersion)
 	}
 	if base.GetConfigForClient == nil {
-		t.Fatal("GetConfigForClient ayarlanmamış — per-domain sürüm hiç uygulanmaz")
+		t.Fatal("GetConfigForClient is unset — no per-domain version can apply")
 	}
 
 	got, err := base.GetConfigForClient(&tls.ClientHelloInfo{ServerName: "tls13.test"})
@@ -66,7 +66,7 @@ func TestGetConfigForClientRaisesMinVersion(t *testing.T) {
 		t.Fatalf("GetConfigForClient: %v", err)
 	}
 	if got == nil {
-		t.Fatal("1.3 isteyen domain için nil döndü — taban 1.2 kalırdı")
+		t.Fatal("nil for a domain asking 1.3 — the base would stay at 1.2")
 	}
 	if got.MinVersion != tls.VersionTLS13 {
 		t.Errorf("MinVersion = 0x%04x, want TLS 1.3 (0x%04x)", got.MinVersion, tls.VersionTLS13)
@@ -85,7 +85,7 @@ func TestGetConfigForClientNilWhenNothingSet(t *testing.T) {
 		t.Fatalf("GetConfigForClient: %v", err)
 	}
 	if got != nil {
-		t.Errorf("ayarsız domain için klon üretildi (MinVersion 0x%04x)", got.MinVersion)
+		t.Errorf("a clone was built for a domain that configures nothing (MinVersion 0x%04x)", got.MinVersion)
 	}
 }
 
@@ -94,12 +94,12 @@ func TestGetConfigForClientUnknownHost(t *testing.T) {
 		{Host: "known.test", SSL: config.SSLConfig{Mode: "auto", MinVersion: "1.3"}},
 	})
 
-	got, err := m.TLSConfig().GetConfigForClient(&tls.ClientHelloInfo{ServerName: "başka.test"})
+	got, err := m.TLSConfig().GetConfigForClient(&tls.ClientHelloInfo{ServerName: "other.test"})
 	if err != nil {
 		t.Fatalf("GetConfigForClient: %v", err)
 	}
 	if got != nil {
-		t.Error("tanınmayan host için taban dışı yapılandırma döndü")
+		t.Error("a config other than the base was returned for an unknown host")
 	}
 }
 
@@ -119,7 +119,7 @@ func TestGetConfigForClientMatchesWWWAndAliases(t *testing.T) {
 			t.Fatalf("%s: %v", host, err)
 		}
 		if got == nil || got.MinVersion != tls.VersionTLS13 {
-			t.Errorf("%s: per-domain sürüm uygulanmadı (got %v)", host, got)
+			t.Errorf("%s: the per-domain version was not applied (got %v)", host, got)
 		}
 	}
 }

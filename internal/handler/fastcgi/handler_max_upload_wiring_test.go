@@ -61,12 +61,12 @@ func alinanParams(t *testing.T, domain *config.Domain) map[string]string {
 
 	h.ServeWith(ctx, domain, ln.Addr().String(), domain.PHP.Env)
 
-	bitti := make(chan struct{})
-	go func() { wg.Wait(); close(bitti) }()
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
 	select {
-	case <-bitti:
+	case <-finished:
 	case <-time.After(5 * time.Second):
-		t.Fatal("FastCGI yanıtlayıcısı istek almadı")
+		t.Fatal("the FastCGI responder received no request")
 	}
 
 	mu.Lock()
@@ -83,7 +83,7 @@ func TestServeWithPassesMaxUploadToPHP(t *testing.T) {
 
 	admin := got["PHP_ADMIN_VALUE"]
 	if !strings.Contains(admin, "upload_max_filesize = 33554432") {
-		t.Errorf("PHP_ADMIN_VALUE = %q — php.max_upload ServeWith'ten geçmiyor", admin)
+		t.Errorf("PHP_ADMIN_VALUE = %q — php.max_upload does not reach it through ServeWith", admin)
 	}
 	if !strings.Contains(admin, "post_max_size = 34603008") {
 		t.Errorf("post_max_size eksik: %q", admin)
@@ -101,6 +101,6 @@ func TestServeWithUnsetMaxUploadSendsNoLimit(t *testing.T) {
 	})
 
 	if admin := got["PHP_ADMIN_VALUE"]; strings.Contains(admin, "upload_max_filesize") {
-		t.Errorf("ayarsız max_upload gönderildi: %q", admin)
+		t.Errorf("an unset max_upload was sent: %q", admin)
 	}
 }

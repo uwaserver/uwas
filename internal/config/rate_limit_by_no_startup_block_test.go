@@ -11,7 +11,7 @@ import (
 // refuses to run on the error. The limiter falls back to the client address
 // and the server warns once when it builds the limiter.
 func TestUnknownRateLimitByDoesNotBlockStartup(t *testing.T) {
-	for _, by := range []string{"cookie:sid", "header:", "header", "saçmalık", ""} {
+	for _, by := range []string{"cookie:sid", "header:", "header", "nonsense", ""} {
 		cfg := &Config{
 			Global: GlobalConfig{LogLevel: "info", LogFormat: "text"},
 			Domains: []Domain{{
@@ -24,9 +24,9 @@ func TestUnknownRateLimitByDoesNotBlockStartup(t *testing.T) {
 		}
 		if err := Validate(cfg); err != nil {
 			if strings.Contains(err.Error(), "rate_limit") {
-				t.Errorf("rate_limit.by=%q açılışı engelledi:\n%v", by, err)
+				t.Errorf("rate_limit.by=%q blocked startup:\n%v", by, err)
 			} else {
-				t.Fatalf("fixture beklenmedik şekilde geçersiz:\n%v", err)
+				t.Fatalf("the fixture is unexpectedly invalid:\n%v", err)
 			}
 		}
 	}

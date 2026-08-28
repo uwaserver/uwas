@@ -353,7 +353,7 @@ func TestHandleCloudflareTunnelStart_ConnectedNoRunner(t *testing.T) {
 		t.Errorf("status = %d, want 500, body=%s", rec.Code, rec.Body.String())
 	}
 	if body := rec.Body.String(); strings.Contains(body, `"status":"started"`) {
-		t.Errorf("runner yokken başlatıldı bildirildi: %s", body)
+		t.Errorf("reported as started with no runner: %s", body)
 	}
 }
 

@@ -33,25 +33,25 @@ func TestSetDomainLimitsRecordsAndReports(t *testing.T) {
 
 	want := rlimit.Limits{CPUPercent: 50, MemoryMB: 256, PIDMax: 100}
 	if !m.SetDomainLimits("limits.test", want) {
-		t.Fatal("SetDomainLimits atanmış domain için false döndü")
+		t.Fatal("SetDomainLimits returned false for an assigned domain")
 	}
 
 	got, ok := m.DomainLimits("limits.test")
 	if !ok {
-		t.Fatal("DomainLimits atanmış domain için false döndü")
+		t.Fatal("DomainLimits returned false for an assigned domain")
 	}
 	if got != want {
-		t.Errorf("limitler = %+v, want %+v", got, want)
+		t.Errorf("limits = %+v, want %+v", got, want)
 	}
 }
 
 func TestSetDomainLimitsUnknownDomain(t *testing.T) {
 	m := limitsManager(t)
 	if m.SetDomainLimits("yok.test", rlimit.Limits{MemoryMB: 64}) {
-		t.Error("atanmamış domain için true döndü")
+		t.Error("returned true for an unassigned domain")
 	}
 	if _, ok := m.DomainLimits("yok.test"); ok {
-		t.Error("atanmamış domain için limit bildirildi")
+		t.Error("limits reported for an unassigned domain")
 	}
 }
 
@@ -94,7 +94,7 @@ func TestStartDomainAppliesRecordedLimits(t *testing.T) {
 		t.Errorf("AssignPID yolu = %q", assignedPath)
 	}
 	if assignedPID == 0 {
-		t.Error("AssignPID çağrılmadı — işçi cgroup dışında koşar")
+		t.Error("AssignPID was not called — the worker runs outside the cgroup")
 	}
 }
 
@@ -112,12 +112,12 @@ func TestStartDomainSurvivesLimitFailure(t *testing.T) {
 	m.SetDomainLimits("limits.test", rlimit.Limits{MemoryMB: 128})
 
 	if err := m.StartDomain("limits.test"); err != nil {
-		t.Fatalf("cgroup hatası domaini düşürdü: %v", err)
+		t.Fatalf("a cgroup failure took the domain down: %v", err)
 	}
 	t.Cleanup(func() { _ = m.StopDomain("limits.test") })
 
 	if m.RunningAddrForDomain("limits.test") == "" {
-		t.Error("cgroup uygulanamayınca PHP başlatılmadı")
+		t.Error("PHP did not start when the cgroup could not be applied")
 	}
 }
 
@@ -129,12 +129,12 @@ func TestStartDomainWithoutLimitsCreatesNoCgroup(t *testing.T) {
 	rlimitApply = func(domain string, l rlimit.Limits) (string, error) {
 		called = true
 		if l != (rlimit.Limits{}) {
-			t.Errorf("boş limitler bekleniyordu, alınan %+v", l)
+			t.Errorf("want empty limits, got %+v", l)
 		}
-		return "", nil // rlimit.Apply boş limitlerde "" döner
+		return "", nil // rlimit.Apply returns "" for empty limits
 	}
 	rlimitAssignPID = func(string, int) error {
-		t.Error("cgroup yokken AssignPID çağrıldı")
+		t.Error("AssignPID was called with no cgroup")
 		return nil
 	}
 
@@ -148,6 +148,6 @@ func TestStartDomainWithoutLimitsCreatesNoCgroup(t *testing.T) {
 	t.Cleanup(func() { _ = m.StopDomain("plain.test") })
 
 	if !called {
-		t.Error("Apply hiç çağrılmadı")
+		t.Error("Apply was never called")
 	}
 }

@@ -63,7 +63,7 @@ func TestDomainLogRotation(t *testing.T) {
 
 	// Wait for background compression. A fixed sleep is a race: the gzip runs
 	// on a background goroutine and 500ms is not enough on a loaded machine.
-	rotasyonuBekle(t, dir)
+	waitForRotation(t, dir)
 
 	// Check that the active log exists
 	if _, err := os.Stat(logPath); err != nil {
@@ -153,9 +153,9 @@ func TestPruneBackups(t *testing.T) {
 	}
 }
 
-// rotasyonuBekle waits until at least one rotated log appears, instead of
+// waitForRotation waits until at least one rotated log appears, instead of
 // sleeping for a fixed time and hoping the background compression finished.
-func rotasyonuBekle(t *testing.T, dir string) {
+func waitForRotation(t *testing.T, dir string) {
 	t.Helper()
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -170,5 +170,5 @@ func rotasyonuBekle(t *testing.T, dir string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("rotasyon 10 saniyede tamamlanmadı")
+	t.Fatal("rotation did not complete within 10 seconds")
 }

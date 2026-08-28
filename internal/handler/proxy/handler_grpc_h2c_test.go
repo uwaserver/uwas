@@ -16,8 +16,8 @@ import (
 // upstream still got HTTP/1.1, and gRPC does not run on HTTP/1.1 — so a
 // domain configured for gRPC could not proxy it.
 
-// protokolSunucusu answers with the protocol it saw, over h2c.
-func protokolSunucusu(t *testing.T) *httptest.Server {
+// protocolServer answers with the protocol it saw, over h2c.
+func protocolServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,14 +48,14 @@ func grpcDomain(host string, upstream string, grpc bool) *config.Domain {
 	}
 }
 
-// istegiGonder round-trips one request through the domain's transport and
+// roundTripProto round-trips one request through the domain's transport and
 // returns the protocol the upstream reported.
-func istegiGonder(t *testing.T, h *Handler, d *config.Domain, url string) string {
+func roundTripProto(t *testing.T, h *Handler, d *config.Domain, url string) string {
 	t.Helper()
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		t.Fatalf("istek: %v", err)
+		t.Fatalf("newRequest: %v", err)
 	}
 	resp, err := h.getTransport(d).RoundTrip(req)
 	if err != nil {
@@ -65,7 +65,7 @@ func istegiGonder(t *testing.T, h *Handler, d *config.Domain, url string) string
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("gövde: %v", err)
+		t.Fatalf("body: %v", err)
 	}
 	return string(body)
 }
@@ -73,12 +73,12 @@ func istegiGonder(t *testing.T, h *Handler, d *config.Domain, url string) string
 func testHandler() *Handler { return New(logger.New("error", "text")) }
 
 func TestGRPCUsesH2CForCleartextUpstream(t *testing.T) {
-	up := protokolSunucusu(t)
+	up := protocolServer(t)
 	h := testHandler()
 
-	got := istegiGonder(t, h, grpcDomain("grpc.test", up.URL, true), up.URL+"/")
+	got := roundTripProto(t, h, grpcDomain("grpc.test", up.URL, true), up.URL+"/")
 	if got != "HTTP/2.0" {
-		t.Errorf("upstream %q gördü, HTTP/2.0 bekleniyordu — proxy.grpc h2c kurmuyor", got)
+		t.Errorf("the upstream saw %q, want HTTP/2.0 — proxy.grpc does not set up h2c", got)
 	}
 }
 
@@ -86,44 +86,44 @@ func TestGRPCUsesH2CForCleartextUpstream(t *testing.T) {
 // negotiation, so speaking HTTP/2 to a server that does not expect it would
 // break every plain proxy domain.
 func TestWithoutGRPCCleartextStaysHTTP11(t *testing.T) {
-	up := protokolSunucusu(t)
+	up := protocolServer(t)
 	h := testHandler()
 
-	got := istegiGonder(t, h, grpcDomain("plain.test", up.URL, false), up.URL+"/")
+	got := roundTripProto(t, h, grpcDomain("plain.test", up.URL, false), up.URL+"/")
 	if got != "HTTP/1.1" {
-		t.Errorf("upstream %q gördü, HTTP/1.1 bekleniyordu", got)
+		t.Errorf("the upstream saw %q, want HTTP/1.1", got)
 	}
 }
 
 // The transport cache must not hand a gRPC domain's h2c transport to a
 // non-gRPC domain, or vice versa.
 func TestGRPCTransportNotSharedAcrossDomains(t *testing.T) {
-	up := protokolSunucusu(t)
+	up := protocolServer(t)
 	h := testHandler()
 
 	// Same host and timeouts; only the grpc flag differs.
 	withGRPC := grpcDomain("same.test", up.URL, true)
 	without := grpcDomain("same.test", up.URL, false)
 
-	if got := istegiGonder(t, h, withGRPC, up.URL+"/"); got != "HTTP/2.0" {
-		t.Errorf("grpc domain %q gördü", got)
+	if got := roundTripProto(t, h, withGRPC, up.URL+"/"); got != "HTTP/2.0" {
+		t.Errorf("the grpc domain saw %q", got)
 	}
-	if got := istegiGonder(t, h, without, up.URL+"/"); got != "HTTP/1.1" {
-		t.Errorf("grpc olmayan domain %q gördü — önbellek h2c taşımasını paylaştırdı", got)
+	if got := roundTripProto(t, h, without, up.URL+"/"); got != "HTTP/1.1" {
+		t.Errorf("the non-grpc domain saw %q — the cache shared the h2c transport", got)
 	}
 }
 
 // ResetTransports must close both halves without panicking on the wrapper.
 func TestResetTransportsHandlesGRPCWrapper(t *testing.T) {
-	up := protokolSunucusu(t)
+	up := protocolServer(t)
 	h := testHandler()
 
-	istegiGonder(t, h, grpcDomain("grpc.test", up.URL, true), up.URL+"/")
+	roundTripProto(t, h, grpcDomain("grpc.test", up.URL, true), up.URL+"/")
 	h.ResetTransports()
 
 	sayac := 0
 	h.transports.Range(func(_, _ any) bool { sayac++; return true })
 	if sayac != 0 {
-		t.Errorf("ResetTransports sonrası %d taşıma kaldı", sayac)
+		t.Errorf("%d transports remained after ResetTransports", sayac)
 	}
 }

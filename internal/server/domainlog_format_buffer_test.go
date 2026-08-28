@@ -26,17 +26,17 @@ func logFixture(t *testing.T, cfg config.AccessLogConfig) (*domainLogManager, st
 	return m, path
 }
 
-func birSatirYaz(m *domainLogManager, cfg config.AccessLogConfig, path string) {
+func writeOneLine(m *domainLogManager, cfg config.AccessLogConfig, path string) {
 	cfg.Path = path
 	m.Write("log.test", cfg, "GET", "/index.html?a=1", "203.0.113.7", "uwas-test",
 		200, 1024, 5*time.Millisecond)
 }
 
-func logOku(t *testing.T, path string) string {
+func readLog(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("log okunamadı: %v", err)
+		t.Fatalf("log unreadable: %v", err)
 	}
 	return string(data)
 }
@@ -44,9 +44,9 @@ func logOku(t *testing.T, path string) string {
 func TestAccessLogJSONFormat(t *testing.T) {
 	cfg := config.AccessLogConfig{Format: "json"}
 	m, path := logFixture(t, cfg)
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 
-	line := strings.TrimSpace(logOku(t, path))
+	line := strings.TrimSpace(readLog(t, path))
 	var got struct {
 		Time       string `json:"time"`
 		RemoteIP   string `json:"remote_ip"`
@@ -58,16 +58,16 @@ func TestAccessLogJSONFormat(t *testing.T) {
 		UserAgent  string `json:"user_agent"`
 	}
 	if err := json.Unmarshal([]byte(line), &got); err != nil {
-		t.Fatalf("format=json JSON üretmedi: %v\n  satır: %s", err, line)
+		t.Fatalf("format=json did not produce JSON: %v\n  line: %s", err, line)
 	}
 	if got.RemoteIP != "203.0.113.7" || got.Method != "GET" || got.Path != "/index.html?a=1" {
-		t.Errorf("alanlar yanlış: %+v", got)
+		t.Errorf("fields are wrong: %+v", got)
 	}
 	if got.Status != 200 || got.Bytes != 1024 || got.DurationMS != 5 {
-		t.Errorf("sayısal alanlar yanlış: %+v", got)
+		t.Errorf("numeric fields are wrong: %+v", got)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, got.Time); err != nil {
-		t.Errorf("time RFC3339 değil: %q", got.Time)
+		t.Errorf("time is not RFC3339: %q", got.Time)
 	}
 }
 
@@ -75,37 +75,37 @@ func TestAccessLogJSONFormat(t *testing.T) {
 func TestAccessLogDefaultsToCLF(t *testing.T) {
 	cfg := config.AccessLogConfig{}
 	m, path := logFixture(t, cfg)
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 
-	line := logOku(t, path)
+	line := readLog(t, path)
 	if !strings.HasPrefix(line, "203.0.113.7 - - [") {
-		t.Errorf("varsayılan biçim CLF değil: %q", line)
+		t.Errorf("the default format is not CLF: %q", line)
 	}
 	if strings.HasPrefix(strings.TrimSpace(line), "{") {
-		t.Error("varsayılan JSON'a döndü")
+		t.Error("the default turned into JSON")
 	}
 }
 
 func TestAccessLogCLFExplicit(t *testing.T) {
 	cfg := config.AccessLogConfig{Format: "clf"}
 	m, path := logFixture(t, cfg)
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 
-	if line := logOku(t, path); !strings.Contains(line, `"GET /index.html?a=1"`) {
-		t.Errorf("clf satırı beklenen şekilde değil: %q", line)
+	if line := readLog(t, path); !strings.Contains(line, `"GET /index.html?a=1"`) {
+		t.Errorf("the clf line is not in the expected shape: %q", line)
 	}
 }
 
 // "custom" is documented but there is no format-string field to carry a
 // template; it must fall back rather than produce nothing.
 func TestAccessLogCustomAndUnknownFallBackToCLF(t *testing.T) {
-	for _, format := range []string{"custom", "saçmalık"} {
+	for _, format := range []string{"custom", "nonsense"} {
 		cfg := config.AccessLogConfig{Format: format}
 		m, path := logFixture(t, cfg)
-		birSatirYaz(m, cfg, path)
+		writeOneLine(m, cfg, path)
 
-		if line := logOku(t, path); !strings.HasPrefix(line, "203.0.113.7 - - [") {
-			t.Errorf("format=%q clf'ye düşmedi: %q", format, line)
+		if line := readLog(t, path); !strings.HasPrefix(line, "203.0.113.7 - - [") {
+			t.Errorf("format=%q did not fall back to clf: %q", format, line)
 		}
 	}
 }
@@ -117,16 +117,16 @@ func TestAccessLogBufferHoldsThenFlushesOnClose(t *testing.T) {
 	cfg.Path = path
 
 	m := newDomainLogManager()
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 
 	if data, _ := os.ReadFile(path); len(data) != 0 {
-		t.Errorf("buffer_size ayarlıyken satır hemen yazıldı: %q", data)
+		t.Errorf("the line was written immediately with buffer_size set: %q", data)
 	}
 
 	m.Close()
 
-	if line := logOku(t, path); !strings.Contains(line, "203.0.113.7") {
-		t.Errorf("Close tamponu boşaltmadı: %q", line)
+	if line := readLog(t, path); !strings.Contains(line, "203.0.113.7") {
+		t.Errorf("Close did not flush the buffer: %q", line)
 	}
 }
 
@@ -135,10 +135,10 @@ func TestAccessLogBufferHoldsThenFlushesOnClose(t *testing.T) {
 func TestAccessLogUnbufferedByDefault(t *testing.T) {
 	cfg := config.AccessLogConfig{}
 	m, path := logFixture(t, cfg)
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 
 	if data, _ := os.ReadFile(path); len(data) == 0 {
-		t.Error("varsayılan tamponlu davrandı — satır dosyada yok")
+		t.Error("the default behaved as buffered — the line is not in the file")
 	}
 }
 
@@ -147,19 +147,19 @@ func TestAccessLogUnbufferedByDefault(t *testing.T) {
 func TestAccessLogBufferFlushedBeforeRotate(t *testing.T) {
 	cfg := config.AccessLogConfig{
 		BufferSize: 64 << 10,
-		Rotate:     config.RotateConfig{MaxSize: 1}, // her satır rotasyonu tetikler
+		Rotate:     config.RotateConfig{MaxSize: 1}, // every line triggers a rotation
 	}
 	path := filepath.Join(t.TempDir(), "access.log")
 	cfg.Path = path
 
 	m := newDomainLogManager()
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 	m.Close()
 
 	dir := filepath.Dir(path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("dizin okunamadı: %v", err)
+		t.Fatalf("directory unreadable: %v", err)
 	}
 	var toplam int64
 	for _, e := range entries {
@@ -170,7 +170,7 @@ func TestAccessLogBufferFlushedBeforeRotate(t *testing.T) {
 		toplam += info.Size()
 	}
 	if toplam == 0 {
-		t.Error("rotasyon sonrası hiçbir dosyada içerik yok — tampon kaybedildi")
+		t.Error("no file holds any content after rotation — the buffer was lost")
 	}
 }
 
@@ -179,7 +179,7 @@ func TestAccessLogLineRendering(t *testing.T) {
 
 	clf := accessLogLine("", now, "POST", "/x", "10.0.0.1", "UA", 201, 7, 3*time.Millisecond)
 	if !strings.HasSuffix(clf, "\n") {
-		t.Error("clf satırı yeni satırla bitmiyor")
+		t.Error("the clf line does not end with a newline")
 	}
 	if !strings.Contains(clf, `"POST /x" 201 7 3ms "UA"`) {
 		t.Errorf("clf = %q", clf)
@@ -187,10 +187,10 @@ func TestAccessLogLineRendering(t *testing.T) {
 
 	js := accessLogLine("JSON", now, "POST", "/x", "10.0.0.1", "UA", 201, 7, 3*time.Millisecond)
 	if !strings.HasSuffix(js, "\n") {
-		t.Error("json satırı yeni satırla bitmiyor")
+		t.Error("the json line does not end with a newline")
 	}
 	if !json.Valid([]byte(strings.TrimSpace(js))) {
-		t.Errorf("json geçersiz: %q", js)
+		t.Errorf("invalid json: %q", js)
 	}
 }
 
@@ -205,7 +205,7 @@ func TestAccessLogBufferFlushesOnTimer(t *testing.T) {
 	t.Cleanup(m.Close)
 	m.StartCleanup()
 
-	birSatirYaz(m, cfg, path)
+	writeOneLine(m, cfg, path)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -214,18 +214,18 @@ func TestAccessLogBufferFlushesOnTimer(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Error("tamponlanan satır zamanlayıcıyla diske inmedi")
+	t.Error("the buffered line never reached disk on the timer")
 }
 
 func TestKnownAccessLogFormat(t *testing.T) {
 	for _, ok := range []string{"", "clf", "CLF", "json", " json ", "custom"} {
 		if !KnownAccessLogFormat(ok) {
-			t.Errorf("%q tanınmadı", ok)
+			t.Errorf("%q was not recognised", ok)
 		}
 	}
-	for _, kotu := range []string{"combined", "json_lines", "saçmalık"} {
+	for _, kotu := range []string{"combined", "json_lines", "nonsense"} {
 		if KnownAccessLogFormat(kotu) {
-			t.Errorf("%q tanındı", kotu)
+			t.Errorf("%q was recognised", kotu)
 		}
 	}
 }
