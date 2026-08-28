@@ -44,7 +44,7 @@ func newTestSecurityStats() *middleware.SecurityStats {
 // are blocked by the WAF guard.
 func TestWAF_BlocksSQLInjection(t *testing.T) {
 	stats := newTestSecurityStats()
-	guard := middleware.DomainWAFGuard(newTestLogger(), nil, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), nil, nil, stats)
 
 	attackURLs := []string{
 		"/page?id=1%20UNION%20SELECT%20%2A%20FROM%20users",
@@ -68,7 +68,7 @@ func TestWAF_BlocksSQLInjection(t *testing.T) {
 // TestWAF_BlocksXSS verifies that XSS payloads in the URL are blocked.
 func TestWAF_BlocksXSS(t *testing.T) {
 	stats := newTestSecurityStats()
-	guard := middleware.DomainWAFGuard(newTestLogger(), nil, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), nil, nil, stats)
 
 	attackURLs := []string{
 		"/search?q=%3Cscript%3Ealert%281%29%3C%2Fscript%3E",
@@ -89,7 +89,7 @@ func TestWAF_BlocksXSS(t *testing.T) {
 // TestWAF_BlocksPathTraversal verifies that ../ in the URL is blocked.
 func TestWAF_BlocksPathTraversal(t *testing.T) {
 	stats := newTestSecurityStats()
-	guard := middleware.DomainWAFGuard(newTestLogger(), nil, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), nil, nil, stats)
 
 	attackURLs := []string{
 		"/../../../etc/passwd",
@@ -110,7 +110,7 @@ func TestWAF_BlocksPathTraversal(t *testing.T) {
 // TestWAF_BlocksShellInjection verifies that shell injection patterns are blocked.
 func TestWAF_BlocksShellInjection(t *testing.T) {
 	stats := newTestSecurityStats()
-	guard := middleware.DomainWAFGuard(newTestLogger(), nil, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), nil, nil, stats)
 
 	attackURLs := []string{
 		"/cmd?exec=%3Bcat%20/etc/passwd",
@@ -132,7 +132,7 @@ func TestWAF_BlocksShellInjection(t *testing.T) {
 // /proc/self, etc. via URL are blocked.
 func TestWAF_BlocksSensitiveFiles(t *testing.T) {
 	stats := newTestSecurityStats()
-	guard := middleware.DomainWAFGuard(newTestLogger(), nil, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), nil, nil, stats)
 
 	attackURLs := []string{
 		"/page?file=/etc/passwd",
@@ -153,7 +153,7 @@ func TestWAF_BlocksSensitiveFiles(t *testing.T) {
 // TestWAF_AllowsLegitimateRequests verifies that normal requests pass the WAF.
 func TestWAF_AllowsLegitimateRequests(t *testing.T) {
 	stats := newTestSecurityStats()
-	guard := middleware.DomainWAFGuard(newTestLogger(), nil, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), nil, nil, stats)
 
 	legitURLs := []string{
 		"/",
@@ -178,7 +178,7 @@ func TestWAF_AllowsLegitimateRequests(t *testing.T) {
 func TestWAF_BypassPaths(t *testing.T) {
 	stats := newTestSecurityStats()
 	bypassPaths := []string{"/webhook/", "/api/callback"}
-	guard := middleware.DomainWAFGuard(newTestLogger(), bypassPaths, stats)
+	guard := middleware.DomainWAFGuard(newTestLogger(), bypassPaths, nil, stats)
 
 	// A URL that would normally be blocked by WAF, but is in a bypass path
 	req := httptest.NewRequest(http.MethodPost, "https://example.com/webhook/drop", strings.NewReader("x=<script>alert(1)</script>"))
