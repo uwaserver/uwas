@@ -338,14 +338,23 @@ func TestHandleCloudflareTunnelStart_ConnectedNoRunner(t *testing.T) {
 	}()
 
 	s := testServer()
-	// testServer() has cfRunner == nil
+	// New() always builds a runner, so the comment this test used to carry —
+	// "testServer() has cfRunner == nil" — had stopped being true. With a
+	// runner in place the handler reached Runner.Start, which shells out to
+	// cloudflared: the test passed on a host without the binary (spawn fails
+	// → 500) and, on a host that has it, spawned a real cloudflared process
+	// with the fixture's fake token and got 200.
+	s.cfRunner = nil
+
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/cloudflare/tunnels/existing-id/start", nil)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500, body=%s", rec.Code, rec.Body.String())
 	}
-	t.Logf("start no runner body: %s", rec.Body.String())
+	if body := rec.Body.String(); strings.Contains(body, `"status":"started"`) {
+		t.Errorf("runner yokken başlatıldı bildirildi: %s", body)
+	}
 }
 
 func TestHandleCloudflareTunnelStart_ConnectedEmptyToken(t *testing.T) {
