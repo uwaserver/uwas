@@ -145,6 +145,13 @@ export default function App() {
       if (b.name) {
         document.title = b.name;
       }
+      // primary_color only tinted the sidebar's fallback avatar. The theme
+      // reads --color-primary, so white-labelling never actually changed the
+      // panel's colour. Validated before it reaches CSS: the value comes from
+      // config, but a style property is not the place to trust input.
+      if (b.primary_color && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(b.primary_color.trim())) {
+        document.documentElement.style.setProperty('--color-primary', b.primary_color.trim());
+      }
     }).catch(() => {});
   }, []);
 
