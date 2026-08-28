@@ -757,7 +757,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, s.securityStats))
 	mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
 
-	mws = append(mws, middleware.AccessLog(s.logger))
+	mws = append(mws, middleware.AccessLog(s.logger, s.config.Global.AccessLog.RequestLogEnabled()))
 
 	chain := middleware.Chain(mws...)
 	return chain(http.HandlerFunc(s.handleRequest))

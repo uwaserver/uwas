@@ -61,7 +61,14 @@ func isSensitiveQueryParam(name string) bool {
 }
 
 // AccessLog logs each completed request in structured format.
-func AccessLog(log *logger.Logger) Middleware {
+//
+// enabled=false drops the line entirely, for a deployment that already writes
+// per-domain access_log files and does not want the same data a second time
+// in the main log.
+func AccessLog(log *logger.Logger, enabled bool) Middleware {
+	if !enabled {
+		return func(next http.Handler) http.Handler { return next }
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -92,6 +99,19 @@ func AccessLog(log *logger.Logger) Middleware {
 				// Also redact sensitive info from Referer
 				ref = redactReferer(ref)
 				fields = append(fields, "referer", ref)
+			}
+			// The level follows the status. Every request used to be Info,
+			// so lowering global.log_level to quieten the stream also hid the
+			// failures — the one part worth keeping. A 5xx is the server
+			// breaking; everything else is telemetry.
+			//
+			// 4xx deliberately stays Info: scanner 404s are constant on any
+			// public site and would put the noise straight back into warn.
+			// Blocked requests are already reported at Warn by the security
+			// and WAF guards.
+			if rw.StatusCode() >= 500 {
+				log.Error("request", fields...)
+				return
 			}
 			log.Info("request", fields...)
 		})
