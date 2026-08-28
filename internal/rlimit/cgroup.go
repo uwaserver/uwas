@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 const cgroupBase = "/sys/fs/cgroup/uwas"
@@ -16,6 +17,7 @@ const cgroupBase = "/sys/fs/cgroup/uwas"
 var (
 	osMkdirAllFn  = os.MkdirAll
 	osWriteFileFn = os.WriteFile
+	osReadFileFn  = os.ReadFile
 	osRemoveFn    = os.Remove
 	runtimeGOOS   = func() string { return runtime.GOOS }
 )
@@ -39,6 +41,17 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	}
 	if limits.CPUPercent == 0 && limits.MemoryMB == 0 && limits.PIDMax == 0 {
 		return "", nil
+	}
+
+	if err := osMkdirAllFn(cgroupBase, 0755); err != nil {
+		return "", fmt.Errorf("create cgroup %s: %w", cgroupBase, err)
+	}
+	// A child cgroup only gets cpu.max / memory.max / pids.max if the parent
+	// enables those controllers for its children. Without this the child is
+	// created with nothing but cgroup.* and *.pressure files, and every write
+	// below fails with EACCES — the limits silently do not exist.
+	if err := enableControllers(cgroupBase, limits); err != nil {
+		return "", err
 	}
 
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
@@ -102,4 +115,56 @@ func sanitizeDomain(domain string) string {
 		}
 	}
 	return string(safe)
+}
+
+// controllersFor returns the cgroup v2 controllers the given limits need.
+func controllersFor(limits Limits) []string {
+	var out []string
+	if limits.CPUPercent > 0 {
+		out = append(out, "cpu")
+	}
+	if limits.MemoryMB > 0 {
+		out = append(out, "memory")
+	}
+	if limits.PIDMax > 0 {
+		out = append(out, "pids")
+	}
+	return out
+}
+
+// enableControllers delegates the controllers a domain needs to the children
+// of base, writing only the ones that are not already enabled.
+//
+// The kernel refuses a controller that the base cgroup itself was not granted
+// (its own parent must list it in cgroup.subtree_control). That is reported
+// rather than silently producing a cgroup with no limit files in it.
+func enableControllers(base string, limits Limits) error {
+	need := controllersFor(limits)
+	if len(need) == 0 {
+		return nil
+	}
+
+	enabled := map[string]bool{}
+	if data, err := osReadFileFn(filepath.Join(base, "cgroup.subtree_control")); err == nil {
+		for _, c := range strings.Fields(string(data)) {
+			enabled[c] = true
+		}
+	}
+
+	var missing []string
+	for _, c := range need {
+		if !enabled[c] {
+			missing = append(missing, "+"+c)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	target := filepath.Join(base, "cgroup.subtree_control")
+	if err := osWriteFileFn(target, []byte(strings.Join(missing, " ")), 0644); err != nil {
+		return fmt.Errorf("enable cgroup controllers %s in %s: %w (is cgroup v2 mounted, and are these controllers delegated to %s?)",
+			strings.Join(missing, " "), target, err, base)
+	}
+	return nil
 }

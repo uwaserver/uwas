@@ -51,6 +51,7 @@ import (
 	"github.com/uwaserver/uwas/internal/monitor"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
+	"github.com/uwaserver/uwas/internal/rlimit"
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/sftpserver"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
@@ -1221,6 +1222,13 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 		if d.PHP.FPMAddress != "" && isAddrReachable(d.PHP.FPMAddress) {
 			// Register in phpMgr so it shows in PHP page domain list
 			phpMgr.RegisterExistingDomain(d.Host, defaultVer, d.PHP.FPMAddress, d.Root, d.PHP.ConfigOverrides)
+			// The pool belongs to systemd, not to UWAS, so its workers cannot
+			// be moved into a UWAS cgroup. Say so rather than leaving the
+			// operator to believe domain.resources is in force.
+			if hasResourceLimits(d.Resources) {
+				s.logger.Warn("domain.resources cannot be enforced for a domain served by an external PHP-FPM pool",
+					"domain", d.Host, "address", d.PHP.FPMAddress)
+			}
 			s.logger.Info("using configured PHP address", "domain", d.Host, "address", d.PHP.FPMAddress)
 			continue
 		}
@@ -1249,28 +1257,34 @@ func (s *Server) autoAssignPHP(phpMgr *phpmanager.Manager, cfg *config.Config) {
 type phpAssigner interface {
 	AssignDomainWithRoot(domain, version, webRoot string) (*phpmanager.DomainPHP, error)
 	SetDomainConfig(domain, key, value string) error
+	SetDomainLimits(domain string, limits rlimit.Limits) bool
 	StartDomain(domain string) error
 }
 
 // assignPHPForDomain assigns PHP to one domain and starts it.
 //
-// The web root and the domain's php.ini overrides must be handed over before
-// the process starts, because buildDomainINI reads both when it writes the
-// per-domain ini. This path used to call AssignDomain, which leaves the web
-// root empty — and buildDomainINI gates the whole open_basedir /
-// upload_tmp_dir / session.save_path block on a non-empty web root. Every PHP
-// domain started at boot therefore ran with no filesystem isolation and
-// shared the system temp directory for sessions and uploads, while the same
-// domain re-assigned through the admin panel (which calls
-// AssignDomainWithRoot) got both. The domain's ConfigOverrides were dropped
-// on this path too.
+// The web root, the domain's php.ini overrides and its resource limits must
+// all be handed over before the process starts: buildDomainINI reads the
+// first two when it writes the per-domain ini, and a cgroup has to exist
+// before a process can be moved into it.
+//
+// This path used to call AssignDomain, which leaves the web root empty, and
+// buildDomainINI gates upload_tmp_dir, session.save_path and sys_temp_dir on
+// a non-empty web root. (open_basedir has a second source: fastcgi/env.go
+// writes it per request.) A domain started at boot therefore kept the shared
+// system temp directory for sessions and uploads, which the open_basedir list
+// permits — so one domain could read another's session files. The same domain
+// re-assigned through the admin panel got the isolation. The domain's
+// ConfigOverrides were dropped here too, and its resource limits were never
+// recorded at all.
 func assignPHPForDomain(phpMgr phpAssigner, d config.Domain, version string, log *logger.Logger) (*phpmanager.DomainPHP, error) {
 	inst, err := phpMgr.AssignDomainWithRoot(d.Host, version, d.Root)
 	if err != nil {
 		return nil, err
 	}
 	if d.Root == "" {
-		log.Warn("PHP domain has no root; open_basedir cannot be enforced", "domain", d.Host)
+		log.Warn("PHP domain has no root; session and upload directories cannot be isolated",
+			"domain", d.Host)
 	}
 
 	// SetDomainConfig validates each key, so a rejected override is reported
@@ -1282,11 +1296,32 @@ func assignPHPForDomain(phpMgr phpAssigner, d config.Domain, version string, log
 		}
 	}
 
+	phpMgr.SetDomainLimits(d.Host, limitsFor(d.Resources))
+
 	if err := phpMgr.StartDomain(d.Host); err != nil {
 		log.Warn("PHP auto-start failed", "domain", d.Host, "error", err)
 		return nil, err
 	}
 	return inst, nil
+}
+
+// limitsFor converts a domain's resource block into the rlimit form.
+//
+// domain.resources was dead configuration: internal/rlimit implemented cgroup
+// v2 limits in full — Apply, AssignPID, Remove, with tests — and no package
+// ever imported it. cpu_percent, memory_mb and pid_max were defaulted,
+// merged, echoed back by the admin API, and never enforced.
+func limitsFor(r config.ResourceLimits) rlimit.Limits {
+	return rlimit.Limits{
+		CPUPercent: r.CPUPercent,
+		MemoryMB:   r.MemoryMB,
+		PIDMax:     r.PIDMax,
+	}
+}
+
+// hasResourceLimits reports whether the operator asked for any limit.
+func hasResourceLimits(r config.ResourceLimits) bool {
+	return r.CPUPercent > 0 || r.MemoryMB > 0 || r.PIDMax > 0
 }
 
 func configHasPHPDomains(cfg *config.Config) bool {

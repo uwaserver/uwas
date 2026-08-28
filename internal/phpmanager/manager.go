@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
+
+	"github.com/uwaserver/uwas/internal/rlimit"
 )
 
 // Testable hooks for OS operations. Overridden in tests.
@@ -76,8 +78,13 @@ type domainInstance struct {
 	listenAddr      string
 	webRoot         string // domain document root for open_basedir
 	configOverrides map[string]string
-	proc            *processInfo
-	tmpINI          string // path to temp ini file, cleaned up on stop
+	// Per-domain resource limits (Linux cgroups v2). cgroupPath is the
+	// cgroup Apply created for this domain, or "" when no limits are set or
+	// the platform has no cgroups.
+	limits     rlimit.Limits
+	cgroupPath string
+	proc       *processInfo
+	tmpINI     string // path to temp ini file, cleaned up on stop
 	// crash-restart tracking: prevent a permanently-broken PHP binary from
 	// looping start→crash→start every 500ms forever.
 	restartCount int
