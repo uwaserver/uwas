@@ -17,8 +17,8 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 )
 
-// caDosyasi writes a self-signed CA to disk and returns its path.
-func caDosyasi(t *testing.T, cn string) string {
+// writeCAFile writes a self-signed CA to disk and returns its path.
+func writeCAFile(t *testing.T, cn string) string {
 	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -47,7 +47,7 @@ func caDosyasi(t *testing.T, cn string) string {
 }
 
 func TestLoadClientCAsAppliesPerDomain(t *testing.T) {
-	ca := caDosyasi(t, "dgn-mtls-ca")
+	ca := writeCAFile(t, "dgn-mtls-ca")
 
 	m := testManager(t, []config.Domain{
 		{Host: "mtls.test", SSL: config.SSLConfig{Mode: "auto", ClientCA: ca, ClientAuth: "require"}},
@@ -64,7 +64,7 @@ func TestLoadClientCAsAppliesPerDomain(t *testing.T) {
 		t.Errorf("taban ClientAuth = %v, want NoClientCert", base.ClientAuth)
 	}
 	if base.ClientCAs != nil {
-		t.Error("taban yapılandırmaya CA havuzu sızmış")
+		t.Error("a CA pool leaked into the base config")
 	}
 
 	got, err := base.GetConfigForClient(&tls.ClientHelloInfo{ServerName: "mtls.test"})
@@ -72,13 +72,13 @@ func TestLoadClientCAsAppliesPerDomain(t *testing.T) {
 		t.Fatalf("GetConfigForClient: %v", err)
 	}
 	if got == nil {
-		t.Fatal("client_ca tanımlı domain için nil döndü — mTLS hiç uygulanmaz")
+		t.Fatal("nil for a domain with client_ca — mTLS never applies")
 	}
 	if got.ClientAuth != tls.RequireAndVerifyClientCert {
 		t.Errorf("ClientAuth = %v, want RequireAndVerifyClientCert", got.ClientAuth)
 	}
 	if got.ClientCAs == nil {
-		t.Error("ClientCAs boş — istemci sertifikası doğrulanamaz")
+		t.Error("ClientCAs is empty — no client certificate can be verified")
 	}
 
 	// The domain next door must be untouched.
@@ -94,8 +94,8 @@ func TestLoadClientCAsAppliesPerDomain(t *testing.T) {
 // Two domains with different CAs must not share a pool.
 func TestLoadClientCAsKeepsPoolsSeparate(t *testing.T) {
 	m := testManager(t, []config.Domain{
-		{Host: "a.test", SSL: config.SSLConfig{Mode: "auto", ClientCA: caDosyasi(t, "ca-a"), ClientAuth: "require"}},
-		{Host: "b.test", SSL: config.SSLConfig{Mode: "auto", ClientCA: caDosyasi(t, "ca-b"), ClientAuth: "request"}},
+		{Host: "a.test", SSL: config.SSLConfig{Mode: "auto", ClientCA: writeCAFile(t, "ca-a"), ClientAuth: "require"}},
+		{Host: "b.test", SSL: config.SSLConfig{Mode: "auto", ClientCA: writeCAFile(t, "ca-b"), ClientAuth: "request"}},
 	})
 	if err := m.LoadClientCAs(); err != nil {
 		t.Fatalf("LoadClientCAs: %v", err)
@@ -103,24 +103,24 @@ func TestLoadClientCAsKeepsPoolsSeparate(t *testing.T) {
 
 	a, b := m.clientCAFor("a.test"), m.clientCAFor("b.test")
 	if a == nil || b == nil {
-		t.Fatal("havuzlardan biri yüklenmedi")
+		t.Fatal("one of the pools did not load")
 	}
 	if a.Equal(b) {
-		t.Error("iki domain aynı havuzu paylaşıyor — birinin CA'sı diğerinin istemcilerini doğrular")
+		t.Error("two domains share one pool — one domain's CA would verify the other's clients")
 	}
 
 	base := m.TLSConfig()
 	got, _ := base.GetConfigForClient(&tls.ClientHelloInfo{ServerName: "b.test"})
 	if got == nil || got.ClientAuth != tls.VerifyClientCertIfGiven {
-		t.Errorf("b.test ClientAuth yanlış: %v", got)
+		t.Errorf("b.test ClientAuth is wrong: %v", got)
 	}
 }
 
 // An unreadable CA must not take the other domains down with it.
 func TestLoadClientCAsSurvivesBadFile(t *testing.T) {
-	iyi := caDosyasi(t, "iyi-ca")
+	iyi := writeCAFile(t, "iyi-ca")
 	bozuk := filepath.Join(t.TempDir(), "bozuk.pem")
-	if err := os.WriteFile(bozuk, []byte("bu bir sertifika değil"), 0o644); err != nil {
+	if err := os.WriteFile(bozuk, []byte("this is not a certificate"), 0o644); err != nil {
 		t.Fatalf("yaz: %v", err)
 	}
 
@@ -129,16 +129,16 @@ func TestLoadClientCAsSurvivesBadFile(t *testing.T) {
 		{Host: "iyi.test", SSL: config.SSLConfig{Mode: "auto", ClientCA: iyi, ClientAuth: "require"}},
 	})
 	if err := m.LoadClientCAs(); err == nil {
-		t.Error("bozuk CA hata döndürmedi — sessizce yutulmuş")
+		t.Error("a broken CA returned no error — it was swallowed")
 	}
 
 	if m.clientCAFor("iyi.test") == nil {
-		t.Error("bozuk dosya diğer domainin yüklenmesini engelledi")
+		t.Error("the broken file stopped the other domain from loading")
 	}
 	// A domain whose CA failed to parse must not silently accept anonymous
 	// clients under a config that claims to require certificates.
 	got, _ := m.TLSConfig().GetConfigForClient(&tls.ClientHelloInfo{ServerName: "bozuk.test"})
 	if got != nil && got.ClientAuth != tls.NoClientCert && got.ClientCAs == nil {
-		t.Errorf("CA yokken ClientAuth=%v ayarlandı — el sıkışma her istemciyi reddeder", got.ClientAuth)
+		t.Errorf("ClientAuth=%v set with no CA — the handshake would reject every client", got.ClientAuth)
 	}
 }

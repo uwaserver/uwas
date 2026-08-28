@@ -35,7 +35,7 @@ func TestStickyUsesConfiguredCookieName(t *testing.T) {
 
 	sb, ok := b.(*StickyBalancer)
 	if !ok {
-		t.Fatalf("sticky.type=cookie bir StickyBalancer üretmedi: %T", b)
+		t.Fatalf("sticky.type=cookie did not produce a StickyBalancer: %T", b)
 	}
 	if sb.CookieName != "UWAS_UPSTREAM" {
 		t.Errorf("CookieName = %q, want UWAS_UPSTREAM", sb.CookieName)
@@ -49,7 +49,7 @@ func TestStickyUsesConfiguredCookieName(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.AddCookie(&http.Cookie{Name: "UWAS_UPSTREAM", Value: "10.0.0.2:80"})
 	if got := sb.Select(backends, r); got == nil || got.URL.Host != "10.0.0.2:80" {
-		t.Errorf("çerezle sabitlenen backend seçilmedi: %v", got)
+		t.Errorf("the backend pinned by the cookie was not chosen: %v", got)
 	}
 
 	// ...and the one written back.
@@ -57,7 +57,7 @@ func TestStickyUsesConfiguredCookieName(t *testing.T) {
 	SetStickyCookie(w, sb.CookieName, "10.0.0.2:80", sb.TTL, false)
 	c := w.Result().Cookies()
 	if len(c) != 1 || c[0].Name != "UWAS_UPSTREAM" || c[0].MaxAge != 600 {
-		t.Errorf("yazılan çerez = %+v", c)
+		t.Errorf("the cookie written = %+v", c)
 	}
 }
 
@@ -71,10 +71,10 @@ func TestStickyDefaultsWhenFieldsOmitted(t *testing.T) {
 
 	sb, ok := b.(*StickyBalancer)
 	if !ok {
-		t.Fatalf("beklenen StickyBalancer, alınan %T", b)
+		t.Fatalf("want *StickyBalancer, got %T", b)
 	}
 	if sb.CookieName != DefaultStickyCookieName || sb.TTL != DefaultStickyTTL {
-		t.Errorf("varsayılanlar bozuldu: %q / %d", sb.CookieName, sb.TTL)
+		t.Errorf("the defaults were broken: %q / %d", sb.CookieName, sb.TTL)
 	}
 }
 
@@ -88,17 +88,17 @@ func TestStickyFallsBackToConfiguredAlgorithm(t *testing.T) {
 
 	sb, ok := b.(*StickyBalancer)
 	if !ok {
-		t.Fatalf("beklenen StickyBalancer, alınan %T", b)
+		t.Fatalf("want *StickyBalancer, got %T", b)
 	}
 	if _, ok := sb.Fallback.(*LeastConn); !ok {
-		t.Fatalf("fallback = %T, want *LeastConn — sticky algoritmayı eziyor", sb.Fallback)
+		t.Fatalf("fallback = %T, want *LeastConn — sticky is replacing the algorithm", sb.Fallback)
 	}
 
 	backends := testBackends(t, "10.0.0.1:80", "10.0.0.2:80")
-	backends[0].ActiveConns.Add(5) // birinci meşgul
+	backends[0].ActiveConns.Add(5) // the first backend is busy
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	if got := sb.Select(backends, r); got == nil || got.URL.Host != "10.0.0.2:80" {
-		t.Errorf("çerezsiz istek least_conn ile yerleştirilmedi: %v", got)
+		t.Errorf("a request with no cookie was not placed by least_conn: %v", got)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestStickyIgnoresStaleCookie(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.AddCookie(&http.Cookie{Name: "s", Value: "10.9.9.9:80"})
 	if got := b.Select(backends, r); got == nil || got.URL.Host != "10.0.0.1:80" {
-		t.Errorf("kaybolmuş backend'e sabitlenmiş çerez isteği askıda bıraktı: %v", got)
+		t.Errorf("a cookie pinned to a vanished backend stranded the request: %v", got)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestStickyTypeHeaderFallsBack(t *testing.T) {
 func TestStickyUnknownTypeFallsBack(t *testing.T) {
 	b := NewBalancerFor(config.ProxyConfig{
 		Algorithm: "ip_hash",
-		Sticky:    config.StickyConfig{Type: "saçmalık"},
+		Sticky:    config.StickyConfig{Type: "nonsense"},
 	}, testLogger())
 	if _, ok := b.(*IPHash); !ok {
 		t.Errorf("bilinmeyen tip → %T, want *IPHash", b)
@@ -155,7 +155,7 @@ func TestNoStickyBlockKeepsAlgorithm(t *testing.T) {
 	for _, alg := range []string{"round_robin", "least_conn", "ip_hash", "uri_hash", "random", ""} {
 		b := NewBalancerFor(config.ProxyConfig{Algorithm: alg}, testLogger())
 		if _, ok := b.(*StickyBalancer); ok {
-			t.Errorf("algorithm=%q sticky olmadan StickyBalancer üretti", alg)
+			t.Errorf("algorithm=%q produced a StickyBalancer with no sticky block", alg)
 		}
 	}
 }
@@ -170,7 +170,7 @@ func TestLegacyAlgorithmSticky(t *testing.T) {
 		t.Fatalf("algorithm=sticky → %T", b)
 	}
 	if sb.CookieName != DefaultStickyCookieName || sb.TTL != DefaultStickyTTL {
-		t.Errorf("eski yazım varsayılanları kaybetti: %q / %d", sb.CookieName, sb.TTL)
+		t.Errorf("the legacy spelling lost the defaults: %q / %d", sb.CookieName, sb.TTL)
 	}
 
 	b2 := NewBalancerFor(config.ProxyConfig{
@@ -179,12 +179,12 @@ func TestLegacyAlgorithmSticky(t *testing.T) {
 	}, testLogger())
 	sb2, ok := b2.(*StickyBalancer)
 	if !ok {
-		t.Fatalf("beklenen StickyBalancer, alınan %T", b2)
+		t.Fatalf("want *StickyBalancer, got %T", b2)
 	}
 	if sb2.CookieName != "x" || sb2.TTL != 30 {
-		t.Errorf("ayarlar uygulanmadı: %q / %d", sb2.CookieName, sb2.TTL)
+		t.Errorf("the overrides were not applied: %q / %d", sb2.CookieName, sb2.TTL)
 	}
 	if _, nested := sb2.Fallback.(*StickyBalancer); nested {
-		t.Error("sticky balancer kendi içine yuvalandı")
+		t.Error("the sticky balancer nested inside itself")
 	}
 }

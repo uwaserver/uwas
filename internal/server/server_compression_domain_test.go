@@ -18,14 +18,14 @@ import (
 // no change. These tests assert the Content-Encoding a client actually
 // receives, so they fail if the block goes back to being ignored.
 
-const sikistirilabilirGovde = 3000 // bytes; above every min_size used below
+const compressibleBodySize = 3000 // bytes; above every min_size used below
 
 func compressionFixture(t *testing.T, c config.CompressionConfig) http.Handler {
 	t.Helper()
 
 	root := t.TempDir()
 	// Highly compressible so the encoded body is unmistakably smaller.
-	body := strings.Repeat("dgn ", sikistirilabilirGovde/4)
+	body := strings.Repeat("dgn ", compressibleBodySize/4)
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
@@ -46,9 +46,9 @@ func compressionFixture(t *testing.T, c config.CompressionConfig) http.Handler {
 	return s.buildMiddlewareChain()
 }
 
-// kodlamaAl issues one request and returns the Content-Encoding it got back.
+// encodingFor issues one request and returns the Content-Encoding it got back.
 // The bot guard answers an empty User-Agent with 403, so it must be set.
-func kodlamaAl(t *testing.T, h http.Handler, acceptEncoding string) (string, int) {
+func encodingFor(t *testing.T, h http.Handler, acceptEncoding string) (string, int) {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
@@ -59,7 +59,7 @@ func kodlamaAl(t *testing.T, h http.Handler, acceptEncoding string) (string, int
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("durum %d döndü, 200 bekleniyordu", rec.Code)
+		t.Fatalf("returned %d, want 200", rec.Code)
 	}
 	return rec.Header().Get("Content-Encoding"), rec.Body.Len()
 }
@@ -69,33 +69,33 @@ func kodlamaAl(t *testing.T, h http.Handler, acceptEncoding string) (string, int
 func TestCompressionDefaultsOnWhenUnconfigured(t *testing.T) {
 	h := compressionFixture(t, config.CompressionConfig{})
 
-	enc, n := kodlamaAl(t, h, "br, gzip")
+	enc, n := encodingFor(t, h, "br, gzip")
 	if enc != "br" {
 		t.Errorf("Content-Encoding = %q, want br", enc)
 	}
-	if n >= sikistirilabilirGovde {
-		t.Errorf("gövde %d bayt — sıkıştırılmamış görünüyor", n)
+	if n >= compressibleBodySize {
+		t.Errorf("body is %d bytes — it does not look compressed", n)
 	}
 }
 
 func TestCompressionDisabledForDomain(t *testing.T) {
 	h := compressionFixture(t, config.CompressionConfig{Enabled: config.BoolPtr(false)})
 
-	enc, n := kodlamaAl(t, h, "br, gzip")
+	enc, n := encodingFor(t, h, "br, gzip")
 	if enc != "" {
-		t.Errorf("Content-Encoding = %q, want boş (kapalı)", enc)
+		t.Errorf("Content-Encoding = %q, want empty (compression disabled)", enc)
 	}
-	if n < sikistirilabilirGovde {
-		t.Errorf("gövde %d bayt — kapalıyken sıkıştırılmış görünüyor", n)
+	if n < compressibleBodySize {
+		t.Errorf("body is %d bytes — it looks compressed while disabled", n)
 	}
 }
 
 // min_size above the body size must leave the response uncompressed.
 func TestCompressionMinSizeIsHonoured(t *testing.T) {
-	h := compressionFixture(t, config.CompressionConfig{MinSize: sikistirilabilirGovde * 10})
+	h := compressionFixture(t, config.CompressionConfig{MinSize: compressibleBodySize * 10})
 
-	if enc, _ := kodlamaAl(t, h, "br, gzip"); enc != "" {
-		t.Errorf("Content-Encoding = %q, want boş (gövde min_size altında)", enc)
+	if enc, _ := encodingFor(t, h, "br, gzip"); enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty (body under min_size)", enc)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestCompressionMinSizeIsHonoured(t *testing.T) {
 func TestCompressionAlgorithmRestriction(t *testing.T) {
 	h := compressionFixture(t, config.CompressionConfig{Algorithms: []string{"gzip"}})
 
-	if enc, _ := kodlamaAl(t, h, "br, gzip"); enc != "gzip" {
+	if enc, _ := encodingFor(t, h, "br, gzip"); enc != "gzip" {
 		t.Errorf("Content-Encoding = %q, want gzip (algorithms: [gzip])", enc)
 	}
 }
@@ -114,8 +114,8 @@ func TestCompressionAlgorithmRestriction(t *testing.T) {
 func TestCompressionAlgorithmRestrictionNoOverlap(t *testing.T) {
 	h := compressionFixture(t, config.CompressionConfig{Algorithms: []string{"br"}})
 
-	if enc, _ := kodlamaAl(t, h, "gzip"); enc != "" {
-		t.Errorf("Content-Encoding = %q, want boş (ortak algoritma yok)", enc)
+	if enc, _ := encodingFor(t, h, "gzip"); enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty (no algorithm in common)", enc)
 	}
 }
 
@@ -123,15 +123,15 @@ func TestCompressionAlgorithmRestrictionNoOverlap(t *testing.T) {
 func TestCompressionTypesRestriction(t *testing.T) {
 	h := compressionFixture(t, config.CompressionConfig{Types: []string{"application/json"}})
 
-	if enc, _ := kodlamaAl(t, h, "br, gzip"); enc != "" {
-		t.Errorf("Content-Encoding = %q, want boş (types listesinde text/html yok)", enc)
+	if enc, _ := encodingFor(t, h, "br, gzip"); enc != "" {
+		t.Errorf("Content-Encoding = %q, want empty (text/html not in types)", enc)
 	}
 }
 
 func TestCompressionTypesIncludingHTML(t *testing.T) {
 	h := compressionFixture(t, config.CompressionConfig{Types: []string{"text/html"}})
 
-	if enc, _ := kodlamaAl(t, h, "br, gzip"); enc != "br" {
+	if enc, _ := encodingFor(t, h, "br, gzip"); enc != "br" {
 		t.Errorf("Content-Encoding = %q, want br (types listesinde text/html var)", enc)
 	}
 }

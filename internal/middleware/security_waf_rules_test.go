@@ -13,8 +13,8 @@ import (
 // `sql_injection | xss | path_traversal` and nothing read it, so every
 // WAF-enabled domain got every family whatever it listed.
 
-// wafIstek runs one request through the guard and reports whether it passed.
-func wafIstek(t *testing.T, rules []string, target string) bool {
+// wafRequest runs one request through the guard and reports whether it passed.
+func wafRequest(t *testing.T, rules []string, target string) bool {
 	t.Helper()
 
 	guard := DomainWAFGuard(logger.New("error", "text"), nil, rules, nil)
@@ -24,20 +24,20 @@ func wafIstek(t *testing.T, rules []string, target string) bool {
 }
 
 const (
-	sqlSaldiri   = "/?q=union+select+password+from+users"
-	xssSaldiri   = "/?q=%3Cscript%3Ealert(1)%3C/script%3E"
-	yolSaldiri   = "/../../etc/shadow"
-	kabukSaldiri = "/?x=;cat+/etc/passwd"
+	sqlAttack       = "/?q=union+select+password+from+users"
+	xssAttack       = "/?q=%3Cscript%3Ealert(1)%3C/script%3E"
+	traversalAttack = "/../../etc/shadow"
+	shellAttack     = "/?x=;cat+/etc/passwd"
 )
 
 // No list means every family, which is what has always happened.
 func TestWAFEmptyRulesEnforcesEverything(t *testing.T) {
-	for _, saldiri := range []string{sqlSaldiri, xssSaldiri, yolSaldiri, kabukSaldiri} {
-		if wafIstek(t, nil, saldiri) {
-			t.Errorf("kural listesi yokken %q geçti", saldiri)
+	for _, saldiri := range []string{sqlAttack, xssAttack, traversalAttack, shellAttack} {
+		if wafRequest(t, nil, saldiri) {
+			t.Errorf("%q passed with no rule list", saldiri)
 		}
-		if wafIstek(t, []string{}, saldiri) {
-			t.Errorf("boş kural listesiyle %q geçti", saldiri)
+		if wafRequest(t, []string{}, saldiri) {
+			t.Errorf("%q passed with an empty rule list", saldiri)
 		}
 	}
 }
@@ -46,35 +46,35 @@ func TestWAFEmptyRulesEnforcesEverything(t *testing.T) {
 func TestWAFRulesSelectFamilies(t *testing.T) {
 	rules := []string{WAFSQLInjection}
 
-	if wafIstek(t, rules, sqlSaldiri) {
-		t.Error("sql_injection listelenmişken SQL saldırısı geçti")
+	if wafRequest(t, rules, sqlAttack) {
+		t.Error("a SQL attack passed with sql_injection listed")
 	}
-	if !wafIstek(t, rules, xssSaldiri) {
-		t.Error("yalnızca sql_injection listeliyken XSS de engellendi — rules seçim yapmıyor")
+	if !wafRequest(t, rules, xssAttack) {
+		t.Error("XSS was blocked too with only sql_injection listed — rules is not selecting")
 	}
-	if !wafIstek(t, rules, yolSaldiri) {
-		t.Error("yalnızca sql_injection listeliyken yol geçişi de engellendi")
+	if !wafRequest(t, rules, traversalAttack) {
+		t.Error("path traversal was blocked too with only sql_injection listed")
 	}
 }
 
 func TestWAFRulesMultipleFamilies(t *testing.T) {
 	rules := []string{WAFXSS, WAFPathTraversal}
 
-	if wafIstek(t, rules, xssSaldiri) {
-		t.Error("xss listelenmişken XSS geçti")
+	if wafRequest(t, rules, xssAttack) {
+		t.Error("XSS passed with xss listed")
 	}
-	if wafIstek(t, rules, yolSaldiri) {
-		t.Error("path_traversal listelenmişken yol geçişi geçti")
+	if wafRequest(t, rules, traversalAttack) {
+		t.Error("path traversal passed with path_traversal listed")
 	}
-	if !wafIstek(t, rules, sqlSaldiri) {
-		t.Error("listelenmemiş sql_injection hâlâ uygulanıyor")
+	if !wafRequest(t, rules, sqlAttack) {
+		t.Error("the unlisted sql_injection family still applies")
 	}
 }
 
 // Case and surrounding space must not change which families run.
 func TestWAFRulesNormalised(t *testing.T) {
-	if wafIstek(t, []string{" SQL_Injection "}, sqlSaldiri) {
-		t.Error("boşluk/büyük harf kural adını bozdu")
+	if wafRequest(t, []string{" SQL_Injection "}, sqlAttack) {
+		t.Error("whitespace or case broke the rule name")
 	}
 }
 
@@ -82,34 +82,34 @@ func TestWAFRulesNormalised(t *testing.T) {
 // filtering, the family set is non-nil and matches nothing, so every request
 // passes — a typo in the rule list would turn the WAF off.
 func TestWAFUnknownRulesDoNotDisableEverything(t *testing.T) {
-	for _, saldiri := range []string{sqlSaldiri, xssSaldiri, yolSaldiri} {
-		if wafIstek(t, []string{"saçmalık"}, saldiri) {
-			t.Errorf("tanınmayan kural WAF'ı kapattı: %q geçti", saldiri)
+	for _, saldiri := range []string{sqlAttack, xssAttack, traversalAttack} {
+		if wafRequest(t, []string{"nonsense"}, saldiri) {
+			t.Errorf("an unrecognised rule turned the WAF off: %q passed", saldiri)
 		}
 	}
 }
 
 // An unknown name mixed with a real one must be dropped, not widen the set.
 func TestWAFUnknownRuleDroppedFromMixedList(t *testing.T) {
-	rules := []string{WAFSQLInjection, "saçmalık"}
+	rules := []string{WAFSQLInjection, "nonsense"}
 
-	if wafIstek(t, rules, sqlSaldiri) {
-		t.Error("listelenen sql_injection uygulanmadı")
+	if wafRequest(t, rules, sqlAttack) {
+		t.Error("the listed sql_injection family was not applied")
 	}
-	if !wafIstek(t, rules, xssSaldiri) {
-		t.Error("tanınmayan giriş listeyi genişletti — xss de uygulandı")
+	if !wafRequest(t, rules, xssAttack) {
+		t.Error("an unrecognised entry widened the list — xss applied too")
 	}
 }
 
 func TestKnownWAFRule(t *testing.T) {
 	for _, ok := range []string{"sql_injection", "XSS", " path_traversal ", "shell_injection", "php"} {
 		if !KnownWAFRule(ok) {
-			t.Errorf("%q tanınmadı", ok)
+			t.Errorf("%q was not recognised", ok)
 		}
 	}
-	for _, kotu := range []string{"", "sqli", "saçmalık"} {
+	for _, kotu := range []string{"", "sqli", "nonsense"} {
 		if KnownWAFRule(kotu) {
-			t.Errorf("%q tanındı", kotu)
+			t.Errorf("%q was recognised", kotu)
 		}
 	}
 }
@@ -118,17 +118,17 @@ func TestKnownWAFRule(t *testing.T) {
 func TestWAFRulesApplyToBody(t *testing.T) {
 	guard := DomainWAFGuard(logger.New("error", "text"), nil, []string{WAFXSS}, nil)
 
-	govde := func(s string) *http.Request {
+	body := func(s string) *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/submit", strings.NewReader(s))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.RemoteAddr = "203.0.113.1:5000"
 		return r
 	}
 
-	if guard(httptest.NewRecorder(), govde("a=javascript:alert(1)")) {
-		t.Error("xss listelenmişken gövdedeki XSS geçti")
+	if guard(httptest.NewRecorder(), body("a=javascript:alert(1)")) {
+		t.Error("XSS in the body passed with xss listed")
 	}
-	if !guard(httptest.NewRecorder(), govde("a=union+select+x+from+y")) {
-		t.Error("listelenmemiş sql_injection gövdede hâlâ uygulanıyor")
+	if !guard(httptest.NewRecorder(), body("a=union+select+x+from+y")) {
+		t.Error("the unlisted sql_injection family still applies to the body")
 	}
 }

@@ -11,7 +11,7 @@ import (
 // run on the error. The runtime falls back to the configured algorithm and
 // logs, which is the right place to report it.
 func TestUnknownStickyTypeDoesNotBlockStartup(t *testing.T) {
-	for _, tip := range []string{"saçmalık", "COOKIE ", "session", ""} {
+	for _, tip := range []string{"nonsense", "COOKIE ", "session", ""} {
 		cfg := &Config{
 			Global: GlobalConfig{LogLevel: "info", LogFormat: "text"},
 			Domains: []Domain{{
@@ -27,9 +27,9 @@ func TestUnknownStickyTypeDoesNotBlockStartup(t *testing.T) {
 		}
 		if err := Validate(cfg); err != nil {
 			if strings.Contains(err.Error(), "sticky") {
-				t.Errorf("sticky.type=%q açılışı engelledi:\n%v", tip, err)
+				t.Errorf("sticky.type=%q blocked startup:\n%v", tip, err)
 			} else {
-				t.Fatalf("fixture beklenmedik şekilde geçersiz:\n%v", err)
+				t.Fatalf("the fixture is unexpectedly invalid:\n%v", err)
 			}
 		}
 	}
