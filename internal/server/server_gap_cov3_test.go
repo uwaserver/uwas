@@ -575,9 +575,9 @@ func TestDomainLogWriteTriggersRotation(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "access.log")
 
 	// Write with a very small max size to trigger rotation
-	m.Write("rotate-host", logPath, config.RotateConfig{
+	m.Write("rotate-host", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{
 		MaxSize: config.ByteSize(10), // 10 bytes max
-	}, "GET", "/", "1.2.3.4", "agent", 200, 100, time.Millisecond)
+	}}, "GET", "/", "1.2.3.4", "agent", 200, 100, time.Millisecond)
 
 	// The write should have rotated the file — verify the new file exists
 	if _, err := os.Stat(logPath); err != nil {

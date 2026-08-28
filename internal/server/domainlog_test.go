@@ -17,7 +17,7 @@ func TestDomainLogWrite(t *testing.T) {
 	m := newDomainLogManager()
 	defer m.Close()
 
-	m.Write("example.com", logPath, config.RotateConfig{},
+	m.Write("example.com", config.AccessLogConfig{Path: logPath, Rotate: config.RotateConfig{}},
 		"GET", "/index.html", "127.0.0.1", "TestAgent",
 		200, 1024, 5*time.Millisecond)
 
@@ -56,13 +56,14 @@ func TestDomainLogRotation(t *testing.T) {
 
 	// Write enough to trigger rotation
 	for i := 0; i < 10; i++ {
-		m.Write("example.com", logPath, rotate,
+		m.Write("example.com", config.AccessLogConfig{Path: logPath, Rotate: rotate},
 			"GET", "/page", "127.0.0.1", "Agent",
 			200, 100, time.Millisecond)
 	}
 
-	// Wait for background compression
-	time.Sleep(500 * time.Millisecond)
+	// Wait for background compression. A fixed sleep is a race: the gzip runs
+	// on a background goroutine and 500ms is not enough on a loaded machine.
+	rotasyonuBekle(t, dir)
 
 	// Check that the active log exists
 	if _, err := os.Stat(logPath); err != nil {
@@ -94,9 +95,9 @@ func TestDomainLogMultipleDomains(t *testing.T) {
 	m := newDomainLogManager()
 	defer m.Close()
 
-	m.Write("a.com", pathA, config.RotateConfig{},
+	m.Write("a.com", config.AccessLogConfig{Path: pathA, Rotate: config.RotateConfig{}},
 		"GET", "/a", "10.0.0.1", "A", 200, 50, time.Millisecond)
-	m.Write("b.com", pathB, config.RotateConfig{},
+	m.Write("b.com", config.AccessLogConfig{Path: pathB, Rotate: config.RotateConfig{}},
 		"POST", "/b", "10.0.0.2", "B", 201, 75, time.Millisecond)
 
 	dataA, _ := os.ReadFile(pathA)
@@ -115,7 +116,7 @@ func TestDomainLogEmptyPath(t *testing.T) {
 	defer m.Close()
 
 	// Should not panic with empty path
-	m.Write("example.com", "", config.RotateConfig{},
+	m.Write("example.com", config.AccessLogConfig{Path: "", Rotate: config.RotateConfig{}},
 		"GET", "/", "127.0.0.1", "Agent", 200, 0, time.Millisecond)
 }
 
@@ -150,4 +151,24 @@ func TestPruneBackups(t *testing.T) {
 	if len(rotated) != 2 {
 		t.Errorf("expected 2 rotated files after prune, got %d", len(rotated))
 	}
+}
+
+// rotasyonuBekle waits until at least one rotated log appears, instead of
+// sleeping for a fixed time and hoping the background compression finished.
+func rotasyonuBekle(t *testing.T, dir string) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, e := range entries {
+				if e.Name() != "access.log" && strings.HasPrefix(e.Name(), "access.log.") {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("rotasyon 10 saniyede tamamlanmadı")
 }
