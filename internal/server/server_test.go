@@ -306,7 +306,7 @@ func TestReloadNoConfigPath(t *testing.T) {
 
 	err := s.reload()
 	if err == nil {
-		t.Error("expected error when no config path set")
+		t.Fatal("expected error when no config path set")
 	}
 	if !strings.Contains(err.Error(), "no config path set") {
 		t.Errorf("error = %q, should mention no config path", err.Error())

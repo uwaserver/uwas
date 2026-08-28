@@ -17,7 +17,7 @@ import (
 // blocks ~100s on this platform and is killed by the test, never run to
 // completion, so it is a safe stand-in for a live PHP daemon.
 func longRunningCmd() *exec.Cmd {
-	return exec.Command("ping", "-n", "100", "127.0.0.1")
+	return exec.Command("sleep", "100")
 }
 
 // --- manager.go: RegisterExistingDomain ---

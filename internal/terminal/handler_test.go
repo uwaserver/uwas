@@ -117,7 +117,7 @@ func TestUpgradeWebSocketNotWebsocket(t *testing.T) {
 	h := &Handler{Logger: &logger.Logger{}}
 	_, err := h.UpgradeWebSocket(w, req)
 	if err == nil {
-		t.Error("expected error for non-websocket upgrade")
+		t.Fatal("expected error for non-websocket upgrade")
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("not a websocket")) {
 		t.Errorf("unexpected error: %v", err)
@@ -134,7 +134,7 @@ func TestUpgradeWebSocketNoHijack(t *testing.T) {
 	h := &Handler{Logger: &logger.Logger{}}
 	_, err := h.UpgradeWebSocket(w, req)
 	if err == nil {
-		t.Error("expected error for non-hijackable response writer")
+		t.Fatal("expected error for non-hijackable response writer")
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("hijacking")) {
 		t.Errorf("unexpected error: %v", err)
@@ -325,7 +325,7 @@ func TestWSConnReadMessageTooLarge(t *testing.T) {
 
 	_, err := conn.ReadMessage()
 	if err == nil {
-		t.Error("expected error for oversized frame")
+		t.Fatal("expected error for oversized frame")
 	}
 	// Error could be "frame too large", EOF, or "unexpected EOF" depending on timing
 	errStr := err.Error()

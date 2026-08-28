@@ -1061,7 +1061,7 @@ func TestUpdateCore_DownloadFails(t *testing.T) {
 
 	_, err := UpdateCore(t.TempDir())
 	if err == nil {
-		t.Error("expected error")
+		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "download failed") {
 		t.Errorf("error = %q", err)
@@ -1374,7 +1374,7 @@ func TestSetDebugMode_FileNotFound(t *testing.T) {
 
 	err := SetDebugMode("/nonexistent/path", true)
 	if err == nil {
-		t.Error("expected error")
+		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "read wp-config.php") {
 		t.Errorf("error = %q", err)
@@ -1676,7 +1676,7 @@ func TestCreateMySQLDB_NoMySQL(t *testing.T) {
 	var log strings.Builder
 	err := createMySQLDB("testdb", "testuser", "testpass", "localhost", &log)
 	if err == nil {
-		t.Error("expected error")
+		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "mysql client not found") {
 		t.Errorf("err = %q", err)
@@ -2009,7 +2009,7 @@ func TestDownloadAndExtract_ExtractFails(t *testing.T) {
 	var log strings.Builder
 	err := downloadAndExtract(t.TempDir(), &log)
 	if err == nil {
-		t.Error("expected extract error")
+		t.Fatal("expected extract error")
 	}
 	if !strings.Contains(err.Error(), "extract failed") {
 		t.Errorf("err = %q", err)
@@ -2358,7 +2358,7 @@ func TestUpdateCore_ExtractFails(t *testing.T) {
 
 	_, err := UpdateCore(t.TempDir())
 	if err == nil {
-		t.Error("expected error")
+		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "extract failed") {
 		t.Errorf("err = %q", err)
@@ -2654,7 +2654,7 @@ func TestUpdateCore_WalkError(t *testing.T) {
 
 	_, err := UpdateCore(webRoot)
 	if err == nil {
-		t.Error("expected error from Walk")
+		t.Fatal("expected error from Walk")
 	}
 	if !strings.Contains(err.Error(), "copy failed") {
 		t.Errorf("err = %q", err)
@@ -2705,7 +2705,7 @@ func TestUpdateCore_WalkReadFileFails(t *testing.T) {
 
 	_, err := UpdateCore(webRoot)
 	if err == nil {
-		t.Error("expected error from readFile failure")
+		t.Fatal("expected error from readFile failure")
 	}
 	if !strings.Contains(err.Error(), "copy failed") {
 		t.Errorf("err = %q", err)

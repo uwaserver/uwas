@@ -171,7 +171,7 @@ func TestListNonexistentDir(t *testing.T) {
 	dir := t.TempDir()
 	_, err := List(dir, "nonexistent")
 	if err == nil {
-		t.Error("expected error listing nonexistent directory")
+		t.Fatal("expected error listing nonexistent directory")
 	}
 }
 

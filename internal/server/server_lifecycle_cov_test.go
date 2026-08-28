@@ -38,7 +38,7 @@ func TestNewFullFeatured(t *testing.T) {
 			},
 			Users: config.UsersConfig{
 				Enabled:                    true,
-				AllowReseller:               true,
+				AllowReseller:              true,
 				AllowLegacyPlaintextAPIKey: true,
 			},
 			MCP: config.MCPConfig{Enabled: true, Listen: "127.0.0.1:0"},

@@ -271,7 +271,7 @@ func TestAuthenticateDisabledUser(t *testing.T) {
 
 	_, err := m.Authenticate("alice", "secret")
 	if err == nil {
-		t.Error("expected error for disabled user")
+		t.Fatal("expected error for disabled user")
 	}
 	if err.Error() != "user disabled" {
 		t.Errorf("expected 'user disabled' error, got %q", err.Error())
@@ -344,7 +344,7 @@ func TestValidateSessionExpired(t *testing.T) {
 
 	_, err := m.ValidateSession(session.Token)
 	if err == nil {
-		t.Error("expected error for expired session")
+		t.Fatal("expected error for expired session")
 	}
 	if err.Error() != "session expired" {
 		t.Errorf("expected 'session expired' error, got %q", err.Error())
@@ -708,7 +708,7 @@ func TestDeleteUserNotFound(t *testing.T) {
 
 	err := m.DeleteUser("nonexistent")
 	if err == nil {
-		t.Error("expected error for deleting nonexistent user")
+		t.Fatal("expected error for deleting nonexistent user")
 	}
 	if err.Error() != "user not found" {
 		t.Errorf("expected 'user not found' error, got %q", err.Error())
@@ -826,7 +826,7 @@ func TestUpdateUserNotFound(t *testing.T) {
 
 	err := m.UpdateUser("nonexistent", &User{Email: "test@test.com"})
 	if err == nil {
-		t.Error("expected error for nonexistent user")
+		t.Fatal("expected error for nonexistent user")
 	}
 	if err.Error() != "user not found" {
 		t.Errorf("expected 'user not found' error, got %q", err.Error())
@@ -937,7 +937,7 @@ func TestRegenerateAPIKeyNotFound(t *testing.T) {
 
 	_, err := m.RegenerateAPIKey("nonexistent")
 	if err == nil {
-		t.Error("expected error for nonexistent user")
+		t.Fatal("expected error for nonexistent user")
 	}
 	if err.Error() != "user not found" {
 		t.Errorf("expected 'user not found' error, got %q", err.Error())
@@ -991,7 +991,7 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 
 	err := m.ChangePassword("alice", "wrongcurrent", "newpass")
 	if err == nil {
-		t.Error("expected error for wrong current password")
+		t.Fatal("expected error for wrong current password")
 	}
 	if err.Error() != "invalid current password" {
 		t.Errorf("expected 'invalid current password' error, got %q", err.Error())
@@ -1009,7 +1009,7 @@ func TestChangePasswordNotFound(t *testing.T) {
 
 	err := m.ChangePassword("nonexistent", "old", "new")
 	if err == nil {
-		t.Error("expected error for nonexistent user")
+		t.Fatal("expected error for nonexistent user")
 	}
 	if err.Error() != "user not found" {
 		t.Errorf("expected 'user not found' error, got %q", err.Error())
@@ -1864,7 +1864,7 @@ func TestCreateUserPasswordTooLong(t *testing.T) {
 
 	_, err := m.CreateUser("alice", "", longPass, RoleAdmin, nil)
 	if err == nil {
-		t.Error("expected error for password exceeding 72 bytes")
+		t.Fatal("expected error for password exceeding 72 bytes")
 	}
 	if !strings.Contains(err.Error(), "hash password") {
 		t.Errorf("expected hash password error, got %q", err.Error())
@@ -1878,7 +1878,7 @@ func TestUpdateUserPasswordTooLong(t *testing.T) {
 
 	err := m.UpdateUser("alice", &User{Password: longPass, Enabled: true})
 	if err == nil {
-		t.Error("expected error for password exceeding 72 bytes in update")
+		t.Fatal("expected error for password exceeding 72 bytes in update")
 	}
 	if !strings.Contains(err.Error(), "hash password") {
 		t.Errorf("expected hash password error, got %q", err.Error())
@@ -1892,7 +1892,7 @@ func TestChangePasswordNewTooLong(t *testing.T) {
 
 	err := m.ChangePassword("alice", "secret", longPass)
 	if err == nil {
-		t.Error("expected error for new password exceeding 72 bytes")
+		t.Fatal("expected error for new password exceeding 72 bytes")
 	}
 	if !strings.Contains(err.Error(), "hash password") {
 		t.Errorf("expected hash password error, got %q", err.Error())

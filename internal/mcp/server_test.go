@@ -287,7 +287,7 @@ func TestCallToolDomainGetNotFound(t *testing.T) {
 
 	_, err := s.CallTool("domain_get", json.RawMessage(`{"host":"nonexistent.com"}`))
 	if err == nil {
-		t.Error("expected error for non-existent domain")
+		t.Fatal("expected error for non-existent domain")
 	}
 	if !strings.Contains(err.Error(), "domain not found") {
 		t.Errorf("unexpected error: %v", err)

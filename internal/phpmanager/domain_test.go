@@ -72,7 +72,7 @@ func TestAssignDomainDuplicate(t *testing.T) {
 
 	_, err = m.AssignDomain("blog.com", "8.4")
 	if err == nil {
-		t.Error("expected error for duplicate domain assignment")
+		t.Fatal("expected error for duplicate domain assignment")
 	}
 	if !strings.Contains(err.Error(), "already has") {
 		t.Errorf("unexpected error: %v", err)
@@ -84,7 +84,7 @@ func TestAssignDomainNotFound(t *testing.T) {
 
 	_, err := m.AssignDomain("blog.com", "9.9")
 	if err == nil {
-		t.Error("expected error for non-existent version")
+		t.Fatal("expected error for non-existent version")
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("unexpected error: %v", err)
@@ -463,7 +463,7 @@ func TestAutoStartAllErrors(t *testing.T) {
 
 	err := m.AutoStartAll()
 	if err == nil {
-		t.Error("expected error from AutoStartAll with failing binary")
+		t.Fatal("expected error from AutoStartAll with failing binary")
 	}
 	if !strings.Contains(err.Error(), "auto-start errors") {
 		t.Errorf("unexpected error: %v", err)

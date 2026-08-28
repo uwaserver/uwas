@@ -148,7 +148,7 @@ func TestWaitForAppImpl_Timeout(t *testing.T) {
 	start := time.Now()
 	err = waitForAppImpl(addr, 300*time.Millisecond)
 	if err == nil {
-		t.Error("waitForAppImpl() expected timeout error")
+		t.Fatal("waitForAppImpl() expected timeout error")
 	}
 	if err != nil && !strings.Contains(err.Error(), "not responding") {
 		t.Errorf("error = %v, want 'not responding'", err)
