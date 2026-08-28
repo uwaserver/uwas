@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/rlimit"
 )
 
 // AssignDomain assigns a PHP version to a domain.
@@ -227,6 +229,30 @@ func (m *Manager) StartDomain(domain string) error {
 		listenAddr: inst.listenAddr,
 	}
 
+	// Place the worker in the domain's cgroup. domain.resources was dead
+	// configuration: internal/rlimit implemented it in full and nothing
+	// imported the package, so cpu_percent / memory_mb / pid_max were
+	// defaulted, merged, echoed back by the API and never enforced.
+	//
+	// A failure here does not stop the domain: a host without cgroup v2, or
+	// UWAS running unprivileged, must still serve PHP. It is logged at error
+	// level because the operator asked for a limit and is not getting it.
+	inst.cgroupPath = ""
+	if cgPath, cgErr := rlimitApply(domain, inst.limits); cgErr != nil {
+		m.logger.Error("resource limits could not be applied; PHP runs unlimited",
+			"domain", domain, "error", cgErr)
+	} else if cgPath != "" {
+		if cgErr := rlimitAssignPID(cgPath, cmd.Process.Pid); cgErr != nil {
+			m.logger.Error("PHP worker could not be moved into its cgroup; it runs unlimited",
+				"domain", domain, "pid", cmd.Process.Pid, "error", cgErr)
+		} else {
+			inst.cgroupPath = cgPath
+			m.logger.Info("resource limits applied", "domain", domain, "cgroup", cgPath,
+				"cpu_percent", inst.limits.CPUPercent, "memory_mb", inst.limits.MemoryMB,
+				"pid_max", inst.limits.PIDMax)
+		}
+	}
+
 	// Capture callback before releasing lock.
 	changeFn := m.onDomainChange
 	listenAddr := inst.listenAddr
@@ -343,7 +369,20 @@ func (m *Manager) StopDomain(domain string) error {
 	inst.proc = nil
 	tmpINI := inst.tmpINI
 	inst.tmpINI = ""
+	hadCgroup := inst.cgroupPath != ""
+	inst.cgroupPath = ""
 	m.domainMu.Unlock()
+
+	// Remove the cgroup once the worker is gone. rmdir fails while the group
+	// still holds processes, so this is best-effort: the next Apply reuses
+	// the directory anyway.
+	if hadCgroup {
+		defer func() {
+			if err := rlimitRemove(domain); err != nil {
+				m.logger.Debug("cgroup not removed", "domain", domain, "error", err)
+			}
+		}()
+	}
 
 	// System FPM socket: no process to kill (managed by systemd)
 	if proc.cmd == nil || proc.cmd.Process == nil {
@@ -442,6 +481,43 @@ func phpINIValueSafe(value string) bool {
 		}
 	}
 	return true
+}
+
+// Indirection over internal/rlimit so the wiring can be tested without a
+// cgroup v2 host. internal/rlimit has its own kernel-level tests.
+var (
+	rlimitApply     = rlimit.Apply
+	rlimitAssignPID = rlimit.AssignPID
+	rlimitRemove    = rlimit.Remove
+)
+
+// SetDomainLimits records the resource limits for a domain. They take effect
+// the next time the domain's PHP worker starts, because a cgroup has to exist
+// before a process can be moved into it.
+//
+// Returns false if the domain has no PHP assignment.
+func (m *Manager) SetDomainLimits(domain string, limits rlimit.Limits) bool {
+	m.domainMu.Lock()
+	defer m.domainMu.Unlock()
+
+	inst, ok := m.domainMap[domain]
+	if !ok {
+		return false
+	}
+	inst.limits = limits
+	return true
+}
+
+// DomainLimits reports the limits recorded for a domain.
+func (m *Manager) DomainLimits(domain string) (rlimit.Limits, bool) {
+	m.domainMu.RLock()
+	defer m.domainMu.RUnlock()
+
+	inst, ok := m.domainMap[domain]
+	if !ok {
+		return rlimit.Limits{}, false
+	}
+	return inst.limits, true
 }
 
 // SetDomainConfig sets a per-domain php.ini override with security validation.
