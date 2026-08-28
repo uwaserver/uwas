@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/middleware"
@@ -102,16 +101,7 @@ func (s *Server) reload() error {
 	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
 	// before swapping the map; otherwise each reload leaks N goroutines bound
 	// to s.ctx (server lifetime).
-	newRateLimiters := make(map[string]*middleware.RateLimiter)
-	for _, d := range newCfg.Domains {
-		if d.Security.RateLimit.Requests > 0 {
-			window := d.Security.RateLimit.Window.Duration
-			if window == 0 {
-				window = time.Minute
-			}
-			newRateLimiters[d.Host] = middleware.NewRateLimiter(s.ctx, d.Security.RateLimit.Requests, window)
-		}
-	}
+	newRateLimiters := buildDomainRateLimiters(s.ctx, newCfg.Domains, newCfg.Global.TrustedProxies, s.logger)
 
 	// Rebuild image optimization chains
 	newImageOpt := make(map[string]middleware.Middleware)

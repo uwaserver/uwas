@@ -431,11 +431,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Per-domain rate limiting
 	if guards.rateLimit != nil {
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil || ip == "" {
-			ip = r.RemoteAddr
-		}
-		if !guards.rateLimit.Allow(ip) {
+		if !guards.rateLimit.Allow(guards.rateLimit.Key(r)) {
 			ctx.Response.Header().Set("Retry-After", "60")
 			ctx.Response.WriteHeader(http.StatusTooManyRequests)
 			ctx.Response.Write([]byte("429 Too Many Requests"))
