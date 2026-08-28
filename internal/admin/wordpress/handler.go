@@ -31,6 +31,12 @@ type Deps interface {
 	RecordAudit(r *http.Request, action, detail string, success bool)
 }
 
+// installFn runs the install. It exists so a test can hold an install
+// in flight: the duplicate-install response depends on h.result still saying
+// "running", and racing a real wp.Install to observe that is only reliable
+// when the install is slow.
+var installFn = wp.Install
+
 // Handler holds WordPress admin API handlers.
 type Handler struct {
 	deps   Deps
@@ -104,7 +110,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	h.deps.LogInfo("starting WordPress install", "domain", req.Domain)
 
 	go func() {
-		result := wp.Install(req)
+		result := installFn(req)
 		h.mu.Lock()
 		h.result = &result
 		h.mu.Unlock()

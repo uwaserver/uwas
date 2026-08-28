@@ -4319,32 +4319,12 @@ func TestWPInstallWithDomain(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-func TestWPInstallDuplicateRunning(t *testing.T) {
-	// The handler answers 409 while an install is in flight. That state lives on
-	// the package-level wpHandler, so this test used to depend on some earlier
-	// test having left an install running — order- and timing-dependent, and it
-	// failed under -race when the earlier goroutine had already finished.
-	//
-	// The precondition is now set up here: the first request marks an install
-	// running, the second is the duplicate under test.
-	s := testServer()
-	root := t.TempDir()
-	body := func() *strings.Reader {
-		return strings.NewReader(`{"domain":"test.com","web_root":"` + filepath.ToSlash(root) + `"}`)
-	}
-
-	first := httptest.NewRecorder()
-	s.handleWPInstall(first, httptest.NewRequest("POST", "/api/v1/wordpress/install", body()))
-	if first.Code != 200 {
-		t.Fatalf("first install: status = %d, want 200, body: %s", first.Code, first.Body.String())
-	}
-
-	second := httptest.NewRecorder()
-	s.handleWPInstall(second, httptest.NewRequest("POST", "/api/v1/wordpress/install", body()))
-	if second.Code != 409 {
-		t.Errorf("duplicate install: status = %d, want 409, body: %s", second.Code, second.Body.String())
-	}
-}
+// TestWPInstallDuplicateRunning moved to internal/admin/wordpress, where the
+// installer can be held open. Here it raced the real wp.Install: the handler
+// writes the finished result over its "running" state, so an install that
+// failed fast cleared the precondition before the duplicate request arrived
+// and the second call got 200 instead of 409. It failed about one run in
+// twelve on this machine.
 
 // =============================================================================
 // Additional coverage: handleClone with root

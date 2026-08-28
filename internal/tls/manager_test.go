@@ -791,7 +791,7 @@ func TestGetCertificateOnDemandAskReject(t *testing.T) {
 	hello := &tls.ClientHelloInfo{ServerName: "unknown-domain.com"}
 	_, err := m.GetCertificate(hello)
 	if err == nil {
-		t.Error("should reject when ask URL returns non-200")
+		t.Fatal("should reject when ask URL returns non-200")
 	}
 	if !strings.Contains(err.Error(), "rejected") {
 		t.Errorf("error = %v, want contains 'rejected'", err)
@@ -835,7 +835,7 @@ func TestGetCertificateOnDemandRateLimited(t *testing.T) {
 	hello := &tls.ClientHelloInfo{ServerName: "ratelimited.com"}
 	_, err := m.GetCertificate(hello)
 	if err == nil {
-		t.Error("should error when rate limited")
+		t.Fatal("should error when rate limited")
 	}
 	if !strings.Contains(err.Error(), "rate limit") {
 		t.Errorf("error = %v, want contains 'rate limit'", err)

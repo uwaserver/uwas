@@ -1948,7 +1948,7 @@ func TestStartHTTPSBadAddress(t *testing.T) {
 
 	err := s.startHTTPS()
 	if err == nil {
-		t.Error("startHTTPS should fail with invalid address")
+		t.Fatal("startHTTPS should fail with invalid address")
 		if s.httpsSrv != nil {
 			s.httpsSrv.Close()
 		}
@@ -2033,7 +2033,7 @@ func TestReloadNoConfigPathCov(t *testing.T) {
 
 	err := s.reload()
 	if err == nil {
-		t.Error("reload should fail when configPath is empty")
+		t.Fatal("reload should fail when configPath is empty")
 	}
 	if !strings.Contains(err.Error(), "no config path") {
 		t.Errorf("unexpected error: %v", err)
@@ -2056,7 +2056,7 @@ func TestReloadInvalidConfigFile(t *testing.T) {
 
 	err := s.reload()
 	if err == nil {
-		t.Error("reload should fail with invalid config file")
+		t.Fatal("reload should fail with invalid config file")
 	}
 	if !strings.Contains(err.Error(), "reload config") {
 		t.Errorf("unexpected error: %v", err)

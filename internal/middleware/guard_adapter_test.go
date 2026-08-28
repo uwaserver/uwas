@@ -11,7 +11,7 @@ func CORS(cfg CORSConfig) Middleware {
 }
 
 func DomainWAF(log *logger.Logger, bypassPaths []string, stats *SecurityStats) Middleware {
-	return middlewareFromGuard(DomainWAFGuard(log, bypassPaths, stats))
+	return middlewareFromGuard(DomainWAFGuard(log, bypassPaths, nil, stats))
 }
 
 func middlewareFromGuard(guard func(http.ResponseWriter, *http.Request) bool) Middleware {

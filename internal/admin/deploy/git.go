@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/apps"
@@ -283,9 +284,33 @@ func resolveRemoteDefaultRef(ctx context.Context, workDir string) string {
 
 func defaultGitEnv() []string {
 	env := os.Environ()
-	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/true", "GIT_ALLOW_PROTOCOL=https:ssh:git")
+	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https:ssh:git")
+
+	// A no-op askpass keeps git from popping a GUI credential prompt when the
+	// environment has SSH_ASKPASS set; GIT_TERMINAL_PROMPT=0 only covers the
+	// terminal. The path was hardcoded to /bin/true, which does not exist on
+	// macOS (true lives in /usr/bin) or in some minimal images — and git
+	// answers a missing GIT_ASKPASS with "cannot run ...", which is worse
+	// than not setting it. Resolve it, or leave it out.
+	if p := noopBinary(); p != "" {
+		env = append(env, "GIT_ASKPASS="+p)
+	}
 	return env
 }
+
+// noopBinary locates a binary that exits successfully and prints nothing.
+// Resolved once: it cannot change while the process runs.
+var noopBinary = sync.OnceValue(func() string {
+	if p, err := exec.LookPath("true"); err == nil {
+		return p
+	}
+	for _, p := range []string{"/usr/bin/true", "/bin/true"} {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
+})
 
 func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), error) {
 	env := defaultGitEnv()
@@ -321,7 +346,11 @@ func gitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), 
 			return nil, "", cleanup, err
 		}
 		cleanup = func() { _ = os.Remove(path) }
-		env = append(env, "GIT_ASKPASS="+path)
+		// Replace, not append: a second GIT_ASKPASS= entry leaves the no-op
+		// helper in the environment behind the real one. exec resolves
+		// duplicates last-wins so it worked, but anything reading the slice
+		// sees a stale entry pointing at a binary that answers nothing.
+		env = setEnv(env, "GIT_ASKPASS", path)
 	}
 	return env, cloneURL, cleanup, nil
 }
@@ -794,4 +823,16 @@ func generateDeployKeyImpl(storeDir, appName string) (string, string, error) {
 		return "", "", fmt.Errorf("install deploy private key: %w", err)
 	}
 	return privatePath, string(ssh.MarshalAuthorizedKey(sshPub)), nil
+}
+
+// setEnv replaces KEY=... in an environment slice, appending if absent.
+func setEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }

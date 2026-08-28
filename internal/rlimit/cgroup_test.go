@@ -58,8 +58,10 @@ func TestApplyLinuxWritesConfiguredLimits(t *testing.T) {
 	if !strings.Contains(path, "test.com") {
 		t.Errorf("path = %q, want sanitized domain", path)
 	}
-	if len(mkdirCalls) != 1 {
-		t.Errorf("mkdir calls = %d, want 1", len(mkdirCalls))
+	// Both the base cgroup and the domain's own are created: the base has to
+	// exist before its cgroup.subtree_control can delegate the controllers.
+	if len(mkdirCalls) != 2 {
+		t.Errorf("mkdir calls = %v, want [%s, %s/test.com]", mkdirCalls, cgroupBase, cgroupBase)
 	}
 
 	want := map[string]string{
@@ -300,11 +302,13 @@ func TestRemoveError(t *testing.T) {
 func saveAndRestoreHooks() func() {
 	origOsMkdirAll := osMkdirAllFn
 	origOsWriteFile := osWriteFileFn
+	origOsReadFile := osReadFileFn
 	origOsRemove := osRemoveFn
 	origRuntimeGOOS := runtimeGOOS
 	return func() {
 		osMkdirAllFn = origOsMkdirAll
 		osWriteFileFn = origOsWriteFile
+		osReadFileFn = origOsReadFile
 		osRemoveFn = origOsRemove
 		runtimeGOOS = origRuntimeGOOS
 	}

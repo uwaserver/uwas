@@ -570,7 +570,7 @@ func TestBuildEnvWithPathInfo(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "/api/users", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "/api/users", nil, 0)
 
 	if env["PATH_INFO"] != "/api/users" {
 		t.Errorf("PATH_INFO = %q, want /api/users", env["PATH_INFO"])
@@ -590,7 +590,7 @@ func TestBuildEnvCustomPort(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if env["SERVER_PORT"] != "8080" {
 		t.Errorf("SERVER_PORT = %q, want 8080", env["SERVER_PORT"])
@@ -610,7 +610,7 @@ func TestBuildEnvNoHost(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if _, ok := env["HTTP_HOST"]; ok {
 		t.Error("HTTP_HOST should not be set when Host is empty")
@@ -867,7 +867,7 @@ func TestBuildEnvHTTPSWithPort(t *testing.T) {
 	ctx.IsHTTPS = true
 	ctx.DocumentRoot = "/var/www"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "", nil, 0)
 
 	if env["HTTPS"] != "on" {
 		t.Errorf("HTTPS = %q, want on", env["HTTPS"])
@@ -886,7 +886,7 @@ func TestBuildEnvTrailingSlashDocRoot(t *testing.T) {
 	defer router.ReleaseContext(ctx)
 	ctx.DocumentRoot = "/var/www/"
 
-	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "/sub", nil)
+	env := BuildEnv(ctx, "/var/www/index.php", "/index.php", "/sub", nil, 0)
 
 	if env["PATH_TRANSLATED"] != "/var/www/sub" {
 		t.Errorf("PATH_TRANSLATED = %q, want /var/www/sub", env["PATH_TRANSLATED"])
