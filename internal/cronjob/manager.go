@@ -2,17 +2,68 @@
 package cronjob
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var (
 	execCommandFn = exec.Command
 	runtimeGOOS   = runtime.GOOS
+
+	// crontabTimeout bounds every crontab invocation.
+	//
+	// These run inside an admin HTTP handler and had no deadline. crontab can
+	// block — waiting on a lock, on a filesystem that is not answering, or on
+	// a host where installing a crontab needs a permission the process does
+	// not have — and a blocked call held the request open with nothing to
+	// interrupt it. It also hung the test suite for the full 10 minute
+	// package timeout on any machine where that happens.
+	crontabTimeout = 10 * time.Second
 )
+
+// runCrontab runs a crontab invocation with a deadline, killing it if it
+// overruns. It reports the timeout as an error rather than waiting.
+//
+// Start is called on this goroutine on purpose. Running cmd.Run in a
+// goroutine and reaching for cmd.Process from here races: Run sets Process
+// while this side reads it. After Start returns, Process is set and stable,
+// and killing it while Wait runs is the documented pattern.
+//
+// stderr is captured and attached to an ExitError the way cmd.Output does,
+// because readCrontab tells "no crontab for user" — an empty crontab, not a
+// failure — from a real error by reading it.
+func runCrontab(cmd *exec.Cmd, capture bool) ([]byte, error) {
+	var stdout, stderr bytes.Buffer
+	if capture {
+		cmd.Stdout = &stdout
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = &stderr
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) == 0 {
+			ee.Stderr = stderr.Bytes()
+		}
+		return stdout.Bytes(), err
+	case <-time.After(crontabTimeout):
+		_ = cmd.Process.Kill()
+		<-done // reap the killed process
+		return nil, fmt.Errorf("crontab did not respond within %s", crontabTimeout)
+	}
+}
 
 // Job represents a cron job entry.
 type Job struct {
@@ -31,7 +82,7 @@ const uwasMarker = "# UWAS managed"
 // overwriting an existing crontab with only their own entry — which would
 // destroy every unrelated cron job on the system.
 func readCrontab() (string, error) {
-	out, err := execCommandFn("crontab", "-l").Output()
+	out, err := runCrontab(execCommandFn("crontab", "-l"), true)
 	if err == nil {
 		return string(out), nil
 	}
@@ -50,7 +101,7 @@ func List() ([]Job, error) {
 	if runtimeGOOS == "windows" {
 		return nil, nil
 	}
-	out, err := execCommandFn("crontab", "-l").Output()
+	out, err := runCrontab(execCommandFn("crontab", "-l"), true)
 	if err != nil {
 		return nil, nil // no crontab
 	}
@@ -173,7 +224,8 @@ func writeCrontab(content string) error {
 		return fmt.Errorf("write crontab temp file: %w", err)
 	}
 	tmp.Close()
-	return execCommandFn("crontab", tmp.Name()).Run()
+	_, err = runCrontab(execCommandFn("crontab", tmp.Name()), false)
+	return err
 }
 
 func parseCronLine(line string) Job {
