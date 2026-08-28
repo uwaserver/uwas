@@ -245,3 +245,30 @@ describe('branding.footer_text', () => {
     expect(screen.queryByText(/Powered by/)).not.toBeInTheDocument();
   });
 });
+
+// The debug control used to float at right-3 top-3, on top of the fixed
+// system stats bar — covering the version number at that bar's right end on
+// every page. It belongs in the sidebar footer with the other always-present
+// controls.
+describe('debug log control', () => {
+  it('is rendered in the sidebar', async () => {
+    await renderSidebar();
+    expect(screen.getByLabelText('Toggle debug log')).toBeInTheDocument();
+    expect(screen.getByText('Debug log')).toBeInTheDocument();
+  });
+
+  it('does not float over the page', async () => {
+    await renderSidebar();
+    const toggle = screen.getByLabelText('Toggle debug log');
+
+    const aside = toggle.closest('aside');
+    expect(aside).not.toBeNull();
+
+    // Nothing between the control and the sidebar may pin itself to the
+    // viewport. The <aside> itself is fixed on purpose — that is the sidebar
+    // chrome — so the walk stops there.
+    for (let el = toggle as HTMLElement | null; el && el !== aside; el = el.parentElement) {
+      expect(el.className).not.toMatch(/\bfixed\b/);
+    }
+  });
+});
