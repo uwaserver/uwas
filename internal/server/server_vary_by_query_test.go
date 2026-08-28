@@ -1,0 +1,113 @@
+package server
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/logger"
+)
+
+// global.cache.vary_by_query reaching the engine is the half no test would
+// otherwise cover: QueryVaries can be right while nothing calls
+// SetVaryByQuery, which is the shape of the bug being fixed.
+
+func varyFixture(t *testing.T, varyByQuery *bool) (*Server, http.Handler) {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<!doctype html>sayfa"), 0o644); err != nil {
+		t.Fatalf("yaz: %v", err)
+	}
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{
+			WorkerCount: "1", LogLevel: "error", LogFormat: "text",
+			Cache: config.CacheConfig{
+				Enabled:     true,
+				MemoryLimit: config.ByteSize(64 << 20),
+				DefaultTTL:  300,
+				VaryByQuery: varyByQuery,
+			},
+		},
+		Domains: []config.Domain{{
+			Host:  "vary.test",
+			Type:  "static",
+			Root:  root,
+			SSL:   config.SSLConfig{Mode: "off"},
+			Cache: config.DomainCache{Enabled: true, TTL: 300},
+		}},
+	}
+
+	s := New(cfg, logger.New("error", "text"))
+	t.Cleanup(func() { s.cancel() })
+	return s, s.buildMiddlewareChain()
+}
+
+func varyIstek(h http.Handler, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Host = "vary.test"
+	req.Header.Set("User-Agent", "uwas-test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// saklandi proves the first request actually populated the cache, so the
+// second assertion cannot pass vacuously.
+func saklandi(t *testing.T, s *Server, path string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Host = "vary.test"
+	if entry, _ := s.cache.Get(req); entry == nil {
+		t.Fatalf("%s önbelleğe yazılmadı — test boşa geçemez", path)
+	}
+}
+
+func TestServerVaryByQueryDefaultsToOn(t *testing.T) {
+	s, h := varyFixture(t, nil) // ayarsız
+
+	if rec := varyIstek(h, "/index.html?a=1"); rec.Code != http.StatusOK {
+		t.Fatalf("durum %d", rec.Code)
+	}
+	saklandi(t, s, "/index.html?a=1")
+
+	req := httptest.NewRequest(http.MethodGet, "/index.html?a=2", nil)
+	req.Host = "vary.test"
+	if entry, _ := s.cache.Get(req); entry != nil {
+		t.Error("ayarsız vary_by_query sorguları çöktürdü — ?a=1 ile ?a=2 aynı girdiyi paylaşır")
+	}
+}
+
+func TestServerVaryByQueryDisabledCollapses(t *testing.T) {
+	s, h := varyFixture(t, config.BoolPtr(false))
+
+	if rec := varyIstek(h, "/index.html?utm_source=a"); rec.Code != http.StatusOK {
+		t.Fatalf("durum %d", rec.Code)
+	}
+	saklandi(t, s, "/index.html?utm_source=a")
+
+	req := httptest.NewRequest(http.MethodGet, "/index.html?utm_source=b", nil)
+	req.Host = "vary.test"
+	if entry, _ := s.cache.Get(req); entry == nil {
+		t.Error("vary_by_query: false motora ulaşmıyor — sorgular ayrı girdilerde kaldı")
+	}
+}
+
+func TestServerVaryByQueryExplicitTrue(t *testing.T) {
+	s, h := varyFixture(t, config.BoolPtr(true))
+
+	if rec := varyIstek(h, "/index.html?a=1"); rec.Code != http.StatusOK {
+		t.Fatalf("durum %d", rec.Code)
+	}
+	saklandi(t, s, "/index.html?a=1")
+
+	req := httptest.NewRequest(http.MethodGet, "/index.html?a=2", nil)
+	req.Host = "vary.test"
+	if entry, _ := s.cache.Get(req); entry != nil {
+		t.Error("açık true sorguları çöktürdü")
+	}
+}

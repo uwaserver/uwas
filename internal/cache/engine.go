@@ -17,6 +17,10 @@ type Engine struct {
 	logger   *logger.Logger
 	varyKeys []string      // precomputed: ["Accept-Encoding", ...configuredVaryHeaders]
 	writeSem chan struct{} // bounds concurrent L2/L3 writes
+	// varyByQuery mirrors global.cache.vary_by_query. It defaults to true —
+	// the key has always included the query string — so an operator has to
+	// ask for the collapse explicitly.
+	varyByQuery bool
 }
 
 // SetVaryHeaders precomput the full vary-key list (Accept-Encoding + caller
@@ -29,14 +33,25 @@ func (e *Engine) SetVaryHeaders(headers []string) {
 	e.varyKeys = keys
 }
 
+// SetVaryByQuery controls whether the query string is part of the cache key.
+//
+// global.cache.vary_by_query was dead configuration: GenerateKey always
+// folded the query in and nothing read the field, so an operator could not
+// collapse /page?utm_source=a and /page?utm_source=b onto one entry however
+// they set it.
+func (e *Engine) SetVaryByQuery(vary bool) {
+	e.varyByQuery = vary
+}
+
 // NewEngine creates a cache engine with memory and optional disk backing.
 // The ctx parameter controls the lifetime of background cleanup goroutines.
 func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimit int64, log *logger.Logger) *Engine {
 	e := &Engine{
-		memory:   NewMemoryCache(memoryLimit),
-		logger:   log,
-		varyKeys: []string{"Accept-Encoding"}, // default; extended via SetVaryHeaders
-		writeSem: make(chan struct{}, maxConcurrentWrites),
+		memory:      NewMemoryCache(memoryLimit),
+		logger:      log,
+		varyKeys:    []string{"Accept-Encoding"}, // default; extended via SetVaryHeaders
+		writeSem:    make(chan struct{}, maxConcurrentWrites),
+		varyByQuery: true,
 	}
 
 	if diskPath != "" {
@@ -55,16 +70,23 @@ func NewEngine(ctx context.Context, memoryLimit int64, diskPath string, diskLimi
 // should call this once and pass the result to GetByKey / SetByKey to avoid
 // recomputing the key (and reallocating the vary slice) a second time.
 func (e *Engine) Key(r *http.Request) string {
+	return e.key(r)
+}
+
+func (e *Engine) key(r *http.Request) string {
+	if !e.varyByQuery {
+		return GenerateKeyWithoutQuery(r, e.varyKeys)
+	}
 	return GenerateKey(r, e.varyKeys)
 }
 
 // Get looks up a cache entry: L1 (memory) → L2 (disk) → L3 (Redis) → miss.
 func (e *Engine) Get(r *http.Request) (*CachedResponse, string) {
-	return e.GetByKey(GenerateKey(r, e.varyKeys))
+	return e.GetByKey(e.key(r))
 }
 
 func (e *Engine) Set(r *http.Request, resp *CachedResponse) {
-	e.SetByKey(GenerateKey(r, e.varyKeys), resp)
+	e.SetByKey(e.key(r), resp)
 }
 
 // GetByKey looks up a cache entry by explicit key (for ESI fragments).

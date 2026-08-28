@@ -210,6 +210,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			log,
 		)
 		cacheEngine.SetVaryHeaders(cfg.Global.Cache.VaryByHeaders)
+		cacheEngine.SetVaryByQuery(cfg.Global.Cache.QueryVaries())
 
 		// L3: Redis cache
 		if cfg.Global.Cache.Redis.Enabled {

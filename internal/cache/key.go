@@ -29,6 +29,17 @@ var builderPool = sync.Pool{
 // Host is normalized: lowercase + port stripped to ensure Example.com:80
 // and example.com produce the same cache key.
 func GenerateKey(r *http.Request, varyHeaders []string) string {
+	return generateKey(r, varyHeaders, true)
+}
+
+// GenerateKeyWithoutQuery builds the key with the query string left out, so
+// requests that differ only in their query share one cache entry. This is
+// what global.cache.vary_by_query: false asks for.
+func GenerateKeyWithoutQuery(r *http.Request, varyHeaders []string) string {
+	return generateKey(r, varyHeaders, false)
+}
+
+func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string {
 	b := builderPool.Get().(*strings.Builder)
 	b.Reset()
 
@@ -60,7 +71,7 @@ func GenerateKey(r *http.Request, varyHeaders []string) string {
 	b.WriteByte('|')
 
 	// Sorted query params for consistency (key=a&b and key=b&a → same key).
-	if r.URL.RawQuery != "" {
+	if varyByQuery && r.URL.RawQuery != "" {
 		writeSortedQuery(b, r.URL.RawQuery)
 	}
 
