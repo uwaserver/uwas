@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.15] - 2026-08-28
+
+Three settings that the dashboard offered, the API echoed back and the runtime
+ignored. All of them now take effect.
+
+### Fixed
+
+- Apply a cache rule's `ttl` and `global.cache.default_ttl`. The store path read neither and hardcoded a 60 second fallback, so an operator could set either one, see it returned by the API, and get no change. TTL is now resolved in precedence order: matching rule, then the domain's `cache.ttl`, then `global.cache.default_ttl`, then a one minute floor.
+- Apply the per-domain `compression` block. `enabled`, `min_size`, `algorithms` and `types` were all inert because the middleware chain hardcoded a 1 KB threshold and read none of them. Algorithm restriction falls back rather than failing: when the policy allows only gzip and the client prefers brotli, gzip is used; when there is no overlap at all the response is sent uncompressed rather than under an encoding the client did not ask for.
+- Reject a cache rule `match` that is not a valid regular expression. This field is a regex, not a glob, and an uncompilable pattern was swallowed at request time — a rule written as `*.html` silently never matched, giving no bypass, no `Cache-Control` and no ttl, with nothing in the logs to explain it. The error now says what to write instead.
+
+### Changed
+
+- **Behaviour change:** a domain that leaves `cache.ttl` at `0` previously got 60 seconds and now gets `global.cache.default_ttl`, which defaults to 3600. Operators relying on the old implicit minute should set `cache.ttl` explicitly.
+- `compression.enabled` is now a nullable boolean in the config and the API. Compression is on by default, so absent and `false` had to become distinguishable — otherwise every domain that never mentions compression would have lost it the moment the field started being read. Absent means on; `false` means off.
+- The domain form in the dashboard gains a Compression section: toggle, minimum size and algorithms. An untouched form sends no compression block, so existing domains are not rewritten on save.
+
 ## [0.8.14] - 2026-08-27
 
 ### Fixed
