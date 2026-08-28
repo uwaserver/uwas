@@ -44,10 +44,10 @@ func TestServerBuildsBalancerFromStickyConfig(t *testing.T) {
 	b := s.proxyBalancers["proxy.test"]
 	sb, ok := b.(*proxy.StickyBalancer)
 	if !ok {
-		t.Fatalf("balancer = %T, want *proxy.StickyBalancer — proxy.sticky sunucuya ulaşmıyor", b)
+		t.Fatalf("balancer = %T, want *proxy.StickyBalancer — proxy.sticky does not reach the server", b)
 	}
 	if sb.CookieName != "UWAS_UPSTREAM" || sb.TTL != 600 {
-		t.Errorf("sticky ayarları taşınmadı: %q / %d", sb.CookieName, sb.TTL)
+		t.Errorf("the sticky settings did not carry: %q / %d", sb.CookieName, sb.TTL)
 	}
 	if _, ok := sb.Fallback.(*proxy.LeastConn); !ok {
 		t.Errorf("fallback = %T, want *proxy.LeastConn", sb.Fallback)
@@ -62,7 +62,7 @@ func TestReloadRebuildsBalancerFromStickyConfig(t *testing.T) {
 	})
 
 	if _, ok := s.proxyBalancers["proxy.test"].(*proxy.StickyBalancer); ok {
-		t.Fatal("sticky bloğu yokken StickyBalancer üretildi")
+		t.Fatal("a StickyBalancer was built with no sticky block")
 	}
 
 	newCfg := &config.Config{
@@ -78,9 +78,9 @@ func TestReloadRebuildsBalancerFromStickyConfig(t *testing.T) {
 
 	sb, ok := s.proxyBalancers["proxy.test"].(*proxy.StickyBalancer)
 	if !ok {
-		t.Fatalf("reload sonrası balancer = %T — sticky bloğu reload yolunda düşüyor", s.proxyBalancers["proxy.test"])
+		t.Fatalf("balancer after reload = %T — the sticky block is dropped on the reload path", s.proxyBalancers["proxy.test"])
 	}
 	if sb.CookieName != "UWAS_UPSTREAM" || sb.TTL != 600 {
-		t.Errorf("reload sticky ayarlarını taşımadı: %q / %d", sb.CookieName, sb.TTL)
+		t.Errorf("reload did not carry the sticky settings: %q / %d", sb.CookieName, sb.TTL)
 	}
 }

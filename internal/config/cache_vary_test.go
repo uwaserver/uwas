@@ -12,9 +12,9 @@ func TestQueryVaries(t *testing.T) {
 		in   *bool
 		want bool
 	}{
-		{"ayarsız (yok) -> varyasyon sürer", nil, true},
-		{"açıkça true", BoolPtr(true), true},
-		{"açıkça false -> çöker", BoolPtr(false), false},
+		{"unset (absent) keeps varying", nil, true},
+		{"explicit true", BoolPtr(true), true},
+		{"explicit false collapses", BoolPtr(false), false},
 	}
 	for _, c := range cases {
 		t.Run(c.ad, func(t *testing.T) {

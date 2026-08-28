@@ -12,9 +12,9 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
-// NOT: cache.rules[].match bir REGEX'tir, glob değil. "*.html" geçersiz bir
-// regex olduğu için matchPath sessizce false döner — testler de bu yüzden
-// önce eşleşmiyordu. Desen doğrulaması validate.go'ya eklendi.
+// NOTE: cache.rules[].match is a REGEX, not a glob. "*.html" is not a valid
+// regex, so matchPath returned false without saying why — which is why these
+// tests did not match at first. Pattern validation was added to validate.go.
 //
 // Two cache settings were dead configuration: a cache rule's `ttl` and
 // `global.cache.default_ttl`. The store path hardcoded a 60 second fallback and
@@ -32,11 +32,11 @@ func TestCacheTTLForPrecedence(t *testing.T) {
 		global   int
 		beklenen time.Duration
 	}{
-		{"kural her şeyi ezer", 30, 120, 3600, 30 * time.Second},
+		{"a rule beats everything", 30, 120, 3600, 30 * time.Second},
 		{"kural yoksa domain", 0, 120, 3600, 120 * time.Second},
 		{"domain yoksa global", 0, 0, 3600, 3600 * time.Second},
-		{"hiçbiri yoksa bir dakika", 0, 0, 0, 60 * time.Second},
-		{"negatif değerler yok sayılır", -5, -1, 900, 900 * time.Second},
+		{"one minute when none is set", 0, 0, 0, 60 * time.Second},
+		{"negative values are ignored", -5, -1, 900, 900 * time.Second},
 	}
 
 	for _, c := range cases {
@@ -89,9 +89,9 @@ func ttlFixture(t *testing.T, globalDefaultTTL, domainTTL int, rules []config.Ca
 	return s, s.buildMiddlewareChain()
 }
 
-// istekYap sends one request through the chain. The bot guard answers an
+// doRequest sends one request through the chain. The bot guard answers an
 // empty User-Agent with 403, so it must be set.
-func istekYap(h http.Handler, path string) *httptest.ResponseRecorder {
+func doRequest(h http.Handler, path string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Host = "ttl.test"
 	req.Header.Set("User-Agent", "uwas-test")
@@ -100,20 +100,20 @@ func istekYap(h http.Handler, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// saklananTTL issues one request and returns the TTL of the entry it stored.
-func saklananTTL(t *testing.T, s *Server, h http.Handler, path string) time.Duration {
+// storedTTL issues one request and returns the TTL of the entry it stored.
+func storedTTL(t *testing.T, s *Server, h http.Handler, path string) time.Duration {
 	t.Helper()
 
-	rec := istekYap(h, path)
+	rec := doRequest(h, path)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("%s durum %d döndü, 200 bekleniyordu", path, rec.Code)
+		t.Fatalf("%s returned %d, want 200", path, rec.Code)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Host = "ttl.test"
 	entry, _ := s.cache.Get(req)
 	if entry == nil {
-		t.Fatalf("%s önbelleğe yazılmadı — test boşa geçemez", path)
+		t.Fatalf("%s was not cached — the test must not pass vacuously", path)
 	}
 	return entry.TTL
 }
@@ -122,7 +122,7 @@ func TestCacheEntryUsesGlobalDefaultTTL(t *testing.T) {
 	// Domain leaves ttl unset; global.cache.default_ttl must apply.
 	s, h := ttlFixture(t, 1800, 0, nil)
 
-	if got := saklananTTL(t, s, h, "/index.html"); got != 1800*time.Second {
+	if got := storedTTL(t, s, h, "/index.html"); got != 1800*time.Second {
 		t.Errorf("saklanan TTL = %v, want 30m (global.cache.default_ttl)", got)
 	}
 }
@@ -130,7 +130,7 @@ func TestCacheEntryUsesGlobalDefaultTTL(t *testing.T) {
 func TestCacheEntryUsesDomainTTLOverGlobal(t *testing.T) {
 	s, h := ttlFixture(t, 1800, 300, nil)
 
-	if got := saklananTTL(t, s, h, "/index.html"); got != 300*time.Second {
+	if got := storedTTL(t, s, h, "/index.html"); got != 300*time.Second {
 		t.Errorf("saklanan TTL = %v, want 5m (domain cache.ttl)", got)
 	}
 }
@@ -141,8 +141,8 @@ func TestCacheEntryUsesMatchingRuleTTL(t *testing.T) {
 		{Match: `\.html$`, TTL: 45},
 	})
 
-	if got := saklananTTL(t, s, h, "/index.html"); got != 45*time.Second {
-		t.Errorf("saklanan TTL = %v, want 45s (eşleşen kural)", got)
+	if got := storedTTL(t, s, h, "/index.html"); got != 45*time.Second {
+		t.Errorf("stored TTL = %v, want 45s (matching rule)", got)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestCacheEntryIgnoresNonMatchingRuleTTL(t *testing.T) {
 		{Match: `\.css$`, TTL: 45},
 	})
 
-	if got := saklananTTL(t, s, h, "/index.html"); got != 300*time.Second {
-		t.Errorf("saklanan TTL = %v, want 5m (kural eşleşmiyor)", got)
+	if got := storedTTL(t, s, h, "/index.html"); got != 300*time.Second {
+		t.Errorf("stored TTL = %v, want 5m (rule does not match)", got)
 	}
 }
 
@@ -165,13 +165,13 @@ func TestCacheBypassRuleStillWins(t *testing.T) {
 		{Match: `\.html$`, Bypass: true, TTL: 45},
 	})
 
-	if rec := istekYap(h, "/index.html"); rec.Code != http.StatusOK {
-		t.Fatalf("durum %d döndü, 200 bekleniyordu", rec.Code)
+	if rec := doRequest(h, "/index.html"); rec.Code != http.StatusOK {
+		t.Fatalf("returned %d, want 200", rec.Code)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
 	req.Host = "ttl.test"
 	if entry, _ := s.cache.Get(req); entry != nil {
-		t.Errorf("bypass edilen yol önbelleğe yazıldı (TTL %v)", entry.TTL)
+		t.Errorf("a bypassed path was cached (TTL %v)", entry.TTL)
 	}
 }

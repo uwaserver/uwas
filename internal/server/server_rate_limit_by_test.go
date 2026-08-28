@@ -41,8 +41,8 @@ func rateFixture(t *testing.T, rl config.RateLimitConfig, trusted []string) http
 	return s.buildMiddlewareChain()
 }
 
-// rlIstek sends one request with a given RemoteAddr and headers.
-func rlIstek(h http.Handler, remoteAddr string, headers map[string]string) int {
+// rateRequest sends one request with a given RemoteAddr and headers.
+func rateRequest(h http.Handler, remoteAddr string, headers map[string]string) int {
 	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
 	req.Host = "rl.test"
 	req.RemoteAddr = remoteAddr
@@ -67,17 +67,17 @@ func TestRateLimitHonoursTrustedProxies(t *testing.T) {
 
 	// Client A exhausts its budget through the proxy.
 	for i := 0; i < 2; i++ {
-		if code := rlIstek(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.10"}); code != http.StatusOK {
-			t.Fatalf("A isteği %d: durum %d", i+1, code)
+		if code := rateRequest(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.10"}); code != http.StatusOK {
+			t.Fatalf("client A request %d: status %d", i+1, code)
 		}
 	}
-	if code := rlIstek(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.10"}); code != http.StatusTooManyRequests {
-		t.Fatalf("A sınırı aşmadı: durum %d", code)
+	if code := rateRequest(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.10"}); code != http.StatusTooManyRequests {
+		t.Fatalf("client A was not limited: status %d", code)
 	}
 
 	// Client B, through the same proxy, must still be served.
-	if code := rlIstek(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.99"}); code != http.StatusOK {
-		t.Errorf("B durumu = %d, want 200 — sınır proxy IP'sine göre anahtarlanıyor, tüm ziyaretçiler tek kovayı paylaşıyor", code)
+	if code := rateRequest(h, "10.0.0.1:1234", map[string]string{"X-Forwarded-For": "203.0.113.99"}); code != http.StatusOK {
+		t.Errorf("client B status = %d, want 200 — the limit is keyed on the proxy address, so every visitor shares one bucket", code)
 	}
 }
 
@@ -88,17 +88,17 @@ func TestRateLimitByHeader(t *testing.T) {
 		nil)
 
 	for i := 0; i < 2; i++ {
-		if code := rlIstek(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-a"}); code != http.StatusOK {
-			t.Fatalf("A isteği %d: durum %d", i+1, code)
+		if code := rateRequest(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-a"}); code != http.StatusOK {
+			t.Fatalf("client A request %d: status %d", i+1, code)
 		}
 	}
-	if code := rlIstek(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-a"}); code != http.StatusTooManyRequests {
-		t.Fatalf("A sınırı aşmadı: durum %d", code)
+	if code := rateRequest(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-a"}); code != http.StatusTooManyRequests {
+		t.Fatalf("client A was not limited: status %d", code)
 	}
 
 	// Same IP, different key: its own budget.
-	if code := rlIstek(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-b"}); code != http.StatusOK {
-		t.Errorf("B durumu = %d, want 200 — by: header uygulanmıyor", code)
+	if code := rateRequest(h, "203.0.113.1:5000", map[string]string{"X-API-Key": "anahtar-b"}); code != http.StatusOK {
+		t.Errorf("client B status = %d, want 200 — by: header is not applied", code)
 	}
 }
 
@@ -108,15 +108,15 @@ func TestRateLimitByIPIsDefault(t *testing.T) {
 		h := rateFixture(t, config.RateLimitConfig{Requests: 2, By: by}, nil)
 
 		for i := 0; i < 2; i++ {
-			if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusOK {
-				t.Fatalf("by=%q istek %d: durum %d", by, i+1, code)
+			if code := rateRequest(h, "203.0.113.1:5000", nil); code != http.StatusOK {
+				t.Fatalf("by=%q newRequest %d: durum %d", by, i+1, code)
 			}
 		}
-		if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
-			t.Errorf("by=%q sınır uygulanmadı: durum %d", by, code)
+		if code := rateRequest(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
+			t.Errorf("by=%q the limit was not applied: status %d", by, code)
 		}
-		if code := rlIstek(h, "203.0.113.2:5000", nil); code != http.StatusOK {
-			t.Errorf("by=%q başka IP engellendi: durum %d", by, code)
+		if code := rateRequest(h, "203.0.113.2:5000", nil); code != http.StatusOK {
+			t.Errorf("by=%q another address was blocked: status %d", by, code)
 		}
 	}
 }
@@ -128,15 +128,15 @@ func TestRateLimitMissingHeaderFallsBackToIP(t *testing.T) {
 	h := rateFixture(t, config.RateLimitConfig{Requests: 2, By: "header:X-API-Key"}, nil)
 
 	for i := 0; i < 2; i++ {
-		if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusOK {
-			t.Fatalf("istek %d: durum %d", i+1, code)
+		if code := rateRequest(h, "203.0.113.1:5000", nil); code != http.StatusOK {
+			t.Fatalf("newRequest %d: durum %d", i+1, code)
 		}
 	}
-	if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
-		t.Fatalf("başlıksız istek sınırlanmadı: durum %d", code)
+	if code := rateRequest(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
+		t.Fatalf("a request without the header was not limited: status %d", code)
 	}
-	if code := rlIstek(h, "203.0.113.2:5000", nil); code != http.StatusOK {
-		t.Errorf("başka IP engellendi: durum %d — başlıksız istekler tek kovayı paylaşıyor", code)
+	if code := rateRequest(h, "203.0.113.2:5000", nil); code != http.StatusOK {
+		t.Errorf("another address was blocked: status %d — header-less requests share one bucket", code)
 	}
 }
 
@@ -151,7 +151,7 @@ func TestBuildDomainRateLimitersCarriesKeyBy(t *testing.T) {
 
 	rl := limiters["rl.test"]
 	if rl == nil {
-		t.Fatal("limiter kurulmadı")
+		t.Fatal("no limiter was built")
 	}
 
 	a := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -162,7 +162,7 @@ func TestBuildDomainRateLimitersCarriesKeyBy(t *testing.T) {
 	b.Header.Set("X-API-Key", "anahtar-b")
 
 	if rl.Key(a) == rl.Key(b) {
-		t.Error("by: header taşınmadı — aynı IP'den iki anahtar tek kovada")
+		t.Error("by: header did not carry — two keys from one address share a bucket")
 	}
 }
 
@@ -170,19 +170,19 @@ func TestBuildDomainRateLimitersCarriesKeyBy(t *testing.T) {
 func TestBuildDomainRateLimitersSkipsUnlimited(t *testing.T) {
 	limiters := buildDomainRateLimiters(t.Context(), []config.Domain{{Host: "plain.test"}}, nil, logger.New("error", "text"))
 	if len(limiters) != 0 {
-		t.Errorf("sınırsız domain için limiter kuruldu: %v", limiters)
+		t.Errorf("a limiter was built for a domain with no limit: %v", limiters)
 	}
 }
 
 func TestKnownRateLimitKey(t *testing.T) {
 	for _, ok := range []string{"", "ip", "IP", " ip ", "header:X-API-Key", "HEADER:X-Api-Key"} {
 		if !middleware.KnownRateLimitKey(ok) {
-			t.Errorf("%q tanınmadı", ok)
+			t.Errorf("%q was not recognised", ok)
 		}
 	}
-	for _, kotu := range []string{"header:", "header", "cookie:sid", "saçmalık"} {
+	for _, kotu := range []string{"header:", "header", "cookie:sid", "nonsense"} {
 		if middleware.KnownRateLimitKey(kotu) {
-			t.Errorf("%q tanındı", kotu)
+			t.Errorf("%q was recognised", kotu)
 		}
 	}
 }
@@ -193,14 +193,14 @@ func TestUnknownKeyByStillLimitsPerAddress(t *testing.T) {
 	h := rateFixture(t, config.RateLimitConfig{Requests: 2, By: "cookie:sid"}, nil)
 
 	for i := 0; i < 2; i++ {
-		if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusOK {
-			t.Fatalf("istek %d: durum %d", i+1, code)
+		if code := rateRequest(h, "203.0.113.1:5000", nil); code != http.StatusOK {
+			t.Fatalf("newRequest %d: durum %d", i+1, code)
 		}
 	}
-	if code := rlIstek(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
-		t.Errorf("tanınmayan by ile sınır uygulanmadı: durum %d", code)
+	if code := rateRequest(h, "203.0.113.1:5000", nil); code != http.StatusTooManyRequests {
+		t.Errorf("the limit was not applied with an unrecognised by: status %d", code)
 	}
-	if code := rlIstek(h, "203.0.113.2:5000", nil); code != http.StatusOK {
-		t.Errorf("başka IP engellendi: durum %d — tek kovaya düşülmüş", code)
+	if code := rateRequest(h, "203.0.113.2:5000", nil); code != http.StatusOK {
+		t.Errorf("another address was blocked: status %d — everything fell into one bucket", code)
 	}
 }

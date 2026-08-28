@@ -45,7 +45,7 @@ func TestMaxUploadReachesPHP(t *testing.T) {
 	d := adminDirectives(t, env)
 
 	if got, want := d["upload_max_filesize"], "67108864"; got != want {
-		t.Errorf("upload_max_filesize = %q, want %q — php.max_upload PHP'ye ulaşmıyor", got, want)
+		t.Errorf("upload_max_filesize = %q, want %q — php.max_upload does not reach PHP", got, want)
 	}
 	// post_max_size must exceed upload_max_filesize: PHP measures the whole
 	// request body against it, and multipart overhead rides along with the
@@ -65,10 +65,10 @@ func TestMaxUploadUnsetAddsNothing(t *testing.T) {
 	d := adminDirectives(t, uploadEnv(t, "/srv/www", 0))
 
 	if _, ok := d["upload_max_filesize"]; ok {
-		t.Error("max_upload ayarsızken direktif yazıldı — sistem php.ini'si eziliyor")
+		t.Error("a directive was written with max_upload unset — it overrides the system php.ini")
 	}
 	if _, ok := d["post_max_size"]; ok {
-		t.Error("max_upload ayarsızken post_max_size yazıldı")
+		t.Error("post_max_size written with max_upload unset")
 	}
 	if !strings.Contains(d["open_basedir"], "/srv/www") {
 		t.Error("open_basedir kayboldu")
@@ -84,13 +84,13 @@ func TestMaxUploadWithoutDocumentRoot(t *testing.T) {
 		t.Errorf("upload_max_filesize = %q, want %q", got, want)
 	}
 	if _, ok := d["open_basedir"]; ok {
-		t.Error("DocumentRoot yokken open_basedir yazıldı")
+		t.Error("open_basedir written with no DocumentRoot")
 	}
 }
 
 func TestMaxUploadNegativeIgnored(t *testing.T) {
 	if d := adminDirectives(t, uploadEnv(t, "/srv/www", -1)); d["upload_max_filesize"] != "" {
-		t.Errorf("negatif max_upload uygulandı: %q", d["upload_max_filesize"])
+		t.Errorf("a negative max_upload was applied: %q", d["upload_max_filesize"])
 	}
 }
 
@@ -103,6 +103,6 @@ func TestMaxUploadNotOverridableByClientHeader(t *testing.T) {
 
 	env := BuildEnv(ctx, "/srv/www/upload.php", "/upload.php", "", nil, 8*config.MB)
 	if got := adminDirectives(t, env)["upload_max_filesize"]; got != "8388608" {
-		t.Errorf("istemci başlığı sınırı ezdi: %q", got)
+		t.Errorf("a client header overrode the limit: %q", got)
 	}
 }

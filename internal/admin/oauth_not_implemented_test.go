@@ -20,7 +20,7 @@ import (
 // stdout around New(). Tests in this package do not run in parallel, so the
 // swap is safe.
 
-func yakalananLog(t *testing.T, kur func(log *logger.Logger)) string {
+func captureStdout(t *testing.T, kur func(log *logger.Logger)) string {
 	t.Helper()
 
 	r, w, err := os.Pipe()
@@ -64,25 +64,25 @@ func oauthConfig(enabled bool) *config.Config {
 
 func TestOAuthEnabledWarnsItIsNotImplemented(t *testing.T) {
 	cfg := oauthConfig(true)
-	out := yakalananLog(t, func(log *logger.Logger) {
+	out := captureStdout(t, func(log *logger.Logger) {
 		New(cfg, log, metrics.New())
 	})
 
 	if !strings.Contains(out, "not implemented") {
-		t.Errorf("oauth.enabled uyarı üretmedi — operatör panelin kısıtlandığına inanır:\n%s", out)
+		t.Errorf("oauth.enabled produced no warning — the operator would believe the panel is restricted:\n%s", out)
 	}
 	if !strings.Contains(out, "allowed_emails") {
-		t.Errorf("uyarı allowed_emails'ten bahsetmiyor — asıl yanlış inanç orada:\n%s", out)
+		t.Errorf("the warning does not mention allowed_emails — that is where the false belief lives:\n%s", out)
 	}
 }
 
 func TestOAuthDisabledDoesNotWarn(t *testing.T) {
 	cfg := oauthConfig(false)
-	out := yakalananLog(t, func(log *logger.Logger) {
+	out := captureStdout(t, func(log *logger.Logger) {
 		New(cfg, log, metrics.New())
 	})
 
 	if strings.Contains(strings.ToLower(out), "oauth") {
-		t.Errorf("oauth kapalıyken uyarı verildi:\n%s", out)
+		t.Errorf("warned with oauth disabled:\n%s", out)
 	}
 }

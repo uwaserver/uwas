@@ -27,7 +27,7 @@ func symlinkedRoot(t *testing.T) (string, string) {
 	}
 	link := filepath.Join(t.TempDir(), "baglanti")
 	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("sembolik bağlantı kurulamıyor: %v", err)
+		t.Skipf("cannot create a symlink: %v", err)
 	}
 	return link, real
 }
@@ -40,7 +40,7 @@ func TestSafeRestorePathUnderSymlinkedRootMissingDir(t *testing.T) {
 
 	got, ok := safeRestorePath(base, "test.yaml")
 	if !ok {
-		t.Fatal("sembolik bağlantı altındaki hedef reddedildi — restore girdiyi sessizce atlar")
+		t.Fatal("a target under a symlink was rejected — restore skips the entry silently")
 	}
 	if want := filepath.Join(base, "test.yaml"); got != want {
 		t.Errorf("safeRestorePath = %q, want %q", got, want)
@@ -55,22 +55,22 @@ func TestSafeRestorePathUnderSymlinkedRootExistingDir(t *testing.T) {
 	}
 
 	if _, ok := safeRestorePath(base, "sub/x.pem"); !ok {
-		t.Error("var olan dizin sembolik bağlantı altındayken reddedildi")
+		t.Error("an existing directory under a symlink was rejected")
 	}
 }
 
 // The guard must still reject what it was written to reject.
 func TestSafeRestorePathStillRejectsEscapes(t *testing.T) {
 	link, real := symlinkedRoot(t)
-	base := filepath.Join(link, "kok")
-	if err := os.MkdirAll(filepath.Join(real, "kok"), 0o755); err != nil {
+	base := filepath.Join(link, "root")
+	if err := os.MkdirAll(filepath.Join(real, "root"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 
 	// Traversal out of the base.
 	for _, rel := range []string{"../disari.txt", "../../disari.txt", "a/../../disari.txt"} {
 		if _, ok := safeRestorePath(base, rel); ok {
-			t.Errorf("%q kabul edildi — kök dışına yazılırdı", rel)
+			t.Errorf("%q accepted — it would write outside the root", rel)
 		}
 	}
 
@@ -83,18 +83,18 @@ func TestSafeRestorePathStillRejectsEscapes(t *testing.T) {
 
 	// A symlink already inside the base that points outside it: writing
 	// through it would land outside the restore root.
-	kacis := filepath.Join(t.TempDir(), "hedef")
-	if err := os.MkdirAll(kacis, 0o755); err != nil {
+	escape := filepath.Join(t.TempDir(), "hedef")
+	if err := os.MkdirAll(escape, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.Symlink(kacis, filepath.Join(real, "kok", "kacis")); err != nil {
-		t.Skipf("sembolik bağlantı kurulamıyor: %v", err)
+	if err := os.Symlink(escape, filepath.Join(real, "root", "escape")); err != nil {
+		t.Skipf("cannot create a symlink: %v", err)
 	}
-	if _, ok := safeRestorePath(base, "kacis/dosya.txt"); ok {
-		t.Error("kök dışına çıkan sembolik bağlantı üzerinden yazma kabul edildi")
+	if _, ok := safeRestorePath(base, "escape/dosya.txt"); ok {
+		t.Error("writing through a symlink that leaves the root was accepted")
 	}
-	if _, ok := safeRestorePath(base, "kacis"); ok {
-		t.Error("sembolik bağlantının kendisi hedef olarak kabul edildi")
+	if _, ok := safeRestorePath(base, "escape"); ok {
+		t.Error("the symlink itself was accepted as a target")
 	}
 }
 
@@ -136,9 +136,9 @@ func TestRestoreBackupIntoSymlinkedRoot(t *testing.T) {
 
 	got, err := os.ReadFile(filepath.Join(dstDomains, "test.yaml"))
 	if err != nil {
-		t.Fatalf("geri yüklenen dosya okunamadı — restore başarı bildirdi ama yazmadı: %v", err)
+		t.Fatalf("the restored file is unreadable — restore reported success and wrote nothing: %v", err)
 	}
 	if string(got) != "host: test.com\n" {
-		t.Errorf("içerik = %q", string(got))
+		t.Errorf("content = %q", string(got))
 	}
 }
