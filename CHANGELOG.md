@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `global.access_log.enabled` is in the panel, as a Request Log toggle under
+  Settings → General → Logging. It shipped in 0.9.1 as a YAML-only setting,
+  and it is the one control that quietens the per-request stream without also
+  hiding certificate renewals, reloads and backups the way a higher
+  `log_level` does.
+
+### Fixed
+
+- The request-log switch takes effect on reload instead of needing a restart.
+  The middleware chain is compiled once at startup, so the value was captured
+  at boot: a toggle would persist to disk, survive a reload and change
+  nothing. The middleware now reads the flag per request.
+
 ## [0.9.1] - 2026-08-28
 
 Follow-up to 0.9.0. Two settings the panel offered but silently discarded, a

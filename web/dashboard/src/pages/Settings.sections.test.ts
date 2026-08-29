@@ -38,3 +38,34 @@ describe('other sections', () => {
     expect(withNotice).toEqual(['oauth']);
   });
 });
+
+// global.access_log.enabled shipped in v0.9.1 as a YAML-only setting: it was
+// the one control that silenced the per-request log without also hiding
+// certificate renewals, reloads and backups, and the only way to reach it was
+// editing uwas.yaml by hand.
+describe('Logging section', () => {
+  const logging = SECTIONS.find(s => s.id === 'logging');
+
+  it('exists', () => {
+    expect(logging).toBeDefined();
+  });
+
+  it('exposes the request log toggle', () => {
+    const field = logging?.fields.find(f => f.key === 'global.access_log.enabled');
+    expect(field).toBeDefined();
+    expect(field?.type).toBe('toggle');
+  });
+
+  it('says what turning it off does and does not affect', () => {
+    const help = logging?.fields.find(f => f.key === 'global.access_log.enabled')?.help ?? '';
+    // An operator reaching for this is trying to quieten journalctl; the help
+    // has to steer them here rather than to log_level, which also hides the
+    // messages worth keeping.
+    expect(help).toMatch(/log level/i);
+    expect(help).toMatch(/metrics|analytics/i);
+  });
+
+  it('keeps the log level control alongside it', () => {
+    expect(logging?.fields.some(f => f.key === 'global.log_level')).toBe(true);
+  });
+});

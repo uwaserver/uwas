@@ -393,7 +393,7 @@ func TestMatchWAFURLShellInjection(t *testing.T) {
 func TestAccessLogWithTraceparent(t *testing.T) {
 	log := logger.New("info", "text")
 
-	handler := AccessLog(log, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AccessLog(log, flag(true))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
 	}))

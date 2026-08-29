@@ -377,6 +377,7 @@ func (h *Handler) SettingsGet(w http.ResponseWriter, r *http.Request) {
 		"global.web_root":                  g.WebRoot,
 		"global.log_level":                 g.LogLevel,
 		"global.log_format":                g.LogFormat,
+		"global.access_log.enabled":        g.AccessLog.RequestLogEnabled(),
 		"global.timeouts.read":             g.Timeouts.Read.String(),
 		"global.timeouts.read_header":      g.Timeouts.ReadHeader.String(),
 		"global.timeouts.write":            g.Timeouts.Write.String(),
@@ -450,6 +451,10 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			g.LogLevel = sv
 		case "global.log_format":
 			g.LogFormat = sv
+		case "global.access_log.enabled":
+			// Stored as *bool so an absent block still means on; the panel
+			// always sends an explicit value, so take the pointer either way.
+			g.AccessLog.Enabled = config.BoolPtr(sv == "true")
 		case "global.timeouts.read":
 			g.Timeouts.Read = h.deps.ParseDur(sv)
 		case "global.timeouts.read_header":

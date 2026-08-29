@@ -25,6 +25,11 @@ func (s *Server) reload() error {
 	// while the process kept logging at the old threshold until restarted.
 	s.logger.SetLevel(newCfg.Global.LogLevel)
 
+	// The middleware chain is built once at startup, so the request-log flag
+	// has to be swapped here rather than re-captured. Without this a panel
+	// toggle would write the new value to disk and keep logging regardless.
+	s.requestLog.Store(newCfg.Global.AccessLog.RequestLogEnabled())
+
 	// Update vhosts
 	s.vhosts.Update(newCfg.Domains)
 

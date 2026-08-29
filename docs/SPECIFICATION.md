@@ -218,6 +218,8 @@ global:
   # collect that file and do not want the same data twice.
   access_log:
     enabled: true             # default: on
+                              # Panel: Settings > General > Logging >
+                              # Request Log. Applied on reload, no restart.
 
   # A request line takes its level from the response status: 5xx is logged at
   # error, everything else at info. log_level: warn therefore keeps the failed
