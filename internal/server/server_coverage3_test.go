@@ -52,7 +52,7 @@ func newMinimalServer(cfg *config.Config) *Server {
 		tlsMgr:             uwastls.NewManager(cfg.Global.ACME, cfg.Domains, log),
 		metrics:            m,
 		analytics:          analytics.New(),
-		alerter:            alerting.New(false, "", log),
+		alerter:            alerting.New(false, "", nil, log),
 		ctx:                ctx,
 		cancel:             cancel,
 		proxyPools:         make(map[string]*proxyhandler.UpstreamPool),

@@ -94,7 +94,7 @@ func TestAlertsNotEnabled(t *testing.T) {
 
 func TestAlertsEnabled(t *testing.T) {
 	s := testServer()
-	a := alerting.New(false, "", s.logger)
+	a := alerting.New(false, "", nil, s.logger)
 	s.SetAlerter(a)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/alerts", nil))

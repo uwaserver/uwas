@@ -228,7 +228,7 @@ func TestHandleAlertsNoAlerter(t *testing.T) {
 func TestHandleAlertsWithAlerter(t *testing.T) {
 	s := testServer()
 	log := logger.New("error", "text")
-	a := alerting.New(true, "", log)
+	a := alerting.New(true, "", nil, log)
 	s.SetAlerter(a)
 
 	rec := httptest.NewRecorder()
@@ -247,7 +247,7 @@ func TestHandleAlertsWithAlerter(t *testing.T) {
 func TestHandleAlertsWithNilAlerts(t *testing.T) {
 	s := testServer()
 	log := logger.New("error", "text")
-	a := alerting.New(false, "", log) // disabled alerter returns nil from Alerts()
+	a := alerting.New(false, "", nil, log) // disabled alerter returns nil from Alerts()
 	s.SetAlerter(a)
 
 	rec := httptest.NewRecorder()
@@ -305,7 +305,7 @@ func TestSetAlerter(t *testing.T) {
 	}
 
 	log := logger.New("error", "text")
-	a := alerting.New(true, "", log)
+	a := alerting.New(true, "", nil, log)
 	s.SetAlerter(a)
 
 	if s.alerter == nil {
