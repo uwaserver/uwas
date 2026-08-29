@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-29
+
+An audit of everything a site's request touches, prompted by asking whether
+one setting actually worked. It did not, and neither did five other things
+the panel reported as working.
+
+The pattern was the same each time: a feature built from both ends and never
+joined in the middle. Stale-while-revalidate had a StatusStale result, a
+dispatch branch to serve it and a counter to report it — and nothing that
+could ever produce one. Alerting had Slack, Telegram and email senders,
+implemented and tested, that no code path called. Configuration was accepted,
+stored, echoed back to the panel and read by nobody.
+
+### Fixed
+
+- `global.cache.stale_while_revalidate` does something. The setting was
+  written by the settings API, stored, echoed back to the panel and read by
+  nothing on the request path — and it could not have worked anyway:
+  `GraceTTL` was never written onto a stored entry, so `IsStale()` compared
+  `age < TTL+0` and could never be true. The whole receiving half was already
+  built — a `StatusStale` result, dispatch handling for it, a `stales` counter
+  reported by the admin API — with nothing able to produce it. Entries now
+  carry the configured grace, an expired entry is served stale, and a refresh
+  runs behind that response so the visitor does not pay for it. Single-flight
+  per cache key: an entry goes stale for every concurrent visitor at once, so
+  without the guard a popular URL sends one origin request per in-flight
+  request — the stampede the cache exists to prevent. The refresh goes through
+  `dispatchHandler`, like ESI subrequests, so it does not appear in the access
+  log, metrics, analytics or bandwidth ledger as a visitor. It also carries no
+  cookies: the entry it rewrites is shared. If the resource has stopped being
+  cacheable, the stale entry is dropped rather than served out its grace.
+
+  The grace window only applies when `stale_while_revalidate` is on. That gate
+  matters: `grace_ttl` defaults to 24 hours, so applying it unconditionally
+  would hand day-old content to visitors of every cached site.
+
+- Turning on `directory_listing` replaced the site's homepage with a file
+  listing. The directory check ran before index resolution, so `GET /` found a
+  directory and rendered it without ever looking for `index.html` — losing the
+  front page and publishing every filename in the doc root. Apache checks
+  `DirectoryIndex` before `Options +Indexes` and nginx checks `index` before
+  `autoindex`; the order now matches. Listings still work for directories that
+  have no index, which is what they are for.
+- The panel reported `.htaccess` as enabled on every domain. `applyDefaults`
+  fills an absent block with `mode: "off"`, the API returns that for every
+  domain, and the dashboard tested the field for truthiness — so "off" read as
+  on. Only `import` activates the engine, and that is now what the panel
+  checks.
+- `htaccess.mode` accepted any value and silently meant "off" for all but
+  `import`. An operator writing the obvious `mode: on` got no `.htaccess` and
+  nothing to explain why; the value is validated now.
+- Alerting delivered to Slack, Telegram and email — the settings API stored
+  them, the panel displayed them, and `internal/alerting` never imported
+  `internal/notify`, where all three senders live, implemented and tested. It
+  only ever posted to the generic webhook. Half-configured channels stay
+  silent rather than failing on every alert.
+- The WAF missed boolean tautologies — `' OR '1'='1` and its variants. The SQL
+  rules are keyword-driven (`union select`, `drop table`), and the canonical
+  probe contains none of those, so the most common injection attempt and the
+  classic authentication bypass passed while XSS and traversal were caught.
+  Added to the URL rules only, anchored on a quote or a numeric equality, with
+  tests pinning that ordinary queries like `?q=rock and roll` and
+  `?name=O'Brien` still pass.
+- Nine settings fields showed a placeholder that was not the actual default:
+  `cache.default_ttl` offered 300 against 3600, `grace_ttl` 60 against 86400,
+  `memory_limit` 256MB against 512MB, `disk_limit` 1GB against 10GB,
+  `max_connections` 10000 against 65536, `shutdown_grace` 15s against 30s,
+  `acme.storage` the wrong path, and both the admin and MCP listeners showed
+  `:9443` / `:9444` where the real default binds loopback only — reading as an
+  invitation to expose the admin API. A placeholder is what an operator takes
+  "leave this blank" to mean. `TestAppliedDefaultsArePinned` now fails if the
+  backend moves without the panel following.
+- Requests were counted twice. The deferred metrics block incremented
+  `RequestsTotal` and then called `RecordRequest`, which increments it again —
+  so `uwas_requests_total`, the panel's request stat and the MCP report all
+  read double the real traffic, while `RequestsByCode` was updated once and
+  quietly disagreed with them. Found by a test asserting a background
+  revalidation is not counted as a visitor request.
+
 ## [0.10.0] - 2026-08-29
 
 Three things the panel reported as working and were not, and the first
