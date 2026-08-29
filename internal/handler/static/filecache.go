@@ -45,12 +45,10 @@ type fileShard struct {
 // except checkedAt, so readers only need the shard lock long enough to take
 // the pointer.
 type fileEntry struct {
-	path        string
-	body        []byte
-	size        int64
-	modTime     time.Time
-	etag        string
-	contentType string
+	path    string
+	body    []byte
+	size    int64
+	modTime time.Time
 
 	// checkedAt is the unix-nano time of the last successful revalidation.
 	// Atomic because several requests can decide to revalidate at once and
