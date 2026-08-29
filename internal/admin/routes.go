@@ -60,6 +60,7 @@ func (s *Server) registerDomainRoutes() {
 	s.mux.HandleFunc("PUT /api/v1/domains/{host}", s.handleUpdateDomain)
 	s.mux.HandleFunc("GET /api/v1/domains/{host}", s.handleDomainDetail)
 	s.mux.HandleFunc("GET /api/v1/domains/{host}/debug", s.handleDomainDebug)
+	s.mux.HandleFunc("GET /api/v1/domains/{host}/cache-control", s.handleDomainCacheControl)
 	s.mux.HandleFunc("GET /api/v1/domains/health", s.handleDomainHealth)
 	s.mux.HandleFunc("POST /api/v1/domains/import", s.handleBulkDomainImport)
 	s.mux.HandleFunc("GET /api/v1/config/domains/{host}/raw", s.handleDomainRawGet)

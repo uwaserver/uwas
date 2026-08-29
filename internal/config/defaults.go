@@ -85,6 +85,17 @@ func applyDefaults(cfg *Config) {
 		g.Cache.GraceTTL = 86400
 	}
 
+	// Static file cache
+	if g.StaticCache.MaxFileSize == 0 {
+		g.StaticCache.MaxFileSize = 512 * KB
+	}
+	if g.StaticCache.MaxBytes == 0 {
+		g.StaticCache.MaxBytes = 64 * MB
+	}
+	if g.StaticCache.Revalidate.Duration == 0 {
+		g.StaticCache.Revalidate.Duration = time.Second
+	}
+
 	// Domain defaults
 	for i := range cfg.Domains {
 		d := &cfg.Domains[i]
@@ -102,6 +113,17 @@ func applyDefaults(cfg *Config) {
 		}
 		if d.Compression.MinSize == 0 {
 			d.Compression.MinSize = 1024
+		}
+
+		// Browser cache. Only the two values that are safe without knowing
+		// anything about the site get defaults; Assets and ImmutablePaths stay
+		// empty, so a domain that says nothing keeps today's behavior for
+		// everything except HTML.
+		if d.BrowserCache.HTML == "" {
+			d.BrowserCache.HTML = DefaultBrowserCacheHTML
+		}
+		if d.BrowserCache.Immutable == "" {
+			d.BrowserCache.Immutable = DefaultBrowserCacheImmutable
 		}
 
 		// PHP defaults

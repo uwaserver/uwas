@@ -49,6 +49,7 @@ type Domain struct {
 	Security          SecurityConfig          `yaml:"security,omitempty" json:"security,omitempty"`
 	Headers           HeadersConfig           `yaml:"headers,omitempty" json:"headers,omitempty"`
 	Compression       CompressionConfig       `yaml:"compression,omitempty" json:"compression,omitempty"`
+	BrowserCache      BrowserCache            `yaml:"browser_cache,omitempty" json:"browser_cache,omitempty"`
 	AccessLog         AccessLogConfig         `yaml:"access_log,omitempty" json:"access_log,omitempty"`
 	ErrorPages        map[int]string          `yaml:"error_pages,omitempty" json:"error_pages,omitempty"`
 	Proxy             ProxyConfig             `yaml:"proxy,omitempty" json:"proxy,omitempty"`
