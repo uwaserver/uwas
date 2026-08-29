@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation re-derived from the source. `ARCHITECTURE.md` had drifted since
+  July: the statistics table understated the tree by 20 source files, 67 test
+  files and 16 packages; five packages (`cloudflare`, `domainroot`,
+  `domainutil`, `pathsafe`, `respond`) were absent from the package map; the
+  admin sub-packaging was shown only at the file level; `internal/tls/acme/dns.go`
+  was listed and does not exist; `phpmanager/manager.go` was described as 1,360
+  LOC after the package was split; and `uwas update` was documented as a CLI
+  command that has never been registered. The middleware diagram placed the WAF
+  and bot guard per-domain when both are global, and described
+  `middleware/accesslog.go` as a per-domain file writer when it writes one line
+  to the main log. Statistics now carry the command that reproduces them.
+  `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/admin-subpackaging.md`,
+  the dashboard About page and the marketing site under `docs/site` were
+  corrected against the same measurements.
+
 ## [0.9.2] - 2026-08-29
 
 Reaches the setting 0.9.1 added. It was the one control that quietens the per-request log without also hiding certificate renewals, reloads and backups, and the only way to set it was editing `uwas.yaml` by hand.

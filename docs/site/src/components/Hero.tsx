@@ -2,10 +2,10 @@ import { ArrowRight, GitBranch } from 'lucide-react'
 
 const stats = [
   { value: '5', label: 'Direct Deps', sub: 'Go modules' },
-  { value: '55', label: 'Go Packages', sub: 'excluding node_modules' },
+  { value: '69', label: 'Go Packages', sub: '62 internal, 2 pkg' },
   { value: '42', label: 'Dashboard Pages', sub: 'built-in' },
-  { value: '251', label: 'Admin Routes', sub: 'explicit registrations' },
-  { value: '~15MB', label: 'Binary', sub: 'linux/amd64' },
+  { value: '253', label: 'Admin Routes', sub: 'explicit registrations' },
+  { value: '~16MB', label: 'Binary', sub: 'linux/amd64' },
 ]
 
 export default function Hero() {

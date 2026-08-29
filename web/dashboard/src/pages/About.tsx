@@ -135,7 +135,7 @@ export default function About() {
           {[
             ['Backend', 'Go 1.26+ (stdlib-first, 5 deps)'],
             ['Frontend', 'React 19 + TypeScript + Tailwind'],
-            ['Build', 'Single binary (~15MB, CGO_ENABLED=0)'],
+            ['Build', 'Single binary (~16MB, CGO_ENABLED=0)'],
             ['Protocol', 'HTTP/1.1, HTTP/2, HTTP/3 (QUIC)'],
             ['PHP', 'FastCGI + .htaccess (mod_rewrite)'],
             ['TLS', 'ACME (Let\'s Encrypt) + SNI routing'],

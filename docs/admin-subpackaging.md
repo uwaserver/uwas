@@ -4,7 +4,7 @@
 > **Pattern:** Established and validated with `database`, `php`, and `cloudflare`.
 
 This document explains the pattern for extracting handler groups from the
-`internal/admin` monolith (97 files, 251 routes) into focused sub-packages
+`internal/admin` monolith (97 files, 251 routes at the time) into focused sub-packages
 under `internal/admin/<area>/`. It is intended for contributors who want to
 extract a new sub-package or understand the existing ones.
 
@@ -326,6 +326,7 @@ removed entirely once test files are migrated to call the sub-package directly.
 | `admin/backup` | 338 | 7 | List, create, domain backup, restore, delete, schedule get/put |
 | `admin/files` | 610 | 11 | File manager + cron: workspaces, list, read, write, delete, mkdir, upload, disk usage |
 | `admin/wordpress` | 400 | 16 | Install, detect, update, security, harden, optimize DB; install state on Handler struct |
+| `admin/deploy` | 1452 | 4 | Git clone/pull, build, rollback, webhook + deploy-key handling |
 
 ### Special case: admin/domain
 
@@ -344,8 +345,14 @@ from `domain_alias.go`.
 
 ## Remaining Candidates
 
-| File | LOC | Priority |
-|------|-----|----------|
-| `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` + `handlers_apps_keys.go` | ~1500 | Deploy pipeline — needs `internal/deploy/` |
+The deploy pipeline has since been extracted to `internal/admin/deploy`. What
+stays in the parent package is the delegating layer:
 
-All other admin handler files have been extracted. Only the deploy pipeline remains.
+| File | LOC | Status |
+|------|-----|--------|
+| `handlers_apps_deploy.go` + `handlers_apps_git.go` + `handlers_apps_webhook.go` + `handlers_apps_keys.go` | 442 | Thin wrappers over `admin/deploy`; they hold the `deployDeps` adapter and the route entry points |
+
+Every admin handler file now either lives in a sub-package or delegates to one.
+The wrappers are deliberate: they keep the `Deps` adapter and route
+registration next to the rest of the parent's server state, which is what the
+sub-packages are built to avoid importing.

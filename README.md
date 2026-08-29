@@ -20,15 +20,15 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard backed by 251 explicit admin API route registrations.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard backed by 253 explicit admin API route registrations.
 
 One binary. Zero hassle.
 
 ## Current Snapshot (v0.9.2)
 
-- **Dashboard pages:** 43 (`web/dashboard/src/pages`)
+- **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 253 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
-- **Go packages:** 69 (`go list ./...`), 56 of them with tests
+- **Go packages:** 69 (`go list ./...`) — 62 under `internal/`, 2 under `pkg/`; 56 carry tests
 - **CLI commands:** 19
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test` (56/56 packages with tests), `go test -race` (0 data races), dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.8.8 resolved all 5 CRITICAL/HIGH and 11 MEDIUM findings from the June security audit; includes admin RBAC hardening, PHP sandbox-escape closure, SVG XSS prevention, docker-compose credential fail-fast, crontab data-loss guard, cron job timeout, Cloudflare pagination, Route53 signing fix, compress middleware WebSocket/Flush/Unwrap, TOTP replay protection, brute-force lockout serialization, and checked I/O paths
@@ -117,7 +117,7 @@ One binary. Zero hassle.
 - **Image Optimization** — On-the-fly WebP/AVIF conversion
 
 ### Hosting Control Panel
-- **43-page Dashboard** — React 19 admin panel with dark/light theme
+- **42-page Dashboard** — React 19 admin panel with dark/light theme
 - **Applications** — Deploy and supervise Node.js, Python, Ruby, Go, custom, and Docker apps
 - **Web Terminal** — Browser-based shell via WebSocket-to-PTY bridge
 - **Multi-user Auth** — Admin, reseller, user roles with TOTP 2FA
@@ -135,7 +135,7 @@ One binary. Zero hassle.
 - **WAF** — SQL injection, XSS, shell, RCE detection
 - **Per-domain Rate Limiting** — Sharded token bucket per domain
 - **Bandwidth Limits** — Monthly/daily caps with throttle or block action
-- **Webhook Events** — 11 event types with HMAC-SHA256 signatures and retry
+- **Webhook Events** — 12 event types plus a `test` event, HMAC-SHA256 signed, with retry
 - **Uptime Monitoring** — Per-domain health checks with alerting
 - **Analytics** — Per-domain traffic, referrer tracking, user agent breakdown
 - **Prometheus Metrics** — p50/p95/p99 latency percentiles
@@ -150,7 +150,7 @@ One binary. Zero hassle.
 - **Hot-Reload** — All per-domain chains rebuild on SIGHUP (zero downtime)
 - **Self-Update** — Binary auto-update from GitHub releases
 - **CI/CD** — GitHub Actions for build, test, release automation
-- **Single Binary** — ~15MB, no dependencies, just download and run
+- **Single Binary** — ~16MB, no runtime dependencies, just download and run
 
 ## Install
 
@@ -396,6 +396,7 @@ uwas php      start <ver>    Start PHP-FPM for version
 uwas install                 Install as systemd service
 uwas uninstall               Remove systemd service
 uwas user     list           List admin users
+uwas cert     list           List certificates + expiry
 uwas doctor                  System diagnostics + auto-fix
 uwas help                    Show help
 ```
@@ -407,18 +408,20 @@ Request Flow:
 
   TCP → TLS (SNI routing)
     → HTTP Parse
-      → Middleware Chain:
-          Recovery → Request ID → Security Headers → Rate Limit → Access Log
+      → Global Middleware Chain:
+          Recovery → Request ID → Real IP → Security Headers → Compress
+            → Rate Limit → Security Guard (blocked paths) → Bot Guard
+            → Access Log
         → Virtual Host Lookup
-          → Per-domain: IP ACL → Rate Limit → BasicAuth → CORS → Header Transform
-            → Security Guard (blocked paths, WAF)
+          → Per-domain (inline in handleRequest, not middleware):
+            IP ACL → GeoIP → BasicAuth → CORS → Header Transform → WAF
               → Bandwidth Check (throttle/block)
               → Rewrite Engine (mod_rewrite compatible)
               → Cache Lookup (L1 memory + L2 disk)
                 → Handler:
                     ├── Static File    (ETag, Range, pre-compressed, SPA)
                     ├── FastCGI/PHP    (connection pool, CGI env)
-                    ├── Reverse Proxy  (5 LB algorithms, circuit breaker)
+                    ├── Reverse Proxy  (6 LB algorithms, sticky, circuit breaker, gRPC)
                     ├── WebSocket      (TCP tunnel, bidirectional pipe)
                     └── Redirect       (301/302/307/308)
               → Cache Store
@@ -431,7 +434,9 @@ Request Flow:
 ```
 cmd/uwas/                → CLI entry point (19 commands)
 internal/
-  admin/                 → REST API (251 route registrations) + dashboard embed + TOTP auth
+  admin/                 → REST API (253 route registrations) + dashboard embed + TOTP auth
+    apps/ authmw/ backup/ cloudflare/ database/ deploy/ domain/ files/
+    php/ settings/ wordpress/   → handler sub-packages (see docs/admin-subpackaging.md)
   alerting/              → Alert thresholds + webhook/Slack/Telegram/email notifications
   analytics/             → Per-domain traffic analytics
   apps/                  → Standalone Node/Python/Ruby/Go/custom/Docker app supervision
@@ -441,6 +446,7 @@ internal/
   build/                 → Build metadata (version, commit, date) via ldflags
   cache/                 → L1 memory (256-shard LRU) + L2 disk cache + ESI
   cli/                   → CLI framework and commands
+  cloudflare/            → Cloudflare Tunnel API + local cloudflared process
   config/                → YAML parser, validation, defaults, ByteSize/Duration types
   cronjob/               → Cron job management + execution monitoring
   database/              → MySQL/MariaDB management + Docker container support
@@ -448,6 +454,8 @@ internal/
   dnsmanager/            → Cloudflare, Route53, Hetzner, DigitalOcean DNS CRUD
   dnschecker/            → DNS record verification (A/MX/NS/TXT)
   doctor/                → System diagnostics + auto-fix
+  domainroot/            → Filesystem root resolution for a domain (apps:// aware)
+  domainutil/            → Pure hostname helpers shared by admin and admin/domain
   filemanager/           → Web file manager (browse/edit/upload/delete)
   firewall/              → UFW management via API
   handler/
@@ -477,7 +485,7 @@ internal/
   terminal/              → WebSocket-to-PTY bridge for browser-based shell
   tls/                   → TLS manager, ACME client, auto-renewal, cert expiry alerts
     acme/                → RFC 8555 ACME protocol, JWS signing
-  webhook/               → Event-driven webhook delivery (11 events, HMAC, retry)
+  webhook/               → Event-driven webhook delivery (12 events + test, HMAC, retry)
   wordpress/             → WordPress install, manage, debug, permissions
 pkg/
   fastcgi/               → FastCGI binary protocol, connection pool
@@ -491,13 +499,15 @@ UWAS includes a 42-page React 19 dashboard at `/_uwas/dashboard/` with dark/ligh
 
 **Sites:** Dashboard, Domains, Domain Detail, Topology, Certificates, DNS Zone Editor, Cloudflare, WordPress, Clone/Staging, Migration, File Manager
 
-**Server:** PHP, PHP Config, Applications, Database, DB Explorer, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
+**Server:** PHP, PHP Config, Applications, Software Library, Database, DB Explorer, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 
 **Performance:** Cache, Metrics, Analytics, Logs
 
-**Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users, Users
+**Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users
 
-**System:** Config Editor, Webhooks, Backups, Terminal, Updates, Doctor, Settings
+**System:** Setup Wizard, Config Editor, Webhooks, Backups, Terminal, Updates, Doctor, Settings, About
+
+**Not in the sidebar:** Domain Detail, Login
 
 **Auth:** Login (with 2FA/TOTP support)
 
