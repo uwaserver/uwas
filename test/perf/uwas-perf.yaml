@@ -1,0 +1,78 @@
+# UWAS response-time benchmark configuration.
+#
+# Deliberately realistic, not a stripped-down best case: the admin API,
+# metrics, analytics and access logging are all on, because those are the
+# things that actually sit on the hot path in production. Turning one off
+# and re-running is how you price it.
+global:
+  worker_count: auto
+  max_connections: 8192
+  http_listen: "127.0.0.1:19180"
+  log_level: error          # keep stderr out of the measurement
+  log_format: text
+
+  timeouts:
+    read: 30s
+    write: 60s
+    idle: 120s
+    shutdown_grace: 2s
+    read_header: 10s
+    max_header_bytes: 1048576
+
+  admin:
+    enabled: true
+    listen: "127.0.0.1:19181"
+    api_key: "perf-bench-key"
+
+  access_log:
+    request_log: true
+
+  cache:
+    enabled: true
+    memory_limit: 256MB
+    default_ttl: 300
+    grace_ttl: 600
+
+domains:
+  # Uncached static: exercises the full middleware chain + static handler.
+  - host: "static.perf"
+    root: ./test/perf/www
+    type: static
+    ssl:
+      mode: "off"
+    cache:
+      enabled: false
+    compression:
+      enabled: false
+    index_files:
+      - index.html
+
+  # Cached static: exercises the L1 memory cache hit path.
+  - host: "cached.perf"
+    root: ./test/perf/www
+    type: static
+    ssl:
+      mode: "off"
+    cache:
+      enabled: true
+      ttl: 300
+    compression:
+      enabled: false
+    index_files:
+      - index.html
+
+  # Compressed static: exercises the gzip middleware.
+  - host: "gzip.perf"
+    root: ./test/perf/www
+    type: static
+    ssl:
+      mode: "off"
+    cache:
+      enabled: false
+    compression:
+      enabled: true
+      algorithms:
+        - gzip
+      min_size: 256
+    index_files:
+      - index.html
