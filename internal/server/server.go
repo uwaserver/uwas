@@ -49,6 +49,7 @@ import (
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
+	"github.com/uwaserver/uwas/internal/notify"
 	"github.com/uwaserver/uwas/internal/pathmatch"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
@@ -109,7 +110,12 @@ type Server struct {
 	proxyBreakers   map[string]*proxyhandler.CircuitBreaker
 	proxyCanaries   map[string]*proxyhandler.CanaryRouter
 
-	unknownHosts  *router.UnknownHostTracker
+	unknownHosts *router.UnknownHostTracker
+
+	// revalidating marks cache keys with a background refresh in flight, so a
+	// stale entry on a busy URL triggers one origin request rather than one
+	// per concurrent visitor.
+	revalidating  sync.Map
 	securityStats *middleware.SecurityStats
 	cloudflareIPs *cfintegration.IPSet
 
@@ -230,7 +236,8 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	}
 
 	// Alerting engine
-	alerter := alerting.New(cfg.Global.Alerting.Enabled, cfg.Global.Alerting.WebhookURL, log)
+	alerter := alerting.New(cfg.Global.Alerting.Enabled, cfg.Global.Alerting.WebhookURL,
+		alertChannels(cfg.Global.Alerting), log)
 
 	s := &Server{
 		config:          cfg,
@@ -738,6 +745,42 @@ func (s *Server) SetConfigPath(path string) {
 			return dumps
 		})
 	}
+}
+
+// alertChannels turns the alerting block into the channels notify knows how
+// to deliver to. Only fully-configured ones are enabled: half a Telegram
+// setup should stay silent rather than fail on every alert.
+//
+// smtp_host carries host:port, which is how the panel asks for it and what
+// notify's email sender expects to split.
+func alertChannels(cfg config.AlertingConfig) []notify.Channel {
+	var out []notify.Channel
+	if cfg.SlackURL != "" {
+		out = append(out, notify.Channel{
+			Type: "slack", Enabled: true,
+			Config: map[string]string{"webhook_url": cfg.SlackURL},
+		})
+	}
+	if cfg.TelegramToken != "" && cfg.TelegramChatID != "" {
+		out = append(out, notify.Channel{
+			Type: "telegram", Enabled: true,
+			Config: map[string]string{"bot_token": cfg.TelegramToken, "chat_id": cfg.TelegramChatID},
+		})
+	}
+	if cfg.EmailSMTP != "" && cfg.EmailTo != "" {
+		host, port, err := net.SplitHostPort(cfg.EmailSMTP)
+		if err != nil {
+			host, port = cfg.EmailSMTP, "587"
+		}
+		out = append(out, notify.Channel{
+			Type: "email", Enabled: true,
+			Config: map[string]string{
+				"smtp_host": host, "smtp_port": port,
+				"from": cfg.EmailFrom, "to": cfg.EmailTo,
+			},
+		})
+	}
+	return out
 }
 
 func (s *Server) buildMiddlewareChain() http.Handler {
