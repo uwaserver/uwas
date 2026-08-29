@@ -345,10 +345,30 @@ export const fetchMetrics = async () => {
 };
 
 export const triggerReload = () => api<{ status: string }>('/api/v1/reload', { method: 'POST' });
-export const triggerPurge = (tag?: string) => api<{ status: string }>('/api/v1/cache/purge', {
+export interface CachePurgeResult {
+  status: string;
+  tag?: string;
+  host?: string;
+  /** Entries actually removed. Zero is a real answer, not an error — surface it. */
+  count: number;
+}
+export const triggerPurge = (tag?: string) => api<CachePurgeResult>('/api/v1/cache/purge', {
   method: 'POST',
   body: JSON.stringify(tag ? { tag } : {}),
 });
+/**
+ * Purge every cached entry belonging to one domain.
+ *
+ * Send the host and let the server derive the tag. Clients used to synthesize
+ * `site:<host>` here, which meant the dashboard had to know how the server
+ * tags and normalizes hosts — it knew neither, so the purge matched nothing
+ * and still reported success.
+ */
+export const purgeCacheForHost = (host: string) =>
+  api<CachePurgeResult>('/api/v1/cache/purge', {
+    method: 'POST',
+    body: JSON.stringify({ host }),
+  });
 export interface CacheStatsData {
   enabled: boolean;
   hits: number;
@@ -404,6 +424,13 @@ export interface DomainDetail {
   ssl: { mode: string; force_ssl?: boolean; cert: string; key: string; min_version: string };
   root: string;
   cache?: { enabled: boolean; ttl: number; rules?: { match: string; ttl: number; bypass: boolean }[] };
+  browser_cache?: {
+    enabled?: boolean;
+    html?: string;
+    assets?: string;
+    immutable?: string;
+    immutable_paths?: string[];
+  };
   security?: { blocked_paths: string[] | null; waf: { enabled: boolean; bypass_paths?: string[] | null; rules?: string[] | null }; cloudflare_only?: boolean; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
   resources?: { cpu_percent?: number; memory_mb?: number; pid_max?: number };
   basic_auth?: BasicAuthRule;
@@ -1818,3 +1845,35 @@ export const importCloudflareZone = (
       }),
     },
   );
+
+// ── Browser cache ──
+
+export interface BrowserCacheSettings {
+  enabled?: boolean;
+  html?: string;
+  assets?: string;
+  immutable_paths?: string[];
+}
+
+export interface CacheControlPreview {
+  host: string;
+  path: string;
+  /** The header that will be sent. Empty means none is sent. */
+  value: string;
+  /** Which setting won: location | headers | cache_rule | browser_cache | none. */
+  source: string;
+  /** The specific pattern or field that matched. */
+  detail?: string;
+}
+
+/**
+ * previewCacheControl asks the server what Cache-Control a path will get.
+ *
+ * Four settings can decide it and they do not win in config-file order — a
+ * cache rule overrides a location, and a page under an immutable_paths prefix
+ * still revalidates. Resolving that in the browser would be a second
+ * implementation free to drift, so the server answers.
+ */
+export const previewCacheControl = (host: string, path: string) =>
+  api<CacheControlPreview>(
+    `/api/v1/domains/${encodeURIComponent(host)}/cache-control?path=${encodeURIComponent(path)}`);

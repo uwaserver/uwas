@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router';
+import BrowserCacheCard from '@/components/BrowserCacheCard';
 import {
   ExternalLink, RefreshCw, Shield, HardDrive, BarChart3, ArrowRight,
   FileText, Settings, Lock, Plug, Save, Plus, Trash2, ArrowLeft, Eye, Server,
@@ -458,6 +459,12 @@ export default function DomainDetail() {
             {wpSite && <Badge ok={true} label={`WP ${wpSite.version}`} />}
           </div>
           )}
+
+          {/* Browser cache. Settings on the left say what to send; the probe
+              on the right says what will actually be sent, because four
+              settings decide Cache-Control and they do not win in the order
+              they appear in the config. */}
+          {!isRedirectDomain && <BrowserCacheCard host={detail.host} detail={detail} onSaved={load} />}
 
           {/* Traffic chart placeholder */}
           {analytics && analytics.hourly_views && (
