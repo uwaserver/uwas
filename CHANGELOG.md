@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dashboard dependencies: `@types/node`, `eslint` and `@xyflow/react` moved to
+  current. TypeScript stays on 5.9 — see below.
+- Dependabot's npm groups are split by update-type, and `docs/site` is now
+  covered. One `"*"` group batched a blocked major together with routine
+  patches, so a TypeScript 7 upgrade that cannot install held three harmless
+  bumps hostage. Minor and patch travel together; majors arrive on their own.
+  The TypeScript major is ignored for now with the reason and the unblock
+  condition recorded in the config: `typescript-eslint` refuses TS 7.0 at
+  runtime, and support is tracked for TS >= 7.1 in typescript-eslint#10940.
+  A dry run showed `tsc`, the Vite build and all 161 tests already pass under
+  7.0.2 once `baseUrl` is dropped from `tsconfig.app.json` — TS 7 removed the
+  option — so the upgrade is a lint-stack wait, not a code problem.
+
 ### Fixed
 
 - The marketing site takes its version from the repo instead of a hand-written

@@ -1,7 +1,14 @@
 version: 2
 # Keeps pinned dependencies fresh so version/SHA pinning is safe rather than a
-# source of frozen-vulnerable deps. Covers CI actions, Go modules, the
-# dashboard's npm deps, and the Docker base images.
+# source of frozen-vulnerable deps. Covers CI actions, Go modules, both npm
+# trees (dashboard and docs site), and the Docker base images.
+#
+# npm groups are split by update-type on purpose. A single group of "*" batches
+# a blocked major together with routine patches, and the whole PR then fails on
+# the major: #92 carried three harmless bumps behind a TypeScript 7 upgrade the
+# lint stack cannot install, so none of them could land. Minor and patch travel
+# together; majors arrive on their own and can be evaluated — or closed —
+# without holding anything else back.
 updates:
   - package-ecosystem: github-actions
     directory: "/"
@@ -26,6 +33,30 @@ updates:
     groups:
       dashboard-deps:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # TypeScript 7.0 is not installable here: typescript-eslint refuses it at
+      # runtime — "typescript-eslint does not support TS 7.0" — so `npm run
+      # lint` cannot start, whatever npm's peer resolution is told to do.
+      # Support is tracked for TS >= 7.1 in typescript-eslint#10940. Dropping
+      # this entry is the first step once that ships; a dry run on 2026-08-29
+      # showed tsc, vite build and all 161 tests already pass under 7.0.2 with
+      # `baseUrl` removed from tsconfig.app.json (TS 7 removed the option).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: "/docs/site"
+    schedule:
+      interval: weekly
+    groups:
+      site-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # Same blocker as the dashboard: this tree lints with typescript-eslint too.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker
     directory: "/"
