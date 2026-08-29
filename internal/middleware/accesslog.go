@@ -62,15 +62,24 @@ func isSensitiveQueryParam(name string) bool {
 
 // AccessLog logs each completed request in structured format.
 //
-// enabled=false drops the line entirely, for a deployment that already writes
-// per-domain access_log files and does not want the same data a second time
-// in the main log.
-func AccessLog(log *logger.Logger, enabled bool) Middleware {
-	if !enabled {
-		return func(next http.Handler) http.Handler { return next }
-	}
+// enabled reports whether the line should be written. It is a function, not a
+// bool, because the middleware chain is built once at startup and never
+// rebuilt: a bool captured here would pin the setting to whatever the config
+// said at boot, so toggling it from the panel would persist to disk, survive a
+// reload and still change nothing until the process restarted. Reading it per
+// request costs one atomic load and lets reload take effect immediately.
+//
+// A nil enabled means on, which is what an absent access_log block has always
+// meant. When it reports false the request is passed straight through without
+// even wrapping the ResponseWriter, so the disabled path stays free.
+func AccessLog(log *logger.Logger, enabled func() bool) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if enabled != nil && !enabled() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			start := time.Now()
 
 			// Wrap response writer to capture status + bytes

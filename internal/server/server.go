@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -77,6 +78,10 @@ type Server struct {
 	mcp        *mcp.Server
 	monitor    *monitor.Monitor
 	handler    http.Handler // compiled middleware chain
+	// requestLog mirrors global.access_log.enabled. The chain above is
+	// built once, so the AccessLog middleware reads this instead of a
+	// captured bool and reload can flip it without a restart.
+	requestLog atomic.Bool
 	httpSrv    *http.Server
 	httpsSrv   *http.Server
 	h3srv      *http3.Server
@@ -254,6 +259,10 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		rewriteCache:    make(map[string]*rewrite.Engine),
 		domainLogs:      newDomainLogManager(),
 	}
+
+	// atomic.Bool zero-values to false, which would mean "no request log" —
+	// the opposite of what an absent access_log block has always meant.
+	s.requestLog.Store(cfg.Global.AccessLog.RequestLogEnabled())
 
 	// Pre-compile rewrite rules for each domain.
 	for _, d := range cfg.Domains {
@@ -757,7 +766,7 @@ func (s *Server) buildMiddlewareChain() http.Handler {
 	mws = append(mws, middleware.SecurityGuard(s.logger, blockedPaths, s.securityStats))
 	mws = append(mws, middleware.BotGuard(s.logger, s.securityStats))
 
-	mws = append(mws, middleware.AccessLog(s.logger, s.config.Global.AccessLog.RequestLogEnabled()))
+	mws = append(mws, middleware.AccessLog(s.logger, s.requestLog.Load))
 
 	chain := middleware.Chain(mws...)
 	return chain(http.HandlerFunc(s.handleRequest))
