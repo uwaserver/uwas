@@ -29,8 +29,11 @@ import {
   type AppDeployHistoryEntry,
   type AppDeployKeyResult,
   type AppStats,
+  fetchAppWebhookStatus,
+  type AppWebhookStatus,
 } from '@/lib/api';
 import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
+import { isPubliclyRoutable } from '@/lib/net';
 import { copyText } from '@/lib/clipboard';
 
 // Apps dashboard: list apps, create runnable workdirs, manage lifecycle,
@@ -180,6 +183,7 @@ export default function Apps() {
   // live alongside the per-deploy fields because operators usually
   // set up auto-deploy as part of their first manual deploy.
   const [deployFor, setDeployFor] = useState<string | null>(null);
+  const [webhookStatus, setWebhookStatus] = useState<AppWebhookStatus | null>(null);
   const [deployForm, setDeployForm] = useState({
     git_url: '',
     git_branch: '',
@@ -546,6 +550,23 @@ export default function Apps() {
       message: ok ? 'Deploy public key copied' : 'Copy failed. Select the public key and copy it manually.',
     });
   };
+
+  const webhookURL = `${window.location.origin}/api/v1/apps/${encodeURIComponent(deployFor ?? '')}/webhook`;
+
+  // The endpoint existed and was typed in the API client from the start, but
+  // nothing ever called it — so "did my push arrive?" had no answer anywhere
+  // in the panel.
+  useEffect(() => {
+    if (!deployFor) {
+      setWebhookStatus(null);
+      return;
+    }
+    let cancelled = false;
+    fetchAppWebhookStatus(deployFor)
+      .then(s => { if (!cancelled) setWebhookStatus(s ?? null); })
+      .catch(() => { if (!cancelled) setWebhookStatus(null); });
+    return () => { cancelled = true; };
+  }, [deployFor]);
 
   // saveWebhookConfig persists the webhook_secret + branch_filter
   // fields to the app's DeployConfig via the PUT endpoint. Kept
@@ -1425,13 +1446,60 @@ export default function Apps() {
                 <div className="space-y-1">
                   <span className="text-muted-foreground">Webhook URL</span>
                   <code className="block bg-muted/50 rounded px-2 py-1.5 break-all">
-                    {`${window.location.origin}/api/v1/apps/${encodeURIComponent(deployFor ?? '')}/webhook`}
+                    {webhookURL}
                   </code>
                   <span className="text-[10px] text-muted-foreground">
-                    GitHub: Content type <code>application/json</code>, secret as above.
-                    GitLab: pass the secret as the <code>X-Gitlab-Token</code> header.
+                    Both content types work — GitHub&apos;s default
+                    (<code>application/x-www-form-urlencoded</code>) and
+                    <code> application/json</code>. GitLab: pass the secret as
+                    the <code>X-Gitlab-Token</code> header.
                   </span>
+                  {/* This URL is whatever the operator happens to be browsing
+                      to. The admin API binds to 127.0.0.1:9443 by default and
+                      is often reached over a tunnel or a private address, so
+                      the panel can hand out a URL that GitHub can never
+                      deliver to — with the failure visible only in GitHub's
+                      own delivery log. Say so rather than letting them find
+                      out from a silent webhook. */}
+                  {!isPubliclyRoutable(window.location.hostname) && (
+                    <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-300">
+                      You are viewing the panel at <code>{window.location.host}</code>,
+                      which your git host cannot reach. The webhook will never
+                      arrive at this URL. Expose the admin API on a public
+                      address (and a valid certificate, which GitHub requires
+                      for HTTPS hooks), then use that address here.
+                    </p>
+                  )}
                 </div>
+
+                {webhookStatus && (
+                  <div className="space-y-1 rounded-md border border-border p-2">
+                    <span className="text-muted-foreground">Last webhook delivery</span>
+                    {webhookStatus.started_at ? (
+                      <div className="space-y-0.5">
+                        <div className={webhookStatus.ok ? 'text-emerald-400' : 'text-red-400'}>
+                          {webhookStatus.ok ? 'Succeeded' : 'Failed'}
+                          {webhookStatus.ref ? ` · ${webhookStatus.ref}` : ''}
+                          {webhookStatus.commit_sha ? ` · ${webhookStatus.commit_sha.slice(0, 8)}` : ''}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {new Date(webhookStatus.started_at).toLocaleString()}
+                        </div>
+                        {webhookStatus.error && (
+                          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/50 p-2 text-[10px]">
+                            {webhookStatus.error}
+                          </pre>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground">
+                        Nothing has arrived yet. If you have pushed since setting
+                        this up, check your repository&apos;s webhook delivery log
+                        for the response code.
+                      </div>
+                    )}
+                  </div>
+                )}
                 <button
                   onClick={saveWebhookConfig}
                   className="text-xs rounded-md border border-border px-3 py-1.5 hover:bg-muted"
