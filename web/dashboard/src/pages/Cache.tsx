@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { useStats } from '@/hooks/useStats';
 import { usePolling } from '@/hooks/usePolling';
-import { triggerPurge, fetchCacheStats as fetchCacheStatsAPI, type CacheStatsData } from '@/lib/api';
+import { triggerPurge, purgeCacheForHost, fetchCacheStats as fetchCacheStatsAPI, type CacheStatsData } from '@/lib/api';
 import Card from '@/components/Card';
 
 function formatBytes(b: number): string {
@@ -56,13 +56,15 @@ export default function Cache() {
     setPurgeLog(prev => [{ time: new Date().toLocaleTimeString(), action, ok }, ...prev].slice(0, 20));
   };
 
+  const entryCount = (n: number) => `${n} ${n === 1 ? 'entry' : 'entries'}`;
+
   const handlePurgeTag = async () => {
     if (!tag.trim()) return;
     setPurging(true); setStatus(null);
     try {
-      await triggerPurge(tag.trim());
-      setStatus({ ok: true, message: `Purged tag "${tag.trim()}"` });
-      addPurgeLog(`Purge tag: ${tag.trim()}`, true);
+      const res = await triggerPurge(tag.trim());
+      setStatus({ ok: true, message: `Purged ${entryCount(res.count)} for tag "${tag.trim()}"` });
+      addPurgeLog(`Purge tag: ${tag.trim()} (${entryCount(res.count)})`, true);
       setTag(''); fetchCacheStats();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
@@ -74,10 +76,14 @@ export default function Cache() {
     if (!purgeHost) return;
     setPurging(true); setStatus(null);
     try {
-      const domainTag = `site:${purgeHost.replace(/[^a-zA-Z0-9.-]/g, '')}`;
-      await triggerPurge(domainTag);
-      setStatus({ ok: true, message: `Purged cache for ${purgeHost}` });
-      addPurgeLog(`Purge domain: ${purgeHost}`, true);
+      const res = await purgeCacheForHost(purgeHost);
+      setStatus({
+        ok: true,
+        message: res.count > 0
+          ? `Purged ${entryCount(res.count)} for ${purgeHost}`
+          : `Nothing cached for ${purgeHost}`,
+      });
+      addPurgeLog(`Purge domain: ${purgeHost} (${entryCount(res.count)})`, true);
       setPurgeHost(''); fetchCacheStats();
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
@@ -182,20 +188,27 @@ export default function Cache() {
                   <td className="py-2.5 pr-4 text-muted-foreground">{d.rules ? (
                     <span title={d.rules.map(r => `${r.match} ${r.bypass ? '(bypass)' : `TTL:${r.ttl}s`}`).join('\n')}>{d.rules.length} rules</span>
                   ) : '—'}</td>
-                  <td className="py-2.5">{d.enabled && d.tags && d.tags.length > 0 && (
+                  {/* Purge by host, not by the domain's first tag: every entry
+                      now carries an implicit site: tag, so this works for
+                      cache-enabled domains that were never tagged by hand. */}
+                  <td className="py-2.5">{d.enabled && (
                     <button
                       onClick={async () => {
                         if (purging) return;
-                        const t = d.tags![0];
                         setPurging(true); setStatus(null);
                         try {
-                          await triggerPurge(t);
-                          setStatus({ ok: true, message: `Purged tag "${t}" for ${d.host}` });
-                          addPurgeLog(`Purge tag: ${t} (${d.host})`, true);
+                          const res = await purgeCacheForHost(d.host);
+                          setStatus({
+                            ok: true,
+                            message: res.count > 0
+                              ? `Purged ${entryCount(res.count)} for ${d.host}`
+                              : `Nothing cached for ${d.host}`,
+                          });
+                          addPurgeLog(`Purge domain: ${d.host} (${entryCount(res.count)})`, true);
                           fetchCacheStats();
                         } catch (e) {
                           setStatus({ ok: false, message: (e as Error).message });
-                          addPurgeLog(`Purge tag: ${t} (${d.host}) — FAILED`, false);
+                          addPurgeLog(`Purge domain: ${d.host} — FAILED`, false);
                         } finally { setPurging(false); }
                       }}
                       disabled={purging}

@@ -39,13 +39,14 @@ func GenerateKeyWithoutQuery(r *http.Request, varyHeaders []string) string {
 	return generateKey(r, varyHeaders, false)
 }
 
-func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string {
-	b := builderPool.Get().(*strings.Builder)
-	b.Reset()
-
-	// Normalize host: lowercase + strip port. Bracketed IPv6 literals
-	// contain colons, so only strip after the closing bracket for those.
-	host := r.Host
+// NormalizeHost canonicalizes a Host header for cache use: lowercase, port
+// stripped. Bracketed IPv6 literals contain colons, so only strip after the
+// closing bracket for those.
+//
+// Cache keys and the implicit site: purge tag both go through here. That is
+// the point: if the two normalized differently, a purge would look for a tag
+// no store ever wrote.
+func NormalizeHost(host string) string {
 	if strings.HasPrefix(host, "[") {
 		if idx := strings.LastIndex(host, "]"); idx != -1 {
 			host = host[:idx+1]
@@ -53,7 +54,21 @@ func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string
 	} else if idx := strings.LastIndex(host, ":"); idx != -1 {
 		host = host[:idx]
 	}
-	host = strings.ToLower(host)
+	return strings.ToLower(host)
+}
+
+// SiteTag is the tag every cached entry carries identifying the domain that
+// produced it. A per-domain purge resolves to this tag, so purging by host
+// needs no cooperation from the caller and no per-domain config.
+func SiteTag(host string) string {
+	return "site:" + NormalizeHost(host)
+}
+
+func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string {
+	b := builderPool.Get().(*strings.Builder)
+	b.Reset()
+
+	host := NormalizeHost(r.Host)
 
 	// Pre-allocate based on typical URL lengths
 	b.Grow(300 + len(r.URL.RawQuery) + len(host) + len(r.URL.Path))
