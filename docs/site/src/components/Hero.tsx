@@ -26,7 +26,7 @@ export default function Hero() {
           style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-secondary)' }}
         >
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          v0.8.9 · stable release
+          {__UWAS_VERSION__} · stable release
         </div>
 
         {/* Heading */}

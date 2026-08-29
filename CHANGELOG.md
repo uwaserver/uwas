@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The marketing site takes its version from the repo instead of a hand-written
+  string. The hero badge still read `v0.8.9` three releases after the fact, and
+  the install transcript repeated it. `vite.config.ts` now resolves the version
+  at build time from the `VERSION` file — bumped in the same commit the release
+  tag points at — falling back to `git describe`, then to `dev`. VERSION is
+  preferred because the Pages deploy checks out shallow with no tags, so
+  `describe` alone would fail in CI and succeed locally.
+
 ### Changed
 
 - Documentation re-derived from the source. `ARCHITECTURE.md` had drifted since
