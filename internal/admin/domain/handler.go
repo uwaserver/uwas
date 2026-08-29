@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/auth"
+	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/domainutil"
@@ -398,6 +399,25 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// New static sites cache by default. The cache is by a wide margin the
+	// largest response-time win available — the uncached static path spends
+	// most of a request in open/stat syscalls — and leaving it off by default
+	// meant most sites never got it.
+	//
+	// Static only. Defaulting a php or proxy domain to cached would hand
+	// stale dynamic output to an operator who never asked for caching.
+	//
+	// An explicit "cache" object in the request wins, including
+	// `{"enabled": false}`: presence of the key is the signal, so this only
+	// fills a gap and never overrides an intent. Type is still empty here
+	// when the caller omitted it; applyDefaults settles it to static on load,
+	// so treat empty the same way.
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(body, &raw)
+	if !rawHas(raw, "cache") && (d.Type == "" || d.Type == string(config.DomainTypeStatic)) {
+		d.Cache.Enabled = true
+	}
+
 	// Check for duplicate hostnames
 	h.deps.LockConfig()
 	cfg := h.deps.ConfigPtr()
@@ -485,7 +505,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 			mgr.StopDomain(host)
 			mgr.UnassignDomain(host)
 		}
-		h.deps.CachePurgeByTag("site:" + host)
+		h.deps.CachePurgeByTag(cache.SiteTag(host))
 		cronjob.RemoveByDomain(host)
 		siteuser.DeleteUser(host)
 	}
@@ -553,17 +573,18 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	patchFields := config.DomainPatchFields{
-		HasAliases:     rawHas(raw, "aliases"),
-		HasLocations:   rawHas(raw, "locations"),
-		HasBasicAuth:   rawHas(raw, "basic_auth"),
-		HasSecurity:    rawHas(raw, "security"),
-		HasCache:       rawHas(raw, "cache"),
-		HasCompression: rawHas(raw, "compression"),
-		HasHtaccess:    rawHas(raw, "htaccess"),
-		HasSSL:         rawHas(raw, "ssl"),
-		HasSSLForce:    hasSSLForce,
-		HasResources:   rawHas(raw, "resources"),
-		HasCanonical:   rawHas(raw, "canonical_host"),
+		HasAliases:      rawHas(raw, "aliases"),
+		HasLocations:    rawHas(raw, "locations"),
+		HasBasicAuth:    rawHas(raw, "basic_auth"),
+		HasSecurity:     rawHas(raw, "security"),
+		HasCache:        rawHas(raw, "cache"),
+		HasBrowserCache: rawHas(raw, "browser_cache"),
+		HasCompression:  rawHas(raw, "compression"),
+		HasHtaccess:     rawHas(raw, "htaccess"),
+		HasSSL:          rawHas(raw, "ssl"),
+		HasSSLForce:     hasSSLForce,
+		HasResources:    rawHas(raw, "resources"),
+		HasCanonical:    rawHas(raw, "canonical_host"),
 	}
 
 	h.deps.LockConfig()

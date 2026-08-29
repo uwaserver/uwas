@@ -926,17 +926,34 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Tag string `json:"tag"`
+		Tag  string `json:"tag"`
+		Host string `json:"host"`
 	}
 	// Body is optional — nil/empty means "purge all"
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // ignore error; empty body = purge all
 	}
 
-	if req.Tag != "" {
-		count := s.cache.PurgeByTag(req.Tag)
-		s.recordAuditR(r, "cache.purge", "tag: "+req.Tag, true)
-		jsonResponse(w, CachePurgeResponse{Status: "purged", Tag: req.Tag, Count: count})
+	// Purging a domain is expressed as a host, not as a tag. Callers used to
+	// build `site:<host>` themselves, which meant every client had to know how
+	// the server tags entries — and got it wrong. The server owns that mapping
+	// now, through the same normalization the cache key uses.
+	tag := req.Tag
+	scope := "tag: " + req.Tag
+	if req.Host != "" {
+		if !s.canAccessDomain(r, req.Host) {
+			s.recordAuditR(r, "cache.purge", "host: "+req.Host+" (forbidden)", false)
+			jsonError(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		tag = cache.SiteTag(req.Host)
+		scope = "host: " + req.Host
+	}
+
+	if tag != "" {
+		count := s.cache.PurgeByTag(tag)
+		s.recordAuditR(r, "cache.purge", scope, true)
+		jsonResponse(w, CachePurgeResponse{Status: "purged", Tag: tag, Host: req.Host, Count: count})
 	} else {
 		s.cache.PurgeAll()
 		s.recordAuditR(r, "cache.purge", "all", true)
