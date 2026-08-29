@@ -7,20 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-08-29
+
+Reaches the setting 0.9.1 added. It was the one control that quietens the per-request log without also hiding certificate renewals, reloads and backups, and the only way to set it was editing `uwas.yaml` by hand.
+
 ### Added
 
-- `global.access_log.enabled` is in the panel, as a Request Log toggle under
-  Settings → General → Logging. It shipped in 0.9.1 as a YAML-only setting,
-  and it is the one control that quietens the per-request stream without also
-  hiding certificate renewals, reloads and backups the way a higher
-  `log_level` does.
+- `global.access_log.enabled` is in the panel, as a Request Log toggle under Settings → General → Logging. Turning it off affects nothing but the log line: metrics, the panel log view, analytics, bandwidth accounting, 5xx alerting and the per-domain `access_log` files are all recorded below this middleware, inside `handleRequest`.
 
 ### Fixed
 
-- The request-log switch takes effect on reload instead of needing a restart.
-  The middleware chain is compiled once at startup, so the value was captured
-  at boot: a toggle would persist to disk, survive a reload and change
-  nothing. The middleware now reads the flag per request.
+- The request-log switch takes effect on reload instead of needing a restart. The middleware chain is compiled once at startup, so the value was captured at boot — saving the toggle would have written it to disk, survived a reload and changed nothing until the process restarted. `AccessLog` now reads the flag per request and reload swaps it.
+- The settings API carries `global.access_log.enabled` in both directions. It is an explicit allow-list: a key missing from the GET map never reaches the panel, and one missing from the PUT switch is accepted with a 200 and dropped.
 
 ## [0.9.1] - 2026-08-28
 
