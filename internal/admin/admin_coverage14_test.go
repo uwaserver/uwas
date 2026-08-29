@@ -641,7 +641,7 @@ func TestHandleSSELogsWithDomainFilter(t *testing.T) {
 
 func TestHandleAlertsWithHostFiltering(t *testing.T) {
 	s := testServer()
-	s.alerter = alerting.New(true, "", logger.New("error", "text"))
+	s.alerter = alerting.New(true, "", nil, logger.New("error", "text"))
 
 	s.alerter.Alert(alerting.Alert{
 		Level:   "warning",
