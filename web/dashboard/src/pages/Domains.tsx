@@ -598,7 +598,10 @@ export default function Domains() {
         blockedPaths: d.security?.blocked_paths?.join(', ') ?? '',
         wafEnabled: d.security?.waf?.enabled ?? false,
         cloudflareOnly: d.security?.cloudflare_only ?? false,
-        htaccessEnabled: !!d.htaccess?.mode,
+        // Only "import" activates the engine. applyDefaults fills an absent
+        // block with mode: "off", which the API returns for every domain — so
+        // a truthiness check reported .htaccess as on everywhere it was off.
+        htaccessEnabled: d.htaccess?.mode === 'import',
       };
       /* Determine if the PHP address matches a known install */
       const knownAddr = phpInstalls.some(p => p.listen_addr === editForm.phpFpmAddress);
@@ -1801,8 +1804,8 @@ function DomainDetailPanel({ detail, aliasHealth, certInfo, purgingHost, onPurge
             )}
             {detail.htaccess && (
               <DetailRow label=".htaccess" value={
-                <span className={`text-xs ${detail.htaccess.mode ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                  {detail.htaccess.mode || 'Disabled'}
+                <span className={`text-xs ${detail.htaccess.mode === 'import' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                  {detail.htaccess.mode === 'import' ? 'Enabled' : 'Disabled'}
                 </span>
               } />
             )}

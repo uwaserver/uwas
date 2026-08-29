@@ -423,6 +423,14 @@ func validateDomain(d *Domain, partial bool) error {
 		return fmt.Errorf("domain is nil")
 	}
 
+	// htaccess.mode is an enum with exactly two values, and only "import"
+	// turns the engine on. Anything else was accepted and silently meant
+	// "off", so an operator writing the obvious `mode: on` got no .htaccess
+	// and no indication why.
+	if m := d.Htaccess.Mode; m != "" && m != "off" && m != "import" {
+		return fmt.Errorf("htaccess.mode = %q: must be \"import\" or \"off\"", m)
+	}
+
 	if !DomainType(d.Type).IsValid() {
 		return fmt.Errorf("invalid type %q — must be static, php, proxy, app, or redirect", d.Type)
 	}
