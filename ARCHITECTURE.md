@@ -6,20 +6,30 @@
 
 ## Codebase Statistics
 
-| Metric | Count |
-|--------|------:|
-| Go source files | 224 |
-| Test files | 217 |
-| Lines of Go code | ~60,000 |
-| Internal packages | 46 |
-| Public packages (pkg/) | 2 |
-| CLI commands | 19 |
-| Admin API routes | 251 explicit registrations |
-| Dashboard pages | 42 |
-| Direct Go dependencies | 5 |
-| Binary size (linux/amd64) | ~15 MB |
+Measured against the tree at v0.9.2. Every figure below is derived from the
+source, not maintained by hand — the commands are given so they can be checked.
 
-> **Note:** The `internal/admin` package is split into focused route/handler files instead of a monolithic API implementation. Current route registrations live in `routes.go`; handler logic is grouped by feature — see the Package Map below.
+| Metric | Count | How to check |
+|--------|------:|--------------|
+| Go source files (excl. tests) | 244 | `find . -name '*.go' -not -name '*_test.go' \| wc -l` |
+| Test files | 284 | `find . -name '*_test.go' \| wc -l` |
+| Lines of Go (excl. tests) | ~64,500 | `find . -name '*.go' -not -name '*_test.go' -exec cat {} + \| wc -l` |
+| Test functions | ~7,000 | `grep -rhoE '^func Test' --include='*_test.go' . \| wc -l` |
+| Packages (total) | 69 | `go list ./... \| wc -l` |
+| — under `internal/` | 62 | `go list ./internal/... \| wc -l` |
+| — under `pkg/` | 2 | `go list ./pkg/... \| wc -l` |
+| Packages with tests | 56 | `go list -f '{{if .TestGoFiles}}x{{end}}' ./...` |
+| CLI commands | 19 | `grep -c 'app.Register(' cmd/uwas/main.go` |
+| Admin API routes | 253 registrations | `grep -cE 'mux\.(HandleFunc\|Handle)\(' internal/admin/routes.go` |
+| Dashboard pages | 42 | `ls web/dashboard/src/pages/*.tsx` (excl. `settingsSections.tsx`, which is not a page) |
+| Direct Go dependencies | 5 | `go.mod` require block, non-indirect |
+| Binary size (linux/amd64) | ~16.4 MB | v0.9.2 release asset |
+
+> **Note:** `internal/admin` is split at the **package** level, not only the file
+> level: eleven handler sub-packages sit under it (`admin/apps`, `admin/settings`,
+> `admin/domain`, …), plus `admin/dashboard` for the `go:embed` of the SPA,
+> alongside the `handlers_*.go` files that remain in the parent as wrappers. Route registration stays in `routes.go`. See `docs/admin-subpackaging.md`
+> and the Package Map below.
 
 ---
 
@@ -37,7 +47,7 @@
 │                            │                    │                  │        │
 │                    ┌───────▼─────────┐    ┌─────▼─────────┐ ┌──────▼──────┐ │
 │                    │  Request Router │    │  Admin API    │ │ SFTP Server │ │
-│                    │  (VHost + SNI)  │    │  251 routes   │ │ chroot jail │ │
+│                    │  (VHost + SNI)  │    │  253 routes   │ │ chroot jail │ │
 │                    └────────┬────────┘    │  + Dashboard  │ └─────────────┘ │
 │                             │             │ + WebSocket   │                 │
 │              ┌──────────────┼────┐        │ + MCP         │                 │
@@ -73,8 +83,10 @@ Client Request
               ▼
 ┌─────────────────────────────┐
 │  2. Global Middleware Chain  │  Recovery → RequestID → RealIP
-│                              │  → SecurityHeaders → Gzip
+│                              │  → SecurityHeaders → Compress
 │                              │  → Global RateLimit
+│                              │  → SecurityGuard (blocked paths)
+│                              │  → BotGuard → AccessLog
 └─────────────┬───────────────┘
               ▼
 ┌─────────────────────────────┐
@@ -83,10 +95,13 @@ Client Request
 └─────────────┬───────────────┘
               ▼
 ┌─────────────────────────────┐
-│  4. Per-Domain Security      │  Blocked paths → IP ACL → GeoIP
-│                              │  → Rate Limit → Basic Auth → CORS
-│                              │  → WAF (URL + body scan 64KB)
-│                              │  → Bot Guard (25+ patterns)
+│  4. Per-Domain Security      │  IP ACL → GeoIP → Basic Auth → CORS
+│     (inline in handleRequest)│  → WAF (URL + body scan)
+│                              │  → location rate limit
+│                              │  These are guard calls inside
+│                              │  handleRequest, not a middleware
+│                              │  chain. Only the IP ACL is stored
+│                              │  as middleware (s.domainChains).
 └─────────────┬───────────────┘
               ▼
 ┌─────────────────────────────┐
@@ -125,7 +140,8 @@ Client Request
 └─────────────┬───────────────┘
               ▼
 ┌─────────────────────────────┐
-│ 10. Post-Response            │  Access log (per-domain file)
+│ 10. Post-Response            │  Per-domain access_log file
+│                              │  Panel log ring buffer
 │                              │  Metrics recording
 │                              │  Analytics aggregation
 │                              │  Alert threshold check
@@ -142,9 +158,27 @@ cmd/uwas/
 └── main.go                     CLI entry point
 
 internal/
-├── admin/                      API server (251 route registrations) + dashboard embed + auth
+├── admin/                      API server (253 route registrations) + dashboard embed + auth
+│   │
+│   │   Twelve sub-packages carry the handler logic; the parent keeps route
+│   │   registration, shared server state and the handlers not yet extracted.
+│   │   See docs/admin-subpackaging.md for the split and its rules.
+│   │
+│   ├── apps/                   Standalone application handlers
+│   ├── authmw/                 Admin API authentication middleware
+│   ├── backup/                 Backup management handlers
+│   ├── cloudflare/             Cloudflare integration handlers
+│   ├── database/               MySQL/MariaDB handlers
+│   ├── deploy/                 Git/Docker deploy pipeline handlers
+│   ├── domain/                 Domain CRUD + unknown-domain handlers
+│   ├── files/                  File manager handlers
+│   ├── php/                    PHP-FPM lifecycle handlers
+│   ├── settings/               Global settings, branding, 2FA, raw YAML editor
+│   ├── wordpress/              WordPress site handlers
+│   ├── dashboard/dist/         Embedded React SPA (go:embed)
+│   │
 │   ├── api.go                  Core: Server struct, lifecycle, middleware, helpers
-│   ├── routes.go               Route registration (15 themed sub-registrars)
+│   ├── routes.go               Route registration (themed sub-registrars)
 │   ├── handlers_auth.go        Login, 2FA, multi-user RBAC, sessions
 │   ├── handlers_domain.go      Domain CRUD, unknown-host tracking
 │   ├── domain_alias.go         www↔apex canonical redirect logic
@@ -165,9 +199,10 @@ internal/
 │   ├── handlers_software_ports.go    Port allocation + conflict detection (162)
 │   ├── handlers_software_store.go    Instance persistence + secret/env helpers (197)
 │   ├── handlers_software_templates.go  Docker Compose YAML templates, 11 apps (175)
-│   ├── handlers_*.go           Apps, deploy, git, files, firewall, DNS, etc.
-│   ├── audit.go                Audit trail ring buffer
-│   └── dashboard/dist/         Embedded React SPA (go:embed)
+│   ├── handlers_*.go           Thin wrappers delegating to the sub-packages,
+│   │                           plus handlers not yet extracted
+│   ├── ringbuf.go              Generic ring buffer (log + audit streams)
+│   └── audit.go                Audit trail
 │
 ├── alerting/                   Threshold-based alerts + notifications
 ├── analytics/                  Per-domain traffic analytics + bandwidth
@@ -182,6 +217,7 @@ internal/
 ├── backup/                     Backup/restore (local, S3, SFTP)
 ├── bandwidth/                  Per-domain bandwidth tracking + limits
 ├── build/                      Version + build info (ldflags)
+├── cloudflare/                 Cloudflare Tunnel API + local cloudflared binary
 ├── cache/                      L1 memory LRU → L2 disk + ESI
 │   ├── engine.go               Get/Set/Purge orchestration
 │   ├── memory.go               256-shard LRU with TTL + grace
@@ -207,6 +243,10 @@ internal/
 ├── database/                   MySQL/MariaDB: detect, install, CRUD, Docker
 ├── deploy/                     Git clone → build → restart / Docker pipeline
 ├── dnschecker/                 DNS record verification (A/MX/NS/TXT)
+├── domainroot/                 Resolves the filesystem root shown for a domain
+│                               (apps:// proxy domains point at the app WorkDir)
+├── domainutil/                 Pure hostname helpers shared by admin and
+│                               admin/domain — exists to break an import cycle
 ├── dnsmanager/                 Cloudflare, Route53, Hetzner, DigitalOcean DNS CRUD
 ├── doctor/                     System diagnostics + auto-fix
 ├── filemanager/                Web file manager (browse/edit/upload/delete)
@@ -219,7 +259,9 @@ internal/
 │   ├── proxy/                  Reverse proxy + LB + circuit breaker + canary
 │   │   ├── handler.go          Forward + WebSocket tunnel
 │   │   ├── health.go           Upstream health checker
-│   │   ├── balancer.go         Round-robin, least-conn, random, weighted
+│   │   ├── balancer.go         round_robin (default, weighted built in),
+│   │   │                       least_conn, ip_hash, uri_hash, random, sticky
+│   │   │                       + affinity layered over any of them
 │   │   ├── circuit.go          Circuit breaker (threshold + auto-heal)
 │   │   ├── canary.go           Percentage-based canary routing
 │   │   └── mirror.go           Async request mirroring
@@ -230,6 +272,8 @@ internal/
 ├── logger/                     log/slog wrapper (structured logging)
 ├── mcp/                        MCP server (AI management interface)
 ├── metrics/                    Request metrics + latency percentiles
+├── pathsafe/                   Path containment checks with a cached resolved
+│                               base — the static-serve hot path
 │
 ├── middleware/                 Composable middlewares
 │   ├── chain.go                Chain(A, B, C)(handler) composition
@@ -247,29 +291,40 @@ internal/
 │   ├── headers.go              Security headers (HSTS, X-Frame, etc.)
 │   ├── imageopt.go             WebP/AVIF auto-conversion
 │   ├── hotlink.go              Referer-based hotlink protection
-│   └── accesslog.go            Per-domain access log to file
+│   └── accesslog.go            One request line to the MAIN log, globally.
+│                               Not per-domain and not a file — the per-domain
+│                               access_log file is written by
+│                               server/domainlog.go inside handleRequest.
+│                               5xx logs at error, everything else at info;
+│                               global.access_log.enabled turns it off.
 │
 ├── migrate/                    Apache/Nginx config converter
 ├── monitor/                    Domain health checks (HTTP probe)
 ├── notify/                     Slack, Telegram, Email (SMTP) channels
 ├── phpmanager/                 PHP detect → install → start → assign → monitor
-│   ├── manager.go              Full lifecycle (1,360 LOC)
+│   ├── manager.go              Manager type + lifecycle entry points
+│   ├── detect.go               Installed version discovery
+│   ├── domain.go               Per-domain assignment + pool config
+│   ├── fpm.go                  FPM process control
+│   ├── ini.go                  Per-domain php.ini generation
 │   └── install.go              Platform-aware install (apt/dnf/brew)
 │
 ├── rewrite/                    Apache mod_rewrite engine
 │   ├── engine.go               RewriteRule + RewriteCond processing
 │   └── variables.go            %{REQUEST_FILENAME}, %{HTTP_HOST}, etc.
 │
+├── respond/                    Centralised JSON responses + hardening headers
 ├── rlimit/                     Linux cgroups v2 (CPU/memory/PID limits)
 ├── router/                     VHost routing + unknown host tracking
 ├── selfupdate/                 Binary self-update from GitHub releases
 │
 ├── server/                     Main server orchestration
-│   ├── server.go               Lifecycle, middleware chain, listeners, signals (1,410 LOC)
-│   ├── server_dispatch.go      Request dispatch pipeline + file/proxy/redirect handlers (860)
-│   ├── server_routing.go       Guard factories (WAF/IP/Geo/CORS/rate) + proxy pool rebuild (144)
-│   ├── server_htaccess.go      Htaccess/rewrite parsing + cache (309)
-│   ├── server_reload.go        Hot config reload (193)
+│   ├── server.go               Lifecycle, middleware chain, listeners, signals
+│   ├── server_dispatch.go      Request dispatch + per-domain guards + handlers
+│   ├── server_routing.go       Guard factories (WAF/IP/Geo/CORS/rate) + proxy pools
+│   ├── server_htaccess.go      Htaccess/rewrite parsing + cache
+│   ├── server_reload.go        Hot config reload
+│   ├── domainlog.go            Per-domain access_log files + rotation
 │   ├── capture.go              Response capture for caching
 │   └── error.go                Domain error pages
 │
@@ -283,8 +338,10 @@ internal/
 │   ├── manager.go              SNI cert selection + renewal ticker
 │   ├── storage.go              Cert file storage (/var/lib/uwas/certs/)
 │   └── acme/                   ACME client (Let's Encrypt)
-│       ├── client.go           Challenge solving (HTTP-01, DNS-01)
-│       └── dns.go              DNS provider integration (4 providers)
+│       ├── client.go           Account, order, challenge solving (HTTP-01, DNS-01)
+│       └── jws.go              JWS signing for ACME requests
+│                               DNS-01 providers live in internal/dnsmanager
+│                               (Cloudflare, Route53, Hetzner, DigitalOcean)
 │
 ├── webhook/                    Event dispatch (HMAC signed, retry)
 └── wordpress/                  One-click WP install (DB + config + mu-plugin)
@@ -300,7 +357,7 @@ pkg/
                                 IfModule, php_value, php_flag
 
 web/dashboard/                  React SPA (Vite + TypeScript + Tailwind)
-├── src/pages/                  42 page components
+├── src/pages/                  42 page components + settingsSections.tsx
 ├── src/lib/api.ts              API client for admin REST routes
 ├── src/components/             Sidebar, PinModal, Card
 └── dist/ → go:embed            Compiled into binary
@@ -326,13 +383,14 @@ domain.Type determines the handler:
 │          │ → X-Sendfile / X-Accel-Redirect support                    │
 │          │ → WSOD detection (empty body + 200 → 500)                  │
 ├──────────┼──────────────────────────────────────────────────────────────┤
-│ proxy    │ select upstream (round-robin / least-conn / random)         │
+│ proxy    │ select upstream (6 algorithms, + optional sticky affinity)  │
 │          │ → circuit breaker check                                     │
 │          │ → canary routing (% split)                                  │
 │          │ → forward request + copy response                           │
 │          │ → WebSocket upgrade detection + tunnel                      │
 │          │ → mirror (async fire-and-forget)                            │
 │          │ → retry on connection error (next backend)                  │
+│          │ → gRPC: h2c to a cleartext backend (proxy.grpc)              │
 ├──────────┼──────────────────────────────────────────────────────────────┤
 │ app      │ UWAS → 127.0.0.1:{auto-port}                              │
 │          │ → managed process (Node/Python/Ruby/Go)                     │
@@ -468,6 +526,24 @@ Server Start
 │  2. Wildcard match: *.domain       │
 │  3. On-demand: issue new cert      │
 │  4. Fallback: self-signed          │
+└──────────────┬──────────────────────┘
+               ▼
+┌─────────────────────────────────────┐
+│   Per-SNI Config (GetConfigForClient)│
+│                                     │
+│  The base config carries a TLS 1.2  │
+│  floor. A domain needing more gets  │
+│  a clone, built from its ClientHello│
+│  server name:                       │
+│                                     │
+│  • ssl.min_version — raises the     │
+│    floor (below 1.2 is clamped up)  │
+│  • ssl.client_ca — mTLS client CA   │
+│    pool + client_auth mode          │
+│    (require / request / none)       │
+│                                     │
+│  A domain configuring neither gets  │
+│  nil, so no clone is allocated.     │
 └─────────────────────────────────────┘
 
 Renewal Ticker (every 12 hours):
@@ -487,10 +563,12 @@ Renewal Ticker (every 12 hours):
                  │  ┌──────────────┐  ┌──────────────────┐ │
                  │  │   Balancer    │  │  Circuit Breaker │ │
                  │  │              │  │                  │ │
-                 │  │ round-robin  │  │ threshold: 10    │ │
-                 │  │ least-conn   │  │ timeout: 30s     │ │
-                 │  │ random       │  │ auto-heal: yes   │ │
-                 │  │ weighted     │  │                  │ │
+                 │  │ round_robin  │  │ threshold: 10    │ │
+                 │  │ least_conn   │  │ timeout: 30s     │ │
+                 │  │ ip_hash      │  │ auto-heal: yes   │ │
+                 │  │ uri_hash     │  │                  │ │
+                 │  │ random       │  │                  │ │
+                 │  │ sticky       │  │                  │ │
                  │  └──────┬───────┘  └────────┬─────────┘ │
                  │         │                    │           │
                  │         ▼                    ▼           │
@@ -514,8 +592,16 @@ Renewal Ticker (every 12 hours):
                  │                                          │
                  │  WebSocket: auto-detect Upgrade header   │
                  │  → hijack + bidirectional TCP tunnel     │
+                 │                                          │
+                 │  gRPC (proxy.grpc): h2c to a cleartext   │
+                 │  backend via the stdlib HTTP/2 transport │
                  └──────────────────────────────────────────┘
 ```
+
+`weighted` is not a separate algorithm — weights are built into round-robin, so
+`algorithm: weighted` resolves to `RoundRobin`. Session affinity (`proxy.sticky`)
+**layers over** the chosen algorithm rather than replacing it: `least_conn` plus
+sticky still places new sessions by least-connections and pins them afterwards.
 
 ---
 
@@ -622,26 +708,44 @@ Multi-User Mode (optional):
 
 ## Middleware Chain
 
-```
-Global (every request):          Per-domain (after VHost lookup):
+Only the left column is a middleware chain. The per-domain controls are guard
+calls made inside `handleRequest`, in the order shown — the sole exception is
+the IP ACL, which is pre-compiled per domain and stored in `s.domainChains`.
 
-  Recovery                         IP ACL (whitelist/blacklist)
-      │                            GeoIP blocking
-  RequestID (UUIDv7)               Rate limiting
-      │                            Basic Auth
-  RealIP                           CORS
-      │                            WAF (SQL/XSS/shell/RCE)
-  Security Headers                 Bot Guard (25+ patterns)
-      │                            Header transforms
-  Gzip/Brotli                      Hotlink protection
-      │                            Image optimization (WebP/AVIF)
-  Global Rate Limit                Access log (per-domain file)
+```
+Global chain (server.go buildMiddlewareChain)   Per-domain, inside handleRequest:
+
+  Recovery                                        IP ACL (whitelist/blacklist)
+      │                                           GeoIP blocking
+  RequestID (UUIDv7)                              Basic Auth
+      │                                           CORS
+  RealIP                                          WAF (SQL/XSS/shell/RCE)
+      │                                           Location rate limit
+  Security Headers                                Header transforms
+      │                                           Hotlink protection
+  Compress (br/gzip, per-domain policy)           Image optimization (WebP/AVIF)
+      │                                           Per-domain access_log file
+  Global Rate Limit (if configured)
+      │
+  SecurityGuard (blocked paths)   ← global, not per-domain
+      │
+  BotGuard                        ← global, not per-domain
+      │
+  AccessLog                       ← one line to the main log
       │
       ▼
   handleRequest()
 
 Composition: Chain(A, B, C)(handler) → A(B(C(handler)))
 ```
+
+**The chain is built once.** `buildMiddlewareChain` runs in `New` and is never
+called again — reload does not rebuild it. A global setting that the chain
+would otherwise capture at boot therefore has to be read per request through a
+live value, not closed over. `global.access_log.enabled` uses an `atomic.Bool`
+on the Server that reload swaps; `global.log_level` uses the logger's
+`slog.LevelVar`. Anything new at this layer needs the same treatment or it will
+silently require a restart.
 
 ---
 
@@ -739,72 +843,81 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
   • Cache rules rebuild
   • Rewrite cache invalidate
   • .htaccess cache invalidate
+  • Logger level (global.log_level)
+  • Request-log switch (global.access_log.enabled)
   Zero downtime — no connection drop
 ```
 
+What reload does **not** rebuild is the global middleware chain — see the
+Middleware Chain section. Settings read by that chain have to be swapped
+through a live value; settings read inside `handleRequest` pick up the new
+config automatically.
+
 ---
 
-## Dashboard Pages (40)
+## Dashboard Pages (42)
+
+Groups and labels below are the sidebar's own (`web/dashboard/src/components/Sidebar.tsx`).
+Two pages are not in the sidebar: **Domain Detail** (`/domains/:host`, reached
+from Domains) and **Login**.
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Overview                                            │
-│  └─ Dashboard        Stats, health, graphs           │
+│  └─ Dashboard         Stats, health, graphs          │
 ├─────────────────────────────────────────────────────┤
 │  Sites                                               │
-│  ├─ Domains          Domain list + CRUD              │
-│  ├─ Domain Detail    Individual domain config        │
-│  ├─ Topology         Domain dependency graph (React  │
-│  │                   Flow visual)                    │
-│  ├─ Certificates     SSL/TLS + ACME status           │
-│  ├─ DNS              Cloudflare DNS sync             │
-│  ├─ Cloudflare       Cloudflare settings             │
-│  ├─ WordPress        One-click WP install            │
-│  ├─ Clone/Staging    Site cloning                    │
-│  ├─ Migration        Apache/Nginx import wizard      │
-│  └─ File Manager     Web file browser/editor         │
+│  ├─ Domains           Domain list + CRUD             │
+│  ├─ Topology          Domain dependency graph        │
+│  ├─ Certificates      SSL/TLS + ACME status          │
+│  ├─ DNS               DNS zone editor                │
+│  ├─ Cloudflare        CF settings, tunnels, purge    │
+│  ├─ WordPress         One-click WP install           │
+│  ├─ Clone / Staging   Site cloning                   │
+│  ├─ Migration         Apache/Nginx import wizard     │
+│  └─ File Manager      Web file browser/editor        │
 ├─────────────────────────────────────────────────────┤
 │  Server                                              │
-│  ├─ PHP              PHP versions + start/stop       │
-│  ├─ PHP Config       php.ini editor per version      │
-│  ├─ Applications     Vercel-style deploy dashboard   │
-│  │                   (wizard, ENV editor, routing    │
-│  │                   diagram, resource gauges)        │
-│  ├─ Database         MySQL/MariaDB + Docker mgmt     │
-│  ├─ DB Explorer      phpMyAdmin-like DB browser      │
-│  ├─ SFTP Users       Chroot users + SSH keys         │
-│  ├─ Cron Jobs        Per-domain cron management      │
-│  ├─ Services         systemd service control         │
-│  ├─ Packages         OS package install/remove       │
-│  ├─ IP Management    IP assignment                   │
-│  └─ Email Guide      DNS record setup guide          │
+│  ├─ PHP               PHP versions + start/stop      │
+│  ├─ PHP Config        php.ini editor per version     │
+│  ├─ Applications      Standalone app deploy + ENV    │
+│  ├─ Software Library  Docker Compose app catalogue   │
+│  ├─ Database          MySQL/MariaDB + Docker mgmt    │
+│  ├─ DB Explorer       Browser-based DB client        │
+│  ├─ SFTP Users        Chroot users + SSH keys        │
+│  ├─ Cron Jobs         Per-domain cron management     │
+│  ├─ Services          systemd service control        │
+│  ├─ Packages          OS package install/remove      │
+│  ├─ IP Management     IP assignment                  │
+│  └─ Email Guide       DNS record setup guide         │
 ├─────────────────────────────────────────────────────┤
 │  Performance                                         │
-│  ├─ Cache            Stats + purge + per-domain      │
-│  ├─ Metrics          Request metrics + percentiles   │
-│  ├─ Analytics        Traffic analytics + bandwidth   │
-│  └─ Logs             Real-time log viewer (SSE)      │
+│  ├─ Cache             Stats + purge + per-domain     │
+│  ├─ Metrics           Request metrics + percentiles  │
+│  ├─ Analytics         Traffic analytics + bandwidth  │
+│  └─ Logs              Real-time log viewer (SSE)     │
 ├─────────────────────────────────────────────────────┤
 │  Security                                            │
-│  ├─ Security         WAF + bot guard stats           │
-│  ├─ Firewall         UFW rule management             │
-│  ├─ Unknown Domains  Block unconfigured hosts        │
-│  ├─ Audit Log        Admin action history            │
-│  ├─ Admin Users      Multi-user management           │
-│  └─ Users            End-user management             │
+│  ├─ Security          WAF + bot guard stats          │
+│  ├─ Firewall          UFW rule management            │
+│  ├─ Unknown Domains   Block unconfigured hosts       │
+│  ├─ Audit Log         Admin action history           │
+│  └─ Admin Users       Multi-user management          │
 ├─────────────────────────────────────────────────────┤
 │  System                                              │
-│  ├─ Config Editor    Raw YAML editor + validation    │
-│  ├─ Webhooks         Webhook management              │
-│  ├─ Backups          Backup/restore + schedule       │
-│  ├─ Terminal         WebSocket browser shell          │
-│  ├─ Updates          Self-update from GitHub          │
-│  ├─ Settings         Structured settings editor      │
-│  ├─ Doctor           Diagnostics + auto-fix          │
-│  └─ About            Version + system info           │
+│  ├─ Setup Wizard      First-run setup                │
+│  ├─ Config Editor     Raw YAML editor + validation   │
+│  ├─ Webhooks          Webhook management             │
+│  ├─ Backups           Backup/restore + schedule      │
+│  ├─ Terminal          WebSocket browser shell        │
+│  ├─ Updates           Self-update from GitHub        │
+│  ├─ Doctor            Diagnostics + auto-fix         │
+│  ├─ Settings          Structured settings editor     │
+│  └─ About             Version + system info          │
 ├─────────────────────────────────────────────────────┤
-│  Auth                                                │
-│  └─ Login            API key + TOTP 2FA              │
+│  Not in the sidebar                                  │
+│  ├─ Domain Detail     Individual domain config       │
+│  └─ Login             API key + TOTP 2FA             │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -817,7 +930,8 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
 │                        Security Layers                         │
 │                                                                │
 │  Layer 1: Network                                              │
-│  ├─ TLS 1.2+ with SNI (auto ACME certs)                      │
+│  ├─ TLS 1.2+ with SNI (auto ACME certs); a domain can raise   │
+│  │   its own floor via ssl.min_version                        │
 │  ├─ HTTP/2 + HTTP/3 (QUIC)                                    │
 │  ├─ Connection limiter (semaphore)                             │
 │  └─ UFW firewall management                                   │
@@ -845,6 +959,7 @@ PUT /api/v1/config/raw  →  Validate  →  Atomic swap  →  Reload all:
 │  ├─ TOTP 2FA: 30-second window, rate-limited                 │
 │  ├─ Pin code: required for destructive operations             │
 │  ├─ Webhook HMAC: SHA-256 signature verification              │
+│  ├─ mTLS: per-domain client CA pool, require/request/none     │
 │  ├─ Git token: redacted in error logs                         │
 │  └─ Credentials: masked in dashboard (copy-only)             │
 │                                                                │
@@ -985,7 +1100,7 @@ net/http + log/slog + crypto/subtle + encoding/json.
 ```bash
 # Production build (stripped, versioned)
 make build
-# → bin/uwas (~15MB, linux/amd64)
+# → bin/uwas (~16.4MB, linux/amd64)
 
 # Development build
 make dev
@@ -998,7 +1113,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 cd web/dashboard && npm run build
 
 # Test
-go test ./...              # all 52 packages, parallel
+go test ./...              # 56 packages carry tests, run in parallel
+go test ./... -race        # what CI gates on
 
 # Install (one-time)
 uwas install                    # creates dirs, systemd unit, config
@@ -1008,17 +1124,21 @@ uwas serve -c /etc/uwas/uwas.yaml
 
 # Hot reload (zero downtime)
 uwas reload
-
-# Self-update
-uwas update                     # downloads latest from GitHub releases
 ```
+
+The 19 CLI commands are: `backup` `cache` `cert` `config` `doctor` `domain`
+`help` `install` `migrate` `php` `reload` `restart` `restore` `serve` `status`
+`stop` `uninstall` `user` `version`.
+
+Self-update has no CLI command. `internal/selfupdate` is reached from the
+admin API (`/api/v1/system/update`) and the dashboard's Updates page.
 
 ---
 
 ## Testing
 
 ```
-52 packages with tests, 136 test files
+56 packages with tests, 284 test files, ~7,000 test functions
 
 Test approach:
   • Unit tests alongside source: foo.go → foo_test.go

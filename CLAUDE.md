@@ -16,11 +16,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 42-page React dashboard.
 
-**Current Stats (v0.8.10 + current main):**
-- 55 Go packages from `go list ./... | grep -v /node_modules/`
-- 42 dashboard pages and 251 explicit admin route registrations
-- 19 CLI commands
-- ~15MB stripped linux/amd64 release binary target
+**Current Stats (v0.9.2):**
+- 69 Go packages (`go list ./...`) — 62 under `internal/`, 2 under `pkg/`; 56 carry tests
+- 42 dashboard pages and 253 explicit admin route registrations
+- 19 CLI commands (no `update` command — self-update is admin-API only)
+- ~16MB stripped linux/amd64 release binary
 
 ## Build & Test Commands
 
@@ -59,7 +59,9 @@ make all                              # Full check + build
 ```
 cmd/uwas/            CLI entry point (19 commands)
 internal/
-  admin/             API server (251 route registrations) + dashboard embed + TOTP auth
+  admin/             API server (253 route registrations) + dashboard embed + TOTP auth
+    apps/ authmw/ backup/ cloudflare/ database/ deploy/ domain/ files/
+    php/ settings/ wordpress/  handler sub-packages
     api.go            Core: Server struct, lifecycle, middleware, helpers
     routes.go         Route registration (15 themed sub-registrars)
     handlers_*.go     Topic-split handlers (auth, domain, cloudflare×3,
@@ -116,7 +118,7 @@ internal/
   siteuser/          SFTP user management (chroot jail + SSH keys)
   terminal/          WebSocket-to-PTY bridge for browser-based shell
   tls/               TLS manager, ACME client, auto-renewal, cert expiry alerts
-  webhook/           Event-driven webhook delivery (11 events, HMAC, retry)
+  webhook/           Event-driven webhook delivery (12 events + test, HMAC, retry)
   wordpress/         WordPress install, manage, debug, permissions
 pkg/
   fastcgi/           FastCGI binary protocol, connection pool
@@ -211,10 +213,10 @@ go test -race ./...                  # Race detector (CI runs this as a separate
 ## Dashboard Pages (42)
 
 - **Sites:** Domains, Domain Detail, Topology, Certificates, DNS, Cloudflare, WordPress, Clone/Staging, Migration, File Manager
-- **Server:** PHP, PHP Config, Applications (Apps), Database, DB Explorer, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
+- **Server:** PHP, PHP Config, Applications (Apps), Software Library, Database, DB Explorer, SFTP Users, Cron Jobs, Services, Packages, IP Management, Email Guide
 - **Performance:** Cache, Metrics, Analytics, Logs
-- **Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users, Users
-- **System:** Config Editor, Webhooks, Backups, Terminal, Updates, Settings, Doctor
+- **Security:** Security, Firewall, Unknown Domains, Audit Log, Admin Users
+- **System:** Setup Wizard, Config Editor, Webhooks, Backups, Terminal, Updates, Doctor, Settings
 - **Auth:** Login (2FA/TOTP support)
 - **Overview:** Dashboard, About
 
