@@ -34,6 +34,7 @@ type GlobalConfig struct {
 	MCP            MCPConfig        `yaml:"mcp"`
 	ACME           ACMEConfig       `yaml:"acme"`
 	Cache          CacheConfig      `yaml:"cache"`
+	StaticCache    StaticFileCache  `yaml:"static_cache,omitempty" json:"static_cache,omitempty"`
 	Alerting       AlertingConfig   `yaml:"alerting"`
 	Backup         BackupConfig     `yaml:"backup"`
 	Cloudflare     CloudflareConfig `yaml:"cloudflare,omitempty"`
