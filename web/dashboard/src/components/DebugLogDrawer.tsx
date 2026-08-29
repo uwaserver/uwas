@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bug, ChevronDown, Copy, Trash2 } from 'lucide-react';
 import {
   addDebugLog,
@@ -70,6 +71,15 @@ export default function DebugLogDrawer() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
   const copyLogs = async () => {
     const text = entries
       .slice()
@@ -116,8 +126,19 @@ export default function DebugLogDrawer() {
         </button>
       </div>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/30">
+      {/* Portalled to <body> on purpose. The sidebar <aside> carries
+          transition-transform and a translate-x utility, and a transformed
+          ancestor becomes the containing block for its fixed descendants —
+          so rendering the panel here left it pinned inside the 15rem sidebar
+          instead of the viewport, which is why the log used to stream in that
+          narrow column. A portal escapes the transform entirely.
+
+          Docked to the content area rather than overlaid: left-0 on mobile,
+          where the sidebar is off-canvas, and lg:left-60 on desktop so it
+          lines up with the wide column. No dimming backdrop either — a debug
+          log is for watching while you use the app, not a modal. */}
+      {open && createPortal(
+        <div className="fixed bottom-0 left-0 right-0 z-40 lg:left-60">
           <div className="w-full border-t border-border bg-card shadow-2xl">
             <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
               <div className="min-w-0">
@@ -184,7 +205,8 @@ export default function DebugLogDrawer() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
