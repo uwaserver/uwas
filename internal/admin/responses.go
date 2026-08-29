@@ -29,7 +29,11 @@ type StatusDetailResponse struct {
 type CachePurgeResponse struct {
 	Status string `json:"status"`
 	Tag    string `json:"tag,omitempty"`
-	Count  int    `json:"count,omitempty"`
+	Host   string `json:"host,omitempty"`
+	// Count carries no omitempty on purpose. A purge that matched nothing is
+	// the failure mode this endpoint actually has, and dropping the zero made
+	// it indistinguishable from a purge that worked.
+	Count int `json:"count"`
 }
 
 // HealthResponse is returned by GET /api/v1/health.

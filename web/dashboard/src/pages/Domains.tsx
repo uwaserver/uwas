@@ -9,7 +9,7 @@ import {
   Archive,
 } from 'lucide-react';
 import {
-  fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, triggerPurge,
+  fetchDomains, addDomain, updateDomain, deleteDomain, fetchDomainDetail, fetchCerts, purgeCacheForHost,
   fetchPHP, fetchServerIPs, fetchDomainHealth, fetchApps,
   type DomainData, type DomainDetail, type CertInfo, type PHPInstall, type ServerIPInfo, type DomainHealth,
   type AppInstance,
@@ -458,9 +458,13 @@ export default function Domains() {
     setPurgingHost(host);
     setStatus(null);
     try {
-      const domainTag = `site:${host.replace(/[^a-zA-Z0-9.-]/g, '')}`;
-      await triggerPurge(domainTag);
-      setStatus({ ok: true, message: `Cache purged for ${host}` });
+      const res = await purgeCacheForHost(host);
+      setStatus({
+        ok: true,
+        message: res.count > 0
+          ? `Purged ${res.count} ${res.count === 1 ? 'entry' : 'entries'} for ${host}`
+          : `Nothing cached for ${host}`,
+      });
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
     } finally {
