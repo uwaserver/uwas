@@ -26,6 +26,23 @@ import (
 	"github.com/uwaserver/uwas/internal/router"
 )
 
+// cacheTagsFor returns the domain's configured cache tags plus an implicit
+// site: tag naming the domain that produced the entry.
+//
+// The implicit tag is what makes "purge this domain" work. The dashboard used
+// to synthesize `site:<host>` client-side and purge by it, but nothing ever
+// wrote that tag, so the purge matched nothing, reported success and left the
+// cache untouched. Writing it here — through cache.SiteTag, the same
+// normalization the cache key uses — is what closes that gap.
+//
+// The result is always a fresh slice: appending to domain.Cache.Tags would
+// write into the shared config slice.
+func cacheTagsFor(domain *config.Domain, host string) []string {
+	tags := make([]string, 0, len(domain.Cache.Tags)+1)
+	tags = append(tags, domain.Cache.Tags...)
+	return append(tags, cache.SiteTag(host))
+}
+
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Connection limiter: reject with 503 when at capacity.
 	if s.connLimiter != nil {
@@ -82,7 +99,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RecordDomain(r.Host, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 
 		// Record to admin log ring buffer (skip internal health checks and monitor)
-		isMonitor := r.UserAgent() == "UWAS-Monitor/1.0"
+		// Matched as a substring: the monitor sends a browser-shaped User-Agent
+		// to get past CDN bot rules and only keeps UWAS-Monitor as a token
+		// inside it.
+		isMonitor := strings.Contains(r.UserAgent(), "UWAS-Monitor")
 		if s.admin != nil && !isMonitor && r.Host != "localhost:80" && r.Host != "localhost" {
 			elapsed := time.Since(start)
 			remoteIP := normalizedRemoteIP(r)
@@ -595,7 +615,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			// ESI assembly on cache hit: replace ESI tags with cached/fetched fragments
 			if cached.ESITemplate && domain.Cache.ESI && s.esiProcessor != nil &&
 				r.Header.Get("X-ESI-Subrequest") == "" {
-				assembled, err := s.esiProcessor.Process(body, r.Host, r, domain.Cache.Tags, 0)
+				assembled, err := s.esiProcessor.Process(body, r.Host, r, cacheTagsFor(domain, r.Host), 0)
 				if err == nil {
 					body = assembled
 				}
@@ -670,7 +690,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				Body:        capturedBody,
 				Created:     time.Now(),
 				TTL:         ttl,
-				Tags:        domain.Cache.Tags,
+				Tags:        cacheTagsFor(domain, r.Host),
 				ESITemplate: isESI,
 			})
 		}
@@ -802,6 +822,25 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		}
 	}
 
+	// Browser caching.
+	//
+	// Set here rather than inside the static handler because this is the last
+	// point where the finally-resolved path is known (index resolution and the
+	// image-optimization swap above both change it), and because it lands
+	// before the response is captured for the server cache — so a cache HIT
+	// replays the same headers a MISS sent.
+	//
+	// Anything already set wins: locations[].cache_control and
+	// cache.rules[].cache_control run earlier and are explicit operator intent.
+	resolvedFile := ctx.ResolvedPath
+	if resolvedFile == "" {
+		resolvedFile = resolved
+	}
+	if ctx.Response.Header().Get("Cache-Control") == "" {
+		if cc := static.BrowserCacheFor(domain.BrowserCache, ctx.Request.URL.Path, resolvedFile); cc != "" {
+			ctx.Response.Header().Set("Cache-Control", cc)
+		}
+	}
 	s.static.Serve(ctx)
 }
 

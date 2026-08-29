@@ -9,17 +9,18 @@ package config
 // means "do not touch the existing value" and an explicit null/empty
 // means "clear it".
 type DomainPatchFields struct {
-	HasAliases     bool
-	HasLocations   bool
-	HasBasicAuth   bool
-	HasSecurity    bool
-	HasCache       bool
-	HasCompression bool
-	HasHtaccess    bool
-	HasSSL         bool
-	HasSSLForce    bool
-	HasResources   bool
-	HasCanonical   bool
+	HasAliases      bool
+	HasLocations    bool
+	HasBasicAuth    bool
+	HasSecurity     bool
+	HasCache        bool
+	HasCompression  bool
+	HasBrowserCache bool
+	HasHtaccess     bool
+	HasSSL          bool
+	HasSSLForce     bool
+	HasResources    bool
+	HasCanonical    bool
 }
 
 // MergeDomain produces a merged domain by overlaying patch fields onto
@@ -168,6 +169,7 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 		merged.Cache = patch.Cache
 		merged.Security = patch.Security
 		merged.Compression = patch.Compression
+		merged.BrowserCache = patch.BrowserCache
 	} else {
 		if fields.HasCache {
 			merged.Cache = patch.Cache
@@ -177,6 +179,12 @@ func MergeDomain(existing, patch Domain, fields DomainPatchFields, replaceMode b
 		}
 		if fields.HasCompression || patch.Compression.Enabled != nil || len(patch.Compression.Algorithms) > 0 || patch.Compression.MinSize > 0 || len(patch.Compression.Types) > 0 {
 			merged.Compression = patch.Compression
+		}
+		// Key presence is the only reliable signal here: clearing
+		// immutable_paths or turning browser_cache off both look like the Go
+		// zero value, so a value check would make them unsendable.
+		if fields.HasBrowserCache {
+			merged.BrowserCache = patch.BrowserCache
 		}
 	}
 
