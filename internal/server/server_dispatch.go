@@ -26,6 +26,27 @@ import (
 	"github.com/uwaserver/uwas/internal/router"
 )
 
+// graceTTL is how long past its TTL an entry may still be served while a
+// refresh runs behind it.
+//
+// Zero unless stale_while_revalidate is on, and that gate is the whole point:
+// grace_ttl defaults to 24 hours, so applying it unconditionally would hand
+// day-old content to visitors of every cached site. Entries stored before the
+// flag is turned on keep a zero grace and expire the old way, which is the
+// conservative direction for a value read off the entry rather than the
+// config at serve time.
+func (s *Server) graceTTL() time.Duration {
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	if !s.config.Global.Cache.StaleWhileRevalidate {
+		return 0
+	}
+	if secs := s.config.Global.Cache.GraceTTL; secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return 0
+}
+
 // cacheTagsFor returns the domain's configured cache tags plus an implicit
 // site: tag naming the domain that produced the entry.
 //
@@ -92,7 +113,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	s.metrics.ActiveConns.Add(1)
 	defer func() {
 		s.metrics.ActiveConns.Add(-1)
-		s.metrics.RequestsTotal.Add(1)
+		// RecordRequest owns RequestsTotal — it increments the counter and the
+		// matching per-status bucket together. An extra Add here counted every
+		// request twice, so uwas_requests_total, the panel's request stat and
+		// the MCP report all read double the real traffic, while
+		// RequestsByCode stayed correct and disagreed with their sum.
 		s.metrics.RecordRequest(ctx.Response.StatusCode())
 		s.metrics.RecordLatency(time.Since(start))
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
@@ -595,6 +620,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if cached != nil && (status == cache.StatusHit || status == cache.StatusStale) {
 			ctx.CacheStatus = status
 			s.metrics.RecordCache(status)
+
+			// Serve the stale copy now, refresh behind it. This is the point of
+			// the grace window: the visitor waiting on this request should not
+			// pay for the origin round trip that makes the entry fresh again.
+			if status == cache.StatusStale {
+				ttl := cacheTTLFor(ruleTTL, domain.Cache.TTL, s.config.Global.Cache.DefaultTTL)
+				s.scheduleRevalidate(domain, s.staleJobFor(cacheKey, r, domain, ttl, s.graceTTL()))
+			}
 			ctx.Response.Header().Set("X-Cache", status)
 			ctx.Response.Header().Set("Age", strconv.FormatInt(int64(cached.Age().Seconds()), 10))
 			for k, vals := range cached.Headers {
@@ -690,6 +723,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				Body:        capturedBody,
 				Created:     time.Now(),
 				TTL:         ttl,
+				GraceTTL:    s.graceTTL(),
 				Tags:        cacheTagsFor(domain, r.Host),
 				ESITemplate: isESI,
 			})
@@ -738,22 +772,32 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		ctx.OriginalURI = ctx.Request.URL.RequestURI()
 	}
 
-	// Check if the raw path points to a directory (for directory listing).
-	// Apply the same guards the normal static path enforces: reject dotfile
-	// path components and require the target stay within the (symlink-resolved)
-	// doc root. Without these, `GET /.config/` or a symlinked subdir pointing
-	// outside the root would be listed, leaking out-of-root filenames.
-	if domain.DirectoryListing && domain.Root != "" {
-		rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
-		if dirListingAllowed(domain.Root, rawPath, ctx.Request.URL.Path) {
-			if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
-				static.ServeDirListing(ctx, rawPath, ctx.Request.URL.Path)
-				return
+	// Resolve first, list second.
+	//
+	// The listing used to be checked before resolution, so turning
+	// directory_listing on replaced the site's homepage with a file listing —
+	// GET / found a directory and rendered it, never looking for index.html.
+	// Every server since NCSA does the opposite: Apache checks DirectoryIndex
+	// before Options +Indexes, nginx checks index before autoindex. An
+	// operator enabling listings for a downloads folder should not lose their
+	// front page and publish every filename in the doc root.
+	if !static.ResolveRequest(ctx, domain) {
+		// Nothing to serve. If the path is a directory and listings are on,
+		// that is what a listing is for.
+		//
+		// The guards match the normal static path: no dotfile components, and
+		// the target must stay inside the symlink-resolved doc root, or
+		// `GET /.config/` and symlinked subdirectories would leak names from
+		// outside the root.
+		if domain.DirectoryListing && domain.Root != "" {
+			rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
+			if dirListingAllowed(domain.Root, rawPath, ctx.Request.URL.Path) {
+				if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
+					static.ServeDirListing(ctx, rawPath, ctx.Request.URL.Path)
+					return
+				}
 			}
 		}
-	}
-
-	if !static.ResolveRequest(ctx, domain) {
 		renderDomainError(ctx.Response, http.StatusNotFound, domain)
 		return
 	}

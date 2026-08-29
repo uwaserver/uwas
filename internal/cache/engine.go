@@ -163,6 +163,21 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 	}
 }
 
+// PurgeKey removes one entry from every tier.
+//
+// Used when a background revalidation finds the resource is no longer
+// cacheable: keeping the stale copy until its grace window runs out would
+// serve content the origin has just declined to have cached.
+func (e *Engine) PurgeKey(key string) {
+	e.memory.Delete(key)
+	if e.disk != nil {
+		e.disk.Delete(key)
+	}
+	if e.redis != nil {
+		_ = e.redis.Delete(key)
+	}
+}
+
 // PurgeByTag removes entries matching tags from L1, L2, and L3.
 func (e *Engine) PurgeByTag(tags ...string) int {
 	count := e.memory.PurgeByTag(tags...)
