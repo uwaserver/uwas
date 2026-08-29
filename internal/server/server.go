@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -50,6 +49,7 @@ import (
 	"github.com/uwaserver/uwas/internal/metrics"
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/monitor"
+	"github.com/uwaserver/uwas/internal/pathmatch"
 	"github.com/uwaserver/uwas/internal/phpmanager"
 	"github.com/uwaserver/uwas/internal/rewrite"
 	"github.com/uwaserver/uwas/internal/rlimit"
@@ -236,7 +236,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 		config:          cfg,
 		logger:          log,
 		vhosts:          router.NewVHostRouter(cfg.Domains),
-		static:          static.New(),
+		static:          static.NewWithFileCache(cfg.Global.StaticCache),
 		php:             fcgihandler.New(log),
 		proxy:           proxyhandler.New(log),
 		tlsMgr:          uwastls.NewManager(cfg.Global.ACME, cfg.Domains, log),
@@ -1481,24 +1481,15 @@ func (s *Server) removePID() {
 	}
 }
 
-// regexCache caches compiled regex patterns to avoid recompilation on every request.
-var regexCache sync.Map
+// matchPath and matchLocation delegate to internal/pathmatch, which owns the
+// implementation. The admin API needs the same two matchers to tell an
+// operator which rule will win for a given path, and it cannot import this
+// package — the server constructs the admin server, so the dependency runs
+// one way only. A second copy of the rules would answer differently from the
+// request path sooner or later.
+func matchPath(path, pattern string) bool { return pathmatch.Regex(path, pattern) }
 
-// matchPath checks if a URL path matches a regex pattern from cache rules.
-func matchPath(path, pattern string) bool {
-	var re *regexp.Regexp
-	if v, ok := regexCache.Load(pattern); ok {
-		re = v.(*regexp.Regexp)
-	} else {
-		var err error
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return false
-		}
-		regexCache.Store(pattern, re)
-	}
-	return re.MatchString(path)
-}
+func matchLocation(path, pattern string) bool { return pathmatch.Location(path, pattern) }
 
 // toWebhookConfigs converts config.WebhookConfig to webhook.WebhookConfig.
 func toWebhookConfigs(cfgs []config.WebhookConfig) []webhook.WebhookConfig {
@@ -1563,30 +1554,6 @@ func (s *Server) locationLimiterJanitor(ctx context.Context) {
 			})
 		}
 	}
-}
-
-// matchLocation checks if a URL path matches a location pattern.
-// Prefix match: "/api/" matches "/api/users"
-// Regex match (prefix ~): "~\\.php$" matches "/index.php"
-func matchLocation(path, pattern string) bool {
-	if strings.HasPrefix(pattern, "~") {
-		// Regex match — use cache to avoid recompiling on every request
-		regexStr := strings.TrimSpace(pattern[1:])
-		var re *regexp.Regexp
-		if v, ok := regexCache.Load(regexStr); ok {
-			re = v.(*regexp.Regexp)
-		} else {
-			var err error
-			re, err = regexp.Compile(regexStr)
-			if err != nil {
-				return false
-			}
-			regexCache.Store(regexStr, re)
-		}
-		return re.MatchString(path)
-	}
-	// Prefix match
-	return strings.HasPrefix(path, pattern)
 }
 
 func enforceBasicAuth(w http.ResponseWriter, r *http.Request, host string, cfg config.BasicAuthConfig) bool {

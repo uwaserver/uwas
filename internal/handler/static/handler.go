@@ -1,13 +1,16 @@
 package static
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/pathsafe"
@@ -15,13 +18,48 @@ import (
 )
 
 type Handler struct {
-	mime *MIMERegistry
+	mime  *MIMERegistry
+	files *fileCache
 }
+
+// Default file cache budget. Small enough that an idle server does not hold
+// meaningful memory, large enough to cover the pages, stylesheets and scripts
+// a busy site actually serves over and over.
+const (
+	defaultFileCacheMaxFile    = 512 << 10 // 512KB
+	defaultFileCacheMaxBytes   = 64 << 20  // 64MB
+	defaultFileCacheRevalidate = time.Second
+)
 
 func New() *Handler {
 	return &Handler{
-		mime: NewMIMERegistry(nil),
+		mime:  NewMIMERegistry(nil),
+		files: newFileCache(defaultFileCacheMaxFile, defaultFileCacheMaxBytes, defaultFileCacheRevalidate),
 	}
+}
+
+// NewWithFileCache builds a handler whose file cache follows operator config.
+// A disabled cache leaves files nil, and every fileCache method is a no-op on
+// nil, so the serve path needs no extra branch.
+func NewWithFileCache(cfg config.StaticFileCache) *Handler {
+	h := &Handler{mime: NewMIMERegistry(nil)}
+	if !cfg.StaticFileCacheEnabled() {
+		return h
+	}
+	maxFile := int64(cfg.MaxFileSize)
+	if maxFile <= 0 {
+		maxFile = defaultFileCacheMaxFile
+	}
+	maxBytes := int64(cfg.MaxBytes)
+	if maxBytes <= 0 {
+		maxBytes = defaultFileCacheMaxBytes
+	}
+	revalidate := cfg.Revalidate.Duration
+	if revalidate <= 0 {
+		revalidate = defaultFileCacheRevalidate
+	}
+	h.files = newFileCache(maxFile, maxBytes, revalidate)
+	return h
 }
 
 // Serve handles the request by serving the resolved static file.
@@ -76,6 +114,14 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	etag := generateETag(info)
 	w.Header().Set("ETag", etag)
 
+	// Serve from the file cache when the bytes are already in memory. The
+	// entry is revalidated against the FileInfo we already hold, so a file
+	// edited on disk is never served stale here.
+	if e := h.files.get(path, info); e != nil {
+		http.ServeContent(w, r, filepath.Base(path), e.modTime, bytes.NewReader(e.body))
+		return
+	}
+
 	// Let http.ServeContent handle If-None-Match, If-Modified-Since, Range requests
 	f, err := os.Open(path)
 	if err != nil {
@@ -83,6 +129,28 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 		return
 	}
 	defer f.Close()
+
+	// Read small files whole so the next request can skip the filesystem
+	// entirely. Anything larger streams straight from the file handle: the
+	// point of the cache is repeated small assets, not one big download.
+	if h.files != nil && info.Size() <= h.files.maxFileSize {
+		if body, readErr := io.ReadAll(f); readErr == nil && int64(len(body)) == info.Size() {
+			h.files.put(&fileEntry{
+				path:    path,
+				body:    body,
+				size:    info.Size(),
+				modTime: info.ModTime(),
+			})
+			http.ServeContent(w, r, filepath.Base(path), info.ModTime(), bytes.NewReader(body))
+			return
+		}
+		// A short or failed read falls through to streaming from the handle;
+		// rewind first, since ReadAll consumed it.
+		if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+			w.Error(http.StatusInternalServerError, "500 Internal Server Error")
+			return
+		}
+	}
 
 	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
 }
