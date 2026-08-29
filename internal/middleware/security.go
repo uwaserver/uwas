@@ -67,6 +67,16 @@ var wafURLPatterns = []wafRule{
 	{WAFSQLInjection, regexp.MustCompile(`(?i)(union\s+select|insert\s+into|delete\s+from|drop\s+table|alter\s+table)`)},
 	{WAFSQLInjection, regexp.MustCompile(`(?i)(--|;)\s+(drop|alter|delete|insert|update)`)},
 	{WAFSQLInjection, regexp.MustCompile(`(?i)(sleep\s*\(|benchmark\s*\(|load_file\s*\(|into\s+outfile)`)},
+	// Boolean tautologies: `' OR '1'='1`, `" or 1=1--`, ` and 2=2`. The rules
+	// above are keyword-driven and miss this family completely, which is
+	// awkward because it is the first thing every scanner sends and the
+	// classic auth bypass.
+	//
+	// URL patterns only, following this file's split: a query string carrying
+	// a quote, OR/AND and an equality is not something a real link contains,
+	// while a form body legitimately carries prose that would trip it.
+	{WAFSQLInjection, regexp.MustCompile(`(?i)['"]\s*(or|and)\s+['"]?\w{1,12}['"]?\s*=\s*['"]?\w{1,12}`)},
+	{WAFSQLInjection, regexp.MustCompile(`(?i)\b(or|and)\s+\d{1,6}\s*=\s*\d{1,6}\b`)},
 	// XSS in URL
 	{WAFXSS, regexp.MustCompile(`(?i)<script[^>]*>`)},
 	{WAFXSS, regexp.MustCompile(`(?i)(javascript|vbscript)\s*:`)},
