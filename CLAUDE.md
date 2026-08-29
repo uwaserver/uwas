@@ -16,9 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 42-page React dashboard.
 
-**Current Stats (v0.9.2):**
-- 69 Go packages (`go list ./...`) — 62 under `internal/`, 2 under `pkg/`; 56 carry tests
-- 42 dashboard pages and 253 explicit admin route registrations
+**Current Stats (v0.10.0):**
+- 71 Go packages (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
+- 42 dashboard pages and 254 explicit admin route registrations
 - 19 CLI commands (no `update` command — self-update is admin-API only)
 - ~16MB stripped linux/amd64 release binary
 
@@ -59,7 +59,7 @@ make all                              # Full check + build
 ```
 cmd/uwas/            CLI entry point (19 commands)
 internal/
-  admin/             API server (253 route registrations) + dashboard embed + TOTP auth
+  admin/             API server (254 route registrations) + dashboard embed + TOTP auth
     apps/ authmw/ backup/ cloudflare/ database/ deploy/ domain/ files/
     php/ settings/ wordpress/  handler sub-packages
     api.go            Core: Server struct, lifecycle, middleware, helpers
@@ -90,7 +90,8 @@ internal/
   handler/
     fastcgi/         PHP-CGI/FPM handler + X-Accel-Redirect + X-Sendfile
     proxy/           Reverse proxy, LB (5 algorithms), circuit breaker, canary, mirror, WebSocket
-    static/          Static files, MIME, ETag, pre-compressed, SPA
+    static/          Static files, MIME, ETag, pre-compressed, SPA, in-memory
+                     file cache, browser Cache-Control policy
   install/           System package installer task queue
   logger/            Structured logger (slog wrapper)
   mcp/               MCP server for AI management
@@ -99,6 +100,8 @@ internal/
   migrate/           Nginx/Apache converter + SSH site migration + clone
   monitor/           Uptime monitoring per domain
   notify/            Webhook, Slack, Telegram, Email (SMTP) channels
+  pathmatch/         Location + cache-rule URL matchers, shared by the request
+                     path and the admin API
   pathsafe/          Path traversal guard (symlink-resolving containment)
   phpmanager/        PHP detect, install, start/stop, per-domain assign
   respond/           Centralized JSON response helpers (5xx logging)

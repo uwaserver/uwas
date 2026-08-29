@@ -73,6 +73,15 @@ global:
     storage: /var/lib/uwas/certs
 
   # Global cache settings
+  # In-memory cache of static file bytes, shared by every static domain.
+  # Distinct from `cache:` below, which stores whole rendered responses and is
+  # configured per site.
+  static_cache:
+    enabled: true
+    max_file_size: 512KB   # larger files stream from disk
+    max_bytes: 64MB        # total memory held
+    revalidate: 1s         # how long a cached file is trusted before re-stat
+
   cache:
     enabled: true
     memory_limit: 512MB
@@ -110,6 +119,26 @@ domains:
         - application/javascript
         - application/json
         - image/svg+xml
+
+    # Cache-Control sent to the browser. Separate from `cache:` below, which
+    # is what the server keeps in memory: this one removes the request
+    # entirely instead of making it cheap to answer.
+    browser_cache:
+      # enabled: true            # default
+      # html: "no-cache"         # default — pages revalidate via ETag (304)
+      #
+      # immutable_paths lists build output whose filenames contain a content
+      # hash, so a change to the bytes changes the URL. Never point it at a
+      # directory whose files are edited in place: matches are told not to
+      # revalidate for a year.
+      immutable_paths:
+        - "/assets/*"
+        - "/_next/static/*"
+      # immutable: "public, max-age=31536000, immutable"   # default
+      #
+      # assets applies to every other static file. Empty (the default) means
+      # no Cache-Control is sent and the browser revalidates.
+      # assets: "public, max-age=3600"
 
     headers:
       add:
