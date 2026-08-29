@@ -366,7 +366,7 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "signature mismatch", http.StatusUnauthorized)
 		return
 	}
-	ref := extractPushRef(body)
+	ref := extractPushRef(webhookPayloadJSON(r, body))
 	branch := ""
 	if i := strings.LastIndex(ref, "/"); i >= 0 {
 		branch = ref[i+1:]

@@ -645,6 +645,35 @@ func verifyWebhookSignature(r *http.Request, body []byte, secret string) bool {
 	return false
 }
 
+// webhookPayloadJSON returns the JSON document out of a webhook request body.
+//
+// GitHub sends the payload one of two ways depending on the webhook's content
+// type setting. With application/json the body *is* the JSON. With
+// application/x-www-form-urlencoded — GitHub's default, and the one most
+// operators never change — the body is a form whose "payload" field holds the
+// JSON. Reading that form as JSON yields no ref, which would turn a push into
+// a deploy with an empty ref and defeat branch filtering.
+//
+// The HMAC is deliberately not computed from this: GitHub signs the raw body
+// it sent, so verifyWebhookSignature must keep using the untouched bytes.
+func webhookPayloadJSON(r *http.Request, body []byte) []byte {
+	ct := r.Header.Get("Content-Type")
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	if strings.TrimSpace(ct) != "application/x-www-form-urlencoded" {
+		return body
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return body
+	}
+	if payload := values.Get("payload"); payload != "" {
+		return []byte(payload)
+	}
+	return body
+}
+
 func extractPushRef(body []byte) string {
 	var payload struct {
 		Ref string `json:"ref"`
