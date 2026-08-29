@@ -5,6 +5,41 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.10.1
+
+Six things the panel reported as working and were not. Two change behavior you
+may have been relying on.
+
+### Action may be required
+
+1. **`directory_listing` no longer replaces the homepage.** With listings on,
+   `GET /` served a file listing even when `index.html` existed. It now serves
+   the index and lists only directories that have none. If you were relying on
+   the listing appearing at a path that also has an index file, remove the
+   index file.
+
+2. **`stale_while_revalidate` now does something.** It was inert, so turning it
+   on changed nothing. With it on, an entry past its TTL is served stale for up
+   to `grace_ttl` — 24 hours by default — while a refresh runs behind it. Check
+   that `grace_ttl` is a window you actually want before enabling it.
+
+### Behavior changes (no action needed)
+
+- **Alerts now reach Slack, Telegram and email.** Those channels were stored
+  and never delivered to. If you configured them and forgot, they will start
+  sending.
+- **The WAF blocks boolean SQL tautologies** (`' OR '1'='1`). Anchored on a
+  quote or a numeric equality in the query string, so ordinary queries are
+  unaffected.
+- **Request metrics halve.** `uwas_requests_total`, the panel's request stat
+  and the MCP report were double-counting; existing graphs will show a step
+  down that is a correction, not a traffic drop.
+- **The panel stops claiming `.htaccess` is enabled everywhere.** It reads
+  `mode: import` now instead of any non-empty value, and an invalid mode is
+  rejected at config load rather than silently meaning "off".
+
+---
+
 ## Upgrading to v0.10.0
 
 Three silent failures fixed and the first measured performance change. Nothing
