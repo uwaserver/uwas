@@ -158,6 +158,7 @@ export const SECTIONS: SectionDef[] = [
         { value: 'text', label: 'Text' },
         { value: 'json', label: 'JSON' },
       ]},
+      { key: 'global.access_log.enabled', label: 'Request Log', type: 'toggle', help: 'Writes one line per request to the main log. Turn it off to quieten journalctl without raising the log level, which would also hide certificate renewals, reloads and backups. Metrics, analytics, the panel log view and per-domain access_log files are unaffected.', fullWidth: true },
     ],
   },
   {
