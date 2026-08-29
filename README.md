@@ -20,15 +20,15 @@ Apache + Nginx + Varnish + Caddy + cPanel → UWAS
 
 ## What is UWAS?
 
-UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard backed by 253 explicit admin API route registrations.
+UWAS replaces your entire web server stack and hosting control panel with a single Go binary. Auto HTTPS, built-in caching, PHP support, .htaccess compatibility, reverse proxy, WebSocket forwarding, WAF, multi-user access control, and a 42-page React dashboard backed by 254 explicit admin API route registrations.
 
 One binary. Zero hassle.
 
 ## Current Snapshot (v0.9.2)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
-- **Admin API routes:** 253 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
-- **Go packages:** 69 (`go list ./...`) — 62 under `internal/`, 2 under `pkg/`; 56 carry tests
+- **Admin API routes:** 254 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
+- **Go packages:** 71 (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
 - **CLI commands:** 19
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test` (56/56 packages with tests), `go test -race` (0 data races), dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
 - **Security/stability fixes:** v0.8.8 resolved all 5 CRITICAL/HIGH and 11 MEDIUM findings from the June security audit; includes admin RBAC hardening, PHP sandbox-escape closure, SVG XSS prevention, docker-compose credential fail-fast, crontab data-loss guard, cron job timeout, Cloudflare pagination, Route53 signing fix, compress middleware WebSocket/Flush/Unwrap, TOTP replay protection, brute-force lockout serialization, and checked I/O paths

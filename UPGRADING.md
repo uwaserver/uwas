@@ -5,6 +5,56 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.10.0
+
+Three silent failures fixed and the first measured performance change. Nothing
+here requires action, but four things behave differently on the first request
+after upgrading.
+
+### Behavior changes (no action needed)
+
+- **Static responses now carry `Cache-Control`.** UWAS previously sent none at
+  all, leaving browsers to guess. HTML and extensionless URLs now get
+  `no-cache`, which means the browser revalidates through the ETag and gets a
+  304 rather than heuristically reusing a page it should not have. Every other
+  static file is untouched by default. If a domain already sets Cache-Control
+  through `locations[].cache_control`, `cache.rules[].cache_control` or
+  `headers`, that value still wins — the new setting only fills a gap.
+
+- **Small static files are held in memory.** A file cache under
+  `global.static_cache` keeps files up to 512KB, capped at 64MB total, and
+  revalidates an entry against size and mtime before reuse. Editing a file on
+  disk is picked up as before. Set `global.static_cache.enabled: false` to
+  turn it off, or lower `max_bytes` on a memory-constrained host.
+
+- **New static domains are created with the cache on.** Adding a domain
+  through the API or panel now writes `cache.enabled: true` unless the request
+  says otherwise, including an explicit `cache: {enabled: false}`. Existing
+  domains are untouched, and php, proxy and redirect domains are unaffected.
+
+- **A domain is reported down only after two consecutive failed checks.** One
+  slow or bot-challenged reply used to flip the badge immediately, which is
+  routine for a site behind a CDN. Recovery still shows on the first good
+  check. Health checks also run up to 8 domains at a time instead of strictly
+  one after another, and send a browser-shaped User-Agent that keeps the
+  `UWAS-Monitor` token.
+
+### Worth knowing
+
+- **The first per-domain cache purge after upgrading may miss older entries.**
+  Purging one domain now matches an implicit `site:<host>` tag that entries
+  carry from this release onward. Anything cached by the previous version has
+  no such tag; those entries fall out on TTL. Purge all if you need them gone
+  immediately.
+
+- **Git push webhooks configured with GitHub's default content type now
+  work.** They were answered with `415 Unsupported Media Type` before reaching
+  the handler, with the failure visible only in GitHub's delivery log. If you
+  changed a webhook to `application/json` to work around this, it will keep
+  working — both content types are accepted.
+
+---
+
 ## Upgrading to v0.8.8
 
 v0.8.8 is a stability and bug-fix release with 26 fixes across the engine,

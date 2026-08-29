@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-29
+
+Three things the panel reported as working and were not, and the first
+measured change to how fast UWAS answers.
+
+The per-domain cache purge removed nothing and said it had. Git push webhooks
+were refused before they reached the handler. Sites behind a CDN were reported
+down on a single slow reply. Each looked fine from the panel, which is what
+made them worth finding: a failure that reports success is not a failure
+anyone goes looking for.
+
+The performance work came out of a profile rather than a hunch. Roughly 87% of
+an uncached static request was filesystem syscalls, and the per-request
+bookkeeping everyone suspects — analytics, the admin log ring, bandwidth
+accounting, alerting — was 1.4% of it. Caching file bytes cut the path from
+9302 to 2465 ns/op, and +42% req/s over a socket. Sending `Cache-Control` at
+all, which UWAS never did, removes the request instead of making it cheap.
+
+### Added
+
+- New static domains cache by default. The cache is by a wide margin the
+  largest response-time win available — the uncached static path spends most
+  of a request in `open`/`stat` syscalls, and a cache hit measured ~6x faster
+  on the in-process hot path and +50% req/s over a socket — but it was off
+  unless an operator went looking for it. Sending an explicit `cache` object
+  when creating a domain still wins, `{"enabled": false}` included; only php,
+  proxy and redirect domains are left alone, since defaulting those to cached
+  would serve stale dynamic output to someone who never asked for caching.
+  Existing domains are untouched.
+- `POST /api/v1/cache/purge` accepts `{"host": "..."}` alongside `{"tag": ...}`
+  and resolves the tag server-side.
+- Static handler file cache. Small files are held in memory with their
+  metadata, so a repeatedly requested file is served without touching the
+  filesystem. A CPU profile of the uncached static path put roughly 87% of a
+  request in filesystem syscalls — `os.Open` 65%, `os.Stat` 16%, then Seek,
+  Read and Close — none of which changes between two requests for an unedited
+  file. Measured 9302 → 2465 ns/op in-process, and +42% req/s with p50 −32%
+  and p99 −23% over a socket on a domain with response caching switched off.
+  Staleness is bounded: a cached file is revalidated against size and mtime,
+  and the handler revalidates against the `FileInfo` it already holds, so an
+  edited file is never served stale. Tunable and switchable under
+  `global.static_cache`.
+- A Browser Cache panel on the domain detail page, with a probe that answers
+  what `Cache-Control` a given path will actually receive and which setting
+  decided it. Four settings can decide that header — cache rules, domain
+  headers, locations and `browser_cache` — and they do not win in the order
+  they appear in the config: a cache rule quietly overrides a location, and an
+  HTML page under an `immutable_paths` prefix still revalidates. None of that
+  is visible from a settings form. The probe asks the server rather than
+  reimplementing the precedence in the browser, and a test drives real requests
+  through the server to check the two agree.
+- `browser_cache` per domain: UWAS now sends `Cache-Control` on static
+  responses. Until now it sent none at all — every asset cost a round trip on
+  every page load, answered with a 304 nobody needed. HTML gets `no-cache`, so
+  pages revalidate through the ETag instead of sitting in a browser's
+  heuristic cache; `immutable_paths` opts a build directory into a one-year
+  immutable lifetime. Ordinary assets are left alone by default: guessing
+  which of a site's files are content-hashed and pinning the wrong one for a
+  year is not a call a web server should make unasked. Existing
+  `locations[].cache_control` and `cache.rules[].cache_control` still win.
+- `test/perf/`: a response-time benchmark environment — a dependency-free load
+  generator with closed- and open-loop modes, a runner, and an interleaved A/B
+  comparator for two builds. Paired with `BenchmarkHotPath*` in
+  `internal/server`, which drives the real middleware chain with an
+  allocation-free `ResponseWriter` and attributes cost per subsystem.
+
 ### Changed
 
 - Dashboard dependencies: `@types/node`, `eslint` and `@xyflow/react` moved to
@@ -24,6 +90,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Git push webhooks were answered with `415 Unsupported Media Type` and never
+  deployed. `requireJSONMiddleware` demanded `Content-Type: application/json`
+  on every POST, exempting only uploads and imports — but GitHub's default
+  webhook content type is `application/x-www-form-urlencoded`, so a
+  default-configured hook was rejected before reaching the handler, with the
+  failure visible only in GitHub's own delivery log. Webhooks are now exempt,
+  and the handler reads the payload out of the form's `payload` field as well
+  as from a JSON body. The HMAC still covers the raw body, which is what
+  GitHub signs. Form-encoded pushes also used to yield an empty ref, which
+  defeated branch filtering.
+- The Apps page never showed whether a webhook had ever arrived. The
+  `webhook-status` endpoint existed and was typed in the API client, but no
+  page called it. The deploy panel now reports the last delivery, and warns
+  when the panel is being viewed at an address a git host cannot reach — the
+  admin API binds to `127.0.0.1:9443` by default, so the URL it prints is
+  often undeliverable.
+- Domain health checks no longer flip to "down" on a single bad reply. One
+  slow or bot-challenged response — routine for a site behind a CDN — used to
+  change the badge immediately; it now takes two consecutive failures, while
+  recovery still shows at once. The sweep also runs up to 8 domains at a time
+  instead of strictly one after another, so one domain sitting out its 10s
+  timeout no longer delays every domain behind it and stretches the 30s
+  interval. The probe sends a browser-shaped User-Agent that keeps the
+  `UWAS-Monitor` token, since a bare one was being challenged by CDN bot
+  rules and the resulting 403 was recorded as the site being unhealthy.
+- Purging one domain's cache from the dashboard did nothing and reported
+  success. The dashboard synthesized a `site:<host>` tag and purged by it, but
+  nothing ever wrote that tag — entries carried only the operator's configured
+  `cache.tags` — so the purge matched nothing, and `count` carried `omitempty`,
+  so the zero never reached the response. Three layers of silence over one
+  missing tag. Entries now carry an implicit `site:` tag derived through the
+  same host normalization the cache key uses (lowercase, port stripped), the
+  API takes a host instead of a client-built tag, and `count` is always
+  serialized. Cached entries written before this release carry no implicit
+  tag; the first per-domain purge after upgrading misses them and they fall
+  out on TTL. The same broken assumption in domain deletion with
+  `?cleanup=true` is fixed with it.
+- The per-domain Purge button on the Cache page only appeared for domains
+  carrying a hand-written cache tag. It now shows for every cache-enabled
+  domain and reports how many entries it actually removed.
 - The marketing site takes its version from the repo instead of a hand-written
   string. The hero badge still read `v0.8.9` three releases after the fact, and
   the install transcript repeated it. `vite.config.ts` now resolves the version
