@@ -17,7 +17,7 @@ func testLogger() *logger.Logger {
 }
 
 func TestAlertRecordAndRetrieve(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	a.Alert(Alert{
 		Level:   "critical",
@@ -42,7 +42,7 @@ func TestAlertRecordAndRetrieve(t *testing.T) {
 }
 
 func TestAlertRingBuffer(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Fill more than maxAlertHistory alerts
 	for i := 0; i < maxAlertHistory+20; i++ {
@@ -66,7 +66,7 @@ func TestAlertRingBuffer(t *testing.T) {
 }
 
 func TestAlertDisabled(t *testing.T) {
-	a := New(false, "", testLogger())
+	a := New(false, "", nil, testLogger())
 
 	a.Alert(Alert{
 		Level:   "critical",
@@ -82,7 +82,7 @@ func TestAlertDisabled(t *testing.T) {
 }
 
 func TestErrorSpikeDetection(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Record 5 OK requests, then 10 errors to push past 10% threshold
 	for i := 0; i < 5; i++ {
@@ -106,7 +106,7 @@ func TestErrorSpikeDetection(t *testing.T) {
 }
 
 func TestEmptyAlerts(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 	alerts := a.Alerts()
 	if alerts != nil {
 		t.Errorf("expected nil alerts on fresh alerter, got %v", alerts)
@@ -126,7 +126,7 @@ func TestItoaFtoa(t *testing.T) {
 }
 
 func TestConcurrentAlerts(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
@@ -150,7 +150,7 @@ func TestConcurrentAlerts(t *testing.T) {
 
 func TestEmptyWebhookURL(t *testing.T) {
 	// With empty webhook URL, no HTTP call should be made (no crash)
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 	a.Alert(Alert{
 		Level:   "info",
 		Type:    "rate_limit",
@@ -165,7 +165,7 @@ func TestEmptyWebhookURL(t *testing.T) {
 }
 
 func TestAlertHistoryRingBufferWrap(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Fill exactly maxAlertHistory alerts
 	for i := 0; i < maxAlertHistory; i++ {
@@ -217,7 +217,7 @@ func TestAlertHistoryRingBufferWrap(t *testing.T) {
 }
 
 func TestConcurrentAlertAndRetrieve(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 	var wg sync.WaitGroup
 
 	// Concurrent writes
@@ -252,7 +252,7 @@ func TestConcurrentAlertAndRetrieve(t *testing.T) {
 }
 
 func TestAlertTimestampAutoSet(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 	before := time.Now()
 	a.Alert(Alert{
 		Level:   "info",
@@ -271,7 +271,7 @@ func TestAlertTimestampAutoSet(t *testing.T) {
 }
 
 func TestAlertTimestampExplicit(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 	explicit := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
 	a.Alert(Alert{
 		Time:    explicit,
@@ -290,7 +290,7 @@ func TestAlertTimestampExplicit(t *testing.T) {
 }
 
 func TestRecordRequestDisabled(t *testing.T) {
-	a := New(false, "", testLogger())
+	a := New(false, "", nil, testLogger())
 
 	for i := 0; i < 20; i++ {
 		a.RecordRequest(true)
@@ -324,7 +324,7 @@ func TestFtoaSmallValues(t *testing.T) {
 }
 
 func TestErrorSpikeBelowThreshold(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Record 9 ok, 1 error = 10% exactly, should not trigger (needs > 10%)
 	for i := 0; i < 9; i++ {
@@ -341,7 +341,7 @@ func TestErrorSpikeBelowThreshold(t *testing.T) {
 }
 
 func TestErrorSpikeTooFewSamples(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Only 5 errors with no OKs = 100% error rate, but < 10 samples
 	for i := 0; i < 5; i++ {
@@ -358,7 +358,7 @@ func TestErrorSpikeTooFewSamples(t *testing.T) {
 
 func TestErrorSpikeDedup(t *testing.T) {
 	// After an error_spike alert fires, a second one should not fire within 1 minute
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Trigger error spike: 5 OK + 10 errors (total 15, error rate ~66%)
 	for i := 0; i < 5; i++ {
@@ -406,7 +406,7 @@ func TestFtoaNegativeFraction(t *testing.T) {
 }
 
 func TestRecordRequestPrunesOldEntries(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	// Manually insert old entries
 	a.errorWindowMu.Lock()
@@ -448,7 +448,7 @@ func TestWebhookDeliveryViaAlert(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(true, srv.URL, testLogger())
+	a := New(true, srv.URL, nil, testLogger())
 	a.Alert(Alert{Level: "warning", Type: "test_alert", Host: "webhook.com", Message: "test delivery"})
 
 	// Wait for the async webhook goroutine to complete
@@ -470,7 +470,7 @@ func TestWebhookDeliveryViaAlert(t *testing.T) {
 
 func TestWebhookDeliveryFailure(t *testing.T) {
 	// Point to a non-existent server — use a short timeout so test doesn't hang
-	a := New(true, "http://127.0.0.1:1/nonexistent", testLogger())
+	a := New(true, "http://127.0.0.1:1/nonexistent", nil, testLogger())
 	a.client.Timeout = 500 * time.Millisecond
 	// Should not panic
 	a.Alert(Alert{Level: "critical", Type: "fail_test", Message: "should not crash"})
@@ -501,7 +501,7 @@ func TestWebhookErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := New(true, srv.URL, testLogger())
+	a := New(true, srv.URL, nil, testLogger())
 	a.Alert(Alert{Level: "info", Type: "status_test", Message: "server returns 500"})
 
 	// Wait for the async webhook goroutine to hit the server
@@ -522,7 +522,7 @@ func TestWebhookErrorStatus(t *testing.T) {
 // RecordRequest. All entries are recorded within the 5-minute window so pruning
 // does not remove them; only the size cap should trim the oldest.
 func TestRecordRequestWindowCap(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	const maxWindowSize = 100000
 	// Record one more than the cap. Use non-error requests so no spike fires.
@@ -545,7 +545,7 @@ func TestRecordRequestWindowCap(t *testing.T) {
 // TestRecordRequestWindowCapDecrementsErrCount verifies the running error count
 // is decremented when error entries are dropped by the size cap.
 func TestRecordRequestWindowCapDecrementsErrCount(t *testing.T) {
-	a := New(true, "", testLogger())
+	a := New(true, "", nil, testLogger())
 
 	const maxWindowSize = 100000
 	// First entries are errors so the cap will drop some error entries; keep the

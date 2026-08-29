@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/notify"
 )
 
 const maxAlertHistory = 100
@@ -25,13 +26,20 @@ type Alert struct {
 // of recent alerts for the admin dashboard.
 type Alerter struct {
 	webhookURL string
-	logger     *logger.Logger
-	mu         sync.Mutex
-	history    []Alert
-	pos        int
-	full       bool
-	enabled    bool
-	client     *http.Client
+
+	// channels are the Slack / Telegram / email destinations configured under
+	// global.alerting. They were accepted by the settings API, stored, shown
+	// in the panel and delivered to nobody: this package never imported
+	// internal/notify, which implements and tests all three.
+	channels []notify.Channel
+
+	logger  *logger.Logger
+	mu      sync.Mutex
+	history []Alert
+	pos     int
+	full    bool
+	enabled bool
+	client  *http.Client
 
 	// Rate limit tracking for error_spike detection.
 	errorWindow    []errorEntry
@@ -45,9 +53,10 @@ type errorEntry struct {
 }
 
 // New creates a new Alerter.
-func New(enabled bool, webhookURL string, log *logger.Logger) *Alerter {
+func New(enabled bool, webhookURL string, channels []notify.Channel, log *logger.Logger) *Alerter {
 	return &Alerter{
 		webhookURL: webhookURL,
+		channels:   channels,
 		logger:     log,
 		enabled:    enabled,
 		history:    make([]Alert, maxAlertHistory),
@@ -84,6 +93,27 @@ func (a *Alerter) Alert(alert Alert) {
 
 	if a.webhookURL != "" {
 		go a.sendWebhook(alert)
+	}
+
+	// Fan out to the configured channels. Each send is its own goroutine: an
+	// unreachable SMTP server must not delay Slack, and none of them may
+	// delay the caller — Alert is invoked from request-path recorders and
+	// certificate renewal alike.
+	for _, ch := range a.channels {
+		if !ch.Enabled {
+			continue
+		}
+		go func(ch notify.Channel) {
+			if err := notify.Send(ch, notify.Message{
+				Level:  alert.Level,
+				Title:  alert.Type,
+				Body:   alert.Message,
+				Source: alert.Host,
+			}); err != nil {
+				a.logger.Warn("alert channel delivery failed",
+					"channel", ch.Type, "type", alert.Type, "error", err)
+			}
+		}(ch)
 	}
 }
 
