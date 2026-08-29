@@ -1141,13 +1141,28 @@ func jsonErrorCause(w http.ResponseWriter, msg string, cause error, code int) {
 	respond.ErrorCause(w, code, msg, cause)
 }
 
+// isDeployWebhookPath reports whether a path is an app's inbound deploy
+// webhook. Kept next to the middleware that exempts it and matched the same
+// way authmw exempts it from auth and CSRF.
+func isDeployWebhookPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/apps/") && strings.HasSuffix(path, "/webhook")
+}
+
 // requireJSONMiddleware enforces Content-Type: application/json for mutation
-// endpoints (POST/PUT/PATCH). File uploads and raw SQL imports are exempt.
+// endpoints (POST/PUT/PATCH). File uploads, raw SQL imports and inbound git
+// webhooks are exempt.
 func requireJSONMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
 			path := r.URL.Path
-			if strings.Contains(path, "/upload") || strings.Contains(path, "/import") {
+			// Git webhooks are exempt because we do not get to choose what
+			// they send. GitHub's default webhook content type is
+			// application/x-www-form-urlencoded, so requiring JSON here
+			// answered every default-configured push with a 415 the operator
+			// could only see in GitHub's delivery log. The handler accepts
+			// both encodings; the HMAC covers the raw body either way.
+			if strings.Contains(path, "/upload") || strings.Contains(path, "/import") ||
+				isDeployWebhookPath(path) {
 				next.ServeHTTP(w, r)
 				return
 			}
