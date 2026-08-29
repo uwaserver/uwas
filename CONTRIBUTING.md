@@ -167,10 +167,11 @@ when running in a container — see `/api/v1/system`.
 cmd/uwas/            CLI entry point
 internal/
   server/            HTTP/HTTPS/HTTP3 server + request dispatch
-  admin/             REST API (251 route registrations) + dashboard embed
+  admin/             REST API (253 route registrations) + dashboard embed
     api.go            Core: Server struct, lifecycle, middleware, helpers
     routes.go         Route registration (themed sub-registrars)
     handlers_*.go     Topic-split handlers (one file per feature area)
+    apps/ … wordpress/  Eleven handler sub-packages; see docs/admin-subpackaging.md
   config/            YAML structs, validation, defaults
   router/            Virtual host routing (SNI + Host header)
   middleware/        Chain composition, WAF, rate limit, compression, CORS
