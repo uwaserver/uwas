@@ -161,8 +161,60 @@ SERVICEEOF
   ok "Systemd service created and enabled"
 else
   ok "Systemd service exists"
-  systemctl daemon-reload
 fi
+
+# ── Resilience drop-in ──────────────────────────────────
+# Written as a drop-in rather than by rewriting the unit: an existing install
+# may carry operator edits, and an upgrade must not silently discard them.
+# Drop-ins layer over whatever the base unit says, so this reaches old installs
+# too — which is the point, since they are the ones without a watchdog.
+
+DROPIN_DIR="/etc/systemd/system/uwas.service.d"
+mkdir -p "$DROPIN_DIR"
+cat > "$DROPIN_DIR/10-resilience.conf" << 'DROPINEOF'
+# Managed by the UWAS installer. Edit the unit, not this file.
+[Unit]
+# Without a start limit systemd stops trying after 5 restarts in 10s, turning a
+# recoverable overload into a permanent outage.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+# NotifyAccess=main enables the sd_notify watchdog ping regardless of Type=.
+NotifyAccess=main
+
+# Restart on any exit: a process killed by the OOM killer or by the watchdog's
+# SIGABRT must come back the same way a crash does.
+Restart=always
+RestartSec=5
+
+# systemd's Restart= only sees a process that exits. WatchdogSec also catches
+# the case it cannot: still running, still "active", answering nothing.
+# UWAS pings only while its own liveness probe passes, so this requires
+# global.watchdog.enabled in uwas.yaml — with the probe off no ping is ever
+# sent and systemd would restart a healthy server every 60 seconds.
+WatchdogSec=60
+
+# Connection floods exhaust file descriptors before anything else, which shows
+# up as "accept: too many open files" and a listener that stops accepting.
+LimitNOFILE=1048576
+
+# Persistent state (the autoblock list) so blocks survive a restart.
+StateDirectory=uwas
+StateDirectoryMode=0750
+DROPINEOF
+
+# The watchdog drop-in is only safe once the config asks for the probe.
+# Enabling WatchdogSec against a binary or config that never pings would
+# restart a perfectly healthy server on a timer.
+if ! grep -qE '^[[:space:]]*watchdog:' /etc/uwas/uwas.yaml 2>/dev/null; then
+  sed -i 's/^WatchdogSec=/#WatchdogSec=/' "$DROPIN_DIR/10-resilience.conf"
+  warn "watchdog not configured in uwas.yaml — WatchdogSec left commented out."
+  warn "Add global.watchdog.enabled: true, then uncomment it in $DROPIN_DIR/10-resilience.conf"
+fi
+
+systemctl daemon-reload
+ok "Systemd resilience drop-in installed"
 
 # ── Start service ───────────────────────────────────────
 

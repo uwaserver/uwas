@@ -38,6 +38,25 @@ type SecurityStats struct {
 	recentIPs  []BlockedRequest
 	recentPos  int
 	recentFull bool
+
+	// observer is notified of every rejection. The autoblocker subscribes to
+	// it so a source that keeps tripping the WAF, the bot guard or the rate
+	// limiter graduates from "blocked per request" to "blocked at the socket",
+	// without every guard needing to know the autoblocker exists.
+	observer atomic.Pointer[func(ip, reason string)]
+}
+
+// SetObserver installs a callback invoked on every recorded rejection. It must
+// not block: it runs inline on the request path.
+func (s *SecurityStats) SetObserver(fn func(ip, reason string)) {
+	if s == nil {
+		return
+	}
+	if fn == nil {
+		s.observer.Store(nil)
+		return
+	}
+	s.observer.Store(&fn)
 }
 
 // BlockedRequest represents a single blocked request.
@@ -83,6 +102,10 @@ func (s *SecurityStats) Record(ip, path, reason, ua string) {
 		s.recentFull = true
 	}
 	s.mu.Unlock()
+
+	if fn := s.observer.Load(); fn != nil {
+		(*fn)(ip, reason)
+	}
 }
 
 // Snapshot returns current stats.

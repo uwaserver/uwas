@@ -41,6 +41,8 @@ type GlobalConfig struct {
 	Webhooks       []WebhookConfig  `yaml:"webhooks"`
 	Users          UsersConfig      `yaml:"users"`
 	ProxyProtocol  bool             `yaml:"proxy_protocol"` // enable PROXY protocol v1/v2 on listeners
+	AutoBlock      AutoBlockConfig  `yaml:"autoblock,omitempty" json:"autoblock,omitempty"`
+	Watchdog       WatchdogConfig   `yaml:"watchdog,omitempty" json:"watchdog,omitempty"`
 }
 
 // CloudflareConfig stores origin-protection settings shared by all domains.

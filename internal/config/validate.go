@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -87,6 +88,8 @@ func Validate(cfg *Config) error {
 	}
 
 	validateRateLimitConfig("global.rate_limit", cfg.Global.RateLimit, &errs)
+	validateAutoBlockConfig(cfg.Global.AutoBlock, &errs)
+	validateWatchdogConfig(cfg.Global.Watchdog, &errs)
 
 	// Trusted proxies validation (CIDR notation)
 	for i, cidr := range cfg.Global.TrustedProxies {
@@ -884,4 +887,67 @@ func isURLSafe(rawURL string, policy urlSafetyPolicy) error {
 		}
 	}
 	return nil
+}
+
+// validateAutoBlockConfig rejects an autoblock policy that would misfire.
+// A malformed whitelist entry is fatal rather than skipped: silently dropping
+// the Cloudflare range an operator meant to exempt is how an autoblocker takes
+// a site off the internet.
+func validateAutoBlockConfig(ab AutoBlockConfig, errs *[]string) {
+	if !ab.Enabled {
+		return
+	}
+	if ab.Window.Duration <= 0 {
+		*errs = append(*errs, "global.autoblock.window must be greater than 0")
+	}
+	for name, v := range map[string]int{
+		"max_connections": ab.MaxConnections,
+		"max_aborts":      ab.MaxAborts,
+		"max_waf_hits":    ab.MaxWAFHits,
+		"max_rate_hits":   ab.MaxRateHits,
+		"max_not_found":   ab.MaxNotFound,
+	} {
+		if v <= 0 {
+			*errs = append(*errs, fmt.Sprintf("global.autoblock.%s must be greater than 0", name))
+		}
+	}
+	if ab.MaxConcurrent < 0 {
+		*errs = append(*errs, "global.autoblock.max_concurrent cannot be negative (0 disables the check)")
+	}
+	if ab.BlockDuration.Duration <= 0 {
+		*errs = append(*errs, "global.autoblock.block_duration must be greater than 0")
+	}
+	if ab.MaxBlockDuration.Duration > 0 && ab.MaxBlockDuration.Duration < ab.BlockDuration.Duration {
+		*errs = append(*errs, "global.autoblock.max_block_duration cannot be shorter than block_duration")
+	}
+	for _, entry := range ab.Whitelist {
+		if _, err := netip.ParsePrefix(entry); err == nil {
+			continue
+		}
+		if _, err := netip.ParseAddr(entry); err == nil {
+			continue
+		}
+		*errs = append(*errs, fmt.Sprintf("global.autoblock.whitelist: %q is not a valid IP or CIDR", entry))
+	}
+}
+
+// validateWatchdogConfig keeps the liveness probe from restarting a healthy
+// server. A timeout at or above the interval means probes overlap and a slow
+// but working server reads as wedged.
+func validateWatchdogConfig(w WatchdogConfig, errs *[]string) {
+	if !w.Enabled {
+		return
+	}
+	if w.Interval.Duration <= 0 {
+		*errs = append(*errs, "global.watchdog.interval must be greater than 0")
+	}
+	if w.Timeout.Duration <= 0 {
+		*errs = append(*errs, "global.watchdog.timeout must be greater than 0")
+	}
+	if w.Interval.Duration > 0 && w.Timeout.Duration >= w.Interval.Duration {
+		*errs = append(*errs, "global.watchdog.timeout must be shorter than global.watchdog.interval")
+	}
+	if w.Failures < 1 {
+		*errs = append(*errs, "global.watchdog.failures must be at least 1")
+	}
 }

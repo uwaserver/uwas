@@ -30,6 +30,7 @@ import (
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
+	"github.com/uwaserver/uwas/internal/autoblock"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/build"
@@ -57,6 +58,7 @@ import (
 	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/sftpserver"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
+	"github.com/uwaserver/uwas/internal/watchdog"
 	"github.com/uwaserver/uwas/internal/webhook"
 )
 
@@ -118,6 +120,15 @@ type Server struct {
 	revalidating  sync.Map
 	securityStats *middleware.SecurityStats
 	cloudflareIPs *cfintegration.IPSet
+
+	// autoblocker turns repeated abuse from one source into a socket-level
+	// block. It is fed from two directions: the guard listener on every
+	// connection, and securityStats on every request-layer rejection.
+	autoblocker *autoblock.Blocker
+
+	// dog probes our own listener and reports liveness to systemd, so a
+	// wedged-but-running process becomes a restart instead of a silent outage.
+	dog *watchdog.Watchdog
 
 	// htaccessCache caches parsed .htaccess rewrite rules keyed by domain root.
 	// Invalidated on config reload. Lazy-initialized in getHtaccessRuleSet.
@@ -366,6 +377,15 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 	s.monitor = monitor.New(cfg.Domains, log)
 	if s.admin != nil {
 		s.admin.SetMonitor(s.monitor)
+	}
+
+	// Automatic source-IP blocking
+	s.autoblocker = newAutoBlocker(cfg, log)
+	if s.autoblocker.Enabled() {
+		s.securityStats.SetObserver(s.autoblocker.RecordHTTP)
+	}
+	if s.admin != nil {
+		s.admin.SetAutoBlocker(s.autoblocker)
 	}
 
 	// ESI processor (requires cache engine + server as fragment fetcher)
@@ -912,6 +932,11 @@ func (s *Server) Start() error {
 		s.logger.SafeGo("monitor", func() { s.monitor.Start(s.ctx) })
 	}
 
+	// Autoblock expiry, firewall sync and state persistence
+	if s.autoblocker.Enabled() {
+		s.logger.SafeGo("autoblock", func() { s.autoblocker.Start(s.ctx) })
+	}
+
 	// Backup scheduler
 	if s.backupMgr != nil {
 		if cron := s.config.Global.Backup.Cron; cron != "" {
@@ -979,6 +1004,14 @@ func (s *Server) Start() error {
 	// Start log rotation cleanup
 	s.domainLogs.StartCleanup()
 
+	// Liveness watchdog. READY=1 goes out unconditionally so a systemd unit
+	// that waits for notification starts cleanly whether or not probing is on.
+	s.dog = newWatchdog(s.config, s.logger)
+	s.dog.NotifyReady()
+	if s.config.Global.Watchdog.Enabled {
+		s.logger.SafeGo("watchdog", func() { s.dog.Run(s.ctx) })
+	}
+
 	<-s.ctx.Done()
 	s.shutdown()
 	s.wg.Wait()
@@ -1004,6 +1037,7 @@ func (s *Server) startHTTP() error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
+	ln = s.guardListener(ln)
 
 	s.logger.Info("listening", "address", addr, "protocol", "HTTP")
 
@@ -1038,8 +1072,11 @@ func (s *Server) startHTTPS() error {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 
+	// Guard first, so a blocked source is dropped before the PROXY header is
+	// read and long before the TLS handshake starts.
+	var ln net.Listener = s.guardListener(tcpLn)
+
 	// Wrap with PROXY protocol if enabled (HAProxy, Cloudflare, etc.)
-	var ln net.Listener = tcpLn
 	if s.config.Global.ProxyProtocol {
 		ln = newProxyProtoListener(ln)
 	}
@@ -1190,6 +1227,10 @@ func (s *Server) handleSignals() {
 func (s *Server) shutdown() {
 	grace := s.config.Global.Timeouts.ShutdownGrace.Duration
 	s.logger.Info("shutting down gracefully...", "grace_period", grace)
+
+	// Tell systemd this exit is intentional before the listeners go away, so
+	// the shutdown is not read as the watchdog firing.
+	s.dog.NotifyStopping()
 
 	ctx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()

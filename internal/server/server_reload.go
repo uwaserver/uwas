@@ -33,6 +33,16 @@ func (s *Server) reload() error {
 	// Update vhosts
 	s.vhosts.Update(newCfg.Domains)
 
+	// Refresh the autoblock whitelist. Thresholds and durations still need a
+	// restart — they are captured when the counters are built — but the
+	// whitelist must track a reload, because that is where a freshly synced
+	// set of Cloudflare edge ranges arrives. Blocking one of those takes the
+	// site offline for everyone that edge serves, so it cannot wait.
+	if s.autoblocker.Enabled() {
+		s.autoblocker.SetWhitelist(autoBlockWhitelist(newCfg))
+		s.autoblocker.SetFirewallSync(newCfg.Global.AutoBlock.FirewallSync)
+	}
+
 	// Update TLS domains
 	s.tlsMgr.UpdateDomains(newCfg.Domains)
 

@@ -25,6 +25,7 @@ import (
 	"github.com/uwaserver/uwas/internal/analytics"
 	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/auth"
+	"github.com/uwaserver/uwas/internal/autoblock"
 	"github.com/uwaserver/uwas/internal/backup"
 	"github.com/uwaserver/uwas/internal/bandwidth"
 	"github.com/uwaserver/uwas/internal/build"
@@ -88,6 +89,7 @@ type Server struct {
 	httpSrv        *http.Server
 
 	monitor       *monitor.Monitor
+	autoblocker   *autoblock.Blocker
 	alerter       *alerting.Alerter
 	phpMgr        *phpmanager.Manager
 	appsMgr       *apps.Manager // standalone apps supervisor

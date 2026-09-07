@@ -50,6 +50,51 @@ func applyDefaults(cfg *Config) {
 		g.Timeouts.MaxHeaderBytes = 1 << 20 // 1MB
 	}
 
+	// AutoBlock. Defaults are set even when disabled so the admin UI has real
+	// numbers to show and enabling it never lands on a zero threshold, which
+	// would block the first connection from every source.
+	if g.AutoBlock.Window.Duration == 0 {
+		g.AutoBlock.Window.Duration = time.Minute
+	}
+	if g.AutoBlock.MaxConnections == 0 {
+		g.AutoBlock.MaxConnections = 600
+	}
+	if g.AutoBlock.MaxAborts == 0 {
+		g.AutoBlock.MaxAborts = 60
+	}
+	if g.AutoBlock.MaxConcurrent == 0 {
+		g.AutoBlock.MaxConcurrent = 150
+	}
+	if g.AutoBlock.MaxWAFHits == 0 {
+		g.AutoBlock.MaxWAFHits = 15
+	}
+	if g.AutoBlock.MaxRateHits == 0 {
+		g.AutoBlock.MaxRateHits = 120
+	}
+	if g.AutoBlock.MaxNotFound == 0 {
+		g.AutoBlock.MaxNotFound = 200
+	}
+	if g.AutoBlock.BlockDuration.Duration == 0 {
+		g.AutoBlock.BlockDuration.Duration = 15 * time.Minute
+	}
+	if g.AutoBlock.MaxBlockDuration.Duration == 0 {
+		g.AutoBlock.MaxBlockDuration.Duration = 24 * time.Hour
+	}
+	if g.AutoBlock.StatePath == "" {
+		g.AutoBlock.StatePath = "/var/lib/uwas/autoblock.json"
+	}
+
+	// Watchdog
+	if g.Watchdog.Interval.Duration == 0 {
+		g.Watchdog.Interval.Duration = 15 * time.Second
+	}
+	if g.Watchdog.Timeout.Duration == 0 {
+		g.Watchdog.Timeout.Duration = 5 * time.Second
+	}
+	if g.Watchdog.Failures == 0 {
+		g.Watchdog.Failures = 3
+	}
+
 	// Admin
 	if g.Admin.Listen == "" {
 		g.Admin.Listen = "127.0.0.1:9443"
