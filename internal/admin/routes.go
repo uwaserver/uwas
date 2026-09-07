@@ -293,6 +293,9 @@ func (s *Server) registerSystemAdminRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/firewall/{number}", s.handleFirewallDelete)
 	s.mux.HandleFunc("POST /api/v1/firewall/enable", s.handleFirewallEnable)
 	s.mux.HandleFunc("POST /api/v1/firewall/disable", s.handleFirewallDisable)
+	s.mux.HandleFunc("GET /api/v1/autoblock", s.handleAutoBlockStatus)
+	s.mux.HandleFunc("POST /api/v1/autoblock", s.handleAutoBlockAdd)
+	s.mux.HandleFunc("DELETE /api/v1/autoblock/{ip}", s.handleAutoBlockDelete)
 
 	// Doctor + self-update + packages
 	s.mux.HandleFunc("GET /api/v1/doctor", s.handleDoctor)

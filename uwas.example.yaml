@@ -48,6 +48,70 @@ global:
   #   requests: 600       # max requests per window per client IP
   #   window: 60s         # sliding window
 
+  # Automatic source-IP blocking.
+  #
+  # The rate limiter and WAF only see requests that finished a TLS handshake.
+  # A flood that opens TCP connections and drops them mid-handshake never
+  # reaches them — it just fills the log with
+  #   http: TLS handshake error from <ip>: EOF
+  # while the accept loop, the file descriptors and the CPU go to traffic no
+  # middleware can refuse. The connection-level thresholds below are the only
+  # ones that can see that.
+  #
+  # Start with dry_run: true for a day and read the "autoblock (dry-run)" lines
+  # before enforcing. Thresholds that are wrong in the tight direction take
+  # real visitors offline.
+  # autoblock:
+  #   enabled: true
+  #   dry_run: false
+  #   window: 60s           # counting period for every threshold below
+  #
+  #   # Connection level — per source IP, per window. These see the flood.
+  #   max_connections: 600  # new TCP connections
+  #   max_aborts: 60        # connections closed without sending a byte
+  #   max_concurrent: 150   # simultaneous open connections (0 disables)
+  #
+  #   # Request level — per source IP, per window. These need a real request.
+  #   max_waf_hits: 15      # WAF + bot-guard rejections
+  #   max_rate_hits: 120    # 429s from the rate limiter
+  #   max_not_found: 200    # 404 sweep (vulnerability scanning)
+  #
+  #   block_duration: 15m       # first offence
+  #   escalate: true            # repeat offenders: 15m -> 1h -> 4h -> ...
+  #   max_block_duration: 24h   # cap, so escalation cannot run away
+  #
+  #   # Push blocks into ufw/iptables. Without this a blocked IP still
+  #   # completes a TCP handshake before being dropped; with it the kernel
+  #   # refuses the SYN and this process never wakes up for it.
+  #   firewall_sync: true
+  #
+  #   # Never blocked. trusted_proxies, the global.cloudflare.ip_ranges and
+  #   # this host's own addresses are added automatically — behind a CDN every
+  #   # connection carries an edge IP, and blocking one takes the site offline
+  #   # for every visitor that edge serves.
+  #   whitelist:
+  #     - 203.0.113.0/24
+  #
+  #   state_path: /var/lib/uwas/autoblock.json   # blocks survive a restart
+
+  # Liveness watchdog.
+  #
+  # systemd's Restart= only reacts to a process that exits. A server wedged by
+  # a flood stays "active (running)" and answers nothing, so nothing restarts.
+  # This probes our own listener over loopback and stops feeding systemd's
+  # watchdog when the probe stops passing, which turns a hang into a restart.
+  #
+  # Requires WatchdogSec in the unit (the installer writes a drop-in at
+  # /etc/systemd/system/uwas.service.d/10-resilience.conf). The two must move
+  # together: WatchdogSec with this disabled restarts a healthy server on a
+  # timer, and this without WatchdogSec has nothing to trigger the restart.
+  # watchdog:
+  #   enabled: true
+  #   interval: 15s     # probe period (auto-reduced to half of WatchdogSec)
+  #   timeout: 5s       # must be shorter than interval
+  #   failures: 3       # consecutive failed probes before it is fatal
+  #   self_restart: false  # exit on our own when there is no systemd (Docker)
+
   # Connection timeouts
   timeouts:
     read: 30s

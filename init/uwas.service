@@ -4,16 +4,48 @@ Documentation=https://github.com/uwaserver/uwas
 After=network-online.target mariadb.service
 Wants=network-online.target
 
+# A flood can crash-loop the service. Without a start limit systemd gives up
+# permanently after 5 restarts in 10s ("start request repeated too quickly"),
+# which turns a recoverable overload into a lasting outage. Allow steady
+# restarts instead: 10 in 5 minutes, then back off.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
 [Service]
-Type=simple
+# Type=exec (not notify): systemd does not wait for a READY=1 the binary may
+# not send, so an older binary still starts. NotifyAccess=main is what enables
+# the watchdog pings below, and works independently of Type.
+Type=exec
+NotifyAccess=main
+
 ExecStart=/usr/local/bin/uwas serve -c /etc/uwas/uwas.yaml
 ExecStop=/usr/local/bin/uwas stop
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
+
+# Restart on any exit, not just a failing one. A process killed by the OOM
+# killer or by the watchdog's SIGABRT must come back the same way a crash does.
+Restart=always
 RestartSec=5
+
+# Liveness watchdog. UWAS probes its own listener and pings systemd only while
+# the probe passes; if it stops, systemd sends SIGABRT here and Restart= above
+# brings the service back. This is what catches the case systemd cannot see on
+# its own: a process still running, still "active", answering nothing.
+# Requires global.watchdog.enabled in uwas.yaml — with it off, no ping is ever
+# sent and this would restart a healthy server, so the two must move together.
+WatchdogSec=60
+
 User=root
 WorkingDirectory=/etc/uwas
-LimitNOFILE=65536
+
+# Connection floods burn file descriptors faster than anything else the server
+# does; a low limit shows up as "accept: too many open files" and a listener
+# that stops accepting.
+LimitNOFILE=1048576
+
+# State directory for the autoblock list, so blocks survive a restart.
+StateDirectory=uwas
+StateDirectoryMode=0750
 
 # Logging
 StandardOutput=journal
