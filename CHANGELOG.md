@@ -346,7 +346,7 @@ all, which UWAS never did, removes the request instead of making it cheap.
   and bot guard per-domain when both are global, and described
   `middleware/accesslog.go` as a per-domain file writer when it writes one line
   to the main log. Statistics now carry the command that reproduces them.
-  `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/admin-subpackaging.md`,
+  `README.md`, `CONTRIBUTING.md`, `docs/admin-subpackaging.md`,
   the dashboard About page and the marketing site under `docs/site` were
   corrected against the same measurements.
 
@@ -559,7 +559,7 @@ ignored. All of them now take effect.
 ### Documentation
 
 - Add v0.8.8 upgrade notes to `UPGRADING.md` covering cron timeout, crontab error handling, Route53 signing, cache encoding changes, and release checksum verification
-- Refresh root documentation (`README.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/SPECIFICATION.md`, `docs/IMPLEMENTATION.md`, `docs/TASKS.md`, `docs/BRANDING.md`) to match current route/page/package counts, licensing, dependency inventory, and build metadata
+- Refresh root documentation (`README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `docs/SPECIFICATION.md`, `docs/IMPLEMENTATION.md`, `docs/TASKS.md`, `docs/BRANDING.md`) to match current route/page/package counts, licensing, dependency inventory, and build metadata
 - Replace leftover Vite template README content in `web/dashboard/README.md` and `docs/site/README.md` with project-specific guidance
 - Refresh docs-site marketing/config examples and the WordPress example README to match the current dashboard, config schema, Docker/compose flow, and release version metadata
 - Add resolved-status framing to security report files and update the main security report narrative to align with the current fixed state (risk score 2.1/10)
@@ -886,7 +886,7 @@ ignored. All of them now take effect.
   download/compile on every run.
 - Added Playwright E2E job to CI (cache + `UWAS_BIN` + `continue-on-error`).
   Runs when Playwright CDN is reachable; non-blocking.
-- Updated README, ARCHITECTURE.md, CLAUDE.md to remove `-p 1` serial test
+- Updated README and ARCHITECTURE.md to remove `-p 1` serial test
   references.
 
 ## [0.7.2] - 2026-06-24
@@ -903,7 +903,7 @@ ignored. All of them now take effect.
 - Split `handlers_cloudflare.go` (1,073 lines) into tunnel + zone files.
 - Split `handlers_apps_deploy.go` (1,069 lines) by extracting git/shell helpers
   into `handlers_apps_git.go`.
-- Updated CLAUDE.md, ARCHITECTURE.md, and CONTRIBUTING.md to reflect the new
+- Updated ARCHITECTURE.md and CONTRIBUTING.md to reflect the new
   admin package file structure.
 
 ### Added
@@ -2771,7 +2771,7 @@ Same commit as v0.0.56 (semver bump for clarity). See v0.0.56 entry below.
 - `logger.SafeGo()` panic recovery for critical goroutines
 - PHP dropdown simplified, PHP Config batch save
 - TypeScript: removed `as any` cast, proper `DomainDetail.ip` typing
-- CLAUDE.md updated: 50 packages, 38 pages, 190+ API endpoints
+- Project docs updated: 50 packages, 38 pages, 190+ API endpoints
 
 ## [0.0.25] - 2026-03-27
 
@@ -2967,7 +2967,7 @@ Downloads the latest release binary for your platform (linux/darwin, amd64/arm64
 - **SFTP path traversal (security)** — Reject all paths containing `..` before processing, prevents chroot escape on Linux
 - **CI green** — Fixed SFTP, admin, and read-only dir tests for Linux; skipped CLI tests (signal handling); increased timeout to 600s
 - **CI workflows** — Upgraded to `actions/checkout@v5`, `setup-go@v6`, `setup-node@v5` (Node.js 20 deprecation fix)
-- **Stats updated** — README, CLAUDE.md, docs site: 35 pages, 170+ API endpoints, 45 test packages
+- **Stats updated** — README, docs site: 35 pages, 170+ API endpoints, 45 test packages
 
 ## [0.0.9] - 2026-03-26
 
@@ -3153,7 +3153,7 @@ New test files and major expansions across 30+ packages:
 - All API wrapper functions exported in frontend api.ts (monitor, alerts, MCP, cache stats)
 - Cache page uses api.ts wrapper instead of direct fetch
 - CacheStatsData interface moved to shared api.ts
-- CLAUDE.md updated with per-domain middleware docs, coverage stats
+- Project docs updated with per-domain middleware docs, coverage stats
 - 21+ new backend tests, 29 e2e tests passing
 
 ### Stats
