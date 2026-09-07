@@ -423,10 +423,10 @@ func (h *Handler) DockerCreate(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireAdmin(w, r) {
 		return
 	}
-	if !dbpkg.DockerAvailable() {
-		jsonError(w, "Docker is not installed or not running", http.StatusServiceUnavailable)
-		return
-	}
+	// Validate the request before probing Docker. A malformed body is a client
+	// error whatever the daemon is doing, and answering "Docker is not
+	// installed" to `not json` sends the caller after the wrong problem — it
+	// also made the outcome depend on whether the host happened to run Docker.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Engine   string `json:"engine"`
@@ -441,6 +441,10 @@ func (h *Handler) DockerCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" || req.Engine == "" || req.Port == 0 || req.RootPass == "" {
 		jsonError(w, "name, engine, port, and root_pass are required", http.StatusBadRequest)
+		return
+	}
+	if !dbpkg.DockerAvailable() {
+		jsonError(w, "Docker is not installed or not running", http.StatusServiceUnavailable)
 		return
 	}
 	engine := dbpkg.DockerDBEngine(req.Engine)

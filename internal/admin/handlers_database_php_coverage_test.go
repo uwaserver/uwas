@@ -77,8 +77,8 @@ func TestHandleDBExport_ErrorPath(t *testing.T) {
 
 func TestHandleDockerDBCreate_MissingRootPass(t *testing.T) {
 	s := testServer()
-	// Valid JSON but missing root_pass — DockerAvailable() may succeed but
-	// field validation catches the missing field first (after Docker check).
+	// Valid JSON but missing root_pass. Field validation runs before the
+	// Docker probe, so this is a 400 whether or not the host runs Docker.
 	body := `{"engine":"mariadb","name":"testdb","port":3306}`
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/database/docker",
