@@ -5,6 +5,75 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.0
+
+Two new subsystems, both **off by default**. Upgrading changes nothing until you
+turn them on — but neither is useful left off if you are exposed to floods, and
+the watchdog has a footgun worth reading before you enable it.
+
+### Action required to get the new protection
+
+1. **Autoblock is opt-in.** Add `global.autoblock.enabled: true`. Start with
+   `dry_run: true` for a day of representative traffic, then read what it would
+   have done:
+
+   ```bash
+   journalctl -u uwas | grep 'autoblock (dry-run'
+   ```
+
+   Anything in there that is a real visitor means a threshold is too tight or
+   an address belongs in `whitelist`. Only then set `dry_run: false`. Enabling
+   enforcement blind is how an autoblocker takes a site off the internet —
+   thresholds wrong in the tight direction are worse than the attack.
+
+   `firewall_sync: true` additionally pushes blocks to ufw/iptables. Without it
+   a blocked IP still completes a TCP handshake before being dropped.
+
+2. **The watchdog and `WatchdogSec` must be enabled together.** With
+   `WatchdogSec` set in the unit and `global.watchdog.enabled` false, UWAS
+   never sends a ping and **systemd restarts a perfectly healthy server every
+   60 seconds.** The installer comments `WatchdogSec` out when it finds no
+   `watchdog:` block in `uwas.yaml`; if you enable the probe later, uncomment
+   it in `/etc/systemd/system/uwas.service.d/10-resilience.conf` and run
+   `systemctl daemon-reload`.
+
+3. **Behind Cloudflare or another CDN, confirm the edge ranges are known.**
+   `global.cloudflare.ip_ranges` and `global.trusted_proxies` are whitelisted
+   automatically. If neither is populated, every connection looks like it comes
+   from the CDN edge and autoblock will eventually block one — taking the site
+   offline for every visitor that edge serves. Sync the ranges from the panel,
+   or list them under `global.autoblock.whitelist`, before enabling
+   enforcement.
+
+   With `proxy_protocol: true`, connection-level detection is disabled outright
+   (a warning is logged at startup) because every connection arrives from the
+   load balancer. Only WAF/rate/404 signals apply. A TLS handshake flood in
+   that topology has to be stopped at the load balancer.
+
+### Behavior changes (no action needed)
+
+- **The service now restarts on any exit, not just a failing one.**
+  `Restart=always` replaces `Restart=on-failure`, so a process killed by the
+  OOM killer comes back the way a crash does. `StartLimitBurst=10` over 5
+  minutes replaces systemd's default of 5 in 10 seconds, which used to give up
+  permanently and turn a recoverable overload into a lasting outage.
+- **`LimitNOFILE` rises to 1048576.** A connection flood exhausts file
+  descriptors before anything else and shows up as `accept: too many open
+  files` with a listener that has stopped accepting.
+- **The installer writes a systemd drop-in** at
+  `/etc/systemd/system/uwas.service.d/10-resilience.conf` instead of rewriting
+  `uwas.service`. Existing operator edits to the unit are preserved. If you
+  have your own `Restart=` or `LimitNOFILE` and want them to win, put them in a
+  drop-in that sorts after `10-`.
+- **`POST /api/v1/database/docker` returns 400 instead of 503 for a malformed
+  body.** It previously reported a Docker daemon problem for bad JSON or a
+  missing `root_pass`. Any client keying on the 503 for these cases should read
+  400 now.
+- **SFTP and SSH pick up two upstream DoS fixes** (`golang.org/x/crypto`
+  v0.56.0). No configuration change.
+
+---
+
 ## Upgrading to v0.10.1
 
 Six things the panel reported as working and were not. Two change behavior you

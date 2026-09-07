@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-07
+
+A GET flood took a server down, and the defences it already had could not see
+it. The journal filled with
+
+```
+http: TLS handshake error from 35.207.219.84:45854: EOF
+http: TLS handshake error from 82.198.243.230:43815: EOF
+```
+
+and then `domain health check status=down code=0 response_ms=10001` — while the
+process stayed up, `active (running)`, answering nothing.
+
+Two independent gaps, both structural rather than a bug in any one component:
+
+The WAF, the rate limiter, the bot guard and the IP ACL are all HTTP
+middleware. They run after TLS termination on a parsed request. These
+connections were opened and dropped before the client sent a ClientHello, so
+there was never a request for any of them to inspect. Every one still cost an
+accept, a goroutine, a file descriptor and a handshake attempt.
+
+And `Restart=on-failure` only reacts to a process that exits. A server
+saturated at the accept path never exits, so nothing restarted it.
+
+### Added
+
+- **`global.autoblock` — automatic source-IP blocking, enforced at accept.**
+  Six signals, three of which exist before TLS and are the only ones that can
+  see a handshake flood: `conn_flood` (connection rate), `tls_abort`
+  (connections closed having never sent a byte — the signature above), and
+  `concurrent` (simultaneous connections). The other three, `waf`, `rate` and
+  `notfound`, come from the request layer via the existing guards.
+
+  Enforcement is two-layered. The in-memory block costs one map lookup per
+  accepted connection, on a lock-free snapshot, and drops the connection before
+  TLS or HTTP touch it. With `firewall_sync` the block is also pushed to
+  ufw/iptables, so the kernel refuses the SYN and the process is never woken —
+  that is what makes a large flood cheap to absorb.
+
+  Repeat offenders escalate (15m → 1h → 4h …) up to `max_block_duration`, and
+  active blocks persist across restarts: an attack that outlives a restart does
+  not get a clean slate. `dry_run` detects and logs without enforcing.
+
+  Never blocked, whatever the config says: loopback, private, link-local and
+  unspecified ranges; `global.trusted_proxies`; `global.cloudflare.ip_ranges`;
+  this host's own addresses. The Cloudflare entry is not a nicety — behind a
+  CDN every connection carries an edge IP, a busy edge trips a connection
+  threshold in seconds, and blocking one takes the site offline for every
+  visitor that edge serves. The whitelist is refreshed on `SIGHUP` for exactly
+  that reason.
+
+  Under `proxy_protocol` every connection arrives from the load balancer, so
+  connection-level counters would all point at it. Connection-level detection
+  is therefore disabled in that mode, with a warning at startup, and only
+  request-level signals apply. A handshake flood against a PROXY-protocol
+  deployment has to be stopped at the load balancer; UWAS never sees the real
+  source.
+
+  New endpoints: `GET /api/v1/autoblock`, `POST /api/v1/autoblock`,
+  `DELETE /api/v1/autoblock/{ip}`. Unblocking clears the escalation history, so
+  an address an operator cleared by hand does not return at level 4.
+
+- **`global.watchdog` — liveness the process has to prove.** UWAS probes its
+  own listener over loopback and pings systemd's watchdog only while the probe
+  passes. When it stops passing, the ping is withheld, `WatchdogSec` expires,
+  systemd sends `SIGABRT` and `Restart=` brings the service back. The restart
+  decision stays with systemd, including its rate limiting.
+
+  Any HTTP status counts as alive: the probe tests whether accept → parse →
+  handler → response still completes, not whether a route is correct. It uses
+  a fresh connection each time — a pooled one established while the server was
+  healthy can keep answering from a kernel buffer, which is exactly the wrong
+  thing to measure.
+
+- **`firewall.BlockIP` / `UnblockIP` / `ListBlockedIPs`.** ufw with an
+  iptables/ip6tables fallback. Rules are inserted at position 1, because ufw
+  stops at the first match and a deny appended after `ALLOW 443/tcp` would
+  never be reached. Loopback, private, link-local, unspecified and multicast
+  addresses are refused before a command is built. `ListBlockedIPs` returns
+  only rules carrying the autoblock comment, so expiry can never delete a rule
+  an operator wrote by hand.
+
+### Changed
+
+- **The systemd unit is more survivable, and the installer reaches existing
+  installs.** `Restart=always` (the OOM killer and the watchdog's `SIGABRT`
+  must be treated like a crash), `WatchdogSec=60`, `NotifyAccess=main`,
+  `LimitNOFILE=1048576` (a flood exhausts descriptors before anything else,
+  which shows up as `accept: too many open files`), and
+  `StartLimitIntervalSec=300` / `StartLimitBurst=10` — systemd's default gives
+  up permanently after 5 restarts in 10 seconds, converting a recoverable
+  overload into a lasting outage.
+
+  The installer writes these as a drop-in at
+  `/etc/systemd/system/uwas.service.d/10-resilience.conf` rather than rewriting
+  the unit, so an install carrying operator edits keeps them and still gets the
+  change. It comments `WatchdogSec` out when `uwas.yaml` has no `watchdog:`
+  block, because `WatchdogSec` with the probe disabled restarts a healthy
+  server every 60 seconds.
+
+### Fixed
+
+- `POST /api/v1/database/docker` answered `503 Docker is not installed` to a
+  malformed request body. The Docker probe ran before the request was parsed,
+  so `not json` and a missing `root_pass` both reported a daemon problem and
+  sent the caller after the wrong thing — and made the response depend on
+  whether the host happened to run Docker. Validation now runs first; the
+  daemon check follows.
+
+### Security
+
+- `golang.org/x/crypto` v0.55.0 → v0.56.0, closing GO-2026-6354 and
+  GO-2026-6355. Both are reachable from this code: the first is a DoS in
+  `ssh.NewServerConn`, which the built-in SFTP server calls on every inbound
+  connection.
+
 ## [0.10.1] - 2026-08-29
 
 An audit of everything a site's request touches, prompted by asking whether
