@@ -16,11 +16,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UWAS (Unified Web Application Server) is a single-binary Go web server + hosting control panel. Replaces Apache + Nginx + Varnish + Caddy + cPanel. Auto HTTPS, caching, PHP/FastCGI, .htaccess, reverse proxy, WAF, and a 42-page React dashboard.
 
-**Current Stats (v0.10.1):**
-- 71 Go packages (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
-- 42 dashboard pages and 254 explicit admin route registrations
+**Current Stats (v0.11.0):**
+- 73 Go packages (`go list ./...`) — 65 under `internal/`, 4 under `pkg/`; 59 carry tests
+- 42 dashboard pages and 258 explicit admin route registrations
 - 19 CLI commands (no `update` command — self-update is admin-API only)
-- ~16MB stripped linux/amd64 release binary
+- ~17MB stripped linux/amd64 release binary
 
 ## Build & Test Commands
 
@@ -70,6 +70,8 @@ internal/
     domain_alias.go   www↔apex canonical redirect logic
   alerting/          Alert thresholds + notifications
   analytics/         Per-domain traffic analytics
+  autoblock/         Source-IP abuse detection + blocking, enforced at accept
+                     (the only layer that sees a pre-TLS handshake flood)
   apps/              Node.js/Python/Ruby/Go/Docker app supervision and YAML persistence
   auth/              Multi-user RBAC (admin/reseller/user) + sessions + TOTP 2FA
   backup/            Local/S3/SFTP backup + restore
@@ -121,6 +123,7 @@ internal/
   siteuser/          SFTP user management (chroot jail + SSH keys)
   terminal/          WebSocket-to-PTY bridge for browser-based shell
   tls/               TLS manager, ACME client, auto-renewal, cert expiry alerts
+  watchdog/          Loopback liveness probe + systemd sd_notify watchdog
   webhook/           Event-driven webhook delivery (12 events + test, HMAC, retry)
   wordpress/         WordPress install, manage, debug, permissions
 pkg/
@@ -132,7 +135,8 @@ web/dashboard/       React 19 SPA (42 pages, Vite + TypeScript + Tailwind)
 ## Request Flow
 
 ```
-TCP → TLS (SNI routing)
+TCP → Accept guard (autoblock: drops blocked sources before TLS)
+  → TLS (SNI routing)
   → HTTP Parse
     → Global Middleware: Recovery → Request ID → Security Headers → Rate Limit → Access Log
       → Virtual Host Lookup (exact → alias → wildcard → fallback)
