@@ -5,6 +5,24 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.8
+
+**Behavior change:** `canonical_host` (the panel's "primary URL") is now
+enforced. It was stored but ignored, so both the apex and www answered 200. A
+domain with `canonical_host: www` now 301-redirects the apex to www (and
+`canonical_host: apex` redirects www to the apex), preserving path and query.
+If you set a primary URL and relied on both hostnames serving directly, the
+non-primary now redirects. Domains with no `canonical_host` set are unaffected.
+
+Between v0.11.1 and v0.11.8 the notable operator-facing changes (full detail in
+CHANGELOG.md): auto-block and the liveness watchdog can be configured from
+Settings and enabling the firewall now allows UWAS's own ports with a 60-second
+auto-rollback (v0.11.5); the bot guard no longer blocks crawlers from
+robots.txt, sitemaps or /.well-known/ (v0.11.7); and a per-domain rate-limit
+429 now reports the configured window as Retry-After (v0.11.1).
+
+---
+
 ## Upgrading to v0.11.1
 
 No action required. Auto-block and the watchdog can now be configured from
