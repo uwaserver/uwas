@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-09-08
+
+### Fixed
+
+- **Completed the v0.11.1 config-reload/watchdog race fix.** That fix
+  snapshotted the config under the server's lock, but copied the whole
+  `*config.Config` — including the `Domains` slice header. The admin
+  domain-CRUD path mutates `Domains` under a *separate* mutex (admin and server
+  hold independent locks over the same config pointer), so a domain add during
+  the startup window still raced the watchdog's read. The snapshot now copies
+  only `GlobalConfig`, which holds the listener addresses and watchdog settings
+  and nothing a domain write touches. Caught by the race detector in CI; the
+  reload integration test runs clean under `-race` now.
+
 ## [0.11.1] - 2026-09-08
 
 The v0.11.0 flood protection worked but had no home in the panel, and testing

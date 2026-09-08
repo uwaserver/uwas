@@ -1007,16 +1007,20 @@ func (s *Server) Start() error {
 	// Liveness watchdog. READY=1 goes out unconditionally so a systemd unit
 	// that waits for notification starts cleanly whether or not probing is on.
 	//
-	// The admin server is already accepting requests by this point, so a
-	// concurrent reload can be writing *s.config while we read it. Snapshot the
-	// listener/watchdog fields under the same lock reload takes, rather than
-	// reading s.config directly here.
+	// The admin server is already accepting requests by this point, so config
+	// writers can run concurrently with this read. Copy only GlobalConfig, and
+	// under the lock reload takes: the watchdog needs the listener addresses
+	// and its own settings, none of which live in Config.Domains — and Domains
+	// is the field the admin domain-CRUD path mutates (under a *separate*
+	// mutex). Copying the whole *s.config would read that slice header and race
+	// a concurrent domain add; copying Global alone touches nothing a domain
+	// write does.
 	s.configMu.RLock()
-	dogCfg := *s.config
+	dogGlobal := s.config.Global
 	s.configMu.RUnlock()
-	s.dog = newWatchdog(&dogCfg, s.logger)
+	s.dog = newWatchdog(&config.Config{Global: dogGlobal}, s.logger)
 	s.dog.NotifyReady()
-	if dogCfg.Global.Watchdog.Enabled {
+	if dogGlobal.Watchdog.Enabled {
 		s.logger.SafeGo("watchdog", func() { s.dog.Run(s.ctx) })
 	}
 
