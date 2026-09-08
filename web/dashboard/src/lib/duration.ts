@@ -23,7 +23,14 @@ export const WINDOW_OPTIONS: { value: string; seconds: number }[] = [
 
 // parseDurationSeconds parses a simple Go-style duration ("10s", "1m", "1m0s",
 // "1h30m") into whole seconds, or null if it is not a duration.
-export function parseDurationSeconds(v: string | undefined | null): number | null {
+//
+// Accepts a number too: the API marshals a zero Duration as the JSON number 0
+// (and could return a positive number as seconds), so a caller passing the raw
+// field must not blow up on `(0).trim()`. A number <= 0 means "unset".
+export function parseDurationSeconds(v: string | number | undefined | null): number | null {
+  if (typeof v === 'number') {
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+  }
   const s = (v ?? '').trim();
   if (s === '') return null;
   const re = /(\d+)(h|m|s)/g;
@@ -47,7 +54,7 @@ export function parseDurationSeconds(v: string | undefined | null): number | nul
 // An unknown-but-valid duration is returned in canonical form so it still
 // round-trips even if it is not one of the presets; anything unparseable falls
 // back to the default.
-export function normalizeWindowValue(v: string | undefined | null): string {
+export function normalizeWindowValue(v: string | number | undefined | null): string {
   const secs = parseDurationSeconds(v);
   if (secs === null) return WINDOW_DEFAULT;
   const preset = WINDOW_OPTIONS.find((o) => o.seconds === secs);

@@ -431,7 +431,7 @@ export interface DomainDetail {
     immutable?: string;
     immutable_paths?: string[];
   };
-  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; bypass_paths?: string[] | null; rules?: string[] | null }; cloudflare_only?: boolean; rate_limit?: { requests: number; window: string }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
+  security?: { blocked_paths: string[] | null; waf: { enabled: boolean; bypass_paths?: string[] | null; rules?: string[] | null }; cloudflare_only?: boolean; rate_limit?: { requests: number; window: string | number }; ip_whitelist?: string[] | null; ip_blacklist?: string[] | null; hotlink_protection?: { enabled: boolean; allowed_referers: string[] | null; extensions: string[] | null }; geo_block_countries?: string[] | null; geo_allow_countries?: string[] | null };
   resources?: { cpu_percent?: number; memory_mb?: number; pid_max?: number };
   basic_auth?: BasicAuthRule;
   locations?: DomainLocationRule[];

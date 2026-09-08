@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-09-08
+
+### Fixed
+
+- **Regression from v0.11.3: clicking a domain on the Security page showed
+  nothing.** The window-dropdown fix normalized the loaded value through a
+  helper that assumed a string, but the API marshals an unset `Duration` as the
+  JSON number `0`. `(0).trim()` threw a `TypeError`, the domain-detail loader's
+  `catch` nulled the detail, and the per-domain security panel never rendered —
+  for any domain without an explicit `rate_limit.window`, which is most of them.
+  The helper now accepts a number (0 → the default, a positive number → seconds)
+  and the API type reflects that a window may come back as a number. Covered by
+  a regression test that the helper does not throw on `0`.
+
 ## [0.11.3] - 2026-09-08
 
 ### Fixed

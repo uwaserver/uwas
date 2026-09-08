@@ -28,6 +28,18 @@ describe('normalizeWindowValue', () => {
     expect(normalizeWindowValue('900s')).toBe('15m0s');
   });
 
+  // Regression: the API marshals a zero/absent Duration as the JSON *number* 0,
+  // so the raw field reaches this helper as a number, not a string. Calling
+  // (0).trim() threw a TypeError, and the caller's catch nulled the whole
+  // domain detail — clicking a domain on the Security page showed nothing.
+  it('handles the numeric window the API returns for an unset value', () => {
+    expect(normalizeWindowValue(0)).toBe(WINDOW_DEFAULT);
+    expect(normalizeWindowValue(60)).toBe('1m0s');   // number seconds -> preset
+    expect(normalizeWindowValue(10)).toBe('10s');
+    expect(normalizeWindowValue(45)).toBe('45s');     // number seconds -> canonical
+    expect(() => normalizeWindowValue(0)).not.toThrow();
+  });
+
   it('falls back to the default for empty or junk', () => {
     expect(normalizeWindowValue('')).toBe(WINDOW_DEFAULT);
     expect(normalizeWindowValue(undefined)).toBe(WINDOW_DEFAULT);
@@ -58,6 +70,12 @@ describe('parseDurationSeconds', () => {
     expect(parseDurationSeconds('1m0s')).toBe(60);
     expect(parseDurationSeconds('1h30m')).toBe(5400);
   });
+  it('accepts numbers as seconds (API returns 0 for unset)', () => {
+    expect(parseDurationSeconds(0)).toBeNull();
+    expect(parseDurationSeconds(60)).toBe(60);
+    expect(parseDurationSeconds(-5)).toBeNull();
+  });
+
   it('rejects non-durations', () => {
     expect(parseDurationSeconds('')).toBeNull();
     expect(parseDurationSeconds('abc')).toBeNull();
