@@ -736,12 +736,13 @@ export const deleteCronJob = (schedule: string, command: string) => api<{ status
 
 // Firewall
 export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; v6?: boolean; }
-export interface FirewallStatus { active: boolean; backend: string; rules: FirewallRule[]; }
+export interface FirewallStatus { active: boolean; backend: string; rules: FirewallRule[]; staged?: boolean; rollback_pending?: boolean; rollback_seconds?: number; }
 export const fetchFirewall = () => api<FirewallStatus>('/api/v1/firewall');
 export const firewallAllow = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto }) });
 export const firewallDeny = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto }) });
 export const firewallDeleteRule = (number: number) => api<{ status: string }>(`/api/v1/firewall/${number}`, { method: 'DELETE' });
-export const firewallEnable = () => api<{ status: string }>('/api/v1/firewall/enable', { method: 'POST' });
+export const firewallEnable = () => api<{ status: string; rollback_seconds?: number; allowed_ports?: string[] }>('/api/v1/firewall/enable', { method: 'POST' });
+export const firewallConfirm = () => api<{ status: string; was_pending: boolean }>('/api/v1/firewall/confirm', { method: 'POST' });
 export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });
 
 // ── Auto-Block (source-IP abuse blocking) ──

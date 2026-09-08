@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/database"
 	"github.com/uwaserver/uwas/internal/firewall"
@@ -42,6 +43,8 @@ func TestMain(m *testing.M) {
 	firewallDeleteRule = func(number int) error { return nil }
 	firewallEnable = func() error { return nil }
 	firewallDisable = func() error { return nil }
+	firewallEnableWithRollback = func(time.Duration, []string) error { return nil }
+	firewallConfirmEnable = func() bool { return true }
 
 	servicesStartService = func(name string) error { return nil }
 	servicesStopService = func(name string) error { return nil }

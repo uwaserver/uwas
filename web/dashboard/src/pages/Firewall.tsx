@@ -16,6 +16,7 @@ import {
   firewallDeleteRule,
   firewallEnable,
   firewallDisable,
+  firewallConfirm,
   type FirewallStatus,
   type FirewallRule,
 } from '@/lib/api';
@@ -57,6 +58,15 @@ export default function Firewall() {
     load();
   }, [load]);
 
+  // While a rollback is pending, refresh once a second so the countdown ticks
+  // and the banner disappears the moment the firewall auto-disables or the
+  // operator confirms.
+  useEffect(() => {
+    if (!fw?.rollback_pending) return;
+    const id = window.setInterval(load, 1000);
+    return () => window.clearInterval(id);
+  }, [fw?.rollback_pending, load]);
+
   // Auto-dismiss success status after 4s. Errors stick.
   useEffect(() => {
     if (!status) return;
@@ -87,10 +97,9 @@ export default function Firewall() {
       );
       if (!hasSSH) {
         const ok = await confirmAction({
-          title: 'Enable without SSH allow rule?',
-          message: 'If you are managing this server over SSH, enabling the firewall now can drop your session and lock you out. UWAS recommends adding "allow 22/tcp" first.',
-          confirmLabel: 'Enable anyway',
-          variant: 'danger',
+          title: 'Enable the firewall?',
+          message: 'UWAS will first allow its own ports (SSH 22, HTTP 80, HTTPS 443, and the admin port), then turn the firewall on with a 60-second safety timer: if you lose access, it disables itself automatically unless you confirm. You can still add your own allow rules first.',
+          confirmLabel: 'Enable firewall',
         });
         if (!ok) {
           return;
@@ -106,14 +115,28 @@ export default function Firewall() {
         await firewallDisable();
         setStatus('Firewall disabled.');
       } else {
-        await firewallEnable();
-        setStatus('Firewall enabled.');
+        const res = await firewallEnable();
+        setStatus(
+          res.rollback_seconds
+            ? `Firewall enabled. Auto-disables in ${res.rollback_seconds}s unless you confirm access below.`
+            : 'Firewall enabled.',
+        );
       }
       await load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleConfirmRollback = async () => {
+    try {
+      await firewallConfirm();
+      setStatus('Firewall confirmed — it will stay enabled.');
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
     }
   };
 
@@ -208,6 +231,25 @@ export default function Firewall() {
         </div>
       )}
 
+      {/* Rollback countdown — the firewall will auto-disable unless confirmed */}
+      {fw?.rollback_pending && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-amber-300">
+            <Power size={16} />
+            <span>
+              Firewall just enabled. It will <strong>auto-disable in {fw.rollback_seconds ?? 0}s</strong> unless you
+              confirm you still have access — so a lockout fixes itself.
+            </span>
+          </div>
+          <button
+            onClick={handleConfirmRollback}
+            className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+          >
+            <CheckCircle size={12} /> I still have access — keep it on
+          </button>
+        </div>
+      )}
+
       {/* Status + toggle */}
       <div className="flex items-center justify-between rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="flex items-center gap-4">
@@ -224,7 +266,7 @@ export default function Firewall() {
               <ShieldOff size={24} className="text-red-400" />
               <div>
                 <p className="text-sm font-semibold text-red-400">Firewall Inactive</p>
-                <p className="text-xs text-muted-foreground">No rules are being enforced</p>
+                <p className="text-xs text-muted-foreground">{fw?.staged ? `${rules.length} rule(s) staged — applied when you enable` : 'No rules are being enforced'}</p>
               </div>
             </div>
           )}

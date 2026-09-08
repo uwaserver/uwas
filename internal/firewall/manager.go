@@ -29,9 +29,12 @@ type Rule struct {
 
 // Status returns firewall status and rules.
 type Status struct {
-	Active  bool   `json:"active"`
-	Backend string `json:"backend"` // "ufw", "iptables", "none"
-	Rules   []Rule `json:"rules"`
+	Active          bool   `json:"active"`
+	Backend         string `json:"backend"` // "ufw", "iptables", "none"
+	Rules           []Rule `json:"rules"`
+	Staged          bool   `json:"staged,omitempty"`           // Rules are staged (ufw inactive); they apply on enable
+	RollbackPending bool   `json:"rollback_pending,omitempty"` // an automatic disable is scheduled
+	RollbackSeconds int    `json:"rollback_seconds,omitempty"` // seconds until that disable
 }
 
 // GetStatus returns the current firewall status.
@@ -70,6 +73,18 @@ func getUFWStatus() Status {
 			st.Rules = append(st.Rules, rule)
 		}
 	}
+
+	// `ufw status` lists nothing while inactive, so a fresh install preparing
+	// rules before enabling would see an empty table. Fall back to the rules
+	// staged via `ufw show added` and mark them as such.
+	if !st.Active && len(st.Rules) == 0 {
+		if staged := stagedRules(); len(staged) > 0 {
+			st.Rules = staged
+			st.Staged = true
+		}
+	}
+
+	st.RollbackPending, st.RollbackSeconds = rollbackStatus()
 	return st
 }
 
@@ -285,5 +300,6 @@ func Enable() error {
 
 // Disable disables the firewall.
 func Disable() error {
+	cancelRollback()
 	return execCommandFn("ufw", "disable").Run()
 }

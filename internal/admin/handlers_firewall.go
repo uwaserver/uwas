@@ -3,9 +3,12 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/firewall"
 	"github.com/uwaserver/uwas/internal/siteuser"
 )
@@ -19,7 +22,51 @@ var (
 	firewallDeleteRule = firewall.DeleteRule
 	firewallEnable     = firewall.Enable
 	firewallDisable    = firewall.Disable
+
+	firewallEnableWithRollback = firewall.EnableWithRollback
+	firewallConfirmEnable      = firewall.ConfirmEnable
 )
+
+// firewallRollbackWindow is how long after enabling ufw the panel has to
+// confirm access before the firewall auto-disables. Long enough to click the
+// button, short enough that a locked-out operator is not stranded.
+const firewallRollbackWindow = 60 * time.Second
+
+// uwasFirewallPorts returns the TCP ports UWAS listens on, so enabling the
+// firewall does not cut them off. SSH (22) is always included — losing it is
+// the whole reason people fear `ufw enable` — and localhost-only listeners are
+// skipped since the firewall governs external traffic they never receive.
+func uwasFirewallPorts(g config.GlobalConfig) []string {
+	seen := map[string]bool{}
+	var ports []string
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		ports = append(ports, p)
+	}
+	// SSH and the web ports are the non-negotiable ones.
+	add("22")
+	add("80")
+	add("443")
+	for _, listen := range []string{g.HTTPListen, g.HTTPSListen, g.Admin.Listen, g.SFTPListen, g.MCP.Listen} {
+		if listen == "" {
+			continue
+		}
+		host, port, err := net.SplitHostPort(listen)
+		if err != nil || port == "" {
+			continue
+		}
+		// A service bound to loopback is not reachable from outside, so it
+		// needs no allow rule.
+		if host == "127.0.0.1" || host == "::1" || strings.EqualFold(host, "localhost") {
+			continue
+		}
+		add(port)
+	}
+	return ports
+}
 
 // ============ Firewall ============
 
@@ -102,11 +149,35 @@ func (s *Server) handleFirewallEnable(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	if err := firewallEnable(); err != nil {
+	s.configMu.RLock()
+	ports := uwasFirewallPorts(s.config.Global)
+	s.configMu.RUnlock()
+
+	// Allow UWAS's own ports first, then enable with an automatic rollback: if
+	// the enable drops the operator's connection they cannot confirm, and the
+	// firewall reverts on its own before they are locked out for good.
+	if err := firewallEnableWithRollback(firewallRollbackWindow, ports); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "enabled"})
+	s.logger.Info("firewall enabled with rollback", "allowed_ports", ports,
+		"rollback_seconds", int(firewallRollbackWindow.Seconds()))
+	jsonResponse(w, map[string]any{
+		"status":           "enabled",
+		"rollback_seconds": int(firewallRollbackWindow.Seconds()),
+		"allowed_ports":    ports,
+	})
+}
+
+// handleFirewallConfirm cancels the pending auto-rollback: the operator has
+// confirmed they still have access, so the firewall stays on.
+func (s *Server) handleFirewallConfirm(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	confirmed := firewallConfirmEnable()
+	s.logger.Info("firewall enable confirmed", "was_pending", confirmed)
+	jsonResponse(w, map[string]any{"status": "confirmed", "was_pending": confirmed})
 }
 
 func (s *Server) handleFirewallDisable(w http.ResponseWriter, r *http.Request) {
