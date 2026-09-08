@@ -5,6 +5,7 @@ import {
   fetchFeatures,
   type SecurityStats, type BlockedRequest, type DomainData, type DomainDetail, type FeatureStatus,
 } from '@/lib/api';
+import { normalizeWindowValue, WINDOW_DEFAULT } from '@/lib/duration';
 import FeatureBanner from '@/components/FeatureBanner';
 import { usePolling } from '@/hooks/usePolling';
 
@@ -38,7 +39,7 @@ export default function Security() {
   // Editable security state
   const [wafEnabled, setWafEnabled] = useState(false);
   const [rateLimitReqs, setRateLimitReqs] = useState(0);
-  const [rateLimitWindow, setRateLimitWindow] = useState('1m');
+  const [rateLimitWindow, setRateLimitWindow] = useState(WINDOW_DEFAULT);
   const [blockedPaths, setBlockedPaths] = useState<string[]>([]);
   const [newBlockedPath, setNewBlockedPath] = useState('');
   const [ipWhitelist, setIpWhitelist] = useState<string[]>([]);
@@ -101,7 +102,7 @@ export default function Security() {
       setDetail(d);
       setWafEnabled(d.security?.waf?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);
-      setRateLimitWindow(d.security?.rate_limit?.window ?? '1m');
+      setRateLimitWindow(normalizeWindowValue(d.security?.rate_limit?.window));
       setBlockedPaths(d.security?.blocked_paths ?? []);
       setIpWhitelist(d.security?.ip_whitelist ?? []);
       setIpBlacklist(d.security?.ip_blacklist ?? []);
@@ -355,9 +356,9 @@ export default function Security() {
                             className="w-full rounded border border-border bg-card px-2 py-1.5 text-sm text-foreground outline-none">
                             <option value="10s">10 seconds</option>
                             <option value="30s">30 seconds</option>
-                            <option value="1m">1 minute</option>
-                            <option value="5m">5 minutes</option>
-                            <option value="15m">15 minutes</option>
+                            <option value="1m0s">1 minute</option>
+                            <option value="5m0s">5 minutes</option>
+                            <option value="15m0s">15 minutes</option>
                           </select>
                         </div>
                       </div>

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-09-08
+
+### Fixed
+
+- **The rate-limit window dropdown misreported the stored value.** The server
+  marshals a `Duration` with Go's `String()`, so one minute is `"1m0s"` — but
+  the Security and Domain pages' window `<select>` used option values `"1m"`,
+  `"5m"`, `"15m"`, which never matched. A `<select>` with no matching option
+  renders its first entry, so a domain limited per **minute** silently showed
+  **"10 seconds"**, and an operator who set "100 requests / 1 minute" and saw
+  "10 seconds" on reload had no way to tell the panel was wrong. Option values
+  are now Go-canonical (`1m0s`/`5m0s`/`15m0s`) and the loaded value is
+  normalized (legacy `"1m"`, bare `"60s"` and canonical `"1m0s"` all map to the
+  same option), so the control reflects the real window. `"10s"` and `"30s"`
+  were unaffected because they already matched.
+
 ## [0.11.2] - 2026-09-08
 
 ### Fixed

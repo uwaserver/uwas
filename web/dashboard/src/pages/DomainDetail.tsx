@@ -14,6 +14,7 @@ import {
   type DomainDetail as DDType, type DomainAnalytics, type WPSite, type DomainLocationRule,
   type WPSecurityStatus, type WPUserInfo, type WPPlugin,
 } from '@/lib/api';
+import { normalizeWindowValue, WINDOW_DEFAULT } from '@/lib/duration';
 
 type Tab = 'overview' | 'settings' | 'security' | 'routes' | 'wordpress' | 'analytics' | 'files';
 
@@ -37,7 +38,7 @@ export default function DomainDetail() {
   const [cloudflareOnly, setCloudflareOnly] = useState(false);
   const [hotlinkEnabled, setHotlinkEnabled] = useState(false);
   const [rateLimitReqs, setRateLimitReqs] = useState(0);
-  const [rateLimitWindow, setRateLimitWindow] = useState('1m');
+  const [rateLimitWindow, setRateLimitWindow] = useState(WINDOW_DEFAULT);
   const [blockedPaths, setBlockedPaths] = useState<string[]>([]);
   const [newBlockedPath, setNewBlockedPath] = useState('');
   const [ipBlacklist, setIpBlacklist] = useState<string[]>([]);
@@ -84,7 +85,7 @@ export default function DomainDetail() {
       setCloudflareOnly(d.security?.cloudflare_only ?? false);
       setHotlinkEnabled(d.security?.hotlink_protection?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);
-      setRateLimitWindow(d.security?.rate_limit?.window ?? '1m');
+      setRateLimitWindow(normalizeWindowValue(d.security?.rate_limit?.window));
       setBlockedPaths(d.security?.blocked_paths ?? []);
       setIpBlacklist(d.security?.ip_blacklist ?? []);
       setGeoBlock((d.security?.geo_block_countries ?? []).join(', '));
@@ -710,7 +711,7 @@ export default function DomainDetail() {
                 <label className="text-[10px] text-muted-foreground">Window</label>
                 <select value={rateLimitWindow} onChange={e => setRateLimitWindow(e.target.value)}
                   className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none">
-                  <option value="10s">10s</option><option value="30s">30s</option><option value="1m">1m</option><option value="5m">5m</option>
+                  <option value="10s">10s</option><option value="30s">30s</option><option value="1m0s">1m</option><option value="5m0s">5m</option>
                 </select>
               </div>
             </div>
