@@ -144,6 +144,23 @@ func (s *SecurityStats) RecentBlocked() []BlockedRequest {
 	return result
 }
 
+// isBotExemptPath reports whether a path exists specifically for automated
+// clients and must be served regardless of the bot guard: robots.txt (crawl
+// rules), sitemaps (URL lists for crawlers), /.well-known/ (ACME challenges,
+// security.txt), and favicon.ico (fetched by everything, harmless).
+func isBotExemptPath(p string) bool {
+	switch {
+	case p == "/robots.txt", p == "/favicon.ico":
+		return true
+	case strings.HasPrefix(p, "/.well-known/"):
+		return true
+	case strings.HasPrefix(p, "/sitemap") && strings.Contains(p, ".xml"):
+		// /sitemap.xml, /sitemap_index.xml, /sitemap.xml.gz, /sitemap1.xml ...
+		return true
+	}
+	return false
+}
+
 // BotGuard blocks known malicious bots and scanners.
 // Localhost requests are always allowed (internal health checks, API calls).
 func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
@@ -155,6 +172,19 @@ func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 				remoteIP = remoteIP[:idx]
 			}
 			if remoteIP == "127.0.0.1" || remoteIP == "::1" || remoteIP == "localhost" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Paths that exist FOR automated clients are never bot-blocked.
+			// robots.txt is how a crawler learns what not to fetch — blocking a
+			// bot from it is self-defeating (it cannot see the Disallow rules,
+			// and a legitimate search engine, which fetches robots.txt first,
+			// is locked out of the whole site). Sitemaps list URLs for
+			// crawlers, and /.well-known/ carries ACME challenges and
+			// security.txt that must stay reachable. These resources are public
+			// and safe, so serving them even to a listed bot costs nothing.
+			if isBotExemptPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}

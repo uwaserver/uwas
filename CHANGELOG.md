@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-09-08
+
+### Fixed
+
+- **The bot guard blocked crawlers from robots.txt.** The malicious-bot list
+  includes aggressive SEO crawlers (AhrefsBot, SemrushBot, MJ12bot, DotBot,
+  BLEXBot, Scrapy…), and the guard blocked them on every path — including
+  `/robots.txt`. That is self-defeating: a crawler that cannot read robots.txt
+  cannot learn the Disallow rules, and a legitimate search engine, which
+  fetches robots.txt first, is locked out of the whole site. Paths that exist
+  *for* automated clients are now served regardless of the bot guard —
+  `/robots.txt`, sitemaps (`/sitemap*.xml`, incl. `.gz`), `/.well-known/` (ACME
+  challenges, security.txt) and `/favicon.ico`. The exemption is narrow: a
+  listed bot hitting a content path is still blocked, so it is not a bypass.
+
 ## [0.11.6] - 2026-09-08
 
 ### Fixed
