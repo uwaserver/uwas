@@ -18,7 +18,7 @@ func TestAutoBlockSettingsRoundTrip(t *testing.T) {
 	// in GET, or the panel renders blanks.
 	want := []string{
 		"global.autoblock.enabled", "global.autoblock.dry_run",
-		"global.autoblock.firewall_sync", "global.autoblock.window",
+		"global.autoblock.firewall_sync", "global.autoblock.feed_rate_hits", "global.autoblock.window",
 		"global.autoblock.max_connections", "global.autoblock.max_aborts",
 		"global.autoblock.max_concurrent", "global.autoblock.max_waf_hits",
 		"global.autoblock.max_rate_hits", "global.autoblock.max_not_found",
@@ -40,6 +40,7 @@ func TestAutoBlockSettingsRoundTrip(t *testing.T) {
 		"global.autoblock.enabled": "true",
 		"global.autoblock.dry_run": "false",
 		"global.autoblock.firewall_sync": "true",
+		"global.autoblock.feed_rate_hits": "false",
 		"global.autoblock.window": "30s",
 		"global.autoblock.max_aborts": 42,
 		"global.autoblock.max_connections": 999,

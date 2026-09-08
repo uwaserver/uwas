@@ -56,14 +56,17 @@ func applyDefaults(cfg *Config) {
 	if g.AutoBlock.Window.Duration == 0 {
 		g.AutoBlock.Window.Duration = time.Minute
 	}
-	if g.AutoBlock.MaxConnections == 0 {
-		g.AutoBlock.MaxConnections = 600
+	if g.AutoBlock.MaxConnections == nil {
+		g.AutoBlock.MaxConnections = intPtr(600)
 	}
 	if g.AutoBlock.MaxAborts == 0 {
 		g.AutoBlock.MaxAborts = 60
 	}
-	if g.AutoBlock.MaxConcurrent == 0 {
-		g.AutoBlock.MaxConcurrent = 150
+	if g.AutoBlock.MaxConcurrent == nil {
+		g.AutoBlock.MaxConcurrent = intPtr(150)
+	}
+	if g.AutoBlock.FeedRateHits == nil {
+		g.AutoBlock.FeedRateHits = BoolPtr(true)
 	}
 	if g.AutoBlock.MaxWAFHits == 0 {
 		g.AutoBlock.MaxWAFHits = 15

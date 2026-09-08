@@ -13,9 +13,14 @@ type AutoBlockConfig struct {
 	Window Duration `yaml:"window,omitempty" json:"window,omitempty"`
 
 	// Connection-level thresholds, per source IP per window.
-	MaxConnections int `yaml:"max_connections,omitempty" json:"max_connections,omitempty"`
-	MaxAborts      int `yaml:"max_aborts,omitempty" json:"max_aborts,omitempty"`
-	MaxConcurrent  int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
+	// MaxConnections and MaxConcurrent are pointers so an absent value can take
+	// the default while an explicit 0 disables the check — the connection-count
+	// checks false-positive on legitimate connection-heavy or NAT'd traffic,
+	// and an operator needs to be able to turn them off without disabling the
+	// abort detector (the real handshake-flood signal).
+	MaxConnections *int `yaml:"max_connections,omitempty" json:"max_connections,omitempty"`
+	MaxAborts      int  `yaml:"max_aborts,omitempty" json:"max_aborts,omitempty"`
+	MaxConcurrent  *int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
 
 	// Request-level thresholds, per source IP per window.
 	MaxWAFHits  int `yaml:"max_waf_hits,omitempty" json:"max_waf_hits,omitempty"`
@@ -35,6 +40,13 @@ type AutoBlockConfig struct {
 	// still completes a TCP handshake before being dropped, which is enough
 	// to keep a large flood expensive.
 	FirewallSync bool `yaml:"firewall_sync,omitempty" json:"firewall_sync,omitempty"`
+
+	// FeedRateHits couples the per-domain rate limiter to the autoblocker: when
+	// true (default), an IP that keeps getting 429s accrues rate hits toward
+	// MaxRateHits and can be hard-blocked. Turn it off to keep rate limiting a
+	// soft throttle — behind a NAT, aggregate 429s can otherwise escalate into
+	// a block of the whole gateway. Pointer so absent means the default (on).
+	FeedRateHits *bool `yaml:"feed_rate_hits,omitempty" json:"feed_rate_hits,omitempty"`
 
 	// Whitelist never gets blocked. trusted_proxies and the Cloudflare edge
 	// ranges are added automatically — behind a CDN every connection carries

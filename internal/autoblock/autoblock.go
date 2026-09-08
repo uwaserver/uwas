@@ -74,6 +74,11 @@ type Config struct {
 	// kernel refuses the SYN and the process never wakes up at all.
 	FirewallSync bool
 
+	// FeedRateHits couples rate-limit rejections to the rate signal. When
+	// false, RecordHTTP ignores "rate" so a soft throttle never escalates to a
+	// hard block (useful behind NAT). Defaults to true via the caller.
+	FeedRateHits bool
+
 	// PersistPath stores active blocks across restarts. An attack that
 	// survives a restart should not get a clean slate.
 	PersistPath string
@@ -84,9 +89,8 @@ func (c *Config) Normalize() {
 	if c.Window <= 0 {
 		c.Window = time.Minute
 	}
-	if c.MaxConnections <= 0 {
-		c.MaxConnections = 600
-	}
+	// MaxConnections is intentionally NOT defaulted here: 0 means "disabled".
+	// The config layer fills the default when the operator omits the field.
 	if c.MaxAborts <= 0 {
 		c.MaxAborts = 60
 	}

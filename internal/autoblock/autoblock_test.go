@@ -26,6 +26,7 @@ func testBlocker(t *testing.T, mutate func(*Config)) *Blocker {
 		MaxRateHits:    3,
 		MaxNotFound:    4,
 		BlockDuration:  time.Hour,
+		FeedRateHits:   true,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -399,8 +400,14 @@ func TestParseAddrForms(t *testing.T) {
 func TestNormalizeFillsDefaults(t *testing.T) {
 	c := Config{}
 	c.Normalize()
-	if c.Window <= 0 || c.MaxConnections <= 0 || c.MaxAborts <= 0 || c.BlockDuration <= 0 {
+	// Normalize fills the time/count defaults it owns. MaxConnections is
+	// deliberately NOT defaulted here — 0 means "disabled", and the config
+	// layer supplies the default when the field is absent.
+	if c.Window <= 0 || c.MaxAborts <= 0 || c.BlockDuration <= 0 {
 		t.Fatalf("Normalize left a zero threshold: %+v", c)
+	}
+	if c.MaxConnections != 0 {
+		t.Fatalf("Normalize must leave MaxConnections at 0 (disabled) when unset, got %d", c.MaxConnections)
 	}
 	// A max shorter than the base would make escalation shrink the block.
 	c2 := Config{BlockDuration: time.Hour, MaxBlockDuration: time.Minute}
@@ -493,5 +500,45 @@ func TestRefusedConnectionReleasesItsConcurrencySlot(t *testing.T) {
 	sh.mu.Unlock()
 	if stillTracked {
 		t.Fatal("idle counters were not collected: a leaked slot pins them forever")
+	}
+}
+
+// max_connections = 0 disables the connection-count check (operators need to
+// turn it off — it false-positives on connection-heavy / NAT'd clients —
+// without losing the abort detector).
+func TestMaxConnectionsZeroDisables(t *testing.T) {
+	b := testBlocker(t, func(c *Config) { c.MaxConnections = 0; c.MaxConcurrent = 0; c.MaxAborts = 1000 })
+	a := mustAddr(t, "203.0.113.130")
+	for i := 0; i < 5000; i++ {
+		if !b.ConnOpened(a) {
+			t.Fatalf("connection %d refused although max_connections is disabled (0)", i)
+		}
+		b.ConnClosed(a, false)
+	}
+	if b.Blocked(a) {
+		t.Fatal("max_connections=0 must not block on connection count")
+	}
+}
+
+// FeedRateHits=false keeps rate limiting a soft throttle: repeated "rate"
+// signals never accrue toward a block.
+func TestFeedRateHitsFalseIgnoresRate(t *testing.T) {
+	b := testBlocker(t, func(c *Config) { c.FeedRateHits = false; c.MaxRateHits = 3 })
+	for i := 0; i < 50; i++ {
+		b.RecordHTTP("203.0.113.131:5555", ReasonRate)
+	}
+	if b.BlockedAddr("203.0.113.131:5555") {
+		t.Fatal("FeedRateHits=false must not let rate hits escalate to a block")
+	}
+}
+
+// With FeedRateHits on (default), rate hits still block past the threshold.
+func TestFeedRateHitsTrueStillBlocks(t *testing.T) {
+	b := testBlocker(t, func(c *Config) { c.FeedRateHits = true; c.MaxRateHits = 3 })
+	for i := 0; i < 5; i++ {
+		b.RecordHTTP("203.0.113.132:5555", ReasonRate)
+	}
+	if !b.BlockedAddr("203.0.113.132:5555") {
+		t.Fatal("FeedRateHits=true must block past max_rate_hits")
 	}
 }

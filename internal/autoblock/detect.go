@@ -83,7 +83,7 @@ func (b *Blocker) ConnOpened(a netip.Addr) bool {
 		b.trip(a, ReasonConcurrent, t.concurrent)
 		return false
 	}
-	if t.conns > b.cfg.MaxConnections {
+	if b.cfg.MaxConnections > 0 && t.conns > b.cfg.MaxConnections {
 		release()
 		b.trip(a, ReasonConnFlood, t.conns)
 		return false
@@ -118,6 +118,13 @@ func (b *Blocker) ConnClosed(a netip.Addr, aborted bool) {
 // counted against an unrelated threshold.
 func (b *Blocker) RecordHTTP(remote, reason string) {
 	if b == nil || !b.cfg.Enabled {
+		return
+	}
+	// Rate-limit rejections only feed the blocker when coupling is on. Off, a
+	// 429 stays a soft throttle and never escalates to a hard IP block —
+	// important behind NAT, where aggregate 429s would otherwise block a whole
+	// gateway.
+	if reason == ReasonRate && !b.cfg.FeedRateHits {
 		return
 	}
 	a, ok := ParseAddr(remote)

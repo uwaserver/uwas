@@ -901,17 +901,21 @@ func validateAutoBlockConfig(ab AutoBlockConfig, errs *[]string) {
 		*errs = append(*errs, "global.autoblock.window must be greater than 0")
 	}
 	for name, v := range map[string]int{
-		"max_connections": ab.MaxConnections,
-		"max_aborts":      ab.MaxAborts,
-		"max_waf_hits":    ab.MaxWAFHits,
-		"max_rate_hits":   ab.MaxRateHits,
-		"max_not_found":   ab.MaxNotFound,
+		"max_aborts":    ab.MaxAborts,
+		"max_waf_hits":  ab.MaxWAFHits,
+		"max_rate_hits": ab.MaxRateHits,
+		"max_not_found": ab.MaxNotFound,
 	} {
 		if v <= 0 {
 			*errs = append(*errs, fmt.Sprintf("global.autoblock.%s must be greater than 0", name))
 		}
 	}
-	if ab.MaxConcurrent < 0 {
+	// MaxConnections / MaxConcurrent are pointers: nil means "use the default",
+	// an explicit 0 disables the check, and a negative value is invalid.
+	if ab.MaxConnections != nil && *ab.MaxConnections < 0 {
+		*errs = append(*errs, "global.autoblock.max_connections cannot be negative (0 disables the check)")
+	}
+	if ab.MaxConcurrent != nil && *ab.MaxConcurrent < 0 {
 		*errs = append(*errs, "global.autoblock.max_concurrent cannot be negative (0 disables the check)")
 	}
 	if ab.BlockDuration.Duration <= 0 {

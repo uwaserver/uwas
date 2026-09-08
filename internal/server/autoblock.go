@@ -15,12 +15,23 @@ import (
 // and the whitelist that keeps it from blocking infrastructure.
 func newAutoBlocker(cfg *config.Config, log *logger.Logger) *autoblock.Blocker {
 	ab := cfg.Global.AutoBlock
+	// MaxConnections / MaxConcurrent are pointers: nil → default, explicit 0 →
+	// disabled (the runtime treats 0 as "off"). FeedRateHits defaults to on.
+	maxConns := 600
+	if ab.MaxConnections != nil {
+		maxConns = *ab.MaxConnections
+	}
+	maxConc := 150
+	if ab.MaxConcurrent != nil {
+		maxConc = *ab.MaxConcurrent
+	}
+	feedRate := ab.FeedRateHits == nil || *ab.FeedRateHits
 	b := autoblock.New(autoblock.Config{
 		Enabled:          ab.Enabled,
 		Window:           ab.Window.Duration,
-		MaxConnections:   ab.MaxConnections,
+		MaxConnections:   maxConns,
 		MaxAborts:        ab.MaxAborts,
-		MaxConcurrent:    ab.MaxConcurrent,
+		MaxConcurrent:    maxConc,
 		MaxWAFHits:       ab.MaxWAFHits,
 		MaxRateHits:      ab.MaxRateHits,
 		MaxNotFound:      ab.MaxNotFound,
@@ -29,6 +40,7 @@ func newAutoBlocker(cfg *config.Config, log *logger.Logger) *autoblock.Blocker {
 		Escalate:         ab.Escalate,
 		DryRun:           ab.DryRun,
 		FirewallSync:     ab.FirewallSync,
+		FeedRateHits:     feedRate,
 		Whitelist:        autoBlockWhitelist(cfg),
 		PersistPath:      ab.StatePath,
 	}, log)

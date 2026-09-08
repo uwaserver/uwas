@@ -67,7 +67,8 @@ global:
   #   window: 60s           # counting period for every threshold below
   #
   #   # Connection level — per source IP, per window. These see the flood.
-  #   max_connections: 600  # new TCP connections
+  #   max_connections: 600  # new TCP connections (0 disables — false-positives on
+  #                         # connection-heavy / NAT-shared clients)
   #   max_aborts: 60        # connections closed without sending a byte
   #   max_concurrent: 150   # simultaneous open connections (0 disables)
   #
@@ -84,6 +85,8 @@ global:
   #   # completes a TCP handshake before being dropped; with it the kernel
   #   # refuses the SYN and this process never wakes up for it.
   #   firewall_sync: true
+  #   feed_rate_hits: true  # off keeps rate limiting a soft throttle instead of
+  #                         # escalating repeated 429s into a hard block (NAT-safe)
   #
   #   # Never blocked. trusted_proxies, the global.cloudflare.ip_ranges and
   #   # this host's own addresses are added automatically — behind a CDN every

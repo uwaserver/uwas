@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.11] - 2026-09-08
+
+### Changed
+
+- **Auto-block: `max_connections` and `max_concurrent` can now be disabled with
+  `0`.** They were pointers-of-nothing before — an explicit `0` was silently
+  replaced with the default. The new-connection-count check false-positives on
+  legitimate connection-heavy or NAT-shared clients (a shared IP's aggregate
+  new connections trip `max_connections=600/window` and the whole gateway is
+  blocked), so an operator needs to turn it off while keeping `max_aborts` — the
+  real handshake-flood signal. An absent value still takes the default (600 /
+  150); only an explicit `0` disables.
+- **Auto-block: new `feed_rate_hits` (default on).** When off, rate-limit 429s
+  no longer count toward `max_rate_hits`, so a per-domain rate limit stays a
+  soft throttle instead of escalating into a hard IP block. Behind a NAT, where
+  many users' aggregate 429s would otherwise block the whole gateway, turning
+  this off keeps rate limiting per-request. The coupling was introduced in
+  v0.11.10; this makes it optional.
+
 ## [0.11.10] - 2026-09-08
 
 ### Fixed

@@ -252,6 +252,8 @@ func (c CompressionConfig) CompressionEnabled() bool {
 // BoolPtr is a helper for building optional booleans in config literals.
 func BoolPtr(v bool) *bool { return &v }
 
+func intPtr(i int) *int { return &i }
+
 // ImageOptimizationConfig enables on-the-fly WebP/AVIF.
 type ImageOptimizationConfig struct {
 	Enabled bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`

@@ -418,10 +418,11 @@ func (h *Handler) SettingsGet(w http.ResponseWriter, r *http.Request) {
 		"global.autoblock.enabled":            g.AutoBlock.Enabled,
 		"global.autoblock.dry_run":            g.AutoBlock.DryRun,
 		"global.autoblock.firewall_sync":      g.AutoBlock.FirewallSync,
+		"global.autoblock.feed_rate_hits":     g.AutoBlock.FeedRateHits == nil || *g.AutoBlock.FeedRateHits,
 		"global.autoblock.window":             g.AutoBlock.Window.String(),
-		"global.autoblock.max_connections":    g.AutoBlock.MaxConnections,
+		"global.autoblock.max_connections":    intOrDefault(g.AutoBlock.MaxConnections, 600),
 		"global.autoblock.max_aborts":         g.AutoBlock.MaxAborts,
-		"global.autoblock.max_concurrent":     g.AutoBlock.MaxConcurrent,
+		"global.autoblock.max_concurrent":     intOrDefault(g.AutoBlock.MaxConcurrent, 150),
 		"global.autoblock.max_waf_hits":       g.AutoBlock.MaxWAFHits,
 		"global.autoblock.max_rate_hits":      g.AutoBlock.MaxRateHits,
 		"global.autoblock.max_not_found":      g.AutoBlock.MaxNotFound,
@@ -585,14 +586,16 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			g.AutoBlock.DryRun = sv == "true"
 		case "global.autoblock.firewall_sync":
 			g.AutoBlock.FirewallSync = sv == "true"
+		case "global.autoblock.feed_rate_hits":
+			g.AutoBlock.FeedRateHits = config.BoolPtr(sv == "true")
 		case "global.autoblock.window":
 			g.AutoBlock.Window = h.deps.ParseDur(sv)
 		case "global.autoblock.max_connections":
-			g.AutoBlock.MaxConnections = h.deps.ToInt(val)
+			g.AutoBlock.MaxConnections = intPtrVal(h.deps.ToInt(val))
 		case "global.autoblock.max_aborts":
 			g.AutoBlock.MaxAborts = h.deps.ToInt(val)
 		case "global.autoblock.max_concurrent":
-			g.AutoBlock.MaxConcurrent = h.deps.ToInt(val)
+			g.AutoBlock.MaxConcurrent = intPtrVal(h.deps.ToInt(val))
 		case "global.autoblock.max_waf_hits":
 			g.AutoBlock.MaxWAFHits = h.deps.ToInt(val)
 		case "global.autoblock.max_rate_hits":
@@ -690,3 +693,15 @@ func maskSecret(s string) string {
 	}
 	return "****" + s[len(s)-4:]
 }
+
+// intOrDefault returns *p or def when p is nil (autoblock pointer thresholds:
+// nil means "use the default"; an explicit 0 means "disabled").
+func intOrDefault(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// intPtrVal boxes an int for the optional autoblock threshold fields.
+func intPtrVal(v int) *int { return &v }
