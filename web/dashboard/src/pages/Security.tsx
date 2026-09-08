@@ -40,6 +40,7 @@ export default function Security() {
   const [wafEnabled, setWafEnabled] = useState(false);
   const [rateLimitReqs, setRateLimitReqs] = useState(0);
   const [rateLimitWindow, setRateLimitWindow] = useState(WINDOW_DEFAULT);
+  const [rateLimitBy, setRateLimitBy] = useState('ip');
   const [blockedPaths, setBlockedPaths] = useState<string[]>([]);
   const [newBlockedPath, setNewBlockedPath] = useState('');
   const [ipWhitelist, setIpWhitelist] = useState<string[]>([]);
@@ -86,6 +87,7 @@ export default function Security() {
     setWafEnabled(false);
     setRateLimitReqs(0);
     setRateLimitWindow('1m');
+    setRateLimitBy('ip');
     setBlockedPaths([]);
     setIpWhitelist([]);
     setIpBlacklist([]);
@@ -103,6 +105,7 @@ export default function Security() {
       setWafEnabled(d.security?.waf?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);
       setRateLimitWindow(normalizeWindowValue(d.security?.rate_limit?.window));
+      setRateLimitBy(d.security?.rate_limit?.by?.trim() || 'ip');
       setBlockedPaths(d.security?.blocked_paths ?? []);
       setIpWhitelist(d.security?.ip_whitelist ?? []);
       setIpBlacklist(d.security?.ip_blacklist ?? []);
@@ -127,7 +130,7 @@ export default function Security() {
       await updateDomain(host, {
         security: {
           waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled, bypass_paths: wafBypassPaths },
-          rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow },
+          rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow, by: rateLimitBy.trim() || 'ip' },
           blocked_paths: blockedPaths,
           ip_whitelist: ipWhitelist,
           ip_blacklist: ipBlacklist,
@@ -361,8 +364,20 @@ export default function Security() {
                             <option value="15m0s">15 minutes</option>
                           </select>
                         </div>
+                        <div className="flex-1">
+                          <label className="text-[10px] text-muted-foreground">Key by</label>
+                          <select value={rateLimitBy} onChange={e => setRateLimitBy(e.target.value)}
+                            className="w-full rounded border border-border bg-card px-2 py-1.5 text-sm text-foreground outline-none">
+                            <option value="ip">Client IP</option>
+                            <option value="header:X-API-Key">Header: X-API-Key</option>
+                            <option value="header:Authorization">Header: Authorization</option>
+                            {!['ip', 'header:X-API-Key', 'header:Authorization'].includes(rateLimitBy) && (
+                              <option value={rateLimitBy}>{rateLimitBy}</option>
+                            )}
+                          </select>
+                        </div>
                       </div>
-                      <p className="text-[10px] text-muted-foreground mt-1">{rateLimitReqs > 0 ? `Max ${rateLimitReqs} requests per ${rateLimitWindow} per IP` : 'Disabled (0 = no limit)'}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">{rateLimitReqs > 0 ? `Max ${rateLimitReqs} requests per ${rateLimitWindow} per ${rateLimitBy === 'ip' ? 'IP' : rateLimitBy}` : 'Disabled (0 = no limit)'}</p>
                     </div>
 
                     {/* Blocked Paths */}

@@ -1,0 +1,68 @@
+# Local autoblock / rate-limit lab. High ports; short windows for fast calibration.
+# Connection-level autoblock never fires on 127.0.0.0/8 (always Safe) — that
+# path is exercised synthetically by the calibrator.
+global:
+  worker_count: "1"
+  max_connections: 4096
+  http_listen: "127.0.0.1:18080"
+  https_listen: ""
+  log_level: warn
+  log_format: text
+  pid_file: /tmp/uwas-autoblock-lab.pid
+
+  timeouts:
+    read: 10s
+    read_header: 5s
+    write: 10s
+    idle: 30s
+    shutdown_grace: 2s
+
+  rate_limit:
+    requests: 40
+    window: 10s
+
+  admin:
+    enabled: true
+    listen: "127.0.0.1:18081"
+    api_key: "lab-key"
+
+  access_log:
+    enabled: false
+
+  autoblock:
+    enabled: true
+    dry_run: false
+    window: 60s
+    max_connections: 600
+    max_aborts: 60
+    max_concurrent: 150
+    max_waf_hits: 15
+    max_rate_hits: 120
+    max_not_found: 200
+    block_duration: 2m
+    max_block_duration: 10m
+    escalate: false
+    firewall_sync: false
+    feed_rate_hits: false
+    state_path: /tmp/uwas-autoblock-lab.json
+
+  cache:
+    enabled: false
+
+domains:
+  - host: "lab.local"
+    root: ./test/autoblock-lab/www
+    type: static
+    ssl:
+      mode: "off"
+    security:
+      rate_limit:
+        requests: 20
+        window: 10s
+        by: ip
+      waf:
+        enabled: true
+        rules:
+          - sql_injection
+          - xss
+          - path_traversal

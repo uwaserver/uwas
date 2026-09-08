@@ -42,7 +42,7 @@ export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 export const SECTION_GROUPS: Record<string, SettingsTab> = {
   server: 'general', timeouts: 'general', logging: 'general', branding: 'general',
   admin: 'security', acme: 'security', users: 'security', mcp: 'security', oauth: 'security',
-  autoblock: 'security', watchdog: 'security',
+  rate_limit: 'security', autoblock: 'security', watchdog: 'security',
   cache: 'performance',
   backup: 'integrations', alerting: 'integrations', trusted_proxies: 'integrations',
 };
@@ -196,6 +196,22 @@ export const SECTIONS: SectionDef[] = [
     fields: [
       { key: 'global.users.enabled', label: 'Enable Multi-User Auth', type: 'toggle' },
       { key: 'global.users.allow_reseller', label: 'Allow Resellers', type: 'toggle' },
+      { key: 'global.users.session_ttl', label: 'Session TTL (hours)', type: 'number', placeholder: '24', help: 'How long a panel login stays valid. Default 24. Applied on save without a restart.' },
+    ],
+  },
+  {
+    id: 'rate_limit',
+    title: 'Global Rate Limit',
+    icon: <Shield size={18} />,
+    iconColor: 'text-amber-400',
+    notice:
+      'Per-IP DoS backstop for unknown hosts and anything that does not match a domain rate_limit. ' +
+      'Disabled when Requests is 0. The middleware chain is built at startup, so enabling or changing ' +
+      'this takes effect after a service restart. Per-domain limits on the Security / Domains pages ' +
+      'apply on reload without a restart.',
+    fields: [
+      { key: 'global.rate_limit.requests', label: 'Requests', type: 'number', placeholder: '600', help: 'Max requests per IP per window. 0 = disabled (default).' },
+      { key: 'global.rate_limit.window', label: 'Window', type: 'text', placeholder: '60s', help: 'Counting period, e.g. 60s or 1m' },
     ],
   },
   {
@@ -240,22 +256,23 @@ export const SECTIONS: SectionDef[] = [
       'service restart (the listener guard is wired at startup); the whitelist and firewall sync refresh on reload. ' +
       'Run with Dry Run on first and watch the logs before enforcing. Behind a CDN, make sure the Cloudflare IP ranges ' +
       'and trusted proxies are set — otherwise a busy edge IP gets blocked and takes the site offline for everyone it serves. ' +
-      'The whitelist itself is edited in the Config Editor (raw YAML). Live blocks are managed on the Firewall page.',
+      'Live blocks are managed on the Firewall page.',
     fields: [
       { key: 'global.autoblock.enabled', label: 'Enable Auto-Block', type: 'toggle', help: 'Takes effect after a service restart' },
       { key: 'global.autoblock.dry_run', label: 'Dry Run (detect only)', type: 'toggle', help: 'Log what would be blocked without enforcing. Calibrate thresholds here first.' },
       { key: 'global.autoblock.firewall_sync', label: 'Firewall Sync (ufw/iptables)', type: 'toggle', help: 'Push blocks to the kernel so the SYN is refused before it reaches the process' },
       { key: 'global.autoblock.feed_rate_hits', label: 'Escalate Rate-Limit Hits', type: 'toggle', help: 'On: repeated 429s count toward Max Rate-Limit Hits and can hard-block the IP. Off: rate limiting stays a soft throttle (safer behind NAT).' },
       { key: 'global.autoblock.window', label: 'Window', type: 'text', placeholder: '60s', help: 'Counting period for every threshold below' },
-      { key: 'global.autoblock.max_connections', label: 'Max New Connections', type: 'number', placeholder: '600', help: 'New TCP connections per IP per window. 0 disables (false-positives on connection-heavy or NAT-shared clients).' },
-      { key: 'global.autoblock.max_aborts', label: 'Max Handshake Aborts', type: 'number', placeholder: '60', help: 'Connections closed without sending a byte — the TLS-flood signature' },
-      { key: 'global.autoblock.max_concurrent', label: 'Max Concurrent Connections', type: 'number', placeholder: '150', help: '0 disables this check' },
+      { key: 'global.autoblock.max_connections', label: 'Max New Connections', type: 'number', placeholder: '600', help: 'New TCP connections per direct peer IP per window — not the end-user behind Cloudflare/NAT. Behind a CDN or shared egress set 0 (disable) unless Cloudflare IP ranges are synced. Leaving a busy edge unwhitelisted will blackhole the site.' },
+      { key: 'global.autoblock.max_aborts', label: 'Max Handshake Aborts', type: 'number', placeholder: '60', help: 'Connections closed without sending a byte — the TLS-flood signature. Safe to keep on; browsers always send a ClientHello.' },
+      { key: 'global.autoblock.max_concurrent', label: 'Max Concurrent Connections', type: 'number', placeholder: '150', help: 'Simultaneous open TCP connections per direct peer IP. Same CDN/NAT footgun as Max New Connections — use 0 behind Cloudflare unless edge ranges are whitelisted.' },
       { key: 'global.autoblock.max_waf_hits', label: 'Max WAF Hits', type: 'number', placeholder: '15', help: 'WAF + bot-guard rejections per IP per window' },
-      { key: 'global.autoblock.max_rate_hits', label: 'Max Rate-Limit Hits', type: 'number', placeholder: '120' },
+      { key: 'global.autoblock.max_rate_hits', label: 'Max Rate-Limit Hits', type: 'number', placeholder: '120', help: 'Only counted when Escalate Rate-Limit Hits is on' },
       { key: 'global.autoblock.max_not_found', label: 'Max 404s', type: 'number', placeholder: '200', help: 'Catches vulnerability-scanning sweeps' },
       { key: 'global.autoblock.block_duration', label: 'Block Duration', type: 'text', placeholder: '15m', help: 'First offence' },
       { key: 'global.autoblock.escalate', label: 'Escalate Repeat Offenders', type: 'toggle', help: '15m → 1h → 4h … up to the cap below' },
       { key: 'global.autoblock.max_block_duration', label: 'Max Block Duration', type: 'text', placeholder: '24h', help: 'Escalation cap' },
+      { key: 'global.autoblock.whitelist', label: 'Whitelist (CIDRs / IPs)', type: 'textarea', placeholder: '203.0.113.0/24\n198.51.100.10', help: 'Never blocked. One per line. trusted_proxies and Cloudflare edge ranges are added automatically. Takes effect on reload.', fullWidth: true },
       { key: 'global.autoblock.state_path', label: 'State File', type: 'text', placeholder: '/var/lib/uwas/autoblock.json', help: 'Active blocks persist across restarts' },
     ],
   },

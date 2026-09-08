@@ -227,6 +227,11 @@ func (b *Blocker) Enabled() bool { return b != nil && b.cfg.Enabled }
 // Callers should feed this the trusted_proxies and the Cloudflare edge ranges:
 // behind a CDN every connection carries an edge IP, and blocking one of those
 // takes the site off the internet for everyone that edge serves.
+//
+// After the list is updated, any active block whose IP is now Safe is lifted
+// (and its firewall rule queued for removal). Otherwise a busy edge that
+// tripped max_connections before the ranges were synced stays blackholed even
+// though the whitelist refresh was meant to protect it.
 func (b *Blocker) SetWhitelist(entries []string) {
 	nets := defaultSafeNets()
 	for _, raw := range entries {
@@ -239,6 +244,42 @@ func (b *Blocker) SetWhitelist(entries []string) {
 		}
 	}
 	b.safeNets.Store(&nets)
+	b.liftSafeBlocks()
+}
+
+// liftSafeBlocks removes active blocks that fall inside the current never-block
+// set. Cleared escalation history too — a CDN edge that was wrongly blocked
+// should not come back at level 4 on the next mild spike.
+func (b *Blocker) liftSafeBlocks() {
+	if b == nil {
+		return
+	}
+	var lifted []string
+	b.mu.Lock()
+	for a, e := range b.blocked {
+		if b.Safe(a) {
+			lifted = append(lifted, e.IP)
+			delete(b.blocked, a)
+			delete(b.history, a)
+		}
+	}
+	if len(lifted) > 0 {
+		b.publish()
+	}
+	b.mu.Unlock()
+
+	for _, ip := range lifted {
+		b.log.Info("autoblock lifted (now whitelisted)", "ip", ip)
+		if b.fwUnlock != nil {
+			select {
+			case b.fwQueue <- fwOp{ip: ip, remove: true}:
+			default:
+			}
+		}
+	}
+	if len(lifted) > 0 {
+		b.requestSave()
+	}
 }
 
 // defaultSafeNets are never blockable regardless of configuration: blocking
@@ -275,8 +316,13 @@ func (b *Blocker) Safe(a netip.Addr) bool {
 }
 
 // Blocked is the hot path: one map lookup on a snapshot, no locking.
+// Safe addresses never report as blocked, even if a stale entry is still in
+// the map between a whitelist refresh and liftSafeBlocks finishing.
 func (b *Blocker) Blocked(a netip.Addr) bool {
 	if b == nil || !b.cfg.Enabled {
+		return false
+	}
+	if b.Safe(a) {
 		return false
 	}
 	v := b.view.Load()

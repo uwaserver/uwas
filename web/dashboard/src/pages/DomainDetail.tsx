@@ -39,6 +39,7 @@ export default function DomainDetail() {
   const [hotlinkEnabled, setHotlinkEnabled] = useState(false);
   const [rateLimitReqs, setRateLimitReqs] = useState(0);
   const [rateLimitWindow, setRateLimitWindow] = useState(WINDOW_DEFAULT);
+  const [rateLimitBy, setRateLimitBy] = useState('ip');
   const [blockedPaths, setBlockedPaths] = useState<string[]>([]);
   const [newBlockedPath, setNewBlockedPath] = useState('');
   const [ipBlacklist, setIpBlacklist] = useState<string[]>([]);
@@ -86,6 +87,7 @@ export default function DomainDetail() {
       setHotlinkEnabled(d.security?.hotlink_protection?.enabled ?? false);
       setRateLimitReqs(d.security?.rate_limit?.requests ?? 0);
       setRateLimitWindow(normalizeWindowValue(d.security?.rate_limit?.window));
+      setRateLimitBy(d.security?.rate_limit?.by?.trim() || 'ip');
       setBlockedPaths(d.security?.blocked_paths ?? []);
       setIpBlacklist(d.security?.ip_blacklist ?? []);
       setGeoBlock((d.security?.geo_block_countries ?? []).join(', '));
@@ -186,7 +188,7 @@ export default function DomainDetail() {
         security: {
           waf: { ...(currentSecurity.waf ?? {}), enabled: wafEnabled },
           cloudflare_only: cloudflareOnly,
-          rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow },
+          rate_limit: { ...(currentSecurity.rate_limit ?? {}), requests: rateLimitReqs, window: rateLimitWindow, by: rateLimitBy.trim() || 'ip' },
           blocked_paths: blockedPaths,
           ip_whitelist: currentSecurity.ip_whitelist ?? [],
           ip_blacklist: ipBlacklist,
@@ -712,6 +714,18 @@ export default function DomainDetail() {
                 <select value={rateLimitWindow} onChange={e => setRateLimitWindow(e.target.value)}
                   className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none">
                   <option value="10s">10s</option><option value="30s">30s</option><option value="1m0s">1m</option><option value="5m0s">5m</option>
+                </select>
+              </div>
+              <div className="flex-1">
+                <label className="text-[10px] text-muted-foreground">Key by</label>
+                <select value={rateLimitBy} onChange={e => setRateLimitBy(e.target.value)}
+                  className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none">
+                  <option value="ip">Client IP</option>
+                  <option value="header:X-API-Key">Header: X-API-Key</option>
+                  <option value="header:Authorization">Header: Authorization</option>
+                  {!['ip', 'header:X-API-Key', 'header:Authorization'].includes(rateLimitBy) && (
+                    <option value={rateLimitBy}>{rateLimitBy}</option>
+                  )}
                 </select>
               </div>
             </div>

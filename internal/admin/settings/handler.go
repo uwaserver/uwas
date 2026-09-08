@@ -406,6 +406,10 @@ func (h *Handler) SettingsGet(w http.ResponseWriter, r *http.Request) {
 		"global.admin.api_key":             maskSecret(g.Admin.APIKey),
 		"global.users.enabled":             g.Users.Enabled,
 		"global.users.allow_reseller":      g.Users.AllowReseller,
+		"global.users.session_ttl":         g.Users.SessionTTL,
+		"global.rate_limit.requests":       g.RateLimit.Requests,
+		"global.rate_limit.window":         g.RateLimit.Window.String(),
+		"global.trusted_proxies":           strings.Join(g.TrustedProxies, "\n"),
 		"global.mcp.enabled":               g.MCP.Enabled,
 		"global.acme.email":                g.ACME.Email,
 		"global.acme.ca_url":               g.ACME.CAURL,
@@ -447,6 +451,7 @@ func (h *Handler) SettingsGet(w http.ResponseWriter, r *http.Request) {
 		"global.autoblock.max_block_duration": g.AutoBlock.MaxBlockDuration.String(),
 		"global.autoblock.escalate":           g.AutoBlock.Escalate,
 		"global.autoblock.state_path":         g.AutoBlock.StatePath,
+		"global.autoblock.whitelist":          strings.Join(g.AutoBlock.Whitelist, "\n"),
 
 		"global.watchdog.enabled":      g.Watchdog.Enabled,
 		"global.watchdog.interval":     g.Watchdog.Interval.String(),
@@ -516,6 +521,14 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			g.Users.Enabled = sv == "true"
 		case "global.users.allow_reseller":
 			g.Users.AllowReseller = sv == "true"
+		case "global.users.session_ttl":
+			g.Users.SessionTTL = h.deps.ToInt(val)
+		case "global.rate_limit.requests":
+			g.RateLimit.Requests = h.deps.ToInt(val)
+		case "global.rate_limit.window":
+			g.RateLimit.Window = h.deps.ParseDur(sv)
+		case "global.trusted_proxies":
+			g.TrustedProxies = splitListField(sv)
 		case "global.mcp.enabled":
 			g.MCP.Enabled = sv == "true"
 		case "global.mcp.listen":
@@ -627,6 +640,8 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			g.AutoBlock.Escalate = sv == "true"
 		case "global.autoblock.state_path":
 			g.AutoBlock.StatePath = sv
+		case "global.autoblock.whitelist":
+			g.AutoBlock.Whitelist = splitListField(sv)
 
 		case "global.watchdog.enabled":
 			g.Watchdog.Enabled = sv == "true"
@@ -826,3 +841,23 @@ func intOrDefault(p *int, def int) int {
 
 // intPtrVal boxes an int for the optional autoblock threshold fields.
 func intPtrVal(v int) *int { return &v }
+
+// splitListField turns a panel textarea (one entry per line, optional commas)
+// into a string slice for YAML list fields like trusted_proxies / whitelist.
+func splitListField(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, part := range strings.Split(line, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}

@@ -180,6 +180,38 @@ func TestWhitelistedAndReservedAddressesAreNeverBlocked(t *testing.T) {
 	}
 }
 
+// A CDN edge that trips max_connections before cloudflare.ip_ranges is synced
+// must come back online the moment those ranges land on reload — otherwise the
+// whitelist refresh does nothing useful and the site stays dark.
+func TestSetWhitelistLiftsActiveBlocksThatAreNowSafe(t *testing.T) {
+	b := testBlocker(t, func(c *Config) { c.MaxConcurrent = 0; c.MaxConnections = 2 })
+	a := mustAddr(t, "104.16.0.1") // looks like a Cloudflare edge
+
+	if !b.ConnOpened(a) || !b.ConnOpened(a) {
+		t.Fatal("first two connections should pass")
+	}
+	if b.ConnOpened(a) {
+		t.Fatal("third connection should trip conn_flood")
+	}
+	if !b.Blocked(a) {
+		t.Fatal("edge should be blocked before the whitelist refresh")
+	}
+
+	b.SetWhitelist([]string{"104.16.0.0/13"})
+
+	if b.Blocked(a) {
+		t.Fatal("Blocked must return false once the edge is Safe")
+	}
+	if !b.ConnOpened(a) {
+		t.Fatal("ConnOpened must serve traffic again after SetWhitelist")
+	}
+	for _, e := range b.List() {
+		if e.IP == a.String() {
+			t.Fatal("active block list must no longer contain the now-safe edge")
+		}
+	}
+}
+
 func TestEscalation(t *testing.T) {
 	b := testBlocker(t, func(c *Config) {
 		c.Escalate = true

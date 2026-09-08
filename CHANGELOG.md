@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.14] - 2026-09-08
+
+### Fixed
+
+- **Auto-block: Safe/whitelist now wins over an active block.** A CDN edge
+  (or any address later covered by Cloudflare ranges / `whitelist`) that was
+  blocked before the Safe set finished syncing stayed refused forever:
+  `ConnOpened` checked Blocked before Safe, and `SetWhitelist` never lifted
+  already-active blocks. Safe is checked first, `Blocked()` never reports a
+  Safe address as blocked, and updating the whitelist clears matching active
+  blocks (and queues firewall unblock).
+- **Settings API silently dropped several Global fields the panel already
+  edited.** `GET`/`PUT /api/v1/settings` now round-trip global rate-limit
+  (`requests` / `window`), admin session TTL, autoblock whitelist, and
+  trusted proxies. Domain Security / Domain Detail also expose
+  `rate_limit.by`.
+
+### Changed
+
+- Dashboard Settings: Global Rate Limit section, session TTL, autoblock
+  whitelist textarea, and clearer help on `max_connections` /
+  `max_concurrent` (0 disables).
+
 ## [0.11.13] - 2026-09-08
 
 ### Fixed

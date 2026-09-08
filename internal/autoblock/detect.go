@@ -52,11 +52,16 @@ func (b *Blocker) ConnOpened(a netip.Addr) bool {
 	if b == nil || !b.cfg.Enabled {
 		return true
 	}
-	if b.Blocked(a) {
-		return false
-	}
+	// Safe must win over Blocked. Behind a CDN an edge IP can trip
+	// max_connections before cloudflare.ip_ranges is synced; once those
+	// ranges land on reload the address becomes Safe, but checking Blocked
+	// first would keep refusing it and leave the site offline for everyone
+	// that edge serves.
 	if b.Safe(a) {
 		return true
+	}
+	if b.Blocked(a) {
+		return false
 	}
 
 	now := time.Now()

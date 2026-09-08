@@ -45,16 +45,39 @@ describe('section notices', () => {
 
   it('limit notices to the sections that have earned one', () => {
     const withNotice = SECTIONS.filter(s => s.notice).map(s => s.id).sort();
-    expect(withNotice).toEqual(['autoblock', 'oauth', 'watchdog']);
+    expect(withNotice).toEqual(['autoblock', 'oauth', 'rate_limit', 'watchdog']);
   });
 
   it('warn on the flood-protection sections that a restart is required', () => {
-    for (const id of ['autoblock', 'watchdog']) {
+    for (const id of ['autoblock', 'watchdog', 'rate_limit']) {
       const sec = SECTIONS.find(s => s.id === id);
       expect(sec?.notice?.toLowerCase()).toContain('restart');
       // These are real features, not the oauth kind of dead setting.
       expect(sec?.notice?.toLowerCase()).not.toContain('not implemented');
     }
+  });
+});
+
+describe('Global rate limit section', () => {
+  const section = SECTIONS.find(s => s.id === 'rate_limit');
+
+  it('exposes requests and window', () => {
+    expect(section?.fields.some(f => f.key === 'global.rate_limit.requests')).toBe(true);
+    expect(section?.fields.some(f => f.key === 'global.rate_limit.window')).toBe(true);
+  });
+});
+
+describe('Auto-block whitelist', () => {
+  it('is editable in the settings panel', () => {
+    const field = SECTIONS.find(s => s.id === 'autoblock')?.fields.find(f => f.key === 'global.autoblock.whitelist');
+    expect(field?.type).toBe('textarea');
+  });
+});
+
+describe('Session TTL', () => {
+  it('is exposed under Multi-User Auth', () => {
+    const field = SECTIONS.find(s => s.id === 'users')?.fields.find(f => f.key === 'global.users.session_ttl');
+    expect(field?.type).toBe('number');
   });
 });
 
