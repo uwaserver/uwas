@@ -20,7 +20,6 @@ var (
 	firewallAllowPort  = firewall.AllowPort
 	firewallDenyPort   = firewall.DenyPort
 	firewallDeleteRule = firewall.DeleteRule
-	firewallEnable     = firewall.Enable
 	firewallDisable    = firewall.Disable
 
 	firewallEnableWithRollback = firewall.EnableWithRollback

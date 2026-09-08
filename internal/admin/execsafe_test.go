@@ -41,7 +41,6 @@ func TestMain(m *testing.M) {
 	firewallAllowPort = func(port, proto string) error { return nil }
 	firewallDenyPort = func(port, proto string) error { return nil }
 	firewallDeleteRule = func(number int) error { return nil }
-	firewallEnable = func() error { return nil }
 	firewallDisable = func() error { return nil }
 	firewallEnableWithRollback = func(time.Duration, []string) error { return nil }
 	firewallConfirmEnable = func() bool { return true }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-09-08
+
+### Fixed
+
+- **CI staticcheck failure (U1000).** When the firewall enable path moved to
+  the rollback flow in v0.11.5, the `firewallEnable` test-seam var was left
+  behind unused. Local build/vet/test passed, but CI's staticcheck step failed
+  on it. Removed the dead var and its test override. No runtime change — the
+  variable was already unreferenced.
+
 ## [0.11.5] - 2026-09-08
 
 ### Added
