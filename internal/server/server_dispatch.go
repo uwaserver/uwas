@@ -64,6 +64,27 @@ func cacheTagsFor(domain *config.Domain, host string) []string {
 	return append(tags, cache.SiteTag(host))
 }
 
+// recordSecurityBlock feeds the security-stats counters (and, through the
+// stats observer, the autoblocker) when a per-domain guard rejects a request.
+// rate-limit and hotlink blocks were never recorded, so the Rate Limit and
+// Hotlink counters on the dashboard and Security page sat at 0 no matter how
+// many requests they turned away — and the autoblocker's rate signal was never
+// fed.
+func (s *Server) recordSecurityBlock(ctx *router.RequestContext, r *http.Request, reason string) {
+	if s.securityStats == nil {
+		return
+	}
+	ip := ctx.RemoteIP
+	if ip == "" {
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			ip = host
+		} else {
+			ip = r.RemoteAddr
+		}
+	}
+	s.securityStats.Record(ip, r.URL.Path, reason, r.UserAgent())
+}
+
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Connection limiter: reject with 503 when at capacity.
 	if s.connLimiter != nil {
@@ -336,6 +357,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				entry.lastAccess = now
 				entry.mu.Unlock()
 				if exceeded {
+					s.recordSecurityBlock(ctx, r, "rate")
 					ctx.Response.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
 					renderDomainError(ctx.Response, http.StatusTooManyRequests, domain)
 					return
@@ -494,6 +516,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			if retry < 1 {
 				retry = 1
 			}
+			s.recordSecurityBlock(ctx, r, "rate")
 			ctx.Response.Header().Set("Retry-After", strconv.Itoa(retry))
 			ctx.Response.WriteHeader(http.StatusTooManyRequests)
 			ctx.Response.Write([]byte("429 Too Many Requests"))
@@ -543,6 +566,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if hp := domain.Security.HotlinkProtection; hp.Enabled {
 		guard := middleware.HotlinkGuard(s.logger, hp.AllowedReferers, hp.Extensions)
 		if !guard(ctx.Response, r) {
+			s.recordSecurityBlock(ctx, r, "hotlink")
 			return
 		}
 	}

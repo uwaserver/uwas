@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.10] - 2026-09-08
+
+### Fixed
+
+- **The Rate Limit and Hotlink counters on the dashboard and Security page were
+  always zero.** A rate-limit 429 and a hotlink 403 returned without recording
+  to SecurityStats, so `rate_blocked` and `hotlink_blocked` never incremented no
+  matter how many requests they turned away (WAF and bot counts were already
+  recorded). Both are now recorded at the block point. This also feeds the
+  autoblocker's rate signal, which is driven by the same stats observer and was
+  therefore never triggered by rate-limit rejections.
+
 ## [0.11.9] - 2026-09-08
 
 ### Fixed
