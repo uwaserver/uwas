@@ -2,11 +2,8 @@ package server
 
 import (
 	"fmt"
-	"net/http"
 
 	"github.com/uwaserver/uwas/internal/config"
-	"github.com/uwaserver/uwas/internal/middleware"
-	"github.com/uwaserver/uwas/internal/rewrite"
 )
 
 // reload re-reads and applies the config file.
@@ -46,114 +43,11 @@ func (s *Server) reload() error {
 	// Update TLS domains
 	s.tlsMgr.UpdateDomains(newCfg.Domains)
 
-	// Invalidate htaccess cache
-	s.htaccessCacheMu.Lock()
-	s.htaccessCache = make(map[string]*htaccessCacheEntry)
-	s.htaccessCacheMu.Unlock()
-
-	// Rebuild rewrite cache for new domains
-	newRewriteCache := make(map[string]*rewrite.Engine)
-	for _, d := range newCfg.Domains {
-		if len(d.Rewrites) == 0 {
-			continue
-		}
-		var cfgRewrites []rewrite.ConfigRewrite
-		for _, rw := range d.Rewrites {
-			cfgRewrites = append(cfgRewrites, rewrite.ConfigRewrite{
-				Match: rw.Match, To: rw.To, Status: rw.Status,
-				Conditions: rw.Conditions, Flags: rw.Flags,
-			})
-		}
-		rules := rewrite.ConvertConfigRewrites(cfgRewrites)
-		if len(rules) > 0 {
-			newRewriteCache[d.Host] = rewrite.NewEngine(rules)
-		}
-	}
-
-	// Swap all per-domain routing maps under routeMu so request goroutines
-	// reading them via the *For accessors never observe a torn map header.
-	// All maps are built into locals BEFORE acquiring the lock so concurrent
-	// requests are only blocked for the pointer swaps, not the construction
-	// loops (which iterate all domains and can be O(hundreds)).
-	newDomainChains := make(map[string]middleware.Middleware)
-	newIPACLGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
-	for _, d := range newCfg.Domains {
-		if len(d.Security.IPWhitelist) > 0 || len(d.Security.IPBlacklist) > 0 {
-			cfg := middleware.IPACLConfig{
-				Whitelist: d.Security.IPWhitelist,
-				Blacklist: d.Security.IPBlacklist,
-			}
-			newDomainChains[d.Host] = middleware.IPACL(cfg)
-			newIPACLGuards[d.Host] = middleware.IPACLGuard(cfg)
-		}
-	}
-
-	newGeoChains := make(map[string]middleware.Middleware)
-	newGeoGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
-	for _, d := range newCfg.Domains {
-		if len(d.Security.GeoBlockCountries) > 0 || len(d.Security.GeoAllowCountries) > 0 {
-			cfg := middleware.GeoIPConfig{
-				BlockedCountries: d.Security.GeoBlockCountries,
-				AllowedCountries: d.Security.GeoAllowCountries,
-			}
-			newGeoChains[d.Host] = middleware.GeoIP(cfg)
-			newGeoGuards[d.Host] = middleware.GeoIPGuard(cfg)
-		}
-	}
-
-	newCORSGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
-	newWAFGuards := make(map[string]func(http.ResponseWriter, *http.Request) bool)
-	for _, d := range newCfg.Domains {
-		if d.CORS.Enabled {
-			newCORSGuards[d.Host] = middleware.CORSGuard(middleware.CORSConfig{
-				AllowedOrigins:   d.CORS.AllowedOrigins,
-				AllowedMethods:   d.CORS.AllowedMethods,
-				AllowedHeaders:   d.CORS.AllowedHeaders,
-				AllowCredentials: d.CORS.AllowCredentials,
-				MaxAge:           d.CORS.MaxAge,
-			})
-		}
-		if d.Security.WAF.Enabled {
-			newWAFGuards[d.Host] = middleware.DomainWAFGuard(s.logger, d.Security.WAF.BypassPaths, d.Security.WAF.Rules, s.securityStats)
-		}
-	}
-
-	// Rebuild per-domain rate limiters. Stop the old ones' cleanup goroutines
-	// before swapping the map; otherwise each reload leaks N goroutines bound
-	// to s.ctx (server lifetime).
-	newRateLimiters := buildDomainRateLimiters(s.ctx, newCfg.Domains, newCfg.Global.TrustedProxies, s.logger)
-
-	// Rebuild image optimization chains
-	newImageOpt := make(map[string]middleware.Middleware)
-	for _, d := range newCfg.Domains {
-		if d.ImageOptimization.Enabled && d.Root != "" {
-			newImageOpt[d.Host] = middleware.ImageOptimization(middleware.ImageOptConfig{
-				Enabled: true,
-				Formats: d.ImageOptimization.Formats,
-			}, d.Root)
-		}
-	}
-
-	// Atomic swap: all maps are pre-built, so the lock is held only for
-	// pointer assignments — O(1) critical section regardless of domain count.
-	s.routeMu.Lock()
-	s.rewriteCache = newRewriteCache
-	s.domainChains = newDomainChains
-	s.ipACLGuards = newIPACLGuards
-	s.geoChains = newGeoChains
-	s.geoGuards = newGeoGuards
-	s.corsGuards = newCORSGuards
-	s.wafGuards = newWAFGuards
-	oldRateLimiters := s.domainRateLimiters
-	s.domainRateLimiters = newRateLimiters
-	s.imageOptChains = newImageOpt
-	s.routeMu.Unlock()
-
-	// Stop the old rate limiters' cleanup goroutines after releasing routeMu;
-	// otherwise each reload leaks N goroutines bound to s.ctx (server lifetime).
-	for _, rl := range oldRateLimiters {
-		rl.Stop()
-	}
+	// Rebuild every per-domain routing map (guards, rate limiters, rewrite
+	// engines, image-opt chains) and swap them in. Shared with onDomainChange
+	// so a per-domain security change takes effect the same way through either
+	// path.
+	s.rebuildDomainRouting(newCfg.Domains, newCfg.Global.TrustedProxies)
 
 	// Rebuild proxy pools + balancers + health checkers against the new
 	// config. Factored into rebuildProxyPools so onDomainChange (which

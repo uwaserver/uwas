@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.9] - 2026-09-08
+
+### Fixed
+
+- **Per-domain security changes made in the panel now apply immediately, not
+  only after a restart.** Domain create/update rebuilt vhosts, TLS and proxy
+  pools through `onDomainChange`, but left the per-domain guard maps — rate
+  limiters, WAF, IP allow/deny, geo and CORS guards — as built at startup. So
+  changing a domain's `rate_limit` (including setting it to 0 to turn it off),
+  toggling the WAF, or editing IP/geo/CORS rules did nothing live: the old
+  limiter and guards kept enforcing until the service was restarted. The map
+  rebuild is now shared between the config reload and the domain-change
+  callback, so either path applies the change at once. In particular, disabling
+  a per-domain rate limit (`requests: 0`) now takes effect on save.
+
 ## [0.11.8] - 2026-09-08
 
 ### Fixed

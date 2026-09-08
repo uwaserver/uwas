@@ -338,9 +338,16 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			// so config.Domains is already updated. Sync all subsystems.
 			s.configMu.RLock()
 			domains := s.config.Domains
+			trustedProxies := s.config.Global.TrustedProxies
 			s.configMu.RUnlock()
 
 			s.vhosts.Update(domains)
+
+			// Rebuild per-domain guards/rate-limiters/etc. so a security
+			// change made through the panel (rate_limit — including disabling
+			// it — WAF, IP lists, geo, CORS) takes effect immediately instead
+			// of only after a full restart.
+			s.rebuildDomainRouting(domains, trustedProxies)
 			s.tlsMgr.UpdateDomains(domains)
 			if s.bwMgr != nil {
 				s.bwMgr.UpdateDomains(domains)
