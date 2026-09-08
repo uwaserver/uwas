@@ -350,7 +350,7 @@ func (h *Handler) ConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := config.Validate(&probe); err != nil {
+	if err := config.ValidateWithDefaults(&probe); err != nil {
 		h.deps.RecordAudit(r, "config.raw_put", "validation failed", false)
 		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 		return

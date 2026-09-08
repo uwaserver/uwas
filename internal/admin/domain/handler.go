@@ -963,7 +963,7 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 		Global:  config.GlobalConfig{LogLevel: "info", LogFormat: "json", Admin: config.AdminConfig{Listen: "127.0.0.1:9443"}, WebRoot: "/var/www"},
 		Domains: []config.Domain{probe},
 	}
-	if err := config.Validate(&tmpCfg); err != nil {
+	if err := config.ValidateWithDefaults(&tmpCfg); err != nil {
 		jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 		return
 	}

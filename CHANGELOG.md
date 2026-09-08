@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.13] - 2026-09-08
+
+### Fixed
+
+- **The raw Config Editor rejected configs the server would load fine.** The
+  save gate validated the submitted YAML *without* first applying defaults,
+  while the loader always defaults then validates. So a config that left a
+  zero-valued autoblock threshold (e.g. `max_rate_hits`) — which every older
+  uwas.yaml and every restored backup does — was refused on save with
+  "global.autoblock.max_rate_hits must be greater than 0", even though it loads
+  and runs correctly. Save now defaults-then-validates via the new
+  `config.ValidateWithDefaults`, matching the loader. The single-domain YAML
+  editor uses the same path.
+
 ## [0.11.12] - 2026-09-08
 
 ### Fixed

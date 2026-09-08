@@ -200,3 +200,15 @@ func applyDefaults(cfg *Config) {
 		}
 	}
 }
+
+// ValidateWithDefaults applies defaults to cfg (mutating it, exactly as Load
+// does) and then validates the result. Callers that validate a config which
+// has NOT been through the loader — the raw config editor's save gate is the
+// one that bit us — must use this instead of Validate. Otherwise a config the
+// loader would happily accept, because it fills a zero-valued field such as
+// autoblock.max_rate_hits with a default, gets rejected on save before it is
+// ever loaded ("max_rate_hits must be greater than 0").
+func ValidateWithDefaults(cfg *Config) error {
+	applyDefaults(cfg)
+	return Validate(cfg)
+}
