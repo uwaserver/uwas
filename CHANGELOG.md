@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.11] - 2026-09-08
+## [0.11.12] - 2026-09-08
+
+### Fixed
+
+- **The raw Config Editor overwrote secrets with the mask on save.**
+  `GET /api/v1/config/raw` shows secrets (api_key, pin_code, purge_key,
+  telegram_token, slack_url, S3/SFTP passwords, TOTP secret, recovery codes, …)
+  as `"********"`, but `PUT` wrote the submitted YAML straight to disk — so
+  saving from the editor replaced every real secret with the literal
+  `********`, breaking admin auth and every integration. The save path now
+  restores any field still holding the mask from the on-disk value (matching by
+  key and occurrence order, so duplicate keys like `password` each restore
+  correctly), while a secret the operator actually changed keeps its new value.
+
+EOF
+old2=## [0.11.11] - 2026-09-08
 
 ### Changed
 

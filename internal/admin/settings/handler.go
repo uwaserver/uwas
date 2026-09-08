@@ -326,6 +326,23 @@ func (h *Handler) ConfigRawPut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Restore any masked secret before parsing/writing. ConfigRawGet shows
+	// secrets as "********"; without this, a save writes that mask straight over
+	// the real secret. Unmask from the current on-disk file so untouched
+	// secrets survive and only values the operator actually changed take effect.
+	if original, rerr := os.ReadFile(configPath); rerr == nil {
+		oldContent := string(original)
+		for _, key := range []string{
+			"api_key", "pin_code", "totp_secret", "secret_key", "password",
+			"secret_access_key", "api_token", "client_secret",
+			"google_client_secret", "github_client_secret",
+			"tls_key", "telegram_token", "slack_url", "purge_key",
+		} {
+			req.Content = unmaskYAMLValue(req.Content, oldContent, key)
+		}
+		req.Content = unmaskYAMLListValue(req.Content, oldContent, "recovery_codes")
+	}
+
 	data := []byte(req.Content)
 	var probe config.Config
 	if err := yaml.Unmarshal(data, &probe); err != nil {
@@ -631,6 +648,110 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── YAML masking helpers ──
+
+const secretMask = `"********"`
+
+// unmaskYAMLValue is the inverse of maskYAMLValue for the raw config editor.
+// The editor shows secrets as "********"; on save, any secret line still
+// holding that mask must be restored from the on-disk value instead of being
+// written literally (which would overwrite the real secret with "********").
+// A line the operator actually changed keeps its new value. Matching is by
+// occurrence order for the key, so duplicate keys (e.g. `password` under s3,
+// sftp, redis) each restore from their corresponding original — as long as the
+// secret lines are not reordered, which editing values never does.
+func unmaskYAMLValue(newContent, oldContent, key string) string {
+	var origs []string
+	for _, line := range strings.Split(oldContent, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), key+":") {
+			idx := strings.Index(line, key+":")
+			origs = append(origs, strings.TrimSpace(line[idx+len(key)+1:]))
+		}
+	}
+	occ := 0
+	var out strings.Builder
+	for _, line := range strings.Split(newContent, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), key+":") {
+			idx := strings.Index(line, key+":")
+			val := strings.TrimSpace(line[idx+len(key)+1:])
+			if (val == secretMask || val == "********") && occ < len(origs) {
+				out.WriteString(line[:idx] + key + ": " + origs[occ])
+			} else {
+				out.WriteString(line)
+			}
+			occ++
+			out.WriteByte('\n')
+			continue
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return strings.TrimSuffix(out.String(), "\n")
+}
+
+// unmaskYAMLListValue restores masked list items (e.g. recovery_codes) from the
+// on-disk list, by position, when the submitted item still holds the mask.
+func unmaskYAMLListValue(newContent, oldContent, key string) string {
+	// Collect original list items for key, in order.
+	collect := func(content string) []string {
+		var items []string
+		inList := false
+		keyIndent := 0
+		for _, line := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !inList {
+				if strings.HasPrefix(trimmed, key+":") {
+					idx := strings.Index(line, key+":")
+					if strings.TrimSpace(line[idx+len(key)+1:]) == "" {
+						inList = true
+						keyIndent = idx
+					}
+				}
+				continue
+			}
+			indent := len(line) - len(strings.TrimLeft(line, " \t"))
+			if trimmed != "" && indent > keyIndent && strings.HasPrefix(trimmed, "-") {
+				items = append(items, strings.TrimSpace(strings.TrimPrefix(trimmed, "-")))
+				continue
+			}
+			inList = false
+		}
+		return items
+	}
+	origs := collect(oldContent)
+
+	occ := 0
+	inList := false
+	keyIndent := 0
+	var out strings.Builder
+	for _, line := range strings.Split(newContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inList {
+			if strings.HasPrefix(trimmed, key+":") && strings.TrimSpace(line[strings.Index(line, key+":")+len(key)+1:]) == "" {
+				inList = true
+				keyIndent = strings.Index(line, key+":")
+			}
+			out.WriteString(line)
+			out.WriteByte('\n')
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if trimmed != "" && indent > keyIndent && strings.HasPrefix(trimmed, "-") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+			if (val == secretMask || val == "********") && occ < len(origs) {
+				out.WriteString(line[:indent] + "- " + origs[occ])
+			} else {
+				out.WriteString(line)
+			}
+			occ++
+			out.WriteByte('\n')
+			continue
+		}
+		inList = false
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return strings.TrimSuffix(out.String(), "\n")
+}
 
 func maskYAMLValue(content, key string) string {
 	var result strings.Builder
