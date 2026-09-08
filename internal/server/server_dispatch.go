@@ -477,7 +477,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain rate limiting
 	if guards.rateLimit != nil {
 		if !guards.rateLimit.Allow(guards.rateLimit.Key(r)) {
-			ctx.Response.Header().Set("Retry-After", "60")
+			// Report the configured window, not a fixed minute. The global and
+			// per-location limiters already do; this one did not, so a domain
+			// limiting per 10s told well-behaved clients — crawlers included —
+			// to back off six times longer than the limit actually lasts.
+			retry := int(guards.rateLimit.Window().Seconds())
+			if retry < 1 {
+				retry = 1
+			}
+			ctx.Response.Header().Set("Retry-After", strconv.Itoa(retry))
 			ctx.Response.WriteHeader(http.StatusTooManyRequests)
 			ctx.Response.Write([]byte("429 Too Many Requests"))
 			return

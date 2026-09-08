@@ -116,6 +116,15 @@ func RateLimit(ctx context.Context, limit int, window time.Duration) Middleware 
 	}
 }
 
+// Window reports the limiter's counting period, so callers that reject a
+// request can tell the client how long to wait instead of guessing.
+func (rl *RateLimiter) Window() time.Duration {
+	if rl == nil {
+		return 0
+	}
+	return rl.window
+}
+
 // SetKeyBy configures what the limiter counts against.
 //
 // security.rate_limit.by was dead configuration: SPECIFICATION.md documents

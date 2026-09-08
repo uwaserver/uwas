@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
@@ -202,5 +203,35 @@ func TestUnknownKeyByStillLimitsPerAddress(t *testing.T) {
 	}
 	if code := rateRequest(h, "203.0.113.2:5000", nil); code != http.StatusOK {
 		t.Errorf("another address was blocked: status %d — everything fell into one bucket", code)
+	}
+}
+
+// A per-domain 429 must advertise the configured window as Retry-After, not a
+// fixed 60. The dispatch path hard-coded "60", so a domain limiting per 10s
+// told well-behaved clients — crawlers included — to back off six times too
+// long. The global and per-location limiters already reported the real window;
+// this pins the per-domain path to the same behaviour.
+func TestRateLimitRetryAfterMatchesWindow(t *testing.T) {
+	h := rateFixture(t,
+		config.RateLimitConfig{Requests: 1, Window: config.Duration{Duration: 10 * time.Second}},
+		nil)
+
+	// Exhaust the single-request budget.
+	if code := rateRequest(h, "203.0.113.5:1111", nil); code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200", code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	req.Host = "rl.test"
+	req.RemoteAddr = "203.0.113.5:1111"
+	req.Header.Set("User-Agent", "uwas-test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request status = %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "10" {
+		t.Errorf("Retry-After = %q, want \"10\" (the configured 10s window, not a fixed 60)", got)
 	}
 }

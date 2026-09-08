@@ -61,3 +61,29 @@ func TestRateLimiterCancelStopsGoroutine(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	_ = rl
 }
+
+// A rejected request has to tell the client how long the limit actually lasts.
+// The per-domain path used to send a fixed 60, so a domain limiting per 10s
+// made well-behaved clients — crawlers included — wait six times too long.
+func TestWindowReportsConfiguredPeriod(t *testing.T) {
+	for _, window := range []time.Duration{10 * time.Second, time.Minute, 5 * time.Minute} {
+		rl := NewRateLimiter(context.Background(), 10, window)
+		defer rl.Stop()
+		if got := rl.Window(); got != window {
+			t.Errorf("Window() = %v, want %v", got, window)
+		}
+	}
+
+	// A zero window is normalised to a minute at construction, so the header
+	// can never advertise "retry after 0 seconds".
+	rl := NewRateLimiter(context.Background(), 10, 0)
+	defer rl.Stop()
+	if got := rl.Window(); got != time.Minute {
+		t.Errorf("Window() = %v for a zero window, want the 1m default", got)
+	}
+
+	var nilRL *RateLimiter
+	if got := nilRL.Window(); got != 0 {
+		t.Errorf("nil limiter Window() = %v, want 0", got)
+	}
+}
