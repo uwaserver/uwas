@@ -1006,9 +1006,17 @@ func (s *Server) Start() error {
 
 	// Liveness watchdog. READY=1 goes out unconditionally so a systemd unit
 	// that waits for notification starts cleanly whether or not probing is on.
-	s.dog = newWatchdog(s.config, s.logger)
+	//
+	// The admin server is already accepting requests by this point, so a
+	// concurrent reload can be writing *s.config while we read it. Snapshot the
+	// listener/watchdog fields under the same lock reload takes, rather than
+	// reading s.config directly here.
+	s.configMu.RLock()
+	dogCfg := *s.config
+	s.configMu.RUnlock()
+	s.dog = newWatchdog(&dogCfg, s.logger)
 	s.dog.NotifyReady()
-	if s.config.Global.Watchdog.Enabled {
+	if dogCfg.Global.Watchdog.Enabled {
 		s.logger.SafeGo("watchdog", func() { s.dog.Run(s.ctx) })
 	}
 
