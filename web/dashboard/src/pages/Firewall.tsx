@@ -20,6 +20,7 @@ import {
   type FirewallRule,
 } from '@/lib/api';
 import { useConfirm } from '@/components/useConfirm';
+import AutoBlockPanel from '@/components/AutoBlockPanel';
 
 export default function Firewall() {
   const { confirmAction } = useConfirm();
@@ -193,6 +194,8 @@ export default function Firewall() {
           <RefreshCw size={12} /> Refresh
         </button>
       </div>
+
+      <AutoBlockPanel />
 
       {error && (
         <div className="flex items-center gap-2 rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">

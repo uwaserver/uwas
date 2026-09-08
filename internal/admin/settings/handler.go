@@ -414,6 +414,27 @@ func (h *Handler) SettingsGet(w http.ResponseWriter, r *http.Request) {
 		"global.backup.sftp.host":          g.Backup.SFTP.Host,
 		"global.backup.sftp.port":          g.Backup.SFTP.Port,
 		"global.backup.sftp.user":          g.Backup.SFTP.User,
+
+		"global.autoblock.enabled":            g.AutoBlock.Enabled,
+		"global.autoblock.dry_run":            g.AutoBlock.DryRun,
+		"global.autoblock.firewall_sync":      g.AutoBlock.FirewallSync,
+		"global.autoblock.window":             g.AutoBlock.Window.String(),
+		"global.autoblock.max_connections":    g.AutoBlock.MaxConnections,
+		"global.autoblock.max_aborts":         g.AutoBlock.MaxAborts,
+		"global.autoblock.max_concurrent":     g.AutoBlock.MaxConcurrent,
+		"global.autoblock.max_waf_hits":       g.AutoBlock.MaxWAFHits,
+		"global.autoblock.max_rate_hits":      g.AutoBlock.MaxRateHits,
+		"global.autoblock.max_not_found":      g.AutoBlock.MaxNotFound,
+		"global.autoblock.block_duration":     g.AutoBlock.BlockDuration.String(),
+		"global.autoblock.max_block_duration": g.AutoBlock.MaxBlockDuration.String(),
+		"global.autoblock.escalate":           g.AutoBlock.Escalate,
+		"global.autoblock.state_path":         g.AutoBlock.StatePath,
+
+		"global.watchdog.enabled":      g.Watchdog.Enabled,
+		"global.watchdog.interval":     g.Watchdog.Interval.String(),
+		"global.watchdog.timeout":      g.Watchdog.Timeout.String(),
+		"global.watchdog.failures":     g.Watchdog.Failures,
+		"global.watchdog.self_restart": g.Watchdog.SelfRestart,
 	}
 	jsonResponse(w, result)
 }
@@ -557,6 +578,46 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			g.Alerting.EmailFrom = sv
 		case "global.alerting.email_to":
 			g.Alerting.EmailTo = sv
+
+		case "global.autoblock.enabled":
+			g.AutoBlock.Enabled = sv == "true"
+		case "global.autoblock.dry_run":
+			g.AutoBlock.DryRun = sv == "true"
+		case "global.autoblock.firewall_sync":
+			g.AutoBlock.FirewallSync = sv == "true"
+		case "global.autoblock.window":
+			g.AutoBlock.Window = h.deps.ParseDur(sv)
+		case "global.autoblock.max_connections":
+			g.AutoBlock.MaxConnections = h.deps.ToInt(val)
+		case "global.autoblock.max_aborts":
+			g.AutoBlock.MaxAborts = h.deps.ToInt(val)
+		case "global.autoblock.max_concurrent":
+			g.AutoBlock.MaxConcurrent = h.deps.ToInt(val)
+		case "global.autoblock.max_waf_hits":
+			g.AutoBlock.MaxWAFHits = h.deps.ToInt(val)
+		case "global.autoblock.max_rate_hits":
+			g.AutoBlock.MaxRateHits = h.deps.ToInt(val)
+		case "global.autoblock.max_not_found":
+			g.AutoBlock.MaxNotFound = h.deps.ToInt(val)
+		case "global.autoblock.block_duration":
+			g.AutoBlock.BlockDuration = h.deps.ParseDur(sv)
+		case "global.autoblock.max_block_duration":
+			g.AutoBlock.MaxBlockDuration = h.deps.ParseDur(sv)
+		case "global.autoblock.escalate":
+			g.AutoBlock.Escalate = sv == "true"
+		case "global.autoblock.state_path":
+			g.AutoBlock.StatePath = sv
+
+		case "global.watchdog.enabled":
+			g.Watchdog.Enabled = sv == "true"
+		case "global.watchdog.interval":
+			g.Watchdog.Interval = h.deps.ParseDur(sv)
+		case "global.watchdog.timeout":
+			g.Watchdog.Timeout = h.deps.ParseDur(sv)
+		case "global.watchdog.failures":
+			g.Watchdog.Failures = h.deps.ToInt(val)
+		case "global.watchdog.self_restart":
+			g.Watchdog.SelfRestart = sv == "true"
 		}
 	}
 	h.deps.UnlockConfig()

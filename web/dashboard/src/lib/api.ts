@@ -744,6 +744,37 @@ export const firewallDeleteRule = (number: number) => api<{ status: string }>(`/
 export const firewallEnable = () => api<{ status: string }>('/api/v1/firewall/enable', { method: 'POST' });
 export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });
 
+// ── Auto-Block (source-IP abuse blocking) ──
+// The GET endpoint works whether or not the feature is enabled; when disabled
+// it reports { enabled: false } and an empty block list. block/unblock return
+// 501 while the feature is off.
+export interface AutoBlockEntry {
+  ip: string;
+  reason: string;
+  hits: number;
+  level: number;
+  blocked_at: string;
+  expires_at: string;
+  firewall: boolean;
+  dry_run?: boolean;
+}
+export interface AutoBlockStatus {
+  enabled: boolean;
+  dry_run?: boolean;
+  firewall_sync?: boolean;
+  active_blocks?: number;
+  total_detected?: number;
+  by_reason?: Record<string, number>;
+  window?: string;
+  thresholds?: Record<string, number>;
+  blocks?: AutoBlockEntry[];
+}
+export const fetchAutoBlock = () => api<AutoBlockStatus>('/api/v1/autoblock');
+export const autoBlockAdd = (ip: string, reason?: string, duration?: string) =>
+  api<{ blocked: string }>('/api/v1/autoblock', { method: 'POST', body: JSON.stringify({ ip, reason, duration }) });
+export const autoBlockRemove = (ip: string) =>
+  api<{ unblocked: string }>(`/api/v1/autoblock/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+
 // SSH Keys
 export const fetchSSHKeys = (domain: string) => api<string[]>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`).then(r => r ?? []);
 export const addSSHKey = (domain: string, publicKey: string) => api<{ status: string }>(`/api/v1/users/${encodeURIComponent(domain)}/ssh-keys`, { method: 'POST', body: JSON.stringify({ public_key: publicKey }) });

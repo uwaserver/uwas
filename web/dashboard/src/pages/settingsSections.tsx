@@ -4,7 +4,7 @@
 // non-component from a component module trips react-refresh/only-export-
 // components, which is an error in this project's lint config.
 
-import { AlertTriangle, Archive, Clock, Cpu, Database, FileText, Globe, Lock, Paintbrush, Server, Shield, Users } from 'lucide-react';
+import { Activity, AlertTriangle, Archive, Ban, Clock, Cpu, Database, FileText, Globe, Lock, Paintbrush, Server, Shield, Users } from 'lucide-react';
 
 export interface FieldDef {
   key: string;       // dot-path in YAML, e.g. "global.http_listen"
@@ -42,6 +42,7 @@ export const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 export const SECTION_GROUPS: Record<string, SettingsTab> = {
   server: 'general', timeouts: 'general', logging: 'general', branding: 'general',
   admin: 'security', acme: 'security', users: 'security', mcp: 'security', oauth: 'security',
+  autoblock: 'security', watchdog: 'security',
   cache: 'performance',
   backup: 'integrations', alerting: 'integrations', trusted_proxies: 'integrations',
 };
@@ -226,6 +227,53 @@ export const SECTIONS: SectionDef[] = [
       { key: 'global.admin.branding.favicon_url', label: 'Favicon URL', type: 'text', placeholder: 'https://example.com/favicon.ico' },
       { key: 'global.admin.branding.primary_color', label: 'Primary Color', type: 'text', placeholder: '#3b82f6' },
       { key: 'global.admin.branding.footer_text', label: 'Footer Text', type: 'text', placeholder: 'Powered by UWAS' },
+    ],
+  },
+  {
+    id: 'autoblock',
+    title: 'Auto-Block (flood protection)',
+    icon: <Ban size={18} />,
+    iconColor: 'text-red-400',
+    notice:
+      'Blocks abusive source IPs at the connection accept path — the only layer that sees a TLS-handshake flood, ' +
+      'which the WAF and rate limiter never do. Enabling, disabling, and threshold changes take effect after a ' +
+      'service restart (the listener guard is wired at startup); the whitelist and firewall sync refresh on reload. ' +
+      'Run with Dry Run on first and watch the logs before enforcing. Behind a CDN, make sure the Cloudflare IP ranges ' +
+      'and trusted proxies are set — otherwise a busy edge IP gets blocked and takes the site offline for everyone it serves. ' +
+      'The whitelist itself is edited in the Config Editor (raw YAML). Live blocks are managed on the Firewall page.',
+    fields: [
+      { key: 'global.autoblock.enabled', label: 'Enable Auto-Block', type: 'toggle', help: 'Takes effect after a service restart' },
+      { key: 'global.autoblock.dry_run', label: 'Dry Run (detect only)', type: 'toggle', help: 'Log what would be blocked without enforcing. Calibrate thresholds here first.' },
+      { key: 'global.autoblock.firewall_sync', label: 'Firewall Sync (ufw/iptables)', type: 'toggle', help: 'Push blocks to the kernel so the SYN is refused before it reaches the process' },
+      { key: 'global.autoblock.window', label: 'Window', type: 'text', placeholder: '60s', help: 'Counting period for every threshold below' },
+      { key: 'global.autoblock.max_connections', label: 'Max New Connections', type: 'number', placeholder: '600', help: 'New TCP connections per IP per window' },
+      { key: 'global.autoblock.max_aborts', label: 'Max Handshake Aborts', type: 'number', placeholder: '60', help: 'Connections closed without sending a byte — the TLS-flood signature' },
+      { key: 'global.autoblock.max_concurrent', label: 'Max Concurrent Connections', type: 'number', placeholder: '150', help: '0 disables this check' },
+      { key: 'global.autoblock.max_waf_hits', label: 'Max WAF Hits', type: 'number', placeholder: '15', help: 'WAF + bot-guard rejections per IP per window' },
+      { key: 'global.autoblock.max_rate_hits', label: 'Max Rate-Limit Hits', type: 'number', placeholder: '120' },
+      { key: 'global.autoblock.max_not_found', label: 'Max 404s', type: 'number', placeholder: '200', help: 'Catches vulnerability-scanning sweeps' },
+      { key: 'global.autoblock.block_duration', label: 'Block Duration', type: 'text', placeholder: '15m', help: 'First offence' },
+      { key: 'global.autoblock.escalate', label: 'Escalate Repeat Offenders', type: 'toggle', help: '15m → 1h → 4h … up to the cap below' },
+      { key: 'global.autoblock.max_block_duration', label: 'Max Block Duration', type: 'text', placeholder: '24h', help: 'Escalation cap' },
+      { key: 'global.autoblock.state_path', label: 'State File', type: 'text', placeholder: '/var/lib/uwas/autoblock.json', help: 'Active blocks persist across restarts' },
+    ],
+  },
+  {
+    id: 'watchdog',
+    title: 'Liveness Watchdog',
+    icon: <Activity size={18} />,
+    iconColor: 'text-emerald-400',
+    notice:
+      "Proves the server is still answering by probing its own listener, and stops feeding systemd's watchdog when it " +
+      'is not — turning a wedged-but-running process into a restart. Requires WatchdogSec in the systemd unit (the ' +
+      'installer writes a drop-in). Enabling or disabling takes effect after a service restart. Leave this off unless ' +
+      'WatchdogSec is set, or systemd will restart a healthy server on a timer.',
+    fields: [
+      { key: 'global.watchdog.enabled', label: 'Enable Watchdog', type: 'toggle', help: 'Takes effect after a service restart' },
+      { key: 'global.watchdog.interval', label: 'Probe Interval', type: 'text', placeholder: '15s', help: 'Auto-reduced to half of WatchdogSec if that is shorter' },
+      { key: 'global.watchdog.timeout', label: 'Probe Timeout', type: 'text', placeholder: '5s', help: 'Must be shorter than the interval' },
+      { key: 'global.watchdog.failures', label: 'Failures Before Action', type: 'number', placeholder: '3', help: 'Consecutive failed probes before the server is treated as wedged' },
+      { key: 'global.watchdog.self_restart', label: 'Self-Restart (no systemd)', type: 'toggle', help: 'Exit the process on failure when there is no systemd watchdog (Docker, plain supervisor)' },
     ],
   },
 ];

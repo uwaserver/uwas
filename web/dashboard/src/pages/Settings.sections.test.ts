@@ -30,12 +30,31 @@ describe('OAuth settings section', () => {
   });
 });
 
-// Every other section must stay free of a notice, so the banner keeps meaning
-// "this does nothing" rather than becoming decoration.
-describe('other sections', () => {
-  it('carry no not-implemented notice', () => {
-    const withNotice = SECTIONS.filter(s => s.notice).map(s => s.id);
-    expect(withNotice).toEqual(['oauth']);
+// A notice must never quietly become decoration. There are two legitimate
+// kinds: the "not implemented" disclaimer (only oauth — settings that are
+// stored but acted on by nothing) and an operational caution on a feature that
+// DOES work but has a footgun (autoblock and the watchdog, which need a restart
+// and can lock people out if misconfigured). The disclaimer kind must stay
+// unique to oauth; anything else carrying "not implemented" would be a section
+// silently presenting dead settings as working.
+describe('section notices', () => {
+  it('reserve the not-implemented disclaimer for oauth alone', () => {
+    const notImplemented = SECTIONS.filter(s => s.notice?.toLowerCase().includes('not implemented')).map(s => s.id);
+    expect(notImplemented).toEqual(['oauth']);
+  });
+
+  it('limit notices to the sections that have earned one', () => {
+    const withNotice = SECTIONS.filter(s => s.notice).map(s => s.id).sort();
+    expect(withNotice).toEqual(['autoblock', 'oauth', 'watchdog']);
+  });
+
+  it('warn on the flood-protection sections that a restart is required', () => {
+    for (const id of ['autoblock', 'watchdog']) {
+      const sec = SECTIONS.find(s => s.id === id);
+      expect(sec?.notice?.toLowerCase()).toContain('restart');
+      // These are real features, not the oauth kind of dead setting.
+      expect(sec?.notice?.toLowerCase()).not.toContain('not implemented');
+    }
   });
 });
 
