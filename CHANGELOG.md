@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-09-08
+
+### Added
+
+- **Enabling the firewall no longer risks a lockout.** Turning ufw on from the
+  panel now (1) allows UWAS's own ports first — SSH 22, HTTP 80, HTTPS 443 and
+  the admin port (localhost-only listeners are skipped) — and (2) arms a
+  60-second auto-rollback: if the enable drops your connection you cannot
+  confirm, and the firewall disables itself before you are locked out for good.
+  A "keep it on" button on the Firewall page cancels the rollback once you have
+  confirmed access, with a live countdown while it is pending.
+- **Rules staged while ufw is inactive are now visible.** `ufw status` lists
+  nothing until the firewall is enabled, so the panel looked empty while an
+  operator was preparing allow rules. It now falls back to `ufw show added` and
+  labels those rules as staged, so you can set up your allow rules before
+  turning the firewall on.
+
+### Fixed
+
+- **The audit log showed nothing after a restart.** Entries are persisted to
+  `audit.log` beside the config file and reloaded into the in-memory ring
+  buffer on startup — but the reload ran during `admin.New()`, before
+  `SetConfigPath` had supplied the path, so it always loaded from an empty path
+  and replayed nothing. Writes still worked, so the file grew on disk while the
+  panel kept showing zero entries across restarts. The reload now runs when the
+  config path is set.
+
 ## [0.11.4] - 2026-09-08
 
 ### Fixed
