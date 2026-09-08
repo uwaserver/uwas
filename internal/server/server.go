@@ -1149,7 +1149,13 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// the operator's explicit override for domains that must always redirect.
 	sslEnabled := domain.SSL.Mode == "auto" || domain.SSL.Mode == "manual"
 	if sslEnabled && (domain.SSL.ForceSSL || s.tlsMgr.HasCert(r.Host)) {
-		target := "https://" + r.Host + r.URL.RequestURI()
+		// Redirect straight to the canonical host so http://apex does not take
+		// two hops (→ https://apex → https://www) when www is primary.
+		targetHost := r.Host
+		if ch, ok := canonicalHostname(domain, r.Host); ok {
+			targetHost = ch
+		}
+		target := "https://" + targetHost + r.URL.RequestURI()
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 		return

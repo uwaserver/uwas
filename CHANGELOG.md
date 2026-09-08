@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.8] - 2026-09-08
+
+### Fixed
+
+- **The canonical-host (primary URL) redirect was never enforced.**
+  `canonical_host` ("apex" or "www") was stored, validated and shown in the
+  panel as the primary URL, but nothing on the request path read it — so
+  selecting www as primary never redirected the apex, and both hostnames
+  answered 200 (duplicate content to a search engine). Requests on the
+  non-canonical hostname now 301 to the canonical one, preserving path and
+  query; the `http://` → `https://` redirect goes straight to the canonical
+  host so there is no double hop. Only an explicit preference on a host with a
+  real apex/www duality applies — a domain without the preference still serves
+  both hostnames.
+
 ## [0.11.7] - 2026-09-08
 
 ### Fixed

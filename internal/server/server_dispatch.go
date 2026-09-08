@@ -188,6 +188,15 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
 
+	// Canonical hostname redirect: honour the domain's primary-URL preference
+	// before serving, so a request on the non-canonical host (e.g. the apex
+	// when www is primary) 301s to the canonical one instead of answering 200.
+	if loc := canonicalRedirectLocation(domain, r); loc != "" {
+		ctx.Response.Header().Set("Location", loc)
+		ctx.Response.WriteHeader(http.StatusMovedPermanently)
+		return
+	}
+
 	if s.rejectNonCloudflareOrigin(ctx.Response, r, domain) {
 		return
 	}
