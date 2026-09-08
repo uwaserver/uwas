@@ -1345,6 +1345,14 @@ func (s *Server) SetConfigPath(path string) {
 	if err := s.loadCloudflareState(); err != nil {
 		s.logger.Error("cloudflare state load failed", "error", err.Error(), "path", path)
 	}
+	// The audit log lives next to the config file, so its path is only known
+	// now — New() ran loadAuditLog() with an empty configPath and loaded
+	// nothing. Without this, the on-disk history is never replayed into the
+	// ring buffer and the panel shows an empty audit log after every restart,
+	// even though entries are still being written to disk.
+	if err := s.loadAuditLog(); err != nil {
+		s.logger.Warn("audit log restore failed", "error", err.Error(), "path", path)
+	}
 }
 
 // --- Raw YAML config editor ---
