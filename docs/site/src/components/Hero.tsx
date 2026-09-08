@@ -2,10 +2,10 @@ import { ArrowRight, GitBranch } from 'lucide-react'
 
 const stats = [
   { value: '5', label: 'Direct Deps', sub: 'Go modules' },
-  { value: '69', label: 'Go Packages', sub: '62 internal, 2 pkg' },
+  { value: '71', label: 'Go Packages', sub: '65 internal, 4 pkg' },
   { value: '42', label: 'Dashboard Pages', sub: 'built-in' },
-  { value: '253', label: 'Admin Routes', sub: 'explicit registrations' },
-  { value: '~16MB', label: 'Binary', sub: 'linux/amd64' },
+  { value: '259', label: 'Admin Routes', sub: 'explicit registrations' },
+  { value: '~17MB', label: 'Binary', sub: 'linux/amd64' },
 ]
 
 export default function Hero() {
@@ -45,7 +45,7 @@ export default function Hero() {
         >
           A high-performance web server + hosting panel replacing Apache + Nginx + Varnish + Caddy + cPanel.
           Auto HTTPS, built-in cache, PHP/FastCGI, reverse proxy, WordPress management, WAF,
-          and a 42-page dashboard — all in a single ~15&nbsp;MB binary. Pure Go, stdlib-first,
+          connection-level DDoS auto-block, and a 42-page dashboard — all in a single ~17&nbsp;MB binary. Pure Go, stdlib-first,
           five dependencies, no runtime.
         </p>
 

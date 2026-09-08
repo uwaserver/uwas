@@ -1,6 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 import {
 	Activity,
+	Ban,
+	HeartPulse,
 	ArrowRightLeft,
 	BarChart3,
 	Brain,
@@ -87,6 +89,22 @@ const features: Feature[] = [
 		bgColor: "rgba(239, 68, 68, 0.1)",
 	},
 	{
+		icon: Ban,
+		title: "DDoS Auto-Block",
+		description:
+			"Blocks abusive source IPs at the connection accept path — the TLS-handshake floods the WAF and rate limiter never see — with kernel-level ufw/iptables sync, escalating block durations, and a dry-run mode.",
+		color: "var(--accent-red)",
+		bgColor: "rgba(239, 68, 68, 0.1)",
+	},
+	{
+		icon: HeartPulse,
+		title: "Self-Healing",
+		description:
+			"A liveness watchdog probes the server and feeds systemd's watchdog, so a wedged-but-running process is restarted automatically instead of silently answering nothing.",
+		color: "var(--accent-green)",
+		bgColor: "rgba(16, 185, 129, 0.1)",
+	},
+	{
 		icon: ArrowRightLeft,
 		title: "Migration Tool",
 		description:
@@ -136,7 +154,7 @@ export default function Features() {
 						className="mt-4 text-lg"
 						style={{ color: "var(--text-secondary)" }}
 					>
-						Twelve capabilities that make UWAS the last server you'll ever
+						Fourteen capabilities that make UWAS the last server you'll ever
 						install.
 					</p>
 				</div>

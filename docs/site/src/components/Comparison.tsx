@@ -19,6 +19,7 @@ const rows: ComparisonRow[] = [
   { feature: '.htaccess Support',  uwas: true,  nginx: false,      caddy: false,    apache: true,     litespeed: true },
   { feature: 'Load Balancer',      uwas: true,  nginx: true,       caddy: true,     apache: 'Module', litespeed: true },
   { feature: 'WAF',                uwas: true,  nginx: 'Module',   caddy: false,    apache: 'Module', litespeed: true },
+  { feature: 'DDoS Auto-Block',    uwas: true,  nginx: 'Module',   caddy: false,    apache: false,    litespeed: 'Partial' },
   { feature: 'Web Dashboard',      uwas: true,  nginx: 'Paid',     caddy: false,    apache: false,    litespeed: true },
   { feature: 'HTTP/3',             uwas: true,  nginx: 'Partial',  caddy: true,     apache: false,    litespeed: true },
   { feature: 'Backup / Restore',   uwas: true,  nginx: false,      caddy: false,    apache: false,    litespeed: false },
