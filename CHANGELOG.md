@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-08
+
+The v0.11.0 flood protection worked but had no home in the panel, and testing
+it against a live server surfaced a rate-limit header bug.
+
+### Added
+
+- **Auto-block and the watchdog are configurable from the dashboard.** Two new
+  sections under Settings → Security expose every field — enable, dry run,
+  firewall sync, all six thresholds, the block window and escalation, plus the
+  watchdog's interval, timeout and failure count. Both carry a notice that
+  enabling, disabling and threshold changes take effect after a service
+  restart (the listener guard is wired at startup and a running listener cannot
+  be re-wrapped), and that the watchdog needs `WatchdogSec` in the unit.
+- **A live auto-block panel on the Firewall page.** Status (disabled / dry run
+  / enforcing), active-block count and detections, a manual block form, and a
+  table of active blocks — reason, escalation level, time remaining, whether
+  the block reached the kernel — each with an unblock button. It refreshes on
+  its own every 15 seconds and shows a clear disabled state, pointing at the
+  setting, rather than an error when the feature is off.
+
+### Fixed
+
+- **A per-domain rate-limit 429 now reports the configured window as
+  `Retry-After`, not a fixed 60.** The global and per-location limiters already
+  did; the per-domain path hard-coded 60, so a domain limiting per 10s told
+  well-behaved clients — crawlers included — to back off six times longer than
+  the limit actually lasts.
+- **Data race between config reload and watchdog startup.** `Start()` built the
+  watchdog by reading `s.config` without the lock, after the admin server was
+  already accepting requests, so a reload writing the config in place raced the
+  read (present since v0.11.0, caught by the race detector in CI). The
+  watchdog's config is now snapshotted under the same lock reload takes.
+
 ## [0.11.0] - 2026-09-07
 
 A GET flood took a server down, and the defences it already had could not see

@@ -5,6 +5,22 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.1
+
+No action required. Auto-block and the watchdog can now be configured from
+Settings → Security instead of hand-editing `uwas.yaml`, and the Firewall page
+gains a live panel of active blocks. As the panel notes, enabling or disabling
+either feature — and changing any threshold — still takes effect only after a
+service restart; the panel persists the values, `systemctl restart uwas`
+applies them.
+
+One behaviour change: a per-domain rate-limit rejection now sends
+`Retry-After` matching the configured window instead of a fixed 60 seconds.
+A client that honoured the old value will back off for the real window now
+(e.g. 10s for a 10s window), which is shorter, not longer.
+
+---
+
 ## Upgrading to v0.11.0
 
 Two new subsystems, both **off by default**. Upgrading changes nothing until you
