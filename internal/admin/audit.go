@@ -42,7 +42,12 @@ func (s *Server) initAudit() {
 	s.rateLimit = make(map[string]*rateLimitEntry)
 	s.userRateLimits = make(map[string]*rateLimitEntry)
 
-	// Start background cleanup goroutine for stale rate-limit entries.
+	// Stop any prior cleanup goroutine before starting a new one.
+	// This prevents goroutine leaks when initAudit is called multiple times
+	// on the same *Server (e.g. in tests that reuse a server instance).
+	if s.rlDone != nil {
+		close(s.rlDone)
+	}
 	s.rlDone = make(chan struct{})
 	go s.rateLimitCleaner()
 }
@@ -51,6 +56,7 @@ func (s *Server) initAudit() {
 func (s *Server) stopAudit() {
 	if s.rlDone != nil {
 		close(s.rlDone)
+		s.rlDone = nil
 	}
 }
 
@@ -86,6 +92,12 @@ func (s *Server) RecordAuditUser(action, detail, ip, user string, success bool) 
 
 	// Persist outside the lock — best-effort, errors only logged.
 	s.appendAuditLine(entry)
+}
+
+// RecordAuditR is the public wrapper for recordAuditR, used by auth.Manager to
+// record failed login attempts so they appear in the audit trail.
+func (s *Server) RecordAuditR(r *http.Request, action, detail string, success bool) {
+	s.recordAuditR(r, action, detail, success)
 }
 
 // recordAuditR is the request-aware convenience wrapper: it extracts the

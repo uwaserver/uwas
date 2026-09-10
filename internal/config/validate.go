@@ -426,6 +426,35 @@ func validateDomain(d *Domain, partial bool) error {
 		return fmt.Errorf("domain is nil")
 	}
 
+	// PHP_ADMIN_VALUE is a FastCGI/SCGI directive that sets PHP_INI_SYSTEM and
+	// PHP_INI_PERDIR ini options at runtime — including open_basedir, which
+	// controls filesystem access per-process.  UWAS sets open_basedir via
+	// PHP_ADMIN_VALUE in BuildEnv (handler/fastcgi/env.go:90) to enforce per-
+	// domain path isolation.  A domain admin who injects their own PHP_ADMIN_VALUE
+	// could widen or clear open_basedir and bypass UWAS's isolation.
+	// PHP_VALUE is blocked separately below (sets PHP_INI_USER directives).
+	for k := range d.PHP.Env {
+		if k == "PHP_ADMIN_VALUE" {
+			return fmt.Errorf("php.env: PHP_ADMIN_VALUE is not allowed — it would override UWAS's open_basedir restriction")
+		}
+		if strings.HasPrefix(k, "PHP_") {
+			// Block PHP_VALUE — sets PHP_INI_USER directives at runtime.
+			// (PHP_ADMIN_VALUE is already blocked above.)
+			if k == "PHP_VALUE" {
+				return fmt.Errorf("php.env: PHP_VALUE is not allowed — it can override ini directives")
+			}
+			// All other PHP_* vars are rejected unless they are safe read-only
+			// CGI-provided variables (not ini-setting directives).
+			switch k {
+			case "PHP_AUTH_USER", "PHP_AUTH_PW", "PHP_AUTH_TYPE",
+				"PHP_SELF", "SCRIPT_NAME", "REQUEST_TIME", "REQUEST_TIME_FLOAT":
+				// These are read-only; harmless to forward.
+			default:
+				return fmt.Errorf("php.env: %q is not allowed — PHP_* vars can set ini directives", k)
+			}
+		}
+	}
+
 	// htaccess.mode is an enum with exactly two values, and only "import"
 	// turns the engine on. Anything else was accepted and silently meant
 	// "off", so an operator writing the obvious `mode: on` got no .htaccess
@@ -455,7 +484,7 @@ func validateDomain(d *Domain, partial bool) error {
 		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
 	}
 
-	if DomainType(d.Type) == DomainTypeRedirect {
+	if DomainType(d.Type) == DomainTypeRedirect && !partial {
 		if d.Redirect.Target == "" {
 			return fmt.Errorf("redirect type requires a target URL")
 		}
@@ -848,7 +877,7 @@ func IsHostSafe(host string) error {
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		return nil
+		return fmt.Errorf("host %q: cannot resolve: %w", host, err)
 	}
 	for _, ip := range ips {
 		if reason := ipBlockedReason(ip, policy); reason != "" {
@@ -887,9 +916,8 @@ func isURLSafe(rawURL string, policy urlSafetyPolicy) error {
 	// Resolve the hostname and check all resolved IPs
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		// Cannot resolve — allow it; DNS may be temporarily unavailable.
-		// The actual HTTP request will fail anyway if the host is unreachable.
-		return nil
+		// Cannot resolve — reject it; allowing unknown hosts creates an SSRF bypass.
+		return fmt.Errorf("host %q: cannot resolve: %w", host, err)
 	}
 	for _, ip := range ips {
 		if reason := ipBlockedReason(ip, policy); reason != "" {

@@ -1122,9 +1122,13 @@ func (m *Manager) monitorNative(p *process, cmd *exec.Cmd, logFile *os.File, sto
 		return
 	case <-backoff.C:
 	}
+	if stopCh == nil {
+		return
+	}
 	select {
 	case <-stopCh:
 		return
+	default:
 	}
 	if err := m.startNative(p); err != nil && m.logger != nil {
 		m.logger.Error("apps: auto-restart failed", "app", p.name, "error", err)

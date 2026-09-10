@@ -315,6 +315,7 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			s.authMgr = auth.NewManager(cfg.Global.WebRoot, cfg.Global.Admin.APIKey)
 			s.authMgr.SetAllowLegacyPlaintextKey(cfg.Global.Users.AllowLegacyPlaintextAPIKey)
 			s.authMgr.SetSessionTTL(cfg.Global.Users.SessionTTL)
+			s.authMgr.SetAuditRecorder(s.admin.RecordAuditR)
 			s.admin.SetAuthManager(s.authMgr)
 			log.Info("multi-user auth enabled",
 				"allow_reseller", cfg.Global.Users.AllowReseller,

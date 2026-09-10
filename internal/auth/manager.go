@@ -178,6 +178,10 @@ type Manager struct {
 	// Background session pruner. Closed by Stop(). Nil when sessionCleanupInterval
 	// is 0 (e.g. tests that want full control).
 	cleanupDone chan struct{}
+
+	// recordAudit is called with request details when a login attempt fails so
+	// failed attempts appear in the audit trail. nil outside HTTP context (tests).
+	recordAudit func(r *http.Request, action, detail string, success bool)
 }
 
 // SetSessionTTL configures the session lifetime (hours). hours <= 0 keeps the
@@ -186,6 +190,12 @@ func (m *Manager) SetSessionTTL(hours int) {
 	if hours > 0 {
 		m.sessionTTL = time.Duration(hours) * time.Hour
 	}
+}
+
+// SetAuditRecorder configures the callback invoked when a login attempt fails
+// so failed attempts appear in the audit trail. Nil outside HTTP context (tests).
+func (m *Manager) SetAuditRecorder(fn func(r *http.Request, action, detail string, success bool)) {
+	m.recordAudit = fn
 }
 
 // sessionLifetime returns the configured session TTL, or 24h if unset.
@@ -479,6 +489,9 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 		// response timing, whether the username exists.
 		_ = bcrypt.CompareHashAndPassword(decoyHash(), []byte(password))
 		m.recordFailedAttempt(lockKey)
+		if m.recordAudit != nil {
+			m.recordAudit(nil, "auth.login.failed", "user="+username+": invalid credentials (user not found)", false)
+		}
 		return nil, errors.New("invalid credentials")
 	}
 	// Snapshot fields under the lock to avoid racing with UpdateUser.
@@ -497,6 +510,9 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
 		m.recordFailedAttempt(lockKey)
+		if m.recordAudit != nil {
+			m.recordAudit(nil, "auth.login.failed", "user="+username+": wrong password", false)
+		}
 		return nil, errors.New("invalid credentials")
 	}
 

@@ -152,6 +152,7 @@ func TestRateLimiterStopNil(t *testing.T) {
 
 func TestRateLimiterStopIdempotent(t *testing.T) {
 	rl := NewRateLimiter(context.Background(), 5, time.Second)
+	defer rl.Stop()
 	rl.Stop()
 	rl.Stop() // safe to call twice
 }

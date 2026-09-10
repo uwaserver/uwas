@@ -350,11 +350,13 @@ func TestIsHostSafe(t *testing.T) {
 	}
 }
 
-// IsHostSafe with an unresolvable hostname should not error (DNS may be down).
+// IsHostSafe with an unresolvable hostname must error: allowing unknown hosts
+// creates an SSRF bypass — an operator who later resolves "evil" to 10.0.0.1
+// via internal DNS would bypass the block.
 func TestIsHostSafe_UnresolvableHostname(t *testing.T) {
 	host := "this-host-should-not-resolve.invalid"
-	if err := IsHostSafe(host); err != nil {
-		t.Fatalf("unresolvable host should be allowed, got %v", err)
+	if err := IsHostSafe(host); err == nil {
+		t.Fatal("unresolvable host should be rejected (SSRF bypass)")
 	}
 }
 
@@ -395,10 +397,10 @@ func TestIsURLSafe_LoopbackHostnameAllowed(t *testing.T) {
 	}
 }
 
-// isURLSafe with an unresolvable hostname returns nil (DNS path).
+// isURLSafe with an unresolvable hostname now errors (same reason as IsHostSafe above).
 func TestIsURLSafe_UnresolvableHostname(t *testing.T) {
-	if err := IsWebhookURLSafe("http://this-host-should-not-resolve.invalid/path"); err != nil {
-		t.Fatalf("unresolvable hostname should be allowed: %v", err)
+	if err := IsWebhookURLSafe("http://this-host-should-not-resolve.invalid/path"); err == nil {
+		t.Fatal("unresolvable hostname in webhook URL should be rejected (SSRF bypass)")
 	}
 }
 

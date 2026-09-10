@@ -75,6 +75,15 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject custom headers containing CRLF to prevent HTTP header injection.
+	// Go's net/http sanitizes header keys automatically but NOT values.
+	for k, v := range req.Headers {
+		if strings.ContainsAny(k, "\r\n") || strings.ContainsAny(v, "\r\n") {
+			jsonError(w, "header keys and values must not contain CR or LF", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Set defaults
 	if req.Retry == 0 {
 		req.Retry = 3

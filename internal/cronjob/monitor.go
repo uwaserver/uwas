@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -17,6 +18,28 @@ var (
 	monitorExecCommandFn = exec.Command
 	monitorRuntimeGOOS   = runtime.GOOS
 )
+
+// validDomainName checks that a domain string is safe for use in filesystem paths.
+// It rejects empty strings, absolute paths, path separators, traversal sequences,
+// and control characters. A valid domain consists of alphanumeric chars, hyphens,
+// and dots, with no leading hyphen and at least one dot.
+var validDomainName = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
+
+// isDomainSafe returns true if the domain is safe to use in path construction.
+// This is a secondary defense: domain validation must also happen at the
+// API boundary where domains are first registered.
+func isDomainSafe(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	// Reject any path separators, traversal, or control characters.
+	if strings.ContainsAny(domain, "/\\") || strings.Contains(domain, "..") {
+		return false
+	}
+	// Require a valid domain name format (e.g. example.com, sub.example.com).
+	// This prevents names like "../../../etc/passwd" or ".hidden" or "trailing-".
+	return validDomainName.MatchString(domain)
+}
 
 // ExecutionRecord tracks a single cron job execution.
 type ExecutionRecord struct {
@@ -160,8 +183,10 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 		cmd = monitorExecCommandFn("sh", "-c", command)
 	}
 
-	// Set working directory to domain root if possible
-	if domain != "" && m.dataDir != "" {
+	// Set working directory to domain root if possible.
+	// domain is validated by the HTTP handler's JSON schema; additionally
+	// check here to prevent path traversal even if domain escapes validation.
+	if domain != "" && m.dataDir != "" && validDomainName.MatchString(domain) {
 		domainRoot := filepath.Join(m.dataDir, "..", "domains", domain)
 		if info, err := os.Stat(domainRoot); err == nil && info.IsDir() {
 			cmd.Dir = domainRoot

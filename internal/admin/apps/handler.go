@@ -75,6 +75,12 @@ var blockedEnvVars = map[string]bool{
 	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "LD_AUDIT": true,
 	"LD_PROFILE": true, "SHELL": true, "IFS": true, "ENV": true, "BASH_ENV": true,
 	"PS4": true, "PROMPT_COMMAND": true, "HOME": true, "USER": true, "LOGNAME": true,
+	// PHP_ADMIN_VALUE sets PHP_INI_SYSTEM / PHP_INI_PERDIR directives that
+	// override the server-enforced open_basedir restriction. Blocking it here
+	// mirrors the same block already applied to HTTP request headers in the
+	// FastCGI handler (handler/fastcgi/env.go:66). Without this, a domain
+	// admin could bypass UWAS's per-domain path isolation.
+	"PHP_ADMIN_VALUE": true,
 }
 
 func validEnvName(name string) bool {

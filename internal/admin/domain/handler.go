@@ -465,6 +465,23 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := domainutil.CanonicalDomainHostname(r.PathValue("host"))
+
+	// Enforce domain ownership: non-admin users can only delete their own domains.
+	if user, ok := h.deps.UserFromContext(r); ok && user.Role != auth.RoleAdmin {
+		allowed := false
+		for _, d := range user.Domains {
+			if domainutil.CanonicalDomainHostname(d) == host {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			h.deps.RecordAudit(r, "domain.delete", "domain: "+host+" (not owned)", false)
+			jsonError(w, "domain not found", http.StatusNotFound)
+			return
+		}
+	}
+
 	if r.URL.Query().Get("confirm") != "true" {
 		jsonError(w, "missing confirmation: add ?confirm=true", http.StatusBadRequest)
 		return
@@ -518,10 +535,29 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	// Permission check must be acquired before LockConfig() to avoid a deadlock:
+	// RequirePermission calls initAudit which acquires configMu.RLock, but a writer
+	// already holding configMu cannot acquire RLock on the same RWMutex.
 	if !h.deps.RequirePermission(w, r, auth.PermDomainUpdate) {
 		return
 	}
 	host := domainutil.CanonicalDomainHostname(r.PathValue("host"))
+
+	// Enforce domain ownership: non-admin users can only modify their own domains.
+	if user, ok := h.deps.UserFromContext(r); ok && user.Role != auth.RoleAdmin {
+		allowed := false
+		for _, d := range user.Domains {
+			if domainutil.CanonicalDomainHostname(d) == host {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (not owned)", false)
+			jsonError(w, "domain not found", http.StatusNotFound)
+			return
+		}
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	body, err := io.ReadAll(r.Body)
@@ -587,6 +623,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		HasCanonical:    rawHas(raw, "canonical_host"),
 	}
 
+	// Capture webRoot before LockConfig to avoid a deadlock: WebRoot() acquires
+	// configMu as RLock and cannot be called while configMu is write-locked.
+	webRoot := h.deps.WebRoot()
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
+
 	h.deps.LockConfig()
 	cfg := h.deps.ConfigPtr()
 	found := false
@@ -642,10 +685,6 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			// a domain created at /var/www/example/public_html could have its
 			// root expanded to /etc or /root on update.
 			if merged.Root != "" && merged.Type != "redirect" {
-				webRoot := h.deps.WebRoot()
-				if webRoot == "" {
-					webRoot = "/var/www"
-				}
 				if !pathsafe.IsWithinBase(webRoot, merged.Root) || !pathsafe.IsWithinBaseResolved(webRoot, merged.Root) {
 					h.deps.UnlockConfig()
 					h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (root outside web root)", false)

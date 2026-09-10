@@ -27,6 +27,7 @@ func newAuditTestServer(t *testing.T, dir string) *Server {
 		metrics:    metrics.New(),
 	}
 	s.initAudit()
+	defer s.stopAudit()
 	return s
 }
 
@@ -77,6 +78,7 @@ func TestAuditPersist_NoFileWhenNoConfigPath(t *testing.T) {
 		metrics: metrics.New(),
 	}
 	s.initAudit()
+	defer s.stopAudit()
 	// Should not panic, should not crash.
 	s.RecordAudit("a", "b", "ip", true)
 	if got := s.auditLogFile(); got != "" {

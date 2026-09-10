@@ -341,7 +341,7 @@ func TestSendEmailMissingHost(t *testing.T) {
 
 func TestSendEmailMissingTo(t *testing.T) {
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 	}
 	err := sendEmail(cfg, testMsg())
 	if err == nil {
@@ -372,7 +372,7 @@ func TestSendEmailSuccess(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"smtp_port": "465",
 		"smtp_user": "user@example.com",
 		"smtp_pass": "secret",
@@ -384,8 +384,8 @@ func TestSendEmailSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if capturedAddr != "mail.example.com:465" {
-		t.Errorf("expected addr 'mail.example.com:465', got %q", capturedAddr)
+	if capturedAddr != "localhost:465" {
+		t.Errorf("expected addr 'localhost:465', got %q", capturedAddr)
 	}
 	if capturedFrom != "alerts@example.com" {
 		t.Errorf("expected from 'alerts@example.com', got %q", capturedFrom)
@@ -421,7 +421,7 @@ func TestSendEmailTrimsRecipientsAndSanitizesHeaders(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"from":      "alerts@example.com",
 		"to":        "admin@example.com, ops@example.com",
 	}
@@ -452,7 +452,7 @@ func TestSendEmailDefaultPort(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"smtp_user": "user@example.com",
 		"smtp_pass": "secret",
 		"from":      "alerts@example.com",
@@ -462,7 +462,7 @@ func TestSendEmailDefaultPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if capturedAddr != "mail.example.com:587" {
+	if capturedAddr != "localhost:587" {
 		t.Errorf("expected default port 587, got addr %q", capturedAddr)
 	}
 }
@@ -478,7 +478,7 @@ func TestSendEmailFromDefaultsToUser(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"smtp_user": "user@example.com",
 		"smtp_pass": "secret",
 		"to":        "admin@example.com",
@@ -504,7 +504,7 @@ func TestSendEmailWithoutAuth(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"from":      "alerts@example.com",
 		"to":        "admin@example.com",
 		// no smtp_user / smtp_pass
@@ -527,7 +527,7 @@ func TestSendEmailSMTPFailure(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"smtp_user": "user@example.com",
 		"smtp_pass": "secret",
 		"from":      "alerts@example.com",
@@ -628,7 +628,7 @@ func TestSendDispatchEmail(t *testing.T) {
 		Type:    "email",
 		Enabled: true,
 		Config: map[string]string{
-			"smtp_host": "mail.example.com",
+			"smtp_host": "localhost",
 			"smtp_user": "user@example.com",
 			"smtp_pass": "pass",
 			"from":      "alerts@example.com",
@@ -647,7 +647,7 @@ func TestSendDispatchEmail(t *testing.T) {
 // TestSendEmailNoValidRecipients covers the "no valid recipients" error path.
 func TestSendEmailNoValidRecipients(t *testing.T) {
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"to":        ",, ,", // only delimiters and whitespace, no real addresses
 	}
 	err := sendEmail(cfg, testMsg())
@@ -670,7 +670,7 @@ func TestSendEmailMultipleRecipients(t *testing.T) {
 	}
 
 	cfg := map[string]string{
-		"smtp_host": "mail.example.com",
+		"smtp_host": "localhost",
 		"from":      "alerts@example.com",
 		"to":        "admin@example.com,ops@example.com",
 	}
