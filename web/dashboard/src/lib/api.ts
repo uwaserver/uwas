@@ -210,6 +210,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
       } finally {
         // Always clean up the abort timer — even if the user cancelled the pin prompt.
         if (doCleanup) doCleanup();
+        pinCode = '';
       }
     }
     if (body.error === 'pin_required' || body.error === 'invalid_pin') {
