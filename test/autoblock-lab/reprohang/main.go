@@ -174,7 +174,7 @@ func runScenario(root string, abCfg *autoblock.Config, rateLimit int, preblock b
 
 	var handler http.Handler = mux
 	if rateLimit > 0 {
-		handler = middleware.RateLimit(context.Background(), rateLimit, time.Minute)(mux)
+		handler = middleware.RateLimit(context.Background(), rateLimit, time.Minute).Middleware()(mux)
 	}
 
 	base, err := net.Listen("tcp", "127.0.0.1:0")
