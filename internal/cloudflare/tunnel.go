@@ -253,14 +253,17 @@ func (r *Runner) Stop(tunnelID string) error {
 		p.stopped = true
 		close(p.stopCh)
 	}
+	// Capture cmd while holding the lock so monitor() cannot nil it between
+	// this read and the nil-check below. After p.stopped is set, monitor()
+	// will not restart a nil cmd, so the pointer remains stable after unlock.
 	cmd := p.cmd
 	r.mu.Unlock()
 
+	// A process that already exited on its own is the outcome Stop wants —
+	// Kill returns os.ErrProcessDone in that case, which is not a failure.
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	// A process that already exited on its own is the outcome Stop wants —
-	// Kill returns os.ErrProcessDone in that case, which is not a failure.
 	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("kill cloudflared: %w", err)
 	}

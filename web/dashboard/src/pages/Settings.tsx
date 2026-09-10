@@ -166,7 +166,7 @@ export default function Settings() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
 
   // Gather all field keys
-  const allFields = SECTIONS.flatMap(s => s.fields);
+  const allFields = [...SECTIONS.flatMap(s => s.fields), ...ALL_DYNAMIC_FIELDS];
 
   /** Load structured settings + raw config + health + system info. */
   const load = useCallback(async () => {

@@ -229,9 +229,8 @@ func (c *geoCache) tryClaimInflight(ip string) bool {
 }
 
 func (c *geoCache) releaseInflight(ip string) {
-	c.mu.Lock()
+	// Caller holds c.mu through set() — do not re-acquire.
 	delete(c.inflight, ip)
-	c.mu.Unlock()
 }
 
 // geoLookupJob queued onto the bounded worker pool.

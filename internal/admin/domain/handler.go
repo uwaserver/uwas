@@ -636,6 +636,23 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "validation failed: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+			// Web-root containment: prevent an update from escaping WebRoot.
+			// Add calls validateDomainConfig (which checks this), but Update only
+			// calls ValidateDomainPartial (which skips it). Without this guard,
+			// a domain created at /var/www/example/public_html could have its
+			// root expanded to /etc or /root on update.
+			if merged.Root != "" && merged.Type != "redirect" {
+				webRoot := h.deps.WebRoot()
+				if webRoot == "" {
+					webRoot = "/var/www"
+				}
+				if !pathsafe.IsWithinBase(webRoot, merged.Root) || !pathsafe.IsWithinBaseResolved(webRoot, merged.Root) {
+					h.deps.UnlockConfig()
+					h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (root outside web root)", false)
+					jsonError(w, fmt.Sprintf("root path must be under %s (got %s)", webRoot, merged.Root), http.StatusBadRequest)
+					return
+				}
+			}
 			for _, alias := range redirectAliases {
 				if conflict := domainutil.FindDomainHostnameConflictAllowingRedirect(cfg.Domains, i, alias, merged.Host); conflict != "" {
 					h.deps.UnlockConfig()

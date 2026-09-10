@@ -2,6 +2,7 @@
 package dnschecker
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -94,17 +95,25 @@ func Check(domain string) Result {
 	}
 
 	// TXT (with timeout)
-	lookupTXTFn := lookupTXT
-	timeout := txtTimeout
+	// Use a context with deadline so the goroutine is cancelled on timeout.
+	// Without cancellation, the goroutine leaks: it stays blocked on the DNS
+	// lookup for its full duration even after Check() returns.
+	ctx, cancel := context.WithTimeout(context.Background(), txtTimeout)
+	defer cancel()
 	txtCh := make(chan []string, 1)
 	go func() {
-		txt, _ := lookupTXTFn(domain)
-		txtCh <- txt
+		txt, _ := lookupTXT(domain)
+		select {
+		case txtCh <- txt:
+		case <-ctx.Done():
+		}
 	}()
 	select {
 	case txt := <-txtCh:
 		r.TXT = txt
-	case <-time.After(timeout):
+	case <-ctx.Done():
+		// timeout reached — goroutine's select above fired ctx.Done() too,
+		// cancelling its DNS call and freeing its resources.
 	}
 
 	return r

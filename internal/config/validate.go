@@ -455,12 +455,22 @@ func validateDomain(d *Domain, partial bool) error {
 		return fmt.Errorf("ssl.mode=manual requires cert and key paths")
 	}
 
+	if DomainType(d.Type) == DomainTypeRedirect {
+		if d.Redirect.Target == "" {
+			return fmt.Errorf("redirect type requires a target URL")
+		}
+		// SSRF guard: reject redirects to private/internal/cloud-metadata hosts.
+		// A domain with redirect.type can be used to bounce requests to an internal
+		// service (e.g. 169.254.169.254, 10.0.0.1, localhost) via a redirect.
+		// isURLSafe uses the same blocklist as proxy upstreams.
+		if err := isURLSafe(d.Redirect.Target, urlSafetyPolicy{}); err != nil {
+			return err
+		}
+	}
+
 	if !partial {
 		if DomainType(d.Type) == DomainTypeProxy && len(d.Proxy.Upstreams) == 0 {
 			return fmt.Errorf("proxy type requires at least one upstream")
-		}
-		if DomainType(d.Type) == DomainTypeRedirect && d.Redirect.Target == "" {
-			return fmt.Errorf("redirect type requires a target URL")
 		}
 	}
 
