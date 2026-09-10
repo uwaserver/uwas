@@ -179,31 +179,38 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     }
     if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
       // Show global pin modal, wait for user input, retry the request
-      const pin = await new Promise<string>((resolve, reject) => {
-        pinPromptCallback!(resolve, reject);
-      });
-      pinCode = pin;
-      addDebugLog({ level: 'info', scope: 'api', message: `${method} ${path} retrying with PIN` });
-      // Retry the same request with pin
-      const retryHeaders: Record<string, string> = { ...headers, 'X-Pin-Code': pin };
-      const { signal: retrySignal, cleanup: retryCleanup } = abortWithTimeout(DEFAULT_REQUEST_TIMEOUT, options?.signal);
-      let retryRes: Response;
+      let doCleanup: () => void;
       try {
-        retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders, signal: retrySignal });
-      } catch (e) {
-        throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+        const pin = await new Promise<string>((resolve, reject) => {
+          pinPromptCallback!(resolve, reject);
+        });
+        pinCode = pin;
+        addDebugLog({ level: 'info', scope: 'api', message: `${method} ${path} retrying with PIN` });
+        // Retry the same request with pin
+        const retryHeaders: Record<string, string> = { ...headers, 'X-Pin-Code': pin };
+        const { signal: retrySignal, cleanup } = abortWithTimeout(DEFAULT_REQUEST_TIMEOUT, options?.signal);
+        doCleanup = cleanup;
+        let retryRes: Response;
+        try {
+          retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders, signal: retrySignal });
+        } catch (e) {
+          throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+        } finally {
+          cleanup();
+        }
+        pinCode = '';
+        if (!retryRes.ok) {
+          const retryBody = await retryRes.json().catch(() => ({ error: retryRes.statusText }));
+          logResponse('error', `${method} ${path} retry -> ${retryRes.status}`, retryBody);
+          throw new Error(retryBody.error || retryRes.statusText);
+        }
+        const retryBody = await retryRes.json();
+        logResponse('success', `${method} ${path} retry -> ${retryRes.status}`, retryBody);
+        return retryBody;
       } finally {
-        retryCleanup();
+        // Always clean up the abort timer — even if the user cancelled the pin prompt.
+        if (doCleanup) doCleanup();
       }
-      pinCode = '';
-      if (!retryRes.ok) {
-        const retryBody = await retryRes.json().catch(() => ({ error: retryRes.statusText }));
-        logResponse('error', `${method} ${path} retry -> ${retryRes.status}`, retryBody);
-        throw new Error(retryBody.error || retryRes.statusText);
-      }
-      const retryBody = await retryRes.json();
-      logResponse('success', `${method} ${path} retry -> ${retryRes.status}`, retryBody);
-      return retryBody;
     }
     if (body.error === 'pin_required' || body.error === 'invalid_pin') {
       throw new Error(body.error);
