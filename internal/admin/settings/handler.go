@@ -266,6 +266,13 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 	copy(sanitized, export.Domains)
 	for i := range sanitized {
 		sanitized[i].PHP.Env = nil
+		// BasicAuth.Users is a map[string]string; copy() does a shallow copy so
+		// sanitized and export share the same map. Setting it to nil here redacts
+		// the exported YAML without affecting the original config in memory.
+		sanitized[i].BasicAuth.Users = nil
+		for j := range sanitized[i].Locations {
+			sanitized[i].Locations[j].BasicAuth.Users = nil
+		}
 	}
 	export.Domains = sanitized
 
