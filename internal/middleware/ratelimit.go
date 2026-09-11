@@ -278,7 +278,7 @@ func clientIP(rl *RateLimiter, r *http.Request) string {
 			// Fall back to X-Real-IP
 			if xri := r.Header.Get("X-Real-IP"); xri != "" {
 				xri = strings.TrimSpace(xri)
-				if xri != "" {
+				if xri != "" && net.ParseIP(xri) != nil {
 					return xri
 				}
 			}

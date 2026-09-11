@@ -1159,8 +1159,11 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if sslEnabled && (domain.SSL.ForceSSL || s.tlsMgr.HasCert(r.Host)) {
 		// Redirect straight to the canonical host so http://apex does not take
 		// two hops (→ https://apex → https://www) when www is primary.
-		targetHost := r.Host
-		if ch, ok := canonicalHostname(domain, r.Host); ok {
+		// Use domain.Host (operator-configured) rather than r.Host (client-supplied)
+		// to prevent an attacker redirecting victims to an arbitrary domain via
+		// a crafted Host header on a server that hosts multiple domains.
+		targetHost := domain.Host
+		if ch, ok := canonicalHostname(domain, domain.Host); ok {
 			targetHost = ch
 		}
 		target := "https://" + targetHost + r.URL.RequestURI()

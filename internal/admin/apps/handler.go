@@ -117,6 +117,7 @@ func appDefinitionForResponse(a *apps.App) *apps.App {
 	}
 	out := *a
 	out.Deploy.GitToken = ""
+	out.Deploy.WebhookSecret = ""
 	return &out
 }
 
@@ -385,6 +386,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			existing.Docker.Volumes = patch.Docker.Volumes
 		}
 		if patch.Docker.ExtraArgs != nil {
+			if err := apps.ValidateExtraArgs(patch.Docker.ExtraArgs); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			existing.Docker.ExtraArgs = patch.Docker.ExtraArgs
 		}
 		if patch.Docker.Build.Context != "" {

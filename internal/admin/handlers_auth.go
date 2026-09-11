@@ -826,7 +826,7 @@ func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
 
 	user, exists := s.authMgr.GetUser(username)
 	if !exists {
-		jsonError(w, "user not found", http.StatusNotFound)
+		jsonError(w, "invalid credentials", http.StatusNotFound)
 		return
 	}
 

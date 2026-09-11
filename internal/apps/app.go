@@ -200,6 +200,9 @@ func (a *App) Validate() error {
 		if a.Docker.ContainerPort == 0 {
 			return fmt.Errorf("docker app %q: docker.container_port is required", a.Name)
 		}
+		if err := ValidateExtraArgs(a.Docker.ExtraArgs); err != nil {
+			return fmt.Errorf("docker app %q: %w", a.Name, err)
+		}
 	case "":
 		return fmt.Errorf("app %q: runtime is required", a.Name)
 	default:
@@ -236,6 +239,62 @@ func (a *App) ExposedPorts() []int {
 		seen[port] = true
 	}
 	return out
+}
+
+// allowedDockerFlags is the allowlist of safe --flags that ExtraArgs may contain.
+// Host-network, privileged, cap-add, security-opt, and bind-mount flags are
+// explicitly excluded because they break the container-isolation contract.
+var allowedDockerFlags = map[string]bool{
+	"--env":                     true,
+	"--label":                   true,
+	"--hostname":                true,
+	"--dns":                     true,
+	"--dns-search":              true,
+	"--dns-option":              true,
+	"--add-host":                true,
+	"--ulimit":                  true,
+	"--cpu-quota":               true,
+	"--cpus":                    true,
+	"--cpu-period":              true,
+	"--cpu-shares":              true,
+	"--memory":                  true,
+	"--memory-swap":             true,
+	"--memory-reservation":      true,
+	"--restart":                 true,
+	"--user":                    true,
+	"--workdir":                 true,
+	"--init":                    true,
+	"--read-only":               true,
+	"--tty":                     true,
+}
+
+// ValidateExtraArgs returns an error if any arg in the slice is not in the
+// allowlist or is a dangerous flag prefix.
+//
+// The allowlist deliberately excludes --network, --privileged, --cap-add,
+// --security-opt, -v/--volume, --pid, --ipc, and --uts because those grant
+// host-level capabilities that the operator has not consented to.
+func ValidateExtraArgs(args []string) error {
+	seenFlag := false
+	for _, arg := range args {
+		if seenFlag {
+			seenFlag = false
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			flag := arg
+			if idx := strings.IndexByte(arg, '='); idx != -1 {
+				flag = arg[:idx]
+			}
+			if !allowedDockerFlags[flag] {
+				return fmt.Errorf("docker extra-arg %q is not in the allowlist", arg)
+			}
+			seenFlag = true
+		} else if !strings.HasPrefix(arg, "-") && arg != "" {
+			return fmt.Errorf("docker extra-arg %q: positional arguments are not allowed", arg)
+		}
+	}
+	return nil
 }
 
 // isValidAppName enforces the filename-safe / shell-safe / URL-safe

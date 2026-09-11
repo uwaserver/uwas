@@ -778,6 +778,9 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "monitor not enabled", http.StatusNotImplemented)
 		return
 	}
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	// Per-domain scoping: non-admins only see their own domains' uptime.
 	results := s.monitor.Results()
 	filtered := make([]monitor.HealthResult, 0, len(results))
