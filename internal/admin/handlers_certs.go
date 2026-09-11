@@ -105,7 +105,8 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.tlsMgr.RenewCert(r.Context(), host); err != nil {
-		jsonError(w, "renewal failed: "+err.Error(), http.StatusInternalServerError)
+		s.recordAuditR(r, "cert.renew", host, false)
+		jsonError(w, "renewal failed", http.StatusInternalServerError)
 		return
 	}
 	if s.webhookMgr != nil {
