@@ -632,27 +632,37 @@ func (h *Handler) Logs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logPath := filepath.Join(filepath.Dir(def.WorkDir), "logs", name+".log")
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		buildLogPath := filepath.Join(filepath.Dir(def.WorkDir), "logs", name+"-build.log")
-		if bdata, berr := os.ReadFile(buildLogPath); berr == nil {
-			if len(bdata) > 100*1024 {
-				bdata = bdata[len(bdata)-100*1024:]
-			}
-			jsonResponse(w, map[string]string{
-				"log":  string(bdata),
-				"kind": "build",
-			})
-			return
-		}
-		jsonResponse(w, map[string]string{"log": "", "kind": "runtime"})
+	logsDir := filepath.Join(filepath.Dir(def.WorkDir), "logs")
+	logPath := filepath.Clean(filepath.Join(logsDir, name+".log"))
+	buildLogPath := filepath.Clean(filepath.Join(logsDir, name+"-build.log"))
+	if !strings.HasPrefix(logPath, logsDir+string(filepath.Separator)) {
+		jsonError(w, "invalid log path", http.StatusForbidden)
 		return
 	}
-	if len(data) > 100*1024 {
-		data = data[len(data)-100*1024:]
+	if !strings.HasPrefix(buildLogPath, logsDir+string(filepath.Separator)) {
+		jsonError(w, "invalid build log path", http.StatusForbidden)
+		return
 	}
-	jsonResponse(w, map[string]string{"log": string(data), "kind": "runtime"})
+
+	data, err := os.ReadFile(logPath)
+	if err == nil {
+		if len(data) > 100*1024 {
+			data = data[len(data)-100*1024:]
+		}
+		jsonResponse(w, map[string]string{"log": string(data), "kind": "runtime"})
+		return
+	}
+
+	buildData, berr := os.ReadFile(buildLogPath)
+	if berr == nil {
+		if len(buildData) > 100*1024 {
+			buildData = buildData[len(buildData)-100*1024:]
+		}
+		jsonResponse(w, map[string]string{"log": string(buildData), "kind": "build"})
+		return
+	}
+
+	jsonResponse(w, map[string]string{"log": "", "kind": "runtime"})
 }
 
 // listenTimeout returns the probe timeout as a duration.
