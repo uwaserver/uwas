@@ -256,7 +256,9 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	user, password, err := siteuser.CreateUserForWebDir(root, identity)
 	if err != nil {
-		jsonError(w, "create user: "+err.Error(), http.StatusInternalServerError)
+		s.recordAuditR(r, "user.create", req.Domain, false)
+		s.logger.Error("user creation failed", "domain", req.Domain, "error", err)
+		jsonError(w, "user creation failed", http.StatusInternalServerError)
 		return
 	}
 
