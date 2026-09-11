@@ -356,7 +356,17 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		var outPath string
 		switch {
 		case strings.HasPrefix(hdr.Name, "config/"):
-			outPath = configPath
+			rel := strings.TrimPrefix(hdr.Name, "config/")
+			if rel == "" {
+				continue
+			}
+			var ok bool
+			outPath, ok = safeRestorePath(configPath, rel)
+			if !ok {
+				m.logger.Warn("backup restore: entry rejected as unsafe, not restored",
+					"name", hdr.Name)
+				continue
+			}
 		case strings.HasPrefix(hdr.Name, "domains.d/"):
 			if domainsDir == "" {
 				continue

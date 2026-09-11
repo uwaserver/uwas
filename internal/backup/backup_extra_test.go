@@ -335,6 +335,44 @@ func TestRestoreBackupRejectsTraversal(t *testing.T) {
 	}
 }
 
+// TestRestoreBackupConfigDirTraversal verifies that config/ entries in the archive
+// are validated through safeRestorePath and traversal attempts are rejected.
+func TestRestoreBackupConfigDirTraversal(t *testing.T) {
+	m, _ := testManager(t)
+	mp := newMemoryProvider("mem")
+	m.providers["mem"] = mp
+
+	dstDir := t.TempDir()
+	configPath := filepath.Join(dstDir, "uwas.yaml")
+	// Set config path so config/ entries are processed (not skipped).
+	m.SetPaths(configPath, "")
+
+	mp.files["t.tar.gz"] = buildArchive(t, []tarEntry{
+		{name: "config/uwas.yaml", data: []byte("real config"), typeflag: tar.TypeReg},
+		{name: "config/../../escape", data: []byte("traversal"), typeflag: tar.TypeReg},
+		{name: "config/../uwas.yaml", data: []byte("overwrite"), typeflag: tar.TypeReg},
+	})
+
+	if err := m.RestoreBackup("t.tar.gz", "mem"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The legitimate config file should be restored.
+	if _, err := os.Stat(configPath); err != nil {
+		t.Errorf("legitimate config/uwas.yaml was not restored: %v", err)
+	}
+
+	// Traversal and overwrite attempts must not create files outside dstDir.
+	for _, p := range []string{
+		filepath.Join(dstDir, "..", "escape"),
+		filepath.Join(dstDir, "uwas.yaml"),
+	} {
+		if _, err := os.Stat(p); err == nil && p != configPath {
+			t.Errorf("unsafe path was created: %s", p)
+		}
+	}
+}
+
 // TestRestoreBackupWriteError covers the os.OpenFile error branch by making the
 // target path's parent a regular file (so MkdirAll on it fails) — actually we
 // force the create error by making outPath a directory that already exists.
