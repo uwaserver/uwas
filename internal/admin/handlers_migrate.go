@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/migrate"
@@ -289,6 +290,11 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := r.PathValue("host")
+	// Domain ownership gate: prevents an admin from uploading certs for
+	// domains they do not own. Same IDOR fix as handleCertRenew.
+	if !s.domainHandler.RequirePermission(w, r, auth.PermDomainUpdate) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		Cert  string `json:"cert"`
@@ -310,7 +316,7 @@ func (s *Server) handleCertUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	certDir := filepath.Join("/var/lib/uwas/certs", host)
 	if err := os.MkdirAll(certDir, 0700); err != nil {
-		jsonError(w, "mkdir cert dir: "+err.Error(), http.StatusInternalServerError)
+		jsonError(w, "failed to create certificate directory", http.StatusInternalServerError)
 		return
 	}
 	// Write cert + key atomically: temp file → fsync → rename. This prevents
