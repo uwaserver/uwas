@@ -251,7 +251,7 @@ func apiRequest(method, url, apiKey string, body io.Reader) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MB cap
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
