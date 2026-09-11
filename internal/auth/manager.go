@@ -505,6 +505,9 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 
 	if !enabled {
 		m.recordFailedAttempt(lockKey)
+		if m.recordAudit != nil {
+			m.recordAudit(nil, "auth.login.failed", "user="+username+": user disabled", false)
+		}
 		return nil, errors.New("user disabled")
 	}
 
