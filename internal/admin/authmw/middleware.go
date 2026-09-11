@@ -285,12 +285,48 @@ func IsAllowedOrigin(origin string, r *http.Request) bool {
 		return true
 	}
 
+	// Exact hostname match only — "localhost.evil.com" must NOT match "localhost".
+	// Use == instead of strings.HasPrefix to prevent subdomain bypass.
+
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
 	dashboardOrigin := scheme + "://" + r.Host
-	return origin == dashboardOrigin
+	return isSameOrigin(u, dashboardOrigin)
+}
+
+// isSameOrigin returns true when parsed URL u has the same scheme+host
+// as targetOrigin. It correctly handles the case where the browser omits
+// the default port (e.g. Origin: https://admin.example.com vs r.Host
+// admin.example.com:443) by comparing hosts and normalising ports.
+func isSameOrigin(u *url.URL, targetOrigin string) bool {
+	tu, err := url.Parse(targetOrigin)
+	if err != nil {
+		return false
+	}
+	if strings.ToLower(u.Scheme) != strings.ToLower(tu.Scheme) {
+		return false
+	}
+	if strings.ToLower(u.Hostname()) != strings.ToLower(tu.Hostname()) {
+		return false
+	}
+	return defaultPort(u.Scheme, u.Port()) == defaultPort(tu.Scheme, tu.Port())
+}
+
+// defaultPort returns the explicit port, or the canonical port for the scheme.
+func defaultPort(scheme, explicitPort string) string {
+	if explicitPort != "" {
+		return explicitPort
+	}
+	switch strings.ToLower(scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 // RequestIP extracts the client IP from a request, stripping the port.

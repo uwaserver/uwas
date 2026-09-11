@@ -2330,6 +2330,71 @@ func TestIsAllowedOriginDashboard(t *testing.T) {
 	}
 }
 
+// --- isAllowedOrigin localhost prefix-match bypass ---
+
+func TestIsAllowedOriginLocalhostPrefixBypass(t *testing.T) {
+	tests := []struct {
+		name   string
+		origin string
+		want   bool
+	}{
+		// Exact localhost variants — must be allowed
+		{"localhost with port", "http://localhost:3000", true},
+		{"localhost no port", "http://localhost", true},
+		{"127.0.0.1", "http://127.0.0.1:8080", true},
+		{"::1", "http://[::1]:8080", true},
+		// Subdomain attacks — must NOT be allowed (prefix bypass)
+		{"localhost subdomain bypass", "http://localhost.evil.com", false},
+		{"localhost attack suffix", "http://localhostattack.com", false},
+		{"127 subdomain bypass", "http://127.0.0.1.evil.com", false},
+		{"localhost double dot", "http://localhost..evil.com", false},
+		// Non-localhost — must be blocked
+		{"evil.com", "http://evil.com", false},
+		{"localhost prefix string", "http://localhost.example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/", nil)
+			r.Host = "admin.example.com:9443"
+			got := isAllowedOrigin(tt.origin, r)
+			if got != tt.want {
+				t.Errorf("isAllowedOrigin(%q) = %v, want %v", tt.origin, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- isAllowedOrigin port-mismatch false negative ---
+
+func TestIsAllowedOriginDashboardOriginPortMismatch(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "admin.example.com:443"
+	r.TLS = &tls.ConnectionState{} // TLS enabled, scheme=https
+
+	// Origin omits default port 443; dashboardOrigin includes it.
+	// These must all return true (same scheme+host, just different port notation).
+	tests := []struct {
+		name   string
+		origin string
+		want   bool
+	}{
+		{"origin omits default TLS port", "https://admin.example.com", true},
+		{"origin omits default TLS port with path", "https://admin.example.com/dashboard", true},
+		{"origin with non-default port", "https://admin.example.com:8443", false},
+		{"http origin when dashboard is https", "http://admin.example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isAllowedOrigin(tt.origin, r)
+			if got != tt.want {
+				t.Errorf("isAllowedOrigin(%q) = %v, want %v", tt.origin, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- handleConfigExport sanitization ---
 
 func TestConfigExportStripsDNSCredentials(t *testing.T) {
