@@ -79,6 +79,13 @@ func New(deps Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
+// RequirePermission delegates to the embedded Deps implementation so callers
+// that hold a *Handler (e.g. Server.domainHandler) can perform permission
+// checks without accessing the unexported deps field.
+func (h *Handler) RequirePermission(w http.ResponseWriter, r *http.Request, perm auth.Permission) bool {
+	return h.deps.RequirePermission(w, r, perm)
+}
+
 // ── Helpers ──
 
 func jsonResponse(w http.ResponseWriter, data any) {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/auth"
 	"github.com/uwaserver/uwas/internal/domainutil"
 	uwastls "github.com/uwaserver/uwas/internal/tls"
 	"github.com/uwaserver/uwas/internal/webhook"
@@ -94,6 +95,11 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := r.PathValue("host")
+	// Domain ownership gate: prevents an admin from renewing certs for
+	// domains they don't own. Mirrors the pattern from domain handler IDOR fix.
+	if !s.domainHandler.RequirePermission(w, r, auth.PermDomainUpdate) {
+		return
+	}
 	if s.tlsMgr == nil {
 		jsonError(w, "TLS manager not available", http.StatusServiceUnavailable)
 		return
