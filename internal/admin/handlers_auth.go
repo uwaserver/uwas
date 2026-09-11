@@ -242,7 +242,8 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 
 	root, err := s.siteUserRoot(req.Domain)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		s.logger.Error("siteUserRoot failed", "domain", req.Domain, "error", err)
+		jsonError(w, "domain configuration error", http.StatusBadRequest)
 		return
 	}
 	if root == "" {
