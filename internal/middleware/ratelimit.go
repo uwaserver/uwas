@@ -201,12 +201,6 @@ func (rl *RateLimiter) Allow(key string) bool {
 
 	// Reset if window expired
 	if now.Sub(b.lastReset) >= rl.window {
-		// If tokens are exhausted, deny until the next window grants fresh tokens.
-		// Without this guard the bucket resets to allow one extra request per
-		// exhausted window (limit+1 total instead of limit).
-		if b.tokens == 0 {
-			return false
-		}
 		b.tokens = rl.limit - 1
 		b.lastReset = now
 		return true
