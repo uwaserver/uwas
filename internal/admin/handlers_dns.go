@@ -97,7 +97,8 @@ func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
 	}
 	records, err := cf.ListRecords(zone.ID)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		s.recordAuditR(r, "dns.records.read", domain, false)
+		jsonError(w, "failed to list DNS records", http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]any{"zone_id": zone.ID, "zone": zone.Name, "records": records})
