@@ -24,7 +24,7 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.9.2)
+## Current Snapshot (v0.11.14)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
@@ -34,46 +34,22 @@ One binary. Zero hassle.
 - **Security/stability fixes:** v0.8.8 resolved all 5 CRITICAL/HIGH and 11 MEDIUM findings from the June security audit; includes admin RBAC hardening, PHP sandbox-escape closure, SVG XSS prevention, docker-compose credential fail-fast, crontab data-loss guard, cron job timeout, Cloudflare pagination, Route53 signing fix, compress middleware WebSocket/Flush/Unwrap, TOTP replay protection, brute-force lockout serialization, and checked I/O paths
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
 
-**v0.9.0 highlights (configuration that now takes effect):**
-- Nineteen settings the dashboard offered, the API echoed back and the runtime
-  ignored now apply: TLS minimum version, mTLS client CAs, per-domain resource
-  limits, sticky sessions, PHP upload limits, cache key composition, access log
-  format and buffering, per-path timeouts, rate-limit keying, gRPC over h2c,
-  and WAF rule families
-- Backup restore into a directory reached through a symlink wrote nothing and
-  reported success; PHP domains started at boot shared the system temp
-  directory for sessions and uploads
-- `admin.oauth` is labelled as not implemented, in the panel and in a startup
-  warning — the Settings page told operators that Allowed Emails restricts who
-  can reach the panel, and it restricts nothing
-- Request lines take their level from the response status, so lowering
-  `global.log_level` quietens the stream without hiding the failures;
-  `global.access_log.enabled` turns the stream off entirely
-- `global.log_level` applies on reload instead of needing a restart
-- Settings that were previously ignored are warned about at startup rather
-  than rejected: a config carrying an odd value has been running fine, and
-  refusing to load it would turn an upgrade into a server that will not start
-
-**v0.8.x highlights (security hardening + release integrity):**
-- v0.8.9 follow-up hardening: DB/root passwords kept off process command lines (`MYSQL_PWD`/stdin, `docker -e` by name), php-fpm pool user/group when root, webhook delivery worker pool, provider DNS pagination + multi-label TLD zone lookup, streaming SFTP backups, and Go 1.26.5 toolchain (`crypto/tls` GO-2026-5856 fix)
-- All security-audit findings (35 total) addressed: CRITICAL/HIGH resolved, MEDIUM resolved, LOW documented as accepted risk
-- Release assets publish `SHA256SUMS`; installer/update scripts verify before execution
-- Multi-user authorization enforced across domain, DNS, notification, webhook, Cloudflare, task, and doctor endpoints
-- Admin/API hardening: public-listener key validation, password policy (12+ chars), safer terminal auth, tighter file/config access controls
-- PHP sandbox escape vectors closed (newline injection, directive overrides)
-- Runtime stability: cron job timeout, bounded cache writes, health checker shutdown, timer cleanup, checked parser/crypto/I/O
-
-**Recent app/platform highlights:**
-- Apps are first-class objects under `/etc/uwas/apps.d/<name>.yaml`
-- Domains expose apps with reverse proxy upstreams such as `apps://my-api`
-- Domains use a dedicated Add Redirect flow for `www.<domain>` redirects,
-  with per-host SSL, 301/302 selection, and no alias/cache/security noise on
-  redirect records
-- Domain creation can choose the canonical host: `domain.com`,
-  `www.domain.com`, or both hostnames without redirecting
-- Dockerized Software Library actions self-repair missing Docker Compose on
-  Debian/Ubuntu, clean up failed installs, and show `needs Docker Compose`
-  instead of leaving broken cards as vague unknown states
+**v0.11.14 highlights:**
+- **Auto-block: Safe/whitelist now wins over an active block.** A CDN edge
+  (or any address later covered by Cloudflare ranges / `whitelist`) that was
+  blocked before the Safe set finished syncing stayed refused forever:
+  `ConnOpened` checked Blocked before Safe, and `SetWhitelist` never lifted
+  already-active blocks. Safe is checked first, `Blocked()` never reports a
+  Safe address as blocked, and updating the whitelist clears matching active
+  blocks (and queues firewall unblock).
+- **Settings API now round-trips Global fields the panel was already editing.**
+  `GET`/`PUT /api/v1/settings` now preserves global rate-limit
+  (`requests` / `window`), admin session TTL, autoblock whitelist, and
+  trusted proxies. Domain Security and Domain Detail also expose
+  `rate_limit.by`.
+- **Dashboard Settings: Global Rate Limit section, session TTL, autoblock
+  whitelist textarea, and clearer help on `max_connections` /
+  `max_concurrent` (0 disables).**
 - Packages exposes Docker Compose as an Infrastructure dependency with a
   dashboard Fix Compose action for Software Library hosts
 - Software Library compose templates are compatible with both modern
