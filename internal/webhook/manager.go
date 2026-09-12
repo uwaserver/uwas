@@ -177,11 +177,7 @@ func (m *Manager) Fire(eventType EventType, data any) {
 func (m *Manager) sendToQueue(qe *queuedEvent, label string) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Expect only "send on closed channel" — re-panic on anything else.
-			if s, ok := r.(string); ok && s == "send on closed channel" {
-				return
-			}
-			panic(r)
+			m.logger.Error("webhook queue send panicked", "label", label, "panic", fmt.Sprintf("%v", r))
 		}
 	}()
 	select {

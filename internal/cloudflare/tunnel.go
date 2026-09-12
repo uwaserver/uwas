@@ -213,6 +213,7 @@ func (r *Runner) monitor(p *runningProc, token string, cmd *exec.Cmd, stopCh cha
 	if r.logger != nil {
 		r.logger.Warn("cloudflared exited unexpectedly", "tunnel_id", p.tunnelID, "error", errString(waitErr))
 	}
+	// ...
 
 	// Backoff before restart, allowing Stop() to break out.
 	backoff := time.NewTimer(2 * time.Second)

@@ -409,6 +409,39 @@ func TestCloseStopsWorker(t *testing.T) {
 	// Sending should panic, but we just verify it doesn't hang
 }
 
+// --- sendToQueue: panic recovery on closed channel ---
+// Regression test: a previous version of sendToQueue used a narrow
+// type-assertion filter (e.g. if r, ok := r.(string); ok && r ==
+// "send on closed channel") that would miss non-string panics (error,
+// int, struct, nil) and re-panic, crashing the process. The fix uses
+// unconditional recover() to log and swallow all panic types safely.
+
+func TestSendToQueuePanicRecovery(t *testing.T) {
+	m := &Manager{
+		queue:  make(chan *queuedEvent, 1),
+		logger: &testLogger{},
+	}
+	close(m.queue) // channel is now closed — any send will panic
+
+	qe := &queuedEvent{
+		webhook: WebhookConfig{URL: "http://example.com/hook", Enabled: true},
+		event:   Event{Type: EventTest, Timestamp: time.Now()},
+	}
+
+	// sendToQueue must not re-panic — unconditional recover() catches all types
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("sendToQueue panicked despite recover(): %v", r)
+			}
+		}()
+		// Call the private method directly; it is accessible in-package
+		//go test compiles this away — the call is real at runtime.
+		//nolint:staticcheck // in-package call on private method for test coverage
+		m.sendToQueue(qe, "test-panic-recovery")
+	}()
+}
+
 // --- deliver: json.Marshal error (unmarshalable data) ---
 
 func TestDeliverMarshalError(t *testing.T) {

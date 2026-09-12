@@ -698,24 +698,28 @@ func (h *Handler) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "sql required", http.StatusBadRequest)
 		return
 	}
-	trimmed := strings.TrimSpace(req.SQL)
-	for strings.HasPrefix(trimmed, "/*") {
-		if end := strings.Index(trimmed, "*/"); end >= 0 {
-			trimmed = strings.TrimSpace(trimmed[end+2:])
+	clean := strings.TrimSpace(req.SQL)
+	for strings.HasPrefix(clean, "/*") {
+		if end := strings.Index(clean, "*/"); end >= 0 {
+			clean = strings.TrimSpace(clean[end+2:])
 		} else {
 			break
 		}
 	}
-	for strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "#") {
-		if nl := strings.IndexByte(trimmed, '\n'); nl >= 0 {
-			trimmed = strings.TrimSpace(trimmed[nl+1:])
+	for strings.HasPrefix(clean, "--") || strings.HasPrefix(clean, "#") {
+		if nl := strings.IndexByte(clean, '\n'); nl >= 0 {
+			clean = strings.TrimSpace(clean[nl+1:])
 		} else {
-			trimmed = ""
+			clean = ""
 		}
 	}
-	upper := strings.ToUpper(trimmed)
-	if strings.Contains(req.SQL, ";") {
+	upper := strings.ToUpper(clean)
+	if strings.Contains(clean, ";") {
 		jsonError(w, "multi-statement queries not allowed", http.StatusForbidden)
+		return
+	}
+	if strings.Contains(clean, "\n") {
+		jsonError(w, "newlines in SQL statement not allowed", http.StatusBadRequest)
 		return
 	}
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "SHOW") &&
@@ -729,7 +733,7 @@ func (h *Handler) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		if limit <= 0 || limit > 500 {
 			limit = 100
 		}
-		req.SQL = req.SQL + fmt.Sprintf(" LIMIT %d", limit)
+		clean = clean + fmt.Sprintf(" LIMIT %d", limit)
 	}
 	if strings.HasPrefix(upper, "SELECT") {
 		if strings.Contains(upper, "INTO OUTFILE") || strings.Contains(upper, "INTO DUMPFILE") {
@@ -745,7 +749,7 @@ func (h *Handler) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	fullSQL := fmt.Sprintf("USE %s;\n%s", dbpkg.BacktickID(db), req.SQL)
+	fullSQL := fmt.Sprintf("USE %s;\n%s", dbpkg.BacktickID(db), clean)
 	out, err := dbpkg.RunSQL(fullSQL)
 	if err != nil {
 		h.deps.LogError("db explorer query failed", "db", db, "error", err)

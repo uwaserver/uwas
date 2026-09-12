@@ -147,8 +147,7 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	found := false
 	codes := h.deps.ConfigPtr().Global.Admin.RecoveryCodes
 	for i, c := range codes {
-		if subtle.ConstantTimeCompare([]byte(c), []byte(sum)) == 1 ||
-			subtle.ConstantTimeCompare([]byte(c), []byte(req.Code)) == 1 {
+		if subtle.ConstantTimeCompare([]byte(c), []byte(sum)) == 1 {
 			h.deps.ConfigPtr().Global.Admin.RecoveryCodes = append(codes[:i], codes[i+1:]...)
 			found = true
 			break

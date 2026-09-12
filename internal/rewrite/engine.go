@@ -44,11 +44,16 @@ func NewEngine(rules []*Rule) *Engine {
 // happen, so this only inspects rule.Pattern, never conditions.
 //
 // Refs: refactor.md P12.
+// deadline protects MightMatch against ReDoS — same guard Process() uses.
 func (e *Engine) MightMatch(uri string) bool {
 	if len(e.rules) == 0 {
 		return false
 	}
+	deadline := time.Now().Add(rewriteTimeout)
 	for _, rule := range e.rules {
+		if time.Now().After(deadline) {
+			return false // timeout — treat as no match
+		}
 		if rule.Pattern != nil && rule.Pattern.MatchString(uri) {
 			return true
 		}

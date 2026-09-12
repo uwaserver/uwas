@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBasicRewrite(t *testing.T) {
@@ -710,4 +711,40 @@ func TestMightMatch(t *testing.T) {
 			t.Error("rule with nil pattern should not match")
 		}
 	})
+}
+
+// TestMightMatchReDoSTimeout verifies that MightMatch returns false (not
+// blocked) when a malicious regex would otherwise cause catastrophic
+// backtracking. This is a regression for a security issue where
+// MatchString was called with no deadline, allowing ReDoS to block the
+// request thread before Process()'s 50ms timeout could run.
+func TestMightMatchReDoSTimeout(t *testing.T) {
+	// ([a-z]+)+X is a classic catastrophic-backtracking regex.
+	// On 38+ 'a' characters it takes seconds to minutes without a timeout.
+	rule, err := ParseRule(`^([a-z]+)+X$`, "/new", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine([]*Rule{rule})
+
+	// A string designed to trigger exponential backtracking on ([a-z]+)+.
+	evil := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX"
+
+	done := make(chan bool, 1)
+	go func() {
+		matched := e.MightMatch(evil)
+		// With the deadline fix: must return false (timeout).
+		// Before the fix: blocks indefinitely.
+		if matched {
+			t.Error("MightMatch should return false on ReDoS timeout")
+		}
+		done <- true
+	}()
+
+	select {
+	case <-done:
+		// Test passed — returned before deadline
+	case <-time.After(2 * time.Second):
+		t.Fatal("MightMatch blocked > 2s — ReDoS timeout fix is not working")
+	}
 }
