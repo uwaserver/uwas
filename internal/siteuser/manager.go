@@ -27,6 +27,10 @@ var (
 	// sshdConfigPath allows tests to redirect sshd_config reads/writes.
 	sshdConfigPath = "/etc/ssh/sshd_config"
 
+	// sshdConfigWriteErr is a testable hook for surfacing sshd config write errors.
+	// If nil, errors are silently discarded.
+	sshdConfigWriteErr func(string)
+
 	// passwdPath allows tests to redirect /etc/passwd reads.
 	passwdPath = "/etc/passwd"
 )
@@ -299,6 +303,9 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) {
 			return
 		}
 		if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
+			if sshdConfigWriteErr != nil {
+				sshdConfigWriteErr(fmt.Sprintf("write sshd_config: %v", err))
+			}
 			return
 		}
 		if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
@@ -319,6 +326,9 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) {
 	}
 
 	if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
+		if sshdConfigWriteErr != nil {
+			sshdConfigWriteErr(fmt.Sprintf("write sshd_config: %v", err))
+		}
 		return // don't reload sshd if config write failed
 	}
 
