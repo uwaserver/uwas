@@ -100,9 +100,15 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			os.MkdirAll(target, 0755)
+			if err := os.MkdirAll(target, 0755); err != nil {
+				result.Errors = append(result.Errors, "mkdir "+name+": "+err.Error())
+				continue
+			}
 		case tar.TypeReg:
-			os.MkdirAll(filepath.Dir(target), 0755)
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				result.Errors = append(result.Errors, "mkdir "+name+": "+err.Error())
+				continue
+			}
 			outFile, err := os.Create(target)
 			if err != nil {
 				result.Errors = append(result.Errors, "create "+name+": "+err.Error())
@@ -170,7 +176,9 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		}
 
 		dstRoot := filepath.Join(targetDir, dom.Domain, "public_html")
-		os.MkdirAll(dstRoot, 0755)
+		if err := os.MkdirAll(dstRoot, 0755); err != nil {
+			result.Errors = append(result.Errors, "mkdir "+dom.Domain+": "+err.Error())
+		}
 
 		if _, err := os.Stat(srcRoot); err == nil {
 			if err := copyDir(srcRoot, dstRoot); err != nil {
@@ -188,7 +196,9 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 			result.SSLCerts++
 			// Copy SSL cert and key to UWAS cert dir
 			certDst := filepath.Join(targetDir, ".certs", dom.Domain)
-			os.MkdirAll(certDst, 0700)
+			if err := os.MkdirAll(certDst, 0700); err != nil {
+				result.Errors = append(result.Errors, "mkdir "+dom.Domain+" certs: "+err.Error())
+			}
 			copyFile(certFile, filepath.Join(certDst, "cert.pem"))
 			keyFile := filepath.Join(sslDir, dom.Domain+".key")
 			if _, err := os.Stat(keyFile); err == nil {
