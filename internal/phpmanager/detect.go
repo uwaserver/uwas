@@ -171,7 +171,9 @@ func (m *Manager) runPHP(binary string, args ...string) (string, error) {
 	}()
 
 	timer := time.NewTimer(3 * time.Second)
+	timer500 := time.NewTimer(500 * time.Millisecond)
 	defer timer.Stop()
+	defer timer500.Stop()
 
 	select {
 	case err := <-done:
@@ -187,7 +189,7 @@ func (m *Manager) runPHP(binary string, args ...string) (string, error) {
 		}
 		select {
 		case <-done:
-		case <-time.After(500 * time.Millisecond):
+		case <-timer500.C:
 		}
 		return "", fmt.Errorf("php probe timed out after 3s")
 	}
