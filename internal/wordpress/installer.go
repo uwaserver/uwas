@@ -308,7 +308,11 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 		return err
 	}
 	tarPath := f.Name()
-	defer os.Remove(tarPath)
+	defer func() {
+		if rmErr := os.Remove(tarPath); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "wordpress: temp file removal failed: %v\n", rmErr)
+		}
+	}()
 	const maxWPDownload = 100 << 20 // 100MB safety cap
 	written, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxWPDownload))
 	f.Close()
