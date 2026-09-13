@@ -323,10 +323,13 @@ func downloadAndExtract(webRoot string, log *strings.Builder) error {
 
 	// Verify SHA1 checksum (wordpress.org publishes .sha1 and .md5; not .sha256)
 	if expected := fetchWPChecksum(wpDownloadURL + ".sha1"); expected != "" {
-		if actual := hashFileSHA1(tarPath); actual != "" {
-			if expected != actual {
-				return fmt.Errorf("WordPress checksum mismatch: expected %s, got %s", expected, actual)
-			}
+		actual := hashFileSHA1(tarPath)
+		if actual == "" {
+			// File read failed; cannot verify. Log and continue (best-effort).
+			log.WriteString("  warning: could not read downloaded file for checksum verification\n")
+		} else if expected != actual {
+			return fmt.Errorf("WordPress checksum mismatch: expected %s, got %s", expected, actual)
+		} else {
 			log.WriteString("  Checksum verified OK\n")
 		}
 	}
