@@ -18,6 +18,14 @@ import (
 	"github.com/uwaserver/uwas/internal/apps"
 )
 
+// jsonEncode writes v as JSON to w, logging on write failure so truncated
+// responses never silently corrupt client state.
+func jsonEncode(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] admin/apps: JSON write failed (client disconnect?): %v\n", err)
+	}
+}
+
 // ── Deps interface ──
 
 // Deps is the interface the sub-package needs from the admin Server.
@@ -61,13 +69,13 @@ const listeningProbeTimeout = 3e9 // 3 seconds as int64 nanoseconds
 
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	jsonEncode(w, data)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	jsonEncode(w, map[string]string{"error": msg})
 }
 
 // blockedEnvVars are system-critical environment variables apps must not override.
