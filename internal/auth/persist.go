@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -147,5 +148,7 @@ func (m *Manager) writeSessions(out []*Session) {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return
 	}
-	_ = os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("auth: save hosts failed: %v", err)
+	}
 }
