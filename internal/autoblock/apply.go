@@ -354,7 +354,9 @@ func (b *Blocker) save() {
 	}
 	if err := os.Rename(tmp, b.cfg.PersistPath); err != nil {
 		b.log.Debug("autoblock state rename", "error", err)
-		os.Remove(tmp)
+		if rmErr := os.Remove(tmp); rmErr != nil {
+			b.log.Debug("autoblock temp file cleanup", "error", rmErr)
+		}
 	}
 }
 
