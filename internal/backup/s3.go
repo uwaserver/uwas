@@ -140,7 +140,11 @@ func (p *S3Provider) List(ctx context.Context) ([]BackupInfo, error) {
 		if !strings.HasSuffix(obj.Key, ".tar.gz") {
 			continue
 		}
-		t, _ := time.Parse(time.RFC3339, obj.LastModified)
+		t, err := time.Parse(time.RFC3339, obj.LastModified)
+		if err != nil {
+			// Zero time: sort order is wrong but no data is lost — log and continue.
+			fmt.Fprintf(os.Stderr, "warning: backup: s3: could not parse LastModified %q for %q: %v\n", obj.LastModified, obj.Key, err)
+		}
 		infos = append(infos, BackupInfo{
 			Name:     obj.Key,
 			Size:     obj.Size,
