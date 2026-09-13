@@ -2,6 +2,7 @@ package apps
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,7 +257,9 @@ func (s *Store) Save(a *App) error {
 		return fmt.Errorf("apps: write tmp %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, full); err != nil {
-		_ = os.Remove(tmp)
+		if rmErr := os.Remove(tmp); rmErr != nil {
+			slog.Debug("apps: temp file cleanup failed", "path", tmp, "error", rmErr)
+		}
 		return fmt.Errorf("apps: rename %s → %s: %w", tmp, full, err)
 	}
 	s.names[a.Name] = struct{}{}
