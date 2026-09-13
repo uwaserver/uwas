@@ -193,8 +193,16 @@ func (p *SFTPProvider) List(ctx context.Context) ([]BackupInfo, error) {
 		if len(parts) == 3 {
 			// find -printf format: name\tsize\tepoch
 			name := parts[0]
-			size, _ := strconv.ParseInt(parts[1], 10, 64)
-			epochF, _ := strconv.ParseFloat(parts[2], 64)
+			size, err := strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "backup: sftp: skipping %q: invalid size %q: %v\n", name, parts[1], err)
+				continue
+			}
+			epochF, err := strconv.ParseFloat(parts[2], 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "backup: sftp: skipping %q: invalid epoch %q: %v\n", name, parts[2], err)
+				continue
+			}
 			t := time.Unix(int64(epochF), 0)
 			infos = append(infos, BackupInfo{
 				Name:     name,
