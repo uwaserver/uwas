@@ -86,7 +86,12 @@ func Clone(req CloneRequest) *CloneResult {
 
 	// Step 1: Copy files
 	log.WriteString("=== Copying files ===\n")
-	os.MkdirAll(req.TargetRoot, 0755)
+	if err := os.MkdirAll(req.TargetRoot, 0755); err != nil {
+		result.Status = "error"
+		result.Error = "create target directory: " + err.Error()
+		result.Output = log.String()
+		return result
+	}
 	if err := runCloneFiles(req.SourceRoot, req.TargetRoot, &log); err != nil {
 		result.Status = "error"
 		result.Error = "file copy failed: " + err.Error()
