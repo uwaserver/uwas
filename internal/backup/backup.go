@@ -483,7 +483,7 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		written, err := io.Copy(f, limited)
 		totalRead += written
 		if err != nil {
-			f.Close()
+			_ = f.Close()
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
 		if err := f.Close(); err != nil {
@@ -817,7 +817,7 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
