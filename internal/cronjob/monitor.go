@@ -478,7 +478,9 @@ func (m *Monitor) saveHistory() {
 
 	// Ensure directory exists
 	dir := filepath.Dir(file)
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
 
 	data, _ := json.Marshal(m.history)
 	os.WriteFile(file, data, 0644)
