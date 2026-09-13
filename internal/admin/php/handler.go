@@ -35,7 +35,7 @@ type Deps interface {
 	// Config access
 	DomainRoot(domain string) string
 	SetDomainFPMAddress(domain, addr string)
-	PersistConfig()
+	PersistConfig() error
 	NotifyDomainChange()
 	PersistDomainPHPOverrides(domain string)
 	// PHP manager (read at call time so direct s.phpMgr assignments work)
@@ -420,7 +420,12 @@ func (h *Handler) DomainAssign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.SetDomainFPMAddress(req.Domain, dp.ListenAddr)
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.LogWarn("PHP assign persist failed", "domain", req.Domain, "error", err)
+		h.deps.RecordAudit(r, "php.assign", req.Domain+": "+err.Error(), false)
+		jsonError(w, "failed to persist config", http.StatusInternalServerError)
+		return
+	}
 	h.deps.NotifyDomainChange()
 	if err := h.deps.PHPManager().StartDomain(req.Domain); err != nil {
 		h.deps.LogWarn("PHP start after assign failed", "domain", req.Domain, "error", err)

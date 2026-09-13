@@ -64,7 +64,7 @@ func (d *domainDeps) ConfigPtr() *config.Config {
 	return d.s.config
 }
 
-func (d *domainDeps) PersistConfig() { d.s.persistConfig() }
+func (d *domainDeps) PersistConfig() error { return d.s.persistConfig() }
 
 func (d *domainDeps) DomainFilePath(host string) (string, error) {
 	return d.s.domainFilePath(host)

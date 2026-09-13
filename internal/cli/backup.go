@@ -109,7 +109,7 @@ func createBackup(output, configPath, certsDir string) error {
 			relPath, _ := filepath.Rel(certsDir, path)
 			tarPath := "certs/" + filepath.ToSlash(relPath)
 			if err := addFileToTar(tw, path, tarPath); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not add %s: %v\n", path, err)
+				fmt.Fprintln(os.Stderr, "warning: could not add", path, ":", err)
 			} else {
 				fileCount++
 			}

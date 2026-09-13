@@ -10,6 +10,7 @@
 package database
 
 import (
+	"os"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -67,9 +68,17 @@ func New(deps Deps) *Handler {
 
 // ── Helpers ──
 
+
+// jsonEncode writes v as JSON to w, logging on write failure so truncated
+// responses never silently corrupt client state.
+func jsonEncode(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] admin/database: JSON write failed: %v\n", err)
+	}
+}
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	jsonEncode(w, data)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
@@ -456,7 +465,7 @@ func (h *Handler) DockerCreate(w http.ResponseWriter, r *http.Request) {
 	h.deps.RecordAudit(r, "docker_db.create", fmt.Sprintf("engine: %s, name: %s, port: %d", req.Engine, req.Name, req.Port), true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(container)
+	jsonEncode(w, container)
 }
 
 func (h *Handler) DockerStart(w http.ResponseWriter, r *http.Request) {
@@ -539,7 +548,7 @@ func (h *Handler) DockerCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	h.deps.RecordAudit(r, "docker_db.create_database", name+"/"+req.DBName, true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(result)
+	jsonEncode(w, result)
 }
 
 func (h *Handler) DockerDropDatabase(w http.ResponseWriter, r *http.Request) {

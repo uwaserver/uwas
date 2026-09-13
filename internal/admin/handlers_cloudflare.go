@@ -45,7 +45,7 @@ func (d *cfDeps) SetCloudflareIPRanges(ranges []string, lastSynced string) {
 	d.s.configMu.Unlock()
 }
 
-func (d *cfDeps) PersistConfig()      { d.s.persistConfig() }
+func (d *cfDeps) PersistConfig() error { return d.s.persistConfig() }
 func (d *cfDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
 
 func (d *cfDeps) LoadCloudflareState() *cfadmin.State {

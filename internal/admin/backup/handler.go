@@ -37,15 +37,23 @@ func New(deps Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
+
+// jsonEncode writes v as JSON to w, logging on write failure so truncated
+// responses never silently corrupt client state.
+func jsonEncode(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] admin/backup: JSON write failed: %v\n", err)
+	}
+}
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	jsonEncode(w, data)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	jsonEncode(w, map[string]string{"error": msg})
 }
 
 // PaginatedResponse wraps a list response with pagination metadata.
@@ -131,7 +139,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(info)
+	jsonEncode(w, info)
 }
 
 // DomainBackup creates a single-domain backup (files + database).
@@ -191,7 +199,7 @@ func (h *Handler) DomainBackup(w http.ResponseWriter, r *http.Request) {
 	h.deps.RecordAudit(r, "backup.domain", req.Domain, true)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(info)
+	jsonEncode(w, info)
 }
 
 // Restore restores a backup archive. Requires PIN confirmation.

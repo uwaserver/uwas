@@ -1152,13 +1152,6 @@ func jsonResponse(w http.ResponseWriter, data any) {
 // 5xx responses are logged at error level (with X-Request-ID when
 // present) via the respond package's registered logger. Refs:
 // refactor.md A10, O6.
-// jsonEncode writes v as JSON to w, logging on write failure so truncated
-// responses never silently corrupt client state.
-func jsonEncode(w http.ResponseWriter, v any) {
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		fmt.Fprintf(os.Stderr, "[WARN] admin: JSON write failed (client disconnect?): %v\n", err)
-	}
-}
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	respond.Error(w, code, msg)

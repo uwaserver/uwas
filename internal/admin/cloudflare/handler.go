@@ -40,7 +40,7 @@ type Deps interface {
 	// Config access
 	CloudflareIPRanges() ([]string, string) // returns (ranges, lastSynced)
 	SetCloudflareIPRanges(ranges []string, lastSynced string)
-	PersistConfig()
+	PersistConfig() error
 	NotifyDomainChange()
 	// Cloudflare state management
 	LoadCloudflareState() *State
@@ -132,9 +132,17 @@ func New(deps Deps) *Handler {
 
 // ── Helpers ──
 
+
+// jsonEncode writes v as JSON to w, logging on write failure so truncated
+// responses never silently corrupt client state.
+func jsonEncode(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] admin/cloudflare: JSON write failed: %v\n", err)
+	}
+}
 func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	jsonEncode(w, data)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
@@ -214,7 +222,11 @@ func (h *Handler) IPsUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.SetCloudflareIPRanges(ranges, "")
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.RecordAudit(r, "cloudflare.ips.update", err.Error(), false)
+		jsonError(w, "failed to persist config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "cloudflare.ips.update", fmt.Sprintf("ranges: %d", len(ranges)), true)
 	jsonResponse(w, map[string]any{
 		"status": "updated", "ip_ranges": ranges, "count": len(ranges),
@@ -234,7 +246,11 @@ func (h *Handler) IPsSync(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	h.deps.SetCloudflareIPRanges(ranges, now)
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.RecordAudit(r, "cloudflare.ips.sync", err.Error(), false)
+		jsonError(w, "failed to persist config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "cloudflare.ips.sync", fmt.Sprintf("ranges: %d", len(ranges)), true)
 	jsonResponse(w, map[string]any{
 		"status": "synced", "ip_ranges": ranges, "last_synced": now, "count": len(ranges),

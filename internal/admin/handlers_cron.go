@@ -83,5 +83,5 @@ func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusOK) // Still 200, but success=false in body
 	}
-	json.NewEncoder(w).Encode(record)
+	jsonEncode(w, record)
 }

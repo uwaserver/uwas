@@ -40,7 +40,7 @@ type Deps interface {
 	UnlockConfig()
 	ConfigPtr() *config.Config
 	// File I/O
-	PersistConfig()
+	PersistConfig() error
 	DomainFilePath(host string) (string, error)
 	RemoveDomainFile(host string)
 	AtomicWriteFile(path string, data []byte, perm os.FileMode) error

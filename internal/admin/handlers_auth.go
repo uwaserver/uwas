@@ -204,6 +204,7 @@ func adminUserDTO(user *auth.User, revealAPIKey bool) adminUserResponse {
 
 // --- SFTP Users ---
 
+
 func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -215,7 +216,7 @@ func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
 	limit, offset := parsePagination(r)
 	users, total := paginateSlice(users, limit, offset)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	jsonEncode(w, map[string]any{
 		"items":  users,
 		"total":  total,
 		"limit":  limit,
@@ -893,7 +894,7 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(adminUserDTO(user, true))
+	jsonEncode(w, adminUserDTO(user, true))
 }
 
 func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {

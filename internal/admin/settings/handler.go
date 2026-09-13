@@ -34,8 +34,7 @@ type Deps interface {
 	UnlockConfig()
 	RLockConfig()
 	RUnlockConfig()
-	PersistConfig()
-	PersistConfigWithError() error
+	PersistConfig() error
 	ConfigPath() string
 	// Auth manager init
 	EnsureAuthManagerFromConfig()
@@ -126,7 +125,7 @@ func (h *Handler) GenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	h.deps.LockConfig()
 	h.deps.ConfigPtr().Global.Admin.RecoveryCodes = hashed
 	h.deps.UnlockConfig()
-	if err := h.deps.PersistConfigWithError(); err != nil {
+	if err := h.deps.PersistConfig(); err != nil {
 		h.deps.RecordAudit(r, "2fa.recovery_codes.generated", err.Error(), false)
 		jsonError(w, "failed to persist recovery codes", http.StatusInternalServerError)
 		return
@@ -163,7 +162,11 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid recovery code", http.StatusUnauthorized)
 		return
 	}
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.RecordAudit(r, "2fa.recovery_code.used", err.Error(), false)
+		jsonError(w, "failed to persist recovery code change", http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "2fa.recovery_code.used", "", true)
 	jsonResponse(w, map[string]string{"status": "ok"})
 }
@@ -200,7 +203,11 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 	h.deps.ConfigPtr().Global.Alerting = req.Alerting
 	h.deps.ConfigPtr().Global.Webhooks = req.Webhooks
 	h.deps.UnlockConfig()
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.RecordAudit(r, "settings.notifications", err.Error(), false)
+		jsonError(w, "failed to persist settings", http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "settings.notifications", "updated", true)
 	jsonResponse(w, map[string]string{"status": "saved"})
 }
@@ -227,7 +234,11 @@ func (h *Handler) BrandingPut(w http.ResponseWriter, r *http.Request) {
 	h.deps.LockConfig()
 	h.deps.ConfigPtr().Global.Admin.Branding = branding
 	h.deps.UnlockConfig()
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.RecordAudit(r, "settings.branding", err.Error(), false)
+		jsonError(w, "failed to persist settings", http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "settings.branding", "updated", true)
 	jsonResponse(w, map[string]string{"status": "saved"})
 }
@@ -668,7 +679,11 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	h.deps.UnlockConfig()
 	h.deps.EnsureAuthManagerFromConfig()
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfig(); err != nil {
+		h.deps.RecordAudit(r, "settings.update", err.Error(), false)
+		jsonError(w, "failed to persist settings", http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "settings.update", fmt.Sprintf("%d fields", len(updates)), true)
 	jsonResponse(w, map[string]any{"status": "saved", "updated": len(updates)})
 }

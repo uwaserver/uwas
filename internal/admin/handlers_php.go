@@ -90,7 +90,7 @@ func (d *phpDeps) SetDomainFPMAddress(domain, addr string) {
 	d.s.configMu.Unlock()
 }
 
-func (d *phpDeps) PersistConfig()      { d.s.persistConfig() }
+func (d *phpDeps) PersistConfig() error { return d.s.persistConfig() }
 func (d *phpDeps) NotifyDomainChange() { d.s.notifyDomainChange() }
 func (d *phpDeps) PersistDomainPHPOverrides(domain string) {
 	d.s.persistDomainPHPOverrides(domain)
