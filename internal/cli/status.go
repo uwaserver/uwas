@@ -30,12 +30,16 @@ func (s *StatusCommand) Run(args []string) error {
 	}
 
 	var health map[string]any
-	json.Unmarshal(healthData, &health)
+	if err := json.Unmarshal(healthData, &health); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: malformed health response: %v\n", err)
+	}
 
 	// Stats
 	statsData, _ := apiRequest("GET", *apiURL+"/api/v1/stats", *apiKey, nil)
 	var stats map[string]any
-	json.Unmarshal(statsData, &stats)
+	if err := json.Unmarshal(statsData, &stats); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: malformed stats response: %v\n", err)
+	}
 
 	// Domains — the API returns a paginated envelope: {"items":[...],"total":...}.
 	var domains []map[string]any
@@ -100,7 +104,9 @@ func (r *ReloadCommand) Run(args []string) error {
 	}
 
 	var result map[string]string
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("reload: malformed response: %w", err)
+	}
 	fmt.Printf("Config reloaded: %s\n", result["status"])
 	return nil
 }

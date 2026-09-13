@@ -226,7 +226,9 @@ func (c *CacheCommand) stats(args []string) error {
 	}
 
 	var stats map[string]any
-	json.Unmarshal(body, &stats)
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return fmt.Errorf("stats: malformed response: %w", err)
+	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for k, v := range stats {
 		fmt.Fprintf(w, "%s\t%v\n", k, v)

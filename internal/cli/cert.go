@@ -119,7 +119,9 @@ func (c *CertCommand) renew(domain string, args []string) error {
 	}
 
 	var result map[string]string
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("renewal: malformed response: %w", err)
+	}
 	fmt.Printf("Certificate renewed: %s\n", result["status"])
 	return nil
 }

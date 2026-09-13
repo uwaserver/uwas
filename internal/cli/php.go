@@ -156,7 +156,9 @@ func (p *PHPCommand) start(args []string) error {
 	}
 
 	var result map[string]any
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("start: malformed response: %w", err)
+	}
 	fmt.Printf("PHP %s started on 127.0.0.1:%s\n", version, *port)
 	return nil
 }
