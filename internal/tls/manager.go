@@ -280,8 +280,8 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 				m.logger.Error("on-demand ask failed", "domain", name, "error", err)
 				return nil, fmt.Errorf("on-demand ask error for %s: %w", name, err)
 			}
+			defer resp.Body.Close()
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxOnDemandAskBodyBytes))
-			resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				return nil, fmt.Errorf("on-demand ask rejected %s (status %d)", name, resp.StatusCode)
 			}
