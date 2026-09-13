@@ -89,13 +89,16 @@ func TestAuthSFTPUserCreate_SystemError(t *testing.T) {
 	s.handleUserCreate(rec, withAdminContext(httptest.NewRequest("POST", "/x", body)))
 	// siteUserRoot succeeds for "example.com" (in test config),
 	// then CreateUserForWebDir fails because it can't create real users.
+	// MkdirAll fails first (permission denied on /var/www), so the generic
+	// "user creation failed" is returned in the JSON body. The underlying
+	// "create directories: ..." error only appears in the server log.
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500, body: %s", rec.Code, rec.Body.String())
 	}
 	var bodyMap map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &bodyMap); err == nil {
 		if msg, ok := bodyMap["error"]; ok {
-			if !strings.Contains(msg.(string), "create user:") {
+			if !strings.Contains(msg.(string), "user creation failed") {
 				t.Errorf("unexpected error message: %v", msg)
 			}
 		}

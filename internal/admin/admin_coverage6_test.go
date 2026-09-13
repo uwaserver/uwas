@@ -335,14 +335,14 @@ func TestHandleUseRecoveryCode(t *testing.T) {
 	// First generate some recovery codes
 	srv.configMu.Lock()
 	srv.config.Global.Admin.RecoveryCodes = []string{
-		"abcd1234",
-		"efgh5678",
-		"ijkl9012",
-		"mnop3456",
-		"qrst7890",
-		"uvwx1234",
-		"yzab5678",
-		"cdef9012",
+		"e9cee71ab932fde863338d08be4de9dfe39ea049bdafb342ce659ec5450b69ae",
+		"a488c73235f23320b3a730ecfb70f0249289561f7436fab597297601291c8213",
+		"c49e533519eb9ae0fa36c04aeea1d0f118fcee526353eaf5b03e28e69cf1a491",
+		"5aad972594e0ed0ccd9588a5d49aef27f7f795d618ce6025f8bd029d538ec259",
+		"02cf17d362b0f1777e396906c0e82495cf08bbeed5df2c01eab43a0619436eab",
+		"9d31859be5ab23cad612cb02a4af60df8aaa1acf48ff55c1d85bd053d33d245e",
+		"92850fe8fc59594e64a959ea204da210db390b7040d5d1e42e75815ccc7506c5",
+		"139bccc2811511be4717523ea454e8dba06e378b0f2499d9e3445d84ba64fa03",
 	}
 	srv.configMu.Unlock()
 
