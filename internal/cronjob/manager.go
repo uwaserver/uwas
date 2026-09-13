@@ -52,13 +52,17 @@ func runCrontab(cmd *exec.Cmd, capture bool) ([]byte, error) {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
+	timer := time.NewTimer(crontabTimeout)
+	defer timer.Stop()
+
 	select {
 	case err := <-done:
+		select { case <-timer.C: default: }
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) == 0 {
 			ee.Stderr = stderr.Bytes()
 		}
 		return stdout.Bytes(), err
-	case <-time.After(crontabTimeout):
+	case <-timer.C:
 		_ = cmd.Process.Kill()
 		<-done // reap the killed process
 		return nil, fmt.Errorf("crontab did not respond within %s", crontabTimeout)
