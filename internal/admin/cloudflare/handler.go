@@ -722,14 +722,19 @@ func ValidateTokenWithClient(client *http.Client, token, accountID string) (stri
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("token verify: malformed response: %w", err)
+	}
 	if !result.Success {
 		if len(result.Errors) > 0 {
 			return "", fmt.Errorf("%s", result.Errors[0].Message)
 		}
 		return "", fmt.Errorf("token validation failed")
 	}
-	req2, _ := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/accounts/"+accountID, nil)
+	req2, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/accounts/"+accountID, nil)
+	if err != nil {
+		return "", fmt.Errorf("account request: %w", err)
+	}
 	req2.Header.Set("Authorization", "Bearer "+token)
 	resp2, err := client.Do(req2)
 	if err != nil {
@@ -742,7 +747,9 @@ func ValidateTokenWithClient(client *http.Client, token, accountID string) (stri
 			Name string `json:"name"`
 		} `json:"result"`
 	}
-	json.NewDecoder(resp2.Body).Decode(&acc)
+	if err := json.NewDecoder(resp2.Body).Decode(&acc); err != nil {
+		return "", fmt.Errorf("account fetch: malformed response: %w", err)
+	}
 	if !acc.Success {
 		return "", fmt.Errorf("account validation failed")
 	}
@@ -785,7 +792,9 @@ func FetchZonesWithClient(client *http.Client, token string) ([]Zone, error) {
 				Message string `json:"message"`
 			} `json:"errors"`
 		}
-		json.NewDecoder(resp.Body).Decode(&result)
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, fmt.Errorf("zones page %d: malformed response: %w", page, err)
+		}
 		resp.Body.Close()
 		if !result.Success {
 			if len(result.Errors) > 0 {
@@ -830,7 +839,9 @@ func FetchDNSRecordsWithClient(client *http.Client, token, zoneID string) ([]DNS
 			Priority int    `json:"priority"`
 		} `json:"result"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("DNS records fetch: malformed response: %w", err)
+	}
 	if !result.Success {
 		return nil, fmt.Errorf("failed to fetch DNS records")
 	}
