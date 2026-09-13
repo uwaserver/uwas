@@ -275,7 +275,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	os.MkdirAll(root, 0755)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		jsonError(w, "failed to create directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		path = "."
