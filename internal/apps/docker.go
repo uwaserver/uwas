@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -283,7 +284,18 @@ func (m *Manager) buildImage(p *process, image string) error {
 	logDir := filepath.Join(filepath.Dir(p.workDir), "logs")
 	_ = osMkdirAllFn(logDir, 0755)
 	logPath := filepath.Join(logDir, p.name+"-build.log")
-	logFile, _ := osOpenFileFn(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	var logFile io.WriteCloser
+	openLogFile := func() {
+		f, err := osOpenFileFn(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			if m.logger != nil {
+				m.logger.Warn("apps: could not open build log file", "app", p.name, "path", logPath, "err", err)
+			}
+			return
+		}
+		logFile = f
+	}
+	openLogFile()
 	if logFile != nil {
 		defer logFile.Close()
 		fmt.Fprintf(logFile, "\n=== %s buildx build %s ===\n", time.Now().Format(time.RFC3339), image)
