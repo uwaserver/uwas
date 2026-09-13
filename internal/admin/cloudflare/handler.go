@@ -673,7 +673,10 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 			d.Cache.TTL = 3600
 		}
 		if root != "" {
-			os.MkdirAll(root, 0755)
+			if err := os.MkdirAll(root, 0755); err != nil {
+				skipped = append(skipped, host)
+				continue
+			}
 		}
 		h.deps.AddDomain(d)
 		existing[host] = true
