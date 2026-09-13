@@ -100,6 +100,7 @@ func migrateApache(file string) error {
 func parseApacheConfig(f *os.File) []apacheVHost {
 	var vhosts []apacheVHost
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 64KB initial, 1MB max
 	inVHost := false
 	var current apacheVHost
 
