@@ -482,9 +482,12 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		limited := io.LimitReader(tr, maxFileSize)
 		written, err := io.Copy(f, limited)
 		totalRead += written
-		f.Close()
 		if err != nil {
+			f.Close()
 			return fmt.Errorf("write %s: %w", outPath, err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("close %s: %w", outPath, err)
 		}
 		// If we hit the per-file limit, the file may be truncated.
 		if written >= maxFileSize {
