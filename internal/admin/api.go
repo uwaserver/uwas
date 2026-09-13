@@ -829,7 +829,7 @@ func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
 	limit, offset := parsePagination(r)
 	tasks, total := paginateSlice(tasks, limit, offset)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	jsonEncode(w, map[string]any{
 		"items":  tasks,
 		"total":  total,
 		"limit":  limit,
@@ -1145,13 +1145,21 @@ func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-	json.NewEncoder(w).Encode(data)
+	jsonEncode(w, data)
 }
 
 // jsonError writes a JSON error response, delegating to respond.Error.
 // 5xx responses are logged at error level (with X-Request-ID when
 // present) via the respond package's registered logger. Refs:
 // refactor.md A10, O6.
+// jsonEncode writes v as JSON to w, logging on write failure so truncated
+// responses never silently corrupt client state.
+func jsonEncode(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "[WARN] admin: JSON write failed (client disconnect?): %v\n", err)
+	}
+}
+
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	respond.Error(w, code, msg)
 }
