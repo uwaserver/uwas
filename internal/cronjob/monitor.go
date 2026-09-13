@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -482,8 +483,14 @@ func (m *Monitor) saveHistory() {
 		return
 	}
 
-	data, _ := json.Marshal(m.history)
-	os.WriteFile(file, data, 0644)
+	data, err := json.Marshal(m.history)
+	if err != nil {
+		slog.Warn("cronjob: failed to marshal history", "file", file, "error", err)
+		return
+	}
+	if err := os.WriteFile(file, data, 0644); err != nil {
+		slog.Warn("cronjob: failed to write history", "file", file, "error", err)
+	}
 }
 
 // WrapCommand wraps a cron command to be monitored.
