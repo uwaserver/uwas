@@ -487,9 +487,7 @@ func TestRestoreBackup_GzipError(t *testing.T) {
 	mp.files["bad.tar.gz"] = []byte("not gzip data")
 
 	tmpDir := t.TempDir()
-	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	os.WriteFile(cfgFile, []byte("x"), 0644)
-	m.SetPaths(cfgFile, "")
+	m.SetPaths(tmpDir, "")
 
 	err := m.RestoreBackup("bad.tar.gz", "mem")
 	if err == nil || !strings.Contains(err.Error(), "gzip reader") {
@@ -514,9 +512,7 @@ func TestRestoreBackup_TarReadError(t *testing.T) {
 	mp.files["bad.tar.gz"] = buf.Bytes()
 
 	tmpDir := t.TempDir()
-	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	os.WriteFile(cfgFile, []byte("x"), 0644)
-	m.SetPaths(cfgFile, "")
+	m.SetPaths(tmpDir, "")
 
 	err := m.RestoreBackup("bad.tar.gz", "mem")
 	if err == nil || !strings.Contains(err.Error(), "read tar") {
@@ -560,9 +556,7 @@ func TestRestoreBackup_ExceedsMaxTotalSize(t *testing.T) {
 	m.cfg.MaxTotalSize = 50
 
 	tmpDir := t.TempDir()
-	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	os.WriteFile(cfgFile, []byte("x"), 0644)
-	m.SetPaths(cfgFile, "")
+	m.SetPaths(tmpDir, "")
 
 	err := m.RestoreBackup("big.tar.gz", "mem")
 	if err == nil || !strings.Contains(err.Error(), "max total size") {
@@ -602,10 +596,9 @@ func TestRestoreBackup_ExceedsMaxFileSize(t *testing.T) {
 	m.cfg.MaxFileSize = 100
 
 	tmpDir := t.TempDir()
-	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	os.WriteFile(cfgFile, []byte("x"), 0644)
-	m.SetPaths(cfgFile, filepath.Join(tmpDir, "certs"))
-	os.MkdirAll(filepath.Join(tmpDir, "certs"), 0755)
+	certsDir := filepath.Join(tmpDir, "certs")
+	os.MkdirAll(certsDir, 0755)
+	m.SetPaths(tmpDir, certsDir)
 
 	err := m.RestoreBackup("big.tar.gz", "mem")
 	if err == nil || !strings.Contains(err.Error(), "exceeds max size") {
@@ -648,9 +641,9 @@ func TestRestoreBackup_SkipsNonRegularFile(t *testing.T) {
 	mp.files["links.tar.gz"] = buf.Bytes()
 
 	tmpDir := t.TempDir()
-	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	os.WriteFile(cfgFile, []byte("x"), 0644)
-	m.SetPaths(cfgFile, filepath.Join(tmpDir, "certs"))
+	certsDir := filepath.Join(tmpDir, "certs")
+	os.MkdirAll(certsDir, 0755)
+	m.SetPaths(tmpDir, certsDir)
 
 	err := m.RestoreBackup("links.tar.gz", "mem")
 	if err != nil {
@@ -947,9 +940,7 @@ func TestRestoreBackup_DefaultLimits(t *testing.T) {
 	mp.files["default-limits.tar.gz"] = buf.Bytes()
 
 	tmpDir := t.TempDir()
-	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	os.WriteFile(cfgFile, []byte("x"), 0644)
-	m.SetPaths(cfgFile, "")
+	m.SetPaths(tmpDir, "")
 
 	m.cfg.MaxFileSize = 0
 	m.cfg.MaxTotalSize = 0
@@ -957,5 +948,10 @@ func TestRestoreBackup_DefaultLimits(t *testing.T) {
 	err := m.RestoreBackup("default-limits.tar.gz", "mem")
 	if err != nil {
 		t.Fatalf("restore with default limits: %v", err)
+	}
+
+	// Verify config was restored inside tmpDir.
+	if got, _ := os.ReadFile(filepath.Join(tmpDir, "uwas.yaml")); string(got) != "cfg" {
+		t.Errorf("config content = %q, want %q", string(got), "cfg")
 	}
 }

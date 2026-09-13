@@ -167,14 +167,13 @@ func TestCreateAndListBackup(t *testing.T) {
 func TestRestoreBackup(t *testing.T) {
 	m, _ := testManager(t)
 
-	// Create source files.
-	srcDir := t.TempDir()
-	cfgFile := filepath.Join(srcDir, "uwas.yaml")
+	// Create source files matching what CreateBackup expects:
+	// SetPaths takes a FILE path (not a directory) — the same as TestCreateAndListBackup.
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
 	cfgContent := "global:\n  log_level: debug\n"
-	if err := os.WriteFile(cfgFile, []byte(cfgContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	certsDir := filepath.Join(srcDir, "certs")
+	os.WriteFile(cfgFile, []byte(cfgContent), 0644)
+	certsDir := filepath.Join(tmpDir, "certs")
 	os.MkdirAll(certsDir, 0755)
 	certContent := "CERTIFICATE"
 	os.WriteFile(filepath.Join(certsDir, "domain.pem"), []byte(certContent), 0644)
@@ -187,20 +186,19 @@ func TestRestoreBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Restore to a new destination.
+	// Restore to a new destination directory. SetPaths takes a directory path,
+	// and RestoreBackup writes to configPath + "/" + rel (e.g. configPath/uwas.yaml).
 	dstDir := t.TempDir()
-	dstCfg := filepath.Join(dstDir, "uwas.yaml")
-	dstCerts := filepath.Join(dstDir, "certs")
-	os.WriteFile(dstCfg, []byte(""), 0644)
+	os.MkdirAll(filepath.Join(dstDir, "certs"), 0755)
 
-	m.SetPaths(dstCfg, dstCerts)
+	m.SetPaths(dstDir, filepath.Join(dstDir, "certs"))
 
 	if err := m.RestoreBackup(info.Name, "mem"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify the config was restored.
-	got, err := os.ReadFile(dstCfg)
+	// Verify the config was restored: RestoreBackup writes to configPath/uwas.yaml.
+	got, err := os.ReadFile(filepath.Join(dstDir, "uwas.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +207,7 @@ func TestRestoreBackup(t *testing.T) {
 	}
 
 	// Verify cert was restored.
-	gotCert, err := os.ReadFile(filepath.Join(dstCerts, "domain.pem"))
+	gotCert, err := os.ReadFile(filepath.Join(dstDir, "certs", "domain.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +700,8 @@ func TestCreateBackupWithCertsSubdirectories(t *testing.T) {
 func TestRestoreBackupEndToEnd(t *testing.T) {
 	m, _ := testManager(t)
 
-	// Create source directory with config and certs.
+	// Create source files. SetPaths takes a FILE path for config (CreateBackup reads
+	// it directly), and a directory path for certs (CreateBackup lists it).
 	srcDir := t.TempDir()
 	cfgFile := filepath.Join(srcDir, "uwas.yaml")
 	cfgContent := "global:\n  log_level: debug\n  http_listen: :8080\n"
@@ -727,19 +726,20 @@ func TestRestoreBackupEndToEnd(t *testing.T) {
 	os.WriteFile(cfgFile, []byte("MODIFIED"), 0644)
 	os.WriteFile(filepath.Join(certsDir, "server.pem"), []byte("MODIFIED"), 0644)
 
-	// Restore to a completely new directory.
+	// Restore to a completely new directory. SetPaths takes a directory for config
+	// (RestoreBackup writes configPath/uwas.yaml) and a directory for certs.
 	dstDir := t.TempDir()
-	dstCfg := filepath.Join(dstDir, "uwas.yaml")
 	dstCerts := filepath.Join(dstDir, "certs")
+	os.MkdirAll(dstCerts, 0755)
 
-	m.SetPaths(dstCfg, dstCerts)
+	m.SetPaths(dstDir, dstCerts)
 
 	if err := m.RestoreBackup(info.Name, "mem"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Verify config was restored correctly.
-	got, err := os.ReadFile(dstCfg)
+	got, err := os.ReadFile(filepath.Join(dstDir, "uwas.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1412,6 +1412,8 @@ func TestCreateBackupCertsDirNonExistent(t *testing.T) {
 func TestRestoreBackupWithEmptyCertsDir(t *testing.T) {
 	m, _ := testManager(t)
 
+	// SetPaths: configPath is a FILE (CreateBackup reads it directly),
+	// certsDir is a directory (CreateBackup lists it).
 	srcDir := t.TempDir()
 	cfgFile := filepath.Join(srcDir, "uwas.yaml")
 	cfgContent := "restored config"
@@ -1427,16 +1429,16 @@ func TestRestoreBackupWithEmptyCertsDir(t *testing.T) {
 	}
 
 	// Restore with empty certsDir -- certs entries should be skipped.
+	// SetPaths for restore: configPath is a DIRECTORY (RestoreBackup writes configPath/uwas.yaml).
 	dstDir := t.TempDir()
-	dstCfg := filepath.Join(dstDir, "uwas.yaml")
-	m.SetPaths(dstCfg, "")
+	m.SetPaths(dstDir, "")
 
 	if err := m.RestoreBackup(info.Name, "mem"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Config should still be restored.
-	got, _ := os.ReadFile(dstCfg)
+	// Config was restored to dstDir/uwas.yaml (safeRestorePath adds "config/" prefix).
+	got, _ := os.ReadFile(filepath.Join(dstDir, "uwas.yaml"))
 	if string(got) != cfgContent {
 		t.Errorf("config = %q, want %q", string(got), cfgContent)
 	}
@@ -2486,9 +2488,14 @@ func TestRestoreBackupWithUnknownEntries(t *testing.T) {
 	mp := newMemoryProvider("mem")
 	m.providers["mem"] = mp
 
+	// SetPaths: configPath is a FILE (CreateBackup reads it).
+	// RestoreBackup verifies configPath is a directory and writes configPath/uwas.yaml.
 	tmpDir := t.TempDir()
 	cfgFile := filepath.Join(tmpDir, "uwas.yaml")
-	m.SetPaths(cfgFile, filepath.Join(tmpDir, "certs"))
+	os.WriteFile(cfgFile, []byte("placeholder"), 0644)
+	certsDir := filepath.Join(tmpDir, "certs")
+	os.MkdirAll(certsDir, 0755)
+	m.SetPaths(cfgFile, certsDir)
 
 	// Build a custom tar.gz with a mix of known and unknown entries.
 	var buf bytes.Buffer
@@ -2541,13 +2548,19 @@ func TestRestoreBackupWithUnknownEntries(t *testing.T) {
 
 	mp.files["custom-backup.tar.gz"] = buf.Bytes()
 
+	// Restore to a separate destination directory. configPath must be a directory
+	// (RestoreBackup writes configPath/uwas.yaml, certsPath/cert.pem, etc.).
+	dstDir := t.TempDir()
+	os.MkdirAll(filepath.Join(dstDir, "certs", "sub"), 0755)
+	m.SetPaths(dstDir, filepath.Join(dstDir, "certs"))
+
 	err := m.RestoreBackup("custom-backup.tar.gz", "mem")
 	if err != nil {
 		t.Fatalf("RestoreBackup error: %v", err)
 	}
 
 	// Verify config was restored.
-	got, err := os.ReadFile(cfgFile)
+	got, err := os.ReadFile(filepath.Join(dstDir, "uwas.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2556,7 +2569,7 @@ func TestRestoreBackupWithUnknownEntries(t *testing.T) {
 	}
 
 	// Verify certs subdirectory was created and file restored.
-	gotCert, err := os.ReadFile(filepath.Join(tmpDir, "certs", "sub", "cert.pem"))
+	gotCert, err := os.ReadFile(filepath.Join(dstDir, "certs", "sub", "cert.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2565,7 +2578,7 @@ func TestRestoreBackupWithUnknownEntries(t *testing.T) {
 	}
 
 	// The "other/random.txt" should NOT have been extracted.
-	if _, err := os.Stat(filepath.Join(tmpDir, "other", "random.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dstDir, "other", "random.txt")); !os.IsNotExist(err) {
 		t.Error("unknown entry should not have been extracted")
 	}
 }
