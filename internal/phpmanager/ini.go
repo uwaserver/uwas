@@ -46,6 +46,7 @@ func parseINIConfig(path string) (PHPConfig, error) {
 
 	cfg := PHPConfig{}
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 4096), 1<<20) // 4KB initial, 1MB max token size
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
