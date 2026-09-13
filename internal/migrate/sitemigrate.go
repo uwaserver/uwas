@@ -114,7 +114,9 @@ func Migrate(req MigrateRequest) *MigrateResult {
 	}
 
 	// Ensure local directory exists
-	os.MkdirAll(req.LocalRoot, 0755)
+	if err := os.MkdirAll(req.LocalRoot, 0755); err != nil {
+		return &MigrateResult{Status: "error", Error: fmt.Sprintf("create local directory %s: %v", req.LocalRoot, err)}
+	}
 
 	// Step 1: Sync files via rsync over SSH
 	log.WriteString("=== Syncing files ===\n")
