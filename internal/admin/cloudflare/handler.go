@@ -19,6 +19,8 @@ import (
 	"github.com/uwaserver/uwas/internal/respond"
 )
 
+var MkdirAllFn = os.MkdirAll // test hook
+
 // Deps is the interface the sub-package needs from the admin Server.
 type Deps interface {
 	// Auth
@@ -673,7 +675,7 @@ func (h *Handler) ZoneImport(w http.ResponseWriter, r *http.Request) {
 			d.Cache.TTL = 3600
 		}
 		if root != "" {
-			if err := os.MkdirAll(root, 0755); err != nil {
+			if err := MkdirAllFn(root, 0755); err != nil {
 				skipped = append(skipped, host)
 				continue
 			}

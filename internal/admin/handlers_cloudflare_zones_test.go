@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/uwaserver/uwas/internal/admin/cloudflare"
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/metrics"
@@ -244,6 +246,9 @@ func TestCloudflareZoneImport_DryRun_AddsNewAndSkipsExisting(t *testing.T) {
 
 func TestCloudflareZoneImport_LiveImport_AddsDomain(t *testing.T) {
 	grpDResetCloudflare(t)
+	origMkdirAll := cloudflare.MkdirAllFn
+	cloudflare.MkdirAllFn = func(_ string, _ os.FileMode) error { return nil }
+	defer func() { cloudflare.MkdirAllFn = origMkdirAll }()
 
 	ts := newDNSRecordsServer(t, []cfTestRecord{
 		{Type: "A", Name: "newsite.com", Content: "1.2.3.4"},
@@ -305,6 +310,9 @@ func TestCloudflareZoneImport_LiveImport_AddsDomain(t *testing.T) {
 
 func TestCloudflareZoneImport_PhpDefault_SetsPhpDefaults(t *testing.T) {
 	grpDResetCloudflare(t)
+	orig := cloudflare.MkdirAllFn
+	cloudflare.MkdirAllFn = func(_ string, _ os.FileMode) error { return nil }
+	defer func() { cloudflare.MkdirAllFn = orig }()
 
 	ts := newDNSRecordsServer(t, []cfTestRecord{
 		{Type: "A", Name: "app.example.com", Content: "1.2.3.4"},
@@ -367,6 +375,9 @@ func TestCloudflareZoneImport_PhpDefault_SetsPhpDefaults(t *testing.T) {
 
 func TestCloudflareZoneImport_HostnameWhitelist_FiltersRecords(t *testing.T) {
 	grpDResetCloudflare(t)
+	orig := cloudflare.MkdirAllFn
+	cloudflare.MkdirAllFn = func(_ string, _ os.FileMode) error { return nil }
+	defer func() { cloudflare.MkdirAllFn = orig }()
 
 	ts := newDNSRecordsServer(t, []cfTestRecord{
 		{Type: "A", Name: "keep.com", Content: "1.1.1.1"},
@@ -671,6 +682,9 @@ func TestCloudflareZoneImport_DNSRecordsAPIReturnsErrorNoMessages_Returns500(t *
 
 func TestCloudflareZoneImport_RedirectType_DisablesCache(t *testing.T) {
 	grpDResetCloudflare(t)
+	orig := cloudflare.MkdirAllFn
+	cloudflare.MkdirAllFn = func(_ string, _ os.FileMode) error { return nil }
+	defer func() { cloudflare.MkdirAllFn = orig }()
 
 	ts := newDNSRecordsServer(t, []cfTestRecord{
 		{Type: "A", Name: "old-site.com", Content: "1.2.3.4"},
