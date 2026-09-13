@@ -111,7 +111,11 @@ func (dc *DiskCache) Set(key string, resp *CachedResponse) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			log.Printf("cache: temp file removal failed: %v", rmErr)
+		}
+	}()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
