@@ -420,10 +420,6 @@ func (m *Manager) watchDocker(p *process, id string, stopCh <-chan struct{}) {
 		return
 	case <-backoff.C:
 	}
-	select {
-	case <-stopCh:
-		return
-	}
 	if err := m.startDocker(p); err != nil && m.logger != nil {
 		m.logger.Error("apps: docker auto-restart failed", "app", p.name, "error", err)
 	}

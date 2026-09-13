@@ -82,6 +82,14 @@ func (p *Route53Provider) FindZoneByDomain(domain string) (*Zone, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Route53 returns zones in creation order, but we need the most-specific
+	// zone (longest name) to match first. Sort longest-first so that a
+	// subdomain-of-subdomain (e.g. www.foo.example.com) resolves to the
+	// correct zone (foo.example.com) even when the parent zone (example.com)
+	// was created earlier and appears first in the API response.
+	sort.Slice(zones, func(i, j int) bool {
+		return len(zones[i].Name) > len(zones[j].Name)
+	})
 	for _, z := range zones {
 		if z.Name == domain || strings.HasSuffix(domain, "."+z.Name) {
 			return &z, nil

@@ -280,9 +280,12 @@ func TestRunner_SpawnEmptyToken(t *testing.T) {
 	}
 }
 
-// TestDoListPages_HardCap exercises the runaway guard (page > 1000).
-func TestDoListPages_HardCap(t *testing.T) {
-	// Return total_pages > 1000; the loop hard-caps at 1000.
+// TestDoListPages_NoHardCap verifies all pages are fetched, including accounts
+// with >1000 pages (50,000+ zones). Previously a hard-coded "page <= 1000" cap
+// silently dropped pages for large accounts, causing FindZoneByDomain to miss
+// zones and ACME DNS-01 challenges to fail silently.
+func TestDoListPages_NoHardCap(t *testing.T) {
+	// Return total_pages > 1000; the loop must fetch all pages.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := struct {
 			Success    bool             `json:"success"`
@@ -305,8 +308,8 @@ func TestDoListPages_HardCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doListPages: %v", err)
 	}
-	if len(pages) != 1000 {
-		t.Fatalf("expected 1000 pages (hard cap), got %d", len(pages))
+	if len(pages) != 9999 {
+		t.Fatalf("expected 9999 pages (all fetched), got %d", len(pages))
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -422,5 +424,49 @@ func TestCreateFirstAdmin_Validation(t *testing.T) {
 	}
 	if _, err = m.CreateFirstAdmin("a", "", ""); err == nil && !strings.Contains(err.Error(), "invalid username") {
 		t.Fatalf("expected invalid username error, got %v", err)
+	}
+}
+
+
+// TestAuthenticateFrom_AuditOnFailure is the regression test for the
+// audit-on-failure gap: AuthenticateFrom must call recordAudit when a login
+// fails, so that failed attempts appear in the audit trail.
+func TestAuthenticateFrom_AuditOnFailure(t *testing.T) {
+	// Override bcrypt cost to speed up the test (bcrypt cost 14 is too slow for unit tests).
+	orig := atomic.LoadInt64(&testBcryptCost)
+	atomic.StoreInt64(&testBcryptCost, 4)
+	t.Cleanup(func() { atomic.StoreInt64(&testBcryptCost, orig) })
+
+	m := NewManager("", "")
+	t.Cleanup(m.Stop)
+
+	if _, err := m.CreateUser("testuser", "test@example.com", "correct-password", RoleUser, nil); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	var called int
+	var recordedAction, recordedDetail string
+	m.SetAuditRecorder(func(r *http.Request, action, detail string, success bool) {
+		called++
+		recordedAction = action
+		recordedDetail = detail
+	})
+
+	_, err := m.AuthenticateFrom("testuser", "wrong-password", "")
+	if err == nil {
+		t.Fatal("expected authentication to fail with wrong password")
+	}
+
+	if called != 1 {
+		t.Fatalf("recordAudit called %d times, want 1", called)
+	}
+	if recordedAction != "auth.login.failed" {
+		t.Fatalf("action=%q, want %q", recordedAction, "auth.login.failed")
+	}
+	if !strings.Contains(recordedDetail, "testuser") {
+		t.Fatalf("detail=%q should contain username", recordedDetail)
+	}
+	if !strings.Contains(recordedDetail, "wrong password") {
+		t.Fatalf("detail=%q should mention wrong password", recordedDetail)
 	}
 }

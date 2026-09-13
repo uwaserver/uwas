@@ -269,9 +269,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		RedeemTicket: func(ticket string) (string, bool) {
 			return s.redeemTicket(ticket)
 		},
-		ValidateTOTP: func(secret, code string) (bool, error) {
-			valid, _ := ValidateTOTP(secret, code)
-			return valid, nil
+		ValidateTOTP: func(secret, code string) bool {
+			return s.validateTOTPNoReplay(secret, code)
 		},
 	}, next)
 }

@@ -46,7 +46,9 @@ type Deps struct {
 	RedeemTicket   func(ticket string) (token string, pinOK bool)
 
 	// TOTP validation (nil when TOTP is not configured).
-	ValidateTOTP func(secret, code string) (bool, error)
+	// Returns bool so the caller can atomically consume the matched time step
+	// and prevent replay within the validity window.
+	ValidateTOTP func(secret, code string) bool
 }
 
 // New returns an http.Handler that wraps `next` with the full auth chain:
@@ -215,7 +217,7 @@ func New(deps Deps, next http.Handler) http.Handler {
 				respond.Error(w, http.StatusForbidden, "2fa_required")
 				return
 			}
-			valid, _ := deps.ValidateTOTP(totpSecret, totpCode)
+			valid := deps.ValidateTOTP(totpSecret, totpCode)
 			if !valid {
 				deps.RecordFailure(ip)
 				respond.Error(w, http.StatusForbidden, "invalid 2FA code")

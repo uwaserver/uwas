@@ -43,6 +43,70 @@ func TestRoute53_SigningRegionAlwaysUsEast1(t *testing.T) {
 	}
 }
 
+// --- FindZoneByDomain ---
+
+// TestRoute53FindZoneByDomain_LongestMatchFirst verifies that the most-specific
+// zone (longest name) is matched first, regardless of the order Route53's API
+// returns them. Route53 returns zones in creation order, not longest-first.
+// Without a sort, a shorter parent zone created before a longer child zone
+// would incorrectly match subdomains of the child.
+//
+// Example: zones [example.com, foo.example.com] in API order, searching for
+// "www.foo.example.com" must return foo.example.com, not example.com.
+func TestRoute53FindZoneByDomain_LongestMatchFirst(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		// Route53 returns zones in creation order.
+		// example.com was created first → appears first in the list (wrong order for suffix match).
+		// foo.example.com was created second → appears second.
+		// Pre-fix: code iterates [example.com, foo.example.com], matches example.com first for
+		//          "www.foo.example.com" (suffix ".example.com" matches) → WRONG zone.
+		// Post-fix: code sorts [foo.example.com, example.com] (longest first), matches
+		//           foo.example.com first (suffix ".foo.example.com" matches) → CORRECT zone.
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<ListHostedZonesResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <HostedZones>
+    <HostedZone><Id>/hostedzone/ZPARENT</Id><Name>example.com.</Name></HostedZone>
+    <HostedZone><Id>/hostedzone/ZCHILD</Id><Name>foo.example.com.</Name></HostedZone>
+  </HostedZones>
+</ListHostedZonesResponse>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := NewRoute53("AKIATEST", "secrettest", "us-east-1")
+	p.baseURL = srv.URL
+
+	// Exact apex match
+	zone, err := p.FindZoneByDomain("example.com")
+	if err != nil {
+		t.Fatalf("FindZoneByDomain(example.com): %v", err)
+	}
+	if zone.ID != "ZPARENT" {
+		t.Errorf("apex exact match: got ID=%q, want ZPARENT", zone.ID)
+	}
+
+	// Subdomain of child zone — must return foo.example.com, not example.com
+	zone, err = p.FindZoneByDomain("www.foo.example.com")
+	if err != nil {
+		t.Fatalf("FindZoneByDomain(www.foo.example.com): %v", err)
+	}
+	if zone.ID != "ZCHILD" {
+		t.Errorf("subdomain-of-child: got ID=%q, want ZCHILD (foo.example.com)\n"+
+			"  Pre-fix: ID=ZPARENT because example.com appeared first in API response\n"+
+			"  and suffix '.example.com' matched before foo.example.com could.",
+			zone.ID)
+	}
+
+	// Subdomain of parent zone — must return example.com
+	zone, err = p.FindZoneByDomain("www.example.com")
+	if err != nil {
+		t.Fatalf("FindZoneByDomain(www.example.com): %v", err)
+	}
+	if zone.ID != "ZPARENT" {
+		t.Errorf("subdomain-of-parent: got ID=%q, want ZPARENT", zone.ID)
+	}
+}
+
 // --- Constructor ---
 
 func TestNewRoute53(t *testing.T) {

@@ -94,7 +94,47 @@ func (c *Client) doListPages(pathBase string) ([]json.RawMessage, error) {
 		sep = "&"
 	}
 	var pages []json.RawMessage
-	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
+	// Fetch the first page to discover totalPages; no runaway cap needed since
+	// the API itself tells us when to stop.
+	path := fmt.Sprintf("%s%sper_page=50&page=1", pathBase, sep)
+	req, err := http.NewRequest("GET", c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	var firstEnv struct {
+		envelope
+		ResultInfo struct {
+			TotalPages int `json:"total_pages"`
+		} `json:"result_info"`
+	}
+	if err := json.Unmarshal(raw, &firstEnv); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	if !firstEnv.Success {
+		if len(firstEnv.Errors) > 0 {
+			return nil, fmt.Errorf("cloudflare: %s", firstEnv.Errors[0].Message)
+		}
+		return nil, fmt.Errorf("cloudflare: request failed")
+	}
+	totalPages := firstEnv.ResultInfo.TotalPages
+	if totalPages <= 0 {
+		totalPages = 1
+	}
+	pages = append(pages, firstEnv.Result)
+	if totalPages <= 1 {
+		return pages, nil
+	}
+	for page := 2; page <= totalPages; page++ {
 		path := fmt.Sprintf("%s%sper_page=50&page=%d", pathBase, sep, page)
 		req, err := http.NewRequest("GET", c.baseURL+path, nil)
 		if err != nil {
@@ -117,18 +157,15 @@ func (c *Client) doListPages(pathBase string) ([]json.RawMessage, error) {
 			} `json:"result_info"`
 		}
 		if err := json.Unmarshal(raw, &env); err != nil {
-			return nil, fmt.Errorf("parse response (status %d): %w", resp.StatusCode, err)
+			return nil, fmt.Errorf("parse response: %w", err)
 		}
 		if !env.Success {
 			if len(env.Errors) > 0 {
 				return nil, fmt.Errorf("cloudflare: %s", env.Errors[0].Message)
 			}
-			return nil, fmt.Errorf("cloudflare: request failed (status %d)", resp.StatusCode)
+			return nil, fmt.Errorf("cloudflare: request failed")
 		}
 		pages = append(pages, env.Result)
-		if env.ResultInfo.TotalPages <= page {
-			break
-		}
 	}
 	return pages, nil
 }

@@ -193,11 +193,20 @@ func (b *Blocker) escalated(level int) time.Duration {
 		return b.cfg.BlockDuration
 	}
 	d := b.cfg.BlockDuration
+	max := b.cfg.MaxBlockDuration
 	for i := 1; i < level; i++ {
-		d *= 4
-		if d >= b.cfg.MaxBlockDuration {
-			return b.cfg.MaxBlockDuration
+		// Multiply as uint64 to avoid int64 overflow. At level 50,
+		// 15min × 4^49 ≈ 8×10^13 years in nanoseconds — well past int64.
+		// Cap before the multiplication would overflow.
+		ns := uint64(d)
+		ns *= 4
+		if ns >= uint64(max) {
+			return max
 		}
+		d = time.Duration(ns)
+	}
+	if d >= max {
+		return max
 	}
 	return d
 }
