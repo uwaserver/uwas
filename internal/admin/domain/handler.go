@@ -365,7 +365,9 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0">
 <div style="text-align:center"><h1>%s</h1><p style="color:#94a3b8">Site is ready. Upload your files via SFTP or place them in:<br><code>%s</code></p></div>
 </body></html>`, d.Host, d.Host, d.Root)
-			os.WriteFile(idx, []byte(placeholder), 0644)
+			if err := os.WriteFile(idx, []byte(placeholder), 0644); err != nil {
+				h.deps.LogWarn("failed to write domain placeholder index.html", "path", idx, "error", err)
+			}
 		}
 		if runtime.GOOS == "linux" {
 			parentDir := filepath.Dir(d.Root)
