@@ -199,10 +199,14 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 			if err := os.MkdirAll(certDst, 0700); err != nil {
 				result.Errors = append(result.Errors, "mkdir "+dom.Domain+" certs: "+err.Error())
 			}
-			copyFile(certFile, filepath.Join(certDst, "cert.pem"))
+			if err := copyFile(certFile, filepath.Join(certDst, "cert.pem")); err != nil {
+				result.Errors = append(result.Errors, "copy cert for "+dom.Domain+": "+err.Error())
+			}
 			keyFile := filepath.Join(sslDir, dom.Domain+".key")
 			if _, err := os.Stat(keyFile); err == nil {
-				copyFile(keyFile, filepath.Join(certDst, "key.pem"))
+				if err := copyFile(keyFile, filepath.Join(certDst, "key.pem")); err != nil {
+					result.Errors = append(result.Errors, "copy key for "+dom.Domain+": "+err.Error())
+				}
 			}
 		}
 	}
