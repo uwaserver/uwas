@@ -35,6 +35,7 @@ type Deps interface {
 	RLockConfig()
 	RUnlockConfig()
 	PersistConfig()
+	PersistConfigWithError() error
 	ConfigPath() string
 	// Auth manager init
 	EnsureAuthManagerFromConfig()
@@ -125,7 +126,11 @@ func (h *Handler) GenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	h.deps.LockConfig()
 	h.deps.ConfigPtr().Global.Admin.RecoveryCodes = hashed
 	h.deps.UnlockConfig()
-	h.deps.PersistConfig()
+	if err := h.deps.PersistConfigWithError(); err != nil {
+		h.deps.RecordAudit(r, "2fa.recovery_codes.generated", err.Error(), false)
+		jsonError(w, "failed to persist recovery codes", http.StatusInternalServerError)
+		return
+	}
 	h.deps.RecordAudit(r, "2fa.recovery_codes.generated", "", true)
 	jsonResponse(w, map[string]any{"codes": codes, "count": len(codes)})
 }

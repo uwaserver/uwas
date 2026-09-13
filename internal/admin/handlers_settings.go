@@ -30,6 +30,7 @@ func (d *settingsDeps) UnlockConfig()                    { d.s.configMu.Unlock()
 func (d *settingsDeps) RLockConfig()                     { d.s.configMu.RLock() }
 func (d *settingsDeps) RUnlockConfig()                   { d.s.configMu.RUnlock() }
 func (d *settingsDeps) PersistConfig()                   { d.s.persistConfig() }
+func (d *settingsDeps) PersistConfigWithError() error   { return d.s.persistConfig() }
 func (d *settingsDeps) ConfigPath() string               { return d.s.configPath }
 func (d *settingsDeps) EnsureAuthManagerFromConfig()     { d.s.ensureAuthManagerFromConfig() }
 func (d *settingsDeps) AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
