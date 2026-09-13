@@ -608,6 +608,8 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 	}
 
 	go func() {
+		timer := time.NewTimer(0) // allocated once; reset each iteration
+		defer timer.Stop()
 		for {
 			next := nextCronRun(cronExpr)
 			if next.IsZero() {
@@ -622,9 +624,13 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 			if wait <= 0 {
 				wait = time.Minute // safety: if we're already past, wait 1 min
 			}
+			if !timer.Stop() {
+				<-timer.C // drain if already fired
+			}
+			timer.Reset(wait)
 
 			select {
-			case <-time.After(wait):
+			case <-timer.C:
 				info, err := m.CreateBackup(provider)
 				if err != nil {
 					m.logger.Error("scheduled backup failed", "error", err)
