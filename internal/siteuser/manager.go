@@ -106,10 +106,18 @@ func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	// Set ownership:
 	// - domain dir owned by root:root (chroot requirement)
 	// - public_html owned by user:www-data (writable)
-	chown(domainDir, "root", "root")
-	chmodDir(domainDir, "755")
-	chownRecursive(webDir, username, "www-data")
-	chmodDir(webDir, "775")
+	if err := chown(domainDir, "root", "root"); err != nil && chownLogErr != nil {
+		chownLogErr(fmt.Sprintf("chown %s: %v", domainDir, err))
+	}
+	if err := chmodDir(domainDir, "755"); err != nil && chmodLogErr != nil {
+		chmodLogErr(fmt.Sprintf("chmod %s 755: %v", domainDir, err))
+	}
+	if err := chownRecursive(webDir, username, "www-data"); err != nil && chownLogErr != nil {
+		chownLogErr(fmt.Sprintf("chown -R %s %s:www-data: %v", webDir, username, err))
+	}
+	if err := chmodDir(webDir, "775"); err != nil && chmodLogErr != nil {
+		chmodLogErr(fmt.Sprintf("chmod %s 775: %v", webDir, err))
+	}
 
 	// Ensure SFTP chroot config exists in sshd_config
 	ensureSFTPConfig(username, domainDir, startDir)
@@ -225,16 +233,20 @@ func userExists(username string) bool {
 	return execCommandFn("id", username).Run() == nil
 }
 
-func chown(path, user, group string) {
-	execCommandFn("chown", user+":"+group, path).Run()
+// chownLogErr and chmodLogErr are testable hooks for surfacing permission errors.
+// If nil, errors are silently discarded.
+var chownLogErr, chmodLogErr func(string)
+
+func chown(path, user, group string) error {
+	return execCommandFn("chown", user+":"+group, path).Run()
 }
 
-func chownRecursive(path, user, group string) {
-	execCommandFn("chown", "-R", user+":"+group, path).Run()
+func chownRecursive(path, user, group string) error {
+	return execCommandFn("chown", "-R", user+":"+group, path).Run()
 }
 
-func chmodDir(path, mode string) {
-	execCommandFn("chmod", mode, path).Run()
+func chmodDir(path, mode string) error {
+	return execCommandFn("chmod", mode, path).Run()
 }
 
 // ensureSFTPConfig ensures sshd is configured for chroot SFTP and adds a Match block.
