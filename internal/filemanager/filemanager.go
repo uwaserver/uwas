@@ -120,7 +120,9 @@ func SaveUpload(baseDir, relPath string, src io.Reader) (int64, error) {
 	if fullPath == "" {
 		return 0, fmt.Errorf("invalid path")
 	}
-	os.MkdirAll(filepath.Dir(fullPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		return 0, fmt.Errorf("create directory for upload: %w", err)
+	}
 	f, err := os.Create(fullPath)
 	if err != nil {
 		return 0, err
