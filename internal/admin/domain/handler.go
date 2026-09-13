@@ -371,8 +371,11 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 		}
 		if runtime.GOOS == "linux" {
 			parentDir := filepath.Dir(d.Root)
-			os.MkdirAll(filepath.Join(parentDir, "logs"), 0755)
-			h.deps.LogInfo("created domain dirs", "root", d.Root)
+			if err := os.MkdirAll(filepath.Join(parentDir, "logs"), 0755); err != nil {
+				h.deps.LogWarn("failed to create domain logs directory", "path", filepath.Join(parentDir, "logs"), "error", err)
+			} else {
+				h.deps.LogInfo("created domain dirs", "root", d.Root)
+			}
 		}
 	}
 
