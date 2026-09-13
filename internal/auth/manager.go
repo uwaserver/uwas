@@ -924,7 +924,11 @@ func (m *Manager) saveUsers() {
 	if err != nil {
 		return
 	}
-	os.WriteFile(file, data, 0600)
+	// persistUsersToDisk is called from Add/Remove which don't propagate errors.
+	// Log and continue so the in-memory state isn't corrupted.
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		slog.Warn("failed to persist users", "file", file, "error", err)
+	}
 }
 
 func (m *Manager) usersFile() string {
