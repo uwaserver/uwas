@@ -67,7 +67,9 @@ func createBackup(output, configPath, certsDir string) error {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("add config: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "warning: config file not found: %s\n", configPath)
+		if _, err := fmt.Fprintf(os.Stderr, "warning: config file not found: %s\n", configPath); err != nil {
+			// stderr broken — nothing we can do
+		}
 	} else {
 		fileCount++
 	}
