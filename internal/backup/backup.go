@@ -1196,7 +1196,12 @@ func archiveAndUpload(
 		return 0, fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	cleanupTemp := func() {
+		if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			// Logged by caller on error paths; best-effort here for the success path
+		}
+	}
+	defer cleanupTemp()
 
 	gw := gzip.NewWriter(tmpFile)
 	tw := tar.NewWriter(gw)
@@ -1221,8 +1226,6 @@ func archiveAndUpload(
 		}
 		return tmpFile.Close()
 	}
-	defer finalize()
-
 	if err := addEntries(tw); err != nil {
 		return 0, err
 	}
