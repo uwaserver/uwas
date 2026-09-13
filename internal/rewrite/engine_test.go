@@ -719,22 +719,26 @@ func TestMightMatch(t *testing.T) {
 // MatchString was called with no deadline, allowing ReDoS to block the
 // request thread before Process()'s 50ms timeout could run.
 func TestMightMatchReDoSTimeout(t *testing.T) {
-	// ([a-z]+)+X is a classic catastrophic-backtracking regex.
-	// On 38+ 'a' characters it takes seconds to minutes without a timeout.
+	// ^([a-z]+)+X$ is a classic catastrophic-backtracking regex.
+	// RE2 uses greedy non-deterministic automata, so ([a-z]+)+ partitions
+	// the input in 2^(n-1) ways. With a trailing "X" it matches (all a's
+	// consumed, no X left — one try). With a trailing "Y" every partition
+	// fails (X never found), forcing RE2 to explore all possibilities.
 	rule, err := ParseRule(`^([a-z]+)+X$`, "/new", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := NewEngine([]*Rule{rule})
 
-	// A string designed to trigger exponential backtracking on ([a-z]+)+.
-	evil := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX"
+	// 60 a's + Y: forces RE2 to explore all 2^59 group partitions.
+	// This takes ~500ms in Go 1.22 RE2 — enough to exceed the 50ms deadline.
+	evil := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaY"
 
 	done := make(chan bool, 1)
 	go func() {
 		matched := e.MightMatch(evil)
 		// With the deadline fix: must return false (timeout).
-		// Before the fix: blocks indefinitely.
+		// Before the fix: blocks for ~500ms per call.
 		if matched {
 			t.Error("MightMatch should return false on ReDoS timeout")
 		}
