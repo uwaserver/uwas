@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,8 +24,12 @@ type DiskCache struct {
 // It scans existing cache files to initialise usedBytes so the accounting
 // stays correct across restarts.
 func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
-	os.MkdirAll(baseDir, 0750)
-	_ = os.Chmod(baseDir, 0750)
+	if err := os.MkdirAll(baseDir, 0750); err != nil {
+		log.Printf("cache: cannot create base dir %q: %v", baseDir, err)
+	}
+	if err := os.Chmod(baseDir, 0750); err != nil {
+		log.Printf("cache: failed to harden base dir permissions: %v", err)
+	}
 	dc := &DiskCache{
 		baseDir:  baseDir,
 		maxBytes: maxBytes,
@@ -37,13 +42,17 @@ func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
 			return nil
 		}
 		if d.IsDir() {
-			_ = os.Chmod(path, 0750)
+			if err := os.Chmod(path, 0750); err != nil {
+				log.Printf("cache: failed to harden dir permissions: %v", err)
+			}
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 || filepath.Ext(path) != ".cache" {
 			return nil
 		}
-		_ = os.Chmod(path, 0600)
+		if err := os.Chmod(path, 0600); err != nil {
+			log.Printf("cache: failed to harden file permissions: %v", err)
+		}
 		if info, err := d.Info(); err == nil {
 			total += info.Size()
 		}
