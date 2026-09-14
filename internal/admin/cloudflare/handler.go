@@ -811,6 +811,7 @@ func FetchZonesWithClient(client *http.Client, token string) ([]Zone, error) {
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return nil, fmt.Errorf("zones page %d: malformed response: %w", page, err)
 		}
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if !result.Success {
 			if len(result.Errors) > 0 {
@@ -883,7 +884,7 @@ func PurgeCacheWithClient(client *http.Client, token, url string, everything boo
 		if everything {
 			payload = []byte(`{"purge_everything":true}`)
 		} else if url != "" {
-			payload = []byte(`{"files":["` + url + `"]}`)
+			payload, _ = json.Marshal(map[string][]string{"files": {url}})
 		} else {
 			continue
 		}

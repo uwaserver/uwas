@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -258,6 +259,7 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 				hr.Status = "down"
 				hr.Error = err.Error()
 			} else {
+				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 				hr.Code = resp.StatusCode
 				if resp.StatusCode >= 200 && resp.StatusCode < 400 {

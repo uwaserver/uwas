@@ -3,6 +3,7 @@ package alerting
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -231,6 +232,7 @@ func (a *Alerter) sendWebhook(alert Alert) {
 		a.logger.Error("webhook delivery failed", "error", err, "url", a.webhookURL)
 		return
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {

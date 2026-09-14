@@ -277,7 +277,9 @@ func (m *Manager) StartDomain(domain string) error {
 		)
 		m.domainMu.Lock()
 		di, stillAssigned := m.domainMap[domain]
-		shouldRestart := stillAssigned && di.proc != nil && di.proc.cmd == cmd
+		// nil di is possible if the domain was removed from the map while this
+		// goroutine was blocked on cmd.Wait() (e.g. UnassignDomain racing).
+		shouldRestart := stillAssigned && di != nil && di.proc != nil && di.proc.cmd == cmd
 		var backoff time.Duration
 		var restartGen int
 		giveUp := false

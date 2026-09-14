@@ -249,18 +249,12 @@ func DockerDBExecSQL(containerName, sql string) (string, error) {
 	}
 	image := strings.TrimSpace(string(inspectOut))
 
-	var args []string
-	switch {
-	case strings.Contains(image, "postgres"):
-		args = []string{"docker", "exec", fullName, "psql", "-U", "postgres", "-t", "-c", sql}
-	default: // mariadb, mysql
-		args = []string{"docker", "exec", fullName, "mariadb", "-u", "root", "-p$MYSQL_ROOT_PASSWORD",
-			"--batch", "--skip-column-names", "-e", sql}
-	}
-
 	var cmd *exec.Cmd
 	if strings.Contains(image, "postgres") {
-		cmd = dockerExecCommandFn(args[0], args[1:]...)
+		// Feed SQL via stdin — avoids argv exposure of SQL text in /proc/<pid>/cmdline.
+		// psql -f - reads SQL from stdin, which matches the MariaDB approach below.
+		cmd = dockerExecCommandFn("docker", "exec", "-i", fullName, "psql", "-U", "postgres", "-t", "-f", "-")
+		cmd.Stdin = strings.NewReader(sql)
 	} else {
 		// Use stdin to pass SQL — avoids shell escaping issues entirely. Select
 		// the client by availability and exec exactly one: the old

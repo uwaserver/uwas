@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -204,6 +205,7 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 		status = "down"
 		statusCode = 0
 	} else {
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		statusCode = resp.StatusCode
 		check.StatusCode = statusCode

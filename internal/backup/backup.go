@@ -162,8 +162,9 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 		return nil, fmt.Errorf("unknown backup provider %q", provider)
 	}
 
-	// Build the backup filename.
-	ts := time.Now().UTC().Format("20060102-150405")
+	// Build the backup filename. Use nanosecond precision to avoid collisions
+	// when two backup jobs run concurrently within the same second.
+	ts := time.Now().UTC().Format("20060102-150405.000000000")
 	filename := fmt.Sprintf("uwas-backup-%s.tar.gz", ts)
 
 	// Snapshot mutable Manager state once so the addEntries closure does

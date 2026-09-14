@@ -88,6 +88,7 @@ func (p *S3Provider) Download(ctx context.Context, filename string) (io.ReadClos
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		return nil, fmt.Errorf("s3 download %s: %s", filename, resp.Status)
 	}
