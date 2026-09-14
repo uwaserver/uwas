@@ -37,8 +37,11 @@ func randomHex(n int) string {
 
 // newTestManagerProof returns a Manager backed by an in-memory store.
 func newTestManagerProof(t *testing.T) *Manager {
-	m := NewManager("", "")
-	_, err := m.CreateUser("attacker", "attacker@test", "correct-password", RoleUser, nil)
+	m, err := NewManager("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.CreateUser("attacker", "attacker@test", "correct-password", RoleUser, nil)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

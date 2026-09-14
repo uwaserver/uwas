@@ -512,7 +512,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			// per-location limiters already do; this one did not, so a domain
 			// limiting per 10s told well-behaved clients — crawlers included —
 			// to back off six times longer than the limit actually lasts.
-			retry := int(guards.rateLimit.Window().Seconds())
+			// Add ±25% jitter to spread retry bursts and prevent thundering herd.
+			window := int(guards.rateLimit.Window().Seconds())
+			jitter := window / 4
+			if jitter < 1 {
+				jitter = 1
+			}
+			retry := window - jitter + int(time.Now().UnixNano()%int64(2*jitter+1))
 			if retry < 1 {
 				retry = 1
 			}

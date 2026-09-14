@@ -199,7 +199,10 @@ func TestLoadJWTSecret_RandReadFailOnEphemeral(t *testing.T) {
 	// The rand.Read error path on ephemeral is untestable without source
 	// injection (crypto/rand.Read never fails on Linux).
 	// Placeholder documenting the gap:
-	m := NewManager("", "")
+	m, err := NewManager("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = m
 	t.Log("ephemeral rand.Read error path: requires source injection; untestable on typical Linux")
 }
@@ -437,7 +440,10 @@ func TestAuthenticateFrom_AuditOnFailure(t *testing.T) {
 	atomic.StoreInt64(&testBcryptCost, 4)
 	t.Cleanup(func() { atomic.StoreInt64(&testBcryptCost, orig) })
 
-	m := NewManager("", "")
+	m, err := NewManager("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(m.Stop)
 
 	if _, err := m.CreateUser("testuser", "test@example.com", "correct-password", RoleUser, nil); err != nil {
@@ -452,7 +458,7 @@ func TestAuthenticateFrom_AuditOnFailure(t *testing.T) {
 		recordedDetail = detail
 	})
 
-	_, err := m.AuthenticateFrom("testuser", "wrong-password", "")
+	_, err = m.AuthenticateFrom("testuser", "wrong-password", "")
 	if err == nil {
 		t.Fatal("expected authentication to fail with wrong password")
 	}

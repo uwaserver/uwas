@@ -123,10 +123,26 @@ func appDefinitionForResponse(a *apps.App) *apps.App {
 	if a == nil {
 		return nil
 	}
-	out := *a
-	out.Deploy.GitToken = ""
-	out.Deploy.WebhookSecret = ""
-	return &out
+	// Copy every value field explicitly so that zeroing sensitive Deploy fields
+	// does NOT mutate the original in the store (a shallow "out := *a" would
+	// share the embedded Deploy struct — zeroing GitToken/WebhookSecret/SSHKeyPath
+	// would destroy the stored credentials on every GET).
+	return &apps.App{
+		Name:        a.Name,
+		WorkDir:     a.WorkDir,
+		AutoRestart: a.AutoRestart,
+		Deploy: apps.DeployConfig{
+			GitURL:        a.Deploy.GitURL,
+			GitBranch:     a.Deploy.GitBranch,
+			BuildCmd:      a.Deploy.BuildCmd,
+			HealthPath:    a.Deploy.HealthPath,
+			GitToken:      "",
+			WebhookSecret: "",
+			SSHKeyPath:   "",
+			BranchFilter:  a.Deploy.BranchFilter,
+		},
+		Env: a.Env,
+	}
 }
 
 func paginateSlice[T any](items []T, limit, offset int) ([]T, int) {

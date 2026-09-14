@@ -133,6 +133,18 @@ func wafFamilySet(rules []string) map[string]bool {
 	return set
 }
 
+// pathSegmentContains reports whether segment appears inside path as a
+// whole path component — as /segment, segment/, or /segment/ — and not as
+// a substring of a longer name.  For example, ".git" matches "/.git/",
+// "/.git/HEAD", and "/.gitignore" (a file named .gitignore, same segment)
+// but does NOT match "/v2/my-git-config.txt" or "/api/.github/workflows".
+func pathSegmentContains(path, segment string) bool {
+	return strings.HasPrefix(path, segment+"/") ||
+		strings.HasSuffix(path, "/"+segment) ||
+		strings.Contains(path, "/"+segment+"/") ||
+		path == segment
+}
+
 // SecurityGuard blocks access to sensitive paths (global middleware).
 func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecurityStats) Middleware {
 	allBlocked := make([]string, 0, len(defaultBlockedPaths)+len(blockedPaths))
@@ -144,7 +156,7 @@ func SecurityGuard(log *logger.Logger, blockedPaths []string, stats *SecuritySta
 			path := r.URL.Path
 
 			for _, blocked := range allBlocked {
-				if strings.Contains(path, blocked) {
+				if pathSegmentContains(path, blocked) {
 					if stats != nil {
 						stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
 					}

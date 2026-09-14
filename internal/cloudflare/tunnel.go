@@ -154,18 +154,24 @@ func (r *Runner) spawn(p *runningProc, token string) error {
 	}
 
 	r.mu.Lock()
+	// Assign cmd before checking p.stopped so that Stop() racing at this point
+	// always sees a non-nil p.cmd and can kill the newly-started process.
+	// If Stop() lands earlier (before cmd.Start), p.cmd stays nil and Stop()
+	// kills it directly via cmd.Process.Kill() — cmd is still accessible on the
+	// stack of the spawn goroutine that called Start().
+	p.cmd = cmd
 	// If Stop() landed while this (re)start was in flight, abort: kill the
 	// freshly-started process and do not register a monitor. Without this check
 	// a backoff-triggered restart racing with Stop() would leak a process that
 	// keeps restarting forever, ignoring the operator's stop.
 	if p.stopped {
 		r.mu.Unlock()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+		if killErr := cmd.Process.Kill(); killErr != nil && r.logger != nil {
+			r.logger.Warn("cloudflared: failed to kill process on stop race",
+				"tunnel_id", p.tunnelID, "pid", cmd.Process.Pid, "error", killErr)
 		}
 		return nil
 	}
-	p.cmd = cmd
 	p.startedAt = time.Now()
 	// Snapshot the stop channel under the lock. p.stopCh is fixed for the proc's
 	// lifetime (Stop() closes it but never replaces it), so the monitor always

@@ -76,8 +76,8 @@ func ReadFile(baseDir, relPath string) ([]byte, error) {
 	if info.IsDir() {
 		return nil, fmt.Errorf("cannot read directory")
 	}
-	if info.Size() > 5<<20 {
-		return nil, fmt.Errorf("file too large (max 5MB)")
+	if info.Size() > DefaultMaxUpload {
+		return nil, fmt.Errorf("file too large (max %dMB)", DefaultMaxUpload>>20)
 	}
 	return os.ReadFile(fullPath)
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -44,10 +45,14 @@ func (m *Manager) loadOrCreateJWTSecret() error {
 		var stored struct {
 			JWTSecret []byte `json:"jwt_secret"`
 		}
-		if err := json.Unmarshal(data, &stored); err == nil && len(stored.JWTSecret) >= 32 {
+		if err := json.Unmarshal(data, &stored); err != nil {
+			return fmt.Errorf("auth: parse %s: %w", path, err)
+		}
+		if len(stored.JWTSecret) >= 32 {
 			m.jwtSecret = stored.JWTSecret
 			return nil
 		}
+		// JWTSecret missing or too short — fall through to generate a new one.
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

@@ -219,6 +219,7 @@ func httpProbe(addr string, useTLS bool, timeout time.Duration) func(context.Con
 		if err != nil {
 			return fmt.Errorf("probe %s: %w", url, err)
 		}
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		// Any status is a pass. The server parsed a request and produced a
 		// response, which is all liveness means here.

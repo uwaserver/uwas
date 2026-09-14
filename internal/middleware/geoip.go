@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/logger"
 )
 
 // GeoIPConfig configures country-based access control.
@@ -20,6 +22,9 @@ type GeoIPConfig struct {
 	// DBPath is the path to a JSON file mapping IP prefixes to country codes.
 	// If empty, uses an external lookup API (ip-api.com) with caching.
 	DBPath string
+	// Logger used to surface errors loading or parsing the local DB.
+	// If nil, errors are silently dropped (legacy behavior, not recommended).
+	Logger *logger.Logger
 }
 
 // GeoIPGuard returns a closure that performs the country check directly
@@ -41,8 +46,16 @@ func GeoIPGuard(cfg GeoIPConfig) func(w http.ResponseWriter, r *http.Request) bo
 	var db map[string]string
 	if cfg.DBPath != "" {
 		data, err := os.ReadFile(cfg.DBPath)
-		if err == nil {
-			json.Unmarshal(data, &db)
+		if err != nil {
+			if cfg.Logger != nil {
+				cfg.Logger.Error("geoip: read db", "path", cfg.DBPath, "err", err)
+			}
+		} else if err := json.Unmarshal(data, &db); err != nil {
+			// json.Unmarshal does not modify db on error — it stays nil.
+			// Log and fall through: external lookup will be used as fallback.
+			if cfg.Logger != nil {
+				cfg.Logger.Error("geoip: parse db", "path", cfg.DBPath, "err", err)
+			}
 		}
 	}
 	cache := &geoCache{entries: make(map[string]geoCacheEntry), inflight: make(map[string]struct{})}
@@ -90,8 +103,16 @@ func GeoIP(cfg GeoIPConfig) Middleware {
 	var db map[string]string // CIDR → country code
 	if cfg.DBPath != "" {
 		data, err := os.ReadFile(cfg.DBPath)
-		if err == nil {
-			json.Unmarshal(data, &db)
+		if err != nil {
+			if cfg.Logger != nil {
+				cfg.Logger.Error("geoip: read db", "path", cfg.DBPath, "err", err)
+			}
+		} else if err := json.Unmarshal(data, &db); err != nil {
+			// json.Unmarshal does not modify db on error — it stays nil.
+			// Log and fall through: external lookup will be used as fallback.
+			if cfg.Logger != nil {
+				cfg.Logger.Error("geoip: parse db", "path", cfg.DBPath, "err", err)
+			}
 		}
 	}
 

@@ -92,7 +92,9 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 
 		// Security: prevent path traversal
 		name := filepath.Clean(header.Name)
-		if strings.Contains(name, "..") {
+		// Block absolute paths (would bypass filepath.Join) and ".." segments
+		// (would escape the extraction directory).
+		if filepath.IsAbs(name) || strings.Contains(name, "..") {
 			continue
 		}
 

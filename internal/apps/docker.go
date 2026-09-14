@@ -71,6 +71,15 @@ func (m *Manager) startDocker(p *process) error {
 		return fmt.Errorf("apps: %s: docker.container_port is required", p.name)
 	}
 
+	// Fail fast if a container with this name already exists.  Without this
+	// check, Docker responds with its own generic error that includes the
+	// container name, leaking our internal "uwas-<name>" convention.
+	inspectCmd := execCommandFn("docker", "inspect", "--type=container", "-q", cname)
+	inspectOut, inspectErr := inspectCmd.Output()
+	if inspectErr == nil && len(strings.TrimSpace(string(inspectOut))) > 0 {
+		return fmt.Errorf("apps: %s: container named %q already exists (stop or remove it first)", p.name, cname)
+	}
+
 	args, extraPorts := dockerRunArgs(p, cname, image, containerPort)
 
 	cmd := execCommandFn("docker", args...)
@@ -247,7 +256,14 @@ func (m *Manager) cleanupOrphanContainers() {
 		}
 		// -f to force-stop a running orphan; -v to drop its anonymous volumes.
 		rmCtx, rmCancel := context.WithTimeout(context.Background(), dockerProbeTimeout)
-		_ = exec.CommandContext(rmCtx, "docker", "rm", "-f", "-v", cname).Run()
+		rmCmd := exec.CommandContext(rmCtx, "docker", "rm", "-f", "-v", cname)
+		if rmErr := rmCmd.Run(); rmErr != nil {
+			if m.logger != nil {
+				m.logger.Warn("apps: failed to remove orphan container",
+					"container", cname,
+					"error", rmErr)
+			}
+		}
 		rmCancel()
 	}
 }

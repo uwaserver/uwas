@@ -173,7 +173,13 @@ func (m *Manager) Fire(eventType EventType, data any) {
 	}
 }
 
-// sendToQueue safely sends to the queue, recovering from a closed-channel panic.
+// sendToQueue safely sends to the queue, recovering from any panic so the
+// manager's event loop is never terminated.  The previous narrow string-type
+// filter only caught exact-value 'send on closed channel' panics; Go's closed-
+// channel panic is a *errors.errorString (an error interface), not a plain
+// string, so the type guard was always failing for the very case it was
+// designed to handle.  Any other panic type (error, int, struct, nil) had
+// the same effect — the deferred recover re-panicked and crashed the process.
 func (m *Manager) sendToQueue(qe *queuedEvent, label string) {
 	defer func() {
 		if r := recover(); r != nil {

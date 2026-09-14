@@ -180,6 +180,7 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 	if err != nil {
 		return err
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("telegram API returned %d", resp.StatusCode)

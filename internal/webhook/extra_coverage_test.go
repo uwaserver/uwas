@@ -194,10 +194,10 @@ func TestDeliverRedirectRevalidation(t *testing.T) {
 	m.deliver(qe)
 }
 
-// NOTE on sendToQueue's recover branch:
-// The deferred recover in sendToQueue only swallows a panic whose value is the
-// literal Go *string* "send on closed channel". In practice the runtime's
-// closed-channel panic value is a runtime error type (runtime.plainError), not
-// a plain string, so the type assertion `r.(string)` fails and the recover
-// re-panics. The "recovered/return" branch is therefore genuinely unreachable
-// without modifying production code, so it is intentionally left uncovered.
+// NOTE on sendToQueue's recover branch (fixed):
+// The deferred recover in sendToQueue now unconditionally logs and swallows any
+// panic.  The previous narrow string-type filter was ineffective because Go's
+// closed-channel panic is a *errors.errorString (an error interface), not a plain
+// string, so the type assertion `r.(string)` always failed and the recover
+// re-panicked — crashing the process for the very case it was meant to handle.
+// Any other panic type (error, int, struct, nil) had the same outcome.

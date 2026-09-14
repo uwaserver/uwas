@@ -212,7 +212,7 @@ func (m *Manager) sessionLifetime() time.Duration {
 const sessionCleanupInterval = 1 * time.Hour
 
 // NewManager creates a new auth manager.
-func NewManager(dataDir, globalAPIKey string) *Manager {
+func NewManager(dataDir, globalAPIKey string) (*Manager, error) {
 	m := &Manager{
 		users:             make(map[string]*User),
 		usersByID:         make(map[string]*User),
@@ -224,12 +224,12 @@ func NewManager(dataDir, globalAPIKey string) *Manager {
 		cleanupDone:       make(chan struct{}),
 	}
 	if err := m.loadOrCreateJWTSecret(); err != nil {
-		panic("auth: jwt secret init failed: " + err.Error())
+		return nil, fmt.Errorf("auth: jwt secret init: %w", err)
 	}
 	m.loadUsers()
 	m.loadSessions()
 	go m.sessionCleanupLoop()
-	return m
+	return m, nil
 }
 
 // SetAllowLegacyPlaintextKey toggles the legacy plaintext API-key

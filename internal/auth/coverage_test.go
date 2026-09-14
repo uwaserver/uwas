@@ -124,22 +124,24 @@ func TestAuthenticateAPIKeyLegacyScanNoMatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// NewManager panics when the JWT secret cannot be initialized
+// NewManager returns an error when the JWT secret cannot be initialized
+// (regression for R18: was a panic before, now gracefully returns)
 // ---------------------------------------------------------------------------
 
-func TestNewManagerJWTInitPanics(t *testing.T) {
+func TestNewManagerJWTInitReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	// Make auth.json a directory so loadOrCreateJWTSecret's ReadFile returns
-	// a non-ErrNotExist error → returns err → NewManager panics.
+	// a non-ErrNotExist error → NewManager returns an error instead of panicking.
 	if err := os.MkdirAll(filepath.Join(dir, "auth.json"), 0700); err != nil {
 		t.Fatalf("mkdir auth.json: %v", err)
 	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected NewManager to panic on JWT init failure")
-		}
-	}()
-	_ = NewManager(dir, "")
+	m, err := NewManager(dir, "")
+	if err == nil {
+		t.Fatal("expected NewManager to return an error when auth.json is a directory")
+	}
+	if m != nil {
+		t.Error("expected nil manager on JWT init failure")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +251,11 @@ func TestSaveUsersSyncsLastLogin(t *testing.T) {
 
 func newTestManager2(t *testing.T, dir string) *Manager {
 	t.Helper()
-	return NewManager(dir, "k")
+	m, err := NewManager(dir, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +356,10 @@ func TestLoadSessionsInvalidJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "sessions.json"), []byte("{not json"), 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	m := NewManager(dir, "")
+	m, err := NewManager(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(m.Stop)
 	m.mu.RLock()
 	n := len(m.sessions)
@@ -373,7 +382,10 @@ func TestLoadSessionsSkipsNilEmptyAndExpired(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "sessions.json"), data, 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	m := NewManager(dir, "")
+	m, err := NewManager(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(m.Stop)
 	m.mu.RLock()
 	defer m.mu.RUnlock()

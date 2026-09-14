@@ -319,16 +319,37 @@ func (h *Handler) DeployPreflight(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// appForPreflightResponse copies the definition with the git token cleared.
-// The preflight payload goes to the browser, and the stored token is a
-// credential that must not leave the server.
+// appForPreflightResponse copies the definition with credentials cleared.
+// The preflight payload goes to the browser, and stored credentials must not
+// leave the server.  Deep-copy the Deploy struct so zeroing fields does not
+// mutate the original in the store (shallow copy out := *a shares the Deploy
+// pointer).
 func appForPreflightResponse(a *apps.App) *apps.App {
 	if a == nil {
 		return nil
 	}
-	out := *a
-	out.Deploy.GitToken = ""
-	return &out
+	// Copy every value field explicitly so that zeroing sensitive Deploy fields
+	// does NOT mutate the original in the store (a shallow "out := *a" would
+	// share the embedded Deploy struct — zeroing GitToken/WebhookSecret/SSHKeyPath
+	// would destroy the stored credentials on every GET).
+	return &apps.App{
+		Name:        a.Name,
+		WorkDir:     a.WorkDir,
+		AutoRestart: a.AutoRestart,
+		Docker:      a.Docker,
+		Port:        a.Port,
+		Deploy: apps.DeployConfig{
+			GitURL:        a.Deploy.GitURL,
+			GitBranch:     a.Deploy.GitBranch,
+			BuildCmd:      a.Deploy.BuildCmd,
+			HealthPath:    a.Deploy.HealthPath,
+			GitToken:      "",
+			WebhookSecret: "",
+			SSHKeyPath:   "",
+			BranchFilter:  a.Deploy.BranchFilter,
+		},
+		Env: a.Env,
+	}
 }
 
 // ── Webhook handler ──

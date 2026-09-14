@@ -57,6 +57,21 @@ func Clone(req CloneRequest) *CloneResult {
 		return result
 	}
 
+	// Reject absolute paths and ".." path traversal in both roots.
+	// Absolute paths could escape the intended web-root; ".." in a relative path
+	// can traverse outside the web root. filepath.Clean normalises the path, so
+	// "/var/www/../../etc" becomes "/etc" and is rejected because it starts with "/".
+	if filepath.IsAbs(req.SourceRoot) || filepath.IsAbs(req.TargetRoot) {
+		result.Status = "error"
+		result.Error = "source_root and target_root must be relative paths"
+		return result
+	}
+	if strings.Contains(req.SourceRoot, "..") || strings.Contains(req.TargetRoot, "..") {
+		result.Status = "error"
+		result.Error = "source_root and target_root must not contain '..'"
+		return result
+	}
+
 	// Auto-generate target DB name
 	if req.SourceDB != "" && req.TargetDB == "" {
 		req.TargetDB = strings.ReplaceAll(req.TargetDomain, ".", "_") + "_db"
@@ -239,7 +254,11 @@ func updateWPConfigURLs(path, domain string, log *strings.Builder) {
 	}
 
 	// Add new static defines before require_once
-	newURL := fmt.Sprintf("https://%s", domain)
+	// Escape backslashes and single-quotes so the domain can safely be injected
+	// into a PHP single-quoted string: "O'Brien.com" → "O\'Brien.com".
+	escaped := strings.ReplaceAll(domain, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+	newURL := fmt.Sprintf("https://%s", escaped)
 	insert := fmt.Sprintf("define('WP_HOME', '%s');\ndefine('WP_SITEURL', '%s');\n\n", newURL, newURL)
 	content = strings.Replace(content, "require_once ABSPATH", insert+"require_once ABSPATH", 1)
 

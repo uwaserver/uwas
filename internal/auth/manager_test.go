@@ -13,7 +13,11 @@ import (
 )
 
 func newTestManager(t *testing.T) *Manager {
-	return NewManager(t.TempDir(), "test-global-api-key")
+	m, err := NewManager(t.TempDir(), "test-global-api-key")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	return m
 }
 
 // TestLockoutPerUsernameIP is the regression for VULN-026: brute-force lockout
@@ -430,7 +434,10 @@ func TestAuthenticateAPIKeyDisabledUser(t *testing.T) {
 
 func TestAuthenticateAPIKeyEmptyGlobalKey(t *testing.T) {
 	// Manager with no global API key
-	m := NewManager(t.TempDir(), "")
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	user, _ := m.CreateUser("alice", "", "secret", RoleAdmin, nil)
 
@@ -1124,11 +1131,17 @@ func TestUserPersistence(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create user and save
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m1.CreateUser("alice", "alice@test.com", "secret", RoleAdmin, nil)
 
 	// New manager loads from disk
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, exists := m2.GetUser("alice")
 	if !exists {
 		t.Fatal("expected user to persist across manager instances")
@@ -1141,12 +1154,18 @@ func TestUserPersistence(t *testing.T) {
 func TestPersistenceMultipleUsers(t *testing.T) {
 	dir := t.TempDir()
 
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m1.CreateUser("alice", "alice@test.com", "pass", RoleAdmin, nil)
 	m1.CreateUser("bob", "bob@test.com", "pass", RoleReseller, []string{"b.com"})
 	m1.CreateUser("carol", "", "pass", RoleUser, nil)
 
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	users := m2.ListUsers()
 	if len(users) != 3 {
 		t.Errorf("expected 3 persisted users, got %d", len(users))
@@ -1167,11 +1186,17 @@ func TestPersistenceMultipleUsers(t *testing.T) {
 func TestPersistenceByID(t *testing.T) {
 	dir := t.TempDir()
 
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	created, _ := m1.CreateUser("alice", "", "pass", RoleAdmin, nil)
 	userID := created.ID
 
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, exists := m2.GetUserByID(userID)
 	if !exists {
 		t.Fatal("expected user to be found by ID after reload")
@@ -1184,12 +1209,18 @@ func TestPersistenceByID(t *testing.T) {
 func TestPersistenceAfterDelete(t *testing.T) {
 	dir := t.TempDir()
 
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m1.CreateUser("alice", "", "pass", RoleAdmin, nil)
 	m1.CreateUser("bob", "", "pass", RoleUser, nil)
 	m1.DeleteUser("alice")
 
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, exists := m2.GetUser("alice")
 	if exists {
 		t.Error("deleted user should not persist")
@@ -1203,11 +1234,17 @@ func TestPersistenceAfterDelete(t *testing.T) {
 func TestPersistenceAfterUpdate(t *testing.T) {
 	dir := t.TempDir()
 
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m1.CreateUser("alice", "old@test.com", "pass", RoleUser, nil)
 	m1.UpdateUser("alice", &User{Email: "new@test.com", Role: RoleAdmin})
 
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, _ := m2.GetUser("alice")
 	if user.Email != "new@test.com" {
 		t.Errorf("expected updated email to persist, got %s", user.Email)
@@ -1224,7 +1261,10 @@ func TestLoadUsersInvalidJSON(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "users.json"), []byte("not valid json{{{"), 0600)
 
 	// Should not panic, just start with empty users
-	m := NewManager(dir, "key")
+	m, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	users := m.ListUsers()
 	if len(users) != 0 {
 		t.Errorf("expected 0 users after invalid JSON load, got %d", len(users))
@@ -1234,7 +1274,10 @@ func TestLoadUsersInvalidJSON(t *testing.T) {
 func TestLoadUsersNonexistentFile(t *testing.T) {
 	dir := t.TempDir()
 	// No users.json file exists - should gracefully handle
-	m := NewManager(dir, "key")
+	m, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	users := m.ListUsers()
 	if len(users) != 0 {
 		t.Errorf("expected 0 users when no file exists, got %d", len(users))
@@ -1243,7 +1286,10 @@ func TestLoadUsersNonexistentFile(t *testing.T) {
 
 func TestNewManagerEmptyDataDir(t *testing.T) {
 	// Empty dataDir - persistence disabled
-	m := NewManager("", "key")
+	m, err := NewManager("", "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, err := m.CreateUser("alice", "", "pass", RoleAdmin, nil)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
@@ -1928,11 +1974,17 @@ func TestAuthenticateAPIKeyWithMultipleUsers(t *testing.T) {
 func TestPersistenceAfterRegenerateAPIKey(t *testing.T) {
 	dir := t.TempDir()
 
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m1.CreateUser("alice", "", "pass", RoleAdmin, nil)
 	newKey, _ := m1.RegenerateAPIKey("alice")
 
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, _ := m2.GetUser("alice")
 
 	// APIKey should store the display prefix (first 8 chars)
@@ -1962,13 +2014,19 @@ func TestPersistenceAfterRegenerateAPIKey(t *testing.T) {
 func TestPersistenceAfterChangePassword(t *testing.T) {
 	dir := t.TempDir()
 
-	m1 := NewManager(dir, "key")
+	m1, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m1.CreateUser("alice", "", "oldpass", RoleAdmin, nil)
 	m1.ChangePassword("alice", "oldpass", "newpass")
 
-	m2 := NewManager(dir, "key")
+	m2, err := NewManager(dir, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Old password should not work
-	_, err := m2.Authenticate("alice", "oldpass")
+	_, err = m2.Authenticate("alice", "oldpass")
 	if err == nil {
 		t.Error("expected old password to fail after persistence")
 	}

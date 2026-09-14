@@ -400,7 +400,7 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	// Wait for challenge validation
 	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)
@@ -421,7 +421,7 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	// Wait for challenge validation
 	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)

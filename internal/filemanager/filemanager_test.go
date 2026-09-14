@@ -146,9 +146,9 @@ func TestSafePathTraversalDotDot(t *testing.T) {
 
 func TestReadFileTooLarge(t *testing.T) {
 	dir := t.TempDir()
-	// Create a file > 5MB
+	// Create a file > DefaultMaxUpload (100MB)
 	f, _ := os.Create(filepath.Join(dir, "big.bin"))
-	f.Truncate(6 << 20)
+	f.Truncate(DefaultMaxUpload + 5<<20)
 	f.Close()
 
 	_, err := ReadFile(dir, "big.bin")

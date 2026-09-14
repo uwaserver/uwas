@@ -75,9 +75,12 @@ func (s *Server) reload() error {
 	// running apps are left untouched; command/port changes still take
 	// effect on an explicit Restart (the LoadAll contract).
 	if s.appsMgr != nil {
-		if _, _, err := s.appsMgr.LoadAll(); err != nil {
+		if _, skipErrs, err := s.appsMgr.LoadAll(); err != nil {
 			s.logger.Warn("apps: reload failed", "error", err)
 		} else {
+			for _, se := range skipErrs {
+				s.logger.Warn("apps: skipped invalid file during reload", "error", se)
+			}
 			s.appsMgr.StartAll()
 		}
 	}

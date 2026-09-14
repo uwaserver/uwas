@@ -76,7 +76,7 @@ type MigrateResult struct {
 var (
 	runSyncFiles = syncFilesReal
 	runMigrateDB = migrateDBReal
-	runChown     = func(root string) { exec.Command("chown", "-R", "www-data:www-data", root).Run() }
+	runChown     = func(root string) error { return exec.Command("chown", "-R", "www-data:www-data", root).Run() }
 	// execCommandFn allows tests to intercept exec.Command calls.
 	execCommandFn = exec.Command
 	// execLookPathFn allows tests to intercept exec.LookPath calls.
@@ -132,8 +132,11 @@ func Migrate(req MigrateRequest) *MigrateResult {
 
 	// Step 3: Fix permissions
 	log.WriteString("\n=== Fixing permissions ===\n")
-	runChown(req.LocalRoot)
-	log.WriteString("Ownership set to www-data:www-data\n")
+	if err := runChown(req.LocalRoot); err != nil {
+		log.WriteString(fmt.Sprintf("WARNING: failed to fix permissions: %v\n", err))
+	} else {
+		log.WriteString("Ownership set to www-data:www-data\n")
+	}
 
 	// Step 4: Update wp-config.php if WordPress
 	wpConfig := filepath.Join(req.LocalRoot, "wp-config.php")

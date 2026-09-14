@@ -142,6 +142,13 @@ func UpdateCore(webRoot string) (string, error) {
 		}
 
 		dst := filepath.Join(webRoot, rel)
+		// Guard: verify the resolved path stays inside webRoot. Go's filepath.Join
+		// does not cancel ".." components that span multiple path segments, so a
+		// malicious tarball entry like "wordpress/../../etc/passwd" would otherwise
+		// write outside webRoot.
+		if safe, _ := filepath.Rel(webRoot, dst); safe == ".." || filepath.IsAbs(safe) {
+			return fmt.Errorf("path traversal attempt detected: %s", dst)
+		}
 		if info.IsDir() {
 			return osMkdirAllFn(dst, 0755)
 		}

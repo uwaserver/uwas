@@ -203,6 +203,9 @@ func (a *App) Validate() error {
 		if err := ValidateExtraArgs(a.Docker.ExtraArgs); err != nil {
 			return fmt.Errorf("docker app %q: %w", a.Name, err)
 		}
+		if err := ValidateVolumes(a.Docker.Volumes); err != nil {
+			return fmt.Errorf("docker app %q: %w", a.Name, err)
+		}
 	case "":
 		return fmt.Errorf("app %q: runtime is required", a.Name)
 	default:
@@ -292,6 +295,41 @@ func ValidateExtraArgs(args []string) error {
 			seenFlag = true
 		} else if !strings.HasPrefix(arg, "-") && arg != "" {
 			return fmt.Errorf("docker extra-arg %q: positional arguments are not allowed", arg)
+		}
+	}
+	return nil
+}
+
+// ValidateVolumes returns an error if any volume in the slice would mount
+// a host path outside the container, enabling container-breakout or host-escape.
+//
+// Rejected forms:
+//   - host path is an absolute path (starts with /) — "/:/host", "/etc:/data"
+//   - host path contains ".." path traversal — "../../../etc:/data"
+//   - host path contains ":" as a prefix form — "/:/host", "/:/mnt:ro"
+//
+// Container-only paths (no host side, or named volumes) are allowed:
+//   - "data:/data"       (relative host path, safe)
+//   - "myvolume:/data"   (named volume, safe)
+func ValidateVolumes(volumes []string) error {
+	for _, vol := range volumes {
+		if vol == "" {
+			continue
+		}
+		// Split on ':' to get the host portion of "host:container[:options]"
+		host := vol
+		if idx := strings.IndexByte(vol, ':'); idx != -1 {
+			host = vol[:idx]
+		}
+		// Reject absolute host paths — these mount host filesystem locations.
+		// Examples: "/:/host", "/etc:/data", "/var/run/docker.sock:/sock"
+		if strings.HasPrefix(host, "/") {
+			return fmt.Errorf("docker volume %q: host path %q is absolute; absolute host paths are not permitted", vol, host)
+		}
+		// Reject path traversal — "../" or ".." in the host portion.
+		// Example: "../../../etc:/data"
+		if strings.Contains(host, "..") {
+			return fmt.Errorf("docker volume %q: host path %q contains \"..\"; path traversal is not permitted", vol, host)
 		}
 	}
 	return nil
