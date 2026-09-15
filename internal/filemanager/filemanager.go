@@ -132,18 +132,52 @@ func SaveUpload(baseDir, relPath string, src io.Reader) (int64, error) {
 }
 
 // DiskUsage returns total bytes used under a directory.
+// Symlinks are not followed; each directory is visited at most once, preventing
+// both infinite symlink loops (symlink → ancestor) and hard-link cycles.
 func DiskUsage(dir string) (int64, error) {
 	var total int64
-	err := filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+	visited := make(map[string]bool)
+
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip errors
+			return nil // skip inaccessible entries
 		}
-		if !info.IsDir() {
-			total += info.Size()
+		if d.IsDir() {
+			// Use the on-disk inode so hard-linked directories are only counted once.
+			real, err := resolvePathForInode(path)
+			if err != nil {
+				return nil // skip dirs whose real path can't be resolved
+			}
+			if visited[real] {
+				return filepath.SkipDir // already counted this directory tree
+			}
+			visited[real] = true
+			return nil
 		}
+		info, err := d.Info()
+		if err != nil {
+			return nil // skip files that can't be stat'd (e.g. permissions, deleted)
+		}
+		total += info.Size()
 		return nil
 	})
 	return total, err
+}
+
+// resolvePathForInode returns the on-disk resolved path of path for use as a
+// directory-identity key. It is not used for security boundary checks (use
+// safePath for that).  Returns the clean absolute path of the on-disk inode,
+// following all symlinks, or an error if resolution fails.
+func resolvePathForInode(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(real), nil
 }
 
 // safePath resolves a relative path within baseDir, preventing directory traversal.

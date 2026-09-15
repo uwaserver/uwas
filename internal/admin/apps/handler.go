@@ -575,7 +575,10 @@ func (h *Handler) Stop(w http.ResponseWriter, r *http.Request) {
 
 	if !existing.Disabled {
 		existing.Disabled = true
-		_ = mgr.Store().Save(existing)
+		if err := mgr.Store().Save(existing); err != nil {
+			jsonError(w, "failed to persist app state: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	h.deps.RecordAudit(r, "app.stop", name, true)
@@ -604,7 +607,10 @@ func (h *Handler) Restart(w http.ResponseWriter, r *http.Request) {
 	}
 	if existing.Disabled {
 		existing.Disabled = false
-		_ = mgr.Store().Save(existing)
+		if err := mgr.Store().Save(existing); err != nil {
+			jsonError(w, "failed to persist app state: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := mgr.Restart(name); err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)

@@ -720,13 +720,17 @@ func matchCronField(value int, field string) bool {
 		}
 		return false
 	}
-	// Handle ranges: 1-5
+	// Handle ranges: 1-5 or wrapped ranges: 59-0 (minute 59 through 0)
 	if strings.Contains(field, "-") {
 		parts := strings.Split(field, "-")
 		if len(parts) == 2 {
 			low := parseInt(parts[0])
 			high := parseInt(parts[1])
-			return value >= low && value <= high
+			if low <= high {
+				return value >= low && value <= high
+			}
+			// Wrapped range (low > high): e.g. "59-0" means 59→0→59.
+			return value >= low || value <= high
 		}
 	}
 	// Handle lists: 1,3,5
@@ -738,8 +742,12 @@ func matchCronField(value int, field string) bool {
 		}
 		return false
 	}
-	// Handle single value
-	return parseInt(field) == value
+	// Handle single value: normalize weekday 7 → 0 (both mean Sunday in cron).
+	v := parseInt(field)
+	if v == 7 && value == 0 {
+		return true
+	}
+	return v == value
 }
 
 func parseInt(s string) int {
@@ -784,6 +792,7 @@ func (m *BackupManager) pruneOld(provider string) {
 
 	items, err := p.List(ctx)
 	if err != nil {
+		m.logger.Warn("pruneOld: provider list failed, retention policy skipped", "provider", provider, "error", err)
 		return
 	}
 	// Only prune full backups. The local provider's List returns every *.tar.gz,

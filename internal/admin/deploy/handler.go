@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -470,7 +471,9 @@ func (h *Handler) recordHistory(name string, entry DeployHistoryEntry) {
 	h.deployHistoryMu.Unlock()
 	appsMgr := h.deps.AppsManager()
 	if appsMgr != nil {
-		_ = persistDeployHistory(appsMgr.Store().Dir, name, items)
+		if err := persistDeployHistory(appsMgr.Store().Dir, name, items); err != nil {
+			log.Printf("deploy history persist failed: name=%s error=%v", name, err)
+		}
 	}
 }
 
@@ -586,7 +589,9 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 		Source: "webhook", StartedAt: status.StartedAt, Finished: status.Finished,
 		OK: true, CommitSHA: status.CommitSHA, Ref: ref, LogTail: status.LogTail,
 	})
-	_ = h.deps.Reload()
+	if err := h.deps.Reload(); err != nil {
+		h.deps.LogError("webhook deploy ok but reload failed", "app", name, "error", err)
+	}
 	h.deps.LogInfo("webhook deploy ok",
 		"app", name, "commit", status.CommitSHA, "duration", status.Finished.Sub(status.StartedAt))
 }

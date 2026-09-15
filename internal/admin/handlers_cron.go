@@ -45,11 +45,16 @@ func (s *Server) handleCronMonitorDomain(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
-	// Admin-only: cron execute runs arbitrary shell commands
-	if s.authMgr != nil {
-		user, ok := auth.UserFromContext(r.Context())
-		if ok && user.Role != auth.RoleAdmin {
-			jsonError(w, "forbidden: admin only", http.StatusForbidden)
+	// Cron execute runs arbitrary shell commands. requirePermission alone is
+	// insufficient: in single-key mode (authMgr == nil) it returns true without
+	// checking the request context (VULN-035). Add an explicit auth check first.
+	if s.authMgr == nil {
+		if _, ok := auth.UserFromContext(r.Context()); !ok {
+			jsonError(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	} else {
+		if !s.requirePermission(w, r, auth.PermSystemConfig) {
 			return
 		}
 	}

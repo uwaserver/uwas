@@ -603,8 +603,8 @@ func (m *Manager) AuthenticateAPIKey(key string) (*User, error) {
 
 // ValidateSession checks if a session token is valid.
 func (m *Manager) ValidateSession(token string) (*Session, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	session, exists := m.sessions[token]
 	if !exists {
@@ -612,6 +612,7 @@ func (m *Manager) ValidateSession(token string) (*Session, error) {
 	}
 
 	if time.Now().After(session.ExpiresAt) {
+		delete(m.sessions, token)
 		return nil, errors.New("session expired")
 	}
 

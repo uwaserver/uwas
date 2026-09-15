@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestListDir(t *testing.T) {
@@ -492,5 +493,47 @@ func TestResolvePathNonNotExistError(t *testing.T) {
 
 	if _, err := resolvePath(t.TempDir()); err == nil {
 		t.Fatal("expected resolvePath error")
+	}
+}
+
+func TestDiskUsageSymlinkCycle(t *testing.T) {
+	// Verify DiskUsage does not hang or panic on a symlink cycle.
+	// The old implementation used filepath.Walk which follows symlinks and
+	// recurses infinitely on a symlink → ancestor, causing a goroutine stack
+	// overflow (unrecoverable panic) or an indefinite hang.
+	tmp := t.TempDir()
+	sub := filepath.Join(tmp, "subdir")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink cycle: subdir/loop -> ..
+	if err := os.Symlink("..", filepath.Join(sub, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	// Place a file so we can verify the cycle skip is the only reason for the
+	// reduced count (not a silent error drop).
+	const fileBytes = 500
+	if err := os.WriteFile(filepath.Join(sub, "data.bin"), make([]byte, fileBytes), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan int64, 1)
+	go func() {
+		sz, _ := DiskUsage(sub)
+		done <- sz
+	}()
+
+	select {
+	case size := <-done:
+		// Expected: 500 (file) + 2 (symlink ".." target length) = 502.
+		// Must NOT hang, panic, or return 0.
+		if size == 0 {
+			t.Fatal("DiskUsage returned 0 — cycle was silently dropped (old Walk behavior)")
+		}
+		if size < fileBytes {
+			t.Fatalf("DiskUsage returned %d, want >= %d (file content missing)", size, fileBytes)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("DiskUsage hung on symlink cycle (infinite walk not detected)")
 	}
 }

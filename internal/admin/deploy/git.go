@@ -110,7 +110,7 @@ func validateBuildCommand(s string) error {
 	if strings.ContainsAny(s, "\x00\n\r") {
 		return fmt.Errorf("control characters not allowed")
 	}
-	for _, f := range []string{"$(", "`", ";"} {
+	for _, f := range []string{"$(", "`", ";", "&&", "||"} {
 		if strings.Contains(s, f) {
 			return fmt.Errorf("forbidden metacharacter: %q", f)
 		}

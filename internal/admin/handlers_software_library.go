@@ -577,7 +577,10 @@ func (s *Server) handleSoftwareDomainConnect(w http.ResponseWriter, r *http.Requ
 	if err := saveSoftwareInstance(inst); err != nil {
 		s.detachSoftwareDomain(host, inst.HostPort)
 		inst.Domain = oldDomain
-		_ = updateSoftwareComposeDomain(inst)
+		if rollbackErr := updateSoftwareComposeDomain(inst); rollbackErr != nil {
+			s.logger.Error("software domain connect: save failed and rollback also failed",
+				"name", inst.Name, "save_error", err.Error(), "rollback_error", rollbackErr.Error())
+		}
 		jsonError(w, "write metadata: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -610,7 +613,10 @@ func (s *Server) handleSoftwareDomainDisconnect(w http.ResponseWriter, r *http.R
 	}
 	if err := saveSoftwareInstance(inst); err != nil {
 		inst.Domain = oldDomain
-		_ = updateSoftwareComposeDomain(inst)
+		if rollbackErr := updateSoftwareComposeDomain(inst); rollbackErr != nil {
+			s.logger.Error("software domain disconnect: save failed and rollback also failed",
+				"name", inst.Name, "save_error", err.Error(), "rollback_error", rollbackErr.Error())
+		}
 		jsonError(w, "write metadata: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

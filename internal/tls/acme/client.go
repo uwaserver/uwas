@@ -454,7 +454,10 @@ func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttem
 		}
 
 		var obj Order
-		json.NewDecoder(resp.Body).Decode(&obj)
+		if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("ACME response decode error: %w", err)
+		}
 		resp.Body.Close()
 		obj.URL = url
 

@@ -255,7 +255,10 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		ListenAddr string `json:"listen_addr"`
 	}
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if req.ListenAddr == "" {
 		req.ListenAddr = "127.0.0.1:9000"

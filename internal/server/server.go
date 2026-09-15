@@ -1151,7 +1151,7 @@ func (s *Server) startHTTPS() error {
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			s.logger.Error("panic recovered in handleHTTP", "error", rec, "path", r.URL.Path)
+			s.logger.Error("panic recovered in handleHTTP", "error", rec, "path", strings.ReplaceAll(r.URL.Path, "\n", "\\n"))
 			http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
 		}
 	}()
@@ -1688,7 +1688,7 @@ func (s *Server) locationLimiterJanitor(ctx context.Context) {
 			s.locationLimiters.Range(func(key, val any) bool {
 				entry := val.(*rateLimitEntry)
 				entry.mu.Lock()
-				idle := now.Sub(entry.lastAccess)
+				idle := now.Sub(entry.windowStart)
 				entry.mu.Unlock()
 				if idle > idleTTL {
 					s.locationLimiters.Delete(key)
