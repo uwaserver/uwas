@@ -524,6 +524,12 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 	g := &h.deps.ConfigPtr().Global
 	for key, val := range updates {
 		sv := fmt.Sprintf("%v", val)
+		// SettingsGet returns masked secrets (****last4). Never persist those
+		// back — a Save that includes an untouched secret field would otherwise
+		// replace the real credential and lock the operator out (issue #43).
+		if isSettingsSecretKey(key) && isMaskedSecretValue(sv) {
+			continue
+		}
 		switch key {
 		case "global.http_listen":
 			g.HTTPListen = sv
@@ -880,6 +886,42 @@ func maskSecret(s string) string {
 		return "****"
 	}
 	return "****" + s[len(s)-4:]
+}
+
+// isSettingsSecretKey reports panel setting keys that SettingsGet returns masked.
+func isSettingsSecretKey(key string) bool {
+	switch key {
+	case "global.admin.api_key",
+		"global.admin.pin_code",
+		"global.cache.purge_key",
+		"global.alerting.slack_url",
+		"global.alerting.telegram_token",
+		"global.backup.s3.access_key",
+		"global.backup.s3.secret_key",
+		"global.backup.sftp.password",
+		"global.acme.dns_credentials.api_token",
+		"global.acme.dns_credentials.api_key",
+		"global.acme.dns_credentials.access_key_id",
+		"global.acme.dns_credentials.secret_access_key":
+		return true
+	default:
+		return false
+	}
+}
+
+// isMaskedSecretValue matches maskSecret output and the raw-editor "********" mask.
+func isMaskedSecretValue(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if s == "********" || s == `"********"` {
+		return true
+	}
+	if s == "****" {
+		return true
+	}
+	return strings.HasPrefix(s, "****") && len(s) >= 4 && len(s) <= 8
 }
 
 // intOrDefault returns *p or def when p is nil (autoblock pointer thresholds:

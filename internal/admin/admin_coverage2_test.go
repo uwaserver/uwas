@@ -374,6 +374,32 @@ func TestSettingsPut(t *testing.T) {
 	}
 }
 
+// Issue #43: saving settings must not overwrite the real API key with the
+// masked value returned by SettingsGet (****last4).
+func TestSettingsPutSkipsMaskedAPIKey(t *testing.T) {
+	s := testServer()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "uwas.yaml")
+	os.WriteFile(cfgPath, []byte("global: {}"), 0644)
+	s.SetConfigPath(cfgPath)
+	s.config.Global.Admin.APIKey = "real-secret-api-key-xyz"
+
+	body := strings.NewReader(`{"global.acme.email":"ops@example.com","global.admin.api_key":"****-xyz"}`)
+	req := httptest.NewRequest("PUT", "/api/v1/settings", body)
+	rec := httptest.NewRecorder()
+	s.handleSettingsPut(rec, withAdminContext(req))
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	if s.config.Global.Admin.APIKey != "real-secret-api-key-xyz" {
+		t.Fatalf("api_key overwritten to %q", s.config.Global.Admin.APIKey)
+	}
+	if s.config.Global.ACME.Email != "ops@example.com" {
+		t.Fatalf("acme.email = %q, want ops@example.com", s.config.Global.ACME.Email)
+	}
+}
+
 func TestSettingsPutEnablesAuthManager(t *testing.T) {
 	s := testServer()
 	dir := t.TempDir()
