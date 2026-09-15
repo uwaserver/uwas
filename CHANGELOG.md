@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.15] - 2026-09-15
+
+### Security
+
+- **Settings / raw config no longer overwrite live secrets with masks.**
+  `SettingsPut` skips values that look like `maskSecret` output (`****` /
+  `****last4`), and the raw YAML editor already restores `"********"` from
+  disk. Saving ACME email or other settings can no longer replace
+  `global.admin.api_key` with a mask and lock the operator out (#43).
+- **Domain RBAC and RawPut.** Non-admins cannot change sensitive domain fields
+  (`root`, `type`, `proxy`, `ip`, `app`, `redirect`, `internal_aliases`,
+  `access_log`, `webhook_secret`). Raw domain PUT requires
+  `PermDomainUpdate`.
+- **File Manager path escape.** `domainroot.Fallback` rejects `..` and path
+  separators; unknown file-manager domains stay under `web_root`.
+- **2FA recovery codes.** Generating codes requires a TOTP step-up when TOTP
+  is enabled; using a recovery code clears `TOTPSecret`.
+- **Location `proxy_pass` SSRF.** Outbound dials go through
+  `ProxyDialControl` with redirect revalidation; client `X-Forwarded-For` is
+  overwritten (not appended). WebSocket upgrades set authoritative hop
+  headers the same way.
+- **PHP FastCGI `open_basedir`.** Parent directories are only added for known
+  framework public dirs (`public` / `web` / `html` / `htdocs`); custom
+  `PHP_ADMIN_VALUE` is filtered; UWAS sandbox lines are applied last.
+- **SFTP refuse-start** when the admin `api_key` is empty.
+- **Broader hardening** from the security audit / bug hunt: cert renew/upload
+  domain ownership gates, apps log path canonicalization, config-export
+  BasicAuth redaction, backup `config/` restore path traversal, ForceSSL open
+  redirect, CORS localhost prefix bypass, error-message path/key disclosure
+  sanitization, and many checked I/O / PersistConfig error paths.
+
+### Fixed
+
+- Pull/build breakage around auth manager return arity, missing imports, and
+  a few flaky test expectations introduced while landing the hardening batch.
+
 ## [0.11.14] - 2026-09-08
 
 ### Fixed

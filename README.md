@@ -24,50 +24,28 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.14)
+## Current Snapshot (v0.11.15)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254 explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
 - **Go packages:** 71 (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
 - **CLI commands:** 19
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test` (56/56 packages with tests), `go test -race` (0 data races), dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
-- **Security/stability fixes:** v0.8.8 resolved all 5 CRITICAL/HIGH and 11 MEDIUM findings from the June security audit; includes admin RBAC hardening, PHP sandbox-escape closure, SVG XSS prevention, docker-compose credential fail-fast, crontab data-loss guard, cron job timeout, Cloudflare pagination, Route53 signing fix, compress middleware WebSocket/Flush/Unwrap, TOTP replay protection, brute-force lockout serialization, and checked I/O paths
+- **Security/stability fixes:** v0.11.15 closes a large authz / path / secret-mask / proxy SSRF / 2FA / PHP sandbox batch on top of the earlier v0.8.8 audit work
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
 
-**v0.11.14 highlights:**
-- **Auto-block: Safe/whitelist now wins over an active block.** A CDN edge
-  (or any address later covered by Cloudflare ranges / `whitelist`) that was
-  blocked before the Safe set finished syncing stayed refused forever:
-  `ConnOpened` checked Blocked before Safe, and `SetWhitelist` never lifted
-  already-active blocks. Safe is checked first, `Blocked()` never reports a
-  Safe address as blocked, and updating the whitelist clears matching active
-  blocks (and queues firewall unblock).
-- **Settings API now round-trips Global fields the panel was already editing.**
-  `GET`/`PUT /api/v1/settings` now preserves global rate-limit
-  (`requests` / `window`), admin session TTL, autoblock whitelist, and
-  trusted proxies. Domain Security and Domain Detail also expose
-  `rate_limit.by`.
-- **Dashboard Settings: Global Rate Limit section, session TTL, autoblock
-  whitelist textarea, and clearer help on `max_connections` /
-  `max_concurrent` (0 disables).**
-- Packages exposes Docker Compose as an Infrastructure dependency with a
-  dashboard Fix Compose action for Software Library hosts
-- Software Library compose templates are compatible with both modern
-  `docker compose` and legacy `docker-compose`
-- Installed Software Library web apps can connect, change, or unlink public
-  auto-SSL proxy domains without reinstalling the app
-- File Manager, built-in SFTP, dashboard SFTP users, and SSH keys open app
-  domains at the app `work_dir`
-- Creating an empty Node.js, Python, Ruby, or Go app seeds a tiny runnable demo
-- Native app restart stops the full process tree so npm/node children do not
-  keep old ports bound
-- The Applications dashboard uses an inline app builder instead of a creation
-  overlay
-- Apps replaced the domain-keyed `type=app` config. The type still loads —
-  removing it would stop an existing config from starting — but it answers
-  502 with the replacement named, and both it and a leftover `app:` block
-  are reported at startup
-- Docker apps support image or BuildKit build context workflows
+**v0.11.15 highlights (security):**
+- Settings and the raw Config Editor no longer persist masked secrets over live
+  credentials (fixes API-key lockouts after Settings saves — #43)
+- Domain RBAC denylist for sensitive fields; RawPut requires domain update
+  permission
+- File Manager fallback path escape closed; unknown domains stay under
+  `web_root`
+- 2FA recovery-code generation requires TOTP step-up; recovery use clears TOTP
+- Location `proxy_pass` dial SSRF controls and authoritative `X-Forwarded-For`
+- PHP FastCGI `open_basedir` tightened; SFTP refuses empty admin API key
+- Cert ownership gates, apps log path canonicalization, backup config/
+  traversal fix, config-export BasicAuth redaction, and error sanitization
 
 **v0.5.0 highlights (refactor + perf + observability sweep, 43 commits):**
 - TLS handshake allowlist is now lock-free (atomic pointer instead of mutex + linear scan)

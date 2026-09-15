@@ -5,6 +5,40 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.15
+
+Security hardening release. Most deployments are drop-in; review the items
+below if you use multi-user RBAC, location proxies, PHP FastCGI, 2FA, or built-in
+SFTP.
+
+### Action may be required
+
+1. **If login fails with “Invalid API key or server unavailable” after a
+   Settings / Config Editor save,** open `uwas.yaml` and restore
+   `global.admin.api_key` (a corrupted value looks like `****xxxx` or
+   `********`). Then restart or reload. v0.11.15 prevents this class of
+   overwrite going forward.
+
+2. **Non-admin domain updates** can no longer change `root`, `type`, `proxy`,
+   `ip`, `app`, `redirect`, `internal_aliases`, `access_log`, or
+   `webhook_secret`. Admins are unchanged.
+
+3. **2FA recovery-code generation** requires a valid TOTP code when TOTP is
+   already enabled. Using a recovery code disables TOTP until re-enrolled.
+
+4. **PHP `open_basedir`** is tighter: the parent of the document root is only
+   allowed for common framework public directories. Sites that relied on reading
+   siblings outside those layouts may need an explicit, reviewed
+   `PHP_ADMIN_VALUE` (filtered values that weaken the sandbox are ignored).
+
+5. **Built-in SFTP will not start** if `global.admin.api_key` is empty — set a
+   key first.
+
+6. **Location `proxy_pass`** blocks private/link-local targets via dial
+   controls and no longer trusts client-supplied `X-Forwarded-For` chains.
+
+---
+
 ## Upgrading to v0.11.8
 
 **Behavior change:** `canonical_host` (the panel's "primary URL") is now
