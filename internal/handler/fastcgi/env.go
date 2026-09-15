@@ -89,25 +89,22 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 
 	// PHP isolation: enforce open_basedir per-request via PHP_ADMIN_VALUE.
 	// This works with both system PHP-FPM and UWAS-managed php-cgi.
-	// Restricts PHP to domain's web root + project root (parent) + system paths.
-	// Including the parent is essential for PHP frameworks where web root is a
-	// subdirectory (e.g. Laravel public/, Symfony public/, Craft web/) and
-	// storage/vendor/var directories are siblings of the web root.
+	// Restricts PHP to domain's web root + optional project root (parent of
+	// well-known public dirs) + domain .tmp + system paths.
+	// Parent is included only when DocumentRoot looks like a framework public/
+	// subdirectory so flat multi-tenant siblings under /var/www stay isolated.
 	if ctx.DocumentRoot != "" {
 		docRoot := ctx.DocumentRoot
 		domainTmp := filepath.Join(docRoot, ".tmp")
-		// Include parent directory (project root) for framework compatibility.
-		// e.g. /var/www/site/public → also allows /var/www/site/storage, /var/www/site/vendor
-		projectRoot := filepath.Dir(docRoot)
-		basedirPaths := docRoot + ":" + projectRoot + ":" + domainTmp + ":/tmp:/usr/share/php:/usr/share/pear:/etc/ssl/certs:/dev/urandom"
-		adminValues := []string{
-			"open_basedir = " + basedirPaths,
+		basedirPaths := docRoot + ":" + domainTmp + ":/usr/share/php:/usr/share/pear:/etc/ssl/certs:/dev/urandom"
+		if projectRoot := frameworkProjectRoot(docRoot); projectRoot != "" {
+			basedirPaths = docRoot + ":" + projectRoot + ":" + domainTmp + ":/usr/share/php:/usr/share/pear:/etc/ssl/certs:/dev/urandom"
 		}
+		// Apply any pre-existing PHP_ADMIN_VALUE first, then UWAS sandbox last
+		// so PHP last-wins keeps open_basedir/disable_functions under UWAS control.
+		adminValues := filterCustomPHPAdminValue(env["PHP_ADMIN_VALUE"])
+		adminValues = append(adminValues, "open_basedir = "+basedirPaths)
 		adminValues = append(adminValues, uploadLimitDirectives(maxUpload)...)
-		// Merge with existing PHP_ADMIN_VALUE if set
-		if existing := env["PHP_ADMIN_VALUE"]; existing != "" {
-			adminValues = append(adminValues, existing)
-		}
 		env["PHP_ADMIN_VALUE"] = strings.Join(adminValues, "\n")
 	}
 
@@ -253,4 +250,49 @@ func uploadLimitDirectives(maxUpload config.ByteSize) []string {
 		fmt.Sprintf("upload_max_filesize = %d", int64(maxUpload)),
 		fmt.Sprintf("post_max_size = %d", int64(postMax)),
 	}
+}
+
+// frameworkProjectRoot returns the parent of DocumentRoot when it looks like a
+// framework public subdirectory (Laravel public/, Symfony public/, etc.).
+// Flat multi-tenant roots like /var/www/a.com must NOT include /var/www.
+func frameworkProjectRoot(docRoot string) string {
+	base := strings.ToLower(filepath.Base(docRoot))
+	switch base {
+	case "public", "web", "html", "htdocs":
+		parent := filepath.Dir(docRoot)
+		if parent == "" || parent == "." || parent == string(filepath.Separator) {
+			return ""
+		}
+		return parent
+	default:
+		return ""
+	}
+}
+
+// filterCustomPHPAdminValue keeps safe custom PHP_ADMIN_VALUE lines and drops
+// directives that could override UWAS sandbox controls via PHP last-wins.
+func filterCustomPHPAdminValue(existing string) []string {
+	if strings.TrimSpace(existing) == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(existing, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		switch {
+		case strings.HasPrefix(lower, "open_basedir"),
+			strings.HasPrefix(lower, "disable_functions"),
+			strings.HasPrefix(lower, "disable_classes"),
+			strings.HasPrefix(lower, "enable_dl"),
+			strings.HasPrefix(lower, "allow_url_include"),
+			strings.HasPrefix(lower, "auto_prepend_file"),
+			strings.HasPrefix(lower, "auto_append_file"):
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }

@@ -125,5 +125,13 @@ func Fallback(globalWebRoot, domain string) string {
 	if globalWebRoot == "" {
 		return ""
 	}
-	return filepath.Join(globalWebRoot, domain, "public_html")
+	domain = strings.TrimSpace(domain)
+	// Reject traversal and separators. ServeMux {domain} can decode %2e%2e%2f
+	// into ".." / path separators inside a single path segment.
+	if domain == "" || domain == "." || domain == ".." ||
+		strings.Contains(domain, "..") ||
+		strings.ContainsAny(domain, `/\:`) {
+		return ""
+	}
+	return filepath.Join(globalWebRoot, filepath.Base(domain), "public_html")
 }

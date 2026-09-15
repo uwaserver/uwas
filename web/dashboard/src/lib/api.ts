@@ -179,7 +179,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     }
     if ((body.error === 'pin_required' || body.error === 'invalid_pin') && pinPromptCallback) {
       // Show global pin modal, wait for user input, retry the request
-      let doCleanup: () => void;
+      let doCleanup: (() => void) | undefined;
       try {
         const pin = await new Promise<string>((resolve, reject) => {
           pinPromptCallback!(resolve, reject);

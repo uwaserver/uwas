@@ -20,6 +20,18 @@ func (d *settingsDeps) RequireAdmin(w http.ResponseWriter, r *http.Request) bool
 func (d *settingsDeps) RequirePin(w http.ResponseWriter, r *http.Request) bool {
 	return d.s.requirePin(w, r)
 }
+func (d *settingsDeps) GetTOTPSecret() string {
+	d.s.configMu.RLock()
+	defer d.s.configMu.RUnlock()
+	return d.s.config.Global.Admin.TOTPSecret
+}
+func (d *settingsDeps) ValidateTOTPCode(code string) bool {
+	secret := d.GetTOTPSecret()
+	if secret == "" {
+		return false
+	}
+	return d.s.validateTOTPNoReplay(secret, code)
+}
 func (d *settingsDeps) RecordAudit(r *http.Request, action, detail string, success bool) {
 	d.s.recordAuditR(r, action, detail, success)
 }
@@ -29,7 +41,7 @@ func (d *settingsDeps) LockConfig()                      { d.s.configMu.Lock() }
 func (d *settingsDeps) UnlockConfig()                    { d.s.configMu.Unlock() }
 func (d *settingsDeps) RLockConfig()                     { d.s.configMu.RLock() }
 func (d *settingsDeps) RUnlockConfig()                   { d.s.configMu.RUnlock() }
-func (d *settingsDeps) PersistConfig() error { return d.s.persistConfig() }
+func (d *settingsDeps) PersistConfig() error             { return d.s.persistConfig() }
 func (d *settingsDeps) ConfigPath() string               { return d.s.configPath }
 func (d *settingsDeps) EnsureAuthManagerFromConfig()     { d.s.ensureAuthManagerFromConfig() }
 func (d *settingsDeps) AtomicWriteFile(path string, data []byte, perm os.FileMode) error {

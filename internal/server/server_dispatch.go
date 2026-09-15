@@ -422,19 +422,16 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 					proxyReq.Header.Add(k, v)
 				}
 			}
-			// X-Forwarded-For carries bare IPs, not ip:port, and appends
-			// to any chain a fronting proxy already started.
+			// X-Forwarded-For: overwrite with the peer address (same as domain
+			// proxy). Do not preserve client-supplied prior hops — backends that
+			// trust the leftmost entry would see attacker-chosen identity.
 			clientIP := r.RemoteAddr
 			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 				clientIP = host
 			}
-			if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
-				proxyReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
-			} else {
-				proxyReq.Header.Set("X-Forwarded-For", clientIP)
-			}
+			proxyReq.Header.Set("X-Forwarded-For", clientIP)
 			proxyReq.Header.Set("X-Forwarded-Host", r.Host)
-			resp, err := locationProxyHTTPClient.Do(proxyReq)
+			resp, err := locationProxyClient(domain.Proxy.AllowPrivateUpstreams, 30*time.Second).Do(proxyReq)
 			if err != nil {
 				// A request_timeout that fired is a gateway timeout, not a bad
 				// gateway: the upstream was reachable, UWAS gave up waiting.

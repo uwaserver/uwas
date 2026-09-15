@@ -24,6 +24,9 @@ type Deps interface {
 	// Auth
 	RequireAdmin(w http.ResponseWriter, r *http.Request) bool
 	RequirePin(w http.ResponseWriter, r *http.Request) bool
+	// TOTP step-up for MFA lifecycle endpoints under the /2fa/ middleware exemption
+	GetTOTPSecret() string
+	ValidateTOTPCode(code string) bool
 	// Audit
 	RecordAudit(r *http.Request, action, detail string, success bool)
 	// Logging
@@ -111,6 +114,24 @@ func (h *Handler) GenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireAdmin(w, r) {
 		return
 	}
+	// Middleware exempts /api/v1/auth/2fa/* from X-TOTP-Code; require step-up here
+	// when TOTP is enabled so a first-factor-only session cannot rotate backup codes.
+	if secret := h.deps.GetTOTPSecret(); secret != "" {
+		code := r.Header.Get("X-TOTP-Code")
+		if code == "" {
+			var body struct {
+				Code string `json:"code"`
+			}
+			// Body is optional; ignore decode errors and fall through to reject.
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
+			code = body.Code
+		}
+		if code == "" || !h.deps.ValidateTOTPCode(code) {
+			w.Header().Set("X-2FA-Required", "true")
+			jsonError(w, "2fa_required", http.StatusForbidden)
+			return
+		}
+	}
 	codes := make([]string, 8)
 	hashed := make([]string, 8)
 	for i := range codes {
@@ -157,6 +178,11 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	if found {
+		// Successful recovery must clear TOTP so the operator can regain panel
+		// access and re-enroll (disable still requires a live authenticator code).
+		h.deps.ConfigPtr().Global.Admin.TOTPSecret = ""
+	}
 	h.deps.UnlockConfig()
 	if !found {
 		jsonError(w, "invalid recovery code", http.StatusUnauthorized)
@@ -167,8 +193,8 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to persist recovery code change", http.StatusInternalServerError)
 		return
 	}
-	h.deps.RecordAudit(r, "2fa.recovery_code.used", "", true)
-	jsonResponse(w, map[string]string{"status": "ok"})
+	h.deps.RecordAudit(r, "2fa.recovery_code.used", "TOTP cleared", true)
+	jsonResponse(w, map[string]string{"status": "ok", "2fa": "disabled"})
 }
 
 // ── Notification Preferences ──

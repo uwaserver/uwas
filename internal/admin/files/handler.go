@@ -18,6 +18,7 @@ import (
 	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/domainroot"
 	"github.com/uwaserver/uwas/internal/filemanager"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 )
 
 // Deps is the interface the sub-package needs from the admin Server.
@@ -156,7 +157,8 @@ func (h *Handler) appRootForFiles(name string) (string, error) {
 }
 
 func (h *Handler) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, domain, action string) (string, bool) {
-	if _, isApp := appFileTargetName(domain); isApp {
+	_, isApp := appFileTargetName(domain)
+	if isApp {
 		if h.deps.AuthEnabled() && !h.deps.RequireAdmin(w, r) {
 			if action != "" {
 				h.deps.RecordAudit(r, action, "app: "+domain+" (forbidden)", false)
@@ -174,6 +176,28 @@ func (h *Handler) authorizedDomainRoot(w http.ResponseWriter, r *http.Request, d
 	if root == "" {
 		jsonError(w, "domain not found", http.StatusNotFound)
 		return "", false
+	}
+	// Unknown (Fallback) workspaces must stay under web_root. Configured domain
+	// roots and apps:// WorkDirs are validated at create time / intentionally
+	// outside web_root.
+	if !isApp {
+		known := false
+		for _, d := range h.deps.Domains() {
+			if d.Host == domain {
+				known = true
+				break
+			}
+		}
+		if !known {
+			webRoot := h.deps.WebRoot()
+			if webRoot != "" && (!pathsafe.IsWithinBase(webRoot, root) || !pathsafe.IsWithinBaseResolved(webRoot, root)) {
+				if action != "" {
+					h.deps.RecordAudit(r, action, "domain: "+domain+" (root outside web root)", false)
+				}
+				jsonError(w, "invalid domain root", http.StatusBadRequest)
+				return "", false
+			}
+		}
 	}
 	return root, true
 }

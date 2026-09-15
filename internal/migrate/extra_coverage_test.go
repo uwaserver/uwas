@@ -10,6 +10,27 @@ import (
 	"testing"
 )
 
+func cloneTestRoots(t *testing.T) (src, dst string) {
+	t.Helper()
+	base := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll("src", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll("dst", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return "src", "dst"
+}
+
+
 // --- validateSSHInput edge cases ---
 
 func TestValidateSSHInputBadPort(t *testing.T) {
@@ -568,11 +589,12 @@ func cloneStubs(t *testing.T) {
 
 func TestCloneInvalidSourceDB(t *testing.T) {
 	cloneStubs(t)
+	_, _ = cloneTestRoots(t)
 	res := Clone(CloneRequest{
 		SourceDomain: "a.com",
 		TargetDomain: "b.com",
-		SourceRoot:   t.TempDir(),
-		TargetRoot:   t.TempDir(),
+		SourceRoot:   "src",
+		TargetRoot:   "dst",
 		SourceDB:     "bad name;drop",
 		TargetDB:     "valid_db",
 	})
@@ -583,11 +605,12 @@ func TestCloneInvalidSourceDB(t *testing.T) {
 
 func TestCloneInvalidTargetDB(t *testing.T) {
 	cloneStubs(t)
+	_, _ = cloneTestRoots(t)
 	res := Clone(CloneRequest{
 		SourceDomain: "a.com",
 		TargetDomain: "b.com",
-		SourceRoot:   t.TempDir(),
-		TargetRoot:   t.TempDir(),
+		SourceRoot:   "src",
+		TargetRoot:   "dst",
 		SourceDB:     "valid_src",
 		TargetDB:     "bad;name",
 	})
@@ -598,11 +621,12 @@ func TestCloneInvalidTargetDB(t *testing.T) {
 
 func TestCloneInvalidDBUser(t *testing.T) {
 	cloneStubs(t)
+	_, _ = cloneTestRoots(t)
 	res := Clone(CloneRequest{
 		SourceDomain: "a.com",
 		TargetDomain: "b.com",
-		SourceRoot:   t.TempDir(),
-		TargetRoot:   t.TempDir(),
+		SourceRoot:   "src",
+		TargetRoot:   "dst",
 		SourceDB:     "valid_src",
 		TargetDB:     "valid_dst",
 		DBUser:       "bad;user",

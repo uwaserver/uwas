@@ -204,7 +204,6 @@ func adminUserDTO(user *auth.User, revealAPIKey bool) adminUserResponse {
 
 // --- SFTP Users ---
 
-
 func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -314,7 +313,13 @@ func (s *Server) ensureAuthManagerFromConfig() {
 		return
 	}
 	if s.authMgr == nil {
-		mgr := auth.NewManager(webRoot, apiKey)
+		mgr, err := auth.NewManager(webRoot, apiKey)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("failed to enable multi-user auth from settings", "error", err)
+			}
+			return
+		}
 		mgr.SetAllowLegacyPlaintextKey(allowLegacyPlaintext)
 		mgr.SetSessionTTL(sessionTTL)
 		s.authMgr = mgr

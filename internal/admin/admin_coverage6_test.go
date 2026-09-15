@@ -334,6 +334,7 @@ func TestHandleUseRecoveryCode(t *testing.T) {
 
 	// First generate some recovery codes
 	srv.configMu.Lock()
+	srv.config.Global.Admin.TOTPSecret = "JBSWY3DPEHPK3PXP"
 	srv.config.Global.Admin.RecoveryCodes = []string{
 		"e9cee71ab932fde863338d08be4de9dfe39ea049bdafb342ce659ec5450b69ae",
 		"a488c73235f23320b3a730ecfb70f0249289561f7436fab597297601291c8213",
@@ -367,11 +368,18 @@ func TestHandleUseRecoveryCode(t *testing.T) {
 	if resp["status"] != "ok" {
 		t.Errorf("handleUseRecoveryCode: expected status ok, got %s", resp["status"])
 	}
+	if resp["2fa"] != "disabled" {
+		t.Errorf("handleUseRecoveryCode: expected 2fa disabled, got %q", resp["2fa"])
+	}
 
-	// Verify code was removed
+	// Verify code was removed and TOTP cleared
 	srv.configMu.RLock()
 	remainingCodes := srv.config.Global.Admin.RecoveryCodes
+	totpSecret := srv.config.Global.Admin.TOTPSecret
 	srv.configMu.RUnlock()
+	if totpSecret != "" {
+		t.Error("handleUseRecoveryCode: TOTPSecret should be cleared after successful recovery")
+	}
 	if len(remainingCodes) != 7 {
 		t.Errorf("handleUseRecoveryCode: expected 7 remaining codes, got %d", len(remainingCodes))
 	}

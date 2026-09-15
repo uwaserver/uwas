@@ -300,6 +300,12 @@ func TestFallback(t *testing.T) {
 	if got := Fallback("/var/www", "example.com"); got != want {
 		t.Fatalf("Fallback = %q, want %q", got, want)
 	}
+	// ServeMux can decode %2e%2e%2f into path separators / ".." inside {domain}.
+	for _, bad := range []string{"../../etc", "..", `foo\bar`, "a/b", "a:b"} {
+		if got := Fallback("/var/www", bad); got != "" {
+			t.Fatalf("Fallback(%q) = %q, want empty", bad, got)
+		}
+	}
 }
 
 func TestLocalUpstreamPort(t *testing.T) {

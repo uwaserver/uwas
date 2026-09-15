@@ -612,6 +612,19 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body, &raw)
 	replaceMode := r.URL.Query().Get("replace") == "true"
 
+	// Non-admins must not mass-assign privilege-sensitive domain fields.
+	// Root is constrained under web_root below, but sibling-tenant paths under
+	// the same web_root would still pass that check.
+	if user, ok := h.deps.UserFromContext(r); ok && user.Role != auth.RoleAdmin {
+		for _, key := range []string{"root", "type", "proxy", "ip", "app", "redirect", "internal_aliases", "access_log", "webhook_secret"} {
+			if rawHas(raw, key) {
+				h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (forbidden field: "+key+")", false)
+				jsonError(w, "forbidden: cannot update field "+key, http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	hasSSLForce := false
 	if rawSSL, ok := raw["ssl"]; ok {
 		var sslRaw map[string]json.RawMessage
@@ -1001,6 +1014,9 @@ func (h *Handler) RawGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
+	if !h.deps.RequirePermission(w, r, auth.PermDomainUpdate) {
+		return
+	}
 	host := r.PathValue("host")
 	if user, ok := h.deps.UserFromContext(r); ok && user.Role != auth.RoleAdmin {
 		if !h.deps.CanManageDomain(user, host) {

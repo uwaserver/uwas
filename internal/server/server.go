@@ -186,8 +186,29 @@ type Server struct {
 	appsMgr *apps.Manager
 }
 
-var locationProxyHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
+// locationProxyClient builds a per-request client for locations[].proxy_pass.
+// It mirrors domain reverse-proxy SSRF policy: dial-time ProxyDialControl and
+// CheckRedirect re-validation (unlike a bare http.Client that follows redirects).
+func locationProxyClient(allowPrivate bool, timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ssrfCheck := config.IsProxyUpstreamSafe
+	if allowPrivate {
+		ssrfCheck = config.IsPrivateProxyUpstreamSafe
+	}
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return ssrfCheck(req.URL.String())
+		},
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: timeout,
+				Control: config.ProxyDialControl(allowPrivate),
+			}).DialContext,
+		},
+	}
 }
 
 // phpCacheableStaticExts is the set of file extensions whose responses are
@@ -312,15 +333,20 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 
 		// Initialize multi-user auth if enabled
 		if cfg.Global.Users.Enabled {
-			s.authMgr = auth.NewManager(cfg.Global.WebRoot, cfg.Global.Admin.APIKey)
-			s.authMgr.SetAllowLegacyPlaintextKey(cfg.Global.Users.AllowLegacyPlaintextAPIKey)
-			s.authMgr.SetSessionTTL(cfg.Global.Users.SessionTTL)
-			s.authMgr.SetAuditRecorder(s.admin.RecordAuditR)
-			s.admin.SetAuthManager(s.authMgr)
-			log.Info("multi-user auth enabled",
-				"allow_reseller", cfg.Global.Users.AllowReseller,
-				"allow_legacy_plaintext_api_key", cfg.Global.Users.AllowLegacyPlaintextAPIKey,
-			)
+			authMgr, err := auth.NewManager(cfg.Global.WebRoot, cfg.Global.Admin.APIKey)
+			if err != nil {
+				log.Error("failed to init multi-user auth manager", "error", err)
+			} else {
+				s.authMgr = authMgr
+				s.authMgr.SetAllowLegacyPlaintextKey(cfg.Global.Users.AllowLegacyPlaintextAPIKey)
+				s.authMgr.SetSessionTTL(cfg.Global.Users.SessionTTL)
+				s.authMgr.SetAuditRecorder(s.admin.RecordAuditR)
+				s.admin.SetAuthManager(s.authMgr)
+				log.Info("multi-user auth enabled",
+					"allow_reseller", cfg.Global.Users.AllowReseller,
+					"allow_legacy_plaintext_api_key", cfg.Global.Users.AllowLegacyPlaintextAPIKey,
+				)
+			}
 		}
 	}
 
@@ -960,40 +986,44 @@ func (s *Server) Start() error {
 
 	// Built-in SFTP server
 	if s.config.Global.SFTPListen != "" {
-		users := make(map[string]sftpserver.User)
 		apiKey := s.config.Global.Admin.APIKey
-		var appStore *apps.Store
-		if s.appsMgr != nil {
-			appStore = s.appsMgr.Store()
-		}
-		for _, d := range s.config.Domains {
-			root, err := domainroot.ForDomain(d, appStore)
-			if err != nil {
-				s.logger.Warn("SFTP domain root unavailable", "domain", d.Host, "error", err)
-				continue
+		if strings.TrimSpace(apiKey) == "" {
+			s.logger.Error("refusing SFTP start: admin api_key is empty (SFTP passwords are derived from it)")
+		} else {
+			users := make(map[string]sftpserver.User)
+			var appStore *apps.Store
+			if s.appsMgr != nil {
+				appStore = s.appsMgr.Store()
 			}
-			if root != "" {
-				// Create an SFTP user per domain with a unique password
-				// derived from API key + domain (so compromising one doesn't
-				// expose all domains).
-				domainPass := deriveSFTPPassword(apiKey, d.Host)
-				passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), auth.BcryptCost)
+			for _, d := range s.config.Domains {
+				root, err := domainroot.ForDomain(d, appStore)
 				if err != nil {
-					s.logger.Warn("failed to hash SFTP password", "domain", d.Host, "error", err)
+					s.logger.Warn("SFTP domain root unavailable", "domain", d.Host, "error", err)
 					continue
 				}
-				users[d.Host] = sftpserver.User{
-					Password: string(passHash),
-					Root:     root,
+				if root != "" {
+					// Create an SFTP user per domain with a unique password
+					// derived from API key + domain (so compromising one doesn't
+					// expose all domains).
+					domainPass := deriveSFTPPassword(apiKey, d.Host)
+					passHash, err := bcrypt.GenerateFromPassword([]byte(domainPass), auth.BcryptCost)
+					if err != nil {
+						s.logger.Warn("failed to hash SFTP password", "domain", d.Host, "error", err)
+						continue
+					}
+					users[d.Host] = sftpserver.User{
+						Password: string(passHash),
+						Root:     root,
+					}
 				}
 			}
-		}
-		s.sftpSrv = sftpserver.New(sftpserver.Config{
-			Listen: s.config.Global.SFTPListen,
-			Users:  users,
-		}, s.logger)
-		if err := s.sftpSrv.Start(); err != nil {
-			s.logger.Warn("SFTP server start failed", "error", err)
+			s.sftpSrv = sftpserver.New(sftpserver.Config{
+				Listen: s.config.Global.SFTPListen,
+				Users:  users,
+			}, s.logger)
+			if err := s.sftpSrv.Start(); err != nil {
+				s.logger.Warn("SFTP server start failed", "error", err)
+			}
 		}
 	}
 

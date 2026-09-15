@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -231,7 +232,13 @@ func TestRateLimitRetryAfterMatchesWindow(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("second request status = %d, want 429", rec.Code)
 	}
-	if got := rec.Header().Get("Retry-After"); got != "10" {
-		t.Errorf("Retry-After = %q, want \"10\" (the configured 10s window, not a fixed 60)", got)
+	got := rec.Header().Get("Retry-After")
+	n, err := strconv.Atoi(got)
+	if err != nil {
+		t.Fatalf("Retry-After = %q, want an integer near the 10s window", got)
+	}
+	// Dispatch applies ±25% jitter so clients do not retry in lockstep.
+	if n < 7 || n > 13 {
+		t.Errorf("Retry-After = %d, want jittered value in [7,13] around the 10s window (not a fixed 60)", n)
 	}
 }

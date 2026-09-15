@@ -649,8 +649,13 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	reqLine := ctx.Request.Method + " " + upstreamURL.RequestURI() + " HTTP/1.1\r\n"
 	upstreamConn.Write([]byte(reqLine))
 
-	// Write headers (including Upgrade and Connection)
+	// Write headers (including Upgrade and Connection). Skip client-supplied
+	// X-Forwarded-For / X-Real-IP so we can set authoritative values below.
 	for key, vals := range ctx.Request.Header {
+		lk := strings.ToLower(key)
+		if lk == "x-forwarded-for" || lk == "x-real-ip" {
+			continue
+		}
 		for _, v := range vals {
 			upstreamConn.Write([]byte(key + ": " + v + "\r\n"))
 		}

@@ -653,7 +653,10 @@ func TestAuthBootstrapConflictAfterUserExists(t *testing.T) {
 	s.config.Global.Users.Enabled = true
 	s.config.Global.Admin.APIKey = ""
 
-	mgr := auth.NewManager(s.config.Global.WebRoot, "")
+	mgr, err := auth.NewManager(s.config.Global.WebRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer mgr.Stop()
 	if _, err := mgr.CreateUser("admin", "admin@example.com", "secret123", auth.RoleAdmin, nil); err != nil {
 		t.Fatal(err)

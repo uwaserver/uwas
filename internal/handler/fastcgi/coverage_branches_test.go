@@ -55,7 +55,7 @@ func TestBuildEnvMergesExistingPHPAdminValue(t *testing.T) {
 	ctx.DocumentRoot = "/var/www/site/public"
 
 	custom := map[string]string{
-		"PHP_ADMIN_VALUE": "memory_limit = 256M",
+		"PHP_ADMIN_VALUE": "memory_limit = 256M\nopen_basedir = /\ndisable_functions =",
 	}
 	env := BuildEnv(ctx, "/var/www/site/public/index.php", "/index.php", "", custom, 0)
 
@@ -64,10 +64,20 @@ func TestBuildEnvMergesExistingPHPAdminValue(t *testing.T) {
 		t.Errorf("PHP_ADMIN_VALUE missing open_basedir: %q", val)
 	}
 	if !strings.Contains(val, "memory_limit = 256M") {
-		t.Errorf("PHP_ADMIN_VALUE did not merge existing value: %q", val)
+		t.Errorf("PHP_ADMIN_VALUE did not merge safe existing value: %q", val)
 	}
-	if !strings.Contains(val, "\n") {
-		t.Errorf("PHP_ADMIN_VALUE should join with newline: %q", val)
+	// Sandbox must win: custom open_basedir=/ and disable_functions= must be stripped,
+	// and UWAS open_basedir must appear after any remaining custom lines.
+	if strings.Contains(val, "open_basedir = /\n") || strings.HasSuffix(val, "open_basedir = /") {
+		t.Errorf("custom open_basedir override must be filtered: %q", val)
+	}
+	if strings.Contains(val, "disable_functions") {
+		t.Errorf("custom disable_functions override must be filtered: %q", val)
+	}
+	idxMem := strings.Index(val, "memory_limit")
+	idxOB := strings.Index(val, "open_basedir = /var/www/site/public")
+	if idxMem < 0 || idxOB < 0 || idxOB < idxMem {
+		t.Errorf("UWAS open_basedir must follow safe custom lines: %q", val)
 	}
 }
 

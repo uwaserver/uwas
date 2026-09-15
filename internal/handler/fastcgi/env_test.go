@@ -248,13 +248,29 @@ func TestBuildEnvOpenBasedirIncludesParent(t *testing.T) {
 	if !ok {
 		t.Fatal("PHP_ADMIN_VALUE not set")
 	}
-	// Should contain both docRoot and parent (project root)
+	// Should contain both docRoot and parent (project root) for framework public/
 	if !strings.Contains(adminValue, "/var/www/site/public") {
 		t.Errorf("open_basedir should contain docRoot, got %q", adminValue)
 	}
-	// filepath.Dir on Windows produces backslashes; check for both separators
 	if !strings.Contains(adminValue, "/var/www/site:") && !strings.Contains(adminValue, "\\var\\www\\site:") {
 		t.Errorf("open_basedir should contain project root (parent), got %q", adminValue)
+	}
+}
+
+func TestBuildEnvOpenBasedirOmitsParentForFlatDocroot(t *testing.T) {
+	r := httptest.NewRequest("GET", "/index.php", nil)
+	w := httptest.NewRecorder()
+	ctx := router.AcquireContext(w, r)
+	defer router.ReleaseContext(ctx)
+	ctx.DocumentRoot = "/var/www/tenant-a"
+
+	env := BuildEnv(ctx, "/var/www/tenant-a/index.php", "/index.php", "", nil, 0)
+	adminValue := env["PHP_ADMIN_VALUE"]
+	if strings.Contains(adminValue, "/var/www:") || strings.Contains(adminValue, "/tmp:") {
+		t.Errorf("flat docroot must not widen open_basedir to shared parent or /tmp: %q", adminValue)
+	}
+	if !strings.Contains(adminValue, "/var/www/tenant-a") {
+		t.Errorf("open_basedir should contain docRoot, got %q", adminValue)
 	}
 }
 

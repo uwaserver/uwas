@@ -522,7 +522,7 @@ func TestMigrateDefaultPort(t *testing.T) {
 	runMigrateDB = func(req MigrateRequest, log *strings.Builder) string {
 		return "ok"
 	}
-	runChown = func(root string) {}
+	runChown = func(root string) error { return nil }
 
 	tmpDir := t.TempDir()
 	result := Migrate(MigrateRequest{
@@ -567,7 +567,7 @@ func TestMigrateWithDB(t *testing.T) {
 		log.WriteString("mock db import ok\n")
 		return "ok"
 	}
-	runChown = func(root string) {}
+	runChown = func(root string) error { return nil }
 
 	tmpDir := t.TempDir()
 	result := Migrate(MigrateRequest{
@@ -602,7 +602,7 @@ func TestMigrateWithWordPress(t *testing.T) {
 
 	runSyncFiles = func(req MigrateRequest, log *strings.Builder) string { return "ok" }
 	runMigrateDB = func(req MigrateRequest, log *strings.Builder) string { return "ok" }
-	runChown = func(root string) {}
+	runChown = func(root string) error { return nil }
 
 	tmpDir := t.TempDir()
 	wpContent := `<?php
@@ -775,7 +775,7 @@ func TestCloneMissingSourceRoot(t *testing.T) {
 
 func TestCloneMissingTargetRoot(t *testing.T) {
 	result := Clone(CloneRequest{
-		SourceRoot: "/tmp/source",
+		SourceRoot: "src",
 	})
 	if result.Status != "error" {
 		t.Errorf("Status = %q, want error", result.Status)
@@ -800,8 +800,7 @@ func TestCloneAutoGenerateTargetDB(t *testing.T) {
 	}
 	runCloneChown = func(root string) {}
 
-	tmpSrc := t.TempDir()
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	result := Clone(CloneRequest{
 		SourceDomain: "example.com",
@@ -842,8 +841,7 @@ func TestCloneAutoGenerateTargetDBLongName(t *testing.T) {
 	}
 	runCloneChown = func(root string) {}
 
-	tmpSrc := t.TempDir()
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	longDomain := strings.Repeat("a", 80) + ".com"
 	result := Clone(CloneRequest{
@@ -880,8 +878,7 @@ func TestCloneAutoGenerateTargetDBSanitize(t *testing.T) {
 	}
 	runCloneChown = func(root string) {}
 
-	tmpSrc := t.TempDir()
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	Clone(CloneRequest{
 		SourceDomain: "example.com",
@@ -914,8 +911,7 @@ func TestCloneFileCopyError(t *testing.T) {
 	}
 	runCloneChown = func(root string) {}
 
-	tmpSrc := t.TempDir()
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	result := Clone(CloneRequest{
 		SourceRoot: tmpSrc,
@@ -945,8 +941,7 @@ func TestCloneDBError(t *testing.T) {
 	}
 	runCloneChown = func(root string) {}
 
-	tmpSrc := t.TempDir()
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	// wp-config.php present in the target — the DB rewrite must be skipped
 	// when the DB clone fails, or wp-config would point at a missing DB.
@@ -999,8 +994,7 @@ func TestCloneWithWordPress(t *testing.T) {
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error { return nil }
 	runCloneChown = func(root string) {}
 
-	tmpSrc := t.TempDir()
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 
 	wpContent := `<?php
 define('DB_NAME', 'old_db');
@@ -1057,7 +1051,7 @@ func TestCloneWithWordPressNoDBUserPass(t *testing.T) {
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error { return nil }
 	runCloneChown = func(root string) {}
 
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 	wpContent := `<?php
 define('DB_NAME', 'old_db');
 define('DB_USER', 'old_user');
@@ -1070,7 +1064,7 @@ require_once ABSPATH . 'wp-settings.php';
 	result := Clone(CloneRequest{
 		SourceDomain: "example.com",
 		TargetDomain: "staging.example.com",
-		SourceRoot:   t.TempDir(),
+		SourceRoot:   tmpSrc,
 		TargetRoot:   tmpDst,
 		SourceDB:     "prod_db",
 		TargetDB:     "staging_db",
@@ -1104,7 +1098,7 @@ func TestCloneWithWordPressNoTargetDB(t *testing.T) {
 	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
 	runCloneChown = func(root string) {}
 
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 	wpContent := `<?php
 define('DB_NAME', 'old_db');
 require_once ABSPATH . 'wp-settings.php';
@@ -1114,7 +1108,7 @@ require_once ABSPATH . 'wp-settings.php';
 	result := Clone(CloneRequest{
 		SourceDomain: "example.com",
 		TargetDomain: "staging.example.com",
-		SourceRoot:   t.TempDir(),
+		SourceRoot:   tmpSrc,
 		TargetRoot:   tmpDst,
 		// No SourceDB — so no DB clone, no DB update in wp-config.
 	})
@@ -1288,8 +1282,8 @@ func TestCloneExplicitTargetDB(t *testing.T) {
 	runCloneChown = func(root string) {}
 
 	Clone(CloneRequest{
-		SourceRoot:   t.TempDir(),
-		TargetRoot:   t.TempDir(),
+		SourceRoot:   "src",
+		TargetRoot:   "dst",
 		SourceDB:     "prod_db",
 		TargetDB:     "my_explicit_db",
 		TargetDomain: "staging.example.com",
@@ -1312,8 +1306,8 @@ func TestCloneNoDBNoWP(t *testing.T) {
 	runCloneChown = func(root string) {}
 
 	result := Clone(CloneRequest{
-		SourceRoot:   t.TempDir(),
-		TargetRoot:   t.TempDir(),
+		SourceRoot:   "src",
+		TargetRoot:   "dst",
 		SourceDomain: "src.com",
 		TargetDomain: "dst.com",
 	})
@@ -1342,11 +1336,11 @@ func TestCloneResultFields(t *testing.T) {
 	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
 	runCloneChown = func(root string) {}
 
-	tmpDst := t.TempDir()
+	tmpSrc, tmpDst := cloneTestRoots(t)
 	result := Clone(CloneRequest{
 		SourceDomain: "source.com",
 		TargetDomain: "target.com",
-		SourceRoot:   t.TempDir(),
+		SourceRoot:   tmpSrc,
 		TargetRoot:   tmpDst,
 	})
 
@@ -2339,7 +2333,7 @@ func TestMigrateResultTimestamps(t *testing.T) {
 	}()
 
 	runSyncFiles = func(req MigrateRequest, log *strings.Builder) string { return "ok" }
-	runChown = func(root string) {}
+	runChown = func(root string) error { return nil }
 
 	result := Migrate(MigrateRequest{
 		SourceHost: "user@1.2.3.4",
@@ -2369,7 +2363,7 @@ func TestMigrateFileSyncResult(t *testing.T) {
 	runSyncFiles = func(req MigrateRequest, log *strings.Builder) string {
 		return "ok"
 	}
-	runChown = func(root string) {}
+	runChown = func(root string) error { return nil }
 
 	result := Migrate(MigrateRequest{
 		SourceHost: "user@1.2.3.4",
