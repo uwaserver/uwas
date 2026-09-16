@@ -183,15 +183,20 @@ func SetAdminPort(port string) {
 	}
 }
 
-// validatePort checks that port is a valid number or range, not empty, not "any".
+// validatePort checks that port is a valid number or range, or empty/"any"
+// (meaning all ports).
 func validatePort(port string) error {
+	if normalizePort(port) == "" {
+		return nil
+	}
 	_, _, err := parsePortSpec(port)
 	return err
 }
 
 // parsePortSpec parses a single port ("80") or an inclusive range ("8000:8100")
 // into [lo, hi]. It rejects empty segments, out-of-range numbers, inverted
-// ranges, and "any"/"all"/"*".
+// ranges, and "any"/"all"/"*" — callers that want "any port" must use
+// normalizePort and skip parsePortSpec.
 func parsePortSpec(port string) (int, int, error) {
 	if port == "" {
 		return 0, 0, fmt.Errorf("port is required")
@@ -263,12 +268,16 @@ func DenyPort(port, proto string) error {
 }
 
 // DenyPortFrom adds a ufw deny rule, optionally limited to a source IP/CIDR.
+// Empty port means any port (deny from X, or deny from any to any).
 func DenyPortFrom(port, proto, from string) error {
-	if err := validatePort(port); err != nil {
-		return err
-	}
-	if deniesProtectedPort(port) && normalizeFrom(from) == "" {
-		return fmt.Errorf("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
+	port = normalizePort(port)
+	if port != "" {
+		if err := validatePort(port); err != nil {
+			return err
+		}
+		if deniesProtectedPort(port) && normalizeFrom(from) == "" {
+			return fmt.Errorf("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
+		}
 	}
 	return addPortRule("deny", port, proto, from)
 }

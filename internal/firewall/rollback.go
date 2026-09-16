@@ -28,29 +28,28 @@ var (
 // The allow-first order matters: `ufw enable` starts denying immediately, so a
 // rule added afterwards would race the dropped connection.
 func EnableWithRollback(within time.Duration, allowPorts []string) error {
+	// Clean duplicates left by earlier enable cycles while we can still see
+	// staged/numbered rules, then ensure UWAS ports, then an explicit bottom
+	// deny-any row (visible in the panel — not only the invisible UFW policy).
+	DeduplicateRules()
+
 	for _, p := range allowPorts {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
 		}
-		// tcp: every port UWAS listens on (HTTP, HTTPS, admin, SFTP, SSH) is
-		// tcp. Errors are ignored on purpose — "rule already exists" and the
-		// like must not stop us from enabling. addPortRule also skips
-		// duplicates so re-enabling cannot stack identical allow rows.
 		_ = AllowPort(p, "tcp")
 	}
 
-	// Default incoming deny is the UFW policy (not a numbered rule). Setting it
-	// explicitly once keeps "allows above, deny below" without inserting
-	// duplicate Anywhere DENY rows on every enable.
 	_ = execCommandFn("ufw", "default", "deny", "incoming").Run()
 	_ = execCommandFn("ufw", "default", "allow", "outgoing").Run()
+	_ = ensureDefaultDenyAtBottom()
 
 	if err := Enable(); err != nil {
 		return err
 	}
 
-	DeduplicatePortAllows()
+	DeduplicateRules()
 
 	if within > 0 {
 		rbMu.Lock()
@@ -59,8 +58,6 @@ func EnableWithRollback(within time.Duration, allowPorts []string) error {
 		}
 		rbDeadline = time.Now().Add(within)
 		rbTimer = time.AfterFunc(within, func() {
-			// The operator never confirmed — assume the enable cut their
-			// access and revert.
 			_ = Disable()
 			rbMu.Lock()
 			rbTimer = nil
@@ -146,22 +143,42 @@ func stagedRules() []Rule {
 			continue
 		}
 		// Find a port/proto token ("22/tcp" or "443") or a from-address.
-		for _, f := range fields[1:] {
-			if f == "from" || f == "to" || f == "in" || f == "out" || f == "on" {
+		// Also handles: "from 1.2.3.4 to any port 3306 proto tcp" and
+		// "from any to any".
+		for i := 1; i < len(fields); i++ {
+			f := fields[i]
+			switch f {
+			case "from":
+				if i+1 < len(fields) {
+					r.From = fields[i+1]
+					if r.From == "any" {
+						r.From = ""
+					}
+					i++
+				}
+			case "to", "in", "out", "on":
 				continue
-			}
-			if strings.Contains(f, "/") {
-				pp := strings.SplitN(f, "/", 2)
-				r.Port, r.Proto, r.To = pp[0], pp[1], f
-				break
-			}
-			if strings.ContainsAny(f, ".:") {
-				r.From = f
-				continue
-			}
-			if r.Port == "" && isNumericPort(f) {
-				r.Port = f
-				r.To = f
+			case "port":
+				if i+1 < len(fields) {
+					r.Port = fields[i+1]
+					r.To = r.Port
+					i++
+				}
+			case "proto":
+				if i+1 < len(fields) {
+					r.Proto = fields[i+1]
+					i++
+				}
+			default:
+				if strings.Contains(f, "/") {
+					pp := strings.SplitN(f, "/", 2)
+					r.Port, r.Proto, r.To = pp[0], pp[1], f
+				} else if strings.ContainsAny(f, ".:") && r.From == "" && f != "any" {
+					r.From = f
+				} else if r.Port == "" && isNumericPort(f) {
+					r.Port = f
+					r.To = f
+				}
 			}
 		}
 		rules = append(rules, r)

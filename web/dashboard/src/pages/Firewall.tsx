@@ -141,18 +141,27 @@ export default function Firewall() {
 
   const handleAddRule = async () => {
     const p = port.trim();
-    if (!p) return;
-    const portRangeRe = /^(\d{1,5})(:\d{1,5})?$/;
-    const match = p.match(portRangeRe);
-    if (match) {
-      const num = parseInt(match[1]);
-      if (num < 1 || num > 65535) { setError('Port must be between 1 and 65535'); return; }
-      if (match[2]) {
-        const end = parseInt(match[2].slice(1));
-        if (end < 1 || end > 65535 || end <= num) { setError('Invalid port range'); return; }
+    const src = from.trim();
+    if (!p && !src && action === 'allow') {
+      // Allow any/any opens the host completely — require an explicit source or port.
+      setError('Specify a port and/or source IP for allow rules (empty both = open everything)');
+      return;
+    }
+    if (p) {
+      const portRangeRe = /^(\d{1,5})(:\d{1,5})?$/;
+      const match = p.match(portRangeRe);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num < 1 || num > 65535) { setError('Port must be between 1 and 65535'); return; }
+        if (match[2]) {
+          const end = parseInt(match[2].slice(1));
+          if (end < 1 || end > 65535 || end <= num) { setError('Invalid port range'); return; }
+        }
+      } else if (!/^(any|all|\*)$/i.test(p)) {
+        setError('Port must be a number, range, or empty/any');
+        return;
       }
     }
-    const src = from.trim();
     if (src && !/^[\d.:a-fA-F/]+$/.test(src)) {
       setError('Source must be an IP or CIDR (e.g. 203.0.113.10 or 10.0.0.0/8)');
       return;
@@ -162,14 +171,15 @@ export default function Firewall() {
     setStatus('');
     try {
       const protoParam = proto === 'both' ? undefined : proto;
+      const portParam = !p || /^(any|all|\*)$/i.test(p) ? '' : p;
       if (action === 'allow') {
-        await firewallAllow(p, protoParam, src || undefined);
+        await firewallAllow(portParam, protoParam, src || undefined);
       } else {
-        await firewallDeny(p, protoParam, src || undefined);
+        await firewallDeny(portParam, protoParam, src || undefined);
       }
       setPort('');
       setFrom('');
-      setStatus(`Rule added: ${action} ${p}/${proto}${src ? ` from ${src}` : ''}`);
+      setStatus(`Rule added: ${action} ${portParam || 'any'}/${proto}${src ? ` from ${src}` : ''}`);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -272,7 +282,10 @@ export default function Firewall() {
               <ShieldCheck size={24} className="text-emerald-400" />
               <div>
                 <p className="text-sm font-semibold text-emerald-400">Firewall Active</p>
-                <p className="text-xs text-muted-foreground">{rules.length} rules configured</p>
+                <p className="text-xs text-muted-foreground">
+                  {filteredRules.length} rules shown
+                  {v6Count > 0 && !showV6 ? ` (${v6Count} IPv6 hidden)` : rules.length !== filteredRules.length ? ` / ${rules.length} total` : ''}
+                </p>
               </div>
             </div>
           ) : (
@@ -280,7 +293,12 @@ export default function Firewall() {
               <ShieldOff size={24} className="text-red-400" />
               <div>
                 <p className="text-sm font-semibold text-red-400">Firewall Inactive</p>
-                <p className="text-xs text-muted-foreground">{fw?.staged ? `${rules.length} rule(s) staged — applied when you enable` : 'No rules are being enforced'}</p>
+                <p className="text-xs text-muted-foreground">
+                  {fw?.staged
+                    ? `${filteredRules.length} rule(s) staged — applied when you enable`
+                    : 'No rules are being enforced'}
+                  {v6Count > 0 && !showV6 ? ` (${v6Count} IPv6 hidden)` : ''}
+                </p>
               </div>
             </div>
           )}
@@ -317,7 +335,7 @@ export default function Firewall() {
                 type="text"
                 value={port}
                 onChange={e => setPort(e.target.value)}
-                placeholder="e.g. 80, 443, 8080:8090"
+                placeholder="empty = any port"
                 className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
               />
             </div>
@@ -380,7 +398,7 @@ export default function Firewall() {
 
             <button
               onClick={handleAddRule}
-              disabled={adding || !port.trim()}
+              disabled={adding}
               className="flex items-center gap-1.5 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {adding ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -388,7 +406,7 @@ export default function Firewall() {
             </button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Empty source = anywhere. New allows are inserted above port-deny rules. Default incoming deny is UFW policy (not listed as a numbered row).
+            Empty port = any port. Empty source = anywhere. New allows insert above port denies / default deny. Enable adds a single DENY any→any at the bottom (plus UFW default policy).
           </p>
         </div>
       </div>

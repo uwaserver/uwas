@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.17] - 2026-09-16
+
+### Fixed
+
+- **Firewall rule count matches the table.** Status showed all rules (including
+  hidden IPv6 twins) while the list hid IPv6 by default — e.g. “8 configured”
+  with 4 rows. The badge now counts visible rules and notes hidden IPv6.
+- **Empty port = any port** on allow/deny (source-scoped or `from any to any`).
+- **Enable adds a numbered default DENY any→any at the bottom** (in addition to
+  UFW’s default policy) so allow-above-deny is visible in the panel.
+- **Disable → enable no longer duplicates rules.** Dedup runs before and after
+  enable; staged `ufw show added` parsing covers `proto` / `from any to any`.
+
 ## [0.11.16] - 2026-09-16
 
 ### Security

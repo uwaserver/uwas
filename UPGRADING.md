@@ -5,6 +5,20 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.17
+
+Drop-in for most hosts. Firewall panel behavior changes slightly:
+
+1. **Enable** now ensures one numbered `DENY any → any` at the bottom (plus the
+   UFW default incoming deny policy). If you already had a blanket deny, it is
+   not duplicated.
+2. **Empty port** in Add Rule means any port. Allow with both port and source
+   empty is rejected in the UI (would open the host completely).
+3. Re-enabling after disable cleans duplicate allow/deny rows left by earlier
+   builds.
+
+---
+
 ## Upgrading to v0.11.16
 
 Mostly drop-in. Review if you use the WAF body scanner, firewall panel, remote

@@ -496,14 +496,15 @@ func TestDenyPort_ProtectedRange(t *testing.T) {
 	}
 }
 
-func TestDenyPort_AnyBlocked(t *testing.T) {
+func TestDenyPort_AnyPortMeansBlanket(t *testing.T) {
 	defer saveAndRestore()()
 	runtimeGOOS = "linux"
 	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
 
 	for _, port := range []string{"any", "all", "*", ""} {
-		if err := DenyPort(port, ""); err == nil {
-			t.Errorf("DenyPort(%q) should fail", port)
+		if err := DenyPort(port, ""); err != nil {
+			t.Errorf("DenyPort(%q) = %v, want nil (any port)", port, err)
 		}
 	}
 }
@@ -816,8 +817,19 @@ func TestAllowPort_InvalidPort(t *testing.T) {
 	execLookPathFn = fakeLookPath(true)
 	execCommandFn = fakeExecCommand("", false)
 
-	if err := AllowPort("any", "tcp"); err == nil {
-		t.Error("AllowPort(\"any\", ...) expected validatePort error")
+	if err := AllowPort("99999", "tcp"); err == nil {
+		t.Error("AllowPort(\"99999\", ...) expected validatePort error")
+	}
+}
+
+func TestAllowPort_AnyPortOK(t *testing.T) {
+	defer saveAndRestore()()
+	runtimeGOOS = "linux"
+	execLookPathFn = fakeLookPath(true)
+	execCommandFn = fakeExecCommand("", false)
+
+	if err := AllowPortFrom("any", "", "203.0.113.10"); err != nil {
+		t.Fatalf("AllowPortFrom(any, from IP): %v", err)
 	}
 }
 

@@ -24,24 +24,26 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.16)
+## Current Snapshot (v0.11.17)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
 - **Go packages:** 71 (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
 - **CLI commands:** 19
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
-- **Security/stability fixes:** v0.11.16 closes a WAF JSON/multipart bypass plus further admin/auth/backup hardening on top of the v0.11.15 batch
+- **Security/stability fixes:** v0.11.17 polishes firewall UX on top of the v0.11.16 WAF/hardening batch
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
 
+**v0.11.17 highlights:**
+- Firewall: visible rule count matches the table (IPv6 hidden noted); empty port
+  = any; enable places a numbered default DENY at the bottom; re-enable no
+  longer duplicates rules
+
 **v0.11.16 highlights:**
-- WAF body scanning covers `application/json` and `multipart/form-data` (was a
-  bypass for the same SQLi/XSS/PHP patterns)
-- Firewall: Source IP/CIDR, allow-above-deny insert, arrow reorder; enable no
-  longer stacks duplicate allows
-- Database Users: Drop action; remote MySQL prompts to allow 3306 when FW is on
-- Apps Edit: Generate deploy key (not only Deploy modal)
-- Cron execute auth, safer deploy build commands, and related reliability fixes
+- WAF body scanning covers `application/json` and `multipart/form-data`
+- Firewall source IP/CIDR, allow-above-deny insert, arrow reorder
+- Database user Drop; remote MySQL firewall prompt for 3306
+- Deploy-key Generate on app Edit
 
 **v0.5.0 highlights (refactor + perf + observability sweep, 43 commits):**
 - TLS handshake allowlist is now lock-free (atomic pointer instead of mutex + linear scan)

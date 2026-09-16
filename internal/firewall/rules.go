@@ -34,15 +34,28 @@ func validateFrom(from string) error {
 	return fmt.Errorf("invalid source address %q — use an IP or CIDR (e.g. 203.0.113.10 or 10.0.0.0/8)", from)
 }
 
+// normalizePort returns "" for empty/"any"/"all"/"*" (meaning any port).
+func normalizePort(port string) string {
+	p := strings.TrimSpace(strings.ToLower(port))
+	if p == "" || p == "any" || p == "all" || p == "*" {
+		return ""
+	}
+	return strings.TrimSpace(port)
+}
+
 // buildPortRuleArgs builds `ufw <action> …` args (without the binary name).
 // When insertAt > 0 the command is `insert <n> <action> …`.
+// Empty / "any" port means all ports (`from …` or `from any to any`).
 func buildPortRuleArgs(action, port, proto, from string, insertAt int) ([]string, error) {
 	action = strings.ToLower(strings.TrimSpace(action))
 	if action != "allow" && action != "deny" && action != "reject" {
 		return nil, fmt.Errorf("invalid action %q", action)
 	}
-	if err := validatePort(port); err != nil {
-		return nil, err
+	port = normalizePort(port)
+	if port != "" {
+		if err := validatePort(port); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateProto(proto); err != nil {
 		return nil, err
@@ -57,6 +70,16 @@ func buildPortRuleArgs(action, port, proto, from string, insertAt int) ([]string
 		args = append(args, "insert", fmt.Sprintf("%d", insertAt))
 	}
 	args = append(args, action)
+
+	if port == "" {
+		// Any port: source-scoped or blanket.
+		if from != "" {
+			args = append(args, "from", from)
+			return args, nil
+		}
+		args = append(args, "from", "any", "to", "any")
+		return args, nil
+	}
 
 	if from != "" {
 		args = append(args, "from", from, "to", "any", "port", port)
@@ -92,23 +115,24 @@ func firstPortDenyNumber(rules []Rule) int {
 	return 0
 }
 
-// ruleExists reports whether an equivalent port rule is already present.
+// ruleExists reports whether an equivalent rule is already present.
 func ruleExists(rules []Rule, action, port, proto, from string) bool {
 	action = strings.ToUpper(action)
 	from = normalizeFrom(from)
+	port = normalizePort(port)
 	proto = strings.ToLower(proto)
 	for _, r := range rules {
 		if strings.ToUpper(r.Action) != action {
 			continue
 		}
-		if r.Port != port {
+		if normalizePort(r.Port) != port {
 			continue
 		}
-		if proto != "" && r.Proto != "" && strings.ToLower(r.Proto) != proto {
+		rp := strings.ToLower(r.Proto)
+		if proto != "" && rp != "" && rp != proto {
 			continue
 		}
-		rf := normalizeFrom(r.From)
-		if rf != from {
+		if normalizeFrom(r.From) != from {
 			continue
 		}
 		return true
@@ -116,20 +140,67 @@ func ruleExists(rules []Rule, action, port, proto, from string) bool {
 	return false
 }
 
-// addPortRule adds an allow/deny rule. Allows are inserted above the first
-// port-deny so "allows above denies" holds; denies are appended.
-func addPortRule(action, port, proto, from string) error {
+// isDefaultDeny reports a blanket DENY any→any (the numbered default-deny row).
+func isDefaultDeny(r Rule) bool {
+	return strings.ToUpper(r.Action) == "DENY" && normalizePort(r.Port) == "" && normalizeFrom(r.From) == ""
+}
+
+// hasDefaultDeny reports whether a blanket deny any/any is already present.
+func hasDefaultDeny(rules []Rule) bool {
+	for _, r := range rules {
+		if isDefaultDeny(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureDefaultDenyAtBottom appends a single numbered `deny from any to any`
+// when missing. UFW's default policy is invisible in the panel; operators want
+// an explicit bottom rule so allow-above-deny is visible.
+func ensureDefaultDenyAtBottom() error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
 	}
 	st := getUFWStatus()
+	if hasDefaultDeny(st.Rules) {
+		return nil
+	}
+	args, err := buildPortRuleArgs("deny", "", "", "", 0)
+	if err != nil {
+		return err
+	}
+	if out, err := execCommandFn("ufw", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("ufw %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// addPortRule adds an allow/deny rule. Allows are inserted above the first
+// port-deny so "allows above denies" holds; denies are appended (default deny
+// stays at the bottom when added last on enable).
+func addPortRule(action, port, proto, from string) error {
+	if _, err := execLookPathFn("ufw"); err != nil {
+		return fmt.Errorf("ufw not installed")
+	}
+	port = normalizePort(port)
+	st := getUFWStatus()
 	if ruleExists(st.Rules, action, port, proto, from) {
-		return nil // already present — avoid the duplicate rows operators see on re-enable
+		return nil
 	}
 
 	insertAt := 0
 	if strings.EqualFold(action, "allow") {
 		insertAt = firstPortDenyNumber(st.Rules)
+		// Also don't insert below a default deny — keep allows above it.
+		if insertAt == 0 {
+			for _, r := range st.Rules {
+				if isDefaultDeny(r) {
+					insertAt = r.Number
+					break
+				}
+			}
+		}
 	}
 
 	args, err := buildPortRuleArgs(action, port, proto, from, insertAt)
@@ -221,20 +292,19 @@ func MoveRule(number int, direction string) error {
 	return nil
 }
 
-// DeduplicatePortAllows removes duplicate allow rules for the same port/proto/from
-// (keeps the lowest number). Used after enable so re-enabling cannot stack copies.
-func DeduplicatePortAllows() {
+// DeduplicateRules removes duplicate rules for the same action/port/proto/from/v6
+// (keeps the lowest number). Used around enable so re-enabling cannot stack copies.
+func DeduplicateRules() {
 	st := getUFWStatus()
 	seen := map[string]int{}
-	// Delete from highest number to lowest so indices stay stable.
 	var toDelete []int
 	for _, r := range st.Rules {
-		if strings.ToUpper(r.Action) != "ALLOW" || r.Port == "" {
+		if r.Number <= 0 {
+			// Staged rules (ufw inactive) have no numbers — delete after enable.
 			continue
 		}
-		key := r.Port + "/" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From) + "|" + fmt.Sprint(r.V6)
-		if prev, ok := seen[key]; ok {
-			_ = prev
+		key := strings.ToUpper(r.Action) + "|" + normalizePort(r.Port) + "/" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From) + "|" + fmt.Sprint(r.V6)
+		if _, ok := seen[key]; ok {
 			toDelete = append(toDelete, r.Number)
 			continue
 		}
@@ -244,3 +314,6 @@ func DeduplicatePortAllows() {
 		_ = DeleteRule(toDelete[i])
 	}
 }
+
+// DeduplicatePortAllows is kept for callers; it now dedupes all rule kinds.
+func DeduplicatePortAllows() { DeduplicateRules() }
