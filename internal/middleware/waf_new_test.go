@@ -11,21 +11,41 @@ import (
 
 // --- DomainWAF: Content-Type skip tests ---
 
-func TestDomainWAFJSONBodyNotScanned(t *testing.T) {
+// JSON body with no attack pattern: passes.
+func TestDomainWAFJSONBodySafe(t *testing.T) {
 	log := logger.New("error", "text")
 
 	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
-	body := `{"query": "SELECT * FROM users WHERE id = 1; DROP TABLE users"}`
+	body := `{"query": "SELECT * FROM users WHERE id = 1"}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/query", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 200 {
-		t.Errorf("JSON body with SQL keywords: status = %d, want 200 (should skip scan)", rec.Code)
+		t.Errorf("safe JSON body: status = %d, want 200", rec.Code)
+	}
+}
+
+// JSON body with a WAF-pattern payload is now blocked (was a bypass).
+func TestDomainWAFJSONBodyBlocked(t *testing.T) {
+	log := logger.New("error", "text")
+
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	body := `{"query": "1' UNION SELECT username,password FROM users--"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/query", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("JSON body with SQLi: status = %d, want 403 (WAF must scan JSON values)", rec.Code)
 	}
 }
 
@@ -47,21 +67,41 @@ func TestDomainWAFJSONCharsetNotScanned(t *testing.T) {
 	}
 }
 
-func TestDomainWAFMultipartNotScanned(t *testing.T) {
+// Multipart with no attack pattern: passes.
+func TestDomainWAFMultipartSafe(t *testing.T) {
 	log := logger.New("error", "text")
 
 	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
 
-	body := "------WebKitFormBoundary\r\nContent-Disposition: form-data\r\n\r\nUNION SELECT * FROM users\r\n------WebKitFormBoundary--"
+	body := "------WebKitFormBoundary\r\nContent-Disposition: form-data; name=\"q\"\r\n\r\nhello world\r\n------WebKitFormBoundary--"
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/upload", strings.NewReader(body))
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=----WebKitFormBoundary")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != 200 {
-		t.Errorf("multipart body: status = %d, want 200", rec.Code)
+		t.Errorf("safe multipart body: status = %d, want 200", rec.Code)
+	}
+}
+
+// Multipart with a WAF-pattern payload is now blocked (was a bypass).
+func TestDomainWAFMultipartBlocked(t *testing.T) {
+	log := logger.New("error", "text")
+
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	body := "------WebKitFormBoundary\r\nContent-Disposition: form-data; name=\"q\"\r\n\r\n1' UNION SELECT username,password FROM users--\r\n------WebKitFormBoundary--"
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader(body))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=----WebKitFormBoundary")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != 403 {
+		t.Errorf("multipart body with SQLi: status = %d, want 403 (WAF must scan form fields)", rec.Code)
 	}
 }
 
@@ -177,20 +217,26 @@ func TestIsAPContentType(t *testing.T) {
 		ct   string
 		want bool
 	}{
-		{"application/json", true},
-		{"application/json; charset=utf-8", true},
-		{"APPLICATION/JSON", true},
-		{"multipart/form-data; boundary=something", true},
+		// application/json and multipart/form-data are now scanned, so they return false.
+		{"application/json", false},
+		{"application/json; charset=utf-8", false},
+		{"APPLICATION/JSON", false},
+		{"multipart/form-data; boundary=something", false},
+		// +json suffix types are scanned.
+		{"application/vnd.api+json", false},
+		{"application/protobuf+json", false},
+		// These types remain skipped.
 		{"application/xml", true},
 		{"text/xml", true},
 		{"application/soap+xml", true},
-		{"application/vnd.api+json", true},
-		{"application/protobuf+json", true},
 		{"application/graphql+json", true},
 		{"application/grpc", true},
 		{"application/grpc-web", true},
 		{"application/octet-stream", true},
 		{"application/x-protobuf", true},
+		// +xml suffix types are skipped.
+		{"application/soap+xml", true},
+		// Not skipped.
 		{"application/x-www-form-urlencoded", false},
 		{"text/html", false},
 		{"text/plain", false},

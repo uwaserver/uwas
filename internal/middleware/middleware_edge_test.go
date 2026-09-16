@@ -101,21 +101,30 @@ func TestExtractRealIPInvalidEntry(t *testing.T) {
 }
 
 // --- isAPContentType ---
+// application/json and multipart/form-data are now scanned, not skipped.
+// +xml suffix types remain skipped; +json suffix types are now scanned too.
 func TestIsAPContentTypeEdge(t *testing.T) {
-	if !isAPContentType("application/json") {
-		t.Error("application/json should be AP content type")
+	if isAPContentType("application/json") {
+		t.Error("application/json should not be AP content type (now scanned)")
 	}
-	if !isAPContentType("multipart/form-data") {
-		t.Error("multipart/form-data should be AP content type")
+	if isAPContentType("multipart/form-data") {
+		t.Error("multipart/form-data should not be AP content type (now scanned)")
 	}
-	if !isAPContentType("application/vnd.api+json") {
-		t.Error("+json suffix should be AP content type")
+	if isAPContentType("application/vnd.api+json") {
+		t.Error("+json suffix should not be AP content type (now scanned)")
 	}
 	if isAPContentType("text/plain") {
 		t.Error("text/plain should not be AP content type")
 	}
 	// Test with charset parameter
-	if !isAPContentType("application/json; charset=utf-8") {
-		t.Error("application/json with charset should be AP content type")
+	if isAPContentType("application/json; charset=utf-8") {
+		t.Error("application/json with charset should not be AP content type (now scanned)")
+	}
+	// +xml suffix types remain skipped.
+	if !isAPContentType("application/soap+xml") {
+		t.Error("application/soap+xml should be AP content type")
+	}
+	if !isAPContentType("application/xml") {
+		t.Error("application/xml should be AP content type")
 	}
 }

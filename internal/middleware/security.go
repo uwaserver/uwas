@@ -2,7 +2,10 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -223,15 +226,35 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, rules []string, st
 			bodyBytes, _ := io.ReadAll(io.LimitReader(r.Body, maxBodyScan))
 			if len(bodyBytes) > 0 {
 				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), r.Body))
-				body := string(bodyBytes)
-				decodedBody, _ := url.QueryUnescape(body)
-				if matchWAF(wafBodyPatterns, families, body, decodedBody) {
-					if stats != nil {
-						stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+				if isJSONContentType(ct) {
+					if scanJSONBody(bodyBytes, families) {
+						if stats != nil {
+							stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+						}
+						log.Warn("WAF blocked request (body)", "path", path, "remote", r.RemoteAddr)
+						http.Error(w, "403 Forbidden", http.StatusForbidden)
+						return false
 					}
-					log.Warn("WAF blocked request (body)", "path", path, "remote", r.RemoteAddr)
-					http.Error(w, "403 Forbidden", http.StatusForbidden)
-					return false
+				} else if isMultipartContentType(ct) {
+					if scanMultipartBody(bodyBytes, ct, families) {
+						if stats != nil {
+							stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+						}
+						log.Warn("WAF blocked request (body)", "path", path, "remote", r.RemoteAddr)
+						http.Error(w, "403 Forbidden", http.StatusForbidden)
+						return false
+					}
+				} else {
+					body := string(bodyBytes)
+					decodedBody, _ := url.QueryUnescape(body)
+					if matchWAF(wafBodyPatterns, families, body, decodedBody) {
+						if stats != nil {
+							stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
+						}
+						log.Warn("WAF blocked request (body)", "path", path, "remote", r.RemoteAddr)
+						http.Error(w, "403 Forbidden", http.StatusForbidden)
+						return false
+					}
 				}
 			}
 		}
@@ -248,9 +271,7 @@ func isAPContentType(ct string) bool {
 	}
 	ct = strings.TrimSpace(ct)
 	switch ct {
-	case "application/json",
-		"multipart/form-data",
-		"application/xml",
+	case "application/xml",
 		"text/xml",
 		"application/soap+xml",
 		"application/x-protobuf",
@@ -260,7 +281,107 @@ func isAPContentType(ct string) bool {
 		"application/graphql+json":
 		return true
 	}
-	return strings.HasSuffix(ct, "+json") || strings.HasSuffix(ct, "+xml")
+	return strings.HasSuffix(ct, "+xml")
+}
+
+// isJSONContentType reports whether ct is application/json or a +json suffix type.
+func isJSONContentType(ct string) bool {
+	ct = strings.ToLower(ct)
+	if idx := strings.Index(ct, ";"); idx != -1 {
+		ct = ct[:idx]
+	}
+	return strings.TrimSpace(ct) == "application/json" || strings.HasSuffix(ct, "+json")
+}
+
+// isMultipartContentType reports whether ct is multipart/form-data.
+func isMultipartContentType(ct string) bool {
+	ct = strings.ToLower(ct)
+	if idx := strings.Index(ct, ";"); idx != -1 {
+		ct = ct[:idx]
+	}
+	return strings.TrimSpace(ct) == "multipart/form-data"
+}
+
+// scanJSONBody recursively extracts every JSON string value from bodyBytes
+// and checks each against the WAF patterns. Returns true if any value is blocked.
+func scanJSONBody(bodyBytes []byte, families map[string]bool) bool {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+		// Not an array — fall back to trying as a plain object/value.
+		var obj interface{}
+		if err2 := json.Unmarshal(bodyBytes, &obj); err2 != nil {
+			return false
+		}
+		return scanJSONValue(obj, families)
+	}
+	for _, v := range raw {
+		if scanJSONValue(v, families) {
+			return true
+		}
+	}
+	return false
+}
+
+// scanJSONValue dispatches a decoded JSON value for WAF checking.
+func scanJSONValue(v interface{}, families map[string]bool) bool {
+	switch val := v.(type) {
+	case string:
+		decoded, _ := url.QueryUnescape(val)
+		if matchWAF(wafBodyPatterns, families, val, decoded) {
+			return true
+		}
+	case map[string]interface{}:
+		for _, sub := range val {
+			if scanJSONValue(sub, families) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, sub := range val {
+			if scanJSONValue(sub, families) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// scanMultipartBody extracts every form-data field value from bodyBytes
+// (using the boundary from ct) and checks each against the WAF patterns.
+// Returns true if any field value is blocked.
+func scanMultipartBody(bodyBytes []byte, ct string, families map[string]bool) bool {
+	_, params, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return false
+	}
+	boundary, ok := params["boundary"]
+	if !ok {
+		return false
+	}
+	mr := multipart.NewReader(bytes.NewReader(bodyBytes), boundary)
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false
+		}
+		// Only scan form-data fields, not file content with Content-Disposition.
+		if part.FormName() == "" {
+			continue
+		}
+		value, err := io.ReadAll(io.LimitReader(part, maxBodyScan))
+		if err != nil {
+			continue
+		}
+		s := string(value)
+		decoded, _ := url.QueryUnescape(s)
+		if matchWAF(wafBodyPatterns, families, s, decoded) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchWAF reports whether any enabled rule matches. families nil means every
