@@ -26,6 +26,11 @@ import {
 import { useConfirm } from '@/components/useConfirm';
 import AutoBlockPanel from '@/components/AutoBlockPanel';
 
+/** Autoblock denys are managed in AutoBlockPanel — hide them from the rules table. */
+function isAutoblockRule(r: FirewallRule): boolean {
+  return (r.from || '').includes('uwas-autoblock') || (r.comment || '').includes('uwas-autoblock');
+}
+
 export default function Firewall() {
   const { confirmAction } = useConfirm();
   const [fw, setFw] = useState<FirewallStatus | null>(null);
@@ -97,7 +102,7 @@ export default function Firewall() {
       if (!hasSSH) {
         const ok = await confirmAction({
           title: 'Enable the firewall?',
-          message: 'UWAS will first allow its own ports (SSH 22, HTTP 80, HTTPS 443, and the admin port), set default incoming deny (policy — not a numbered rule), then turn the firewall on with a 60-second safety timer. Duplicate allow rules are skipped.',
+          message: 'UWAS will first allow its own ports (SSH 22, HTTP 80, HTTPS 443/tcp + 443/udp for QUIC, and the admin port), set default incoming deny (policy — not a numbered rule), then turn the firewall on with a 60-second safety timer. Duplicate allow rules are skipped.',
           confirmLabel: 'Enable firewall',
         });
         if (!ok) {
@@ -218,8 +223,9 @@ export default function Firewall() {
   };
 
   const rules: FirewallRule[] = fw?.rules ?? [];
-  const filteredRules = showV6 ? rules : rules.filter(r => !r.v6);
-  const v6Count = rules.filter(r => r.v6).length;
+  const filteredRules = rules.filter(r => (showV6 || !r.v6) && !isAutoblockRule(r));
+  const v6Count = rules.filter(r => r.v6 && !isAutoblockRule(r)).length;
+  const autoblockHidden = rules.filter(r => !r.v6 && isAutoblockRule(r)).length;
 
   if (loading) {
     return (
@@ -284,7 +290,8 @@ export default function Firewall() {
                 <p className="text-sm font-semibold text-emerald-400">Firewall Active</p>
                 <p className="text-xs text-muted-foreground">
                   {filteredRules.length} rules shown
-                  {v6Count > 0 && !showV6 ? ` (${v6Count} IPv6 hidden)` : rules.length !== filteredRules.length ? ` / ${rules.length} total` : ''}
+                  {v6Count > 0 && !showV6 ? ` (${v6Count} IPv6 hidden)` : ''}
+                  {autoblockHidden > 0 ? ` (${autoblockHidden} auto-block in panel above)` : ''}
                 </p>
               </div>
             </div>
@@ -298,6 +305,7 @@ export default function Firewall() {
                     ? `${filteredRules.length} rule(s) staged — applied when you enable`
                     : 'No rules are being enforced'}
                   {v6Count > 0 && !showV6 ? ` (${v6Count} IPv6 hidden)` : ''}
+                  {autoblockHidden > 0 ? ` (${autoblockHidden} auto-block in panel above)` : ''}
                 </p>
               </div>
             </div>

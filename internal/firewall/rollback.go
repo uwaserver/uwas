@@ -25,6 +25,9 @@ var (
 // Disable after `within` unless ConfirmEnable cancels it first. A `within` of 0
 // enables with no rollback.
 //
+// Each entry is a port ("80") or "port/proto" ("443/udp"). Bare ports default
+// to tcp. UDP/443 is required for HTTP/3 (QUIC).
+//
 // The allow-first order matters: `ufw enable` starts denying immediately, so a
 // rule added afterwards would race the dropped connection.
 func EnableWithRollback(within time.Duration, allowPorts []string) error {
@@ -38,7 +41,11 @@ func EnableWithRollback(within time.Duration, allowPorts []string) error {
 		if p == "" {
 			continue
 		}
-		_ = AllowPort(p, "tcp")
+		port, proto := p, "tcp"
+		if i := strings.IndexByte(p, '/'); i >= 0 {
+			port, proto = p[:i], p[i+1:]
+		}
+		_ = AllowPort(port, proto)
 	}
 
 	_ = execCommandFn("ufw", "default", "deny", "incoming").Run()

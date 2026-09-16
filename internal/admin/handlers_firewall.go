@@ -32,10 +32,10 @@ var (
 // button, short enough that a locked-out operator is not stranded.
 const firewallRollbackWindow = 60 * time.Second
 
-// uwasFirewallPorts returns the TCP ports UWAS listens on, so enabling the
-// firewall does not cut them off. SSH (22) is always included — losing it is
-// the whole reason people fear `ufw enable` — and localhost-only listeners are
-// skipped since the firewall governs external traffic they never receive.
+// uwasFirewallPorts returns the ports UWAS needs open when enabling the
+// firewall. Entries are "port" (tcp) or "port/proto". SSH (22) and the web
+// ports are always included — losing SSH is why people fear `ufw enable`.
+// UDP/443 is included for HTTP/3 (QUIC). Localhost-only listeners are skipped.
 func uwasFirewallPorts(g config.GlobalConfig) []string {
 	seen := map[string]bool{}
 	var ports []string
@@ -46,10 +46,10 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 		seen[p] = true
 		ports = append(ports, p)
 	}
-	// SSH and the web ports are the non-negotiable ones.
 	add("22")
 	add("80")
 	add("443")
+	add("443/udp") // HTTP/3 (QUIC)
 	for _, listen := range []string{g.HTTPListen, g.HTTPSListen, g.Admin.Listen, g.SFTPListen, g.MCP.Listen} {
 		if listen == "" {
 			continue
@@ -58,12 +58,19 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 		if err != nil || port == "" {
 			continue
 		}
-		// A service bound to loopback is not reachable from outside, so it
-		// needs no allow rule.
 		if host == "127.0.0.1" || host == "::1" || strings.EqualFold(host, "localhost") {
 			continue
 		}
 		add(port)
+	}
+	// QUIC shares the HTTPS listen port when it is not the default 443.
+	if g.HTTPSListen != "" {
+		host, port, err := net.SplitHostPort(g.HTTPSListen)
+		if err == nil && port != "" && port != "443" {
+			if host != "127.0.0.1" && host != "::1" && !strings.EqualFold(host, "localhost") {
+				add(port + "/udp")
+			}
+		}
 	}
 	return ports
 }
