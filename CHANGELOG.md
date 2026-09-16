@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.16] - 2026-09-16
+
+### Security
+
+- **WAF body scan no longer skips JSON and multipart.**
+  `application/json`, `multipart/form-data`, and `+json` bodies were treated as
+  opaque and bypassed SQLi/XSS/PHP pattern checks. Dedicated scanners now
+  extract string values from JSON and named multipart fields and run them
+  through the same body patterns.
+- **Cron execute requires admin auth**; deploy `build_cmd` rejects shell
+  chaining metacharacters (`&&`, `|`, `;`, …); expired sessions are deleted on
+  validate.
+- Fifteen additional security/reliability fixes across admin, auth, backup,
+  filemanager, TLS/ACME, limiter, PHP, apps, deploy, and panic logging.
+
+### Added
+
+- **Firewall: Source IP/CIDR** on allow/deny rules; allows insert above
+  port-denies; ↑↓ reorder via `POST /api/v1/firewall/{n}/move`.
+- **Database user Drop** in the panel (`DELETE /api/v1/database/users`).
+- **Deploy-key Generate** on app Edit (previously only in the Deploy modal).
+
+### Fixed
+
+- Firewall enable no longer stacks duplicate allows; default incoming deny is
+  UFW policy (not numbered “Any DENY” rows); source-IP deny rules parse `From`
+  correctly instead of looking like Anywhere.
+- Enabling remote MySQL while the firewall is active prompts to allow TCP 3306
+  (from the DB host or anywhere).
+
 ## [0.11.15] - 2026-09-15
 
 ### Security
