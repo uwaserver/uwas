@@ -91,7 +91,8 @@ func getUFWStatus() Status {
 func parseUFWRule(line string) Rule {
 	// Format: [ 1] 80/tcp                     ALLOW IN    Anywhere
 	// Format: [ 2] 22/tcp                     ALLOW IN    Anywhere (v6)
-	// Format: [ 3] Anywhere on eth0           DENY IN     192.168.1.100
+	// Format: [ 3] Anywhere                   DENY IN     192.168.1.100
+	// Format: [ 4] 3306/tcp                   ALLOW IN    203.0.113.10
 	r := Rule{}
 
 	line = strings.TrimSpace(line)
@@ -137,30 +138,30 @@ func parseUFWRule(line string) Rule {
 		if len(parts) >= 3 && strings.ToLower(parts[1]) == "on" {
 			r.To = firstPart + " " + parts[1] + " " + parts[2]
 		}
+	} else if isNumericPort(firstPart) {
+		r.Port = firstPart
+		r.To = firstPart
 	} else {
 		r.To = firstPart
 	}
 
-	// Find action (ALLOW, DENY, REJECT)
-	for _, p := range parts {
+	// Find action (ALLOW, DENY, REJECT) and treat everything after IN/OUT as From.
+	// Important: do NOT treat the destination "Anywhere" as From — source-IP
+	// denys look like `Anywhere DENY IN 1.2.3.4` and used to be mis-parsed as
+	// From=Anywhere (showing up as duplicate "Any DENY" rows).
+	for i, p := range parts {
 		up := strings.ToUpper(p)
 		if up == "ALLOW" || up == "DENY" || up == "REJECT" {
 			r.Action = up
+			continue
+		}
+		if (up == "IN" || up == "OUT") && i+1 < len(parts) {
+			r.From = strings.Join(parts[i+1:], " ")
 			break
 		}
 	}
-
-	// Find From (usually "Anywhere" or an IP/CIDR)
-	for _, p := range parts {
-		lowerP := strings.ToLower(p)
-		if lowerP == "anywhere" {
-			r.From = "Anywhere"
-			break
-		}
-		// IPv4 or IPv6 source address (contains '.' or ':')
-		if !r.V6 && (strings.Contains(p, ".") || strings.Contains(p, ":")) && r.From == "" {
-			r.From = p
-		}
+	if r.From == "" {
+		r.From = "Anywhere"
 	}
 
 	return r
@@ -247,41 +248,29 @@ func validateProto(proto string) error {
 }
 
 func AllowPort(port, proto string) error {
-	if _, err := execLookPathFn("ufw"); err != nil {
-		return fmt.Errorf("ufw not installed")
-	}
-	if err := validatePort(port); err != nil {
-		return err
-	}
-	if err := validateProto(proto); err != nil {
-		return err
-	}
-	target := port
-	if proto != "" {
-		target = port + "/" + proto
-	}
-	return execCommandFn("ufw", "allow", target).Run()
+	return AllowPortFrom(port, proto, "")
+}
+
+// AllowPortFrom adds a ufw allow rule, optionally limited to a source IP/CIDR.
+// Allows are inserted above port-deny rules so they stay effective.
+func AllowPortFrom(port, proto, from string) error {
+	return addPortRule("allow", port, proto, from)
 }
 
 // DenyPort adds a ufw deny rule. Cannot deny protected ports (80, 443, 22, admin).
 func DenyPort(port, proto string) error {
-	if _, err := execLookPathFn("ufw"); err != nil {
-		return fmt.Errorf("ufw not installed")
-	}
+	return DenyPortFrom(port, proto, "")
+}
+
+// DenyPortFrom adds a ufw deny rule, optionally limited to a source IP/CIDR.
+func DenyPortFrom(port, proto, from string) error {
 	if err := validatePort(port); err != nil {
 		return err
 	}
-	if err := validateProto(proto); err != nil {
-		return err
-	}
-	if deniesProtectedPort(port) {
+	if deniesProtectedPort(port) && normalizeFrom(from) == "" {
 		return fmt.Errorf("cannot deny port %s — it covers a port required for server operation (HTTP/HTTPS/SSH/Admin)", port)
 	}
-	target := port
-	if proto != "" {
-		target = port + "/" + proto
-	}
-	return execCommandFn("ufw", "deny", target).Run()
+	return addPortRule("deny", port, proto, from)
 }
 
 // DeleteRule removes a rule by number.

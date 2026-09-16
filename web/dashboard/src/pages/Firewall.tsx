@@ -8,12 +8,15 @@ import {
   CheckCircle,
   XCircle,
   Power,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import {
   fetchFirewall,
   firewallAllow,
   firewallDeny,
   firewallDeleteRule,
+  firewallMoveRule,
   firewallEnable,
   firewallDisable,
   firewallConfirm,
@@ -34,8 +37,10 @@ export default function Firewall() {
   // Add rule form
   const [port, setPort] = useState('');
   const [proto, setProto] = useState('tcp');
+  const [from, setFrom] = useState('');
   const [action, setAction] = useState<'allow' | 'deny'>('allow');
   const [adding, setAdding] = useState(false);
+  const [moving, setMoving] = useState<number | null>(null);
 
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
@@ -58,16 +63,12 @@ export default function Firewall() {
     load();
   }, [load]);
 
-  // While a rollback is pending, refresh once a second so the countdown ticks
-  // and the banner disappears the moment the firewall auto-disables or the
-  // operator confirms.
   useEffect(() => {
     if (!fw?.rollback_pending) return;
     const id = window.setInterval(load, 1000);
     return () => window.clearInterval(id);
   }, [fw?.rollback_pending, load]);
 
-  // Auto-dismiss success status after 4s. Errors stick.
   useEffect(() => {
     if (!status) return;
     const id = window.setTimeout(() => setStatus(s => s === status ? '' : s), 4000);
@@ -88,8 +89,6 @@ export default function Firewall() {
         return;
       }
     } else {
-      // Enabling UFW without an explicit allow rule for SSH is the
-      // classic way to lock yourself out of a remote server.
       const rules = fw.rules ?? [];
       const hasSSH = rules.some(r =>
         r.action.toLowerCase() === 'allow' &&
@@ -98,7 +97,7 @@ export default function Firewall() {
       if (!hasSSH) {
         const ok = await confirmAction({
           title: 'Enable the firewall?',
-          message: 'UWAS will first allow its own ports (SSH 22, HTTP 80, HTTPS 443, and the admin port), then turn the firewall on with a 60-second safety timer: if you lose access, it disables itself automatically unless you confirm. You can still add your own allow rules first.',
+          message: 'UWAS will first allow its own ports (SSH 22, HTTP 80, HTTPS 443, and the admin port), set default incoming deny (policy — not a numbered rule), then turn the firewall on with a 60-second safety timer. Duplicate allow rules are skipped.',
           confirmLabel: 'Enable firewall',
         });
         if (!ok) {
@@ -143,7 +142,6 @@ export default function Firewall() {
   const handleAddRule = async () => {
     const p = port.trim();
     if (!p) return;
-    // Validate port: single port (1-65535), range (8080:8090), or service name
     const portRangeRe = /^(\d{1,5})(:\d{1,5})?$/;
     const match = p.match(portRangeRe);
     if (match) {
@@ -154,18 +152,24 @@ export default function Firewall() {
         if (end < 1 || end > 65535 || end <= num) { setError('Invalid port range'); return; }
       }
     }
+    const src = from.trim();
+    if (src && !/^[\d.:a-fA-F/]+$/.test(src)) {
+      setError('Source must be an IP or CIDR (e.g. 203.0.113.10 or 10.0.0.0/8)');
+      return;
+    }
     setAdding(true);
     setError('');
     setStatus('');
     try {
       const protoParam = proto === 'both' ? undefined : proto;
       if (action === 'allow') {
-        await firewallAllow(port.trim(), protoParam);
+        await firewallAllow(p, protoParam, src || undefined);
       } else {
-        await firewallDeny(port.trim(), protoParam);
+        await firewallDeny(p, protoParam, src || undefined);
       }
       setPort('');
-      setStatus(`Rule added: ${action} port ${port.trim()}/${proto}`);
+      setFrom('');
+      setStatus(`Rule added: ${action} ${p}/${proto}${src ? ` from ${src}` : ''}`);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -190,6 +194,19 @@ export default function Firewall() {
     }
   };
 
+  const handleMove = async (num: number, direction: 'up' | 'down') => {
+    setMoving(num);
+    setError('');
+    try {
+      await firewallMoveRule(num, direction);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setMoving(null);
+    }
+  };
+
   const rules: FirewallRule[] = fw?.rules ?? [];
   const filteredRules = showV6 ? rules : rules.filter(r => !r.v6);
   const v6Count = rules.filter(r => r.v6).length;
@@ -202,12 +219,11 @@ export default function Firewall() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold sm:text-2xl text-foreground">Firewall</h1>
           <p className="text-sm text-muted-foreground">
-            Manage firewall rules{fw?.backend ? ` (backend: ${fw.backend})` : ''}
+            Manage firewall rules{fw?.backend ? ` (backend: ${fw.backend})` : ''} — allows above port denies; use arrows to reorder
           </p>
         </div>
         <button
@@ -231,7 +247,6 @@ export default function Firewall() {
         </div>
       )}
 
-      {/* Rollback countdown — the firewall will auto-disable unless confirmed */}
       {fw?.rollback_pending && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
           <div className="flex items-center gap-2 text-sm text-amber-300">
@@ -250,7 +265,6 @@ export default function Firewall() {
         </div>
       )}
 
-      {/* Status + toggle */}
       <div className="flex items-center justify-between rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="flex items-center gap-4">
           {fw?.active ? (
@@ -289,86 +303,96 @@ export default function Firewall() {
         </button>
       </div>
 
-      {/* Add rule form */}
       <div className="rounded-lg border border-border bg-card p-5 shadow-md">
         <div className="mb-4 flex items-center gap-2">
           <Plus size={18} className="text-blue-400" />
           <h2 className="text-sm font-semibold text-card-foreground">Add Rule</h2>
         </div>
 
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-          {/* Port */}
-          <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Port</label>
-            <input
-              type="text"
-              value={port}
-              onChange={e => setPort(e.target.value)}
-              placeholder="e.g. 80, 443, 8080:8090"
-              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
-            />
-          </div>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="flex-1">
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Port</label>
+              <input
+                type="text"
+                value={port}
+                onChange={e => setPort(e.target.value)}
+                placeholder="e.g. 80, 443, 8080:8090"
+                className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500"
+              />
+            </div>
 
-          {/* Protocol */}
-          <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Protocol</label>
-            <div className="flex gap-1 rounded-lg bg-background p-1">
-              {(['tcp', 'udp', 'both'] as const).map(p => (
+            <div className="flex-1">
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Source IP / CIDR</label>
+              <input
+                type="text"
+                value={from}
+                onChange={e => setFrom(e.target.value)}
+                placeholder="Anywhere (leave empty) or 203.0.113.10"
+                className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm font-mono text-foreground outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Protocol</label>
+              <div className="flex gap-1 rounded-lg bg-background p-1">
+                {(['tcp', 'udp', 'both'] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setProto(p)}
+                    className={`rounded-md px-4 py-2 text-sm font-medium transition ${
+                      proto === p
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {p.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Action</label>
+              <div className="flex gap-1 rounded-lg bg-background p-1">
                 <button
-                  key={p}
-                  onClick={() => setProto(p)}
+                  onClick={() => setAction('allow')}
                   className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                    proto === p
-                      ? 'bg-blue-600 text-white shadow'
+                    action === 'allow'
+                      ? 'bg-emerald-600 text-white shadow'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {p.toUpperCase()}
+                  Allow
                 </button>
-              ))}
+                <button
+                  onClick={() => setAction('deny')}
+                  className={`rounded-md px-4 py-2 text-sm font-medium transition ${
+                    action === 'deny'
+                      ? 'bg-red-600 text-white shadow'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Deny
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* Action */}
-          <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase text-muted-foreground">Action</label>
-            <div className="flex gap-1 rounded-lg bg-background p-1">
-              <button
-                onClick={() => setAction('allow')}
-                className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                  action === 'allow'
-                    ? 'bg-emerald-600 text-white shadow'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Allow
-              </button>
-              <button
-                onClick={() => setAction('deny')}
-                className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                  action === 'deny'
-                    ? 'bg-red-600 text-white shadow'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Deny
-              </button>
-            </div>
+            <button
+              onClick={handleAddRule}
+              disabled={adding || !port.trim()}
+              className="flex items-center gap-1.5 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {adding ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+              {adding ? 'Adding...' : 'Add Rule'}
+            </button>
           </div>
-
-          {/* Submit */}
-          <button
-            onClick={handleAddRule}
-            disabled={adding || !port.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {adding ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-            {adding ? 'Adding...' : 'Add Rule'}
-          </button>
+          <p className="text-[11px] text-muted-foreground">
+            Empty source = anywhere. New allows are inserted above port-deny rules. Default incoming deny is UFW policy (not listed as a numbered row).
+          </p>
         </div>
       </div>
 
-      {/* Rules table */}
       <div className="rounded-lg border border-border bg-card shadow-md">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-sm font-semibold text-card-foreground">Firewall Rules ({filteredRules.length})</h2>
@@ -389,14 +413,14 @@ export default function Firewall() {
                 <th className="px-5 py-3 font-medium">Action</th>
                 <th className="px-5 py-3 font-medium">Port</th>
                 <th className="px-5 py-3 font-medium">Protocol</th>
-                <th className="px-5 py-3 font-medium">From</th>
+                <th className="px-5 py-3 font-medium">Source</th>
                 <th className="px-5 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredRules.map(rule => (
+              {filteredRules.map((rule, i) => (
                 <tr
-                  key={rule.number}
+                  key={`${rule.number}-${rule.v6 ? 'v6' : 'v4'}`}
                   className="border-b border-border/50 text-card-foreground transition hover:bg-accent/30"
                 >
                   <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{rule.number}</td>
@@ -433,12 +457,30 @@ export default function Firewall() {
                         </button>
                       </span>
                     ) : (
-                      <button
-                        onClick={() => setConfirmDelete(rule.number)}
-                        className="flex items-center gap-1 rounded-md bg-red-500/15 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/25"
-                      >
-                        <Trash2 size={12} /> Delete
-                      </button>
+                      <span className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => handleMove(rule.number, 'up')}
+                          disabled={moving === rule.number || i === 0}
+                          className="rounded-md bg-accent/50 p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
+                          title="Move up"
+                        >
+                          <ArrowUp size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleMove(rule.number, 'down')}
+                          disabled={moving === rule.number || i === filteredRules.length - 1}
+                          className="rounded-md bg-accent/50 p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
+                          title="Move down"
+                        >
+                          <ArrowDown size={12} />
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(rule.number)}
+                          className="flex items-center gap-1 rounded-md bg-red-500/15 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/25"
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
+                      </span>
                     )}
                   </td>
                 </tr>

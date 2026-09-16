@@ -528,6 +528,43 @@ func DropDatabase(name, user, host string) error {
 	return nil
 }
 
+// protectedMySQLUsers must never be dropped via the panel.
+var protectedMySQLUsers = map[string]struct{}{
+	"root": {}, "mysql": {}, "mariadb.sys": {}, "debian-sys-maint": {},
+	"mysql.sys": {}, "mysql.session": {}, "mysql.infoschema": {},
+}
+
+// DropUser removes a MySQL/MariaDB account (user@host). Does not drop databases.
+func DropUser(user, host string) error {
+	user = strings.TrimSpace(user)
+	host = strings.TrimSpace(host)
+	if user == "" {
+		return fmt.Errorf("user is required")
+	}
+	if !validDBIdentifier(user) {
+		return fmt.Errorf("invalid username: only letters, digits, and underscore allowed (max 64 chars)")
+	}
+	if _, ok := protectedMySQLUsers[user]; ok {
+		return fmt.Errorf("refusing to drop protected system user %q", user)
+	}
+	if host == "" {
+		host = "localhost"
+	}
+	if strings.ContainsAny(host, "\x00\n\r'") {
+		return fmt.Errorf("invalid host")
+	}
+
+	sql := fmt.Sprintf(`
+		DROP USER IF EXISTS '%s'@'%s';
+		FLUSH PRIVILEGES;
+	`, escapeSQL(user), escapeSQL(host))
+
+	if _, err := runMySQLFn(sql); err != nil {
+		return fmt.Errorf("drop user %q@%q: %w", user, host, err)
+	}
+	return nil
+}
+
 // ChangePassword changes the password for a database user.
 func ChangePassword(user, host, newPassword string) error {
 	if host == "" {

@@ -746,9 +746,13 @@ export const deleteCronJob = (schedule: string, command: string) => api<{ status
 export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; v6?: boolean; }
 export interface FirewallStatus { active: boolean; backend: string; rules: FirewallRule[]; staged?: boolean; rollback_pending?: boolean; rollback_seconds?: number; }
 export const fetchFirewall = () => api<FirewallStatus>('/api/v1/firewall');
-export const firewallAllow = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto }) });
-export const firewallDeny = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto }) });
+export const firewallAllow = (port: string, proto?: string, from?: string) =>
+  api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto, from: from || undefined }) });
+export const firewallDeny = (port: string, proto?: string, from?: string) =>
+  api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto, from: from || undefined }) });
 export const firewallDeleteRule = (number: number) => api<{ status: string }>(`/api/v1/firewall/${number}`, { method: 'DELETE' });
+export const firewallMoveRule = (number: number, direction: 'up' | 'down') =>
+  api<{ status: string }>(`/api/v1/firewall/${number}/move`, { method: 'POST', body: JSON.stringify({ direction }) });
 export const firewallEnable = () => api<{ status: string; rollback_seconds?: number; allowed_ports?: string[] }>('/api/v1/firewall/enable', { method: 'POST' });
 export const firewallConfirm = () => api<{ status: string; was_pending: boolean }>('/api/v1/firewall/confirm', { method: 'POST' });
 export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });
@@ -820,6 +824,8 @@ export interface DBUser { user: string; host: string; }
 export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users').then(r => r ?? []);
 export const changeDBPassword = (user: string, host: string, password: string) =>
   api<{ status: string }>('/api/v1/database/users/password', { method: 'POST', body: JSON.stringify({ user, host, password }) });
+export const dropDBUser = (user: string, host: string) =>
+  api<{ status: string }>('/api/v1/database/users', { method: 'DELETE', body: JSON.stringify({ user, host }) });
 export interface DBRemoteAccessResult { user: string; host: string; database?: string; password?: string; config_path: string; restarted: boolean; }
 export const configureDBRemoteAccess = (body: { user: string; host?: string; password?: string; database?: string }) =>
   api<DBRemoteAccessResult>('/api/v1/database/remote-access', { method: 'POST', body: JSON.stringify(body) });

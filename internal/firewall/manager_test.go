@@ -132,8 +132,57 @@ func TestGetStatus_Active(t *testing.T) {
 	if st.Rules[0].Port != "80" || st.Rules[0].Proto != "tcp" || st.Rules[0].Action != "ALLOW" {
 		t.Errorf("rule 0 mismatch: %+v", st.Rules[0])
 	}
+	if st.Rules[0].From != "Anywhere" {
+		t.Errorf("rule 0 from = %q, want Anywhere", st.Rules[0].From)
+	}
 	if st.Rules[2].Action != "DENY" {
 		t.Errorf("rule 2 action = %q, want DENY", st.Rules[2].Action)
+	}
+}
+
+func TestParseUFWRule_SourceIPDeny(t *testing.T) {
+	r := parseUFWRule("[ 1] Anywhere                   DENY IN     203.0.113.50")
+	if r.Action != "DENY" {
+		t.Fatalf("action = %q", r.Action)
+	}
+	if r.From != "203.0.113.50" {
+		t.Fatalf("from = %q, want 203.0.113.50 (not Anywhere)", r.From)
+	}
+	if r.Port != "" {
+		t.Fatalf("port = %q, want empty for IP deny", r.Port)
+	}
+}
+
+func TestParseUFWRule_AllowFromIP(t *testing.T) {
+	r := parseUFWRule("[ 4] 3306/tcp                   ALLOW IN    198.51.100.9")
+	if r.Port != "3306" || r.Proto != "tcp" || r.Action != "ALLOW" {
+		t.Fatalf("rule mismatch: %+v", r)
+	}
+	if r.From != "198.51.100.9" {
+		t.Fatalf("from = %q", r.From)
+	}
+}
+
+func TestBuildPortRuleArgs_From(t *testing.T) {
+	args, err := buildPortRuleArgs("allow", "3306", "tcp", "203.0.113.10", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(args, " ")
+	want := "allow from 203.0.113.10 to any port 3306 proto tcp"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestFirstPortDenyNumber(t *testing.T) {
+	rules := []Rule{
+		{Number: 1, Action: "DENY", From: "203.0.113.1"}, // IP deny — skip
+		{Number: 2, Action: "ALLOW", Port: "80", Proto: "tcp", From: "Anywhere"},
+		{Number: 3, Action: "DENY", Port: "3306", Proto: "tcp", From: "Anywhere"},
+	}
+	if n := firstPortDenyNumber(rules); n != 3 {
+		t.Fatalf("firstPortDenyNumber = %d, want 3", n)
 	}
 }
 
@@ -812,9 +861,9 @@ func TestParseUFWRule_AnywhereOnInterface(t *testing.T) {
 	if r.To != "Anywhere on eth0" {
 		t.Errorf("To = %q, want \"Anywhere on eth0\"", r.To)
 	}
-	// The From loop matches the literal "Anywhere" token (within "Anywhere on
-	// eth0") before reaching the trailing IP, so From resolves to "Anywhere".
-	if r.From != "Anywhere" {
-		t.Errorf("From = %q, want Anywhere", r.From)
+	// From is everything after IN/OUT — the source IP, not the destination
+	// "Anywhere" token.
+	if r.From != "192.168.1.100" {
+		t.Errorf("From = %q, want 192.168.1.100", r.From)
 	}
 }

@@ -17,9 +17,10 @@ import (
 // safe no-ops so `go test` never runs real ufw commands).
 var (
 	firewallGetStatus  = firewall.GetStatus
-	firewallAllowPort  = firewall.AllowPort
-	firewallDenyPort   = firewall.DenyPort
+	firewallAllowPort  = firewall.AllowPortFrom
+	firewallDenyPort   = firewall.DenyPortFrom
 	firewallDeleteRule = firewall.DeleteRule
+	firewallMoveRule   = firewall.MoveRule
 	firewallDisable    = firewall.Disable
 
 	firewallEnableWithRollback = firewall.EnableWithRollback
@@ -81,6 +82,7 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Port  string `json:"port"`
 		Proto string `json:"proto"`
+		From  string `json:"from"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -90,11 +92,11 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "port is required", http.StatusBadRequest)
 		return
 	}
-	if err := firewallAllowPort(req.Port, req.Proto); err != nil {
+	if err := firewallAllowPort(req.Port, req.Proto, req.From); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("firewall allow", "port", req.Port, "proto", req.Proto)
+	s.logger.Info("firewall allow", "port", req.Port, "proto", req.Proto, "from", req.From)
 	jsonResponse(w, map[string]string{"status": "allowed", "port": req.Port})
 }
 
@@ -106,6 +108,7 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Port  string `json:"port"`
 		Proto string `json:"proto"`
+		From  string `json:"from"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -115,12 +118,37 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "port is required", http.StatusBadRequest)
 		return
 	}
-	if err := firewallDenyPort(req.Port, req.Proto); err != nil {
+	if err := firewallDenyPort(req.Port, req.Proto, req.From); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("firewall deny", "port", req.Port, "proto", req.Proto)
+	s.logger.Info("firewall deny", "port", req.Port, "proto", req.Proto, "from", req.From)
 	jsonResponse(w, map[string]string{"status": "denied", "port": req.Port})
+}
+
+func (s *Server) handleFirewallMove(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	numStr := r.PathValue("number")
+	var num int
+	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil || num <= 0 {
+		jsonError(w, "invalid rule number", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Direction string `json:"direction"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := firewallMoveRule(num, req.Direction); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "moved", "direction": req.Direction})
 }
 
 func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {

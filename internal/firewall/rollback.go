@@ -35,13 +35,22 @@ func EnableWithRollback(within time.Duration, allowPorts []string) error {
 		}
 		// tcp: every port UWAS listens on (HTTP, HTTPS, admin, SFTP, SSH) is
 		// tcp. Errors are ignored on purpose — "rule already exists" and the
-		// like must not stop us from enabling.
+		// like must not stop us from enabling. addPortRule also skips
+		// duplicates so re-enabling cannot stack identical allow rows.
 		_ = AllowPort(p, "tcp")
 	}
+
+	// Default incoming deny is the UFW policy (not a numbered rule). Setting it
+	// explicitly once keeps "allows above, deny below" without inserting
+	// duplicate Anywhere DENY rows on every enable.
+	_ = execCommandFn("ufw", "default", "deny", "incoming").Run()
+	_ = execCommandFn("ufw", "default", "allow", "outgoing").Run()
 
 	if err := Enable(); err != nil {
 		return err
 	}
+
+	DeduplicatePortAllows()
 
 	if within > 0 {
 		rbMu.Lock()

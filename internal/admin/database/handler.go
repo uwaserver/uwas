@@ -241,6 +241,37 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "changed"})
 }
 
+func (h *Handler) DropUser(w http.ResponseWriter, r *http.Request) {
+	if !h.deps.RequireAdmin(w, r) || !h.deps.RequirePin(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		User string `json:"user"`
+		Host string `json:"host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.User == "" {
+		jsonError(w, "user is required", http.StatusBadRequest)
+		return
+	}
+	if err := dbpkg.DropUser(req.User, req.Host); err != nil {
+		h.deps.RecordAudit(r, "database.user_drop", "user: "+req.User+"@"+req.Host+": "+err.Error(), false)
+		code := http.StatusInternalServerError
+		msg := err.Error()
+		if strings.Contains(msg, "required") || strings.Contains(msg, "invalid") || strings.Contains(msg, "refusing") {
+			code = http.StatusBadRequest
+		}
+		jsonError(w, msg, code)
+		return
+	}
+	h.deps.RecordAudit(r, "database.user_drop", "user: "+req.User+"@"+req.Host, true)
+	jsonResponse(w, map[string]string{"status": "dropped", "user": req.User, "host": req.Host})
+}
+
 func (h *Handler) RemoteAccess(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireAdmin(w, r) || !h.deps.RequirePin(w, r) {
 		return

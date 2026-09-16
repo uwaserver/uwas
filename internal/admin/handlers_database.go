@@ -106,6 +106,9 @@ func (s *Server) handleDBUsers(w http.ResponseWriter, r *http.Request)    { s.db
 func (s *Server) handleDBChangePassword(w http.ResponseWriter, r *http.Request) {
 	s.dbHandler.ChangePassword(w, r)
 }
+func (s *Server) handleDBDropUser(w http.ResponseWriter, r *http.Request) {
+	s.dbHandler.DropUser(w, r)
+}
 func (s *Server) handleDBRemoteAccess(w http.ResponseWriter, r *http.Request) {
 	s.dbHandler.RemoteAccess(w, r)
 }
