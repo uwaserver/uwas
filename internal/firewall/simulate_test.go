@@ -705,6 +705,55 @@ func TestSimulate_MoveSwap_TwoAllows(t *testing.T) {
 	}
 }
 
+func TestSimulate_EnsureDefaultDeny_WhenOnlyV6Present(t *testing.T) {
+	s := newSim(t)
+	installSim(t, s)
+	s.add("allow", "22", "tcp", "", false)
+	s.setActive(true)
+
+	// Orphan: only the IPv6 default deny remains (production bug after bad move).
+	s.mu.Lock()
+	s.load()
+	var kept []simRule
+	for _, r := range s.rules {
+		if strings.EqualFold(r.Action, "DENY") && r.Port == "" && r.From == "" {
+			continue // drop any existing deny twins from seed
+		}
+		kept = append(kept, r)
+	}
+	kept = append(kept, simRule{Action: "DENY", V6: true})
+	s.rules = kept
+	s.persistLocked()
+	s.mu.Unlock()
+
+	st := GetStatus()
+	if hasDefaultDeny(st.Rules) {
+		t.Fatalf("v6-only deny must not satisfy hasDefaultDeny; rules=%v", dumpRules(st.Rules))
+	}
+	if err := ensureDefaultDenyAtBottom(); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	st = GetStatus()
+	if !hasDefaultDeny(st.Rules) {
+		t.Fatalf("IPv4 default deny not restored; rules=%v", dumpRules(st.Rules))
+	}
+	// Still exactly one IPv4 and one IPv6 default deny after dedupe.
+	v4, v6 := 0, 0
+	for _, r := range st.Rules {
+		if !isDefaultDeny(r) {
+			continue
+		}
+		if r.V6 {
+			v6++
+		} else {
+			v4++
+		}
+	}
+	if v4 != 1 || v6 != 1 {
+		t.Fatalf("want 1 v4 + 1 v6 default deny, got v4=%d v6=%d; rules=%v", v4, v6, dumpRules(st.Rules))
+	}
+}
+
 func dumpRules(rules []Rule) string {
 	var b strings.Builder
 	for _, r := range rules {

@@ -24,15 +24,18 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.18)
+## Current Snapshot (v0.11.19)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
 - **Go packages:** 71 (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
 - **CLI commands:** 19
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
-- **Security/stability fixes:** v0.11.18 hardens firewall reorder on top of the v0.11.17 panel polish
+- **Security/stability fixes:** v0.11.19 restores IPv4 default DENY when only the v6 twin survived
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.11.19 highlights:**
+- Firewall: heal missing IPv4 default DENY (v6-only orphan no longer blocks restore)
 
 **v0.11.18 highlights:**
 - Firewall: ↑↓ move no longer drops the bottom DENY; empty protocol shows as

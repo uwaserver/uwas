@@ -71,6 +71,8 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 // ============ Firewall ============
 
 func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) {
+	// Heal IPv4 default deny if an older move left only the v6 twin.
+	_ = firewall.EnsureDefaultDenyAtBottom()
 	jsonResponse(w, firewallGetStatus())
 }
 

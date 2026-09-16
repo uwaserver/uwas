@@ -5,6 +5,16 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.19
+
+Drop-in. If the firewall panel is missing the bottom IPv4 `DENY any → any` but
+still has an IPv6 twin (from an older move bug), open Firewall or click Refresh
+— the IPv4 deny is re-added automatically.
+
+No config or data migration.
+
+---
+
 ## Upgrading to v0.11.18
 
 Drop-in. Firewall reorder and display fixes only:

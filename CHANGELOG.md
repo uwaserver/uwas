@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.19] - 2026-09-16
+
+### Fixed
+
+- **IPv4 default DENY restores when only the IPv6 twin remains.** After a bad
+  move, `hasDefaultDeny` treated the orphaned v6 DENY as sufficient and never
+  re-added the IPv4 row — the panel showed no bottom drop. Status/refresh now
+  heals the IPv4 deny; dedupe keeps a single v4+v6 pair.
+
 ## [0.11.18] - 2026-09-16
 
 ### Fixed

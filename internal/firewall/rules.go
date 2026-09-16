@@ -146,19 +146,27 @@ func isDefaultDeny(r Rule) bool {
 	return strings.ToUpper(r.Action) == "DENY" && normalizePort(r.Port) == "" && normalizeFrom(r.From) == ""
 }
 
-// hasDefaultDeny reports whether a blanket deny any/any is already present.
+// hasDefaultDeny reports whether a blanket IPv4 deny any/any is present.
+// IPv6-only twins do not count: after a bad move the v4 row can vanish while
+// the v6 DENY remains, and treating that as "present" blocked re-adding IPv4.
 func hasDefaultDeny(rules []Rule) bool {
 	for _, r := range rules {
-		if isDefaultDeny(r) {
+		if !r.V6 && isDefaultDeny(r) {
 			return true
 		}
 	}
 	return false
 }
 
+// EnsureDefaultDenyAtBottom appends a numbered `deny from any to any` when the
+// IPv4 default deny is missing (exported so the admin status handler can heal).
+func EnsureDefaultDenyAtBottom() error {
+	return ensureDefaultDenyAtBottom()
+}
+
 // ensureDefaultDenyAtBottom appends a single numbered `deny from any to any`
-// when missing. UFW's default policy is invisible in the panel; operators want
-// an explicit bottom rule so allow-above-deny is visible.
+// when the IPv4 row is missing. UFW's default policy is invisible in the panel;
+// operators want an explicit bottom rule so allow-above-deny is visible.
 func ensureDefaultDenyAtBottom() error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
@@ -174,6 +182,8 @@ func ensureDefaultDenyAtBottom() error {
 	if out, err := execCommandFn("ufw", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ufw %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
+	// Adding deny any/any may recreate a v6 twin that already existed alone.
+	DeduplicateRules()
 	return nil
 }
 
@@ -196,7 +206,7 @@ func addPortRule(action, port, proto, from string) error {
 		// Also don't insert below a default deny — keep allows above it.
 		if insertAt == 0 {
 			for _, r := range st.Rules {
-				if isDefaultDeny(r) {
+				if !r.V6 && isDefaultDeny(r) {
 					insertAt = r.Number
 					break
 				}
