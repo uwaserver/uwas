@@ -88,7 +88,12 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Empty port = any port; empty from = anywhere.
+	// Empty port = any port; empty from = anywhere — but not both (that would
+	// be a blanket allow any/any which must never come from the panel form).
+	if strings.TrimSpace(req.Port) == "" && strings.TrimSpace(req.From) == "" {
+		jsonError(w, "port or source IP required", http.StatusBadRequest)
+		return
+	}
 	if err := firewallAllowPort(req.Port, req.Proto, req.From); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -109,6 +114,10 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Port) == "" && strings.TrimSpace(req.From) == "" {
+		jsonError(w, "port or source IP required", http.StatusBadRequest)
 		return
 	}
 	if err := firewallDenyPort(req.Port, req.Proto, req.From); err != nil {

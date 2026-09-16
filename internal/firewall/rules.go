@@ -3,6 +3,7 @@ package firewall
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 )
 
@@ -230,7 +231,39 @@ func ruleToUFWArgs(r Rule) ([]string, error) {
 	return buildPortRuleArgs(action, r.Port, r.Proto, from, 0)
 }
 
-// MoveRule moves a numbered rule up or down by one position ("up" / "down").
+// ruleFingerprint identifies equivalent rules across v4/v6 twins.
+func ruleFingerprint(r Rule) string {
+	return strings.ToUpper(r.Action) + "|" + normalizePort(r.Port) + "|" + strings.ToLower(r.Proto) + "|" + normalizeFrom(r.From)
+}
+
+// matchingRuleNumbers returns all numbered rules (v4+v6) matching r's content.
+func matchingRuleNumbers(rules []Rule, r Rule) []int {
+	fp := ruleFingerprint(r)
+	var nums []int
+	for _, x := range rules {
+		if x.Number > 0 && ruleFingerprint(x) == fp {
+			nums = append(nums, x.Number)
+		}
+	}
+	return nums
+}
+
+// logicalIPv4Rules returns non-v6 rules in status order (matches the panel list).
+func logicalIPv4Rules(rules []Rule) []Rule {
+	out := make([]Rule, 0, len(rules))
+	for _, r := range rules {
+		if !r.V6 {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// MoveRule moves a numbered rule up or down by one logical (IPv4) position.
+//
+// Important: UFW skips inserting a rule that already exists ("Skipping adding
+// existing rule") with exit 0. The old insert-then-delete approach then deleted
+// the next rule — often the default DENY. We delete-first, then insert.
 func MoveRule(number int, direction string) error {
 	if _, err := execLookPathFn("ufw"); err != nil {
 		return fmt.Errorf("ufw not installed")
@@ -244,51 +277,101 @@ func MoveRule(number int, direction string) error {
 	}
 
 	st := getUFWStatus()
+	logical := logicalIPv4Rules(st.Rules)
+
 	idx := -1
-	for i, r := range st.Rules {
+	for i, r := range logical {
 		if r.Number == number {
 			idx = i
 			break
 		}
 	}
+	// Map a v6 click to its IPv4 sibling when present.
+	if idx < 0 {
+		var clicked Rule
+		found := false
+		for _, r := range st.Rules {
+			if r.Number == number {
+				clicked = r
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("rule #%d not found", number)
+		}
+		fp := ruleFingerprint(clicked)
+		for i, r := range logical {
+			if ruleFingerprint(r) == fp {
+				idx = i
+				number = r.Number
+				break
+			}
+		}
+	}
 	if idx < 0 {
 		return fmt.Errorf("rule #%d not found", number)
 	}
-	if dir == "up" && idx == 0 {
-		return nil
-	}
-	if dir == "down" && idx >= len(st.Rules)-1 {
-		return nil
+
+	r := logical[idx]
+	if isDefaultDeny(r) {
+		return fmt.Errorf("cannot move the default deny rule")
 	}
 
-	r := st.Rules[idx]
+	swapIdx := idx - 1
+	if dir == "down" {
+		swapIdx = idx + 1
+	}
+	if swapIdx < 0 || swapIdx >= len(logical) {
+		return nil
+	}
+	if isDefaultDeny(logical[swapIdx]) {
+		return fmt.Errorf("cannot move a rule past the default deny")
+	}
+
 	args, err := ruleToUFWArgs(r)
 	if err != nil {
 		return err
 	}
 
-	var insertAt, deleteAt int
+	neighbor := logical[swapIdx]
+	toDelete := matchingRuleNumbers(st.Rules, r)
+	sort.Ints(toDelete)
+	for i := len(toDelete) - 1; i >= 0; i-- {
+		if out, err := execCommandFn("ufw", "--force", "delete", fmt.Sprintf("%d", toDelete[i])).CombinedOutput(); err != nil {
+			return fmt.Errorf("ufw delete before move: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Re-read and place relative to the surviving neighbor (and its v6 twin).
+	st2 := getUFWStatus()
+	fp := ruleFingerprint(neighbor)
+	insertAt := 1
 	if dir == "up" {
-		insertAt = st.Rules[idx-1].Number
-		// After insert, the original rule shifts down by one.
-		deleteAt = number + 1
+		for _, x := range st2.Rules {
+			if ruleFingerprint(x) == fp {
+				insertAt = x.Number
+				break
+			}
+		}
 	} else {
-		insertAt = st.Rules[idx+1].Number + 1
-		// Insert below the next rule: original stays at `number`, delete it there.
-		deleteAt = number
-		// When inserting at insertAt, everything at/after shifts up, so the
-		// original at `number` stays put only if insertAt > number. For moving
-		// down one slot: insert at (next.Number+1), then delete the still-
-		// original number.
+		last := 0
+		for _, x := range st2.Rules {
+			if ruleFingerprint(x) == fp {
+				last = x.Number
+			}
+		}
+		if last == 0 {
+			return fmt.Errorf("neighbor rule disappeared during move")
+		}
+		insertAt = last + 1
 	}
 
 	ins := append([]string{"insert", fmt.Sprintf("%d", insertAt)}, args...)
 	if out, err := execCommandFn("ufw", ins...).CombinedOutput(); err != nil {
 		return fmt.Errorf("ufw insert: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	if out, err := execCommandFn("ufw", "--force", "delete", fmt.Sprintf("%d", deleteAt)).CombinedOutput(); err != nil {
-		return fmt.Errorf("ufw delete after move: %w: %s", err, strings.TrimSpace(string(out)))
-	}
+	_ = ensureDefaultDenyAtBottom()
 	return nil
 }
 

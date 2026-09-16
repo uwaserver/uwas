@@ -5,6 +5,18 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.18
+
+Drop-in. Firewall reorder and display fixes only:
+
+1. **↑↓ move** no longer risks deleting the numbered default DENY (delete-first
+   move; default deny stays at the bottom and cannot be moved).
+2. **Protocol** column shows `any` when empty (source-only / any-port rules).
+
+No config or data migration.
+
+---
+
 ## Upgrading to v0.11.17
 
 Drop-in for most hosts. Firewall panel behavior changes slightly:

@@ -150,14 +150,61 @@ func (s *simState) add(action, port, proto, from string, skipExisting bool) stri
 			}
 		}
 	}
-	disp := from
-	// store empty From as ""
-	s.rules = append(s.rules,
-		simRule{Action: strings.ToUpper(action), Port: port, Proto: proto, From: disp, V6: false},
-		simRule{Action: strings.ToUpper(action), Port: port, Proto: proto, From: disp, V6: true},
-	)
-	s.persistLocked()
+	s.insertRulesLocked(len(s.rules), action, port, proto, from)
 	return ""
+}
+
+// insertAt inserts a rule at 1-based position (like `ufw insert N …`).
+// Skips when an equivalent rule already exists (real ufw behavior).
+func (s *simState) insertAt(pos int, action, port, proto, from string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	from = normalizeFrom(from)
+	for _, r := range s.rules {
+		if !r.V6 && strings.EqualFold(r.Action, action) && r.Port == port && r.Proto == proto && normalizeFrom(r.From) == from {
+			return "Skipping adding existing rule\n"
+		}
+	}
+	idx := pos - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(s.rules) {
+		idx = len(s.rules)
+	}
+	s.insertRulesLocked(idx, action, port, proto, from)
+	return ""
+}
+
+func (s *simState) insertRulesLocked(idx int, action, port, proto, from string) {
+	v4 := simRule{Action: strings.ToUpper(action), Port: port, Proto: proto, From: from, V6: false}
+	newRules := []simRule{v4}
+	// IPv4-literal sources only get a v4 row (matches real ufw).
+	if from == "" || looksLikeIPv6(from) {
+		newRules = append(newRules, simRule{Action: strings.ToUpper(action), Port: port, Proto: proto, From: from, V6: true})
+	} else if _, err := parseIPv4Literal(from); err != nil {
+		// CIDR / hostname-ish: add both families like ufw often does for "anywhere".
+		newRules = append(newRules, simRule{Action: strings.ToUpper(action), Port: port, Proto: proto, From: from, V6: true})
+	}
+	tail := append([]simRule{}, s.rules[idx:]...)
+	s.rules = append(s.rules[:idx], append(newRules, tail...)...)
+	s.persistLocked()
+}
+
+func parseIPv4Literal(s string) (string, error) {
+	if strings.Contains(s, ":") || strings.Contains(s, "/") {
+		return "", fmt.Errorf("not v4 literal")
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return "", fmt.Errorf("not v4 literal")
+	}
+	return s, nil
+}
+
+func looksLikeIPv6(s string) bool {
+	return strings.Contains(s, ":")
 }
 
 func (s *simState) persistLocked() {
@@ -290,9 +337,11 @@ func dispatchSim(path string, arg []string) (string, bool) {
 		if len(arg) < 3 {
 			return "bad insert", true
 		}
+		var pos int
+		fmt.Sscanf(arg[1], "%d", &pos)
 		action, port, proto, from := parseUFWAddArgs(arg[2:])
-		_ = s.add(action, port, proto, from, true)
-		return "", false
+		msg := s.insertAt(pos, action, port, proto, from)
+		return msg, false
 	default:
 		return "unknown", true
 	}
@@ -409,4 +458,258 @@ func TestBuildPortRuleArgs_AnyPort(t *testing.T) {
 	if got != "allow from 203.0.113.8" {
 		t.Fatalf("got %q want allow from IP (any port)", got)
 	}
+}
+
+func TestSimulate_SourceOnlyAllow_EmptyProto(t *testing.T) {
+	s := newSim(t)
+	installSim(t, s)
+	s.add("allow", "22", "tcp", "", false)
+	s.setActive(false)
+
+	if err := EnableWithRollback(0, []string{"22"}); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := AllowPortFrom("", "tcp", "203.0.113.50"); err != nil {
+		t.Fatalf("allow source-only: %v", err)
+	}
+	st := GetStatus()
+	var found Rule
+	for _, r := range st.Rules {
+		if !r.V6 && normalizeFrom(r.From) == "203.0.113.50" {
+			found = r
+			break
+		}
+	}
+	if found.Number == 0 {
+		t.Fatal("source-only allow not found")
+	}
+	if found.Port != "" {
+		t.Fatalf("port=%q want empty (any)", found.Port)
+	}
+	if found.Proto != "" {
+		t.Fatalf("proto=%q want empty (UI shows any)", found.Proto)
+	}
+	if !hasDefaultDeny(st.Rules) {
+		t.Fatal("default deny missing after source-only allow")
+	}
+}
+
+func TestSimulate_MoveUp_PreservesDefaultDeny(t *testing.T) {
+	s := newSim(t)
+	installSim(t, s)
+	s.add("allow", "22", "tcp", "", false)
+	s.add("allow", "80", "tcp", "", false)
+	s.setActive(false)
+
+	if err := EnableWithRollback(0, []string{"22", "80"}); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := AllowPortFrom("", "", "203.0.113.9"); err != nil {
+		t.Fatalf("allow source: %v", err)
+	}
+
+	st := GetStatus()
+	var srcNum int
+	for _, r := range st.Rules {
+		if !r.V6 && normalizeFrom(r.From) == "203.0.113.9" {
+			srcNum = r.Number
+			break
+		}
+	}
+	if srcNum == 0 {
+		t.Fatal("source rule missing")
+	}
+
+	// Move source rule up past the rule above it (may need several steps to
+	// climb; one up is enough to exercise the buggy insert-skip path).
+	if err := MoveRule(srcNum, "up"); err != nil {
+		t.Fatalf("move up: %v", err)
+	}
+	st = GetStatus()
+	if !hasDefaultDeny(st.Rules) {
+		t.Fatalf("default deny vanished after move up; rules=%v", dumpRules(st.Rules))
+	}
+
+	// Climb until just above default deny — every step must keep deny.
+	for step := 0; step < 10; step++ {
+		st = GetStatus()
+		logical := logicalIPv4Rules(st.Rules)
+		var srcIdx int = -1
+		for i, r := range logical {
+			if normalizeFrom(r.From) == "203.0.113.9" {
+				srcIdx = i
+				break
+			}
+		}
+		if srcIdx < 0 {
+			t.Fatal("source rule lost during moves")
+		}
+		if srcIdx == 0 {
+			break
+		}
+		if isDefaultDeny(logical[srcIdx-1]) {
+			t.Fatal("source somehow below default deny neighbor above")
+		}
+		// Stop when next up would be past something we shouldn't — move until top.
+		if err := MoveRule(logical[srcIdx].Number, "up"); err != nil {
+			t.Fatalf("move up step %d: %v", step, err)
+		}
+		if !hasDefaultDeny(GetStatus().Rules) {
+			t.Fatalf("default deny vanished at step %d; rules=%v", step, dumpRules(GetStatus().Rules))
+		}
+	}
+	if !hasDefaultDeny(GetStatus().Rules) {
+		t.Fatal("default deny missing at end")
+	}
+}
+
+func TestSimulate_MoveDown_BlockedByDefaultDeny(t *testing.T) {
+	s := newSim(t)
+	installSim(t, s)
+	s.add("allow", "22", "tcp", "", false)
+	s.setActive(false)
+	if err := EnableWithRollback(0, []string{"22"}); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	st := GetStatus()
+	logical := logicalIPv4Rules(st.Rules)
+	var allowNum, denyNum int
+	for _, r := range logical {
+		if r.Port == "22" {
+			allowNum = r.Number
+		}
+		if isDefaultDeny(r) {
+			denyNum = r.Number
+		}
+	}
+	if allowNum == 0 || denyNum == 0 {
+		t.Fatalf("setup failed: allow=%d deny=%d", allowNum, denyNum)
+	}
+	if err := MoveRule(allowNum, "down"); err == nil {
+		t.Fatal("expected error moving allow past default deny")
+	}
+	if err := MoveRule(denyNum, "up"); err == nil {
+		t.Fatal("expected error moving default deny")
+	}
+	if !hasDefaultDeny(GetStatus().Rules) {
+		t.Fatal("default deny missing after refused moves")
+	}
+}
+
+func TestSimulate_MoveUp_OldInsertSkipWouldDeleteDeny(t *testing.T) {
+	// Reproduces the production bug: insert of an already-present rule is a
+	// no-op, then deleteAt=number+1 removed the default deny.
+	s := newSim(t)
+	installSim(t, s)
+	s.add("allow", "22", "tcp", "", false)
+	s.setActive(true)
+	_ = ensureDefaultDenyAtBottom()
+	if err := AllowPortFrom("", "", "198.51.100.7"); err != nil {
+		t.Fatalf("allow: %v", err)
+	}
+
+	st := GetStatus()
+	var src Rule
+	for _, r := range st.Rules {
+		if !r.V6 && normalizeFrom(r.From) == "198.51.100.7" {
+			src = r
+			break
+		}
+	}
+	if src.Number == 0 {
+		t.Fatal("no source rule")
+	}
+
+	// Neighbor above source (last allow before deny, or deny itself in bad layouts).
+	logical := logicalIPv4Rules(st.Rules)
+	srcIdx := -1
+	for i, r := range logical {
+		if r.Number == src.Number {
+			srcIdx = i
+			break
+		}
+	}
+	if srcIdx <= 0 {
+		t.Fatalf("srcIdx=%d", srcIdx)
+	}
+
+	if err := MoveRule(src.Number, "up"); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	st = GetStatus()
+	if !hasDefaultDeny(st.Rules) {
+		t.Fatalf("BUG: default deny deleted by move; rules=%v", dumpRules(st.Rules))
+	}
+	// Source must still exist exactly once (v4).
+	n := 0
+	for _, r := range st.Rules {
+		if !r.V6 && normalizeFrom(r.From) == "198.51.100.7" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("source rule count=%d want 1; rules=%v", n, dumpRules(st.Rules))
+	}
+}
+
+func TestSimulate_MoveSwap_TwoAllows(t *testing.T) {
+	s := newSim(t)
+	installSim(t, s)
+	s.add("allow", "22", "tcp", "", false)
+	s.add("allow", "80", "tcp", "", false)
+	s.setActive(false)
+	if err := EnableWithRollback(0, []string{"22", "80"}); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	st := GetStatus()
+	logical := logicalIPv4Rules(st.Rules)
+	var n80 int
+	for _, r := range logical {
+		if r.Port == "80" {
+			n80 = r.Number
+			break
+		}
+	}
+	if n80 == 0 {
+		t.Fatal("no :80")
+	}
+	if err := MoveRule(n80, "up"); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	st = GetStatus()
+	logical = logicalIPv4Rules(st.Rules)
+	if len(logical) < 2 {
+		t.Fatal("too few rules")
+	}
+	if logical[0].Port != "80" {
+		t.Fatalf("after move up, first want 80 got %+v", logical[0])
+	}
+	if logical[1].Port != "22" {
+		t.Fatalf("after move up, second want 22 got %+v", logical[1])
+	}
+	if !hasDefaultDeny(st.Rules) {
+		t.Fatal("default deny missing")
+	}
+
+	// Move 80 back down.
+	if err := MoveRule(logical[0].Number, "down"); err != nil {
+		t.Fatalf("move down: %v", err)
+	}
+	logical = logicalIPv4Rules(GetStatus().Rules)
+	if logical[0].Port != "22" || logical[1].Port != "80" {
+		t.Fatalf("after move down want 22 then 80, got %+v %+v", logical[0], logical[1])
+	}
+	if !hasDefaultDeny(GetStatus().Rules) {
+		t.Fatal("default deny missing after down")
+	}
+}
+
+func dumpRules(rules []Rule) string {
+	var b strings.Builder
+	for _, r := range rules {
+		b.WriteString(fmt.Sprintf("#%d %s port=%q proto=%q from=%q v6=%v; ",
+			r.Number, r.Action, r.Port, r.Proto, r.From, r.V6))
+	}
+	return b.String()
 }

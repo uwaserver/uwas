@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.18] - 2026-09-16
+
+### Fixed
+
+- **Firewall move no longer deletes the default DENY.** Reorder used
+  insert-then-delete; when UFW skipped a duplicate insert, `delete` removed the
+  next rule (often the bottom drop). Move now deletes first, then inserts, and
+  refuses to move or pass the default deny.
+- **Empty protocol displays as `any`** (not `--`) for any-port / source-only
+  rules.
+- **Allow/deny API** rejects requests with both port and source empty (blanket
+  any/any must not come from the panel form).
+
 ## [0.11.17] - 2026-09-16
 
 ### Fixed

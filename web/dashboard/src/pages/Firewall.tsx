@@ -179,7 +179,7 @@ export default function Firewall() {
       }
       setPort('');
       setFrom('');
-      setStatus(`Rule added: ${action} ${portParam || 'any'}/${proto}${src ? ` from ${src}` : ''}`);
+      setStatus(`Rule added: ${action} ${portParam || 'any'}/${portParam ? proto : 'any'}${src ? ` from ${src}` : ''}`);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -454,7 +454,7 @@ export default function Firewall() {
                     </span>
                   </td>
                   <td className="px-5 py-3 font-mono text-sm text-foreground">{rule.port || 'Any'}</td>
-                  <td className="px-5 py-3 text-xs text-muted-foreground uppercase">{rule.proto || '--'}</td>
+                  <td className="px-5 py-3 text-xs text-muted-foreground uppercase">{rule.proto || 'any'}</td>
                   <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{rule.from || 'Anywhere'}</td>
                   <td className="px-5 py-3 text-right">
                     {confirmDelete === rule.number ? (
