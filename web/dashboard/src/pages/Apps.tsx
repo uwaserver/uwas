@@ -347,6 +347,7 @@ export default function Apps() {
   const openEdit = async (name: string) => {
     try {
       const { app } = await fetchApp(name);
+      setDeployKeyResult(null);
       setForm({
         sourceMode: 'blank',
         name: app.name,
@@ -515,20 +516,29 @@ export default function Apps() {
     }
   };
 
-  const generateDeployKey = async () => {
-    if (!deployFor) return;
+  // Deploy-key generation needs an existing app name (keys live under
+  // apps.d/deploy-keys/<name>/). Available from the Deploy modal and from
+  // Edit — Create has no app yet, so it only shows a path field + hint.
+  const generateDeployKey = async (appName: string, target: 'deploy' | 'edit') => {
+    if (!appName) return;
     setDeployKeyGenerating(true);
     setDeployKeyResult(null);
     try {
-      const result = await generateAppDeployKey(deployFor);
+      const result = await generateAppDeployKey(appName);
       setDeployKeyResult(result);
-      setDeployForm(f => ({ ...f, ssh_key_path: result.private_key_path }));
-      setStatus({ ok: true, message: `Generated deploy key for ${deployFor}` });
-      try {
-        const preflight = await fetchAppDeployPreflight(deployFor);
-        setDeployPreflight(preflight);
-      } catch {
-        // Key generation succeeded; preflight refresh is only informational.
+      if (target === 'deploy') {
+        setDeployForm(f => ({ ...f, ssh_key_path: result.private_key_path }));
+      } else {
+        setForm(f => ({ ...f, ssh_key_path: result.private_key_path }));
+      }
+      setStatus({ ok: true, message: `Generated deploy key for ${appName}` });
+      if (target === 'deploy') {
+        try {
+          const preflight = await fetchAppDeployPreflight(appName);
+          setDeployPreflight(preflight);
+        } catch {
+          // Key generation succeeded; preflight refresh is only informational.
+        }
       }
     } catch (e) {
       setStatusErr(e);
@@ -961,12 +971,26 @@ export default function Apps() {
                     </label>
                     <label className="space-y-1">
                       <span className="text-xs text-blue-200">SSH key path</span>
-                      <input
-                        value={form.ssh_key_path}
-                        onChange={e => setForm(f => ({ ...f, ssh_key_path: e.target.value }))}
-                        placeholder="/home/uwas/.ssh/deploy_key"
-                        className="w-full rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={form.ssh_key_path}
+                          onChange={e => setForm(f => ({ ...f, ssh_key_path: e.target.value }))}
+                          placeholder="/etc/uwas/apps.d/deploy-keys/app/id_ed25519"
+                          className="min-w-0 flex-1 rounded-md border border-blue-500/30 bg-background px-3 py-2 text-sm font-mono"
+                        />
+                        {editing?.mode === 'edit' && editing.name && (
+                          <button
+                            type="button"
+                            onClick={() => generateDeployKey(editing.name!, 'edit')}
+                            disabled={deployKeyGenerating}
+                            className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 px-2.5 py-1.5 text-xs text-blue-100 hover:bg-blue-500/20 disabled:opacity-50"
+                            title="Generate an app-specific SSH deploy key for GitHub/GitLab"
+                          >
+                            {deployKeyGenerating ? <RefreshCw size={12} className="animate-spin" /> : <Key size={12} />}
+                            Generate
+                          </button>
+                        )}
+                      </div>
                     </label>
                     <label className="space-y-1">
                       <span className="text-xs text-blue-200">HTTPS token</span>
@@ -979,8 +1003,30 @@ export default function Apps() {
                       />
                     </label>
                   </div>
+                  {editing?.mode === 'edit' && deployKeyResult && (
+                    <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="font-medium text-emerald-300">Deploy key generated</span>
+                        <button
+                          type="button"
+                          onClick={copyDeployKey}
+                          className="inline-flex items-center gap-1 rounded border border-emerald-500/30 px-2 py-1 text-emerald-200 hover:bg-emerald-500/10"
+                        >
+                          <Copy size={12} /> Copy public key
+                        </button>
+                      </div>
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] text-emerald-100/90">
+                        {deployKeyResult.public_key}
+                      </pre>
+                      <p className="mt-2 text-[10px] text-emerald-200/80">
+                        Add this public key on GitHub: repo → Settings → Deploy keys (read-only). Use a git@ or ssh:// Git URL.
+                      </p>
+                    </div>
+                  )}
                   <p className="mt-2 text-[10px] text-blue-200/80">
-                    Use an HTTPS token for private HTTPS repos, or an absolute SSH key path for git@ / ssh:// repos. Leave token empty while editing to keep the stored credential.
+                    {editing?.mode === 'edit'
+                      ? 'Generate creates an app-specific ed25519 key. Copy the public key into the private repo as a read-only deploy key, then use git@ / ssh://. Leave the HTTPS token empty to keep a stored credential.'
+                      : 'Create the app first, then open Deploy (or Edit) and click Generate for a GitHub deploy key — or paste an absolute SSH private-key path / HTTPS token here.'}
                   </p>
                 </div>
               )}
@@ -1367,8 +1413,8 @@ export default function Apps() {
                     />
                     <button
                       type="button"
-                      onClick={generateDeployKey}
-                      disabled={deployKeyGenerating}
+                      onClick={() => deployFor && generateDeployKey(deployFor, 'deploy')}
+                      disabled={deployKeyGenerating || !deployFor}
                       className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
                       title="Generate an app-specific SSH deploy key"
                     >
