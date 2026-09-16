@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.20] - 2026-09-16
+
+### Added
+
+- **Firewall enable allows UDP/443** (and non-default HTTPS listen UDP) for
+  HTTP/3 (QUIC), alongside the existing TCP/443 allow.
+
+### Changed
+
+- **Autoblock denys are hidden from the Firewall Rules table** — they remain in
+  the Auto-Block panel only (`# uwas-autoblock`).
+
 ## [0.11.19] - 2026-09-16
 
 ### Fixed

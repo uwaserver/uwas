@@ -5,6 +5,19 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.20
+
+Drop-in.
+
+1. **Firewall Rules table** no longer lists `# uwas-autoblock` denys (still in
+   Auto-Block panel).
+2. **Enable** now allows **443/udp** for HTTP/3 (QUIC). Already-enabled hosts
+   keep existing rules — re-enable or add `443/udp` manually if needed.
+
+No config or data migration.
+
+---
+
 ## Upgrading to v0.11.19
 
 Drop-in. If the firewall panel is missing the bottom IPv4 `DENY any → any` but
