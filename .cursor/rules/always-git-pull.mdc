@@ -1,0 +1,13 @@
+---
+description: Always git pull first — shared collaborative repo
+alwaysApply: true
+---
+
+# Always pull before work
+
+This repository is managed collaboratively. Before any edit, commit, push, deploy, or branch work:
+
+1. `git pull --ff-only` (or equivalent) on the current branch
+2. Only then inspect status/diff and make changes
+
+Do not assume the local tree is up to date. Remote commits land frequently; skipping pull causes avoidable conflicts and lost work.
