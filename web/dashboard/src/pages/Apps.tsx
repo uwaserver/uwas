@@ -654,6 +654,10 @@ export default function Apps() {
           ok: true,
           message: `Deployed ${deployFor}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ''}`,
         });
+        setDeployFor(null);
+        setDeployResult(null);
+        setDeployLiveLog('');
+        setDeployKeyResult(null);
         await load();
       } else {
         addDebugLog({
