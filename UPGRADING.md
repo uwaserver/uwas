@@ -5,6 +5,19 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.21
+
+Drop-in.
+
+1. **Deploy** recovers from leftover `.git/**/*.lock` (e.g. `shallow.lock`)
+   and streams live logs in the panel (5m client timeout).
+2. **Auto-detected Node builds** run `install` then `build` as separate
+   steps — custom `build_cmd` still must not contain `&&` / `|` / `;`.
+
+No config or data migration.
+
+---
+
 ## Upgrading to v0.11.20
 
 Drop-in.

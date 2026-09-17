@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.21] - 2026-09-17
+
+### Fixed
+
+- **Deploy recovers from stale git locks** (`shallow.lock` and other
+  `.git/**/*.lock` leftovers after a killed fetch) — clear and retry once.
+- **Auto-detected Node builds no longer fail** with `forbidden metacharacter
+  "&&"` — install and build run as separate steps.
+
+### Changed
+
+- **Deploy modal streams live logs** via SSE (`Accept: text/event-stream`);
+  Recent deploys starts empty so stale errors are not shown on open.
+- **Deploy UI timeout is 5 minutes** (default API requests stay at 30s).
+
 ## [0.11.20] - 2026-09-16
 
 ### Added
