@@ -39,7 +39,7 @@ type Deps interface {
 	Reload() error
 	// App lifecycle (for post-deploy restart)
 	AppCompleteDeploy(name string, def *apps.App, skipStart bool) error
-	AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf *strings.Builder) (bool, string, string)
+	AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf LogSink) (bool, string, string)
 }
 
 // ── Types ──
@@ -229,7 +229,37 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	logBuf := &strings.Builder{}
+	stream := wantsDeployStream(r)
+	var flusher http.Flusher
+	if stream {
+		var ok bool
+		flusher, ok = w.(http.Flusher)
+		if !ok {
+			stream = false
+		}
+	}
+
+	logBuf := &LiveLog{}
+	if stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		logBuf.Emit = func(chunk string) {
+			writeDeploySSE(w, flusher, map[string]any{"type": "log", "text": chunk})
+		}
+	}
+
+	respond := func(resp *AppDeployResponse) {
+		if stream {
+			writeDeploySSE(w, flusher, map[string]any{"type": "done", "result": resp})
+			return
+		}
+		jsonResponse(w, resp)
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
@@ -245,10 +275,17 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		if rollbackSHA != "" {
 			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), !req.SkipStart, logBuf)
 			resp.RolledBack = rb
+			resp.RollbackSHA = rbSHA
+			resp.RollbackNote = rbNote
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 		}
 		h.deps.RecordAudit(r, "app.deploy", name+" error: "+err.Error(), false)
-		jsonResponse(w, resp)
+		h.recordHistory(name, DeployHistoryEntry{
+			Source: "manual", StartedAt: time.Now(), Finished: time.Now(),
+			OK: false, Error: resp.Error, LogTail: tailString(logBuf.String(), 2048),
+			RolledBack: resp.RolledBack, RollbackSHA: resp.RollbackSHA, RollbackNote: resp.RollbackNote,
+		})
+		respond(resp)
 		return
 	}
 
@@ -264,9 +301,15 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 			resp.RolledBack = rb
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 			resp.RollbackSHA = rbSHA
+			resp.RollbackNote = rbNote
 		}
 		h.deps.RecordAudit(r, "app.deploy", name+" post-deploy error: "+err.Error(), false)
-		jsonResponse(w, resp)
+		h.recordHistory(name, DeployHistoryEntry{
+			Source: "manual", StartedAt: time.Now(), Finished: time.Now(),
+			OK: false, CommitSHA: commitSHA, Error: resp.Error, LogTail: tailString(logBuf.String(), 2048),
+			RolledBack: resp.RolledBack, RollbackSHA: resp.RollbackSHA, RollbackNote: resp.RollbackNote,
+		})
+		respond(resp)
 		return
 	}
 
@@ -278,10 +321,25 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err := h.deps.Reload(); err != nil {
 		h.deps.LogError("reload after deploy failed", "error", err)
 	}
-	jsonResponse(w, &AppDeployResponse{
+	respond(&AppDeployResponse{
 		OK: true, CommitSHA: commitSHA, Message: "deployed successfully",
 		Log: logBuf.String(), LogTail: tailString(logBuf.String(), 2048),
 	})
+}
+
+func wantsDeployStream(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
+func writeDeploySSE(w http.ResponseWriter, flusher http.Flusher, payload map[string]any) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+	if flusher != nil {
+		flusher.Flush()
+	}
 }
 
 func (h *Handler) DeployPreflight(w http.ResponseWriter, r *http.Request) {

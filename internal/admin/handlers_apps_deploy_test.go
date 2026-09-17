@@ -70,7 +70,7 @@ func TestValidGitRef(t *testing.T) {
 func TestValidateBuildCommand(t *testing.T) {
 	good := []string{
 		"npm ci",
-		"npm ci && npm run build",
+		"npm run build",
 		"pip install -r requirements.txt",
 		"go build -o ./main",
 		"make",
@@ -81,6 +81,7 @@ func TestValidateBuildCommand(t *testing.T) {
 		}
 	}
 	bad := []string{
+		"npm ci && npm run build",
 		"npm ci; rm -rf /",
 		"npm ci & rm -rf /",
 		"npm ci | tee build.log",

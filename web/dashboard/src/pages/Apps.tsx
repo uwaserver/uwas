@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Play, Square, RefreshCw, Plus, Trash2, FileText, Edit2, X,
   Container, Cpu, AlertCircle, CheckCircle, Circle, ArrowRight,
@@ -17,16 +17,15 @@ import {
   restartApp,
   fetchAppLogs,
   deployApp,
+  deployAppLive,
   fetchAppStats,
   fetchAppDeployPreflight,
-  fetchAppDeployHistory,
   generateAppDeployKey,
   type App,
   type AppInstance,
   type AppRuntime,
   type AppDeployResult,
   type AppDeployPreflight,
-  type AppDeployHistoryEntry,
   type AppDeployKeyResult,
   type AppStats,
   fetchAppWebhookStatus,
@@ -196,8 +195,9 @@ export default function Apps() {
   });
   const [deployRunning, setDeployRunning] = useState(false);
   const [deployResult, setDeployResult] = useState<AppDeployResult | null>(null);
+  const [deployLiveLog, setDeployLiveLog] = useState('');
+  const deployLogRef = useRef<HTMLPreElement | null>(null);
   const [deployPreflight, setDeployPreflight] = useState<AppDeployPreflight | null>(null);
-  const [deployHistory, setDeployHistory] = useState<AppDeployHistoryEntry[]>([]);
   const [deployKeyResult, setDeployKeyResult] = useState<AppDeployKeyResult | null>(null);
   const [deployKeyGenerating, setDeployKeyGenerating] = useState(false);
   const [deployMetaLoading, setDeployMetaLoading] = useState(false);
@@ -478,6 +478,11 @@ export default function Apps() {
     }
   };
 
+  useEffect(() => {
+    const el = deployLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [deployLiveLog]);
+
   const openDeploy = async (name: string) => {
     // Pre-fill from the app's stored DeployConfig so a follow-up
     // deploy doesn't make the operator re-type git URL / branch /
@@ -485,15 +490,14 @@ export default function Apps() {
     // it (and rotate by typing a new value).
     setDeployFor(name);
     setDeployResult(null);
+    setDeployLiveLog('');
     setDeployPreflight(null);
-    setDeployHistory([]);
     setDeployKeyResult(null);
     setDeployMetaLoading(true);
     try {
-      const [{ app }, preflight, history] = await Promise.all([
+      const [{ app }, preflight] = await Promise.all([
         fetchApp(name),
         fetchAppDeployPreflight(name).catch(() => null),
-        fetchAppDeployHistory(name).catch(() => ({ name, items: [] })),
       ]);
       setDeployForm({
         git_url: app.deploy?.git_url ?? '',
@@ -506,11 +510,9 @@ export default function Apps() {
         branch_filter: app.deploy?.branch_filter ?? '',
       });
       setDeployPreflight(preflight);
-      setDeployHistory(history.items ?? []);
     } catch {
       // Fall back to empty form on fetch error.
       setDeployForm({ git_url: '', git_branch: '', build_cmd: '', health_path: '', ssh_key_path: '', git_token: '', webhook_secret: '', branch_filter: '' });
-      setDeployHistory([]);
     } finally {
       setDeployMetaLoading(false);
     }
@@ -612,6 +614,7 @@ export default function Apps() {
     }
     setDeployRunning(true);
     setDeployResult(null);
+    setDeployLiveLog('');
     addDebugLog({
       level: 'info',
       scope: 'deploy',
@@ -626,15 +629,20 @@ export default function Apps() {
       }),
     });
     try {
-      const r = await deployApp(deployFor, {
-        git_url: deployForm.git_url.trim(),
-        git_branch: deployForm.git_branch.trim() || undefined,
-        build_cmd: deployTargetIsDocker ? undefined : deployForm.build_cmd.trim() || undefined,
-        health_path: deployForm.health_path.trim() || undefined,
-        ssh_key_path: deployForm.ssh_key_path.trim() || undefined,
-        git_token: deployForm.git_token.trim() || undefined,
-      });
+      const r = await deployAppLive(
+        deployFor,
+        {
+          git_url: deployForm.git_url.trim(),
+          git_branch: deployForm.git_branch.trim() || undefined,
+          build_cmd: deployTargetIsDocker ? undefined : deployForm.build_cmd.trim() || undefined,
+          health_path: deployForm.health_path.trim() || undefined,
+          ssh_key_path: deployForm.ssh_key_path.trim() || undefined,
+          git_token: deployForm.git_token.trim() || undefined,
+        },
+        chunk => setDeployLiveLog(prev => prev + chunk),
+      );
       setDeployResult(r);
+      if (r.log) setDeployLiveLog(r.log);
       if (r.ok) {
         addDebugLog({
           level: 'success',
@@ -646,12 +654,6 @@ export default function Apps() {
           ok: true,
           message: `Deployed ${deployFor}${r.commit_sha ? ` @ ${r.commit_sha.slice(0, 7)}` : ''}`,
         });
-        try {
-          const history = await fetchAppDeployHistory(deployFor);
-          setDeployHistory(history.items ?? []);
-        } catch {
-          // Non-critical; deploy result already carries the authoritative outcome.
-        }
         await load();
       } else {
         addDebugLog({
@@ -1590,71 +1592,32 @@ export default function Apps() {
 
               <div className="rounded-md border border-border p-3 text-xs">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="font-medium">Recent deploys</span>
-                  <span className="text-muted-foreground">{deployHistory.length}</span>
-                </div>
-                <div className="space-y-1">
-                  {deployHistory.length ? deployHistory.slice(0, 5).map(item => (
-                    <div key={`${item.started_at}-${item.commit_sha ?? item.error ?? item.source}`} className="flex items-start gap-2">
-                      {item.ok ? (
-                        <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-400" />
-                      ) : (
-                        <AlertCircle size={12} className="mt-0.5 shrink-0 text-red-400" />
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="font-medium">{item.source}</span>
-                        {item.mode ? <span className="text-muted-foreground"> · {item.mode}</span> : null}
-                        {item.commit_sha ? <span className="font-mono text-muted-foreground"> · {item.commit_sha.slice(0, 7)}</span> : null}
-                        {item.rolled_back ? <span className="font-mono text-amber-400"> · rollback{item.rollback_sha ? ` ${item.rollback_sha.slice(0, 7)}` : ''}</span> : null}
-                        <span className="text-muted-foreground"> · {new Date(item.started_at).toLocaleString()}</span>
-                        {item.rollback_note ? <span className="block truncate text-amber-400" title={item.rollback_note}>{item.rollback_note}</span> : null}
-                        {item.error ? <span className="block truncate text-red-400" title={item.error}>{item.error}</span> : null}
-                      </span>
-                    </div>
-                  )) : (
-                    <div className="text-muted-foreground">No deploys recorded in this process.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {deployResult && (
-              <div className={`rounded-md border p-2 text-xs space-y-1 ${
-                deployResult.ok
-                  ? 'border-green-500/30 bg-green-500/5'
-                  : 'border-red-500/30 bg-red-500/5'
-              }`}>
-                <div className="flex items-center gap-2 font-medium">
-                  {deployResult.ok
-                    ? <CheckCircle size={12} className="text-green-400" />
-                    : <AlertCircle size={12} className="text-red-400" />}
-                  <span>
-                    {deployResult.ok ? `${deployResult.mode} ok` : 'Failed'}
+                  <span className="font-medium">Deploy log</span>
+                  <span className="text-muted-foreground">
+                    {deployRunning ? 'running…' : deployResult ? (deployResult.ok ? 'done' : 'failed') : 'idle'}
                   </span>
-                  {deployResult.commit_sha && (
-                    <span className="font-mono text-muted-foreground">
-                      @ {deployResult.commit_sha.slice(0, 7)}
-                    </span>
-                  )}
                 </div>
-                {deployResult.error && (
-                  <div className="text-red-400">{deployResult.error}</div>
+                {deployResult?.error && (
+                  <div className="mb-2 text-red-400">{deployResult.error}</div>
                 )}
-                {deployResult.rollback_note && (
-                  <div className={deployResult.rolled_back ? 'text-amber-400' : 'text-red-400'}>
+                {deployResult?.rollback_note && (
+                  <div className={`mb-2 ${deployResult.rolled_back ? 'text-amber-400' : 'text-red-400'}`}>
                     {deployResult.rollback_note}
                     {deployResult.rollback_sha ? ` (${deployResult.rollback_sha.slice(0, 7)})` : ''}
                   </div>
                 )}
-                <pre className="text-[10px] font-mono whitespace-pre-wrap bg-background/50 rounded p-2 max-h-60 overflow-auto">
-                  {deployResult.log || '(no output)'}
+                <pre
+                  ref={deployLogRef}
+                  className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-background/50 p-2 font-mono text-[10px] text-muted-foreground"
+                >
+                  {deployLiveLog || (deployRunning ? 'Starting deploy…' : 'Press Deploy now to stream logs here.')}
                 </pre>
               </div>
-            )}
+            </div>
 
             <div className="flex items-center justify-end gap-2">
               <button
-                onClick={() => { setDeployFor(null); setDeployResult(null); }}
+                onClick={() => { setDeployFor(null); setDeployResult(null); setDeployLiveLog(''); }}
                 disabled={deployRunning}
                 className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted disabled:opacity-50"
               >

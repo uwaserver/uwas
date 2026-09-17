@@ -52,7 +52,7 @@ func (d *deployDeps) Reload() error {
 func (d *deployDeps) AppCompleteDeploy(name string, def *apps.App, skipStart bool) error {
 	return d.s.completeDeployedApp(name, def, skipStart)
 }
-func (d *deployDeps) AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf *strings.Builder) (bool, string, string) {
+func (d *deployDeps) AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf deployadmin.LogSink) (bool, string, string) {
 	return d.s.rollbackDeployedApp(ctx, name, def, rollbackSHA, deployCfg, env, restart, logBuf)
 }
 
@@ -394,7 +394,7 @@ func (s *Server) rollbackDeployedApp(
 	deployCfg apps.DeployConfig,
 	env map[string]string,
 	restart bool,
-	logBuf *strings.Builder,
+	logBuf deployadmin.LogSink,
 ) (bool, string, string) {
 	rollbackSHA = strings.TrimSpace(rollbackSHA)
 	if rollbackSHA == "" {
