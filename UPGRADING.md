@@ -5,6 +5,15 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.22
+
+Drop-in. App `env` keys keep the order you saved (no alphabetical reshuffle).
+Existing YAML maps load in document order going forward.
+
+No config or data migration.
+
+---
+
 ## Upgrading to v0.11.21
 
 Drop-in.

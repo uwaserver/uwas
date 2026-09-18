@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.22] - 2026-09-18
+
+### Fixed
+
+- **App Environment variables keep save order** — YAML/JSON no longer
+  alphabetically re-sort keys on every save/reload.
+
+### Changed
+
+- **Edit application Environment field** is full-width below the form
+  (no longer a narrow side column).
+- **Deploy modal closes automatically** after a successful deploy
+  (stays open on failure so the log remains visible).
+
 ## [0.11.21] - 2026-09-17
 
 ### Fixed
