@@ -256,9 +256,10 @@ func runAppBuild(ctx context.Context, def *apps.App, buildCmd string, extraEnv m
 		return nil
 	}
 	buildEnv := os.Environ()
-	for k, v := range def.Env {
+	def.Env.Range(func(k, v string) bool {
 		buildEnv = append(buildEnv, fmt.Sprintf("%s=%s", k, v))
-	}
+		return true
+	})
 	for k, v := range extraEnv {
 		buildEnv = append(buildEnv, fmt.Sprintf("%s=%s", k, v))
 	}

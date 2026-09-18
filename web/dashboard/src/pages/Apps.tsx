@@ -104,8 +104,8 @@ const blankForm: CreateForm = {
 };
 
 // envTextToMap and envMapToText keep the form's textarea-based env
-// editor symmetrical: KEY=value lines round-trip with the on-disk
-// map. Empty or comment lines are skipped on parse.
+// editor symmetrical: KEY=value lines round-trip in the same order.
+// The API stores env as an ordered object (not alphabetically sorted).
 function envTextToMap(t: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of t.split(/\r?\n/)) {
@@ -121,6 +121,7 @@ function envTextToMap(t: string): Record<string, string> {
 }
 function envMapToText(m: Record<string, string> | undefined): string {
   if (!m) return '';
+  // Insertion order from JSON.parse / save — do not sort.
   return Object.entries(m).map(([k, v]) => `${k}=${v}`).join('\n');
 }
 
@@ -829,8 +830,7 @@ export default function Apps() {
             </button>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-            <div className="space-y-4">
+          <div className="space-y-4">
               {editing.mode === 'create' && (
                 <div className="grid gap-2 sm:grid-cols-2">
                   <button
@@ -1101,18 +1101,18 @@ export default function Apps() {
                   </label>
                 </div>
               )}
-            </div>
 
-            <div className="flex flex-col gap-3">
-              <label className="flex min-h-48 flex-1 flex-col gap-1">
+              <label className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">Environment</span>
                 <textarea
                   value={form.envText}
                   onChange={e => setForm(f => ({ ...f, envText: e.target.value }))}
-                  placeholder="NODE_ENV=production"
-                  className="min-h-40 flex-1 resize-y rounded-md border border-border bg-background px-3 py-2 text-xs font-mono"
+                  placeholder={"NODE_ENV=production\nPORT=3000"}
+                  rows={8}
+                  className="min-h-40 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-xs font-mono"
                 />
               </label>
+
               <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={closeEditor}
@@ -1130,7 +1130,6 @@ export default function Apps() {
                   <ArrowRight size={14} />
                 </button>
               </div>
-            </div>
           </div>
         </section>
       )}

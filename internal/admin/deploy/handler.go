@@ -213,7 +213,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		validationDef.Deploy.GitToken = req.GitToken
 	}
 	if req.Env != nil {
-		validationDef.Env = req.Env
+		validationDef.Env = apps.EnvFromMap(req.Env)
 	}
 	if err := h.deps.ValidateDeployConfig(&validationDef); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -267,13 +267,14 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	// Merge env.
 	env := def.Env
 	if req.Env != nil {
-		env = req.Env
+		env = apps.EnvFromMap(req.Env)
 	}
+	envMap := env.Map()
 
-	if err := runDeployCore(ctx, def, validationDef.Deploy.GitURL, validationDef.Deploy.GitBranch, validationDef.Deploy.BuildCmd, validationDef.Deploy.SSHKeyPath, validationDef.Deploy.GitToken, env, logBuf); err != nil {
+	if err := runDeployCore(ctx, def, validationDef.Deploy.GitURL, validationDef.Deploy.GitBranch, validationDef.Deploy.BuildCmd, validationDef.Deploy.SSHKeyPath, validationDef.Deploy.GitToken, envMap, logBuf); err != nil {
 		resp := &AppDeployResponse{OK: false, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096)}
 		if rollbackSHA != "" {
-			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), !req.SkipStart, logBuf)
+			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), !req.SkipStart, logBuf)
 			resp.RolledBack = rb
 			resp.RollbackSHA = rbSHA
 			resp.RollbackNote = rbNote
@@ -297,7 +298,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err := h.deps.AppCompleteDeploy(name, def, req.SkipStart); err != nil {
 		resp := &AppDeployResponse{OK: false, CommitSHA: commitSHA, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096), RollbackSHA: rollbackSHA}
 		if rollbackSHA != "" {
-			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), true, logBuf)
+			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), true, logBuf)
 			resp.RolledBack = rb
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 			resp.RollbackSHA = rbSHA
@@ -599,11 +600,11 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 	defer cancel()
 	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
 
-	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, def.Env, logBuf); err != nil {
+	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, def.Env.Map(), logBuf); err != nil {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env), false, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env.Map()), false, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()
@@ -625,7 +626,7 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env), true, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env.Map()), true, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()

@@ -24,7 +24,7 @@ func TestValidateAppEnvMap_Empty(t *testing.T) {
 	if err := validateAppEnvMap(nil); err != nil {
 		t.Errorf("nil map should be valid: %v", err)
 	}
-	if err := validateAppEnvMap(map[string]string{}); err != nil {
+	if err := validateAppEnvMap(apps.EnvFromMap(map[string]string{})); err != nil {
 		t.Errorf("empty map should be valid: %v", err)
 	}
 }
@@ -32,7 +32,7 @@ func TestValidateAppEnvMap_Empty(t *testing.T) {
 func TestValidateAppEnvMap_ReservedVars(t *testing.T) {
 	reserved := []string{"PATH", "LD_PRELOAD", "HOME", "USER", "SHELL", "IFS", "BASH_ENV"}
 	for _, name := range reserved {
-		env := map[string]string{name: "value"}
+		env := apps.EnvFromPairs(name, "value")
 		err := validateAppEnvMap(env)
 		if err == nil {
 			t.Fatalf("expected error for reserved env var %q", name)
@@ -46,7 +46,7 @@ func TestValidateAppEnvMap_ReservedVars(t *testing.T) {
 func TestValidateAppEnvMap_InvalidNames(t *testing.T) {
 	bad := []string{"", "123startswithdigit", "has space", "has=equals", "has\nnewline"}
 	for _, name := range bad {
-		env := map[string]string{name: "value"}
+		env := apps.EnvFromPairs(name, "value")
 		err := validateAppEnvMap(env)
 		if err == nil {
 			t.Errorf("expected error for invalid env name %q", name)
@@ -57,7 +57,7 @@ func TestValidateAppEnvMap_InvalidNames(t *testing.T) {
 func TestValidateAppEnvMap_ValidNames(t *testing.T) {
 	good := []string{"MY_VAR", "my_var", "_underscore", "FOO_BAR_123", "a", "Z", "_"}
 	for _, name := range good {
-		env := map[string]string{name: "value"}
+		env := apps.EnvFromPairs(name, "value")
 		if err := validateAppEnvMap(env); err != nil {
 			t.Errorf("unexpected error for valid name %q: %v", name, err)
 		}
@@ -65,10 +65,7 @@ func TestValidateAppEnvMap_ValidNames(t *testing.T) {
 }
 
 func TestValidateAppEnvMap_MixedValidAndInvalid(t *testing.T) {
-	env := map[string]string{
-		"VALID_VAR": "ok",
-		"PATH":      "override",
-	}
+	env := apps.EnvFromPairs("VALID_VAR", "ok", "PATH", "override")
 	if err := validateAppEnvMap(env); err == nil {
 		t.Error("expected error for map containing reserved var PATH")
 	}

@@ -1292,7 +1292,7 @@ http.createServer((req, res) => {
 		Runtime: apps.RuntimeNode,
 		WorkDir: workDir,
 		Port:    freeTestPort(t),
-		Env:     map[string]string{"OLD_FLAG": "1"},
+		Env:     apps.EnvFromPairs("OLD_FLAG", "1"),
 		Deploy: apps.DeployConfig{
 			GitURL:     "https://github.com/acme/private-node.git",
 			GitBranch:  "main",
@@ -1408,7 +1408,7 @@ esac
 	if stored.Deploy.HealthPath != "/health" {
 		t.Fatalf("stored health path = %q, want previous /health", stored.Deploy.HealthPath)
 	}
-	if stored.Env["NEW_FLAG"] != "" || stored.Env["OLD_FLAG"] != "1" {
+	if stored.Env.Get("NEW_FLAG") != "" || stored.Env.Get("OLD_FLAG") != "1" {
 		t.Fatalf("stored env after rollback = %#v, want only previous env", stored.Env)
 	}
 }

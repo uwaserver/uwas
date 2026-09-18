@@ -109,14 +109,21 @@ func validEnvName(name string) bool {
 	return true
 }
 
-func validateAppEnvMap(env map[string]string) error {
-	for k := range env {
+func validateAppEnvMap(env *apps.EnvMap) error {
+	if env == nil {
+		return nil
+	}
+	var err error
+	env.Range(func(k, _ string) bool {
 		if blockedEnvVars[k] {
-			return fmt.Errorf("env var %s is reserved", k)
+			err = fmt.Errorf("env var %s is reserved", k)
+			return false
 		}
 		if !validEnvName(k) {
-			return fmt.Errorf("invalid env name: %s", k)
+			err = fmt.Errorf("invalid env name: %s", k)
+			return false
 		}
-	}
-	return nil
+		return true
+	})
+	return err
 }

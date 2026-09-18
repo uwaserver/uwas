@@ -1589,7 +1589,7 @@ func TestStartNativeWithLoggerAndEnv(t *testing.T) {
 		Runtime: RuntimeCustom,
 		Command: "sleep 2",
 		WorkDir: filepath.Join(store.DataRoot, "envapp"),
-		Env:     map[string]string{"CUSTOM_VAR": "hello"},
+		Env:     EnvFromPairs("CUSTOM_VAR", "hello"),
 	}
 	if err := m.Register(app); err != nil {
 		t.Fatal(err)
