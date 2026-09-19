@@ -735,6 +735,7 @@ func ValidateTokenWithClient(client *http.Client, token, accountID string) (stri
 	var result struct {
 		Success bool `json:"success"`
 		Errors  []struct {
+			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
@@ -743,7 +744,7 @@ func ValidateTokenWithClient(client *http.Client, token, accountID string) (stri
 	}
 	if !result.Success {
 		if len(result.Errors) > 0 {
-			return "", fmt.Errorf("%s", result.Errors[0].Message)
+			return "", fmt.Errorf("[%d] %s", result.Errors[0].Code, result.Errors[0].Message)
 		}
 		return "", fmt.Errorf("token validation failed")
 	}
@@ -805,6 +806,7 @@ func FetchZonesWithClient(client *http.Client, token string) ([]Zone, error) {
 				TotalPages int `json:"total_pages"`
 			} `json:"result_info"`
 			Errors []struct {
+				Code    int    `json:"code"`
 				Message string `json:"message"`
 			} `json:"errors"`
 		}
@@ -815,7 +817,7 @@ func FetchZonesWithClient(client *http.Client, token string) ([]Zone, error) {
 		resp.Body.Close()
 		if !result.Success {
 			if len(result.Errors) > 0 {
-				return nil, fmt.Errorf("%s", result.Errors[0].Message)
+				return nil, fmt.Errorf("[%d] %s", result.Errors[0].Code, result.Errors[0].Message)
 			}
 			return nil, fmt.Errorf("failed to fetch zones (page %d)", page)
 		}
@@ -897,6 +899,9 @@ func PurgeCacheWithClient(client *http.Client, token, url string, everything boo
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("cache purge failed for zone %s: HTTP %d", zone.ID, resp.StatusCode)
+		}
 	}
 	return nil
 }

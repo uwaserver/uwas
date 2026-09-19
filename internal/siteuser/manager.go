@@ -124,7 +124,9 @@ func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	}
 
 	// Ensure SFTP chroot config exists in sshd_config
-	ensureSFTPConfig(username, domainDir, startDir)
+	if err := ensureSFTPConfig(username, domainDir, startDir); err != nil {
+		return nil, "", fmt.Errorf("ensureSFTPConfig: %w", err)
+	}
 
 	return &User{
 		Username: username,
@@ -254,10 +256,10 @@ func chmodDir(path, mode string) error {
 }
 
 // ensureSFTPConfig ensures sshd is configured for chroot SFTP and adds a Match block.
-func ensureSFTPConfig(username, chrootDir string, startDirs ...string) {
+func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
 	data, err := osReadFileFn(sshdConfigPath)
 	if err != nil {
-		return
+		return err
 	}
 	content := string(data)
 	startDir := ""
@@ -300,18 +302,15 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) {
 			changed = true
 		}
 		if !changed {
-			return
+			return nil
 		}
 		if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
-			if sshdConfigWriteErr != nil {
-				sshdConfigWriteErr(fmt.Sprintf("write sshd_config: %v", err))
-			}
-			return
+			return fmt.Errorf("write sshd_config: %w", err)
 		}
 		if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
 			execCommandFn("systemctl", "reload", "sshd").Run()
 		}
-		return
+		return nil
 	}
 
 	// Add Match User block if not present
@@ -322,20 +321,18 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) {
 	}
 
 	if !changed {
-		return
+		return nil
 	}
 
 	if err := osWriteFileFn(sshdConfigPath, []byte(content), 0644); err != nil {
-		if sshdConfigWriteErr != nil {
-			sshdConfigWriteErr(fmt.Sprintf("write sshd_config: %v", err))
-		}
-		return // don't reload sshd if config write failed
+		return fmt.Errorf("write sshd_config: %w", err)
 	}
 
 	// Reload sshd — try both service names
 	if err := execCommandFn("systemctl", "reload", "ssh").Run(); err != nil {
 		execCommandFn("systemctl", "reload", "sshd").Run()
 	}
+	return nil
 }
 
 func cleanSFTPStartDir(startDir string) string {

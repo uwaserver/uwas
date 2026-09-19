@@ -141,7 +141,7 @@ func TestEnsureSFTPConfig_ManagedBlockUnchanged(t *testing.T) {
 		return fakeExecCommand(command, args...)
 	}
 
-	ensureSFTPConfig("uwas-a", "/var/www/a", "/public_html")
+	_ = ensureSFTPConfig("uwas-a", "/var/www/a", "/public_html")
 
 	if wrote {
 		t.Fatal("expected no write when managed block is unchanged")
@@ -182,7 +182,7 @@ func TestEnsureSFTPConfig_ManagedBlockWriteError(t *testing.T) {
 		return fakeExecCommand(command, args...)
 	}
 
-	ensureSFTPConfig("uwas-example--com", "/new/path", "/public_html")
+	_ = ensureSFTPConfig("uwas-example--com", "/new/path", "/public_html")
 	if !reloaded {
 		t.Fatal("expected write to be attempted")
 	}
@@ -223,7 +223,7 @@ func TestEnsureSFTPConfig_ManagedBlockReloadFallback(t *testing.T) {
 		return fakeExecCommand(command, args...)
 	}
 
-	ensureSFTPConfig("uwas-example--com", "/new/path", "/public_html")
+	_ = ensureSFTPConfig("uwas-example--com", "/new/path", "/public_html")
 
 	if len(calls) != 2 {
 		t.Fatalf("expected ssh+sshd reload attempts, got %v", calls)

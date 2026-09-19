@@ -290,7 +290,7 @@ Match User uwas-app--example--com
 	osWriteFileFn = os.WriteFile
 	execCommandFn = fakeExecCommand
 
-	ensureSFTPConfig("uwas-app--example--com", "/var/lib/uwas/apps", "/demo")
+	_ = ensureSFTPConfig("uwas-app--example--com", "/var/lib/uwas/apps", "/demo")
 
 	data, _ := os.ReadFile(sshdFile)
 	content := string(data)
@@ -599,7 +599,7 @@ func TestEnsureSFTPConfig_AddsSubsystemAndMatch(t *testing.T) {
 	osWriteFileFn = os.WriteFile
 	execCommandFn = fakeExecCommand
 
-	ensureSFTPConfig("uwas-example--com", "/var/www/example.com")
+	_ = ensureSFTPConfig("uwas-example--com", "/var/www/example.com")
 
 	data, err := os.ReadFile(sshdFile)
 	if err != nil {
@@ -660,7 +660,7 @@ func TestEnsureSFTPConfig_AlreadyConfigured(t *testing.T) {
 	}
 	execCommandFn = fakeExecCommand
 
-	ensureSFTPConfig("uwas-example--com", "/var/www/example.com")
+	_ = ensureSFTPConfig("uwas-example--com", "/var/www/example.com")
 
 	if writeCalled {
 		t.Error("expected no write when config already correct")
