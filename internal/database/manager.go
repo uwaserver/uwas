@@ -512,6 +512,13 @@ func DropDatabase(name, user, host string) error {
 	if user == "" {
 		user = name
 	}
+	// user is used in a SQL string literal via escapeSQL, which does not block
+	// SQL metacharacters like single-quote. Without this guard, a username like
+	// "admin'#" breaks the string and enables SQL comment injection:
+	//   DROP USER IF EXISTS 'admin'#'@'host'  → drops user 'admin'
+	if !validDBIdentifier(user) {
+		return fmt.Errorf("invalid database user")
+	}
 	if host == "" {
 		host = "localhost"
 	}
@@ -567,6 +574,12 @@ func DropUser(user, host string) error {
 
 // ChangePassword changes the password for a database user.
 func ChangePassword(user, host, newPassword string) error {
+	// user is used in a SQL string literal via escapeSQL. Without this guard,
+	// a username with SQL metacharacters (e.g., single-quote) can break the
+	// string literal and enable comment injection into the ALTER USER statement.
+	if !validDBIdentifier(user) {
+		return fmt.Errorf("invalid database user")
+	}
 	if host == "" {
 		host = "localhost"
 	}
@@ -982,11 +995,31 @@ func validDBIdentifier(s string) bool {
 }
 
 func escapeSQL(s string) string {
-	// IMPORTANT: escape backslashes FIRST, then quotes.
-	// Reversing this order breaks the escape (\ -> \\ -> \\' leaves quote unescaped).
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "'", "\\'")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = strings.ReplaceAll(s, "\x00", "")
-	return s
+	// Single-pass scan to avoid the interaction between sequential ReplaceAll
+	// passes that both modify the same characters.
+	// Rule: output backslash as-is only when it precedes a quote (so \' in
+	// single-quoted SQL = literal quote); in all other cases \ → \\.
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' {
+			if i+1 < len(s) && (s[i+1] == '\'' || s[i+1] == '"') {
+				// Backslash directly before a quote: write \ as-is so the quote
+				// escape can handle it. In a single-quoted SQL string, \' means
+				// a literal single-quote (not a string terminator). The same
+				// applies to \" in double-quoted strings.
+				b.WriteByte(s[i])
+			} else {
+				b.WriteString("\\\\")
+			}
+		} else if s[i] == '\'' {
+			b.WriteString("\\'")
+		} else if s[i] == '"' {
+			b.WriteString("\\\"")
+		} else if s[i] == '\x00' {
+			// skip
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }

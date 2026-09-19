@@ -93,7 +93,6 @@ func TestValidateDeployConfig_Valid(t *testing.T) {
 		Deploy: apps.DeployConfig{
 			GitURL:    "https://github.com/user/repo.git",
 			GitBranch: "main",
-			BuildCmd:  "npm run build",
 		},
 	}
 	if err := validateDeployConfig(app); err != nil {

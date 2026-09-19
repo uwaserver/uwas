@@ -145,10 +145,37 @@ func Add(job Job) error {
 		strings.ContainsAny(job.Domain, "\n\r") || strings.ContainsAny(job.Comment, "\n\r") {
 		return fmt.Errorf("cron fields must not contain newlines")
 	}
+	// Enforce the same shell metacharacter restriction that Monitor.Execute
+	// applies at execution time. Without this, a malicious admin can inject
+	// cron jobs with $(...), `...`, |, >, ;, etc., and those commands will
+	// execute when cron fires — bypassing the per-execution validation.
+	if err := validateShellCommand(job.Command); err != nil {
+		return err
+	}
 
 	existing, err := readCrontab()
 	if err != nil {
 		return err
+	}
+	// Prevent duplicate entries: if a job with the same schedule and command
+	// already exists in the crontab, skip the write. Without this, two calls
+	// to Add() with identical schedule+command would write two crontab lines,
+	// and cron would fire both on every matching tick — doubling side-effects.
+	// The Monitor.Execute overlap guard only prevents concurrent calls from the
+	// same goroutine, not two crontab entries from firing simultaneously.
+	for _, line := range strings.Split(existing, "\n") {
+		// Skip empty lines and UWAS comment lines; only parse actual job lines.
+		// Inverting the marker check: comment lines (which contain uwasMarker) must
+		// be skipped — they have 6+ fields and parseCronLine returns
+		// Schedule="#UWAS managed [domain]" which never matches a real cron schedule,
+		// silently breaking deduplication for all UWAS-managed jobs.
+		if strings.TrimSpace(line) == "" || strings.Contains(line, uwasMarker) {
+			continue
+		}
+		parsed := parseCronLine(line)
+		if parsed.Schedule == job.Schedule && parsed.Command == job.Command {
+			return fmt.Errorf("cron job already exists: schedule=%s command=%s", job.Schedule, job.Command)
+		}
 	}
 	comment := fmt.Sprintf("%s [%s] %s", uwasMarker, job.Domain, job.Comment)
 	entry := fmt.Sprintf("%s\n%s %s\n", comment, job.Schedule, job.Command)

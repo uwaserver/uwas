@@ -80,15 +80,29 @@ func (r *ringBuffer[T]) Seed(tail []T) {
 	}
 }
 
-// PosAndEntries returns the current write position plus a reference to the
-// underlying slice for read-only streaming use. Callers must not modify the
-// returned slice. Used by the SSE log stream which polls for new entries.
+// PosAndEntries returns the current write position plus an independent snapshot
+// of all ring-buffer entries (oldest first). The snapshot is safe to retain
+// and iterate without locking — it is a copy made while the mutex is held.
+// Used by the SSE log stream which polls for new entries.
 func (r *ringBuffer[T]) PosAndEntries() (int, []T) {
 	r.mu.Lock()
 	pos := r.pos
-	entries := r.entries
+	var count int
+	if r.full {
+		count = r.cap
+	} else {
+		count = r.pos
+	}
+	var start int
+	if r.full {
+		start = r.pos
+	}
+	snapshot := make([]T, count)
+	for i := 0; i < count; i++ {
+		snapshot[i] = r.entries[(start+i)%r.cap]
+	}
 	r.mu.Unlock()
-	return pos, entries
+	return pos, snapshot
 }
 
 // Since returns the current write position and a copy of the entries

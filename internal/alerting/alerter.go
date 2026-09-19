@@ -3,6 +3,7 @@ package alerting
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -60,7 +61,7 @@ func New(enabled bool, webhookURL string, channels []notify.Channel, log *logger
 		channels:   channels,
 		logger:     log,
 		enabled:    enabled,
-		history:    make([]Alert, maxAlertHistory),
+		history:    make([]Alert, 0, maxAlertHistory),
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -78,10 +79,14 @@ func (a *Alerter) Alert(alert Alert) {
 	}
 
 	a.mu.Lock()
-	a.history[a.pos] = alert
-	a.pos = (a.pos + 1) % maxAlertHistory
-	if a.pos == 0 {
-		a.full = true
+	if len(a.history) < maxAlertHistory {
+		a.history = append(a.history, alert)
+		if len(a.history) == maxAlertHistory {
+			a.full = true
+		}
+	} else {
+		a.history[a.pos] = alert
+		a.pos = (a.pos + 1) % maxAlertHistory
 	}
 	a.mu.Unlock()
 
@@ -93,7 +98,11 @@ func (a *Alerter) Alert(alert Alert) {
 	)
 
 	if a.webhookURL != "" {
-		go a.sendWebhook(alert)
+		go func() {
+			if err := a.sendWebhook(alert); err != nil {
+				a.logger.Warn("webhook delivery failed", "error", err, "url", a.webhookURL)
+			}
+		}()
 	}
 
 	// Fan out to the configured channels. Each send is its own goroutine: an
@@ -168,7 +177,7 @@ func (a *Alerter) RecordRequest(isError bool) {
 		// Deduplicate: only alert once per minute
 		a.mu.Lock()
 		shouldAlert := true
-		for i := 0; i < maxAlertHistory; i++ {
+		for i := 0; i < len(a.history); i++ {
 			h := a.history[i]
 			if h.Type == "error_spike" && now.Sub(h.Time) < time.Minute {
 				shouldAlert = false
@@ -193,26 +202,22 @@ func (a *Alerter) Alerts() []Alert {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	var count int
-	if a.full {
-		count = maxAlertHistory
-	} else {
-		count = a.pos
-	}
-	if count == 0 {
+	if len(a.history) == 0 {
 		return nil
 	}
 
-	result := make([]Alert, 0, count)
-	// Walk backward from most recent to oldest
-	for i := count - 1; i >= 0; i-- {
-		var idx int
-		if a.full {
-			idx = (a.pos - 1 - (count - 1 - i) + maxAlertHistory) % maxAlertHistory
-		} else {
-			idx = i
+	// When history is still growing (len < maxAlertHistory), entries are at
+	// history[0]..history[len-1]; iterate newest-first from the end.
+	// When full, entries are at history[0..pos-1] and history[pos..cap-1];
+	// newest is at (pos-1+cap)%cap, then wrap backward.
+	result := make([]Alert, 0, maxAlertHistory)
+	if !a.full {
+		for i := len(a.history) - 1; i >= 0; i-- {
+			result = append(result, a.history[i])
 		}
-		if !a.history[idx].Time.IsZero() {
+	} else {
+		for i := 0; i < maxAlertHistory; i++ {
+			idx := (a.pos - 1 - i + maxAlertHistory) % maxAlertHistory
 			result = append(result, a.history[idx])
 		}
 	}
@@ -220,24 +225,26 @@ func (a *Alerter) Alerts() []Alert {
 	return result
 }
 
-func (a *Alerter) sendWebhook(alert Alert) {
+func (a *Alerter) sendWebhook(alert Alert) error {
 	payload, err := json.Marshal(alert)
 	if err != nil {
 		a.logger.Error("failed to marshal alert for webhook", "error", err)
-		return
+		return fmt.Errorf("marshal alert for webhook: %w", err)
 	}
 
 	resp, err := a.client.Post(a.webhookURL, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		a.logger.Error("webhook delivery failed", "error", err, "url", a.webhookURL)
-		return
+		return fmt.Errorf("webhook delivery failed: %w", err)
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		a.logger.Error("webhook returned error", "status", resp.StatusCode, "url", a.webhookURL)
+		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
+	return nil
 }
 
 func itoa(n int) string {

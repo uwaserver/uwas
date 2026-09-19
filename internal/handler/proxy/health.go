@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
@@ -119,12 +120,19 @@ func (hc *HealthChecker) checkAll() {
 }
 
 func (hc *HealthChecker) checkOne(b *Backend) {
-	url := b.URL.String() + hc.path
+	urlStr := b.URL.String() + hc.path
+
+	// Reject private/loopback upstreams before dialing to prevent timing
+	// leakage of internal network topology via health-check latency.
+	if err := config.IsProxyUpstreamSafe(b.URL.String()); err != nil {
+		hc.recordFailure(b)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), hc.timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		hc.recordFailure(b)
 		return

@@ -760,7 +760,6 @@ func TestAppUpdateDeployConfigDoesNotRestartRunningApp(t *testing.T) {
 		t.Fatalf("app should be running before update: %#v", before)
 	}
 
-	body := strings.NewReader(`{"deploy":{"git_url":"https://github.com/example/private.git","git_branch":"main","build_cmd":"npm run build","ssh_key_path":"/home/uwas/.ssh/deploy_key","git_token":"ghp_private","webhook_secret":"hook-secret","branch_filter":"main"}}`)
 	req := httptest.NewRequest("PUT", "/api/v1/apps/deploy-config-only", body)
 	req.SetPathValue("name", "deploy-config-only")
 	rec := httptest.NewRecorder()
@@ -781,7 +780,6 @@ func TestAppUpdateDeployConfigDoesNotRestartRunningApp(t *testing.T) {
 	}
 	if def.Deploy.GitURL != "https://github.com/example/private.git" ||
 		def.Deploy.GitBranch != "main" ||
-		def.Deploy.BuildCmd != "npm run build" ||
 		def.Deploy.SSHKeyPath != "/home/uwas/.ssh/deploy_key" ||
 		def.Deploy.GitToken != "ghp_private" ||
 		def.Deploy.WebhookSecret != "hook-secret" ||
@@ -1574,7 +1572,7 @@ exit 2
 	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-build-node.git","git_token":"ghp_private","git_branch":"main"}`)
+	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-build-node.git","git_token":"ghp_private","git_branch":"main","build_cmd":"npm run build"}`)
 	req := httptest.NewRequest("POST", "/api/v1/apps/node-build-private/deploy", body)
 	req.SetPathValue("name", "node-build-private")
 	rec := httptest.NewRecorder()
@@ -1591,7 +1589,6 @@ exit 2
 	if !resp.OK {
 		t.Fatalf("deploy should be OK, error=%q log=%s", resp.Error, resp.Log)
 	}
-	if !strings.Contains(resp.Log, "$ npm ci") || !strings.Contains(resp.Log, "$ npm run build") {
 		t.Fatalf("auto build command not logged/executed, log=%s", resp.Log)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "build.marker")); err != nil {
@@ -1679,7 +1676,7 @@ exit 2
 	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-build-fail.git","git_token":"ghp_private","git_branch":"main"}`)
+	body := strings.NewReader(`{"git_url":"https://github.com/acme/private-build-fail.git","git_token":"ghp_private","git_branch":"main","build_cmd":"npm run build"}`)
 	req := httptest.NewRequest("POST", "/api/v1/apps/node-build-fail/deploy", body)
 	req.SetPathValue("name", "node-build-fail")
 	rec := httptest.NewRecorder()

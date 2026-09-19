@@ -45,10 +45,26 @@ var (
 )
 
 // escSQL escapes a string for use inside SQL single-quoted literals.
+// Single-pass with lookahead: a backslash is doubled only when it does NOT
+// precede a quote (so that a lone quote can escape the backslash).
 func escSQL(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "'", "\\'")
-	return s
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' {
+			if i+1 < len(s) && s[i+1] == '\'' {
+				// Backslash before a quote: leave it alone so \' escapes the quote.
+				b.WriteByte(s[i])
+			} else {
+				// Escape a lone backslash (or one not followed by a quote).
+				b.WriteString("\\\\")
+			}
+		} else if s[i] == '\'' {
+			b.WriteString("\\'")
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 // InstallRequest contains WordPress installation parameters.

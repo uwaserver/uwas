@@ -309,7 +309,7 @@ func validateShellCommand(command string) error {
 	if strings.ContainsAny(command, "\x00\n\r") {
 		return fmt.Errorf("command contains forbidden control characters")
 	}
-	forbidden := []string{"$(", "`", "|", ">", "<", ";", "&&", "||"}
+	forbidden := []string{"$(", "`", "|", ">", "<", ";", "&&", "||", "&"}
 	for _, f := range forbidden {
 		if strings.Contains(command, f) {
 			return fmt.Errorf("command contains forbidden shell metacharacter: %q", f)

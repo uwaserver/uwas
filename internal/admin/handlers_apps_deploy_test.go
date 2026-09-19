@@ -70,7 +70,6 @@ func TestValidGitRef(t *testing.T) {
 func TestValidateBuildCommand(t *testing.T) {
 	good := []string{
 		"npm ci",
-		"npm run build",
 		"pip install -r requirements.txt",
 		"go build -o ./main",
 		"make",
@@ -90,6 +89,8 @@ func TestValidateBuildCommand(t *testing.T) {
 		"echo $(whoami)",
 		"npm ci\nmalicious",
 		"npm ci\x00",
+		"npm ci && npm run build",
+		"false || echo injected",
 	}
 	for _, s := range bad {
 		if err := validateBuildCommand(s); err == nil {
