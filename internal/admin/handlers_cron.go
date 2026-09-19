@@ -72,6 +72,9 @@ func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "domain and command are required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireDomainAccess(w, r, req.Domain, "cron.execute") {
+		return
+	}
 	if s.cronMonitor == nil {
 		jsonError(w, "cron monitor not initialized", http.StatusServiceUnavailable)
 		return

@@ -19,6 +19,7 @@ type RateLimiter struct {
 	limit          int
 	window         time.Duration
 	cleanup        atomic.Bool
+	mu             sync.RWMutex // protects trustedProxies and keyBy
 	trustedProxies []*net.IPNet
 	// keyBy mirrors security.rate_limit.by: "" or "ip" keys on the client
 	// address, "header:<Name>" on that request header.
@@ -73,6 +74,8 @@ func (rl *RateLimiter) Stop() {
 // SetTrustedProxies configures CIDR ranges for trusted reverse proxies.
 // Only X-Forwarded-For / X-Real-IP from these IPs will be trusted.
 func (rl *RateLimiter) SetTrustedProxies(cidrs []string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	rl.trustedProxies = nil
 	for _, cidr := range cidrs {
 		_, ipNet, err := net.ParseCIDR(cidr)
@@ -84,6 +87,8 @@ func (rl *RateLimiter) SetTrustedProxies(cidrs []string) {
 
 // isTrustedProxy checks if the given IP is in the trusted proxies list.
 func (rl *RateLimiter) isTrustedProxy(ip net.IP) bool {
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
 	if rl.trustedProxies == nil {
 		return false
 	}
@@ -131,6 +136,8 @@ func (rl *RateLimiter) Window() time.Duration {
 // `by: ip | header:X-Forwarded-For` and nothing read it, so every limiter
 // keyed on the client address whatever the domain asked for.
 func (rl *RateLimiter) SetKeyBy(by string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	rl.keyBy = strings.TrimSpace(by)
 }
 
@@ -157,7 +164,9 @@ func KnownRateLimitKey(by string) bool {
 // against trusted_proxies, and taking the raw header would let any client set
 // its own bucket. That is what `by: header:X-Forwarded-For` means in the docs.
 func (rl *RateLimiter) Key(r *http.Request) string {
+	rl.mu.RLock()
 	by := rl.keyBy
+	rl.mu.RUnlock()
 	if by == "" || strings.EqualFold(by, "ip") {
 		return clientIP(rl, r)
 	}

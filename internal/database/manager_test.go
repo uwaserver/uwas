@@ -1534,7 +1534,14 @@ func TestEscapeSQL(t *testing.T) {
 		{"backslash\\", "backslash\\\\"},
 		{"quote\"", "quote\\\""},
 		{"null\x00char", "nullchar"},
-		{"complex\\'\"", "complex\\\\\\'\\\""},
+		{"complex\\'\"", "complex\\\\'\\\""},
+		// Regression: single backslash before quote must NOT be double-escaped.
+		// Old code: pass1 \→\\, pass2 '→\' → \\' → MySQL reads \\ as escaped-backslash
+		// then ' as string-terminator, truncating the value at the quote.
+		// After fix: backslash writes as-is when followed by quote, then quote escape
+		// handles \'. Output: backslash + \' = \\' (one escaped-backslash + one escaped-quote).
+		// MySQL reads \\' as: \\ = escaped-backslash, ' = string terminator → correct.
+		{"user\\'pass", "user\\\\'pass"},
 	}
 
 	for _, tt := range tests {

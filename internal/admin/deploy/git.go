@@ -123,8 +123,7 @@ func validateBuildCommand(s string) error {
 			continue
 		}
 		if i+1 < len(s) && s[i+1] == '&' {
-			i++
-			continue
+			return fmt.Errorf("forbidden metacharacter: %q", "&&")
 		}
 		return fmt.Errorf("forbidden metacharacter: %q", "&")
 	}

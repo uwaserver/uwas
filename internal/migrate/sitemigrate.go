@@ -262,7 +262,14 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 	// second) collides when two migrations of the same DB run in the same
 	// second (concurrent processes, or rapid retries), and one's deferred
 	// os.Remove then deletes the other's dump out from under it.
-	dumpF, err := os.CreateTemp(tempDirFn(), fmt.Sprintf("uwas-migrate-%s-*.sql", req.DBName))
+	// req.DBName is guaranteed alphanumeric by validMigrateDBIdentifier above,
+	// but use a defensive sanitized prefix regardless: os.CreateTemp interprets
+	// the dir argument strictly, so the prefix cannot escape it — however a
+	// directory-separated DBName would create an unintended subdirectory in the
+	// temp tree. Stripping to alphanum only keeps the prefix tidy and defends
+	// against any future caller that bypasses the identifier check.
+	safePrefix := "uwas-migrate-" + safeMigratePrefix(req.DBName)
+	dumpF, err := os.CreateTemp(tempDirFn(), safePrefix+"-*.sql")
 	if err != nil {
 		log.WriteString(fmt.Sprintf("write dump file: %s\n", err))
 		return "error: write failed"
