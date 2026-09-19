@@ -59,7 +59,7 @@ func TestEnableWithRollbackAllowsPortsBeforeEnabling(t *testing.T) {
 	rs := &recordingStub{}
 	rs.install(t)
 
-	if err := EnableWithRollback(time.Minute, []string{"22", "80", "443", "9443"}); err != nil {
+	if err := EnableWithRollback(time.Minute, []string{"22", "80", "443", "443/udp", "9443"}); err != nil {
 		t.Fatalf("EnableWithRollback: %v", err)
 	}
 	calls := rs.got()
@@ -69,6 +69,9 @@ func TestEnableWithRollbackAllowsPortsBeforeEnabling(t *testing.T) {
 	for i, c := range calls {
 		if strings.Contains(c, "allow 22/tcp") {
 			allowed["22"] = i
+		}
+		if strings.Contains(c, "allow 443/udp") {
+			allowed["443/udp"] = i
 		}
 		if strings.HasPrefix(c, "ufw --force enable") {
 			enableAt = i
@@ -81,6 +84,12 @@ func TestEnableWithRollbackAllowsPortsBeforeEnabling(t *testing.T) {
 		if !rs.contains("allow " + p + "/tcp") {
 			t.Errorf("port %s was not allowed", p)
 		}
+	}
+	if !rs.contains("allow 443/udp") {
+		t.Error("443/udp (QUIC) was not allowed")
+	}
+	if allowed["443/udp"] > enableAt {
+		t.Error("443/udp was allowed AFTER enabling")
 	}
 	if allowed["22"] > enableAt {
 		t.Errorf("SSH was allowed AFTER enabling — a remote session could be dropped first")

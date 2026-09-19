@@ -27,7 +27,7 @@ import (
 )
 
 // runStep runs a command and tees output to the log buffer.
-func runStep(ctx context.Context, wd, name string, args []string, out *strings.Builder, env []string) error {
+func runStep(ctx context.Context, wd, name string, args []string, out LogSink, env []string) error {
 	out.WriteString(fmt.Sprintf("\n$ %s %s\n", name, redactCommandArgs(args)))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = wd
@@ -49,7 +49,7 @@ func runOutput(ctx context.Context, wd, name string, args ...string) (string, er
 	return string(out), err
 }
 
-func runShell(ctx context.Context, wd, command string, out *strings.Builder, env []string) error {
+func runShell(ctx context.Context, wd, command string, out LogSink, env []string) error {
 	cmd := buildShellCmd(ctx, command)
 	cmd.Dir = wd
 	if env != nil {
@@ -146,7 +146,7 @@ func runDeployCore(
 	def *apps.App,
 	gitURL, gitBranch, buildCmd, sshKeyPath, gitToken string,
 	extraEnv map[string]string,
-	logBuf *strings.Builder,
+	logBuf LogSink,
 ) error {
 	if def == nil || def.WorkDir == "" {
 		return fmt.Errorf("app has no work_dir resolved")
@@ -209,8 +209,20 @@ func runDeployCore(
 		if err := ensureGitOrigin(ctx, def.WorkDir, remoteURL, logBuf, gitEnv); err != nil {
 			return err
 		}
+		if n := clearStaleGitLocks(gitDir, staleGitLockAge); n > 0 {
+			logBuf.WriteString(fmt.Sprintf("cleared %d stale git lock file(s)\n", n))
+		}
 		if err := runStep(ctx, def.WorkDir, "git", []string{"fetch", "origin", "--depth", "50"}, logBuf, gitEnv); err != nil {
-			return fmt.Errorf("git fetch failed: %w", err)
+			// A crashed prior fetch often leaves shallow.lock; clear and retry once.
+			if isGitLockContention(err, logBuf.String()) {
+				if n := clearStaleGitLocks(gitDir, 0); n > 0 {
+					logBuf.WriteString(fmt.Sprintf("retrying fetch after clearing %d git lock file(s)\n", n))
+				}
+				err = runStep(ctx, def.WorkDir, "git", []string{"fetch", "origin", "--depth", "50"}, logBuf, gitEnv)
+			}
+			if err != nil {
+				return fmt.Errorf("git fetch failed: %w", err)
+			}
 		}
 		ref := gitBranch
 		if ref == "" {
@@ -226,35 +238,47 @@ func runDeployCore(
 	return runAppBuild(ctx, def, buildCmd, extraEnv, logBuf)
 }
 
-func runAppBuild(ctx context.Context, def *apps.App, buildCmd string, extraEnv map[string]string, logBuf *strings.Builder) error {
+func runAppBuild(ctx context.Context, def *apps.App, buildCmd string, extraEnv map[string]string, logBuf LogSink) error {
 	buildCmd = strings.TrimSpace(buildCmd)
-	if buildCmd == "" {
-		buildCmd = detectAppBuildCmd(def.WorkDir)
-	}
-	if strings.EqualFold(buildCmd, "skip") || strings.EqualFold(buildCmd, "none") {
+	var cmds []string
+	switch {
+	case strings.EqualFold(buildCmd, "skip"), strings.EqualFold(buildCmd, "none"):
 		return nil
+	case buildCmd == "":
+		// Auto-detect returns separate steps so we never need "&&"
+		// (validateBuildCommand rejects shell chaining).
+		cmds = detectAppBuildCmds(def.WorkDir)
+	default:
+		cmds = []string{buildCmd}
 	}
-	if buildCmd == "" {
+	if len(cmds) == 0 {
 		return nil
-	}
-	if err := validateBuildCommand(buildCmd); err != nil {
-		return fmt.Errorf("invalid build command: %w", err)
 	}
 	buildEnv := os.Environ()
-	for k, v := range def.Env {
+	def.Env.Range(func(k, v string) bool {
 		buildEnv = append(buildEnv, fmt.Sprintf("%s=%s", k, v))
-	}
+		return true
+	})
 	for k, v := range extraEnv {
 		buildEnv = append(buildEnv, fmt.Sprintf("%s=%s", k, v))
 	}
-	logBuf.WriteString(fmt.Sprintf("\n$ %s\n", buildCmd))
-	if err := runShell(ctx, def.WorkDir, buildCmd, logBuf, buildEnv); err != nil {
-		return fmt.Errorf("build failed: %w", err)
+	for _, cmd := range cmds {
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" {
+			continue
+		}
+		if err := validateBuildCommand(cmd); err != nil {
+			return fmt.Errorf("invalid build command: %w", err)
+		}
+		logBuf.WriteString(fmt.Sprintf("\n$ %s\n", cmd))
+		if err := runShell(ctx, def.WorkDir, cmd, logBuf, buildEnv); err != nil {
+			return fmt.Errorf("build failed: %w", err)
+		}
 	}
 	return nil
 }
 
-func ensureGitOrigin(ctx context.Context, workDir, gitURL string, logBuf *strings.Builder, env []string) error {
+func ensureGitOrigin(ctx context.Context, workDir, gitURL string, logBuf LogSink, env []string) error {
 	current, err := runOutput(ctx, workDir, "git", "remote", "get-url", "origin")
 	if err != nil {
 		if err := runStep(ctx, workDir, "git", []string{"remote", "add", "origin", gitURL}, logBuf, env); err != nil {
@@ -421,43 +445,46 @@ func redactCommandArgs(args []string) string {
 	return strings.Join(out, " ")
 }
 
-func detectAppBuildCmd(appRoot string) string {
+func detectAppBuildCmds(appRoot string) []string {
 	if data, err := os.ReadFile(filepath.Join(appRoot, "package.json")); err == nil {
 		var pkg struct {
 			Scripts map[string]string `json:"scripts"`
 		}
 		if json.Unmarshal(data, &pkg) == nil {
 			install := "npm install"
+			build := "npm run build"
 			if _, err := os.Stat(filepath.Join(appRoot, "package-lock.json")); err == nil {
 				install = "npm ci"
 			} else if _, err := os.Stat(filepath.Join(appRoot, "pnpm-lock.yaml")); err == nil {
 				install = "corepack pnpm install --frozen-lockfile"
+				build = "corepack pnpm run build"
 			} else if _, err := os.Stat(filepath.Join(appRoot, "yarn.lock")); err == nil {
 				install = "corepack yarn install --frozen-lockfile"
+				build = "corepack yarn build"
 			}
 			if _, ok := pkg.Scripts["build"]; ok {
-				switch {
-				case strings.HasPrefix(install, "corepack pnpm"):
-					return install + " && corepack pnpm run build"
-				case strings.HasPrefix(install, "corepack yarn"):
-					return install + " && corepack yarn build"
-				default:
-					return install + " && npm run build"
-				}
+				return []string{install, build}
 			}
-			return install
+			return []string{install}
 		}
 	}
 	if _, err := os.Stat(filepath.Join(appRoot, "requirements.txt")); err == nil {
-		return "pip install -r requirements.txt"
+		return []string{"pip install -r requirements.txt"}
 	}
 	if _, err := os.Stat(filepath.Join(appRoot, "Gemfile")); err == nil {
-		return "bundle install"
+		return []string{"bundle install"}
 	}
 	if _, err := os.Stat(filepath.Join(appRoot, "go.mod")); err == nil {
-		return "go build -o main ."
+		return []string{"go build -o main ."}
 	}
-	return ""
+	return nil
+}
+
+// detectAppBuildCmd joins auto-detected steps with " && " for display/compat.
+// Runtime execution uses detectAppBuildCmds (separate steps) because
+// validateBuildCommand rejects shell chaining.
+func detectAppBuildCmd(appRoot string) string {
+	return strings.Join(detectAppBuildCmds(appRoot), " && ")
 }
 
 func currentGitSHA(ctx context.Context, workDir string) string {
@@ -772,19 +799,19 @@ func GitAuthEnv(gitURL, sshKeyPath, gitToken string) ([]string, string, func(), 
 }
 func WriteGitAskpass(token string) (string, error) { return writeGitAskpass(token) }
 func ShellQuote(s string) string                   { return shellQuote(s) }
-func RunStep(ctx context.Context, wd, name string, args []string, out *strings.Builder, env []string) error {
+func RunStep(ctx context.Context, wd, name string, args []string, out LogSink, env []string) error {
 	return runStep(ctx, wd, name, args, out, env)
 }
 func RunOutput(ctx context.Context, wd, name string, args ...string) (string, error) {
 	return runOutput(ctx, wd, name, args...)
 }
-func RunShell(ctx context.Context, wd, command string, out *strings.Builder, env []string) error {
+func RunShell(ctx context.Context, wd, command string, out LogSink, env []string) error {
 	return runShell(ctx, wd, command, out, env)
 }
 func IsWindows() bool                             { return isWindows() }
 func TailString(s string, n int) string           { return tailString(s, n) }
 func ValidateDockerGitDeploy(def *apps.App) error { return validateDockerGitDeploy(def) }
-func EnsureGitOrigin(ctx context.Context, workDir, gitURL string, logBuf *strings.Builder, env []string) error {
+func EnsureGitOrigin(ctx context.Context, workDir, gitURL string, logBuf LogSink, env []string) error {
 	return ensureGitOrigin(ctx, workDir, gitURL, logBuf, env)
 }
 func ProbeAppHealth(def *apps.App, path string) error { return probeAppHealth(def, path) }
@@ -796,7 +823,7 @@ func PersistDeployHistoryExported(root, name string, items []DeployHistoryEntry)
 func LoadDeployHistoryExported(root, name string) []DeployHistoryEntry {
 	return loadDeployHistory(root, name)
 }
-func RunDeployCoreExported(ctx context.Context, def *apps.App, gitURL, branch, buildCmd, sshKeyPath, gitToken string, extraEnv map[string]string, logBuf *strings.Builder) error {
+func RunDeployCoreExported(ctx context.Context, def *apps.App, gitURL, branch, buildCmd, sshKeyPath, gitToken string, extraEnv map[string]string, logBuf LogSink) error {
 	return runDeployCore(ctx, def, gitURL, branch, buildCmd, sshKeyPath, gitToken, extraEnv, logBuf)
 }
 func VerifyWebhookSignature(r *http.Request, body []byte, secret string) bool {
@@ -863,4 +890,58 @@ func setEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+// staleGitLockAge: locks newer than this may belong to a live git process.
+const staleGitLockAge = 30 * time.Second
+
+// clearStaleGitLocks removes leftover .git/**/*.lock files (e.g. shallow.lock
+// after a killed `git fetch --depth`). olderThan==0 removes matching locks
+// regardless of mtime (used on retry after a lock-contention error).
+func clearStaleGitLocks(gitDir string, olderThan time.Duration) int {
+	if gitDir == "" {
+		return 0
+	}
+	info, err := os.Stat(gitDir)
+	if err != nil || !info.IsDir() {
+		return 0
+	}
+	var cutoff time.Time
+	if olderThan > 0 {
+		cutoff = time.Now().Add(-olderThan)
+	}
+	removed := 0
+	_ = filepath.WalkDir(gitDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".lock") {
+			return nil
+		}
+		if olderThan > 0 {
+			fi, err := d.Info()
+			if err != nil || fi.ModTime().After(cutoff) {
+				return nil
+			}
+		}
+		if err := os.Remove(path); err == nil {
+			removed++
+		}
+		return nil
+	})
+	return removed
+}
+
+func isGitLockContention(err error, combinedOut string) bool {
+	if err == nil {
+		return false
+	}
+	blob := strings.ToLower(err.Error() + "\n" + combinedOut)
+	if !strings.Contains(blob, ".lock") {
+		return false
+	}
+	return strings.Contains(blob, "file exists") ||
+		strings.Contains(blob, "another git process") ||
+		strings.Contains(blob, "unable to create")
 }

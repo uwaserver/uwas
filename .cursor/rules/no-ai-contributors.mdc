@@ -1,0 +1,16 @@
+---
+description: Never add AI tools as git authors or project contributors
+alwaysApply: true
+---
+
+# No AI as contributor / author
+
+Never list, credit, or add AI assistants (Claude, Cursor, Composer, Auto, ChatGPT, Copilot, etc.) as project contributors, authors, or co-authors.
+
+Hard rules:
+- Do **not** add `Co-authored-by:` trailers for any AI tool or model.
+- Do **not** set git `author` / `committer` to Claude, Cursor, Anthropic, or similar.
+- Do **not** add AI names to README, CONTRIBUTORS, About, docs credits, or release notes contributor lists.
+- Do **not** invent or restore AI contributor entries that were removed.
+
+Commits and credits belong to human maintainers only (e.g. the repo owners / operators who requested the work).

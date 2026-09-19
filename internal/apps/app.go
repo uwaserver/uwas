@@ -66,7 +66,9 @@ type App struct {
 	Ports []int `yaml:"ports,omitempty" json:"ports,omitempty"`
 
 	// Env are extra environment variables passed to the process.
-	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	// Ordered: keys keep the operator's textarea / YAML order on round-trip
+	// (plain map[string]string would sort alphabetically on marshal).
+	Env *EnvMap `yaml:"env,omitempty" json:"env,omitempty"`
 
 	// AutoRestart enables the supervisor to restart the process on
 	// crash. Defaults true unless Disabled.

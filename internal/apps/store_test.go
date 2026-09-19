@@ -19,7 +19,7 @@ func TestStoreSaveLoadRoundtrip(t *testing.T) {
 		Command: "node index.js",
 		Port:    3001,
 		Ports:   []int{5173, 8080},
-		Env:     map[string]string{"FOO": "bar"},
+		Env:     EnvFromPairs("FOO", "bar"),
 	}
 	if err := s.Save(want); err != nil {
 		t.Fatalf("save: %v", err)
@@ -54,7 +54,7 @@ func TestStoreSaveLoadRoundtrip(t *testing.T) {
 	if len(got.Ports) != 2 || got.Ports[0] != 5173 || got.Ports[1] != 8080 {
 		t.Fatalf("ports not preserved: %+v", got.Ports)
 	}
-	if got.Env["FOO"] != "bar" {
+	if got.Env.Get("FOO") != "bar" {
 		t.Fatalf("env not preserved: %+v", got.Env)
 	}
 }

@@ -107,16 +107,23 @@ func validEnvName(name string) bool {
 	return true
 }
 
-func validateAppEnvMap(env map[string]string) error {
-	for k := range env {
+func validateAppEnvMap(env *apps.EnvMap) error {
+	if env == nil {
+		return nil
+	}
+	var err error
+	env.Range(func(k, _ string) bool {
 		if blockedEnvVars[k] {
-			return fmt.Errorf("env var %s is reserved", k)
+			err = fmt.Errorf("env var %s is reserved", k)
+			return false
 		}
 		if !validEnvName(k) {
-			return fmt.Errorf("invalid env name: %s", k)
+			err = fmt.Errorf("invalid env name: %s", k)
+			return false
 		}
-	}
-	return nil
+		return true
+	})
+	return err
 }
 
 func appDefinitionForResponse(a *apps.App) *apps.App {
@@ -366,7 +373,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		existing.Env = patch.Env
+		existing.Env = patch.Env.Clone()
 	}
 	if patch.Deploy.GitURL != "" {
 		existing.Deploy.GitURL = patch.Deploy.GitURL

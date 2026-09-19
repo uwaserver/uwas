@@ -38,9 +38,10 @@ func TestMain(m *testing.M) {
 	databaseDropDatabase = func(name, user, host string) error { return nil }
 
 	firewallGetStatus = func() firewall.Status { return firewall.Status{} }
-	firewallAllowPort = func(port, proto string) error { return nil }
-	firewallDenyPort = func(port, proto string) error { return nil }
+	firewallAllowPort = func(port, proto, from string) error { return nil }
+	firewallDenyPort = func(port, proto, from string) error { return nil }
 	firewallDeleteRule = func(number int) error { return nil }
+	firewallMoveRule = func(number int, direction string) error { return nil }
 	firewallDisable = func() error { return nil }
 	firewallEnableWithRollback = func(time.Duration, []string) error { return nil }
 	firewallConfirmEnable = func() bool { return true }

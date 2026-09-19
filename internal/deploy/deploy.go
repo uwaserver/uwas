@@ -261,9 +261,19 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 		if req.GitToken != "" && gitURL != "" {
 			runCmd(appRoot, gitEnv, "git", "remote", "set-url", "origin", gitURL)
 		}
+		if n := clearStaleGitLocks(gitDir, 30*time.Second); n > 0 {
+			log.WriteString(fmt.Sprintf("cleared %d stale git lock file(s)\n", n))
+		}
 		log.WriteString("$ git fetch origin\n")
 		if out, err := runCmd(appRoot, gitEnv, "git", "fetch", "origin"); err != nil {
-			return fmt.Errorf("git fetch: %w\n%s", err, redactURL(out))
+			if isGitLockErr(err, out) {
+				_ = clearStaleGitLocks(gitDir, 0)
+				log.WriteString("retrying fetch after clearing git lock files\n")
+				out, err = runCmd(appRoot, gitEnv, "git", "fetch", "origin")
+			}
+			if err != nil {
+				return fmt.Errorf("git fetch: %w\n%s", err, redactURL(out))
+			}
 		}
 		log.WriteString("$ git reset --hard origin/" + branch + "\n")
 		// No "--" here: git would treat the ref as a pathspec and refuse
@@ -580,4 +590,53 @@ func sanitizeName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// clearStaleGitLocks removes leftover .git/**/*.lock files (e.g. shallow.lock).
+// olderThan==0 removes matching locks regardless of mtime.
+func clearStaleGitLocks(gitDir string, olderThan time.Duration) int {
+	if gitDir == "" {
+		return 0
+	}
+	info, err := os.Stat(gitDir)
+	if err != nil || !info.IsDir() {
+		return 0
+	}
+	var cutoff time.Time
+	if olderThan > 0 {
+		cutoff = time.Now().Add(-olderThan)
+	}
+	removed := 0
+	_ = filepath.WalkDir(gitDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".lock") {
+			return nil
+		}
+		if olderThan > 0 {
+			fi, err := d.Info()
+			if err != nil || fi.ModTime().After(cutoff) {
+				return nil
+			}
+		}
+		if err := os.Remove(path); err == nil {
+			removed++
+		}
+		return nil
+	})
+	return removed
+}
+
+func isGitLockErr(err error, out string) bool {
+	if err == nil {
+		return false
+	}
+	blob := strings.ToLower(err.Error() + "\n" + out)
+	if !strings.Contains(blob, ".lock") {
+		return false
+	}
+	return strings.Contains(blob, "file exists") ||
+		strings.Contains(blob, "another git process") ||
+		strings.Contains(blob, "unable to create")
 }

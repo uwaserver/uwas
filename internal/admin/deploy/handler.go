@@ -39,7 +39,7 @@ type Deps interface {
 	Reload() error
 	// App lifecycle (for post-deploy restart)
 	AppCompleteDeploy(name string, def *apps.App, skipStart bool) error
-	AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf *strings.Builder) (bool, string, string)
+	AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf LogSink) (bool, string, string)
 }
 
 // ── Types ──
@@ -213,7 +213,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 		validationDef.Deploy.GitToken = req.GitToken
 	}
 	if req.Env != nil {
-		validationDef.Env = req.Env
+		validationDef.Env = apps.EnvFromMap(req.Env)
 	}
 	if err := h.deps.ValidateDeployConfig(&validationDef); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -229,7 +229,37 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	logBuf := &strings.Builder{}
+	stream := wantsDeployStream(r)
+	var flusher http.Flusher
+	if stream {
+		var ok bool
+		flusher, ok = w.(http.Flusher)
+		if !ok {
+			stream = false
+		}
+	}
+
+	logBuf := &LiveLog{}
+	if stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+		logBuf.Emit = func(chunk string) {
+			writeDeploySSE(w, flusher, map[string]any{"type": "log", "text": chunk})
+		}
+	}
+
+	respond := func(resp *AppDeployResponse) {
+		if stream {
+			writeDeploySSE(w, flusher, map[string]any{"type": "done", "result": resp})
+			return
+		}
+		jsonResponse(w, resp)
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
@@ -237,18 +267,26 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	// Merge env.
 	env := def.Env
 	if req.Env != nil {
-		env = req.Env
+		env = apps.EnvFromMap(req.Env)
 	}
+	envMap := env.Map()
 
-	if err := runDeployCore(ctx, def, validationDef.Deploy.GitURL, validationDef.Deploy.GitBranch, validationDef.Deploy.BuildCmd, validationDef.Deploy.SSHKeyPath, validationDef.Deploy.GitToken, env, logBuf); err != nil {
+	if err := runDeployCore(ctx, def, validationDef.Deploy.GitURL, validationDef.Deploy.GitBranch, validationDef.Deploy.BuildCmd, validationDef.Deploy.SSHKeyPath, validationDef.Deploy.GitToken, envMap, logBuf); err != nil {
 		resp := &AppDeployResponse{OK: false, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096)}
 		if rollbackSHA != "" {
-			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), !req.SkipStart, logBuf)
+			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), !req.SkipStart, logBuf)
 			resp.RolledBack = rb
+			resp.RollbackSHA = rbSHA
+			resp.RollbackNote = rbNote
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 		}
 		h.deps.RecordAudit(r, "app.deploy", name+" error: "+err.Error(), false)
-		jsonResponse(w, resp)
+		h.recordHistory(name, DeployHistoryEntry{
+			Source: "manual", StartedAt: time.Now(), Finished: time.Now(),
+			OK: false, Error: resp.Error, LogTail: tailString(logBuf.String(), 2048),
+			RolledBack: resp.RolledBack, RollbackSHA: resp.RollbackSHA, RollbackNote: resp.RollbackNote,
+		})
+		respond(resp)
 		return
 	}
 
@@ -260,13 +298,19 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err := h.deps.AppCompleteDeploy(name, def, req.SkipStart); err != nil {
 		resp := &AppDeployResponse{OK: false, CommitSHA: commitSHA, Error: err.Error(), Log: logBuf.String(), LogTail: tailString(logBuf.String(), 4096), RollbackSHA: rollbackSHA}
 		if rollbackSHA != "" {
-			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(env), true, logBuf)
+			rb, rbSHA, rbNote := h.deps.AppRollback(ctx, name, def, rollbackSHA, validationDef.Deploy, cloneStringMap(envMap), true, logBuf)
 			resp.RolledBack = rb
 			resp.Error += " (rollback: " + rbSHA + " " + rbNote + ")"
 			resp.RollbackSHA = rbSHA
+			resp.RollbackNote = rbNote
 		}
 		h.deps.RecordAudit(r, "app.deploy", name+" post-deploy error: "+err.Error(), false)
-		jsonResponse(w, resp)
+		h.recordHistory(name, DeployHistoryEntry{
+			Source: "manual", StartedAt: time.Now(), Finished: time.Now(),
+			OK: false, CommitSHA: commitSHA, Error: resp.Error, LogTail: tailString(logBuf.String(), 2048),
+			RolledBack: resp.RolledBack, RollbackSHA: resp.RollbackSHA, RollbackNote: resp.RollbackNote,
+		})
+		respond(resp)
 		return
 	}
 
@@ -278,10 +322,25 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err := h.deps.Reload(); err != nil {
 		h.deps.LogError("reload after deploy failed", "error", err)
 	}
-	jsonResponse(w, &AppDeployResponse{
+	respond(&AppDeployResponse{
 		OK: true, CommitSHA: commitSHA, Message: "deployed successfully",
 		Log: logBuf.String(), LogTail: tailString(logBuf.String(), 2048),
 	})
+}
+
+func wantsDeployStream(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
+func writeDeploySSE(w http.ResponseWriter, flusher http.Flusher, payload map[string]any) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+	if flusher != nil {
+		flusher.Flush()
+	}
 }
 
 func (h *Handler) DeployPreflight(w http.ResponseWriter, r *http.Request) {
@@ -541,11 +600,11 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 	defer cancel()
 	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
 
-	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, def.Env, logBuf); err != nil {
+	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, def.Env.Map(), logBuf); err != nil {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env), false, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env.Map()), false, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()
@@ -567,7 +626,7 @@ func (h *Handler) runWebhookDeploy(name, ref string) {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env), true, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = h.deps.AppRollback(ctx, name, def, rollbackSHA, def.Deploy, cloneStringMap(def.Env.Map()), true, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()

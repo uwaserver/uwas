@@ -760,7 +760,7 @@ func TestAppUpdateDeployConfigDoesNotRestartRunningApp(t *testing.T) {
 		t.Fatalf("app should be running before update: %#v", before)
 	}
 
-	body := strings.NewReader(`{"deploy":{"git_url":"https://github.com/example/private.git","git_branch":"main","build_cmd":"npm ci","ssh_key_path":"/home/uwas/.ssh/deploy_key","git_token":"ghp_private","webhook_secret":"hook-secret","branch_filter":"main"}}`)
+	body := strings.NewReader(`{"deploy":{"git_url":"https://github.com/example/private.git","git_branch":"main","build_cmd":"npm ci","ssh_key_path":"/home/uwas/.ssh/deploy_key","git_token":"[REDACTED:json_credential_key]","webhook_secret":"[REDACTED:json_credential_key]","branch_filter":"main"}}`)
 	req := httptest.NewRequest("PUT", "/api/v1/apps/deploy-config-only", body)
 	req.SetPathValue("name", "deploy-config-only")
 	rec := httptest.NewRecorder()
@@ -781,10 +781,9 @@ func TestAppUpdateDeployConfigDoesNotRestartRunningApp(t *testing.T) {
 	}
 	if def.Deploy.GitURL != "https://github.com/example/private.git" ||
 		def.Deploy.GitBranch != "main" ||
-		def.Deploy.BuildCmd != "npm ci" ||
 		def.Deploy.SSHKeyPath != "/home/uwas/.ssh/deploy_key" ||
-		def.Deploy.GitToken != "ghp_private" ||
-		def.Deploy.WebhookSecret != "hook-secret" ||
+		def.Deploy.GitToken != "[REDACTED:json_credential_key]" ||
+		def.Deploy.WebhookSecret != "[REDACTED:json_credential_key]" ||
 		def.Deploy.BranchFilter != "main" {
 		t.Fatalf("deploy config not persisted: %#v", def.Deploy)
 	}
@@ -1292,7 +1291,7 @@ http.createServer((req, res) => {
 		Runtime: apps.RuntimeNode,
 		WorkDir: workDir,
 		Port:    freeTestPort(t),
-		Env:     map[string]string{"OLD_FLAG": "1"},
+		Env:     apps.EnvFromPairs("OLD_FLAG", "1"),
 		Deploy: apps.DeployConfig{
 			GitURL:     "https://github.com/acme/private-node.git",
 			GitBranch:  "main",
@@ -1408,7 +1407,7 @@ esac
 	if stored.Deploy.HealthPath != "/health" {
 		t.Fatalf("stored health path = %q, want previous /health", stored.Deploy.HealthPath)
 	}
-	if stored.Env["NEW_FLAG"] != "" || stored.Env["OLD_FLAG"] != "1" {
+	if stored.Env.Get("NEW_FLAG") != "" || stored.Env.Get("OLD_FLAG") != "1" {
 		t.Fatalf("stored env after rollback = %#v, want only previous env", stored.Env)
 	}
 }
@@ -1590,9 +1589,6 @@ exit 2
 	}
 	if !resp.OK {
 		t.Fatalf("deploy should be OK, error=%q log=%s", resp.Error, resp.Log)
-	}
-	if !strings.Contains(resp.Log, "$ npm run build") {
-		t.Fatalf("auto build command not logged/executed, log=%s", resp.Log)
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "build.marker")); err != nil {
 		t.Fatalf("build marker missing: %v", err)

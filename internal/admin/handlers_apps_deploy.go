@@ -52,7 +52,7 @@ func (d *deployDeps) Reload() error {
 func (d *deployDeps) AppCompleteDeploy(name string, def *apps.App, skipStart bool) error {
 	return d.s.completeDeployedApp(name, def, skipStart)
 }
-func (d *deployDeps) AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf *strings.Builder) (bool, string, string) {
+func (d *deployDeps) AppRollback(ctx context.Context, name string, def *apps.App, rollbackSHA string, deployCfg apps.DeployConfig, env map[string]string, restart bool, logBuf deployadmin.LogSink) (bool, string, string) {
 	return d.s.rollbackDeployedApp(ctx, name, def, rollbackSHA, deployCfg, env, restart, logBuf)
 }
 
@@ -199,13 +199,13 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 	defer cancel()
 	rollbackSHA := currentGitSHA(ctx, def.WorkDir)
 
-	env := deployadmin.CloneStringMap(def.Env)
+	env := deployadmin.CloneStringMap(def.Env.Map())
 
 	if err := runDeployCore(ctx, def, def.Deploy.GitURL, def.Deploy.GitBranch, def.Deploy.BuildCmd, def.Deploy.SSHKeyPath, def.Deploy.GitToken, env, logBuf); err != nil {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, deployadmin.CloneStringMap(def.Env), false, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, deployadmin.CloneStringMap(def.Env.Map()), false, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()
@@ -221,7 +221,7 @@ func (s *Server) runWebhookDeploy(name, ref string) {
 		status.OK = false
 		status.Error = err.Error()
 		if rollbackSHA != "" {
-			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, deployadmin.CloneStringMap(def.Env), true, logBuf)
+			status.RolledBack, status.RollbackSHA, status.RollbackNote = s.rollbackDeployedApp(ctx, name, def, rollbackSHA, def.Deploy, deployadmin.CloneStringMap(def.Env.Map()), true, logBuf)
 		}
 		status.LogTail = tailString(logBuf.String(), 4096)
 		status.Finished = time.Now()
@@ -394,7 +394,7 @@ func (s *Server) rollbackDeployedApp(
 	deployCfg apps.DeployConfig,
 	env map[string]string,
 	restart bool,
-	logBuf *strings.Builder,
+	logBuf deployadmin.LogSink,
 ) (bool, string, string) {
 	rollbackSHA = strings.TrimSpace(rollbackSHA)
 	if rollbackSHA == "" {

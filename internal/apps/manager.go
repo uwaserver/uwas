@@ -300,7 +300,7 @@ func (m *Manager) registerLocked(a *App) {
 		command:     cmd,
 		port:        port,
 		workDir:     a.WorkDir,
-		env:         a.Env,
+		env:         a.Env.Map(),
 		autoRestart: autoRestart,
 		stopCh:      make(chan struct{}),
 	}

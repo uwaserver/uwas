@@ -811,6 +811,61 @@ func TestChangePassword_Success(t *testing.T) {
 	}
 }
 
+func TestDropUser_Success(t *testing.T) {
+	saveHooks(t)
+	var capturedSQL string
+	runMySQLFn = func(sql string) (string, error) {
+		capturedSQL = sql
+		return "", nil
+	}
+
+	if err := DropUser("appuser", "localhost"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(capturedSQL, "DROP USER IF EXISTS 'appuser'@'localhost'") {
+		t.Errorf("expected DROP USER, got %q", capturedSQL)
+	}
+}
+
+func TestDropUser_DefaultHost(t *testing.T) {
+	saveHooks(t)
+	var capturedSQL string
+	runMySQLFn = func(sql string) (string, error) {
+		capturedSQL = sql
+		return "", nil
+	}
+	if err := DropUser("appuser", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(capturedSQL, "'appuser'@'localhost'") {
+		t.Errorf("expected localhost default, got %q", capturedSQL)
+	}
+}
+
+func TestDropUser_Protected(t *testing.T) {
+	saveHooks(t)
+	runMySQLFn = func(sql string) (string, error) {
+		t.Fatal("should not run SQL for protected user")
+		return "", nil
+	}
+	if err := DropUser("root", "localhost"); err == nil {
+		t.Fatal("expected error for root")
+	}
+}
+
+func TestDropUser_Invalid(t *testing.T) {
+	saveHooks(t)
+	if err := DropUser("", "localhost"); err == nil {
+		t.Fatal("expected error for empty user")
+	}
+	if err := DropUser("bad;user", "localhost"); err == nil {
+		t.Fatal("expected error for invalid user")
+	}
+	if err := DropUser("ok", "bad'\nhost"); err == nil {
+		t.Fatal("expected error for invalid host")
+	}
+}
+
 func TestChangePassword_DefaultHost(t *testing.T) {
 	saveHooks(t)
 	var capturedSQL string

@@ -17,9 +17,10 @@ import (
 // safe no-ops so `go test` never runs real ufw commands).
 var (
 	firewallGetStatus  = firewall.GetStatus
-	firewallAllowPort  = firewall.AllowPort
-	firewallDenyPort   = firewall.DenyPort
+	firewallAllowPort  = firewall.AllowPortFrom
+	firewallDenyPort   = firewall.DenyPortFrom
 	firewallDeleteRule = firewall.DeleteRule
+	firewallMoveRule   = firewall.MoveRule
 	firewallDisable    = firewall.Disable
 
 	firewallEnableWithRollback = firewall.EnableWithRollback
@@ -31,10 +32,10 @@ var (
 // button, short enough that a locked-out operator is not stranded.
 const firewallRollbackWindow = 60 * time.Second
 
-// uwasFirewallPorts returns the TCP ports UWAS listens on, so enabling the
-// firewall does not cut them off. SSH (22) is always included — losing it is
-// the whole reason people fear `ufw enable` — and localhost-only listeners are
-// skipped since the firewall governs external traffic they never receive.
+// uwasFirewallPorts returns the ports UWAS needs open when enabling the
+// firewall. Entries are "port" (tcp) or "port/proto". SSH (22) and the web
+// ports are always included — losing SSH is why people fear `ufw enable`.
+// UDP/443 is included for HTTP/3 (QUIC). Localhost-only listeners are skipped.
 func uwasFirewallPorts(g config.GlobalConfig) []string {
 	seen := map[string]bool{}
 	var ports []string
@@ -45,10 +46,10 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 		seen[p] = true
 		ports = append(ports, p)
 	}
-	// SSH and the web ports are the non-negotiable ones.
 	add("22")
 	add("80")
 	add("443")
+	add("443/udp") // HTTP/3 (QUIC)
 	for _, listen := range []string{g.HTTPListen, g.HTTPSListen, g.Admin.Listen, g.SFTPListen, g.MCP.Listen} {
 		if listen == "" {
 			continue
@@ -57,12 +58,19 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 		if err != nil || port == "" {
 			continue
 		}
-		// A service bound to loopback is not reachable from outside, so it
-		// needs no allow rule.
 		if host == "127.0.0.1" || host == "::1" || strings.EqualFold(host, "localhost") {
 			continue
 		}
 		add(port)
+	}
+	// QUIC shares the HTTPS listen port when it is not the default 443.
+	if g.HTTPSListen != "" {
+		host, port, err := net.SplitHostPort(g.HTTPSListen)
+		if err == nil && port != "" && port != "443" {
+			if host != "127.0.0.1" && host != "::1" && !strings.EqualFold(host, "localhost") {
+				add(port + "/udp")
+			}
+		}
 	}
 	return ports
 }
@@ -70,6 +78,8 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 // ============ Firewall ============
 
 func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) {
+	// Heal IPv4 default deny if an older move left only the v6 twin.
+	_ = firewall.EnsureDefaultDenyAtBottom()
 	jsonResponse(w, firewallGetStatus())
 }
 
@@ -81,20 +91,23 @@ func (s *Server) handleFirewallAllow(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Port  string `json:"port"`
 		Proto string `json:"proto"`
+		From  string `json:"from"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Port == "" {
-		jsonError(w, "port is required", http.StatusBadRequest)
+	// Empty port = any port; empty from = anywhere — but not both (that would
+	// be a blanket allow any/any which must never come from the panel form).
+	if strings.TrimSpace(req.Port) == "" && strings.TrimSpace(req.From) == "" {
+		jsonError(w, "port or source IP required", http.StatusBadRequest)
 		return
 	}
-	if err := firewallAllowPort(req.Port, req.Proto); err != nil {
+	if err := firewallAllowPort(req.Port, req.Proto, req.From); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("firewall allow", "port", req.Port, "proto", req.Proto)
+	s.logger.Info("firewall allow", "port", req.Port, "proto", req.Proto, "from", req.From)
 	jsonResponse(w, map[string]string{"status": "allowed", "port": req.Port})
 }
 
@@ -106,21 +119,47 @@ func (s *Server) handleFirewallDeny(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Port  string `json:"port"`
 		Proto string `json:"proto"`
+		From  string `json:"from"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.Port == "" {
-		jsonError(w, "port is required", http.StatusBadRequest)
+	if strings.TrimSpace(req.Port) == "" && strings.TrimSpace(req.From) == "" {
+		jsonError(w, "port or source IP required", http.StatusBadRequest)
 		return
 	}
-	if err := firewallDenyPort(req.Port, req.Proto); err != nil {
+	if err := firewallDenyPort(req.Port, req.Proto, req.From); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("firewall deny", "port", req.Port, "proto", req.Proto)
+	s.logger.Info("firewall deny", "port", req.Port, "proto", req.Proto, "from", req.From)
 	jsonResponse(w, map[string]string{"status": "denied", "port": req.Port})
+}
+
+func (s *Server) handleFirewallMove(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	numStr := r.PathValue("number")
+	var num int
+	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil || num <= 0 {
+		jsonError(w, "invalid rule number", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req struct {
+		Direction string `json:"direction"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := firewallMoveRule(num, req.Direction); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]string{"status": "moved", "direction": req.Direction})
 }
 
 func (s *Server) handleFirewallDelete(w http.ResponseWriter, r *http.Request) {

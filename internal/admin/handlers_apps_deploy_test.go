@@ -80,6 +80,7 @@ func TestValidateBuildCommand(t *testing.T) {
 		}
 	}
 	bad := []string{
+		"npm ci && npm run build",
 		"npm ci; rm -rf /",
 		"npm ci & rm -rf /",
 		"npm ci | tee build.log",

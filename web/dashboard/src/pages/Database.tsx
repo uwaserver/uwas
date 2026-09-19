@@ -31,6 +31,7 @@ import {
   diagnoseDatabase,
   fetchDBUsers,
   changeDBPassword,
+  dropDBUser,
   configureDBRemoteAccess,
   exportDatabase,
   importDatabase,
@@ -46,6 +47,8 @@ import {
   fetchDockerDBDatabases,
   createDockerDBDatabase,
   dropDockerDBDatabase,
+  fetchFirewall,
+  firewallAllow,
   type DBStatus,
   type DBInfo,
   type DBUser,
@@ -58,6 +61,7 @@ import {
 } from '@/lib/api';
 import { copyText } from '@/lib/clipboard';
 import Card from '@/components/Card';
+import { useConfirm } from '@/components/useConfirm';
 
 /* -- Confirmation Modal -------------------------------------------------- */
 
@@ -179,6 +183,7 @@ function CredentialsPanel({
 /* -- Main Page ----------------------------------------------------------- */
 
 export default function Database() {
+  const { confirmAction: askConfirm } = useConfirm();
   const [pageTab, setPageTab] = useState<'manage' | 'explorer'>('manage');
   const [dbStatus, setDbStatus] = useState<DBStatus | null>(null);
   const [databases, setDatabases] = useState<DBInfo[]>([]);
@@ -214,6 +219,8 @@ export default function Database() {
   const [pwUser, setPwUser] = useState<DBUser | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [changingPw, setChangingPw] = useState(false);
+  const [dropUserTarget, setDropUserTarget] = useState<DBUser | null>(null);
+  const [droppingUser, setDroppingUser] = useState(false);
   const [remoteForm, setRemoteForm] = useState({ database: '', user: '', host: '%', password: '' });
   const [configuringRemote, setConfiguringRemote] = useState(false);
 
@@ -414,6 +421,27 @@ export default function Database() {
       setRemoteForm({ database: '', user: '', host: '%', password: '' });
       setStatus({ ok: true, message: `Remote MySQL enabled via ${result.config_path}; service restarted` });
       await load();
+
+      // If the host firewall is active, MySQL will still be unreachable from
+      // outside until 3306/tcp is allowed — ask before opening it.
+      try {
+        const fw = await fetchFirewall();
+        if (fw.active) {
+          const srcHost = result.host && result.host !== '%' ? result.host : '';
+          const fromLabel = srcHost || 'anywhere';
+          const ok = await askConfirm({
+            title: 'Firewall is active',
+            message: `Remote MySQL is listening on all interfaces, but the firewall is on. Allow TCP 3306 from ${fromLabel}? Without this rule, external clients cannot connect.`,
+            confirmLabel: srcHost ? `Allow 3306 from ${srcHost}` : 'Allow 3306 from anywhere',
+          });
+          if (ok) {
+            await firewallAllow('3306', 'tcp', srcHost || undefined);
+            setStatus({ ok: true, message: `Remote MySQL enabled; firewall allow 3306/tcp from ${fromLabel} added` });
+          }
+        }
+      } catch {
+        // Firewall status/allow is best-effort; remote access already succeeded.
+      }
     } catch (e) {
       setStatus({ ok: false, message: (e as Error).message });
     } finally {
@@ -434,6 +462,26 @@ export default function Database() {
       setStatus({ ok: false, message: (e as Error).message });
     } finally {
       setDropping(false);
+    }
+  };
+
+  const handleDropUser = async () => {
+    if (!dropUserTarget) return;
+    setDroppingUser(true);
+    setStatus(null);
+    try {
+      await dropDBUser(dropUserTarget.user, dropUserTarget.host);
+      setStatus({ ok: true, message: `Dropped user ${dropUserTarget.user}@${dropUserTarget.host}` });
+      setDropUserTarget(null);
+      if (pwUser?.user === dropUserTarget.user && pwUser?.host === dropUserTarget.host) {
+        setPwUser(null);
+        setNewPassword('');
+      }
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, message: (e as Error).message });
+    } finally {
+      setDroppingUser(false);
     }
   };
 
@@ -874,6 +922,32 @@ export default function Database() {
         </div>
       </ConfirmModal>
 
+      {/* Drop Database User Confirmation */}
+      <ConfirmModal
+        open={dropUserTarget !== null}
+        title="Drop Database User"
+        confirmLabel="Drop User"
+        confirmClass="bg-red-600 hover:bg-red-700"
+        onConfirm={handleDropUser}
+        onCancel={() => setDropUserTarget(null)}
+        loading={droppingUser}
+      >
+        <div className="space-y-3">
+          <div className="flex items-start gap-2 rounded-md bg-red-500/10 p-3 text-red-400">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+            <p>
+              This removes the MySQL/MariaDB account only. Databases they own are not dropped.
+              Apps still using this login will fail to connect.
+            </p>
+          </div>
+          {dropUserTarget && (
+            <p className="font-mono text-xs text-foreground">
+              {dropUserTarget.user}@{dropUserTarget.host}
+            </p>
+          )}
+        </div>
+      </ConfirmModal>
+
       {/* Generic Confirm Modal (docker container remove, docker db drop, uninstall) */}
       <ConfirmModal
         open={confirmAction !== null}
@@ -941,9 +1015,18 @@ export default function Database() {
                           <button onClick={() => { setPwUser(null); setNewPassword(''); }} className="text-xs text-muted-foreground">Cancel</button>
                         </div>
                       ) : (
-                        <button onClick={() => setPwUser(u)} className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs text-card-foreground hover:bg-accent">
-                          <Key size={12} /> Change Password
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => setPwUser(u)} className="flex items-center gap-1 rounded-md bg-accent/50 px-2.5 py-1.5 text-xs text-card-foreground hover:bg-accent">
+                            <Key size={12} /> Change Password
+                          </button>
+                          <button
+                            onClick={() => setDropUserTarget(u)}
+                            className="flex items-center gap-1 rounded-md bg-red-600/15 px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-600/25"
+                            title={`Drop ${u.user}@${u.host}`}
+                          >
+                            <Trash2 size={12} /> Drop
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>

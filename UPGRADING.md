@@ -5,6 +5,102 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.22
+
+Drop-in. App `env` keys keep the order you saved (no alphabetical reshuffle).
+Existing YAML maps load in document order going forward.
+
+No config or data migration.
+
+---
+
+## Upgrading to v0.11.21
+
+Drop-in.
+
+1. **Deploy** recovers from leftover `.git/**/*.lock` (e.g. `shallow.lock`)
+   and streams live logs in the panel (5m client timeout).
+2. **Auto-detected Node builds** run `install` then `build` as separate
+   steps — custom `build_cmd` still must not contain `&&` / `|` / `;`.
+
+No config or data migration.
+
+---
+
+## Upgrading to v0.11.20
+
+Drop-in.
+
+1. **Firewall Rules table** no longer lists `# uwas-autoblock` denys (still in
+   Auto-Block panel).
+2. **Enable** now allows **443/udp** for HTTP/3 (QUIC). Already-enabled hosts
+   keep existing rules — re-enable or add `443/udp` manually if needed.
+
+No config or data migration.
+
+---
+
+## Upgrading to v0.11.19
+
+Drop-in. If the firewall panel is missing the bottom IPv4 `DENY any → any` but
+still has an IPv6 twin (from an older move bug), open Firewall or click Refresh
+— the IPv4 deny is re-added automatically.
+
+No config or data migration.
+
+---
+
+## Upgrading to v0.11.18
+
+Drop-in. Firewall reorder and display fixes only:
+
+1. **↑↓ move** no longer risks deleting the numbered default DENY (delete-first
+   move; default deny stays at the bottom and cannot be moved).
+2. **Protocol** column shows `any` when empty (source-only / any-port rules).
+
+No config or data migration.
+
+---
+
+## Upgrading to v0.11.17
+
+Drop-in for most hosts. Firewall panel behavior changes slightly:
+
+1. **Enable** now ensures one numbered `DENY any → any` at the bottom (plus the
+   UFW default incoming deny policy). If you already had a blanket deny, it is
+   not duplicated.
+2. **Empty port** in Add Rule means any port. Allow with both port and source
+   empty is rejected in the UI (would open the host completely).
+3. Re-enabling after disable cleans duplicate allow/deny rows left by earlier
+   builds.
+
+---
+
+## Upgrading to v0.11.16
+
+Mostly drop-in. Review if you use the WAF body scanner, firewall panel, remote
+MySQL, or app deploy build commands.
+
+### Action may be required
+
+1. **WAF now inspects JSON and multipart bodies.** Legitimate APIs that send
+   strings matching SQLi/XSS/PHP patterns in JSON fields or form-data may get
+   blocked where they previously passed. Tune WAF rules or exclude those
+   paths if needed.
+
+2. **App deploy `build_cmd`** rejects shell chaining (`&&`, `|`, `;`, backticks,
+   etc.). Split into a single safe command or a script file invoked without
+   metacharacters.
+
+3. **Firewall enable** sets `ufw default deny incoming` (policy) and skips
+   duplicate allow rows. Existing numbered rules are unchanged; use Source IP
+   and ↑↓ reorder in the panel if you want tighter allow-above-deny ordering.
+
+4. **Remote MySQL** with an active firewall prompts to open `3306/tcp` — decline
+   if you only reach MySQL over a private network / tunnel.
+
+---
+
 ## Upgrading to v0.11.15
 
 Security hardening release. Most deployments are drop-in; review the items

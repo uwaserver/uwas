@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.22] - 2026-09-18
+
+### Fixed
+
+- **App Environment variables keep save order** — YAML/JSON no longer
+  alphabetically re-sort keys on every save/reload.
+
+### Changed
+
+- **Edit application Environment field** is full-width below the form
+  (no longer a narrow side column).
+- **Deploy modal closes automatically** after a successful deploy
+  (stays open on failure so the log remains visible).
+
+## [0.11.21] - 2026-09-17
+
+### Fixed
+
+- **Deploy recovers from stale git locks** (`shallow.lock` and other
+  `.git/**/*.lock` leftovers after a killed fetch) — clear and retry once.
+- **Auto-detected Node builds no longer fail** with `forbidden metacharacter
+  "&&"` — install and build run as separate steps.
+
+### Changed
+
+- **Deploy modal streams live logs** via SSE (`Accept: text/event-stream`);
+  Recent deploys starts empty so stale errors are not shown on open.
+- **Deploy UI timeout is 5 minutes** (default API requests stay at 30s).
+
+## [0.11.20] - 2026-09-16
+
+### Added
+
+- **Firewall enable allows UDP/443** (and non-default HTTPS listen UDP) for
+  HTTP/3 (QUIC), alongside the existing TCP/443 allow.
+
+### Changed
+
+- **Autoblock denys are hidden from the Firewall Rules table** — they remain in
+  the Auto-Block panel only (`# uwas-autoblock`).
+
+## [0.11.19] - 2026-09-16
+
+### Fixed
+
+- **IPv4 default DENY restores when only the IPv6 twin remains.** After a bad
+  move, `hasDefaultDeny` treated the orphaned v6 DENY as sufficient and never
+  re-added the IPv4 row — the panel showed no bottom drop. Status/refresh now
+  heals the IPv4 deny; dedupe keeps a single v4+v6 pair.
+
+## [0.11.18] - 2026-09-16
+
+### Fixed
+
+- **Firewall move no longer deletes the default DENY.** Reorder used
+  insert-then-delete; when UFW skipped a duplicate insert, `delete` removed the
+  next rule (often the bottom drop). Move now deletes first, then inserts, and
+  refuses to move or pass the default deny.
+- **Empty protocol displays as `any`** (not `--`) for any-port / source-only
+  rules.
+- **Allow/deny API** rejects requests with both port and source empty (blanket
+  any/any must not come from the panel form).
+
+## [0.11.17] - 2026-09-16
+
+### Fixed
+
+- **Firewall rule count matches the table.** Status showed all rules (including
+  hidden IPv6 twins) while the list hid IPv6 by default — e.g. “8 configured”
+  with 4 rows. The badge now counts visible rules and notes hidden IPv6.
+- **Empty port = any port** on allow/deny (source-scoped or `from any to any`).
+- **Enable adds a numbered default DENY any→any at the bottom** (in addition to
+  UFW’s default policy) so allow-above-deny is visible in the panel.
+- **Disable → enable no longer duplicates rules.** Dedup runs before and after
+  enable; staged `ufw show added` parsing covers `proto` / `from any to any`.
+
+## [0.11.16] - 2026-09-16
+
+### Security
+
+- **WAF body scan no longer skips JSON and multipart.**
+  `application/json`, `multipart/form-data`, and `+json` bodies were treated as
+  opaque and bypassed SQLi/XSS/PHP pattern checks. Dedicated scanners now
+  extract string values from JSON and named multipart fields and run them
+  through the same body patterns.
+- **Cron execute requires admin auth**; deploy `build_cmd` rejects shell
+  chaining metacharacters (`&&`, `|`, `;`, …); expired sessions are deleted on
+  validate.
+- Fifteen additional security/reliability fixes across admin, auth, backup,
+  filemanager, TLS/ACME, limiter, PHP, apps, deploy, and panic logging.
+
+### Added
+
+- **Firewall: Source IP/CIDR** on allow/deny rules; allows insert above
+  port-denies; ↑↓ reorder via `POST /api/v1/firewall/{n}/move`.
+- **Database user Drop** in the panel (`DELETE /api/v1/database/users`).
+- **Deploy-key Generate** on app Edit (previously only in the Deploy modal).
+
+### Fixed
+
+- Firewall enable no longer stacks duplicate allows; default incoming deny is
+  UFW policy (not numbered “Any DENY” rows); source-IP deny rules parse `From`
+  correctly instead of looking like Anywhere.
+- Enabling remote MySQL while the firewall is active prompts to allow TCP 3306
+  (from the DB host or anywhere).
+
 ## [0.11.15] - 2026-09-15
 
 ### Security

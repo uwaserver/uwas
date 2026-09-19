@@ -107,9 +107,10 @@ function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === 'AbortError';
 }
 
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
+async function api<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const started = performance.now();
   const method = options?.method || 'GET';
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT;
   addDebugLog({
     level: 'info',
     scope: 'api',
@@ -130,18 +131,19 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   let res: Response;
-  const { signal, cleanup } = abortWithTimeout(DEFAULT_REQUEST_TIMEOUT, options?.signal);
+  const { timeoutMs: _timeoutOpt, ...fetchOptions } = options ?? {};
+  const { signal, cleanup } = abortWithTimeout(timeoutMs, fetchOptions.signal);
   try {
-    res = await fetch(`${BASE}${path}`, { ...options, headers, signal });
+    res = await fetch(`${BASE}${path}`, { ...fetchOptions, headers, signal });
   } catch (e) {
     addDebugLog({
       level: 'error',
       scope: 'api',
       message: `${method} ${path} ${isAbortError(e) ? 'timeout' : 'network error'}`,
-      detail: isAbortError(e) ? `Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s` : (e instanceof Error ? e.message : String(e)),
+      detail: isAbortError(e) ? `Request timed out after ${timeoutMs / 1000}s` : (e instanceof Error ? e.message : String(e)),
       duration_ms: Math.round(performance.now() - started),
     });
-    throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+    throw isAbortError(e) ? new Error(`Request timed out after ${timeoutMs / 1000}s`) : e;
   } finally {
     cleanup();
   }
@@ -188,13 +190,13 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
         addDebugLog({ level: 'info', scope: 'api', message: `${method} ${path} retrying with PIN` });
         // Retry the same request with pin
         const retryHeaders: Record<string, string> = { ...headers, 'X-Pin-Code': pin };
-        const { signal: retrySignal, cleanup } = abortWithTimeout(DEFAULT_REQUEST_TIMEOUT, options?.signal);
+        const { signal: retrySignal, cleanup } = abortWithTimeout(timeoutMs, fetchOptions.signal);
         doCleanup = cleanup;
         let retryRes: Response;
         try {
-          retryRes = await fetch(`${BASE}${path}`, { ...options, headers: retryHeaders, signal: retrySignal });
+          retryRes = await fetch(`${BASE}${path}`, { ...fetchOptions, headers: retryHeaders, signal: retrySignal });
         } catch (e) {
-          throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+          throw isAbortError(e) ? new Error(`Request timed out after ${timeoutMs / 1000}s`) : e;
         } finally {
           cleanup();
         }
@@ -743,12 +745,16 @@ export const addCronJob = (job: { schedule: string; command: string; domain?: st
 export const deleteCronJob = (schedule: string, command: string) => api<{ status: string }>('/api/v1/cron', { method: 'DELETE', body: JSON.stringify({ schedule, command }) });
 
 // Firewall
-export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; v6?: boolean; }
+export interface FirewallRule { number: number; action: string; from: string; to: string; port: string; proto: string; v6?: boolean; comment?: string; }
 export interface FirewallStatus { active: boolean; backend: string; rules: FirewallRule[]; staged?: boolean; rollback_pending?: boolean; rollback_seconds?: number; }
 export const fetchFirewall = () => api<FirewallStatus>('/api/v1/firewall');
-export const firewallAllow = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto }) });
-export const firewallDeny = (port: string, proto?: string) => api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto }) });
+export const firewallAllow = (port: string, proto?: string, from?: string) =>
+  api<{ status: string }>('/api/v1/firewall/allow', { method: 'POST', body: JSON.stringify({ port, proto, from: from || undefined }) });
+export const firewallDeny = (port: string, proto?: string, from?: string) =>
+  api<{ status: string }>('/api/v1/firewall/deny', { method: 'POST', body: JSON.stringify({ port, proto, from: from || undefined }) });
 export const firewallDeleteRule = (number: number) => api<{ status: string }>(`/api/v1/firewall/${number}`, { method: 'DELETE' });
+export const firewallMoveRule = (number: number, direction: 'up' | 'down') =>
+  api<{ status: string }>(`/api/v1/firewall/${number}/move`, { method: 'POST', body: JSON.stringify({ direction }) });
 export const firewallEnable = () => api<{ status: string; rollback_seconds?: number; allowed_ports?: string[] }>('/api/v1/firewall/enable', { method: 'POST' });
 export const firewallConfirm = () => api<{ status: string; was_pending: boolean }>('/api/v1/firewall/confirm', { method: 'POST' });
 export const firewallDisable = () => api<{ status: string }>('/api/v1/firewall/disable', { method: 'POST' });
@@ -820,6 +826,8 @@ export interface DBUser { user: string; host: string; }
 export const fetchDBUsers = () => api<DBUser[]>('/api/v1/database/users').then(r => r ?? []);
 export const changeDBPassword = (user: string, host: string, password: string) =>
   api<{ status: string }>('/api/v1/database/users/password', { method: 'POST', body: JSON.stringify({ user, host, password }) });
+export const dropDBUser = (user: string, host: string) =>
+  api<{ status: string }>('/api/v1/database/users', { method: 'DELETE', body: JSON.stringify({ user, host }) });
 export interface DBRemoteAccessResult { user: string; host: string; database?: string; password?: string; config_path: string; restarted: boolean; }
 export const configureDBRemoteAccess = (body: { user: string; host?: string; password?: string; database?: string }) =>
   api<DBRemoteAccessResult>('/api/v1/database/remote-access', { method: 'POST', body: JSON.stringify(body) });
@@ -1371,7 +1379,80 @@ export const deployApp = (name: string, body: AppDeployRequest) =>
   api<AppDeployResult>(`/api/v1/apps/${encodeURIComponent(name)}/deploy`, {
     method: 'POST',
     body: JSON.stringify(body),
+    // Git clone/fetch/build often exceeds the default 30s UI abort.
+    timeoutMs: 5 * 60_000,
   });
+
+/** Live deploy: streams SSE log chunks, then resolves with the final result. */
+export async function deployAppLive(
+  name: string,
+  body: AppDeployRequest,
+  onLog: (chunk: string) => void,
+  externalSignal?: AbortSignal | null,
+): Promise<AppDeployResult> {
+  const { signal, cleanup } = abortWithTimeout(5 * 60_000, externalSignal);
+  try {
+    const res = await fetch(`${BASE}/api/v1/apps/${encodeURIComponent(name)}/deploy`, {
+      method: 'POST',
+      headers: {
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      let msg = text;
+      try {
+        const j = JSON.parse(text) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch { /* keep text */ }
+      throw new Error(msg || `Deploy failed (${res.status})`);
+    }
+    const ct = res.headers.get('Content-Type') || '';
+    if (!ct.includes('text/event-stream') || !res.body) {
+      // Server fell back to JSON (no flusher) — treat as one-shot.
+      const result = (await res.json()) as AppDeployResult;
+      if (result.log) onLog(result.log);
+      return result;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult: AppDeployResult | null = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+      for (const part of parts) {
+        const line = part.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;
+        try {
+          const ev = JSON.parse(line.slice(6)) as {
+            type?: string;
+            text?: string;
+            result?: AppDeployResult;
+          };
+          if (ev.type === 'log' && ev.text) onLog(ev.text);
+          if (ev.type === 'done' && ev.result) finalResult = ev.result;
+        } catch {
+          // ignore malformed chunk
+        }
+      }
+    }
+    if (!finalResult) {
+      throw new Error('Deploy stream ended without a result');
+    }
+    return finalResult;
+  } finally {
+    cleanup();
+  }
+}
 
 export interface AppPreflightCheck {
   name: string;
