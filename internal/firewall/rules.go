@@ -180,7 +180,7 @@ func ensureDefaultDenyAtBottom() error {
 		return err
 	}
 	if out, err := execCommandFn("ufw", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("ufw %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("firewall rule failed")
 	}
 	// Adding deny any/any may recreate a v6 twin that already existed alone.
 	DeduplicateRules()
@@ -219,7 +219,7 @@ func addPortRule(action, port, proto, from string) error {
 		return err
 	}
 	if out, err := execCommandFn("ufw", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("ufw %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("firewall rule failed")
 	}
 	return nil
 }
@@ -349,7 +349,7 @@ func MoveRule(number int, direction string) error {
 	sort.Ints(toDelete)
 	for i := len(toDelete) - 1; i >= 0; i-- {
 		if out, err := execCommandFn("ufw", "--force", "delete", fmt.Sprintf("%d", toDelete[i])).CombinedOutput(); err != nil {
-			return fmt.Errorf("ufw delete before move: %w: %s", err, strings.TrimSpace(string(out)))
+			return fmt.Errorf("firewall rule failed")
 		}
 	}
 
@@ -379,7 +379,7 @@ func MoveRule(number int, direction string) error {
 
 	ins := append([]string{"insert", fmt.Sprintf("%d", insertAt)}, args...)
 	if out, err := execCommandFn("ufw", ins...).CombinedOutput(); err != nil {
-		return fmt.Errorf("ufw insert: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("firewall rule failed")
 	}
 	_ = ensureDefaultDenyAtBottom()
 	return nil

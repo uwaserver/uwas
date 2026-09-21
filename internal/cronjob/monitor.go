@@ -304,8 +304,9 @@ func (m *Monitor) GetAllStatus() []JobStatus {
 	return statuses
 }
 
-// validateShellCommand rejects commands with dangerous shell metacharacters.
-func validateShellCommand(command string) error {
+// ValidateShellCommand rejects commands with dangerous shell metacharacters.
+// Exported for reuse by internal/apps.
+func ValidateShellCommand(command string) error {
 	if strings.ContainsAny(command, "\x00\n\r") {
 		return fmt.Errorf("command contains forbidden control characters")
 	}

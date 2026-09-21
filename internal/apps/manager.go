@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/cronjob"
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
@@ -907,6 +908,11 @@ func (m *Manager) startNative(p *process) error {
 	m.mu.RLock()
 	port := p.port
 	m.mu.RUnlock()
+	// R17-001 fix: reject commands with dangerous shell metacharacters before exec.
+	if err := cronjob.ValidateShellCommand(p.command); err != nil {
+		return fmt.Errorf("invalid command: %w", err)
+	}
+
 	cmdStr := strings.ReplaceAll(p.command, "${PORT}", fmt.Sprintf("%d", port))
 	if err := validateShellCommand(cmdStr); err != nil {
 		return fmt.Errorf("apps: %s: invalid command: %w", p.name, err)
