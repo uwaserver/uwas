@@ -149,7 +149,7 @@ func Add(job Job) error {
 	// applies at execution time. Without this, a malicious admin can inject
 	// cron jobs with $(...), `...`, |, >, ;, etc., and those commands will
 	// execute when cron fires — bypassing the per-execution validation.
-	if err := validateShellCommand(job.Command); err != nil {
+	if err := ValidateShellCommand(job.Command); err != nil {
 		return err
 	}
 

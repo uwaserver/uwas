@@ -377,7 +377,7 @@ func (s *Server) completeDeployedApp(name string, def *apps.App, skipStart bool)
 	if err := s.appsMgr.Start(name); err != nil {
 		return fmt.Errorf("deploy succeeded but restart failed: %w", err)
 	}
-	if err := s.appsMgr.WaitListening(name, listeningProbeTimeout); err != nil {
+	if err := s.appsMgr.WaitListening(name, deployListeningProbeTimeout); err != nil {
 		return fmt.Errorf("deploy succeeded and process started, but app is not listening: %w", err)
 	}
 	if err := deployadmin.ProbeAppHealth(def, def.Deploy.HealthPath); err != nil {

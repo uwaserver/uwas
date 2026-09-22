@@ -63,7 +63,7 @@ func New(deps Deps) *Handler {
 
 // ── Constants ──
 
-const listeningProbeTimeout = 3e9 // 3 seconds as int64 nanoseconds
+const listeningProbeTimeout = 15 * time.Second
 
 // ── Helpers ──
 

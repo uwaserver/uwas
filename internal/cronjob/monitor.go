@@ -168,7 +168,7 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 	}
 
 	// Execute the command
-	if err := validateShellCommand(command); err != nil {
+	if err := ValidateShellCommand(command); err != nil {
 		record.EndedAt = time.Now()
 		record.Duration = record.EndedAt.Sub(record.StartedAt)
 		record.Success = false
@@ -318,6 +318,9 @@ func ValidateShellCommand(command string) error {
 	}
 	return nil
 }
+
+// validateShellCommand is the unexported alias used by existing tests.
+func validateShellCommand(command string) error { return ValidateShellCommand(command) }
 
 // GetDomainStatus returns all job statuses for a domain.
 func (m *Monitor) GetDomainStatus(domain string) []JobStatus {

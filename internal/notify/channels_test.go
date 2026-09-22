@@ -255,6 +255,17 @@ func TestSendTelegramSuccess(t *testing.T) {
 		{"critical", "\U0001f6a8"},
 	}
 
+	origHost := resolveHostname
+	origIP := resolveServerIP
+	resolveHostname = func() (string, error) { return "uwas-prod-1", nil }
+	resolveServerIP = func() string { return "203.0.113.10" }
+	resetServerIdentityForTest()
+	t.Cleanup(func() {
+		resolveHostname = origHost
+		resolveServerIP = origIP
+		resetServerIdentityForTest()
+	})
+
 	for _, tc := range levels {
 		t.Run(tc.level, func(t *testing.T) {
 			var receivedPayload map[string]string
@@ -288,7 +299,41 @@ func TestSendTelegramSuccess(t *testing.T) {
 			if !strings.Contains(text, msg.Title) {
 				t.Errorf("expected text to contain title %q, got: %s", msg.Title, text)
 			}
+			if !strings.Contains(text, "uwas-prod-1 · 203.0.113.10") {
+				t.Errorf("expected text to contain server identity, got: %s", text)
+			}
 		})
+	}
+}
+
+func TestFormatServerIdentity(t *testing.T) {
+	origHost := resolveHostname
+	origIP := resolveServerIP
+	t.Cleanup(func() {
+		resolveHostname = origHost
+		resolveServerIP = origIP
+		resetServerIdentityForTest()
+	})
+
+	resolveHostname = func() (string, error) { return "box", nil }
+	resolveServerIP = func() string { return "10.0.0.1" }
+	resetServerIdentityForTest()
+	if got := formatServerIdentity(); got != "box · 10.0.0.1" {
+		t.Fatalf("both = %q", got)
+	}
+
+	resolveHostname = func() (string, error) { return "box", nil }
+	resolveServerIP = func() string { return "" }
+	resetServerIdentityForTest()
+	if got := formatServerIdentity(); got != "box" {
+		t.Fatalf("host only = %q", got)
+	}
+
+	resolveHostname = func() (string, error) { return "", fmt.Errorf("no host") }
+	resolveServerIP = func() string { return "10.0.0.1" }
+	resetServerIdentityForTest()
+	if got := formatServerIdentity(); got != "10.0.0.1" {
+		t.Fatalf("ip only = %q", got)
 	}
 }
 

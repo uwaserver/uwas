@@ -5,15 +5,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/smtp"
+	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/serverip"
 )
 
 var (
@@ -48,6 +52,14 @@ var (
 			}).DialContext,
 		},
 	}
+
+	// Overridable in tests.
+	resolveHostname = os.Hostname
+	resolveServerIP = serverip.PrimaryIPv4
+
+	serverIDOnce sync.Once
+	serverHost   string
+	serverIP     string
 )
 
 // Channel is a notification destination.
@@ -161,6 +173,11 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 		emoji = "🚨"
 	}
 	text := fmt.Sprintf("%s <b>%s</b>\n%s\n<i>%s</i>", emoji, msg.Title, msg.Body, msg.Source)
+	if id := formatServerIdentity(); id != "" {
+		// Identify which UWAS host sent this — useful when one bot/chat
+		// receives alerts from multiple servers.
+		text += "\n<code>" + html.EscapeString(id) + "</code>"
+	}
 	url := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBase, botToken)
 	// Match the SSRF policy applied to the webhook and Slack channels.
 	// telegramAPIBase is a package-level var (overridable by tests and any
@@ -186,6 +203,34 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 		return fmt.Errorf("telegram API returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// formatServerIdentity returns "hostname · IP" (whichever parts are known).
+// Cached for the process lifetime so alerts do not rescan interfaces.
+func formatServerIdentity() string {
+	serverIDOnce.Do(func() {
+		if h, err := resolveHostname(); err == nil {
+			serverHost = strings.TrimSpace(h)
+		}
+		serverIP = strings.TrimSpace(resolveServerIP())
+	})
+	switch {
+	case serverHost != "" && serverIP != "":
+		return serverHost + " · " + serverIP
+	case serverHost != "":
+		return serverHost
+	case serverIP != "":
+		return serverIP
+	default:
+		return ""
+	}
+}
+
+// resetServerIdentityForTest clears the cached identity (tests only).
+func resetServerIdentityForTest() {
+	serverIDOnce = sync.Once{}
+	serverHost = ""
+	serverIP = ""
 }
 
 func sendEmail(cfg map[string]string, msg Message) error {

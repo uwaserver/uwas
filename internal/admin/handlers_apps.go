@@ -57,9 +57,8 @@ func (s *Server) initAppsHandler() {
 	appsHandler = appsadmin.New(&appsDeps{s: s})
 }
 
-// Override the constant from constants.go for the sub-package.
-// listeningProbeTimeout is 3s — same as constants.go.
-var _ = 3 * time.Second
+// Keep a compile-time reference to time so sub-package wrappers stay linked.
+var _ = 15 * time.Second
 
 // ── Thin wrappers for CRUD + lifecycle ──
 // The deploy/git/webhook/keys handlers stay in their original files
