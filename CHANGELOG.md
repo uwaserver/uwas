@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.23] - 2026-09-22
+
+### Fixed
+
+- **Deploy no longer false-rollbacks slow Node starts.** Post-deploy listen
+  probe was 3s; apps like `crm` (`npm run start`) often bind just after that
+  and were rolled back. Deploy wait is now **45s**; Create/Start warning
+  probe is **15s**.
+- **Telegram alerts include server hostname and IP** so multi-server bots can
+  tell which host sent the message.
+- **Build break on main:** cronjob `ValidateShellCommand` rename call sites;
+  unused `out` after opaque UFW errors.
+
 ## [0.11.22] - 2026-09-18
 
 ### Fixed

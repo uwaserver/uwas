@@ -5,6 +5,18 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.23
+
+Drop-in.
+
+1. **Deploy listen timeout** is 45s (was 3s). Slow Node/`npm start` apps
+   should no longer false-rollback after a successful fetch/build.
+2. **Telegram** alert footer shows `hostname · IP`.
+
+No config or data migration.
+
+---
+
 ## Upgrading to v0.11.22
 
 Drop-in. App `env` keys keep the order you saved (no alphabetical reshuffle).
