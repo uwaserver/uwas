@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,11 +19,15 @@ const (
 )
 
 // IPSet caches parsed Cloudflare CIDR ranges for request-time origin checks.
+// The nets field is accessed via atomic.Pointer so reads are always lock-free
+// (safe for concurrent use), while only the recompute path holds the mutex.
 type IPSet struct {
 	mu          sync.RWMutex
 	fingerprint string
-	nets        []*net.IPNet
+	nets        atomic.Pointer[IPNetSlice]
 }
+
+type IPNetSlice []*net.IPNet
 
 func NewIPSet() *IPSet {
 	return &IPSet{}
@@ -46,14 +51,16 @@ func (s *IPSet) netsFor(cidrs []string) []*net.IPNet {
 	fp := fingerprintCIDRs(cidrs)
 	s.mu.RLock()
 	if fp == s.fingerprint {
-		nets := s.nets
+		nets := *s.nets.Load()
 		s.mu.RUnlock()
 		return nets
 	}
 	s.mu.RUnlock()
 
+	// Recompute without holding any lock. sync/atomic.Pointer makes the
+	// assignment to s.nets safe for concurrent readers of netsFor.
 	normalized, _ := NormalizeCIDRs(cidrs)
-	nets := make([]*net.IPNet, 0, len(normalized))
+	nets := make(IPNetSlice, 0, len(normalized))
 	for _, cidr := range normalized {
 		_, n, err := net.ParseCIDR(cidr)
 		if err == nil {
@@ -63,7 +70,7 @@ func (s *IPSet) netsFor(cidrs []string) []*net.IPNet {
 
 	s.mu.Lock()
 	s.fingerprint = fp
-	s.nets = nets
+	s.nets.Store(&nets)
 	s.mu.Unlock()
 	return nets
 }
