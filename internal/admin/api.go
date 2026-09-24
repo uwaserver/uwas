@@ -896,6 +896,9 @@ func (s *Server) persistDomainPHPOverrides(domain string) {
 // Close releases background resources used by the admin module.
 func (s *Server) Close() {
 	s.stopAudit()
+	if s.taskMgr != nil {
+		s.taskMgr.Stop()
+	}
 }
 
 // SetReloadFunc sets the callback for config reload.
