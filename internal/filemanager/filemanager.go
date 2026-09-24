@@ -89,7 +89,7 @@ func WriteFile(baseDir, relPath string, content []byte) error {
 		return fmt.Errorf("invalid path")
 	}
 	os.MkdirAll(filepath.Dir(fullPath), 0755)
-	return os.WriteFile(fullPath, content, 0644)
+	return os.WriteFile(fullPath, content, 0600)
 }
 
 // Delete removes a file or empty directory.
@@ -123,7 +123,7 @@ func SaveUpload(baseDir, relPath string, src io.Reader) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return 0, fmt.Errorf("create directory for upload: %w", err)
 	}
-	f, err := os.Create(fullPath)
+	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return 0, err
 	}
