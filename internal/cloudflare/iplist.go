@@ -39,6 +39,9 @@ func (s *IPSet) Contains(ip string, cidrs []string) bool {
 		return false
 	}
 	nets := s.netsFor(cidrs)
+	if nets == nil {
+		return false
+	}
 	for _, n := range nets {
 		if n.Contains(parsed) {
 			return true
@@ -51,9 +54,13 @@ func (s *IPSet) netsFor(cidrs []string) []*net.IPNet {
 	fp := fingerprintCIDRs(cidrs)
 	s.mu.RLock()
 	if fp == s.fingerprint {
-		nets := *s.nets.Load()
+		nets := s.nets.Load()
 		s.mu.RUnlock()
-		return nets
+		if nets != nil {
+			return *nets
+		}
+		// Cache exists but is nil — treat as empty rather than crash.
+		return nil
 	}
 	s.mu.RUnlock()
 
