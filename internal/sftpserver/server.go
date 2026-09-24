@@ -249,7 +249,8 @@ const (
 	sshFXFWrite  = 0x00000002
 	sshFXFAppend = 0x00000004
 	sshFXFCreat  = 0x00000008
-	sshFXFTrunc  = 0x00000010
+	sshFXFTrunc   = 0x00000010
+	sshFXFExclusive = 0x00000020 // SSH_FXF_EXCL: atomic exclusive create — fail if file exists
 )
 
 type sftpSession struct {
@@ -607,6 +608,9 @@ func (sess *sftpSession) handleOpen(id uint32, payload []byte) {
 	}
 	if pflags&sshFXFCreat != 0 {
 		flags |= os.O_CREATE
+		if pflags&sshFXFExclusive != 0 {
+			flags |= os.O_EXCL
+		}
 	}
 	if pflags&sshFXFTrunc != 0 {
 		flags |= os.O_TRUNC
