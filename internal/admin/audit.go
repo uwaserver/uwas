@@ -53,11 +53,23 @@ func (s *Server) initAudit() {
 }
 
 // stopAudit stops the background rate-limit cleanup goroutine.
+// Must not be called concurrently with initAudit.
 func (s *Server) stopAudit() {
 	if s.rlDone != nil {
 		close(s.rlDone)
-		s.rlDone = nil
+		// Do not set s.rlDone = nil here — rateLimitCleaner reads it
+		// without holding a lock, so a concurrent write races with any
+		// subsequent initAudit call that would race on the field itself.
 	}
+
+	// Nil auditBuf and rate-limit maps under auditMu so that any
+	// concurrent RecordAuditUser call sees consistent state (nil check
+	// under lock matches nil write under lock).
+	s.auditMu.Lock()
+	s.auditBuf = nil
+	s.rateLimit = nil
+	s.userRateLimits = nil
+	s.auditMu.Unlock()
 }
 
 // RecordAudit appends an audit entry to the ring buffer. Safe for concurrent use.
@@ -86,9 +98,14 @@ func (s *Server) RecordAuditUser(action, detail, ip, user string, success bool) 
 		Success: success,
 	}
 
-	if s.auditBuf != nil {
-		s.auditBuf.Append(entry)
+	// Hold auditMu for the nil check AND the Append call so it races safely
+	// with stopAudit's nil write (stopAudit holds auditMu while writing).
+	s.auditMu.RLock()
+	buf := s.auditBuf
+	if buf != nil {
+		buf.Append(entry)
 	}
+	s.auditMu.RUnlock()
 
 	// Persist outside the lock — best-effort, errors only logged.
 	s.appendAuditLine(entry)

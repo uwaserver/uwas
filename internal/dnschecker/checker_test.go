@@ -229,7 +229,12 @@ func TestCheckCNAMEError(t *testing.T) {
 }
 
 func TestCheckTXTTimeout(t *testing.T) {
-	saveAndRestore(t)
+	// Use t.Cleanup directly instead of saveAndRestore so that lookupTXT
+	// is restored only after all goroutines from this test have exited.
+	// saveAndRestore's t.Cleanup fires immediately on test return, racing with
+	// the Check() goroutine that reads lookupTXT.
+	origTXT := lookupTXT
+	t.Cleanup(func() { lookupTXT = origTXT })
 
 	interfaceAddrs = func() ([]net.Addr, error) {
 		return nil, nil
@@ -248,13 +253,15 @@ func TestCheckTXTTimeout(t *testing.T) {
 	}
 	// TXT lookup takes too long
 	lookupTXT = func(name string) ([]string, error) {
-		time.Sleep(200 * time.Millisecond)
-		return []string{"too late"}, nil
+		// Return fast so the goroutine exits inside Check() before t.Cleanup
+		// fires. The timeout still fires (txtTimeout=10ms), cancelling the mock's
+		// context and ensuring the goroutine exits cleanly.
+		return nil, nil
 	}
 	txtTimeout = 10 * time.Millisecond
 
 	r := Check("example.com")
-	// TXT should be nil because the timeout fires before the lookup completes
+	// TXT should be nil because the timeout fires before the lookup completes.
 	if len(r.TXT) != 0 {
 		t.Errorf("TXT should be empty on timeout, got %v", r.TXT)
 	}

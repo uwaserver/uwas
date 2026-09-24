@@ -202,6 +202,10 @@ func (c *Collector) HandlerPercentiles(handlerType string) (p50, p95, p99, max f
 		stats.mu.Unlock()
 		return
 	}
+	// Copy while holding the lock so that RecordHandlerLatency's concurrent
+	// write to stats.buf[stats.pos] cannot overlap with this read. The
+	// data slice is heap-allocated and independent of the ring buffer once
+	// copy returns, so we can safely unlock before sorting.
 	data := make([]float64, n)
 	copy(data, stats.buf[:n])
 	stats.mu.Unlock()

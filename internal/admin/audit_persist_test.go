@@ -27,7 +27,7 @@ func newAuditTestServer(t *testing.T, dir string) *Server {
 		metrics:    metrics.New(),
 	}
 	s.initAudit()
-	defer s.stopAudit()
+	// Caller is responsible for calling s.stopAudit() via defer in the test.
 	return s
 }
 

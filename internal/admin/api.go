@@ -118,6 +118,7 @@ type Server struct {
 	// initAudit / RecordLog. Tests reach into the buffer fields directly.
 	logBuf   *ringBuffer[LogEntry]
 	auditBuf *ringBuffer[AuditEntry]
+	auditMu  sync.RWMutex // guards auditBuf against stopAudit
 
 	// 2FA pending setup (per-user, keyed by username)
 	pendingTOTPMu sync.Mutex
