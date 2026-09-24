@@ -1184,9 +1184,20 @@ func TestEscapeSQL_Quotes(t *testing.T) {
 		// "a\b" → "a\\b" → no quote → "a\\b"
 		{"a\\b", "a\\\\b"},
 		// Both: "a\'b" → "a\\\\'b" → "a\\\\'b" (already safe)
-		// Null bytes stripped
-		{"null\x00byte", "nullbyte"},
 	}
+
+	// Null bytes must be rejected (panic), not silently stripped.
+	// MySQL's text protocol uses \x00 as a string terminator; stripping
+	// a null byte silently truncates the SQL literal and enables injection.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("escapeSQL should panic on null byte")
+		} else {
+			t.Logf("escapeSQL correctly rejected null byte: %v", r)
+		}
+	}()
+	escapeSQL("null\x00byte")
+	t.Error("escapeSQL should have panicked on null byte")
 
 	for _, tt := range tests {
 		got := escapeSQL(tt.input)
@@ -1580,6 +1591,19 @@ func TestValidDBIdentifier(t *testing.T) {
 
 // Test EscapeSQL
 func TestEscapeSQL(t *testing.T) {
+	// Null bytes must be rejected, not silently stripped.
+	// MySQL's text protocol uses \x00 as a string terminator; stripping a null
+	// byte silently truncates the SQL literal and enables injection.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("EscapeSQL should panic on null byte")
+		} else {
+			t.Logf("EscapeSQL correctly rejected null byte: %v", r)
+		}
+	}()
+	EscapeSQL("null\x00char")
+	t.Error("EscapeSQL should have panicked on null byte")
+
 	tests := []struct {
 		input    string
 		expected string
@@ -1588,7 +1612,6 @@ func TestEscapeSQL(t *testing.T) {
 		{"it's", "it\\'s"},
 		{"backslash\\", "backslash\\\\"},
 		{"quote\"", "quote\\\""},
-		{"null\x00char", "nullchar"},
 		{"complex\\'\"", "complex\\\\'\\\""},
 		// Regression: single backslash before quote must NOT be double-escaped.
 		// Old code: pass1 \→\\, pass2 '→\' → \\' → MySQL reads \\ as escaped-backslash

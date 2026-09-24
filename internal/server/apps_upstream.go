@@ -90,5 +90,8 @@ func (s *Server) startRegisteredApps() {
 		return
 	}
 	s.appsMgr.StartAll()
-	s.rebuildProxyPools(s.config.Domains)
+	s.configMu.RLock()
+	domains := s.config.Domains
+	s.configMu.RUnlock()
+	s.rebuildProxyPools(domains)
 }

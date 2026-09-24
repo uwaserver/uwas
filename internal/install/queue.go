@@ -5,6 +5,7 @@ package install
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -230,11 +231,37 @@ func (q *Queue) runTask(entry *queueEntry) {
 
 func (q *Queue) cleanupLocked() {
 	cutoff := time.Now().Add(-q.keepTime)
+
+	// Prune by time: remove expired completed tasks.
 	for id, t := range q.tasks {
 		if t.Status != StatusRunning && t.Status != StatusQueued {
 			if t.EndedAt != nil && t.EndedAt.Before(cutoff) {
 				delete(q.tasks, id)
 			}
+		}
+	}
+
+	// Prune by count: if still over maxKeep, remove oldest completed tasks.
+	if len(q.tasks) > q.maxKeep {
+		type taskMeta struct {
+			id        string
+			createdAt time.Time
+		}
+		var completed []taskMeta
+		for id, t := range q.tasks {
+			if t.Status != StatusRunning && t.Status != StatusQueued {
+				completed = append(completed, taskMeta{id, t.CreatedAt})
+			}
+		}
+		sort.Slice(completed, func(i, j int) bool {
+			return completed[i].createdAt.Before(completed[j].createdAt)
+		})
+		excess := len(q.tasks) - q.maxKeep
+		if excess < len(completed) {
+			completed = completed[:excess]
+		}
+		for _, t := range completed {
+			delete(q.tasks, t.id)
 		}
 	}
 }

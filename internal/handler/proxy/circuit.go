@@ -52,6 +52,7 @@ func (cb *CircuitBreaker) Allow() bool {
 		if time.Since(time.Unix(0, cb.lastFailure.Load())) >= cb.timeout {
 			// Try to transition to half-open using CAS
 			if cb.state.CompareAndSwap(int32(CircuitOpen), int32(CircuitHalfOpen)) {
+				cb.failures.Store(0) // reset so prior Closed-state failures don't immediately re-trip on first probe failure
 				// Claim the probe slot via CAS (not Store) so we don't admit a
 				// second probe that a concurrent CircuitHalfOpen caller may have
 				// already claimed between the state CAS and here. probeSlot was

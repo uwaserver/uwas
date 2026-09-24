@@ -47,7 +47,15 @@ var (
 // escSQL escapes a string for use inside SQL single-quoted literals.
 // Single-pass with lookahead: a backslash is doubled only when it does NOT
 // precede a quote (so that a lone quote can escape the backslash).
+// Rejects null bytes — MySQL's text protocol uses \x00 as a string terminator,
+// and embedding it inside a single-quoted literal silently truncates the string
+// at the null byte, allowing arbitrary SQL to follow.
 func escSQL(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0 {
+			panic("escSQL: null byte not allowed in SQL literal")
+		}
+	}
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' {

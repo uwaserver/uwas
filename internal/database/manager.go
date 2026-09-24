@@ -995,6 +995,15 @@ func validDBIdentifier(s string) bool {
 }
 
 func escapeSQL(s string) string {
+	// Reject null bytes: MySQL's text protocol uses \x00 as a string
+	// terminator. A null byte inside a single-quoted SQL literal silently
+	// truncates the string at that byte, allowing arbitrary SQL injection
+	// after the truncated literal. This mirrors the fix in wordpress/installer.go.
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0 {
+			panic("escapeSQL: null byte not allowed in SQL literal")
+		}
+	}
 	// Single-pass scan to avoid the interaction between sequential ReplaceAll
 	// passes that both modify the same characters.
 	// Rule: output backslash as-is only when it precedes a quote (so \' in
