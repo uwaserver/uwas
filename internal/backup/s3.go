@@ -160,6 +160,9 @@ func (p *S3Provider) List(ctx context.Context) ([]BackupInfo, error) {
 }
 
 func (p *S3Provider) Delete(ctx context.Context, filename string) error {
+	if err := safeBackupFilename(filename); err != nil {
+		return err
+	}
 	url := p.objectURL(filename)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
