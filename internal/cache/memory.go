@@ -176,7 +176,18 @@ func (mc *MemoryCache) PurgeAll() {
 			freed += e.size
 		}
 		s.items = make(map[string]*entry)
-		s.lru.Init()
+		// Remove elements individually rather than lru.Init(): Init()
+		// resets the root without clearing detached elements' list stamps,
+		// so a concurrent Get holding an element reference across the lock
+		// gap (sampled LRU promotion) could MoveToFront an orphan back into
+		// the fresh list without incrementing len — a phantom that
+		// evictLRU later evicts, double-subtracting usedBytes and deleting
+		// a live entry's key mapping via the phantom's stale key. Remove()
+		// clears each element's stamp, making a racing MoveToFront a
+		// harmless no-op.
+		for s.lru.Len() > 0 {
+			s.lru.Remove(s.lru.Front())
+		}
 		s.mu.Unlock()
 		mc.usedBytes.Add(-freed)
 	}
