@@ -54,7 +54,7 @@ test: ## Run all Go tests
 # protocol framing) were invisible to the plain gate — they only reproduce
 # under -race. Wall clock ~2-4 min; plain `test` stays the fast path.
 test-race: ## Run race-detector tests on concurrency-heavy packages
-	go test -race -count=1 -timeout 600s ./internal/admin ./internal/middleware ./internal/cache ./internal/cloudflare ./internal/server
+	go test -race -count=1 -timeout 600s ./internal/admin ./internal/middleware ./internal/cache ./internal/cloudflare ./internal/server ./pkg/fastcgi ./internal/handler/... ./internal/dnsmanager
 
 test-coverage: ## Run tests with coverage and print total
 	go test ./internal/... ./pkg/... -coverprofile=coverage.out -timeout 600s
