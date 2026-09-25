@@ -315,6 +315,13 @@ func (c *respClient) Get(_ context.Context, key string) (string, error) {
 }
 
 func (c *respClient) Set(_ context.Context, key, value string, ttl time.Duration) error {
+	// The reader rejects any bulk reply over maxBulkLen, so storing a
+	// larger value would create an entry this client can never read back
+	// — unreadable garbage in Redis until purged. Reject at write time:
+	// the writer's cap must match the reader's.
+	if len(value) > maxBulkLen {
+		return fmt.Errorf("redis: SET value %d bytes exceeds read cap %d — refusing to store an entry this client cannot read", len(value), maxBulkLen)
+	}
 	if ttl > 0 {
 		secs := int64(ttl / time.Second)
 		if secs < 1 {
