@@ -250,8 +250,14 @@ func (c *geoCache) tryClaimInflight(ip string) bool {
 }
 
 func (c *geoCache) releaseInflight(ip string) {
-	// Caller holds c.mu through set() — do not re-acquire.
+	// Both callers — the worker's set()-then-release sequence and
+	// enqueueGeoLookup's queue-full path — run WITHOUT holding c.mu, so the
+	// delete must take the lock itself. A previous comment assumed a
+	// caller-held lock that no caller actually held, leaving this delete
+	// racing tryClaimInflight's locked writes on the same map.
+	c.mu.Lock()
 	delete(c.inflight, ip)
+	c.mu.Unlock()
 }
 
 // geoLookupJob queued onto the bounded worker pool.
