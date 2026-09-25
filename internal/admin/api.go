@@ -117,6 +117,7 @@ type Server struct {
 	// In-memory log + audit ring buffers. Both are populated lazily in
 	// initAudit / RecordLog. Tests reach into the buffer fields directly.
 	logBuf   *ringBuffer[LogEntry]
+	logMu    sync.RWMutex // guards logBuf lazy init in RecordLog
 	auditBuf *ringBuffer[AuditEntry]
 	auditMu  sync.RWMutex // guards auditBuf against stopAudit
 
@@ -1102,8 +1103,11 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 
 	// Track last seen position
 	var lastSeen int
-	if s.logBuf != nil {
-		lastSeen, _ = s.logBuf.PosAndEntries()
+	s.logMu.RLock()
+	buf := s.logBuf
+	s.logMu.RUnlock()
+	if buf != nil {
+		lastSeen, _ = buf.PosAndEntries()
 	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -1114,10 +1118,13 @@ func (s *Server) handleSSELogs(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if s.logBuf == nil {
+			s.logMu.RLock()
+			buf = s.logBuf
+			s.logMu.RUnlock()
+			if buf == nil {
 				continue
 			}
-			pos, newEntries := s.logBuf.Since(lastSeen)
+			pos, newEntries := buf.Since(lastSeen)
 			lastSeen = pos
 			if len(newEntries) == 0 {
 				continue
@@ -1306,12 +1313,17 @@ func (s *Server) persistConfig() error {
 
 // --- Logs ring buffer ---
 
-// RecordLog appends a log entry to the ring buffer. Safe for concurrent use.
+// RecordLog appends a log entry to the ring buffer. Safe for concurrent use:
+// logMu serializes the lazy init so concurrent first requests cannot each
+// build a private buffer (silently dropping entries) or publish it without
+// a sync edge for the readers in handleLogs/handleSSELogs.
 func (s *Server) RecordLog(e LogEntry) {
+	s.logMu.Lock()
 	if s.logBuf == nil {
 		s.logBuf = newRingBuffer[LogEntry](maxLogEntries)
 	}
 	s.logBuf.Append(e)
+	s.logMu.Unlock()
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -1320,13 +1332,16 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	const returnLimit = 100
 
-	if s.logBuf == nil {
+	s.logMu.RLock()
+	buf := s.logBuf
+	s.logMu.RUnlock()
+	if buf == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]\n"))
 		return
 	}
 
-	all := s.logBuf.Snapshot()
+	all := buf.Snapshot()
 	if len(all) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]\n"))
