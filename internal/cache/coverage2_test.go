@@ -751,7 +751,7 @@ func TestGenerateKeyTLSAndPort(t *testing.T) {
 	req.Host = "Example.COM:8443"
 	req.TLS = &tls.ConnectionState{} // mark request as TLS
 	k := GenerateKey(req, []string{"Accept-Encoding"})
-	if !strings.HasPrefix(k, "GET|https|example.com|/path|") {
+	if !strings.HasPrefix(k, "3:GET5:https11:example.com5:/path3:z=1") {
 		t.Fatalf("unexpected key: %q", k)
 	}
 }

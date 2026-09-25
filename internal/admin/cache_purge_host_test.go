@@ -31,7 +31,10 @@ func purgeTestServer(t *testing.T, hosts ...string) *Server {
 
 	eng := cache.NewEngine(context.Background(), 1<<20, "", 0, logger.New("error", "text"))
 	for _, h := range hosts {
-		eng.SetByKey("GET|http|"+h+"|/page|", &cache.CachedResponse{
+		// Build the key the way the request path does, so the stored entry
+		// is indistinguishable from a real cached page for this host.
+		req := httptest.NewRequest(http.MethodGet, "http://"+h+"/page", nil)
+		eng.SetByKey(cache.GenerateKey(req, nil), &cache.CachedResponse{
 			StatusCode: 200,
 			Body:       []byte("body"),
 			Created:    time.Now(),

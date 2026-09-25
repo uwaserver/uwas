@@ -4,6 +4,7 @@ import (
 	"hash/fnv"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -73,29 +74,43 @@ func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string
 	// Pre-allocate based on typical URL lengths
 	b.Grow(300 + len(r.URL.RawQuery) + len(host) + len(r.URL.Path))
 
-	b.WriteString(r.Method)
-	b.WriteByte('|')
-	if r.TLS != nil {
-		b.WriteString("https|")
-	} else {
-		b.WriteString("http|")
+	// Every component is length-prefixed: boundaries are determined by the
+	// parsed lengths, not by scanning for a delimiter. The previous '|'
+	// scheme was injective only while no component contained '|' — but the
+	// decoded path (%7C), the raw query, and vary-header values all legally
+	// can, letting two distinct requests share one key (e.g. /p?x| and
+	// /p%7Cx both produced GET|http|h|/p|x|) so the cache served one URL's
+	// content for the other.
+	writeKeyPart := func(s string) {
+		b.WriteString(strconv.Itoa(len(s)))
+		b.WriteByte(':')
+		b.WriteString(s)
 	}
-	b.WriteString(host)
-	b.WriteByte('|')
-	b.WriteString(r.URL.Path)
-	b.WriteByte('|')
+
+	writeKeyPart(r.Method)
+	if r.TLS != nil {
+		writeKeyPart("https")
+	} else {
+		writeKeyPart("http")
+	}
+	writeKeyPart(host)
+	writeKeyPart(r.URL.Path)
 
 	// Sorted query params for consistency (key=a&b and key=b&a → same key).
 	if varyByQuery && r.URL.RawQuery != "" {
+		// Sorting only permutes bytes, so the prefix length equals the raw
+		// query length regardless of parameter order.
+		b.WriteString(strconv.Itoa(len(r.URL.RawQuery)))
+		b.WriteByte(':')
 		writeSortedQuery(b, r.URL.RawQuery)
+	} else {
+		b.WriteString("0:")
 	}
 
 	// Vary headers
 	for _, name := range varyHeaders {
-		b.WriteByte('|')
-		b.WriteString(name)
-		b.WriteByte('=')
-		b.WriteString(r.Header.Get(name))
+		writeKeyPart(name)
+		writeKeyPart(r.Header.Get(name))
 	}
 
 	// Copy the string before returning the Builder to the pool.

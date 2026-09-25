@@ -3,6 +3,7 @@ package cache
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,29 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
+// keyPart returns the n-th (0-based) length-prefixed component of a
+// generateKey key: <len>:METHOD<len>:scheme<len>:host<len>:path...
+// Returns "" when the key does not hold n+1 parseable components. Consuming
+// exactly <len> bytes per component keeps embedded separators (e.g. the
+// colons in an IPv6 host) from confusing the parse.
+func keyPart(key string, n int) string {
+	for i := 0; i <= n; i++ {
+		c := strings.IndexByte(key, ':')
+		if c < 0 {
+			return ""
+		}
+		l, err := strconv.Atoi(key[:c])
+		if err != nil || c+1+l > len(key) {
+			return ""
+		}
+		if i == n {
+			return key[c+1 : c+1+l]
+		}
+		key = key[c+1+l:]
+	}
+	return ""
+}
+
 func TestSiteTagMatchesCacheKeyHost(t *testing.T) {
 	// The whole per-domain purge rests on these two agreeing. If the key
 	// normalizes a host one way and the tag another, a purge looks for a tag
@@ -43,12 +67,12 @@ func TestSiteTagMatchesCacheKeyHost(t *testing.T) {
 			req.Host = host
 			key := GenerateKey(req, nil)
 
-			// Key layout is METHOD|scheme|host|path|...
-			parts := strings.Split(key, "|")
-			if len(parts) < 3 {
+			// Key layout is length-prefixed components:
+			// <len>:METHOD<len>:scheme<len>:host<len>:path...
+			keyHost := keyPart(key, 2) // method=0, scheme=1, host=2
+			if keyHost == "" {
 				t.Fatalf("unexpected key layout %q", key)
 			}
-			keyHost := parts[2]
 
 			tag := SiteTag(host)
 			wantTag := "site:" + keyHost
