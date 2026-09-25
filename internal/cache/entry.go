@@ -197,7 +197,15 @@ func Deserialize(data []byte) (*CachedResponse, error) {
 		}
 		tagCount := int(binary.BigEndian.Uint32(data[pos:]))
 		pos += 4
-		r.Tags = make([]string, 0, tagCount)
+		// Each serialized tag needs at least its 4 length bytes, so a
+		// count that cannot fit in the remaining data is corruption (or
+		// a hostile payload). Reject it before the pre-allocation: a
+		// corrupt 4-byte field must not be able to drive a
+		// multi-gigabyte make() and fatal-OOM the process.
+		if tagCount > (len(data)-pos)/4 {
+			return nil, errCorrupt
+		}
+		r.Tags = make([]string, 0, min(tagCount, 1024))
 		for i := 0; i < tagCount; i++ {
 			if pos+4 > len(data) {
 				return nil, errCorrupt
