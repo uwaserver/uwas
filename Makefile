@@ -9,7 +9,7 @@ LDFLAGS := -s -w \
 	-X 'github.com/uwaserver/uwas/internal/build.Commit=$(COMMIT)' \
 	-X 'github.com/uwaserver/uwas/internal/build.Date=$(DATE)'
 
-.PHONY: help build dev test test-coverage lint check clean run dashboard dashboard-dev release all deploy
+.PHONY: help build dev test test-race test-coverage lint check clean run dashboard dashboard-dev release all deploy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -47,6 +47,14 @@ release: check dashboard linux linux-arm ## Full release build (checks + cross-c
 # Use -p 1 only if you suspect cross-package interference.
 test: ## Run all Go tests
 	go test -count=1 -timeout 600s $(GO_PACKAGES)
+
+# Race-detector gate for the packages with the heaviest shared state
+# (maps, mutexes, pools, ring buffers, singleflight, connection reuse).
+# Past races here (lazy-init, inflight-map delete, LRU/list interleavings,
+# protocol framing) were invisible to the plain gate — they only reproduce
+# under -race. Wall clock ~2-4 min; plain `test` stays the fast path.
+test-race: ## Run race-detector tests on concurrency-heavy packages
+	go test -race -count=1 -timeout 600s ./internal/admin ./internal/middleware ./internal/cache ./internal/cloudflare ./internal/server
 
 test-coverage: ## Run tests with coverage and print total
 	go test ./internal/... ./pkg/... -coverprofile=coverage.out -timeout 600s
