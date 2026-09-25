@@ -16,15 +16,16 @@ var ErrPoolClosed = errors.New("connection pool is closed")
 
 // Pool manages a pool of FastCGI connections.
 type Pool struct {
-	network string // "unix" or "tcp"
-	address string // socket path or host:port
-	maxIdle int
-	maxOpen int
-	maxLife time.Duration
-	idle    chan *conn
-	active  atomic.Int32
-	mu      sync.Mutex
-	closed  bool
+	network          string // "unix" or "tcp"
+	address          string // socket path or host:port
+	maxIdle          int
+	maxOpen          int
+	maxLife          time.Duration
+	maxResponseBytes int64
+	idle             chan *conn
+	active           atomic.Int32
+	mu               sync.Mutex
+	closed           bool
 }
 
 type conn struct {
@@ -39,6 +40,12 @@ type PoolConfig struct {
 	MaxIdle     int           // max idle connections (default 10)
 	MaxOpen     int           // max total connections (default 64)
 	MaxLifetime time.Duration // max connection lifetime (default 5m)
+	// MaxResponseBytes caps how much a single request may buffer from the
+	// FastCGI peer before Execute aborts with ErrResponseTooLarge. Without
+	// a cap, a peer that streams stdout records without ever sending
+	// FCGI_END_REQUEST is bounded only by the socket deadline — on a fast
+	// local socket that is tens of GB, i.e. fatal OOM.
+	MaxResponseBytes int64 // default 64 MiB
 }
 
 // NewPool creates a new connection pool.
@@ -57,14 +64,19 @@ func NewPool(cfg PoolConfig) *Pool {
 	if maxLife <= 0 {
 		maxLife = 5 * time.Minute
 	}
+	maxResponseBytes := cfg.MaxResponseBytes
+	if maxResponseBytes <= 0 {
+		maxResponseBytes = 64 << 20 // 64 MiB
+	}
 
 	return &Pool{
-		network: network,
-		address: address,
-		maxIdle: maxIdle,
-		maxOpen: maxOpen,
-		maxLife: maxLife,
-		idle:    make(chan *conn, maxIdle),
+		network:          network,
+		address:          address,
+		maxIdle:          maxIdle,
+		maxOpen:          maxOpen,
+		maxLife:          maxLife,
+		maxResponseBytes: maxResponseBytes,
+		idle:             make(chan *conn, maxIdle),
 	}
 }
 

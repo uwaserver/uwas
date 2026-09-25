@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,11 @@ var (
 		New: func() any { b := make([]byte, maxContentLength); return &b },
 	}
 )
+
+// ErrResponseTooLarge is returned by Execute when the peer sends more
+// stdout/stderr than the pool's MaxResponseBytes. The connection is
+// discarded: everything after the cap is unread garbage.
+var ErrResponseTooLarge = errors.New("fastcgi: response exceeds size limit")
 
 // Client sends requests to a FastCGI server via a connection pool.
 type Client struct {
@@ -172,6 +178,15 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 				resp.AppStatus = binary.BigEndian.Uint32(rec.Content[0:4])
 			}
 			return resp, nil
+		}
+
+		// A peer that streams stdout/stderr without ever sending
+		// FCGI_END_REQUEST must not be able to buffer the machine out of
+		// memory: abort and discard the connection once the buffered
+		// response crosses the configured cap.
+		if buffered := int64(resp.stdout.Len()) + int64(resp.stderr.Len()); buffered > c.pool.maxResponseBytes {
+			broken = true
+			return nil, fmt.Errorf("fastcgi: response of %d bytes exceeds limit %d: %w", buffered, c.pool.maxResponseBytes, ErrResponseTooLarge)
 		}
 	}
 }
