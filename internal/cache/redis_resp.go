@@ -41,6 +41,23 @@ const (
 	ioTimeout   = 5 * time.Second
 )
 
+// maxBulkLen caps a single bulk-string reply and maxArrayLen caps array
+// reply element counts. The values this client exchanges are serialized
+// cache entries and key lists — 64 MiB per bulk string and 1 Mi elements
+// per array are far beyond anything legitimate, and they keep a hostile or
+// misbehaving peer's length headers from becoming multi-gigabyte
+// allocations or integer overflow (n+2 in the $ branch) on the request path.
+const (
+	maxBulkLen  = 64 << 20 // 64 MiB per bulk string
+	maxArrayLen = 1 << 20  // 1 Mi elements per array
+)
+
+// errFramingLost marks reply-parse failures that may have left the reply
+// partially consumed. The RESP stream position is unknown after such an
+// error, so the connection must be discarded (redialed), not reused —
+// otherwise the next command parses the leftover bytes as its own reply.
+var errFramingLost = errors.New("redis: reply framing lost")
+
 func newRespClient(cfg config.RedisConfig) (*respClient, error) {
 	c := &respClient{
 		addr:     cfg.Addr,
@@ -121,8 +138,11 @@ func (c *respClient) command(args ...string) (any, error) {
 	if err == nil {
 		return reply, nil
 	}
-	// On I/O error try one reconnect.
-	if isNetErr(err) {
+	// On I/O error — or a reply-parse failure that may have left the
+	// stream mid-reply (framing lost) — try one reconnect: reusing a
+	// desynced connection makes the next command parse leftover bytes as
+	// its own reply.
+	if isNetErr(err) || errors.Is(err, errFramingLost) {
 		if derr := c.dial(); derr != nil {
 			return nil, derr
 		}
@@ -209,6 +229,10 @@ func readReply(r *bufio.Reader) (any, error) {
 		if n < 0 {
 			return nil, nil // RESP nil
 		}
+		if n > maxBulkLen {
+			// The declared payload stays unread: framing is lost.
+			return nil, fmt.Errorf("redis: bulk len %d exceeds cap %d: %w", n, maxBulkLen, errFramingLost)
+		}
 		buf := make([]byte, n+2) // includes trailing CRLF
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
@@ -222,6 +246,10 @@ func readReply(r *bufio.Reader) (any, error) {
 		if n < 0 {
 			return nil, nil
 		}
+		if n > maxArrayLen {
+			// The declared elements stay unread: framing is lost.
+			return nil, fmt.Errorf("redis: array len %d exceeds cap %d: %w", n, maxArrayLen, errFramingLost)
+		}
 		out := make([]any, n)
 		for i := 0; i < n; i++ {
 			out[i], err = readReply(r)
@@ -231,20 +259,42 @@ func readReply(r *bufio.Reader) (any, error) {
 		}
 		return out, nil
 	default:
-		return nil, fmt.Errorf("redis: unknown reply type %q", line[0])
+		// Unknown type consumed one line; any pending reply lines would
+		// desync the stream. Treat as framing lost.
+		return nil, fmt.Errorf("redis: unknown reply type %q: %w", line[0], errFramingLost)
 	}
 }
 
-// readLine reads up to and including \r\n, returning the bytes WITHOUT the CRLF.
+// maxLineLen caps a single RESP line. Every reply starts with a line
+// (type + payload); legitimate lines are short — status strings, integers,
+// length headers (bulk DATA goes through io.ReadFull, not readLine). A peer
+// streaming bytes with no newline must not be able to grow memory without
+// bound.
+const maxLineLen = 64 << 10 // 64 KiB
+
+// readLine reads up to and including \r\n, returning the bytes WITHOUT the
+// CRLF. Lines longer than maxLineLen are rejected. Built on ReadSlice so
+// bytes after the newline remain buffered for the next read, exactly as
+// ReadBytes left them.
 func readLine(r *bufio.Reader) ([]byte, error) {
-	line, err := r.ReadBytes('\n')
-	if err != nil {
-		return nil, err
+	var buf []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		buf = append(buf, chunk...)
+		if len(buf) > maxLineLen {
+			return nil, fmt.Errorf("redis: line exceeds %d bytes: %w", maxLineLen, errFramingLost)
+		}
+		if err == nil {
+			break // newline found
+		}
+		if err != bufio.ErrBufferFull {
+			return nil, err // EOF or I/O error
+		}
 	}
-	if len(line) < 2 || line[len(line)-2] != '\r' {
-		return nil, fmt.Errorf("redis: malformed line")
+	if len(buf) < 2 || buf[len(buf)-2] != '\r' {
+		return nil, fmt.Errorf("redis: malformed line: %w", errFramingLost)
 	}
-	return line[:len(line)-2], nil
+	return buf[:len(buf)-2], nil
 }
 
 // --- RedisClient interface implementation ---
