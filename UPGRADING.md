@@ -5,6 +5,15 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.25
+
+Drop-in. Use this tag. The v0.11.24 Git tag is the same product change, but
+its GitHub release did not publish binaries (dashboard `npm audit` failed).
+
+Runtime notes are in the v0.11.24 section below.
+
+---
+
 ## Upgrading to v0.11.24
 
 Drop-in. No config or data migration.

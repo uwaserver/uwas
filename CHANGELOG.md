@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.25] - 2026-09-30
+
+### Fixed
+
+- **The v0.11.24 tag did not publish binaries.** The release job failed
+  `npm audit --audit-level=moderate` on high advisories in `brace-expansion`
+  and `undici`. This tag carries the same product changes as v0.11.24, with
+  those packages at 5.0.12 and 8.11.2, and a rebuilt embedded dashboard.
+
 ## [0.11.24] - 2026-09-30
 
 ### Fixed
