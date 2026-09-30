@@ -688,9 +688,26 @@ export interface FileWorkspace {
 export const fetchFileWorkspaces = () =>
   api<{ items: FileWorkspace[]; total: number; limit: number; offset: number }>('/api/v1/files/workspaces')
     .then(r => r.items ?? []);
-export const fetchFiles = (domain: string, path?: string) =>
-  api<{ items: FileEntry[]; total: number; limit: number; offset: number }>(`/api/v1/files/${encodeURIComponent(domain)}/list?path=${encodeURIComponent(path || '.')}`)
-    .then(r => r.items ?? []);
+export interface FileListPage {
+  items: FileEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export const fetchFiles = (
+  domain: string,
+  path?: string,
+  opts?: { limit?: number; offset?: number; q?: string },
+) => {
+  const params = new URLSearchParams();
+  params.set('path', path || '.');
+  if (opts?.limit != null) params.set('limit', String(opts.limit));
+  if (opts?.offset) params.set('offset', String(opts.offset));
+  const q = opts?.q?.trim();
+  if (q) params.set('q', q);
+  return api<FileListPage>(`/api/v1/files/${encodeURIComponent(domain)}/list?${params.toString()}`);
+};
 export const readFile = (domain: string, path: string) => api<{ content: string }>(`/api/v1/files/${encodeURIComponent(domain)}/read?path=${encodeURIComponent(path)}`);
 export const writeFile = (domain: string, path: string, content: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/write`, { method: 'PUT', body: JSON.stringify({ path, content }) });
 export const deleteFile = (domain: string, path: string) => api<{ status: string }>(`/api/v1/files/${encodeURIComponent(domain)}/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });

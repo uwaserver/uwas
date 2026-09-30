@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   FolderOpen,
   File,
@@ -38,6 +38,8 @@ function formatSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
+const PAGE_SIZE = 50;
+
 function formatDate(dateStr: string): string {
   if (!dateStr) return '--';
   try {
@@ -59,6 +61,8 @@ export default function FileManager() {
   const [selectedWorkspaceID, setSelectedWorkspaceID] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [fileFilter, setFileFilter] = useState('');
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [currentPath, setCurrentPath] = useState('.');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -100,8 +104,11 @@ export default function FileManager() {
   const domainWorkspaces = useMemo(() => workspaces.filter(w => w.kind === 'domain'), [workspaces]);
   const applicationWorkspaces = useMemo(() => workspaces.filter(w => w.kind === 'application'), [workspaces]);
 
+  const requestSeq = useRef(0);
+
   const loadFiles = useCallback(async () => {
     if (!selectedWorkspaceID) return;
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError('');
     // Disk usage is a sidebar metric — when its endpoint fails (e.g.
@@ -109,23 +116,39 @@ export default function FileManager() {
     // render the file list. Use allSettled so one failure doesn't blank
     // the whole page.
     const [filesRes, duRes] = await Promise.allSettled([
-      fetchFiles(selectedWorkspaceID, currentPath),
+      fetchFiles(selectedWorkspaceID, currentPath, {
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        q: fileFilter,
+      }),
       fetchDiskUsage(selectedWorkspaceID),
     ]);
+    if (seq !== requestSeq.current) return;
     if (filesRes.status === 'fulfilled') {
-      const sorted = (filesRes.value ?? []).sort((a, b) => {
+      const pageResult = filesRes.value;
+      const sorted = (pageResult.items ?? []).sort((a, b) => {
         if (a.is_dir && !b.is_dir) return -1;
         if (!a.is_dir && b.is_dir) return 1;
         return a.name.localeCompare(b.name);
       });
+      const nextTotal = pageResult.total ?? sorted.length;
+      const maxPage = Math.max(0, Math.ceil(nextTotal / PAGE_SIZE) - 1);
+      if (page > maxPage) {
+        setTotal(nextTotal);
+        setPage(maxPage);
+        setLoading(false);
+        return;
+      }
       setFiles(sorted);
+      setTotal(nextTotal);
     } else {
       setError((filesRes.reason as Error).message);
       setFiles([]);
+      setTotal(0);
     }
     setDiskUsage(duRes.status === 'fulfilled' ? duRes.value : null);
     setLoading(false);
-  }, [selectedWorkspaceID, currentPath]);
+  }, [selectedWorkspaceID, currentPath, page, fileFilter]);
 
   // Helper: confirm before discarding unsaved edits.
   const confirmDiscardEdits = async (): Promise<boolean> => {
@@ -148,6 +171,7 @@ export default function FileManager() {
     setEditDirty(false);
     setSaveState('idle');
     setFileFilter('');
+    setPage(0);
     setCurrentPath(path);
   };
 
@@ -162,14 +186,9 @@ export default function FileManager() {
     ? ['.']
     : ['.', ...currentPath.split('/').filter(Boolean)];
 
-  const visibleFiles = useMemo(() => {
-    const q = fileFilter.trim().toLowerCase();
-    if (!q) return files;
-    return files.filter(entry =>
-      entry.name.toLowerCase().includes(q) ||
-      entry.path.toLowerCase().includes(q),
-    );
-  }, [fileFilter, files]);
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEnd = page * PAGE_SIZE + files.length;
 
   const handleOpenFile = async (entry: FileEntry) => {
     if (entry.is_dir) {
@@ -380,6 +399,7 @@ export default function FileManager() {
               setSelectedWorkspaceID(e.target.value);
               setCurrentPath('.');
               setFileFilter('');
+              setPage(0);
               setEditingFile(null);
               setEditDirty(false);
               setSaveState('idle');
@@ -457,7 +477,10 @@ export default function FileManager() {
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               value={fileFilter}
-              onChange={e => setFileFilter(e.target.value)}
+              onChange={e => {
+                setFileFilter(e.target.value);
+                setPage(0);
+              }}
               placeholder="Filter files"
               className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-xs text-foreground outline-none focus:border-blue-500"
             />
@@ -564,17 +587,17 @@ export default function FileManager() {
       {/* File list */}
       {loading ? (
         <div className="flex h-48 items-center justify-center text-muted-foreground">Loading files...</div>
+      ) : files.length === 0 && fileFilter.trim() && !editingFile ? (
+        <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
+          <Search size={36} className="mx-auto mb-3 text-muted-foreground" />
+          <p className="font-medium text-card-foreground">No matches</p>
+          <p className="mt-1 text-sm text-muted-foreground">Try a different file name.</p>
+        </div>
       ) : files.length === 0 && !editingFile ? (
         <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
           <FolderOpen size={40} className="mx-auto mb-3 text-muted-foreground" />
           <p className="text-card-foreground font-medium">Empty directory</p>
           <p className="text-sm text-muted-foreground mt-1">Upload a file or create a folder to get started.</p>
-        </div>
-      ) : visibleFiles.length === 0 && !editingFile ? (
-        <div className="rounded-lg border border-border bg-card px-6 py-12 text-center">
-          <Search size={36} className="mx-auto mb-3 text-muted-foreground" />
-          <p className="font-medium text-card-foreground">No matches</p>
-          <p className="mt-1 text-sm text-muted-foreground">Try a different file name.</p>
         </div>
       ) : !editingFile && (
         <div className="overflow-hidden rounded-lg border border-border">
@@ -589,7 +612,7 @@ export default function FileManager() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {visibleFiles.map(entry => (
+              {files.map(entry => (
                 <tr key={entry.path} className="bg-background hover:bg-card/50">
                   <td className="px-4 py-3">
                     <button
@@ -644,6 +667,32 @@ export default function FileManager() {
               ))}
             </tbody>
           </table>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/50 px-4 py-3 text-xs text-muted-foreground">
+            <span>
+              {total === 0 ? '0 files' : `${rangeStart}–${rangeEnd} of ${total}`}
+            </span>
+            {total > PAGE_SIZE && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage(current => Math.max(0, current - 1))}
+                  disabled={page === 0 || loading}
+                  className="rounded-md border border-border bg-background px-2.5 py-1.5 text-card-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span className="tabular-nums">Page {page + 1} of {pageCount}</span>
+                <button
+                  type="button"
+                  onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}
+                  disabled={page >= pageCount - 1 || loading}
+                  className="rounded-md border border-border bg-background px-2.5 py-1.5 text-card-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

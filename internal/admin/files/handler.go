@@ -68,6 +68,31 @@ type PaginatedResponse[T any] struct {
 	Offset int `json:"offset"`
 }
 
+// prepareFileEntries filters by name (optional q) and sorts directories first,
+// then name, so each page is a stable slice of the full directory.
+func prepareFileEntries(entries []filemanager.Entry, query string) []filemanager.Entry {
+	if entries == nil {
+		entries = []filemanager.Entry{}
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q != "" {
+		filtered := make([]filemanager.Entry, 0, len(entries))
+		for _, e := range entries {
+			if strings.Contains(strings.ToLower(e.Name), q) {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+	return entries
+}
+
 func paginate[T any](items []T, limit, offset int) ([]T, int) {
 	total := len(items)
 	if offset >= total {
@@ -312,9 +337,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if entries == nil {
-		entries = []filemanager.Entry{}
-	}
+	entries = prepareFileEntries(entries, r.URL.Query().Get("q"))
 	limit, offset := h.deps.ParsePagination(r)
 	items, total := paginate(entries, limit, offset)
 	jsonResponse(w, PaginatedResponse[filemanager.Entry]{
