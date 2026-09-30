@@ -5,6 +5,23 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.24
+
+Drop-in. No config or data migration.
+
+1. **File Manager** pages directory listings (50 at a time). Search covers
+   the whole directory, not only the open page.
+2. **New file-manager writes are mode 0600** (owner-only). Existing files
+   keep their mode. UWAS itself still serves what it writes; other local
+   users cannot read new uploads.
+3. **Cache keys changed shape.** The first request for each URL is a miss,
+   then the new key is stored. Purge is optional.
+4. **PHP/FastCGI responses over 64 MiB** now fail with `ErrResponseTooLarge`
+   (`PoolConfig.MaxResponseBytes`). Raise the knob if a site legitimately
+   returns a larger body.
+
+---
+
 ## Upgrading to v0.11.23
 
 Drop-in.

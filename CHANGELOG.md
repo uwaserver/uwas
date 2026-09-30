@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.24] - 2026-09-30
+
+### Fixed
+
+- **File Manager lists every file in a directory.** The panel only showed
+  the API's first 50 entries and had no way to request the rest. Listings
+  are now paged (50 per page) with previous/next, directories first, and
+  the name filter applies to the whole directory.
+- **File Manager writes are owner-only (0600).** Uploads and saves no
+  longer create world-readable files on a shared host.
+- **Cache keys cannot collide across URLs.** Components are length-prefixed.
+  Existing entries miss once and refill.
+- **Cache and Redis no longer trust hostile lengths.** SET rejects values
+  the reader cannot return; bulk and tag counts are capped before
+  allocation; a broken frame redials instead of parsing the next reply.
+- **FastCGI responses are capped at 64 MiB** per request so a peer that
+  never sends `FCGI_END_REQUEST` cannot exhaust memory.
+- **S3 backup delete rejects path-like object names** the same way upload
+  and download already did.
+- **SQL helpers reject a null byte** in WordPress install and database
+  escaping so a truncated literal cannot smuggle a second statement.
+- **Circuit breaker probes are not stuck open** after the first half-open
+  failure, and the install queue honors its task cap.
+- **Data races** in the admin log buffer, audit shutdown, Cloudflare IP
+  list, geo lookup singleflight, app startup config reads, and cache
+  purge LRU.
+
+### Added
+
+- **SFTP `SSH_FXF_EXCL`** maps to `O_EXCL` so clients can create a file
+  only when it does not already exist.
+
 ## [0.11.23] - 2026-09-22
 
 ### Fixed
