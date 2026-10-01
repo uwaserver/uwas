@@ -5,6 +5,22 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.26
+
+Drop-in. No config or data migration.
+
+1. **Weighted round-robin now uses `weight`.** A pool that was configured
+   `3` / `1` and was served evenly will shift traffic toward the heavier
+   backend.
+2. **`EXPLAIN ANALYZE` is rejected** in the database explorer. Plain
+   `EXPLAIN` still works.
+3. **`Accept-Encoding: gzip;q=0` is honored.** Clients that refuse gzip get
+   an uncompressed body.
+4. **Services lists inactive and failed units** that were previously hidden.
+   A failed `crontab -l` shows as an error instead of an empty job list.
+
+---
+
 ## Upgrading to v0.11.25
 
 Drop-in. Use this tag. The v0.11.24 Git tag is the same product change, but

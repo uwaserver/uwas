@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.26] - 2026-10-02
+
+### Fixed
+
+- **SQL explorer rejects `EXPLAIN ANALYZE`.** That form runs the statement
+  it prefixes, so it could write through a console that only allows
+  `SELECT`, `SHOW`, `DESCRIBE`, and plain `EXPLAIN`.
+- **Docker extra args no longer accept short flags.** A one-token `-v/:/host`
+  used to skip the allowlist and reach the Docker CLI.
+- **Backup cron lists are split before ranges.** `1-5,30` no longer matches
+  every minute. A file of exactly `max_file_size` restores, and named pipes
+  in a web root no longer hang the backup.
+- **Round-robin honors backend weight.** A configured 3:1 pool was served
+  evenly.
+- **A failed half-open circuit probe re-opens the breaker** so a recovered
+  upstream is not stuck returning 503.
+- **WebSocket upgrades set `X-Forwarded-Proto` and `X-Forwarded-Host` from
+  the connection** and drop client-supplied copies.
+- **DNS record ids are path-escaped**, and DigitalOcean and Hetzner pick the
+  longest matching zone so ACME DNS-01 is not written on the parent zone.
+- **Deleting the web root is refused** when `root` has a trailing slash.
+- **Hotlink checks ignore the port** on the referer and the site host.
+- **Compression treats `q=0` as a refusal.** `gzip;q=0` is no longer served
+  gzip.
+- **Site clone and migration report user-create and grant failures** instead
+  of continuing as if the database user exists.
+- **PHP-FPM listen addresses cannot contain control characters.**
+- **Stopped and failed systemd units stay on the Services page** instead of
+  disappearing. Cron list errors surface instead of looking like an empty
+  crontab.
+- **Terminal output keeps a UTF-8 character that was split across reads.**
+
+### Changed
+
+- **Local `make test-race` covers the same packages as the CI race job.**
+
 ## [0.11.25] - 2026-09-30
 
 ### Fixed
