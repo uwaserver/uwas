@@ -22,6 +22,11 @@ export default function Packages() {
   const [success, setSuccess] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Async continuations (the install/remove POSTs, the mount-time task
+  // resume) can resolve after the unmount cleanup has already run. Without
+  // this guard they re-arm the 3s poll timers the cleanup can no longer
+  // clear, and the page keeps polling the server after it is gone.
+  const aliveRef = useRef(true);
 
   const load = useCallback(async () => {
     try { setPackages((await fetchPackages()) ?? []); }
@@ -30,9 +35,11 @@ export default function Packages() {
   }, []);
 
   useEffect(() => {
+    aliveRef.current = true;
     load();
     // Resume monitoring if a package task is running
     fetchTasks().then(tasks => {
+      if (!aliveRef.current) return;
       const active = tasks?.find(t => t.type === 'package' && (t.status === 'running' || t.status === 'queued'));
       if (active) {
         setActing(active.name);
@@ -50,7 +57,11 @@ export default function Packages() {
         }, 3000);
       }
     }).catch(() => {});
-    return () => { clearInterval(pollRef.current); clearTimeout(timeoutRef.current); };
+    return () => {
+      aliveRef.current = false;
+      clearInterval(pollRef.current);
+      clearTimeout(timeoutRef.current);
+    };
   }, [load]);
 
   // Auto-dismiss success toasts after 5s. Long-finished install/remove
@@ -67,6 +78,7 @@ export default function Packages() {
     setError(''); setSuccess('');
     try {
       await installPackage(pkg.id);
+      if (!aliveRef.current) return; // unmounted mid-install: cleanup already ran
       setSuccess(`Installing ${pkg.name}...`);
       clearInterval(pollRef.current);
       clearTimeout(timeoutRef.current);
@@ -91,6 +103,7 @@ export default function Packages() {
     setError(''); setSuccess('');
     try {
       await removePackage(pkg.id);
+      if (!aliveRef.current) return; // unmounted mid-remove: cleanup already ran
       setSuccess(`Removing ${pkg.name}...`);
       clearInterval(pollRef.current);
       clearTimeout(timeoutRef.current);

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -46,13 +47,32 @@ func saveAndRestoreHooks(t *testing.T) {
 	})
 }
 
+// fakeOutputScript reproduces the TestHelperProcess helper's observable
+// behaviour — print a canned stdout, exit with a canned code — without
+// re-executing the test binary.
+//
+// Re-exec was essentially all of this package's -race cost. Each spawn had to
+// initialise the race runtime: measured at 1.01s per spawn (vs 0.00s plain), and
+// with ~128 spawns across 85 tests the 129s package was process startup rather
+// than test logic. /bin/sh starts in ~1ms and is not instrumented.
+//
+// The payload travels as argv, not the environment, and stdin is drained in the
+// background. Neither is strictly required by doctor production code today (it
+// sets neither cmd.Stdin nor cmd.Env), but both keep the stand-in honest if a
+// caller later starts piping SQL into it, and a child that exits in ~1ms rather
+// than ~1s can otherwise race the parent into an EPIPE the old timing masked.
+const fakeOutputScript = `cat >/dev/null 2>&1 & printf '%s' "$1"; exit "$2"`
+
+// fakeOutputCmd writes stdout and exits with exitCode. It ignores name/args,
+// exactly as the helper process did.
+func fakeOutputCmd(stdout string, exitCode int) *exec.Cmd {
+	return exec.Command("/bin/sh", "-c", fakeOutputScript, "sh", stdout, strconv.Itoa(exitCode))
+}
+
 // fakeCmd returns a *exec.Cmd that immediately succeeds (exits 0) with given stdout.
-// It uses the TestHelperProcess pattern.
 func fakeCmd(stdout string) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--")
-		cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "GO_TEST_STDOUT="+stdout)
-		return cmd
+		return fakeOutputCmd(stdout, 0)
 	}
 }
 
@@ -70,18 +90,14 @@ func fakeCmdRouter(routes map[string]string) func(string, ...string) *exec.Cmd {
 		} else if v, ok := routes[filepath.Base(name)]; ok {
 			stdout = v
 		}
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--")
-		cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "GO_TEST_STDOUT="+stdout)
-		return cmd
+		return fakeOutputCmd(stdout, 0)
 	}
 }
 
 // fakeCmdFail returns a *exec.Cmd that will fail (exit 1).
 func fakeCmdFail() func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--")
-		cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "GO_TEST_EXIT=1")
-		return cmd
+		return fakeOutputCmd("", 1)
 	}
 }
 
@@ -94,9 +110,7 @@ func fakeCmdRouterWithFail(routes map[string]string, failKeys map[string]bool) f
 		}
 		// Check fail keys
 		if failKeys[key] || failKeys[filepath.Base(name)] {
-			cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--")
-			cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "GO_TEST_EXIT=1")
-			return cmd
+			return fakeOutputCmd("", 1)
 		}
 		stdout := ""
 		if v, ok := routes[key]; ok {
@@ -104,9 +118,7 @@ func fakeCmdRouterWithFail(routes map[string]string, failKeys map[string]bool) f
 		} else if v, ok := routes[filepath.Base(name)]; ok {
 			stdout = v
 		}
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--")
-		cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "GO_TEST_STDOUT="+stdout)
-		return cmd
+		return fakeOutputCmd(stdout, 0)
 	}
 }
 

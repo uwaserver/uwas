@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,12 +28,26 @@ func isAllowedReferer(refLower, allowed string) bool {
 // example.com matches: "example.com", "sub.example.com"
 // example.com does NOT match: "example.com.evil.com", "notexample.com"
 func domainSuffixMatch(refHost, allowed string) bool {
-	refHost = strings.ToLower(strings.TrimPrefix(refHost, "www."))
-	allowed = strings.ToLower(strings.TrimPrefix(allowed, "www."))
+	refHost = strings.ToLower(strings.TrimPrefix(stripPort(refHost), "www."))
+	allowed = strings.ToLower(strings.TrimPrefix(stripPort(allowed), "www."))
 	if refHost == allowed {
 		return true
 	}
 	return strings.HasSuffix(refHost, "."+allowed)
+}
+
+// stripPort removes an optional ":port" suffix so a host:port authority is
+// compared as a bare domain. The port is not part of the domain identity, but
+// it arrives attached at both ends of the comparison: a parsed referer
+// exposes it through url.URL.Host ("example.com:8443"), and the same-host
+// allowance passes r.Host, which also carries it on a non-default-port site.
+// Comparing the two with the port still attached made neither the exact
+// domain nor the "."+allowed suffix match, so legitimate referers were 403'd.
+func stripPort(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
 }
 
 // HotlinkGuard blocks direct linking to resources from unauthorized referers.

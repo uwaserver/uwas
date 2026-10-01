@@ -309,12 +309,23 @@ func migrateDBReal(req MigrateRequest, log *strings.Builder) string {
 		safeName := sqlIdent(req.DBName)
 		// Feed CREATE USER over stdin, not -e: the SQL embeds the plaintext
 		// password and -e would expose it on argv (/proc/<pid>/cmdline).
+		//
+		// Both provisioning results must be checked. The import below runs as
+		// -u root, so it succeeds whether or not the application user exists —
+		// discarding these errors made a migration report success with no
+		// database user for the destination site to connect as.
 		userCmd := execCommandFn(bin, "-u", "root")
 		userCmd.Stdin = strings.NewReader(
 			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", safeUser, safePass))
-		userCmd.Run()
-		execCommandFn(bin, "-u", "root", "-e",
-			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).Run()
+		if out, err := userCmd.CombinedOutput(); err != nil {
+			log.WriteString(fmt.Sprintf("create user error: %s — %s\n", err, strings.TrimSpace(string(out))))
+			return "error: create user failed"
+		}
+		if out, err := execCommandFn(bin, "-u", "root", "-e",
+			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", safeName, safeUser)).CombinedOutput(); err != nil {
+			log.WriteString(fmt.Sprintf("grant error: %s — %s\n", err, strings.TrimSpace(string(out))))
+			return "error: grant failed"
+		}
 
 		// Import
 		importCmd := execCommandFn(bin, "-u", "root", req.DBName)

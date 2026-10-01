@@ -317,16 +317,40 @@ func compressFile(path string) {
 	os.Remove(path) // remove uncompressed
 }
 
-// pruneBackups keeps only the newest maxBackups rotated files.
+// pruneBackups keeps only the newest maxBackups rotated logs.
 func pruneBackups(basePath string, maxBackups int) {
 	rotated := findRotatedFiles(basePath)
-	if len(rotated) <= maxBackups {
+	if len(rotated) == 0 {
+		return
+	}
+
+	// Group by rotation identity. compressFile holds "base.<ts>" and its
+	// "base.<ts>.gz" on disk simultaneously for the whole copy window (it only
+	// unlinks the source after the archive is closed), and rotateLocked starts
+	// it and this prune concurrently. Counting the pair as two backups let the
+	// keep-slice absorb the in-flight source and evict an archive that was
+	// still inside the retention window, so a configured max_backups silently
+	// lost one of the logs it was supposed to keep. Stripping the .gz suffix
+	// collapses each pair back to the single rotated log it represents; a
+	// backup whose compression failed is still its own group and is retained.
+	groups := make(map[string][]string, len(rotated))
+	var order []string
+	for _, path := range rotated {
+		id := strings.TrimSuffix(path, ".gz")
+		if _, seen := groups[id]; !seen {
+			order = append(order, id)
+		}
+		groups[id] = append(groups[id], path)
+	}
+	if len(order) <= maxBackups {
 		return
 	}
 	// Sort newest first by name (timestamp in name ensures correct order)
-	sort.Sort(sort.Reverse(sort.StringSlice(rotated)))
-	for _, old := range rotated[maxBackups:] {
-		os.Remove(old)
+	sort.Sort(sort.Reverse(sort.StringSlice(order)))
+	for _, id := range order[maxBackups:] {
+		for _, path := range groups[id] {
+			os.Remove(path)
+		}
 	}
 }
 

@@ -263,7 +263,13 @@ func (c *CloudflareProvider) UpdateRecord(zoneID, recordID string, rec Record) (
 	if rec.TTL == 0 {
 		rec.TTL = 1
 	}
-	data, err := c.do("PUT", fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, recordID), rec)
+	// Escape both segments: they are path *segments*, and an unescaped one
+	// carrying "/" or ".." escapes the /zones/{zoneID}/dns_records/ prefix and
+	// retargets the call at a different zone of the same account. The admin API
+	// authorizes the operation against the {domain} path value, not against the
+	// zone the request ultimately reaches, so the escape crosses a tenant
+	// boundary. recordID arrives from r.PathValue("id").
+	data, err := c.do("PUT", fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(zoneID), url.PathEscape(recordID)), rec)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +281,9 @@ func (c *CloudflareProvider) UpdateRecord(zoneID, recordID string, rec Record) (
 }
 
 func (c *CloudflareProvider) DeleteRecord(zoneID, recordID string) error {
-	_, err := c.do("DELETE", fmt.Sprintf("/zones/%s/dns_records/%s", zoneID, recordID), nil)
+	// See UpdateRecord: both are path segments and must be escaped so a crafted
+	// record id cannot retarget the call at another zone.
+	_, err := c.do("DELETE", fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(zoneID), url.PathEscape(recordID)), nil)
 	return err
 }
 

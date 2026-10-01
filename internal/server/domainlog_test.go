@@ -153,6 +153,119 @@ func TestPruneBackups(t *testing.T) {
 	}
 }
 
+// TestPruneBackupsCountsInFlightCompressionAsOneBackup pins the retention
+// contract against a rotation whose gzip is still being written.
+//
+// compressFile keeps "access.log.<ts>" and "access.log.<ts>.gz" on disk at
+// the same time — it unlinks the source only after the archive is closed —
+// and rotateLocked starts it alongside this prune, so a prune routinely runs
+// inside that window. The pair is one rotated log, not two. Counting it as
+// two made the keep-slice absorb the in-flight source and evict an archive
+// that was still inside the max_backups window, so the configured retention
+// silently lost a log.
+func TestPruneBackupsCountsInFlightCompressionAsOneBackup(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "access.log")
+
+	// T1, T2: compression finished, only the archive remains.
+	for _, name := range []string{
+		"access.log.20260101-000000.000000000.gz",
+		"access.log.20260102-000000.000000000.gz",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("data"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	// T3: compressFile is mid-copy, so the source and its archive coexist.
+	for _, name := range []string{
+		"access.log.20260103-000000.000000000.gz",
+		"access.log.20260103-000000.000000000",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("data"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	active := filepath.Join(dir, "access.log")
+	if err := os.WriteFile(active, []byte("data"), 0644); err != nil {
+		t.Fatalf("write active log: %v", err)
+	}
+
+	pruneBackups(base, 2)
+
+	// Three rotated logs exist, so the newest two (T3, T2) are inside the
+	// retention window. T2's archive must survive.
+	if _, err := os.Stat(filepath.Join(dir, "access.log.20260102-000000.000000000.gz")); err != nil {
+		t.Errorf("backup inside the max_backups=2 window was pruned: %v", err)
+	}
+	// T1 is outside the window and is the one that must go.
+	if _, err := os.Stat(filepath.Join(dir, "access.log.20260101-000000.000000000.gz")); err == nil {
+		t.Error("backup outside the max_backups=2 window was kept")
+	}
+	// The active log is never a rotated backup.
+	if _, err := os.Stat(active); err != nil {
+		t.Errorf("prune removed the active log: %v", err)
+	}
+}
+
+// TestPruneBackupsRetainsBackupWhoseCompressionFailed covers the secondary
+// branch: a rotation with no archive (compressFile bailed) is a single file
+// that must still count as one backup and be retained on its own merit.
+func TestPruneBackupsRetainsBackupWhoseCompressionFailed(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "access.log")
+
+	// Newest rotation failed to compress: source only, no .gz.
+	failed := filepath.Join(dir, "access.log.20260103-000000.000000000")
+	if err := os.WriteFile(failed, []byte("data"), 0644); err != nil {
+		t.Fatalf("write failed-compression backup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "access.log.20260102-000000.000000000.gz"), []byte("data"), 0644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "access.log.20260101-000000.000000000.gz"), []byte("data"), 0644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	pruneBackups(base, 2)
+
+	if _, err := os.Stat(failed); err != nil {
+		t.Errorf("backup whose compression failed was pruned: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "access.log.20260102-000000.000000000.gz")); err != nil {
+		t.Errorf("backup inside the max_backups=2 window was pruned: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "access.log.20260101-000000.000000000.gz")); err == nil {
+		t.Error("backup outside the max_backups=2 window was kept")
+	}
+}
+
+// TestPruneBackupsUnderLimitDeletesNothing is the boundary case: when the
+// number of rotated logs is at or below max_backups, nothing may be removed —
+// including an in-flight pair, which counts as one.
+func TestPruneBackupsUnderLimitDeletesNothing(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "access.log")
+
+	names := []string{
+		"access.log.20260102-000000.000000000.gz",
+		"access.log.20260103-000000.000000000.gz",
+		"access.log.20260103-000000.000000000", // in-flight twin of the above
+	}
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("data"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	pruneBackups(base, 2) // two rotated logs, max_backups: 2
+
+	for _, name := range names {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("prune deleted %s at the max_backups limit: %v", name, err)
+		}
+	}
+}
+
 // waitForRotation waits until at least one rotated log appears, instead of
 // sleeping for a fixed time and hoping the background compression finished.
 func waitForRotation(t *testing.T, dir string) {

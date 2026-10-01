@@ -768,6 +768,20 @@ func (h *Handler) ExploreQuery(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "only SELECT, SHOW, DESCRIBE, EXPLAIN are allowed in explorer", http.StatusForbidden)
 		return
 	}
+	// EXPLAIN ANALYZE (MySQL 8.0.18+) is the one EXPLAIN form that does not
+	// merely plan: it *runs* the statement it prefixes — accepting SELECT,
+	// INSERT, UPDATE, DELETE and TABLE, then discarding the result set. It
+	// therefore slipped through the EXPLAIN allowlist above and performed real
+	// writes through a console documented as read-only. Note also that every
+	// write-blocking sub-guard below is gated on a SELECT prefix, so none of
+	// them applied to it. Reject the form outright; plain EXPLAIN stays allowed.
+	// Compare on whitespace-separated fields rather than a literal prefix, since
+	// MySQL accepts any run of spaces between the keywords ("EXPLAIN  ANALYZE").
+	if fields := strings.Fields(upper); len(fields) >= 2 &&
+		fields[0] == "EXPLAIN" && fields[1] == "ANALYZE" {
+		jsonError(w, "EXPLAIN ANALYZE is not allowed in explorer (it executes the statement)", http.StatusForbidden)
+		return
+	}
 	if strings.HasPrefix(upper, "SELECT") && !strings.Contains(upper, "LIMIT") {
 		limit := req.Limit
 		if limit <= 0 || limit > 500 {

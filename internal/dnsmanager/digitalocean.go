@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -96,6 +98,15 @@ func (p *DigitalOceanProvider) FindZoneByDomain(domain string) (*Zone, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Match the most-specific zone first. Taking the first match in API order
+	// returned the parent when an account holds both a zone and a nested zone:
+	// "sub.foo.example.com" ends with ".example.com", so an earlier
+	// "example.com" won over "foo.example.com". The ACME DNS-01 challenge TXT
+	// record is then created in the wrong zone and the CA never sees it. Sort
+	// longest-name-first, the same rule Route53 and Cloudflare already apply.
+	sort.Slice(zones, func(i, j int) bool {
+		return len(zones[i].Name) > len(zones[j].Name)
+	})
 	for _, z := range zones {
 		if z.Name == domain || strings.HasSuffix(domain, "."+z.Name) {
 			return &z, nil
@@ -109,7 +120,7 @@ func (p *DigitalOceanProvider) ListRecords(zoneID string) ([]Record, error) {
 	// Follow links.pages.next so domains with more than one page of records
 	// (20 per page by default) are fully enumerated.
 	for page := 1; page <= 1000; page++ { // hard cap: runaway guard
-		data, err := p.doRequest("GET", fmt.Sprintf("/domains/%s/records?per_page=200&page=%d", zoneID, page), nil)
+		data, err := p.doRequest("GET", fmt.Sprintf("/domains/%s/records?per_page=200&page=%d", url.PathEscape(zoneID), page), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +160,7 @@ func (p *DigitalOceanProvider) CreateRecord(zoneID string, rec Record) (*Record,
 		"type": rec.Type, "name": rec.Name, "data": rec.Content,
 		"ttl": rec.TTL, "priority": rec.Priority,
 	}
-	data, err := p.doRequest("POST", "/domains/"+zoneID+"/records", body)
+	data, err := p.doRequest("POST", "/domains/"+url.PathEscape(zoneID)+"/records", body)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +181,7 @@ func (p *DigitalOceanProvider) UpdateRecord(zoneID, recordID string, rec Record)
 		"type": rec.Type, "name": rec.Name, "data": rec.Content,
 		"ttl": rec.TTL, "priority": rec.Priority,
 	}
-	_, err := p.doRequest("PUT", "/domains/"+zoneID+"/records/"+recordID, body)
+	_, err := p.doRequest("PUT", "/domains/"+url.PathEscape(zoneID)+"/records/"+url.PathEscape(recordID), body)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +190,6 @@ func (p *DigitalOceanProvider) UpdateRecord(zoneID, recordID string, rec Record)
 }
 
 func (p *DigitalOceanProvider) DeleteRecord(zoneID, recordID string) error {
-	_, err := p.doRequest("DELETE", "/domains/"+zoneID+"/records/"+recordID, nil)
+	_, err := p.doRequest("DELETE", "/domains/"+url.PathEscape(zoneID)+"/records/"+url.PathEscape(recordID), nil)
 	return err
 }

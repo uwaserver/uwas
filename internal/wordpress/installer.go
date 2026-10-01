@@ -458,12 +458,27 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 	if runtimeGOOS == "windows" {
 		return
 	}
-	execCommandFn("chown", "-R", "www-data:www-data", webRoot).Run()
-	execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";").Run()
-	execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";").Run()
+	// This function returns nothing, so the log is the installer's only feedback
+	// about ownership. Every result used to be discarded and a "Permissions set"
+	// line was written unconditionally, so a host where chown/chmod fails (UWAS
+	// running unprivileged, or a filesystem that refuses the mode) reported
+	// success while the web root stayed owned by the installing user — and
+	// www-data, which runs the site, could not write. Count the failures instead
+	// and say what actually happened.
+	var failed int
+	run := func(label string, c *exec.Cmd) {
+		if c.Run() != nil {
+			failed++
+			log.WriteString(fmt.Sprintf("  warning: %s failed — run as a user permitted to chown/chmod this web root, or set the ownership manually\n", label))
+		}
+	}
+
+	run("chown -R www-data:www-data", execCommandFn("chown", "-R", "www-data:www-data", webRoot))
+	run("chmod 755 (directories)", execCommandFn("find", webRoot, "-type", "d", "-exec", "chmod", "755", "{}", ";"))
+	run("chmod 644 (files)", execCommandFn("find", webRoot, "-type", "f", "-exec", "chmod", "644", "{}", ";"))
 	// wp-content needs to be writable
 	wpContent := filepath.Join(webRoot, "wp-content")
-	execCommandFn("chmod", "-R", "775", wpContent).Run()
+	run("chmod -R 775 wp-content", execCommandFn("chmod", "-R", "775", wpContent))
 
 	// Create directories WordPress needs for plugin/theme installs and uploads
 	for _, sub := range []string{"upgrade", "uploads", "upgrade/skins", ".tmp"} {
@@ -472,9 +487,13 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 			dir = filepath.Join(webRoot, ".tmp")
 		}
 		osMkdirAllFn(dir, 0775)
-		execCommandFn("chown", "www-data:www-data", dir).Run()
+		run("chown www-data:www-data "+sub, execCommandFn("chown", "www-data:www-data", dir))
 	}
-	log.WriteString("Permissions set (www-data:www-data, 755/644, wp-content 775, upgrade/uploads created)\n")
+	if failed == 0 {
+		log.WriteString("Permissions set (www-data:www-data, 755/644, wp-content 775, upgrade/uploads created)\n")
+	} else {
+		log.WriteString(fmt.Sprintf("WARNING: %d permission step(s) failed — WordPress may be unable to install plugins, upload media, or update until ownership is fixed\n", failed))
+	}
 }
 
 func sanitizeDBName(domain string) string {

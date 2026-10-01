@@ -2,6 +2,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -72,10 +73,20 @@ func ListServices() []Service {
 func checkService(name, display string) *Service {
 	// Check if service unit exists
 	out, err := execCommandFn("systemctl", "is-active", name).Output()
-	if err != nil {
-		return nil
-	}
 	active := strings.TrimSpace(string(out))
+	if err != nil {
+		// `systemctl is-active` exits 0 when the unit is active, 3 when the
+		// unit is loaded but not running (inactive, failed, activating) and 4
+		// when the unit is not known at all. Only the last one means "not
+		// installed", so bailing out on every non-zero exit silently dropped
+		// stopped and crashed services from ListServices — the dashboard
+		// showed them as absent rather than down, even though Service.Active
+		// is documented to carry exactly those values.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 {
+			return nil
+		}
+	}
 
 	enabled := false
 	enabledOut, _ := execCommandFn("systemctl", "is-enabled", name).Output()

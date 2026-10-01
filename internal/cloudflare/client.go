@@ -106,8 +106,9 @@ func (c *Client) doListPages(pathBase string) ([]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	// Close as soon as this page is read — see the note in the loop below.
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -145,8 +146,13 @@ func (c *Client) doListPages(pathBase string) ([]json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
+		// Read this page's body and close it before requesting the next one.
+		// A `defer` here would run at function return, not at the end of the
+		// iteration, so every page's body and pooled connection would stay
+		// open for the whole pagination walk — exactly the many-page case
+		// this function exists to handle.
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("read response: %w", err)
 		}

@@ -84,7 +84,7 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 		stats.Paths = make(map[string]int64)
 	}
 	const maxPaths = 50000
-	if len(stats.Paths) < maxPaths {
+	if _, exists := stats.Paths[path]; exists || len(stats.Paths) < maxPaths {
 		stats.Paths[path]++
 	}
 

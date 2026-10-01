@@ -711,6 +711,84 @@ func TestCircuitBreakerHalfOpenFailure(t *testing.T) {
 	}
 }
 
+// TestCircuitBreakerHalfOpenFailureReopensAboveThreshold covers the case
+// TestCircuitBreakerHalfOpenFailure misses: that test uses threshold=1, where
+// the probe failure happens to satisfy `failures >= threshold` and re-opens the
+// breaker on its own. For any threshold > 1 (NewCircuitBreaker(0, 0) installs
+// the default 5) Allow() zeroes the counter on the Open->HalfOpen transition,
+// so a lone probe failure reaches only failures=1 and the re-open guard is
+// skipped. The breaker then stays in CircuitHalfOpen with probeSlot still
+// claimed, and since the timeout only elapses from CircuitOpen, every later
+// Allow() loses the probeSlot CAS — the domain 503s forever even after the
+// upstream recovers.
+func TestCircuitBreakerHalfOpenFailureReopensAboveThreshold(t *testing.T) {
+	const threshold = 5 // the default installed by NewCircuitBreaker(0, 0)
+	cb := NewCircuitBreaker(threshold, 20*time.Millisecond)
+
+	// Trip the breaker the way server_dispatch.go does for a failing upstream.
+	for i := 0; i < threshold; i++ {
+		cb.RecordFailure()
+	}
+	if got := cb.State(); got != CircuitOpen {
+		t.Fatalf("should be open after %d failures, got %v", threshold, got)
+	}
+
+	// Timeout elapses; the next request is admitted as the half-open probe.
+	time.Sleep(30 * time.Millisecond)
+	if !cb.Allow() {
+		t.Fatal("half-open probe request should be admitted")
+	}
+	if got := cb.State(); got != CircuitHalfOpen {
+		t.Fatalf("should be half-open, got %v", got)
+	}
+
+	// The probe comes back 5xx. A failed probe is definitive: the breaker must
+	// return to Open so the next timeout can admit a fresh probe.
+	cb.RecordFailure()
+	if got := cb.State(); got != CircuitOpen {
+		t.Fatalf("a failed half-open probe must re-open the breaker, got %v", got)
+	}
+
+	// Recovery: once the open window elapses again, a fresh probe is admitted
+	// and a success closes the breaker, so traffic flows again.
+	time.Sleep(30 * time.Millisecond)
+	if !cb.Allow() {
+		t.Fatal("breaker must admit a fresh probe after the failed one re-opened it")
+	}
+	cb.RecordSuccess()
+	if got := cb.State(); got != CircuitClosed {
+		t.Fatalf("should be closed after a successful probe, got %v", got)
+	}
+	for i := 0; i < 10; i++ {
+		if !cb.Allow() {
+			t.Fatalf("closed breaker denied request %d", i)
+		}
+	}
+}
+
+// TestCircuitBreakerHalfOpenReleasesProbeSlot checks the secondary branch the
+// fix touches: re-opening must also free probeSlot, otherwise a breaker that
+// bounces back to Open still rejects the probe it admits.
+func TestCircuitBreakerHalfOpenReleasesProbeSlot(t *testing.T) {
+	cb := NewCircuitBreaker(5, 20*time.Millisecond)
+	for i := 0; i < 5; i++ {
+		cb.RecordFailure()
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	if !cb.Allow() {
+		t.Fatal("first probe should be admitted")
+	}
+	cb.RecordFailure() // re-opens and must release the slot
+
+	// Immediately after re-opening the slot is free again, so an excess probe
+	// cannot still be rejected by a stale claim.
+	time.Sleep(30 * time.Millisecond)
+	if !cb.Allow() {
+		t.Fatal("probe slot was not released by the failed half-open probe")
+	}
+}
+
 func TestCircuitBreakerRecordSuccessInClosed(t *testing.T) {
 	cb := NewCircuitBreaker(5, time.Second)
 

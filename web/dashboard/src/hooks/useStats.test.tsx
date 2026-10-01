@@ -345,4 +345,84 @@ describe('useStats', () => {
 
     expect(result.current.stats).toBeNull();
   });
+
+  // ── Async teardown ──────────────────────────────────────────────────────
+
+  // Regression: startSSE is async and is not awaited by the effect, so the
+  // effect can be torn down while it is still suspended on
+  // `await sseStatsURL()`. Cleanup only closes the `es` it captured — which is
+  // still null at that point — so the EventSource and the healthId interval
+  // were created *after* teardown and never released. Every unmount leaked one
+  // SSE connection plus one timer that polls fetchHealth() forever.
+  it('does not leak the EventSource when unmounted while sseStatsURL is pending', async () => {
+    let releaseURL: (() => void) | null = null;
+    mockSseStatsURL.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseURL = () => resolve('/api/v1/sse/stats?ticket=abc');
+        }),
+    );
+
+    const { unmount } = renderHook(() => useStats(3000));
+
+    // Tear down while startSSE is suspended on the pending sseStatsURL().
+    unmount();
+
+    // Now let the pending promise resolve: startSSE resumes past cleanup.
+    await act(async () => {
+      releaseURL?.();
+      await Promise.resolve();
+    });
+
+    expect(currentEventSource).toBeNull();
+  });
+
+  it('does not leave a health poller running when unmounted while sseStatsURL is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseURL: (() => void) | null = null;
+      mockSseStatsURL.mockImplementation(
+        () =>
+          new Promise<string>((resolve) => {
+            releaseURL = () => resolve('/api/v1/sse/stats?ticket=abc');
+          }),
+      );
+
+      const { unmount } = renderHook(() => useStats(3000));
+      unmount();
+
+      await act(async () => {
+        releaseURL?.();
+        await Promise.resolve();
+      });
+
+      // The healthId interval is only registered after the await, so a
+      // mid-await unmount must leave nothing scheduled.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('control: releases the EventSource and health poller on a normal unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = renderHook(() => useStats(3000));
+
+      // Let the async setup complete BEFORE unmounting.
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(currentEventSource).not.toBeNull();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      unmount();
+
+      expect(currentEventSource!.close).toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

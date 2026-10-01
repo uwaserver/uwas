@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -39,19 +40,35 @@ func saveHooks(t *testing.T) {
 	})
 }
 
+// fakeOutputScript reproduces TestHelperProcess's observable behaviour — print a
+// canned stdout, exit with a canned code — without re-executing the test binary.
+//
+// Re-exec was by far the largest cost in this package under -race. Each spawn
+// had to initialise the race runtime: measured at 1.01s per spawn (vs 0.00s for
+// a plain build), so a suite issuing ~144 fake commands spent 147s in process
+// startup rather than in test logic. /bin/sh starts in ~1ms and is not
+// instrumented.
+//
+// Two details preserve the old observable behaviour:
+//   - Stdin is drained in the background. Several production paths set cmd.Stdin
+//     to a SQL payload, and a child that exits in ~1ms rather than ~1s can
+//     otherwise race the parent into an EPIPE the old timing had masked.
+//   - The payload is passed as argv, not the environment, because two
+//     production paths replace cmd.Env outright (docker.go, manager.go) and
+//     would silently drop env-based values.
+const fakeOutputScript = `cat >/dev/null 2>&1 & printf '%s' "$1"; exit "$2"`
+
+// fakeOutputCmd returns a command that writes stdout to its own stdout and
+// exits with exitCode, ignoring name/args exactly as TestHelperProcess did.
+func fakeOutputCmd(stdout string, exitCode int) *exec.Cmd {
+	return exec.Command("/bin/sh", "-c", fakeOutputScript, "sh", stdout, strconv.Itoa(exitCode))
+}
+
 // fakeCmd returns an *exec.Cmd that, when executed, writes stdout and exits
-// with the given code.  It uses the TestHelperProcess trick.
+// with the given code.
 func fakeCmd(stdout string, exitCode int) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--", name}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
-		cmd.Env = append(os.Environ(),
-			"GO_WANT_HELPER_PROCESS=1",
-			fmt.Sprintf("HELPER_STDOUT=%s", stdout),
-			fmt.Sprintf("HELPER_EXIT_CODE=%d", exitCode),
-		)
-		return cmd
+		return fakeOutputCmd(stdout, exitCode)
 	}
 }
 
@@ -85,15 +102,7 @@ func fakeCmdRouter(routes map[string]cmdRoute, fallback cmdRoute) func(string, .
 }
 
 func buildHelperCmd(name string, args []string, stdout string, exitCode int) *exec.Cmd {
-	cs := []string{"-test.run=TestHelperProcess", "--", name}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
-	cmd.Env = append(os.Environ(),
-		"GO_WANT_HELPER_PROCESS=1",
-		fmt.Sprintf("HELPER_STDOUT=%s", stdout),
-		fmt.Sprintf("HELPER_EXIT_CODE=%d", exitCode),
-	)
-	return cmd
+	return fakeOutputCmd(stdout, exitCode)
 }
 
 // lookPathFound returns a LookPath mock that succeeds for listed binaries.

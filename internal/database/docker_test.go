@@ -1,8 +1,6 @@
 package database
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -18,15 +16,7 @@ func saveDockerHook(t *testing.T) {
 
 func fakeDockerCmd(stdout string, exitCode int) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--", name}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
-		cmd.Env = append(os.Environ(),
-			"GO_WANT_HELPER_PROCESS=1",
-			fmt.Sprintf("HELPER_STDOUT=%s", stdout),
-			fmt.Sprintf("HELPER_EXIT_CODE=%d", exitCode),
-		)
-		return cmd
+		return fakeOutputCmd(stdout, exitCode)
 	}
 }
 
@@ -546,21 +536,10 @@ func TestCreateDockerDB_NilEnv(t *testing.T) {
 
 	// Create a mock that returns a Cmd with nil Env for the "run" subcommand.
 	// We need the "ps" check to succeed to get past the "already exists" check.
+	// fakeOutputCmd leaves Env nil (exec.Command does not populate it), which is
+	// exactly what the docker.go fallback at lines 123-125 needs to be exercised.
 	dockerExecCommandFn = func(name string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--", name}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
-		if len(args) > 0 && args[0] == "ps" {
-			cmd.Env = append(os.Environ(),
-				"GO_WANT_HELPER_PROCESS=1",
-				"HELPER_STDOUT=",
-				"HELPER_EXIT_CODE=0",
-			)
-		} else {
-			// For "run" — leave Env nil to exercise the nil check.
-			cmd.Env = nil
-		}
-		return cmd
+		return fakeOutputCmd("", 0)
 	}
 
 	_, err := CreateDockerDB(EngineMariaDB, "test-nil-env", 3399, "testpass", "")

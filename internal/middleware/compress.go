@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -54,29 +55,47 @@ const (
 // selectEncoding inspects the Accept-Encoding header and returns the best
 // supported encoding. Brotli is preferred over gzip when both are present.
 func selectEncoding(acceptEncoding string) encodingType {
-	hasBr := false
-	hasGzip := false
-	for _, part := range strings.Split(acceptEncoding, ",") {
-		token := strings.TrimSpace(part)
-		// Strip quality value (e.g. "br;q=0.9" → "br")
-		if idx := strings.IndexByte(token, ';'); idx >= 0 {
-			token = strings.TrimSpace(token[:idx])
-		}
-		switch token {
-		case "br":
-			hasBr = true
-		case "gzip":
-			hasGzip = true
-		}
-	}
-
-	if hasBr {
+	// Brotli is preferred when both are acceptable; a coding the client
+	// refused with q=0 must not be chosen.
+	if encodingAccepted(acceptEncoding, "br") {
 		return encodingBrotli
 	}
-	if hasGzip {
+	if encodingAccepted(acceptEncoding, "gzip") {
 		return encodingGzip
 	}
 	return encodingNone
+}
+
+// encodingAccepted reports whether the client accepts the given content-coding
+// at all. A q-value of 0 is an explicit refusal ("do not send me this"), so
+// such a coding is never selected: RFC 9110 §12.5.3 defines q=0 as
+// "not acceptable to the user agent". The static handler's acceptsEncoding
+// already enforced this for pre-compressed files; without it here a client
+// sending "gzip;q=0" was served a gzip body it had just refused.
+func encodingAccepted(header, coding string) bool {
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name := part
+		q := 1.0
+		if i := strings.IndexByte(part, ';'); i != -1 {
+			name = strings.TrimSpace(part[:i])
+			for _, p := range strings.Split(part[i+1:], ";") {
+				p = strings.TrimSpace(p)
+				if v, ok := strings.CutPrefix(p, "q="); ok {
+					if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+						q = f
+					}
+				}
+			}
+		}
+		if strings.EqualFold(name, coding) {
+			return q > 0
+		}
+	}
+	return false
 }
 
 // CompressionPolicy is the per-request compression policy, resolved from the

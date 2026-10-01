@@ -255,11 +255,20 @@ export default function Database() {
   // clear it. Without this, navigating away mid-install leaks an interval
   // that fires every 3s forever and calls setState on an unmounted page.
   const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => () => {
-    if (installPollRef.current) {
-      clearInterval(installPollRef.current);
-      installPollRef.current = null;
-    }
+  // The install POST can resolve after the unmount cleanup below has already
+  // run; without this flag the continuation re-arms the 3s fetchTask poll
+  // interval the cleanup can never clear, and the page keeps polling the
+  // server after it is gone.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (installPollRef.current) {
+        clearInterval(installPollRef.current);
+        installPollRef.current = null;
+      }
+    };
   }, []);
 
   // Authenticated download for the Database "Export" button. The /export
@@ -330,6 +339,7 @@ export default function Database() {
     }
     try {
       const res = await installDatabase();
+      if (!aliveRef.current) return; // unmounted mid-install: cleanup already ran
       setStatus({ ok: true, message: 'MariaDB installation started. This may take a few minutes...' });
       if (res.task_id) {
         installPollRef.current = setInterval(async () => {

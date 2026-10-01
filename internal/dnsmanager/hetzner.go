@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -97,6 +99,15 @@ func (p *HetznerProvider) FindZoneByDomain(domain string) (*Zone, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Match the most-specific zone first. Taking the first match in API order
+	// returned the parent when an account holds both a zone and a nested zone:
+	// "sub.foo.example.com" ends with ".example.com", so an earlier
+	// "example.com" won over "foo.example.com". The ACME DNS-01 challenge TXT
+	// record is then created in the wrong zone and the CA never sees it. Sort
+	// longest-name-first, the same rule Route53 and Cloudflare already apply.
+	sort.Slice(zones, func(i, j int) bool {
+		return len(zones[i].Name) > len(zones[j].Name)
+	})
 	for _, z := range zones {
 		if z.Name == domain || strings.HasSuffix(domain, "."+z.Name) {
 			return &z, nil
@@ -167,7 +178,7 @@ func (p *HetznerProvider) UpdateRecord(zoneID, recordID string, rec Record) (*Re
 		"zone_id": zoneID, "type": rec.Type, "name": rec.Name,
 		"value": rec.Content, "ttl": rec.TTL,
 	}
-	_, err := p.hetznerRequest("PUT", "/records/"+recordID, body)
+	_, err := p.hetznerRequest("PUT", "/records/"+url.PathEscape(recordID), body)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +187,6 @@ func (p *HetznerProvider) UpdateRecord(zoneID, recordID string, rec Record) (*Re
 }
 
 func (p *HetznerProvider) DeleteRecord(zoneID, recordID string) error {
-	_, err := p.hetznerRequest("DELETE", "/records/"+recordID, nil)
+	_, err := p.hetznerRequest("DELETE", "/records/"+url.PathEscape(recordID), nil)
 	return err
 }

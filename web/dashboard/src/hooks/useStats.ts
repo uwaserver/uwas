@@ -41,9 +41,15 @@ export function useStats(interval = 3000) {
     let pollingId: ReturnType<typeof setInterval> | null = null;
     let healthId: ReturnType<typeof setInterval> | null = null;
     let es: EventSource | null = null;
+    // startSSE is async and is NOT awaited here, so the effect can tear down
+    // while it is still suspended on `await sseStatsURL()`. Without this flag
+    // the EventSource and the healthId interval are created *after* cleanup has
+    // already run, so nothing ever closes them: every unmount leaks one SSE
+    // connection and one forever-polling timer.
+    let cancelled = false;
 
     function startPolling() {
-      if (pollingId) return;
+      if (pollingId || cancelled) return;
       usingSSE.current = false;
       refresh();
       pollingId = setInterval(refresh, interval);
@@ -52,6 +58,7 @@ export function useStats(interval = 3000) {
     async function startSSE() {
       try {
         const url = await sseStatsURL();
+        if (cancelled) return;
         es = new EventSource(url);
 
         es.onmessage = (event) => {
@@ -91,6 +98,7 @@ export function useStats(interval = 3000) {
     startSSE();
 
     return () => {
+      cancelled = true;
       if (pollingId) clearInterval(pollingId);
       if (healthId) clearInterval(healthId);
       if (es) es.close();

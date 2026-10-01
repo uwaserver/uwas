@@ -251,19 +251,15 @@ func TestDetectSiteURL_Branches(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // fakeCmdStderr produces a command that writes to stdout/stderr and may exit
-// non-zero. It targets TestHelperProcessWithStderr below.
+// non-zero. Shares fakeOutputCmd with fakeCmd in installer_test.go.
+//
+// The old TestHelperProcessWithStderr exited 1 only when its env value was
+// exactly "1" and 0 otherwise, so any other non-zero code silently became a
+// success. Both callers pass 1, so exiting with the real code is behaviourally
+// identical for the current suite and is the more honest contract going forward.
 func fakeCmdStderr(stdout, stderr string, exit int) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcessWithStderr", "--", name}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
-		cmd.Env = append(os.Environ(),
-			"GO_TEST_HELPER_STDERR_PROCESS=1",
-			"GO_TEST_HELPER_STDOUT="+stdout,
-			"GO_TEST_HELPER_STDERR="+stderr,
-			fmt.Sprintf("GO_TEST_HELPER_EXIT=%d", exit),
-		)
-		return cmd
+		return fakeOutputCmd(stdout, stderr, exit)
 	}
 }
 

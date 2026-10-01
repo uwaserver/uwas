@@ -98,8 +98,18 @@ func Delete(baseDir, relPath string) error {
 	if fullPath == "" {
 		return fmt.Errorf("invalid path")
 	}
-	// Prevent deleting the base dir itself
-	if fullPath == baseDir {
+	// Prevent deleting the base dir itself. Both sides must be resolved the
+	// same way: safePath returns an absolute, cleaned path, so comparing it
+	// against the raw baseDir argument only held when the caller happened to
+	// pass an already-absolute, clean string. A baseDir with a trailing slash
+	// (an operator writing `root: /var/www/site/public_html/`) or a relative
+	// one slipped past the check, and os.RemoveAll then wiped the whole web
+	// root instead of rejecting the request.
+	absBase, err := absFunc(baseDir)
+	if err != nil {
+		return fmt.Errorf("invalid web root: %w", err)
+	}
+	if fullPath == filepath.Clean(absBase) {
 		return fmt.Errorf("cannot delete web root")
 	}
 	return os.RemoveAll(fullPath)

@@ -1841,15 +1841,22 @@ export async function terminalWSURL(pin?: string): Promise<string> {
   // carries it via the X-Pin-Code header — the server then binds PIN
   // verification into the ticket, so the PIN never appears in this URL.
   if (pin) setPinCode(pin);
-  const ticket = await obtainTicket();
-  if (ticket) {
-    params.set('ticket', ticket);
-    // PIN is bound into the ticket — do NOT put it in the URL.
-  } else if (pin) {
-    throw new Error('Could not create a terminal access ticket; refusing to put the PIN in the WebSocket URL.');
+  try {
+    const ticket = await obtainTicket();
+    if (ticket) {
+      params.set('ticket', ticket);
+      // PIN is bound into the ticket — do NOT put it in the URL.
+    } else if (pin) {
+      throw new Error('Could not create a terminal access ticket; refusing to put the PIN in the WebSocket URL.');
+    }
+    const qs = params.toString();
+    return `${proto}//${host}/api/v1/terminal${qs ? '?' + qs : ''}`;
+  } finally {
+    // Like every other PIN flow in this module (403 retry, uploads, cPanel
+    // migration), drop the global as soon as the mint is done so the
+    // credential does not ride along on unrelated later requests.
+    if (pin) clearPinCode();
   }
-  const qs = params.toString();
-  return `${proto}//${host}/api/v1/terminal${qs ? '?' + qs : ''}`;
 }
 
 // requestPin returns a promise that resolves with the user's pin code.

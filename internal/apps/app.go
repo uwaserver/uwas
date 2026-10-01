@@ -295,7 +295,15 @@ func ValidateExtraArgs(args []string) error {
 				return fmt.Errorf("docker extra-arg %q is not in the allowlist", arg)
 			}
 			seenFlag = true
-		} else if !strings.HasPrefix(arg, "-") && arg != "" {
+		} else if strings.HasPrefix(arg, "-") {
+			// Single-dash forms (-v, -v/:/host, -v=/:/host, -privileged) match
+			// neither the long-form allowlist nor the positional check, so they
+			// used to fall through unexamined and be handed to the docker CLI
+			// verbatim by docker.go — mounting the host root with a one-token
+			// "-v/:/host". The allowlist only ever names long spellings, so
+			// anything else starting with "-" is not on it.
+			return fmt.Errorf("docker extra-arg %q is not in the allowlist; only the long (--flag) spellings are accepted", arg)
+		} else if arg != "" {
 			return fmt.Errorf("docker extra-arg %q: positional arguments are not allowed", arg)
 		}
 	}

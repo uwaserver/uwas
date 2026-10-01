@@ -17,17 +17,54 @@ type Balancer interface {
 	Select(backends []*Backend, r *http.Request) *Backend
 }
 
-// RoundRobin implements weighted smooth round-robin.
+// RoundRobin implements weighted round-robin.
 type RoundRobin struct {
 	counter atomic.Uint64
+}
+
+// backendWeight is the weight a backend is scheduled with, treating a
+// non-positive weight as 1. NewUpstreamPool already clamps, but Backend is an
+// exported struct that callers and tests build directly.
+func backendWeight(b *Backend) int64 {
+	if b.Weight > 0 {
+		return int64(b.Weight)
+	}
+	return 1
 }
 
 func (rr *RoundRobin) Select(backends []*Backend, _ *http.Request) *Backend {
 	if len(backends) == 0 {
 		return nil
 	}
-	idx := rr.counter.Add(1) % uint64(len(backends))
-	return backends[idx]
+	// Each backend occupies Weight slots in a cycle of the total weight, so a
+	// 3:1 pool gives the heavy backend three of every four requests. The
+	// counter is the only shared state, so selection stays lock-free.
+	//
+	// `weight` used to be stored on Backend and then ignored, making it dead
+	// configuration: SPECIFICATION.md documents round_robin as "Distribute in
+	// order, based on weight" and README.md ships weight: 3 / weight: 1, but
+	// every backend was served an equal share regardless of what was
+	// configured.
+	var total int64
+	for _, b := range backends {
+		total += backendWeight(b)
+	}
+	if total <= 0 {
+		// Unreachable via NewUpstreamPool (weights are clamped to >= 1) and
+		// unreachable with a non-empty slice, since every term is >= 1. Guard
+		// anyway so a hand-built Backend can never divide by zero.
+		return backends[rr.counter.Add(1)%uint64(len(backends))]
+	}
+	pos := int64(rr.counter.Add(1) % uint64(total))
+	for _, b := range backends {
+		pos -= backendWeight(b)
+		if pos < 0 {
+			return b
+		}
+	}
+	// Unreachable: the slot always lands inside some backend's range. Fall back
+	// to the last one rather than returning nil and 502-ing the domain.
+	return backends[len(backends)-1]
 }
 
 // LeastConn selects the backend with fewest active connections.

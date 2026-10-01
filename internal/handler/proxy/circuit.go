@@ -96,7 +96,17 @@ func (cb *CircuitBreaker) RecordFailure() {
 	cb.failures.Add(1)
 	cb.lastFailure.Store(time.Now().UnixNano())
 
-	if cb.failures.Load() >= int32(cb.threshold) {
+	// A failed half-open probe is definitive: the upstream is still down, so
+	// re-open and release the probe slot regardless of the failure threshold.
+	// Allow() zeroes `failures` on the Open->HalfOpen transition, so a lone
+	// probe failure only reaches failures=1 and never satisfies
+	// `failures >= threshold` for any threshold > 1 (the default is 5). Without
+	// this the breaker stays wedged in CircuitHalfOpen with the slot claimed:
+	// the timeout only elapses from CircuitOpen, and every later Allow() loses
+	// the probeSlot CAS — so the domain 503s forever even after the upstream
+	// has recovered. lastFailure is still stamped above, so the open window
+	// restarts from the probe failure instead of hot-looping into half-open.
+	if CircuitState(cb.state.Load()) == CircuitHalfOpen || cb.failures.Load() >= int32(cb.threshold) {
 		cb.state.Store(int32(CircuitOpen))
 		cb.probeSlot.Store(0)
 	}

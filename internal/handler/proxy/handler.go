@@ -476,6 +476,19 @@ var hopByHopHeaders = []string{
 }
 
 func removeHopByHop(h http.Header) {
+	// RFC 7230 §6.1: "Connection" may name *additional* headers that are
+	// hop-by-hop for this connection ("Connection: X-Secret"). Those must be
+	// dropped too, or a client chooses which header gets laundered to the
+	// upstream. Read the names before deleting Connection itself. Header field
+	// names are case-insensitive and http.Header.Del canonicalizes the key, so
+	// a lowercase name in Connection still removes the canonical header.
+	for _, value := range h.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				h.Del(name)
+			}
+		}
+	}
 	for _, key := range hopByHopHeaders {
 		h.Del(key)
 	}
@@ -649,11 +662,17 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	reqLine := ctx.Request.Method + " " + upstreamURL.RequestURI() + " HTTP/1.1\r\n"
 	upstreamConn.Write([]byte(reqLine))
 
-	// Write headers (including Upgrade and Connection). Skip client-supplied
-	// X-Forwarded-For / X-Real-IP so we can set authoritative values below.
+	// Write headers (including Upgrade and Connection). Skip every
+	// client-supplied forwarded header so we can set authoritative values
+	// below — the same set the HTTP reverse-proxy path overwrites via
+	// Header.Set. Leaving X-Forwarded-Proto / X-Forwarded-Host in would let a
+	// client claim https (or an arbitrary host) on a plain-HTTP upgrade, and
+	// backends that trust those headers (PHP's HTTP_X_FORWARDED_PROTO) would
+	// be misled.
 	for key, vals := range ctx.Request.Header {
 		lk := strings.ToLower(key)
-		if lk == "x-forwarded-for" || lk == "x-real-ip" {
+		if lk == "x-forwarded-for" || lk == "x-real-ip" ||
+			lk == "x-forwarded-proto" || lk == "x-forwarded-host" {
 			continue
 		}
 		for _, v := range vals {
@@ -663,6 +682,8 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	// Add proxy headers
 	upstreamConn.Write([]byte("X-Forwarded-For: " + clientIP(ctx.Request) + "\r\n"))
 	upstreamConn.Write([]byte("X-Real-IP: " + clientIP(ctx.Request) + "\r\n"))
+	upstreamConn.Write([]byte("X-Forwarded-Proto: " + forwardedProto(ctx) + "\r\n"))
+	upstreamConn.Write([]byte("X-Forwarded-Host: " + ctx.Request.Host + "\r\n"))
 	upstreamConn.Write([]byte("Host: " + ctx.Request.Host + "\r\n"))
 	upstreamConn.Write([]byte("\r\n"))
 

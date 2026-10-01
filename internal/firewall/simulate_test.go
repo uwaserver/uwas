@@ -277,20 +277,13 @@ func installSim(t *testing.T, s *simState) {
 	statePath := s.path
 	execCommandFn = func(name string, arg ...string) *exec.Cmd {
 		out, fail := dispatchSim(statePath, arg)
-		cs := []string{"-test.run=TestHelperProcess", "--", name}
-		cs = append(cs, arg...)
-		cmd := exec.Command(os.Args[0], cs...)
-		exit := "0"
+		// dispatchSim already mutated the on-disk state in-process, so the
+		// stand-in only has to replay its stdout/exit status. The old
+		// UWAS_UFW_SIM env var had no consumer anywhere in the package.
 		if fail {
-			exit = "1"
+			return fakeOutputCmd(out, 1)
 		}
-		cmd.Env = append(os.Environ(),
-			"GO_HELPER_PROCESS=1",
-			"GO_HELPER_OUTPUT="+out,
-			"GO_HELPER_EXIT="+exit,
-			"UWAS_UFW_SIM="+statePath,
-		)
-		return cmd
+		return fakeOutputCmd(out, 0)
 	}
 }
 

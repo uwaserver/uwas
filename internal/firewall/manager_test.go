@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -21,24 +22,35 @@ func TestHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-// fakeExecCommand returns a function that creates a *exec.Cmd which re-invokes
-// the test binary as TestHelperProcess, injecting the desired stdout output and
-// exit code via environment variables.
+// fakeOutputScript reproduces TestHelperProcess's observable behaviour — print a
+// canned stdout, exit 0 or 1 — without re-executing the test binary.
+//
+// Re-exec was essentially all of this package's -race cost. Each spawn had to
+// initialise the race runtime: measured at 1.01s per spawn (vs 0.00s plain), and
+// the suite issues ~211 of them, so 213s of a 213s package was process startup
+// rather than test logic. /bin/sh starts in ~1ms and is not instrumented.
+//
+// The payload is passed as argv, not the environment, so nothing here depends on
+// cmd.Env surviving (production firewall code never touches it, but keeping the
+// contract explicit is what the database package learned the hard way). Stdin is
+// drained in the background: a child that exits in ~1ms rather than ~1s can
+// otherwise race the parent into an EPIPE the old timing had masked.
+const fakeOutputScript = `cat >/dev/null 2>&1 & printf '%s' "$1"; exit "$2"`
+
+// fakeOutputCmd returns a command that writes stdout to its own stdout and exits
+// with exitCode (0 or 1), ignoring name/arg exactly as TestHelperProcess did.
+func fakeOutputCmd(stdout string, exitCode int) *exec.Cmd {
+	return exec.Command("/bin/sh", "-c", fakeOutputScript, "sh", stdout, strconv.Itoa(exitCode))
+}
+
+// fakeExecCommand returns a function that creates a *exec.Cmd yielding the given
+// stdout and exit status.
 func fakeExecCommand(output string, fail bool) func(name string, arg ...string) *exec.Cmd {
 	return func(name string, arg ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--", name}
-		cs = append(cs, arg...)
-		cmd := exec.Command(os.Args[0], cs...)
-		exitVal := "0"
 		if fail {
-			exitVal = "1"
+			return fakeOutputCmd(output, 1)
 		}
-		cmd.Env = append(os.Environ(),
-			"GO_HELPER_PROCESS=1",
-			"GO_HELPER_OUTPUT="+output,
-			"GO_HELPER_EXIT="+exitVal,
-		)
-		return cmd
+		return fakeOutputCmd(output, 0)
 	}
 }
 

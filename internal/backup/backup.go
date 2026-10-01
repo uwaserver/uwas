@@ -480,7 +480,14 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		if err != nil {
 			return fmt.Errorf("create %s: %w", outPath, err)
 		}
-		limited := io.LimitReader(tr, maxFileSize)
+		// Read one byte past the per-file limit so an oversized entry is
+		// detected and rejected rather than silently truncated — the same
+		// convention the database-dump branch above uses. Limiting the copy to
+		// exactly maxFileSize and then testing `written >= maxFileSize` made
+		// `written` unable to exceed the limit, so a file of exactly
+		// max_file_size bytes was reported as "exceeds max size limit" and the
+		// restore aborted partway, leaving a half-restored tree.
+		limited := io.LimitReader(tr, maxFileSize+1)
 		written, err := io.Copy(f, limited)
 		totalRead += written
 		if err != nil {
@@ -490,8 +497,9 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		if err := f.Close(); err != nil {
 			return fmt.Errorf("close %s: %w", outPath, err)
 		}
-		// If we hit the per-file limit, the file may be truncated.
-		if written >= maxFileSize {
+		// Strictly greater: max_file_size is an inclusive maximum, so a file of
+		// exactly that size restores normally.
+		if written > maxFileSize {
 			return fmt.Errorf("file %s exceeds max size limit (%d bytes)", hdr.Name, maxFileSize)
 		}
 	}
@@ -712,18 +720,37 @@ func matchCronField(value int, field string) bool {
 	if field == "*" {
 		return true
 	}
-	// Handle step values: */5
-	if strings.HasPrefix(field, "*/") {
-		step := parseInt(strings.TrimPrefix(field, "*/"))
-		if step > 0 && value%step == 0 {
-			return true
+	// A list may mix ranges and single values ("1-5,30"), so it has to be
+	// split before any single-term form is tried. The range test used to come
+	// first, so "1-5,30" went to it, split on "-" into ["1", "5,30"], and
+	// parseInt silently dropped the comma: the field became the range 1-530 and
+	// matched every minute instead of {1,2,3,4,5,30}. An operator asking for a
+	// few nightly backup windows got all of them.
+	if strings.Contains(field, ",") {
+		for _, term := range strings.Split(field, ",") {
+			if matchCronTerm(value, term) {
+				return true
+			}
 		}
 		return false
 	}
+	return matchCronTerm(value, field)
+}
+
+// matchCronTerm matches a single comma-free cron term: "*", "*/5", "1-5",
+// "59-0", or a bare value with the weekday 7 → 0 alias.
+func matchCronTerm(value int, term string) bool {
+	if term == "*" {
+		return true
+	}
+	// Handle step values: */5
+	if strings.HasPrefix(term, "*/") {
+		step := parseInt(strings.TrimPrefix(term, "*/"))
+		return step > 0 && value%step == 0
+	}
 	// Handle ranges: 1-5 or wrapped ranges: 59-0 (minute 59 through 0)
-	if strings.Contains(field, "-") {
-		parts := strings.Split(field, "-")
-		if len(parts) == 2 {
+	if strings.Contains(term, "-") {
+		if parts := strings.Split(term, "-"); len(parts) == 2 {
 			low := parseInt(parts[0])
 			high := parseInt(parts[1])
 			if low <= high {
@@ -733,17 +760,8 @@ func matchCronField(value int, field string) bool {
 			return value >= low || value <= high
 		}
 	}
-	// Handle lists: 1,3,5
-	if strings.Contains(field, ",") {
-		for _, v := range strings.Split(field, ",") {
-			if parseInt(v) == value {
-				return true
-			}
-		}
-		return false
-	}
 	// Handle single value: normalize weekday 7 → 0 (both mean Sunday in cron).
-	v := parseInt(field)
+	v := parseInt(term)
 	if v == 7 && value == 0 {
 		return true
 	}
@@ -804,14 +822,25 @@ func (m *BackupManager) pruneOld(provider string) {
 			fulls = append(fulls, it)
 		}
 	}
-	if len(fulls) <= m.keepCount {
+	// Snapshot the retention count under the lock SetKeepCount writes it with.
+	// pruneOld runs on the backup goroutine — CreateBackup releases m.mu before
+	// calling it (backup.go:274-279) — while the admin API updates keep from an
+	// HTTP goroutine, so reading m.keepCount here without the lock was a data
+	// race. Taking one snapshot also removes the crash the race enabled: the
+	// length check and the slice used to be two separate reads, so keepCount
+	// could grow past len(fulls) between them and panic on fulls[keepCount:].
+	m.mu.Lock()
+	keepCount := m.keepCount
+	m.mu.Unlock()
+
+	if len(fulls) <= keepCount {
 		return
 	}
 	// Sort newest first, then delete everything past keepCount.
 	sort.Slice(fulls, func(i, j int) bool {
 		return fulls[i].Created.After(fulls[j].Created)
 	})
-	for _, item := range fulls[m.keepCount:] {
+	for _, item := range fulls[keepCount:] {
 		if err := p.Delete(ctx, item.Name); err != nil {
 			m.logger.Warn("prune backup failed", "name", item.Name, "error", err)
 		} else {
@@ -1019,6 +1048,16 @@ func addDirToTar(tw *tar.Writer, srcDir, archivePrefix string) error {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		// Skip every other non-regular entry. addFileToTar opens the path, and
+		// os.Open on a FIFO with no writer blocks forever, so one named pipe in a
+		// customer's web root would hang the whole scheduled backup permanently.
+		// A socket or device instead fails with ENXIO, and the propagated error
+		// aborted the whole walk, silently dropping every file after it. This
+		// mirrors the restore side, which only accepts tar.TypeReg entries.
+		if !d.IsDir() && !d.Type().IsRegular() {
 			return nil
 		}
 

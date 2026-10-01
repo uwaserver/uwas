@@ -438,6 +438,32 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 	return nil
 }
 
+// acmeError renders an ACME problem document (RFC 7807) into an error that
+// names the server's actual cause. Reporting only "timeout waiting for
+// status" — or a bare HTTP status — leaves the operator unable to tell a
+// rate limit from an authorization failure, which are the two errors that
+// actually need operator action.
+func acmeError(statusCode int, body []byte) error {
+	var problem struct {
+		Type   string `json:"type"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &problem); err == nil {
+		switch {
+		case problem.Type != "" && problem.Detail != "":
+			return fmt.Errorf("acme error %d %s: %s", statusCode, problem.Type, problem.Detail)
+		case problem.Detail != "":
+			return fmt.Errorf("acme error %d: %s", statusCode, problem.Detail)
+		case problem.Type != "":
+			return fmt.Errorf("acme error %d %s", statusCode, problem.Type)
+		}
+	}
+	if detail := strings.TrimSpace(string(body)); detail != "" {
+		return fmt.Errorf("acme error %d: %s", statusCode, detail)
+	}
+	return fmt.Errorf("acme error %d", statusCode)
+}
+
 func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttempts int) (*Order, error) {
 	for i := 0; i < maxAttempts; i++ {
 		wait := time.NewTimer(time.Duration(i+1) * time.Second)
@@ -451,6 +477,19 @@ func (c *Client) waitForStatus(ctx context.Context, url, target string, maxAttem
 		resp, err := c.signedRequest(ctx, url, nil) // POST-as-GET
 		if err != nil {
 			return nil, err
+		}
+
+		// A non-2xx response is an ACME problem document (RFC 7807), not an
+		// order. Decoding it into Order yields Status == "", which the loop
+		// below reads as "still pending" — so a hard failure such as
+		// rateLimited or unauthorized was retried for the entire attempt
+		// budget and then reported as a timeout. Fail fast and surface the
+		// server's own diagnostic, as ensureDirectory, ensureAccount and
+		// newOrder already do for their own responses.
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, acmeError(resp.StatusCode, body)
 		}
 
 		var obj Order

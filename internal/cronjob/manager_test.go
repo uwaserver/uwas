@@ -335,8 +335,12 @@ func TestList_NoCrontab(t *testing.T) {
 		execCommandFn = origCmd
 	}()
 
-	// Simulate crontab -l returning an error (no crontab for user)
-	execCommandFn = fakeExecCommand("", 1)
+	// Simulate crontab -l reporting a genuinely empty crontab. The "no crontab"
+	// signal is carried on stderr — that is what readCrontab (and now List)
+	// keys on, exactly as TestReadCrontab_Empty does above. The previous fixture
+	// here was exit 1 with EMPTY stderr, which is indistinguishable from a real
+	// failure, so this test only ever passed because List swallowed every error.
+	execCommandFn = fakeExecCommandWithStderr("", "no crontab for user\n", 1)
 
 	jobs, err := List()
 	if err != nil {

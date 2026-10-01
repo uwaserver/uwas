@@ -105,13 +105,17 @@ func List() ([]Job, error) {
 	if runtimeGOOS == "windows" {
 		return nil, nil
 	}
-	out, err := runCrontab(execCommandFn("crontab", "-l"), true)
+	// Route through readCrontab so a failed `crontab -l` is reported instead of
+	// being read as "no jobs". A genuinely empty crontab still yields ("", nil);
+	// every other failure (timeout, lock contention, permission) now surfaces
+	// as an error, which is the case the admin API's 500 branch already expects.
+	existing, err := readCrontab()
 	if err != nil {
-		return nil, nil // no crontab
+		return nil, err
 	}
 
 	var jobs []Job
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(existing, "\n")
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.Contains(line, uwasMarker) {

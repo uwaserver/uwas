@@ -282,6 +282,11 @@ func (m *Manager) StartDomain(domain string) error {
 		shouldRestart := stillAssigned && di != nil && di.proc != nil && di.proc.cmd == cmd
 		var backoff time.Duration
 		var restartGen int
+		// Capture the crash callback under the lock, the same way StartDomain
+		// captures onDomainChange before releasing it. Reading m.onCrash after
+		// Unlock — as this monitor used to — races with SetOnCrash, which writes
+		// that field under domainMu.
+		crashFn := m.onCrash
 		giveUp := false
 		if shouldRestart {
 			restartGen = di.stopGen
@@ -319,8 +324,8 @@ func (m *Manager) StartDomain(domain string) error {
 		// Auto-restart only when this goroutine still owns the active process
 		// (prevents restart after intentional StopDomain/StopAll).
 		if shouldRestart {
-			if waitErr != nil && m.onCrash != nil {
-				m.onCrash(domain)
+			if waitErr != nil && crashFn != nil {
+				crashFn(domain)
 			}
 			if giveUp {
 				m.logger.Error("PHP-CGI crash-looping, giving up auto-restart",

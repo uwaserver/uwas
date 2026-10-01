@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -312,5 +313,46 @@ func sanitizeDomainForMCP(d config.Domain) config.Domain {
 	d.BasicAuth.Users = nil // username → password map (often hashed, but still)
 	d.WebhookSecret = ""    // per-domain webhook HMAC
 	d.SSL.Key = ""          // path or inline private key — neither belongs in agent output
+
+	// URL-shaped fields are secret-bearing too: a reverse-proxy upstream,
+	// canary, mirror or redirect target routinely carries HTTP basic-auth
+	// userinfo in its authority. Strip the credential but keep scheme, host
+	// and path — the agent still needs to know where the traffic goes.
+	d.Proxy.Upstreams = sanitizeUpstreams(d.Proxy.Upstreams)
+	d.Proxy.Canary.Upstreams = sanitizeUpstreams(d.Proxy.Canary.Upstreams)
+	d.Proxy.Mirror.Backend = sanitizeURLUserinfo(d.Proxy.Mirror.Backend)
+	d.Redirect.Target = sanitizeURLUserinfo(d.Redirect.Target)
 	return d
+}
+
+// sanitizeURLUserinfo removes the userinfo component from a URL, leaving the
+// rest intact. A value that does not parse, or that carries no userinfo, is
+// returned unchanged — redaction must never mangle ordinary addresses.
+func sanitizeURLUserinfo(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
+
+// sanitizeUpstreams copies the slice before rewriting each address. The copy
+// is required, not stylistic: sanitizeDomainForMCP takes config.Domain by
+// value, but a slice header still aliases the caller's backing array, so
+// mutating in place would strip credentials from the caller's live config —
+// silently breaking the running proxy that needs them to reach its backend.
+func sanitizeUpstreams(ups []config.Upstream) []config.Upstream {
+	if len(ups) == 0 {
+		return ups
+	}
+	out := make([]config.Upstream, len(ups))
+	copy(out, ups)
+	for i := range out {
+		out[i].Address = sanitizeURLUserinfo(out[i].Address)
+	}
+	return out
 }

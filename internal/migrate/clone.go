@@ -205,9 +205,13 @@ func cloneDBReal(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 			userCmd := execCommandFn(bin, "-u", "root")
 			userCmd.Stdin = strings.NewReader(
 				fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'", sqlString(user), sqlString(pass)))
-			userCmd.Run()
-			execCommandFn(bin, "-u", "root", "-e",
-				fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", sqlIdent(dstDB), sqlString(user))).Run()
+			if err := userCmd.Run(); err != nil {
+				return fmt.Errorf("create user %q in %s: %w", user, dstDB, err)
+			}
+			if err := execCommandFn(bin, "-u", "root", "-e",
+				fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", sqlIdent(dstDB), sqlString(user))).Run(); err != nil {
+				return fmt.Errorf("grant privileges to %q on %s: %w", user, dstDB, err)
+			}
 		}
 
 		// Dump source and pipe to target

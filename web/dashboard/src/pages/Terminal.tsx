@@ -27,6 +27,10 @@ export default function TerminalPage() {
       setError('Failed to obtain terminal connection.');
       return;
     }
+    // A second Connect during the async window must not orphan the first
+    // socket: close it before replacing. Its close event is delivered
+    // asynchronously after this, so onclose below ignores superseded sockets.
+    wsRef.current?.close();
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
@@ -51,6 +55,7 @@ export default function TerminalPage() {
       setError('WebSocket failed to connect. Check the server logs.');
     };
     ws.onclose = (e) => {
+      if (wsRef.current !== ws) return; // superseded socket — it no longer owns the session state
       setConnected(false);
       wsRef.current = null;
       if (e.code === 1006) setError('Connection lost (abnormal close). Server may have rejected the WebSocket upgrade.');

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -96,19 +97,33 @@ func restoreHooks(s hookSnapshot) {
 	filepathWalkFn = s.walkFn
 }
 
+// fakeOutputScript reproduces the TestHelperProcess helpers' observable
+// behaviour — print a canned stdout, a canned stderr, exit with a canned code —
+// without re-executing the test binary.
+//
+// Re-exec was essentially all of this package's -race cost. Each spawn had to
+// initialise the race runtime: measured at 1.01s per spawn (vs 0.00s plain), and
+// with ~155 spawns the 156s package was process startup rather than test logic.
+// /bin/sh starts in ~1ms and is not instrumented.
+//
+// Two details preserve the old contract:
+//   - Stdin is drained in the background. installer.go:258 and :264 set
+//     cmd.Stdin to a SQL payload, and a child that exits in ~1ms rather than
+//     ~1s can otherwise race the parent into an EPIPE the old timing masked.
+//   - Payloads travel as argv, not the environment, because installer.go:553
+//     replaces cmd.Env outright and would silently drop env-based values.
+const fakeOutputScript = `cat >/dev/null 2>&1 & printf '%s' "$1"; printf '%s' "$2" 1>&2; exit "$3"`
+
+// fakeOutputCmd writes stdout and stderr and exits with exitCode. It ignores
+// name/args, exactly as the helper processes did.
+func fakeOutputCmd(stdout, stderr string, exitCode int) *exec.Cmd {
+	return exec.Command("/bin/sh", "-c", fakeOutputScript, "sh", stdout, stderr, strconv.Itoa(exitCode))
+}
+
 // fakeCmd returns a *exec.Cmd that just succeeds (exit 0) with optional stdout.
 func fakeCmd(stdout string) func(string, ...string) *exec.Cmd {
 	return func(name string, args ...string) *exec.Cmd {
-		// Use Go test binary itself as the subprocess via TestHelperProcess.
-		cs := []string{"-test.run=TestHelperProcess", "--", name}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
-		cmd.Env = append(os.Environ(),
-			"GO_TEST_HELPER_PROCESS=1",
-			"GO_TEST_HELPER_STDOUT="+stdout,
-			"GO_TEST_HELPER_EXIT=0",
-		)
-		return cmd
+		return fakeOutputCmd(stdout, "", 0)
 	}
 }
 

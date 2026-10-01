@@ -48,13 +48,27 @@ release: check dashboard linux linux-arm ## Full release build (checks + cross-c
 test: ## Run all Go tests
 	go test -count=1 -timeout 600s $(GO_PACKAGES)
 
-# Race-detector gate for the packages with the heaviest shared state
-# (maps, mutexes, pools, ring buffers, singleflight, connection reuse).
-# Past races here (lazy-init, inflight-map delete, LRU/list interleavings,
-# protocol framing) were invisible to the plain gate — they only reproduce
-# under -race. Wall clock ~2-4 min; plain `test` stays the fast path.
-test-race: ## Run race-detector tests on concurrency-heavy packages
-	go test -race -count=1 -timeout 600s ./internal/admin ./internal/middleware ./internal/cache ./internal/cloudflare ./internal/server ./pkg/fastcgi ./internal/handler/... ./internal/dnsmanager
+# Race-detector gate, package-for-package identical to the CI `race` job
+# (.github/workflows/ci.yml). Past races here (lazy-init, inflight-map delete,
+# LRU/list interleavings, protocol framing) were invisible to the plain gate —
+# they only reproduce under -race.
+#
+# The package set is derived with `go list ./...` rather than hand-listed on
+# purpose: a hand-maintained list silently drifts from CI, and it had drifted
+# badly — 63 of 73 packages were uncovered locally, including internal/phpmanager
+# and internal/backup. Deriving it makes local and CI identical by construction
+# and makes a newly added package race-checked from its first commit.
+#
+# Two notes on matching CI:
+#   - CI uses `mapfile` + process substitution, which are bash-only. This file
+#     sets no SHELL, so make runs recipes under /bin/sh (dash); the POSIX
+#     command substitution below is the equivalent.
+#   - CI additionally starts MariaDB and exports UWAS_DB_* so DB-backed tests
+#     actually execute. Without a local database those paths skip, so this
+#     target's coverage of DB paths is shallower than CI's even though the
+#     package set now matches.
+test-race: ## Run race-detector tests on all packages (same set as the CI race job)
+	go test -race -count=1 -timeout 900s $$(go list ./... | grep -v '/node_modules/')
 
 test-coverage: ## Run tests with coverage and print total
 	go test ./internal/... ./pkg/... -coverprofile=coverage.out -timeout 600s

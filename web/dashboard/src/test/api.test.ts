@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { setToken, getToken, getAuthHeaders, clearToken, getAuthMode, setTOTPCode } from '@/lib/api'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { setToken, getToken, getAuthHeaders, clearToken, getAuthMode, setTOTPCode, terminalWSURL, fetchStats, clearPinCode } from '@/lib/api'
 
 describe('api token management', () => {
   beforeEach(() => {
@@ -78,6 +78,55 @@ describe('api token management', () => {
     setToken('sess-mode-b', 'session')
     const h2 = getAuthHeaders()
     expect(h2).toHaveProperty('X-Session-Token')
+    expect(h2).not.toHaveProperty('X-Pin-Code')
     expect(getAuthMode()).toBe('session')
+  })
+})
+
+describe('terminalWSURL pin lifecycle', () => {
+  const fetchMock = vi.fn()
+
+  beforeEach(() => {
+    clearToken()
+    clearPinCode()
+    sessionStorage.clear()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    // Default responder; individual tests override per call as needed.
+    fetchMock.mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes('/auth/ticket') ? { ticket: 'tk-1' } : {}), { status: 200 }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function callFor(path: string): { url: string; init: RequestInit } {
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes(path))
+    if (!call) throw new Error(`no fetch call for ${path}`)
+    return { url: String(call[0]), init: call[1] as RequestInit }
+  }
+
+  // The ticket mint is the one request that must carry the PIN — the server
+  // binds it into the single-use ticket. Afterwards the credential must be
+  // gone: every other PIN flow in this module (403 retry, uploads, cPanel
+  // migration) clears the global once its request is done.
+  it('sends the PIN on the ticket mint but not on later API requests', async () => {
+    await terminalWSURL('424242')
+    expect(callFor('/auth/ticket').init.headers).toMatchObject({ 'X-Pin-Code': '424242' })
+
+    await fetchStats()
+    const statsHeaders = callFor('/api/v1/stats').init.headers as Record<string, string>
+    expect(statsHeaders).not.toHaveProperty('X-Pin-Code')
+  })
+
+  it('does not leak the PIN into a later ticket mint made without a pin', async () => {
+    await terminalWSURL('424242')
+    await terminalWSURL()
+    // Inspect the SECOND mint — the first legitimately carries the PIN.
+    const mintCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/auth/ticket'))
+    expect(mintCalls.length).toBe(2)
+    const mintHeaders = (mintCalls[1][1] as RequestInit).headers as Record<string, string>
+    expect(mintHeaders).not.toHaveProperty('X-Pin-Code')
   })
 })

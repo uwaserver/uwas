@@ -109,8 +109,31 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	return nil
 }
 
+// validListenAddr reports whether addr is safe to interpolate into the
+// php-fpm INI config. A legitimate listen target is "host:port",
+// "unix:/path" or a bare socket path — none of which contain control
+// characters. Rejecting them here stops a newline in an admin-supplied
+// listen_addr from appending further pool directives: php-fpm INI is
+// last-wins, so an injected "user = root" overrides the unprivileged
+// pool identity below and a second "listen" can bind the unauthenticated
+// FastCGI port to a public interface.
+func validListenAddr(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	for _, r := range addr {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // startFPMDaemon starts php-fpm as a proper daemon with worker pool.
 func (m *Manager) startFPMDaemon(version, binary, listenAddr string) error {
+	if !validListenAddr(listenAddr) {
+		return fmt.Errorf("invalid listen address: must not contain control characters")
+	}
 	// Generate a minimal php-fpm config for this listen address
 	confDir := filepath.Join(os.TempDir(), "uwas-fpm")
 	osMkdirAllHook(confDir, 0755)
