@@ -8,6 +8,10 @@ export default function CloneStaging() {
   const [loading, setLoading] = useState(true);
   const [sourceDomain, setSourceDomain] = useState('');
   const [targetDomain, setTargetDomain] = useState('');
+  // True while targetDomain holds an auto-suggested value; a manual edit
+  // clears it, so switching sources re-suggests instead of keeping a stale
+  // target that points at the previous site's staging.
+  const [targetAuto, setTargetAuto] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [result, setResult] = useState<CloneResult | null>(null);
   const [error, setError] = useState('');
@@ -25,12 +29,16 @@ export default function CloneStaging() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-suggest staging domain name
+  // Auto-suggest staging domain name. Re-suggests when the current target is
+  // empty OR was itself auto-suggested — after cloning A and switching to B,
+  // the stale 'staging.a.com' must not survive: the server has no target-exists
+  // check and would silently overwrite A's staging.
   useEffect(() => {
-    if (sourceDomain && !targetDomain) {
+    if (sourceDomain && (targetDomain === '' || targetAuto)) {
       setTargetDomain(`staging.${sourceDomain}`);
+      if (!targetAuto) setTargetAuto(true);
     }
-  }, [sourceDomain, targetDomain]);
+  }, [sourceDomain, targetDomain, targetAuto]);
 
   const handleClone = async () => {
     if (!sourceDomain || !targetDomain) return;
@@ -46,6 +54,10 @@ export default function CloneStaging() {
       if (res.status === 'error' && res.error) {
         setError(res.error);
       }
+      // Refresh the domain list: the clone auto-creates the target domain, and
+      // the exists-disable + warning below read this state. Without the
+      // refresh a session-created staging host stays invisible to them.
+      await load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -55,7 +67,13 @@ export default function CloneStaging() {
 
   const [copied, setCopied] = useState('');
   const copy = async (text: string, label: string) => {
-    await copyText(text);
+    // A failed clipboard write must not show the success check: the result
+    // panel's values go into DNS and operator notes.
+    if (!(await copyText(text))) {
+      setError('Copy failed — copy the value manually.');
+      return;
+    }
+    setError('');
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };
@@ -112,7 +130,7 @@ export default function CloneStaging() {
             <input
               type="text"
               value={targetDomain}
-              onChange={e => { setTargetDomain(e.target.value); setResult(null); }}
+              onChange={e => { setTargetDomain(e.target.value); setTargetAuto(false); setResult(null); }}
               disabled={cloning}
               placeholder="staging.example.com"
               className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-blue-500 disabled:opacity-50"
