@@ -32,6 +32,9 @@ function formatTime(iso: string) {
 export default function DebugLogDrawer() {
   const snapshot = useSyncExternalStore(subscribeDebugLog, getDebugLogSnapshot, getDebugLogSnapshot);
   const [open, setOpen] = useState(false);
+  // Clipboard feedback: copyText resolves false on total failure — silence
+  // would leave the operator unsure whether the log was copied.
+  const [copyState, setCopyState] = useState<'ok' | 'failed' | ''>('');
   const entries = snapshot.entries;
 
   useEffect(() => {
@@ -89,7 +92,8 @@ export default function DebugLogDrawer() {
         return e.detail ? `${base}\n${e.detail}` : base;
       })
       .join('\n\n');
-    await copyText(text);
+    const ok = await copyText(text);
+    setCopyState(ok ? 'ok' : 'failed');
   };
 
   return (
@@ -156,6 +160,8 @@ export default function DebugLogDrawer() {
                 >
                   <Copy size={13} /> Copy
                 </button>
+                {copyState === 'ok' && <span className="text-xs text-emerald-300">Copied</span>}
+                {copyState === 'failed' && <span className="text-xs text-red-300">Copy failed</span>}
                 <button
                   type="button"
                   onClick={clearDebugLog}

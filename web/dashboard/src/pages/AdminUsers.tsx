@@ -15,6 +15,11 @@ export default function AdminUsers() {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ username: string; password: string; api_key: string } | null>(null);
   const [copied, setCopied] = useState('');
+  // Clipboard failures must be visible: this panel holds ONE-TIME secrets
+  // (created password, API key) — a check icon on a failed copy would claim
+  // the secret is on the clipboard when it is not, and the operator
+  // dismisses the panel into an unrecoverable state.
+  const [copyError, setCopyError] = useState('');
   const [regenResult, setRegenResult] = useState<{ username: string; api_key: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [pwUser, setPwUser] = useState<string | null>(null);
@@ -33,7 +38,11 @@ export default function AdminUsers() {
   useEffect(() => { load(); }, [load]);
 
   const copy = async (text: string, label: string) => {
-    await copyText(text);
+    if (!(await copyText(text))) {
+      setCopyError('Copy failed — select the value and copy it manually.');
+      return;
+    }
+    setCopyError('');
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };
@@ -120,6 +129,9 @@ export default function AdminUsers() {
       </div>
 
       {error && <div className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>}
+      {copyError && (
+        <div className="rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{copyError}</div>
+      )}
       {status && <div className="rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{status}</div>}
 
       {/* Regenerated API key — show once, copy-only */}

@@ -9,6 +9,10 @@ export default function EmailGuide() {
   const [selectedDomain, setSelectedDomain] = useState('');
   const [serverIP, setServerIP] = useState('');
   const [copied, setCopied] = useState('');
+  // Clipboard failures must be visible: the operator copies DNS records from
+  // this guide into their provider — a check icon on a failed copy sends
+  // them away with records that were never copied.
+  const [copyError, setCopyError] = useState('');
 
   useEffect(() => {
     fetchDomains().then(d => { const list = d ?? []; setDomains(list); if (list.length > 0) setSelectedDomain(list[0].host); }).catch(() => {});
@@ -16,7 +20,11 @@ export default function EmailGuide() {
   }, []);
 
   const copy = async (text: string, label: string) => {
-    await copyText(text);
+    if (!(await copyText(text))) {
+      setCopyError('Copy failed — select the value and copy it manually.');
+      return;
+    }
+    setCopyError('');
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };
@@ -83,6 +91,9 @@ export default function EmailGuide() {
           DNS records needed for email delivery. Add these at your DNS provider.
         </p>
       </div>
+      {copyError && (
+        <div className="rounded-md bg-amber-500/10 px-4 py-3 text-sm text-amber-300">{copyError}</div>
+      )}
 
       {/* Domain selector */}
       {domains.length === 0 ? (

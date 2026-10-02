@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import DebugLogDrawer from './DebugLogDrawer';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -279,5 +279,31 @@ describe('DebugLogDrawer', () => {
 
     const badge = screen.getByText(level);
     expect(badge.className).toContain(expectedClass);
+  });
+
+  // ── Clipboard failure feedback (R20) ────────────────────────────────────
+
+  it('shows a copy-failed message when the clipboard write fails', async () => {
+    mockCopyText.mockResolvedValue(false);
+    setSnapshot(true, [
+      { ...sampleEntry, id: 1, message: 'test log', level: 'info' },
+    ]);
+    render(<DebugLogDrawer />);
+    fireEvent.click(screen.getByText('1'));
+
+    fireEvent.click(screen.getByText('Copy'));
+    await waitFor(() => expect(screen.getByText(/Copy failed/i)).toBeTruthy());
+  });
+
+  it('shows a copied confirmation when the clipboard write succeeds', async () => {
+    mockCopyText.mockResolvedValue(true);
+    setSnapshot(true, [
+      { ...sampleEntry, id: 1, message: 'test log', level: 'info' },
+    ]);
+    render(<DebugLogDrawer />);
+    fireEvent.click(screen.getByText('1'));
+
+    fireEvent.click(screen.getByText('Copy'));
+    await waitFor(() => expect(screen.getByText(/Copied/i)).toBeTruthy());
   });
 });

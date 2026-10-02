@@ -360,8 +360,11 @@ export default function Settings() {
   };
 
   const copyToClipboard = (value: string) => {
-    copyText(value).then(() => {
-      showStatus(true, 'Copied to clipboard');
+    copyText(value).then(ok => {
+      // copyText resolves false when every strategy failed — showing the
+      // success status would hide a failed credential copy.
+      if (ok) showStatus(true, 'Copied to clipboard');
+      else showStatus(false, 'Copy failed — copy the value manually.');
     });
   };
 
@@ -595,7 +598,7 @@ export default function Settings() {
                         {twoFASetup.secret}
                       </code>
                       <button
-                        onClick={() => void copyText(twoFASetup.secret)}
+                        onClick={() => void copyToClipboard(twoFASetup.secret)}
                         className="rounded bg-accent p-2 text-muted-foreground hover:text-white"
                         title="Copy secret"
                       >
