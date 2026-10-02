@@ -60,8 +60,25 @@ export default function Webhooks() {
   };
 
   const handleDelete = async (idx: number) => {
+    const target = webhooks[idx];
+    if (!target) return;
     try {
-      await deleteWebhook(idx);
+      // The server deletes by list POSITION (webhook_handlers.go parses the
+      // {id} path segment with strconv.Atoi and removes Global.Webhooks[idx]),
+      // and this page loads the list once and never polls — a stale render
+      // index (second tab, another admin, API scripts; the PIN prompt
+      // widens the window) would remove whatever webhook now sits at that
+      // position. Re-resolve the target's current position right before
+      // deleting, and treat a vanished target as a no-op.
+      const fresh = await fetchWebhooks();
+      const freshIdx = fresh.findIndex(w => w.url === target.url);
+      if (freshIdx === -1) {
+        setConfirmDelete(null);
+        showStatus('Webhook was already removed — list refreshed');
+        await load();
+        return;
+      }
+      await deleteWebhook(freshIdx);
       setConfirmDelete(null);
       showStatus('Webhook deleted');
       await load();

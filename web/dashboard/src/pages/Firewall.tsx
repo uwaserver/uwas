@@ -31,6 +31,13 @@ function isAutoblockRule(r: FirewallRule): boolean {
   return (r.from || '').includes('uwas-autoblock') || (r.comment || '').includes('uwas-autoblock');
 }
 
+/** True when a and b are the same rule — identity fields, number excluded
+ *  (numbers are list positions that renumber whenever the list changes). */
+function sameFirewallRule(a: FirewallRule, b: FirewallRule): boolean {
+  return a.action === b.action && a.from === b.from && a.to === b.to
+    && a.port === b.port && a.proto === b.proto && (a.v6 ?? false) === (b.v6 ?? false);
+}
+
 export default function Firewall() {
   const { confirmAction } = useConfirm();
   const [fw, setFw] = useState<FirewallStatus | null>(null);
@@ -198,6 +205,22 @@ export default function Firewall() {
     setError('');
     setStatus('');
     try {
+      // Firewall rule numbers are list POSITIONS — they renumber whenever a
+      // rule above is added or removed — and this page loads the list once
+      // and never polls. A stale number (second tab, CLI firewall change;
+      // the PIN prompt widens the window) would delete whatever rule now
+      // sits at that number. Verify the number still maps to the same rule
+      // right before deleting; refuse and refresh when it does not.
+      const loaded = (fw?.rules ?? []).find(r => r.number === num);
+      const fresh = await fetchFirewall();
+      const freshRule = fresh.rules?.find(r => r.number === num);
+      const same = !!loaded && !!freshRule && sameFirewallRule(loaded, freshRule);
+      if (!same) {
+        setConfirmDelete(null);
+        setStatus(`Rule #${num} changed — list refreshed, review and try again.`);
+        await load();
+        return;
+      }
       await firewallDeleteRule(num);
       setConfirmDelete(null);
       setStatus(`Rule #${num} deleted.`);
@@ -213,6 +236,18 @@ export default function Firewall() {
     setMoving(num);
     setError('');
     try {
+      // Same positional-number hazard as handleDeleteRule: rule numbers
+      // renumber when the list changes and this page does not poll — a
+      // stale number moves whichever rule now holds it, reordering
+      // first-match filtering precedence. Verify, then act.
+      const loaded = (fw?.rules ?? []).find(r => r.number === num);
+      const fresh = await fetchFirewall();
+      const freshRule = fresh.rules?.find(r => r.number === num);
+      if (!loaded || !freshRule || !sameFirewallRule(loaded, freshRule)) {
+        setStatus(`Rule #${num} changed — list refreshed, review and try again.`);
+        await load();
+        return;
+      }
       await firewallMoveRule(num, direction);
       await load();
     } catch (e) {
