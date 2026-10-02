@@ -79,6 +79,10 @@ interface CreateForm {
   docker_container_port: string;
   docker_build_context: string;
   docker_build_dockerfile: string;
+  // Round-tripped on edit (see formToApp): the apps PUT assigns both
+  // unconditionally from the body, so omitting them resets them.
+  auto_restart: boolean;
+  disabled: boolean;
 }
 
 const blankForm: CreateForm = {
@@ -101,6 +105,8 @@ const blankForm: CreateForm = {
   docker_container_port: '',
   docker_build_context: '',
   docker_build_dockerfile: '',
+  auto_restart: false,
+  disabled: false,
 };
 
 // envTextToMap and envMapToText keep the form's textarea-based env
@@ -290,6 +296,15 @@ export default function Apps() {
       ports: extraPorts.length > 0 ? extraPorts : editing?.mode === 'edit' ? [] : undefined,
       env,
     };
+    // The apps PUT assigns auto_restart/disabled unconditionally from the
+    // body (internal/admin/apps/handler.go), so an edit save must carry
+    // them: omitting either resets it to false — re-enabling a disabled
+    // app (which then gets started) and dropping crash-restart. The UI has
+    // no controls for these flags; round-trip what the app had.
+    if (editing?.mode === 'edit') {
+      body.auto_restart = form.auto_restart;
+      body.disabled = form.disabled;
+    }
     if (showGitSettings) {
       if (!form.git_url.trim()) {
         if (createFromGit) {
@@ -369,6 +384,8 @@ export default function Apps() {
         docker_container_port: app.docker?.container_port ? String(app.docker.container_port) : '',
         docker_build_context: app.docker?.build?.context ?? '',
         docker_build_dockerfile: app.docker?.build?.dockerfile ?? '',
+        auto_restart: app.auto_restart ?? false,
+        disabled: app.disabled ?? false,
       });
       setEditing({ mode: 'edit', name });
     } catch (e) {
