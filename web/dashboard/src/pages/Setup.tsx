@@ -80,6 +80,11 @@ export default function Setup() {
   const [results, setResults] = useState<SetupInstallResult[]>([]);
   const [tasks, setTasks] = useState<Record<string, InstallTask>>({});
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  // Guards beginInstall's async continuation: if the start-install POST
+  // resolves after the unmount cleanup below has already run (navigating away
+  // mid-start), the continuation must not re-arm the task poll — nothing
+  // could clear it until every task reaches a terminal state.
+  const aliveRef = useRef(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,7 +103,13 @@ export default function Setup() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   const grouped = useMemo(() => {
     const g: Record<string, CatalogItem[]> = {};
@@ -130,6 +141,7 @@ export default function Setup() {
     setError('');
     try {
       const resp = await startSetupInstall(chosen.map(c => ({ type: c.type, id: c.id })));
+      if (!aliveRef.current) return; // unmounted mid-start — cleanup already ran
       setResults(resp.items);
       const taskIds = resp.items.filter(i => i.task_id).map(i => i.task_id!);
       if (taskIds.length === 0) return; // everything skipped

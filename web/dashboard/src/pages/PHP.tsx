@@ -140,9 +140,17 @@ export default function PHP() {
   const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Clear the install poll on unmount so it can't keep firing setState on an
-  // unmounted component or poll the server forever.
-  useEffect(() => () => {
-    if (installPollRef.current) clearInterval(installPollRef.current);
+  // unmounted component or poll the server forever. aliveRef also guards the
+  // install button's async continuation: if the POST resolves after this
+  // cleanup has already run (navigating away mid-install), it must not arm
+  // the interval — the already-run cleanup could never clear it.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (installPollRef.current) clearInterval(installPollRef.current);
+    };
   }, []);
 
   /* -------- helpers -------- */
@@ -606,6 +614,7 @@ export default function PHP() {
               onClick={async () => {
                 try {
                   await installPHP(installVer);
+                  if (!aliveRef.current) return; // unmounted mid-install — cleanup already ran
                   setInstallJob({ status: 'running', version: installVer });
                   // Poll for completion. Store the handle in a ref so the
                   // unmount cleanup can clear it.
