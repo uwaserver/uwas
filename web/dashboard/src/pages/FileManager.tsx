@@ -338,8 +338,20 @@ export default function FileManager() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Check if file already exists
-    const exists = files.some(f => f.name === file.name && !f.is_dir);
+    // Check if file already exists. The visible page is not the whole
+    // directory (server-side pagination), and SaveUpload overwrites with
+    // O_TRUNC — so when the name is not on the current page, ask the server
+    // before destroying a file without the promised warning.
+    let exists = files.some(f => f.name === file.name && !f.is_dir);
+    if (!exists && selectedWorkspaceID) {
+      try {
+        const hits = await fetchFiles(selectedWorkspaceID, currentPath, { q: file.name });
+        exists = (hits.items ?? []).some(f => f.name === file.name && !f.is_dir);
+      } catch {
+        // Listing failed — upload anyway; the server accepts overwrites and
+        // this dialog is a courtesy warning, not a hard guard.
+      }
+    }
     if (exists && !await confirmAction({
       title: `Overwrite "${file.name}"?`,
       message: 'A file with this name already exists in the current directory.',
