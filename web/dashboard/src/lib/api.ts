@@ -335,23 +335,34 @@ export const fetchMetrics = async () => {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
   if (totpCode) headers['X-TOTP-Code'] = totpCode;
   if (pinCode) headers['X-Pin-Code'] = pinCode;
-  const res = await fetch(`${BASE}/api/v1/metrics`, { headers });
-  if (res.status === 401) {
-    clearToken();
-    if (!window.location.pathname.includes('/login')) window.location.href = '/_uwas/dashboard/login';
-    throw new Error('Unauthorized');
-  }
-  if (res.status === 403) {
-    const err = await res.json().catch(() => ({ error: 'Forbidden' }));
-    if (err.error === '2fa_required') {
-      sessionStorage.removeItem('uwas_totp_verified');
-      totpCode = '';
-      window.location.href = '/_uwas/dashboard/login?2fa=required';
+  // Bounded like every other normal api() request: Metrics.tsx polls this
+  // every 5s, so a hung endpoint would otherwise stack unbounded
+  // never-settling fetches (starving the browser's per-origin connection
+  // pool) without ever surfacing an error.
+  const { signal, cleanup } = abortWithTimeout();
+  try {
+    const res = await fetch(`${BASE}/api/v1/metrics`, { headers, signal });
+    if (res.status === 401) {
+      clearToken();
+      if (!window.location.pathname.includes('/login')) window.location.href = '/_uwas/dashboard/login';
+      throw new Error('Unauthorized');
     }
-    throw new Error(err.error || 'Forbidden');
+    if (res.status === 403) {
+      const err = await res.json().catch(() => ({ error: 'Forbidden' }));
+      if (err.error === '2fa_required') {
+        sessionStorage.removeItem('uwas_totp_verified');
+        totpCode = '';
+        window.location.href = '/_uwas/dashboard/login?2fa=required';
+      }
+      throw new Error(err.error || 'Forbidden');
+    }
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.text();
+  } catch (e) {
+    throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+  } finally {
+    cleanup();
   }
-  if (!res.ok) throw new Error(res.statusText);
-  return res.text();
 };
 
 export const triggerReload = () => api<{ status: string }>('/api/v1/reload', { method: 'POST' });

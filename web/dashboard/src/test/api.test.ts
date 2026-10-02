@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { setToken, getToken, getAuthHeaders, clearToken, getAuthMode, setTOTPCode, terminalWSURL, fetchStats, clearPinCode } from '@/lib/api'
+import { setToken, getToken, getAuthHeaders, clearToken, getAuthMode, setTOTPCode, terminalWSURL, fetchStats, clearPinCode, fetchMetrics } from '@/lib/api'
 
 describe('api token management', () => {
   beforeEach(() => {
@@ -128,5 +128,46 @@ describe('terminalWSURL pin lifecycle', () => {
     expect(mintCalls.length).toBe(2)
     const mintHeaders = (mintCalls[1][1] as RequestInit).headers as Record<string, string>
     expect(mintHeaders).not.toHaveProperty('X-Pin-Code')
+  })
+})
+
+describe('fetchMetrics request timeout', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  // Control: a healthy endpoint returns the Prometheus text payload.
+  it('returns the response text for a healthy endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => 'uwas_requests_total 42',
+    }))
+    await expect(fetchMetrics()).resolves.toBe('uwas_requests_total 42')
+  })
+
+  // Regression: Metrics.tsx polls this endpoint every 5s. Like every normal
+  // api() request it must be bounded by DEFAULT_REQUEST_TIMEOUT — a hung
+  // endpoint would otherwise stack an unbounded number of never-settling
+  // fetches (starving the browser's per-origin connection pool) and never
+  // surface an error.
+  it('aborts a hung endpoint at the 30s request timeout', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_url: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')))
+      }),
+    ))
+    const outcome = fetchMetrics().then(
+      () => 'resolved' as const,
+      () => 'rejected' as const,
+    )
+    const raced = Promise.race([
+      outcome,
+      vi.advanceTimersByTimeAsync(35_000).then(() => 'pending' as const),
+    ])
+    await expect(raced).resolves.toBe('rejected')
   })
 })
