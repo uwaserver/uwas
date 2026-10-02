@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type FormEvent, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, type FormEvent, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router';
 import PinModal from '@/components/PinModal';
 import { setPinCode, clearPinCode, bulkImportDomains } from '@/lib/api';
@@ -318,6 +318,17 @@ export default function Domains() {
   const [form, setForm] = useState<DomainFormState>({ ...emptyForm });
   const [submitting, setSubmitting] = useState(false);
   const [editingHost, setEditingHost] = useState<string | null>(null);
+  // Saved security block captured by startEdit and re-sent on update: the
+  // server replaces the whole security block on any patch that carries one
+  // (config.MergeDomain), so sending only the three form-managed fields
+  // would wipe rate limiting, IP black/whitelist, hotlink protection, and
+  // geo rules configured elsewhere (Security page / YAML).
+  const editSecurityRef = useRef<DomainDetail['security']>(undefined);
+  // Saved cache block captured by startEdit and re-sent on update: besides
+  // the two form-managed fields, DomainCache carries rules/tags/esi, and the
+  // server replaces the whole block when the patch carries a `cache` key
+  // (config.MergeDomain) — a {enabled, ttl}-only block would drop them.
+  const editCacheRef = useRef<DomainDetail['cache']>(undefined);
   const [showRedirect, setShowRedirect] = useState(false);
   const [redirectForm, setRedirectForm] = useState({ baseHost: '', targetHost: '', code: '301' });
 
@@ -562,6 +573,8 @@ export default function Domains() {
   const openAddModal = () => {
     setShowAdd(true);
     setEditingHost(null);
+    editSecurityRef.current = undefined;
+    editCacheRef.current = undefined;
     setSelectedTemplate(null);
     setForm({ ...emptyForm });
     setPhpCustomInput(false);
@@ -572,6 +585,11 @@ export default function Domains() {
     setStatus(null);
     try {
       const d = await fetchDomainDetail(host);
+      // Keep the full security + cache blocks for the update round-trip
+      // (see editSecurityRef / editCacheRef) — the form manages only three
+      // security fields and two cache fields of them.
+      editSecurityRef.current = d.security;
+      editCacheRef.current = d.cache;
       const editForm: DomainFormState = {
         host: d.host,
         ip: d.ip ?? '',
@@ -676,16 +694,31 @@ export default function Domains() {
       const idx = form.phpIndexFiles.split(',').map(s => s.trim()).filter(Boolean);
       if (idx.length > 0) php.index_files = idx;
       if (Object.keys(php).length > 0) payload.php = php;
-      payload.htaccess = { mode: 'import' };
+    }
+
+    // .htaccess import follows the form toggle. The server validates the
+    // mode as exactly "import"|"off" and replaces the whole block whenever
+    // the key is present (config.MergeDomain), so the operator's choice
+    // must be sent: forcing "import" for php sites re-enabled a saved
+    // "off" on every edit, and omitting the block for other types made
+    // the toggle a no-op.
+    if (form.type !== 'redirect') {
+      payload.htaccess = { mode: form.htaccessEnabled ? 'import' : 'off' };
     }
 
     // type=app submission was removed in v0.5.8. The dashboard no longer
     // creates managed app processes via domain create; that's the Apps
     // page's job now.
 
-    // Cache settings
-    if (form.type !== 'redirect' && (form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0)) {
+    // Cache settings. Besides the two form-managed fields, DomainCache
+    // carries rules/tags/esi, and the server replaces the whole block when
+    // the patch carries a `cache` key (config.MergeDomain), so on edit the
+    // saved block is round-tripped — a {enabled, ttl}-only block would
+    // silently drop YAML-configured cache rules, tags, and ESI.
+    const savedCache = editingHost ? editCacheRef.current : undefined;
+    if (form.type !== 'redirect' && (savedCache || form.cacheEnabled || parseInt(form.cacheTTL, 10) > 0)) {
       payload.cache = {
+        ...savedCache,
         enabled: form.cacheEnabled,
         ttl: parseInt(form.cacheTTL, 10) || 3600,
       };
@@ -709,13 +742,19 @@ export default function Domains() {
       };
     }
 
-    // Security settings
+    // Security settings. The server replaces the whole security block on
+    // any patch that carries one (config.MergeDomain), so on edit the saved
+    // block is round-tripped and only the three form-managed fields are
+    // overridden — a partial block would silently drop rate limiting, IP
+    // black/whitelist, hotlink protection, and geo rules.
     const blocked = form.blockedPaths.split(',').map(s => s.trim()).filter(Boolean);
-    if (form.type !== 'redirect' && (form.wafEnabled || form.cloudflareOnly || blocked.length > 0)) {
+    const savedSecurity = editingHost ? editSecurityRef.current : undefined;
+    if (form.type !== 'redirect' && (savedSecurity || form.wafEnabled || form.cloudflareOnly || blocked.length > 0)) {
       payload.security = {
-        waf: { enabled: form.wafEnabled },
+        ...savedSecurity,
+        waf: { ...(savedSecurity?.waf ?? {}), enabled: form.wafEnabled },
         cloudflare_only: form.cloudflareOnly,
-        blocked_paths: blocked.length > 0 ? blocked : undefined,
+        blocked_paths: blocked,
       };
     }
 
@@ -731,6 +770,8 @@ export default function Domains() {
       setForm({ ...emptyForm });
       setSelectedTemplate(null);
       setEditingHost(null);
+      editSecurityRef.current = undefined;
+      editCacheRef.current = undefined;
       setPhpCustomInput(false);
       setShowAdd(false);
       loadDomains();
