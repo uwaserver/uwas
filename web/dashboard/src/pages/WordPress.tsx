@@ -39,18 +39,31 @@ export default function WordPress() {
   const [siteTab, setSiteTab] = useState<'overview' | 'security' | 'users' | 'optimize'>('overview');
   const activeSiteRef = useRef('');
   const installPollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  // Guards the install button's async continuation: if the POST resolves after
+  // the unmount cleanup below has already run (navigating away mid-install),
+  // the continuation must not re-arm the status poll — nothing could clear it.
+  const aliveRef = useRef(true);
+  // Only the initial load may pick the tab. Re-deciding on every refresh
+  // yanked the user off the Install tab the moment an install succeeded,
+  // unmounting the one-time "WordPress installed!" panel (DB password, admin
+  // URL) before the operator could copy it.
+  const initialLoadRef = useRef(true);
 
   const loadSites = useCallback(async () => {
     try {
       const s = await fetchWPSites();
       setSites(s ?? []);
-      if ((s ?? []).length > 0) setTab('sites');
-      else setTab('install');
+      if (initialLoadRef.current) {
+        initialLoadRef.current = false;
+        if ((s ?? []).length > 0) setTab('sites');
+        else setTab('install');
+      }
     } catch { setSites([]); }
     finally { setLoadingSites(false); }
   }, []);
 
   useEffect(() => {
+    aliveRef.current = true;
     loadSites().then(() => {
       // After sites loaded, load domains for install tab
       fetchDomains().then(d => {
@@ -67,7 +80,10 @@ export default function WordPress() {
     });
     fetchDBStatus().then(s => setMysqlOk(s?.installed === true && s?.running === true)).catch(() => {});
     fetchDockerDBs().then(r => setDockerDBs((r?.containers ?? []).filter(c => c.running))).catch(() => {});
-    return () => { clearInterval(installPollRef.current); };
+    return () => {
+      aliveRef.current = false;
+      clearInterval(installPollRef.current);
+    };
   }, [loadSites]);
 
   const phpDomains = domains.filter(d => d.type === 'php');
@@ -81,6 +97,7 @@ export default function WordPress() {
     setStatus(null);
     try {
       await installWordPress(selectedDomain, dbHost);
+      if (!aliveRef.current) return; // unmounted mid-install — cleanup already ran
       clearInterval(installPollRef.current);
       // Guard against overlapping fetches when the backend is slow — the
       // 2s tick can otherwise fire a second request before the first
@@ -115,7 +132,13 @@ export default function WordPress() {
   };
 
   const copy = async (text: string, label: string) => {
-    await copyText(text);
+    // A failed clipboard write must not show the success check: this panel
+    // holds one-time credentials (DB password, admin URL).
+    if (!(await copyText(text))) {
+      setError('Copy failed — copy the value manually.');
+      return;
+    }
+    setError('');
     setCopied(label);
     setTimeout(() => setCopied(''), 2000);
   };

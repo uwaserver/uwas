@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router';
 import BrowserCacheCard from '@/components/BrowserCacheCard';
 import {
@@ -64,8 +64,13 @@ export default function DomainDetail() {
   const [newPw, setNewPw] = useState('');
   const [wpResult, setWpResult] = useState('');
 
+  // Monotonic sequence for load(): only the newest load may apply its
+  // responses (guards inside load).
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async () => {
     if (!host) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setLoadError('');
     try {
@@ -74,6 +79,11 @@ export default function DomainDetail() {
         fetchDomainStats().catch(() => ({})),
         fetchDomainAnalytics(host).catch(() => null),
       ]);
+      // A superseded load (host changed mid-flight, or a newer refresh) must
+      // not apply its responses: an out-of-order response would populate the
+      // page with another domain's data, which saveSecurity would then write
+      // onto the current host.
+      if (seq !== loadSeqRef.current) return;
       setDetail(d);
       if (d.type === 'redirect') {
         setTab(prev => (prev === 'overview' || prev === 'settings' || prev === 'analytics') ? prev : 'overview');
@@ -111,22 +121,29 @@ export default function DomainDetail() {
       }
 
       // Disk usage
-      fetchDiskUsage(host).then(setDiskUsage).catch(() => {});
+      fetchDiskUsage(host).then((usage) => {
+        if (seq === loadSeqRef.current) setDiskUsage(usage);
+      }).catch(() => {});
 
       // WordPress
       fetchWPSites().then(sites => {
+        if (seq !== loadSeqRef.current) return;
         const wp = sites?.find(s => s.domain === host);
         setWpSite(wp ?? null);
         if (wp) {
-          wpSecurityStatus(host).then(setWpSecurity).catch(() => setWpSecurity(null));
+          wpSecurityStatus(host).then((status) => {
+            if (seq === loadSeqRef.current) setWpSecurity(status);
+          }).catch(() => setWpSecurity(null));
           setWpUsers([]);
           setWpUsersError('');
           wpListUsers(host)
             .then(users => {
+              if (seq !== loadSeqRef.current) return;
               setWpUsers(users);
               setWpUsersError('');
             })
             .catch((e) => {
+              if (seq !== loadSeqRef.current) return;
               setWpUsers([]);
               setWpUsersError((e as Error).message || 'Failed to load WordPress users');
             });
@@ -136,9 +153,10 @@ export default function DomainDetail() {
         }
       }).catch(() => {});
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setLoadError((e as Error).message || 'Failed to load domain');
     }
-    finally { setLoading(false); }
+    finally { if (seq === loadSeqRef.current) setLoading(false); }
   }, [host]);
 
   useEffect(() => { load(); }, [load]);

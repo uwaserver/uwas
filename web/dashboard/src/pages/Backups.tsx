@@ -48,6 +48,11 @@ const INTERVAL_OPTIONS = [
   { value: '__custom__', label: 'Custom...' },
 ];
 
+// Preset option values; anything else the server stores is a custom interval.
+const PRESET_INTERVALS = new Set(
+  INTERVAL_OPTIONS.filter((o) => o.value !== '__custom__').map((o) => o.value),
+);
+
 // Custom interval label shown when the user selects "Custom...". The backend
 // parses interval as a Go time.Duration string, so valid formats are like
 // "3h", "90m", "48h", "240h". We also accept "Xd" for day-based shorthand.
@@ -230,7 +235,18 @@ export default function Backups() {
       const [b, s] = await Promise.all([fetchBackups(), fetchBackupSchedule()]);
       setBackups(b ?? []);
       setSchedule(s);
-      setScheduleForm({ enabled: s.enabled, interval: s.interval, keep: s.keep, customInterval: '' });
+      // A stored interval that is not one of the presets (e.g. "90m", or
+      // "48h" converted from a saved "2d") matches no <select> option, which
+      // silently renders the first preset. Represent it as Custom... with
+      // the stored value prefilled so the configured schedule stays visible
+      // and round-trips on save.
+      const preset = PRESET_INTERVALS.has(s.interval);
+      setScheduleForm({
+        enabled: s.enabled,
+        interval: preset ? s.interval : '__custom__',
+        keep: s.keep,
+        customInterval: preset ? '' : s.interval,
+      });
       setError('');
     } catch (e) {
       setError((e as Error).message);
