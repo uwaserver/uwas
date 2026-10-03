@@ -14,6 +14,7 @@ import (
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/domainutil"
 	"github.com/uwaserver/uwas/internal/migrate"
+	"github.com/uwaserver/uwas/internal/pathsafe"
 )
 
 // ============ Site Migration + Clone ============
@@ -57,7 +58,17 @@ func (s *Server) validateCloneRequest(r *http.Request) (migrate.CloneRequest, er
 }
 
 // resolveClonePaths resolves source and target root paths for cloning.
+// Caller-supplied relative roots are resolved against the web root (not the
+// process working directory) and the target — the destructive destination of
+// rsync --delete — is required to stay under the web root. The source is only
+// read and may legitimately live outside it (app workdirs).
 func (s *Server) resolveClonePaths(req *migrate.CloneRequest) error {
+	s.configMu.RLock()
+	webRoot := s.config.Global.WebRoot
+	s.configMu.RUnlock()
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
 	if req.SourceRoot == "" {
 		req.SourceRoot = s.domainRoot(req.SourceDomain)
 	}
@@ -65,13 +76,25 @@ func (s *Server) resolveClonePaths(req *migrate.CloneRequest) error {
 		return fmt.Errorf("source domain not found")
 	}
 	if req.TargetRoot == "" {
-		s.configMu.RLock()
-		webRoot := s.config.Global.WebRoot
-		s.configMu.RUnlock()
-		if webRoot == "" {
-			webRoot = "/var/www"
-		}
 		req.TargetRoot = filepath.Join(webRoot, req.TargetDomain, "public_html")
+	}
+
+	if !filepath.IsAbs(req.SourceRoot) {
+		req.SourceRoot = filepath.Join(webRoot, req.SourceRoot)
+	}
+	if !filepath.IsAbs(req.TargetRoot) {
+		req.TargetRoot = filepath.Join(webRoot, req.TargetRoot)
+	}
+	absWeb, err := filepath.Abs(webRoot)
+	if err != nil {
+		return fmt.Errorf("resolve web root: %w", err)
+	}
+	absTarget, err := filepath.Abs(req.TargetRoot)
+	if err != nil {
+		return fmt.Errorf("resolve target root: %w", err)
+	}
+	if !pathsafe.IsWithinBase(absWeb, absTarget) {
+		return fmt.Errorf("target root %q escapes the web root", req.TargetRoot)
 	}
 	return nil
 }

@@ -793,7 +793,27 @@ func TestCloneAutoGenerateTargetDB(t *testing.T) {
 	}()
 
 	var capturedTargetDB string
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 		capturedTargetDB = dstDB
 		return nil
@@ -834,7 +854,27 @@ func TestCloneAutoGenerateTargetDBLongName(t *testing.T) {
 	}()
 
 	var capturedTargetDB string
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 		capturedTargetDB = dstDB
 		return nil
@@ -871,7 +911,27 @@ func TestCloneAutoGenerateTargetDBSanitize(t *testing.T) {
 	}()
 
 	var capturedTargetDB string
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 		capturedTargetDB = dstDB
 		return nil
@@ -935,7 +995,27 @@ func TestCloneDBError(t *testing.T) {
 		runCloneChown = origChown
 	}()
 
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 		return fmt.Errorf("mysql client not found")
 	}
@@ -943,13 +1023,14 @@ func TestCloneDBError(t *testing.T) {
 
 	tmpSrc, tmpDst := cloneTestRoots(t)
 
-	// wp-config.php present in the target — the DB rewrite must be skipped
-	// when the DB clone fails, or wp-config would point at a missing DB.
+	// wp-config.php in the source is carried into the fresh target by the
+	// file copy — the DB rewrite must be skipped when the DB clone fails, or
+	// wp-config would point at a missing DB.
 	wpContent := `<?php
 define('DB_NAME', 'old_db');
 require_once ABSPATH . 'wp-settings.php';
 `
-	os.WriteFile(filepath.Join(tmpDst, "wp-config.php"), []byte(wpContent), 0644)
+	os.WriteFile(filepath.Join(tmpSrc, "wp-config.php"), []byte(wpContent), 0644)
 
 	result := Clone(CloneRequest{
 		SourceRoot:   tmpSrc,
@@ -990,7 +1071,27 @@ func TestCloneWithWordPress(t *testing.T) {
 		runCloneChown = origChown
 	}()
 
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error { return nil }
 	runCloneChown = func(root string) {}
 
@@ -1005,8 +1106,9 @@ define('WP_HOME', 'https://old.com');
 define('WP_SITEURL', 'https://old.com');
 require_once ABSPATH . 'wp-settings.php';
 `
-	// Write wp-config.php to TARGET (Clone copies files first, then updates).
-	os.WriteFile(filepath.Join(tmpDst, "wp-config.php"), []byte(wpContent), 0644)
+	// Write wp-config.php to the SOURCE: the file copy carries it into the
+	// fresh target, then Clone updates it.
+	os.WriteFile(filepath.Join(tmpSrc, "wp-config.php"), []byte(wpContent), 0644)
 
 	result := Clone(CloneRequest{
 		SourceDomain: "example.com",
@@ -1047,7 +1149,27 @@ func TestCloneWithWordPressNoDBUserPass(t *testing.T) {
 		runCloneChown = origChown
 	}()
 
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error { return nil }
 	runCloneChown = func(root string) {}
 
@@ -1059,7 +1181,7 @@ define('DB_PASSWORD', 'old_pass');
 define('DB_HOST', 'old_host');
 require_once ABSPATH . 'wp-settings.php';
 `
-	os.WriteFile(filepath.Join(tmpDst, "wp-config.php"), []byte(wpContent), 0644)
+	os.WriteFile(filepath.Join(tmpSrc, "wp-config.php"), []byte(wpContent), 0644)
 
 	result := Clone(CloneRequest{
 		SourceDomain: "example.com",
@@ -1095,7 +1217,27 @@ func TestCloneWithWordPressNoTargetDB(t *testing.T) {
 		runCloneChown = origChown
 	}()
 
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneChown = func(root string) {}
 
 	tmpSrc, tmpDst := cloneTestRoots(t)
@@ -1103,7 +1245,7 @@ func TestCloneWithWordPressNoTargetDB(t *testing.T) {
 define('DB_NAME', 'old_db');
 require_once ABSPATH . 'wp-settings.php';
 `
-	os.WriteFile(filepath.Join(tmpDst, "wp-config.php"), []byte(wpContent), 0644)
+	os.WriteFile(filepath.Join(tmpSrc, "wp-config.php"), []byte(wpContent), 0644)
 
 	result := Clone(CloneRequest{
 		SourceDomain: "example.com",
@@ -1274,12 +1416,34 @@ func TestCloneExplicitTargetDB(t *testing.T) {
 	}()
 
 	var capturedTargetDB string
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneDB = func(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 		capturedTargetDB = dstDB
 		return nil
 	}
 	runCloneChown = func(root string) {}
+
+	cloneTestRoots(t) // chdirs into a temp base with empty src/ and dst/
 
 	Clone(CloneRequest{
 		SourceRoot:   "src",
@@ -1302,8 +1466,30 @@ func TestCloneNoDBNoWP(t *testing.T) {
 		runCloneChown = origChown
 	}()
 
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneChown = func(root string) {}
+
+	cloneTestRoots(t) // chdirs into a temp base with empty src/ and dst/
 
 	result := Clone(CloneRequest{
 		SourceRoot:   "src",
@@ -1333,7 +1519,27 @@ func TestCloneResultFields(t *testing.T) {
 		runCloneChown = origChown
 	}()
 
-	runCloneFiles = func(src, dst string, log *strings.Builder) error { return nil }
+	runCloneFiles = func(src, dst string, log *strings.Builder) error {
+		// Simulate rsync: the file copy carries the source tree (including
+		// wp-config.php) into the fresh target.
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(src, e.Name()))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	runCloneChown = func(root string) {}
 
 	tmpSrc, tmpDst := cloneTestRoots(t)

@@ -57,18 +57,24 @@ func Clone(req CloneRequest) *CloneResult {
 		return result
 	}
 
-	// Reject absolute paths and ".." path traversal in both roots.
-	// Absolute paths could escape the intended web-root; ".." in a relative path
-	// can traverse outside the web root. filepath.Clean normalises the path, so
-	// "/var/www/../../etc" becomes "/etc" and is rejected because it starts with "/".
-	if filepath.IsAbs(req.SourceRoot) || filepath.IsAbs(req.TargetRoot) {
+	// Root-path contract: the admin handler (resolveClonePaths) resolves both
+	// roots against the web root — including caller-supplied relative roots —
+	// and enforces containment under it before calling Clone. Clone therefore
+	// accepts the absolute roots its caller actually produces; the old blanket
+	// rejection of absolute paths made every panel-initiated clone fail with
+	// "must be relative paths" before a byte was copied. Containment stays the
+	// handler's job because only it knows the web root.
+
+	// Refuse to clone onto an existing NON-EMPTY target: rsync --delete would
+	// destroy that site's files and the deterministic staging DB name would
+	// clobber its tables, all reported as "done". The panel already refuses
+	// existing targets; this is the API-side enforcement of the same contract.
+	// An existing empty directory (leftover from a failed clone) is fine to
+	// fill.
+	if entries, err := os.ReadDir(req.TargetRoot); err == nil && len(entries) > 0 {
 		result.Status = "error"
-		result.Error = "source_root and target_root must be relative paths"
-		return result
-	}
-	if strings.Contains(req.SourceRoot, "..") || strings.Contains(req.TargetRoot, "..") {
-		result.Status = "error"
-		result.Error = "source_root and target_root must not contain '..'"
+		result.Error = "target root already exists and is not empty — refusing to overwrite an existing site; remove it or choose another target domain"
+		result.Output = log.String()
 		return result
 	}
 

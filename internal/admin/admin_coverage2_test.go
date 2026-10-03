@@ -4390,13 +4390,31 @@ func TestWPInstallWithDomain(t *testing.T) {
 
 func TestCloneWithSourceRoot(t *testing.T) {
 	s, root := testServerWithRoot(t)
+	// Caller-supplied explicit roots are resolved against the web root (not
+	// the process working directory), and the target must stay under it —
+	// so the request now uses web-root-relative roots and the clone actually
+	// runs end-to-end (real rsync, no DB in play).
+	srcDir := filepath.Join(root, "index.php")
+	os.WriteFile(srcDir, []byte("<?php echo 1;"), 0644)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader(fmt.Sprintf(`{"source_domain":"example.com","target_domain":"clone.com","source_root":"%s","target_root":"/tmp/clone"}`, strings.ReplaceAll(root, `\`, `\\`))))
+	req := httptest.NewRequest("POST", "/api/v1/clone", strings.NewReader(`{"source_domain":"example.com","target_domain":"clone.com","source_root":"example.com/public_html","target_root":"clone.com/public_html"}`))
 	req.RemoteAddr = "10.0.0.1:1234"
 	s.handleClone(rec, withAdminContext(req))
-	// Clone will run, may fail but exercises the code path
 	if rec.Code != 200 {
-		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+		t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result.Status != "done" {
+		t.Errorf("clone status = %q, error = %q, want done", result.Status, result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(s.config.Global.WebRoot, "clone.com", "public_html", "index.php")); err != nil {
+		t.Errorf("cloned file missing at the resolved target: %v", err)
 	}
 }
 
