@@ -637,7 +637,14 @@ func (m *BackupManager) ScheduleBackupCron(cronExpr string) {
 				wait = time.Minute // safety: if we're already past, wait 1 min
 			}
 			if !timer.Stop() {
-				<-timer.C // drain if already fired
+				// Drain a fired-but-unreceived value if there is one. On the
+				// iteration after a fire, the select below has already
+				// consumed the value, so a plain <-timer.C here would block
+				// forever and wedge the schedule after its first run.
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			timer.Reset(wait)
 
@@ -691,7 +698,7 @@ func nextCronRun(expr string) time.Time {
 			continue
 		}
 		// Check weekday
-		if !matchCronField(int(candidate.Weekday())%7, weekdayField) {
+		if !matchCronField(int(candidate.Weekday())%7, normalizeCronWeekdayField(weekdayField)) {
 			continue
 		}
 
@@ -760,12 +767,52 @@ func matchCronTerm(value int, term string) bool {
 			return value >= low || value <= high
 		}
 	}
-	// Handle single value: normalize weekday 7 → 0 (both mean Sunday in cron).
-	v := parseInt(term)
-	if v == 7 && value == 0 {
-		return true
+	// Handle single value. The weekday 7≡Sunday alias is folded into the
+	// weekday field by normalizeCronWeekdayField at the nextCronRun call
+	// site — applying it here leaked into the minute/hour/day/month fields,
+	// where term "7" then also matched value 0 (e.g. "0 7 * * *" fired at
+	// midnight as well as 07:00).
+	return parseInt(term) == value
+}
+
+// normalizeCronWeekdayField folds cron's weekday 7 (Sunday alias) onto 0 in
+// every term of the WEEKDAY field so range matching sees Sunday. Applied only
+// to the weekday field: in the minute/hour/day/month fields 7 is just 7.
+// Vixie cron folds dow 7 into 0 after range expansion, so "1-7" (Mon-Sun) and
+// "5-7" (Fri-Sun) include Sunday, and "7-7" means Sunday rather than a value
+// no weekday candidate (0..6) can ever hold — without the fold, "7-7" matched
+// nothing and the whole schedule never fired. "1-7" normalizes to "1-0",
+// which the existing wrapped-range branch matches as {1..6, 0}.
+func normalizeCronWeekdayField(field string) string {
+	if field == "*" || field == "" {
+		return field
 	}
-	return v == value
+	terms := strings.Split(field, ",")
+	for i, term := range terms {
+		terms[i] = normalizeCronWeekdayTerm(term)
+	}
+	return strings.Join(terms, ",")
+}
+
+func normalizeCronWeekdayTerm(term string) string {
+	base, step := term, ""
+	if idx := strings.Index(term, "/"); idx != -1 {
+		base, step = term[:idx], term[idx:]
+	}
+	if parts := strings.Split(base, "-"); len(parts) == 2 {
+		base = foldCronWeekday7(parts[0]) + "-" + foldCronWeekday7(parts[1])
+	} else {
+		base = foldCronWeekday7(base)
+	}
+	return base + step
+}
+
+// foldCronWeekday7 maps a single cron weekday token "7" to "0" (both Sunday).
+func foldCronWeekday7(token string) string {
+	if strings.TrimSpace(token) == "7" {
+		return "0"
+	}
+	return token
 }
 
 func parseInt(s string) int {

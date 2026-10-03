@@ -101,7 +101,7 @@ func TestMatchCronFieldSingleTermFormsUnaffected(t *testing.T) {
 		{"1,3,5", []int{1, 3, 5}, []int{0, 2, 4, 6, 30}},
 		{"1-5", []int{1, 3, 5}, []int{0, 6, 30, 59}},
 		{"*/15", []int{0, 15, 30, 45}, []int{1, 7, 14, 20}},
-		{"7", []int{0, 7}, []int{1, 6}}, // weekday 7 aliases Sunday (0)
+		{"7", []int{7}, []int{0, 1, 6}}, // bare 7 matches only 7 outside the weekday field; the dow 7≡Sunday alias is folded by normalizeCronWeekdayField at the weekday call site (schedule_weekday7_test.go)
 	}
 	for _, tc := range cases {
 		for _, v := range tc.match {
