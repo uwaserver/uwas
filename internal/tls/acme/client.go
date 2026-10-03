@@ -351,6 +351,15 @@ func (c *Client) getAuthorization(ctx context.Context, url string) (*Authorizati
 	}
 	defer resp.Body.Close()
 
+	// A non-2xx response is an ACME problem document (RFC 7807). Decoding it
+	// into an Authorization yields no challenges, which solveChallenge then
+	// misreported as "no supported challenge available" instead of the
+	// server's actual cause.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, acmeError(resp.StatusCode, body)
+	}
+
 	authz := &Authorization{}
 	return authz, json.NewDecoder(resp.Body).Decode(authz)
 }
@@ -521,6 +530,16 @@ func (c *Client) finalizeOrder(ctx context.Context, url string, csr []byte) (*Or
 	}
 	defer resp.Body.Close()
 
+	// A non-2xx response is an ACME problem document (RFC 7807). Decoding it
+	// into an Order yields Status == "" with no error, so ObtainCertificate
+	// treated a hard finalize rejection (badCSR, rateLimited, ...) as a
+	// pending order and polled for "valid" for its whole 30-attempt budget
+	// before reporting a vague timeout instead of the server's cause.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, acmeError(resp.StatusCode, body)
+	}
+
 	order := &Order{}
 	return order, json.NewDecoder(resp.Body).Decode(order)
 }
@@ -531,6 +550,14 @@ func (c *Client) downloadCert(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// A non-2xx response is an ACME problem document (RFC 7807), not a
+	// certificate chain; returning it as certPEM only produced a misleading
+	// keypair parse error later.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, acmeError(resp.StatusCode, body)
+	}
 
 	return io.ReadAll(resp.Body)
 }
