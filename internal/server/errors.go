@@ -20,15 +20,30 @@ var defaultErrorTitles = map[int]string{
 }
 
 // renderDomainError serves a custom error page if configured, otherwise the default styled page.
-// ErrorPages is set from YAML config at load time and is immutable at runtime (the old htaccess
-// path that mutated domain.ErrorPages has been removed — error pages now live in the htaccess
-// cache entry only). No locking is needed since config reloads atomically swap the entire config.
-func renderDomainError(w http.ResponseWriter, code int, domain *config.Domain) {
+// Precedence: the domain's .htaccess ErrorDocument first (per-directory override, Apache
+// semantics — looked up in the htaccess cache entry), then domain.ErrorPages from YAML config,
+// then the built-in page. Both maps are immutable at runtime (config reloads atomically swap the
+// entire config; htaccess entries are re-parsed when the file changes), so no extra locking is
+// needed beyond getHtaccessRuleSet's own. Nil-receiver safe: without a Server (tests) only the
+// config and built-in paths apply.
+func (s *Server) renderDomainError(w http.ResponseWriter, code int, domain *config.Domain) {
 	if domain != nil && domain.Root != "" {
+		// .htaccess ErrorDocument — per-directory override.
+		if s != nil {
+			if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && entry.errorPages != nil {
+				if pagePath, ok := entry.errorPages[code]; ok {
+					if data, err := os.ReadFile(filepath.Join(domain.Root, pagePath)); err == nil {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						w.WriteHeader(code)
+						w.Write(data)
+						return
+					}
+				}
+			}
+		}
 		if domain.ErrorPages != nil {
 			if pagePath, ok := domain.ErrorPages[code]; ok {
-				fullPath := filepath.Join(domain.Root, pagePath)
-				if data, err := os.ReadFile(fullPath); err == nil {
+				if data, err := os.ReadFile(filepath.Join(domain.Root, pagePath)); err == nil {
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
 					w.WriteHeader(code)
 					w.Write(data)

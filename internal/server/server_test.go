@@ -1771,7 +1771,8 @@ func TestRenderDomainErrorCustomPage(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 404, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 404, domain)
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
@@ -1788,7 +1789,8 @@ func TestRenderDomainErrorFallsBackToDefault(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 404, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 404, domain)
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
@@ -1801,7 +1803,8 @@ func TestRenderDomainErrorFallsBackToDefault(t *testing.T) {
 
 func TestRenderDomainErrorNilDomain(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 500, nil)
+	s := &Server{}
+	s.renderDomainError(rec, 500, nil)
 
 	if rec.Code != 500 {
 		t.Errorf("status = %d, want 500", rec.Code)
@@ -1812,7 +1815,8 @@ func TestRenderDomainErrorNilErrorPages(t *testing.T) {
 	domain := &config.Domain{Root: "/tmp"}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 403, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 403, domain)
 
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403", rec.Code)
@@ -1830,7 +1834,8 @@ func TestRenderDomainErrorUnmappedCode(t *testing.T) {
 
 	// 500 is not mapped in ErrorPages, should use default
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 500, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 500, domain)
 
 	if rec.Code != 500 {
 		t.Errorf("status = %d, want 500", rec.Code)

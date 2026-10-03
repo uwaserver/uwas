@@ -32,11 +32,11 @@ func (s *Server) applyRewrites(ctx *router.RequestContext, domain *config.Domain
 	result := engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
 
 	if result.Forbidden {
-		renderDomainError(ctx.Response, http.StatusForbidden, domain)
+		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 		return true
 	}
 	if result.Gone {
-		renderDomainError(ctx.Response, http.StatusGone, domain)
+		s.renderDomainError(ctx.Response, http.StatusGone, domain)
 		return true
 	}
 	if result.Redirect {
@@ -77,11 +77,11 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 		// includes, uploads on migrated Apache sites) were computed and then
 		// silently discarded — a fail-open security gap.
 		if result.Forbidden {
-			renderDomainError(ctx.Response, http.StatusForbidden, domain)
+			s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 			return true
 		}
 		if result.Gone {
-			renderDomainError(ctx.Response, http.StatusGone, domain)
+			s.renderDomainError(ctx.Response, http.StatusGone, domain)
 			return true
 		}
 		if result.Redirect {
@@ -95,6 +95,35 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 			}
 			ctx.RewrittenURI = result.URI
 		}
+	}
+
+	// 1b. Apply mod_alias Redirect/RedirectMatch. Apache runs mod_alias
+	// after mod_rewrite: these fire only when no rewrite above handled the
+	// request. Before this block, Redirect rules were parsed into the
+	// RuleSet and silently dropped — a migrated Apache site's redirects
+	// were no-ops and requests fell through to 404.
+	for _, redir := range ruleSet.raw.Redirects {
+		location, status, ok := htaccess.MatchRedirect(redir, ctx.Request.URL.Path)
+		if !ok {
+			continue
+		}
+		if location == "" || status == http.StatusGone {
+			// Empty target (the "gone" form) responds 410 without Location.
+			s.renderDomainError(ctx.Response, http.StatusGone, domain)
+			return true
+		}
+		if status < 300 || status > 399 {
+			status = http.StatusFound
+		}
+		http.Redirect(ctx.Response, ctx.Request, location, status)
+		return true
+	}
+
+	// 1c. DirectoryIndex — feeds static.ResolveRequest's index order via
+	// ctx (per-request; never mutated on the shared domain). Apache honors
+	// the htaccess list as-given: no built-in fallbacks are appended.
+	if len(ruleSet.raw.DirectoryIndex) > 0 {
+		ctx.IndexFiles = ruleSet.raw.DirectoryIndex
 	}
 
 	// 2. Apply Header directives

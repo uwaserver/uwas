@@ -347,7 +347,8 @@ func TestRenderDomainErrorCustomPageNotFound(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	rw := http.ResponseWriter(rec)
-	renderDomainError(rw, 404, domain)
+	s := &Server{}
+	s.renderDomainError(rw, 404, domain)
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)

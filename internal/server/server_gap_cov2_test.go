@@ -41,7 +41,8 @@ func TestSafeHeaderValueCov(t *testing.T) {
 
 func TestRenderDomainErrorCov(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 502, nil)
+	s := &Server{}
+	s.renderDomainError(rec, 502, nil)
 	if rec.Code != 502 {
 		t.Errorf("status = %d, want 502", rec.Code)
 	}

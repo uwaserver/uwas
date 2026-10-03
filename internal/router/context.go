@@ -39,6 +39,7 @@ type RequestContext struct {
 	CacheStatus    string
 	Upstream       string
 	PHPEnvOverride map[string]string // htaccess-derived PHP_VALUE override (per-request, not mutated on domain)
+	IndexFiles     []string          // htaccess-derived DirectoryIndex order (per-request, not mutated on domain)
 
 	// Metrics
 	BytesSent int64

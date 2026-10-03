@@ -2,6 +2,7 @@ package htaccess
 
 import (
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -328,32 +329,146 @@ func parseRedirect(d Directive, isRegex bool) RedirectRule {
 
 	switch len(d.Args) {
 	case 2:
-		// Redirect /old /new (default 302)
+		// "Redirect /old /new" — unless the first argument is a status: the
+		// status forms with an omitted target ("Redirect gone /old") also
+		// have two arguments. Without this detection the keyword landed in
+		// Pattern and the URL-path in Target, so gone rules never matched
+		// at request time (404 instead of 410).
+		if status, ok := redirectStatus(d.Args[0]); ok {
+			r.Status = status
+			r.Pattern = d.Args[1]
+			return r
+		}
 		r.Pattern = d.Args[0]
 		r.Target = d.Args[1]
 	case 3:
-		// Redirect 301 /old /new
-		code, err := strconv.Atoi(d.Args[0])
-		if err == nil {
-			r.Status = code
+		if status, ok := redirectStatus(d.Args[0]); ok {
+			r.Status = status
 			r.Pattern = d.Args[1]
 			r.Target = d.Args[2]
-		} else {
-			// Redirect permanent /old /new
-			switch strings.ToLower(d.Args[0]) {
-			case "permanent":
-				r.Status = 301
-			case "temp":
-				r.Status = 302
-			case "seeother":
-				r.Status = 303
-			case "gone":
-				r.Status = 410
-			}
-			r.Pattern = d.Args[1]
-			r.Target = d.Args[2]
+			return r
 		}
+		// Apache requires a status first when three arguments are given;
+		// be liberal with invalid config and treat it as path + target.
+		r.Pattern = d.Args[0]
+		r.Target = d.Args[1]
 	}
 
 	return r
+}
+
+// redirectStatus reports the redirect status named by s — a 3xx number, 410,
+// or one of Apache's status keywords — and ok=false when s is a URL-path.
+func redirectStatus(s string) (int, bool) {
+	if code, err := strconv.Atoi(s); err == nil {
+		if (code >= 300 && code <= 399) || code == 410 {
+			return code, true
+		}
+		return 0, false
+	}
+	switch strings.ToLower(s) {
+	case "permanent":
+		return 301, true
+	case "temp":
+		return 302, true
+	case "seeother":
+		return 303, true
+	case "gone":
+		return 410, true
+	}
+	return 0, false
+}
+
+// MatchRedirect applies one parsed Redirect/RedirectRule to a request path
+// with Apache mod_alias semantics: plain patterns are URL-path prefixes and
+// the unmatched suffix is carried onto the target (also for absolute target
+// URLs); regex patterns match the whole path and $1..$9 backrefs expand from
+// the match. Returns ok=false when the rule does not match. An empty target
+// means "gone" — the caller responds 410 without a Location header.
+func MatchRedirect(rule RedirectRule, urlPath string) (location string, status int, ok bool) {
+	if rule.Pattern == "" {
+		return "", 0, false
+	}
+	status = rule.Status
+	if status == 0 {
+		status = 302
+	}
+	if rule.IsRegex {
+		re, err := regexp.Compile(rule.Pattern)
+		if err != nil {
+			// An uncompilable pattern is operator config to fix; skipping
+			// the rule fails closed without taking the whole site down
+			// (same policy as unwas rewrite patterns).
+			return "", 0, false
+		}
+		m := re.FindStringSubmatch(urlPath)
+		if m == nil {
+			return "", 0, false
+		}
+		return expandBackrefs(rule.Target, m), status, true
+	}
+	if !strings.HasPrefix(urlPath, rule.Pattern) {
+		return "", 0, false
+	}
+	if rule.Target == "" {
+		// The "gone" form has no target: report gone, no Location.
+		return "", status, true
+	}
+	return rule.Target + urlPath[len(rule.Pattern):], status, true
+}
+
+// expandBackrefs replaces $1..$9 in target with the corresponding regexp
+// submatches. Out-of-range or non-participating groups expand to "".
+func expandBackrefs(target string, m []string) string {
+	if !strings.Contains(target, "$") {
+		return target
+	}
+	var b strings.Builder
+	for i := 0; i < len(target); i++ {
+		ch := target[i]
+		if ch != '$' || i+1 >= len(target) || target[i+1] < '1' || target[i+1] > '9' {
+			b.WriteByte(ch)
+			continue
+		}
+		n := int(target[i+1] - '0')
+		i++
+		if n < len(m) {
+			b.WriteString(m[n])
+		}
+	}
+	return b.String()
+}
+
+// FilesMatchDenies reports whether any <FilesMatch>/<Files> block whose
+// pattern matches filename carries a deny directive — Apache 2.4
+// "Require all denied"/"Require ip …" denied forms or 2.2 "Deny from …".
+// Deny wins across blocks (fail closed): a grant in one matching block does
+// not unlock another matching block's deny. Uncompilable patterns skip that
+// block only (same policy as rewrite patterns — operator config to fix).
+func FilesMatchDenies(rules *RuleSet, filename string) bool {
+	if rules == nil {
+		return false
+	}
+	for _, block := range rules.FilesMatch {
+		if block.Pattern == "" {
+			continue
+		}
+		re, err := regexp.Compile(block.Pattern)
+		if err != nil || !re.MatchString(filename) {
+			continue
+		}
+		for _, d := range block.Directives {
+			switch strings.ToLower(d.Name) {
+			case "require":
+				arg := strings.ToLower(strings.Join(d.Args, " "))
+				if strings.Contains(arg, "denied") || strings.HasPrefix(arg, "deny") {
+					return true
+				}
+			case "deny":
+				// 2.2 form: "Deny from all" / "Deny from 1.2.3.4".
+				return true
+			}
+		}
+	}
+	return false
 }

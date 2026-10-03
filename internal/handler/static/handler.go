@@ -347,41 +347,47 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 		candidates = []string{"$uri", "$uri/", "/index.html"}
 	}
 
-	indexFiles := domain.IndexFiles
+	// Index order precedence: .htaccess DirectoryIndex (per-request ctx
+	// override, honored as-given — Apache appends no built-in fallbacks)
+	// → domain.IndexFiles from YAML → built-in defaults.
+	indexFiles := ctx.IndexFiles
 	if len(indexFiles) == 0 {
-		if domain.Type == "php" {
-			indexFiles = []string{"index.php", "index.html", "index.htm"}
-		} else {
-			indexFiles = []string{"index.html", "index.htm"}
-		}
-	}
-	// For PHP domains, ensure index.php is always checked first.
-	// Config may have index_files: [index.html] without index.php,
-	// which breaks directory resolution (e.g. /wp-admin/ → index.php).
-	if domain.Type == "php" {
-		hasIndexPHP := false
-		for _, f := range indexFiles {
-			if f == "index.php" {
-				hasIndexPHP = true
-				break
+		indexFiles = domain.IndexFiles
+		if len(indexFiles) == 0 {
+			if domain.Type == "php" {
+				indexFiles = []string{"index.php", "index.html", "index.htm"}
+			} else {
+				indexFiles = []string{"index.html", "index.htm"}
 			}
 		}
-		if !hasIndexPHP {
-			indexFiles = append([]string{"index.php"}, indexFiles...)
-		}
-	}
-	// Also merge PHP-specific index files if set
-	if len(domain.PHP.IndexFiles) > 0 {
-		for _, f := range domain.PHP.IndexFiles {
-			found := false
-			for _, existing := range indexFiles {
-				if existing == f {
-					found = true
+		// For PHP domains, ensure index.php is always checked first.
+		// Config may have index_files: [index.html] without index.php,
+		// which breaks directory resolution (e.g. /wp-admin/ → index.php).
+		if domain.Type == "php" {
+			hasIndexPHP := false
+			for _, f := range indexFiles {
+				if f == "index.php" {
+					hasIndexPHP = true
 					break
 				}
 			}
-			if !found {
-				indexFiles = append(indexFiles, f)
+			if !hasIndexPHP {
+				indexFiles = append([]string{"index.php"}, indexFiles...)
+			}
+		}
+		// Also merge PHP-specific index files if set
+		if len(domain.PHP.IndexFiles) > 0 {
+			for _, f := range domain.PHP.IndexFiles {
+				found := false
+				for _, existing := range indexFiles {
+					if existing == f {
+						found = true
+						break
+					}
+				}
+				if !found {
+					indexFiles = append(indexFiles, f)
+				}
 			}
 		}
 	}

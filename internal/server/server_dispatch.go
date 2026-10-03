@@ -24,6 +24,7 @@ import (
 	"github.com/uwaserver/uwas/internal/middleware"
 	"github.com/uwaserver/uwas/internal/pathsafe"
 	"github.com/uwaserver/uwas/internal/router"
+	"github.com/uwaserver/uwas/pkg/htaccess"
 )
 
 // graceTTL is how long past its TTL an entry may still be served while a
@@ -256,7 +257,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Bandwidth limit check: block requests to domains that exceeded their limit
 	if s.bwMgr != nil && domain.Bandwidth.Enabled && s.bwMgr.IsBlocked(domain.Host) {
 		ctx.Response.Header().Set("Retry-After", "3600")
-		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
+		s.renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
 		return
 	}
 
@@ -359,7 +360,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				if exceeded {
 					s.recordSecurityBlock(ctx, r, "rate")
 					ctx.Response.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
-					renderDomainError(ctx.Response, http.StatusTooManyRequests, domain)
+					s.renderDomainError(ctx.Response, http.StatusTooManyRequests, domain)
 					return
 				}
 			}
@@ -470,7 +471,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			filePath := filepath.Join(loc.Root, filepath.Clean("/"+path))
 			// Security: must stay within loc.Root.
 			if !pathsafe.IsWithinBase(loc.Root, filePath) || !pathsafe.IsWithinBaseResolved(loc.Root, filePath) {
-				renderDomainError(ctx.Response, http.StatusForbidden, domain)
+				s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 				return
 			}
 			http.ServeFile(ctx.Response, r, filePath)
@@ -483,7 +484,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Per-domain blocked paths
 	for _, blocked := range domain.Security.BlockedPaths {
 		if strings.Contains(r.URL.Path, blocked) {
-			renderDomainError(ctx.Response, http.StatusForbidden, domain)
+			s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 			return
 		}
 	}
@@ -833,7 +834,14 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		// the target must stay inside the symlink-resolved doc root, or
 		// `GET /.config/` and symlinked subdirectories would leak names from
 		// outside the root.
-		if domain.DirectoryListing && domain.Root != "" {
+		// .htaccess Options ±Indexes — per-directory override (Apache
+		// semantics), consulted only when the operator declared one in
+		// .htaccess; otherwise the YAML config value stands.
+		listing := domain.DirectoryListing
+		if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && entry.raw != nil && entry.raw.DirectoryListing != nil {
+			listing = *entry.raw.DirectoryListing
+		}
+		if listing && domain.Root != "" {
 			rawPath := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 			if dirListingAllowed(domain.Root, rawPath, ctx.Request.URL.Path) {
 				if info, err := os.Stat(rawPath); err == nil && info.IsDir() {
@@ -842,7 +850,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 				}
 			}
 		}
-		renderDomainError(ctx.Response, http.StatusNotFound, domain)
+		s.renderDomainError(ctx.Response, http.StatusNotFound, domain)
 		return
 	}
 
@@ -854,13 +862,23 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		var err error
 		info, err = os.Stat(resolved)
 		if err != nil {
-			renderDomainError(ctx.Response, http.StatusNotFound, domain)
+			s.renderDomainError(ctx.Response, http.StatusNotFound, domain)
 			return
 		}
 	}
 
 	if info.IsDir() {
-		renderDomainError(ctx.Response, http.StatusForbidden, domain)
+		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
+		return
+	}
+
+	// <FilesMatch>/<Files> deny blocks from .htaccess — access control that
+	// Apache applies to any served file (static or handler), matched against
+	// the final path component. Before this, deny blocks were parsed into
+	// the RuleSet and silently ignored: files an operator explicitly denied
+	// (database dumps, backups, logs) were served to anyone.
+	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && htaccess.FilesMatchDenies(entry.raw, filepath.Base(resolved)) {
+		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 		return
 	}
 
@@ -935,7 +953,7 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) {
 	pool, balancer, cb, mirror, canary := s.proxyRouteFor(domain.Host)
 	if pool == nil {
-		renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+		s.renderDomainError(ctx.Response, http.StatusBadGateway, domain)
 		return
 	}
 
@@ -945,7 +963,7 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 
 	// Circuit breaker: reject if circuit is open
 	if cb != nil && !cb.Allow() {
-		renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
+		s.renderDomainError(ctx.Response, http.StatusServiceUnavailable, domain)
 		return
 	}
 
@@ -969,7 +987,7 @@ func (s *Server) handleProxy(ctx *router.RequestContext, domain *config.Domain) 
 				limited := io.LimitReader(ctx.Request.Body, maxBytes+1)
 				buf, err := io.ReadAll(limited)
 				if err != nil {
-					renderDomainError(ctx.Response, http.StatusBadRequest, domain)
+					s.renderDomainError(ctx.Response, http.StatusBadRequest, domain)
 					return
 				}
 				if int64(len(buf)) > maxBytes {

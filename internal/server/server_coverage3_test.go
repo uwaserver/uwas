@@ -1715,7 +1715,8 @@ func TestRenderDomainErrorReadFileFails(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 404, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 404, domain)
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
@@ -1734,7 +1735,8 @@ func TestRenderDomainErrorEmptyRoot(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 500, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 500, domain)
 
 	if rec.Code != 500 {
 		t.Errorf("status = %d, want 500", rec.Code)

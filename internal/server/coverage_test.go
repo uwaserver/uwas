@@ -222,7 +222,8 @@ func TestRenderDomainErrorCustomPagePath(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 404, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 404, domain)
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
@@ -570,7 +571,8 @@ func TestRenderDomainErrorCustomPageServed(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 500, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 500, domain)
 
 	if rec.Code != 500 {
 		t.Errorf("status = %d, want 500", rec.Code)
@@ -582,7 +584,8 @@ func TestRenderDomainErrorCustomPageServed(t *testing.T) {
 
 func TestRenderDomainErrorNilDomainFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 404, nil)
+	s := &Server{}
+	s.renderDomainError(rec, 404, nil)
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
@@ -596,7 +599,8 @@ func TestRenderDomainErrorNoErrorPages(t *testing.T) {
 	domain := &config.Domain{Root: "/tmp"}
 
 	rec := httptest.NewRecorder()
-	renderDomainError(rec, 403, domain)
+	s := &Server{}
+	s.renderDomainError(rec, 403, domain)
 
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403", rec.Code)
