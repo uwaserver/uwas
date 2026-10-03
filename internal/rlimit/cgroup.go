@@ -19,6 +19,7 @@ var (
 	osWriteFileFn = os.WriteFile
 	osReadFileFn  = os.ReadFile
 	osRemoveFn    = os.Remove
+	osStatFn      = os.Stat
 	runtimeGOOS   = func() string { return runtime.GOOS }
 )
 
@@ -39,24 +40,34 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 	if runtimeGOOS() != "linux" {
 		return "", nil
 	}
-	if limits.CPUPercent == 0 && limits.MemoryMB == 0 && limits.PIDMax == 0 {
-		return "", nil
-	}
 
-	if err := osMkdirAllFn(cgroupBase, 0755); err != nil {
-		return "", fmt.Errorf("create cgroup %s: %w", cgroupBase, err)
-	}
-	// A child cgroup only gets cpu.max / memory.max / pids.max if the parent
-	// enables those controllers for its children. Without this the child is
-	// created with nothing but cgroup.* and *.pressure files, and every write
-	// below fails with EACCES — the limits silently do not exist.
-	if err := enableControllers(cgroupBase, limits); err != nil {
-		return "", err
-	}
-
+	anyLimit := limits.CPUPercent > 0 || limits.MemoryMB > 0 || limits.PIDMax > 0
 	path := filepath.Join(cgroupBase, sanitizeDomain(domain))
-	if err := osMkdirAllFn(path, 0755); err != nil {
-		return "", fmt.Errorf("create cgroup %s: %w", path, err)
+
+	if !anyLimit {
+		// Nothing is limited. A cgroup that was never created must not be
+		// created now (worker starts call Apply on every boot); one that a
+		// previous Apply created may still carry caps from limits that were
+		// since lowered to 0 — "0 means unlimited" — so fall through and
+		// lift them.
+		if _, err := osStatFn(path); err != nil {
+			return "", nil
+		}
+	} else {
+		if err := osMkdirAllFn(cgroupBase, 0755); err != nil {
+			return "", fmt.Errorf("create cgroup %s: %w", cgroupBase, err)
+		}
+		// A child cgroup only gets cpu.max / memory.max / pids.max if the parent
+		// enables those controllers for its children. Without this the child is
+		// created with nothing but cgroup.* and *.pressure files, and every write
+		// below fails with EACCES — the limits silently do not exist.
+		if err := enableControllers(cgroupBase, limits); err != nil {
+			return "", err
+		}
+
+		if err := osMkdirAllFn(path, 0755); err != nil {
+			return "", fmt.Errorf("create cgroup %s: %w", path, err)
+		}
 	}
 
 	if limits.CPUPercent > 0 {
@@ -65,6 +76,8 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		if err := osWriteFileFn(filepath.Join(path, "cpu.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set cpu.max: %w", err)
 		}
+	} else if err := liftLimit(filepath.Join(path, "cpu.max"), "max 100000"); err != nil {
+		return path, fmt.Errorf("set cpu.max: %w", err)
 	}
 
 	if limits.MemoryMB > 0 {
@@ -72,6 +85,8 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		if err := osWriteFileFn(filepath.Join(path, "memory.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set memory.max: %w", err)
 		}
+	} else if err := liftLimit(filepath.Join(path, "memory.max"), "max"); err != nil {
+		return path, fmt.Errorf("set memory.max: %w", err)
 	}
 
 	if limits.PIDMax > 0 {
@@ -79,9 +94,28 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		if err := osWriteFileFn(filepath.Join(path, "pids.max"), []byte(val), 0644); err != nil {
 			return path, fmt.Errorf("set pids.max: %w", err)
 		}
+	} else if err := liftLimit(filepath.Join(path, "pids.max"), "max"); err != nil {
+		return path, fmt.Errorf("set pids.max: %w", err)
 	}
 
 	return path, nil
+}
+
+// liftLimit resets a cgroup limit file to its unlimited form when the file
+// already exists from a previous Apply. A fresh cgroup has no limit files for
+// controllers its limits never needed — creating one would require delegating
+// that controller (enableControllers deliberately delegates only what the
+// current limits need), so a missing file simply means there is nothing to
+// lift.
+func liftLimit(path, unlimited string) error {
+	cur, err := osReadFileFn(path)
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(string(cur)) == unlimited {
+		return nil
+	}
+	return osWriteFileFn(path, []byte(unlimited), 0644)
 }
 
 // AssignPID moves a process into the domain's cgroup.

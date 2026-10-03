@@ -304,12 +304,14 @@ func saveAndRestoreHooks() func() {
 	origOsWriteFile := osWriteFileFn
 	origOsReadFile := osReadFileFn
 	origOsRemove := osRemoveFn
+	origOsStat := osStatFn
 	origRuntimeGOOS := runtimeGOOS
 	return func() {
 		osMkdirAllFn = origOsMkdirAll
 		osWriteFileFn = origOsWriteFile
 		osReadFileFn = origOsReadFile
 		osRemoveFn = origOsRemove
+		osStatFn = origOsStat
 		runtimeGOOS = origRuntimeGOOS
 	}
 }
