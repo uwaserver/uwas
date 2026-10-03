@@ -644,9 +644,13 @@ func ResolveSiteUserRoot(deps Deps, domain string) (string, error) {
 
 func domainrootFallback(webRoot, host string) string {
 	// Inline implementation to avoid importing domainroot for one function.
-	// Matches domainroot.Fallback logic.
+	// Mirrors domainroot.Fallback's safety contract: traversal and separator
+	// characters are rejected (returning "" so handlers answer 404), because
+	// the result feeds SFTP chroots and SSH-key paths. This function is only
+	// ever called with hosts Fallback itself rejected, so the decision must
+	// match exactly.
 	host = strings.TrimSpace(host)
-	if host == "" {
+	if host == "" || strings.Contains(host, "..") || strings.ContainsAny(host, `/\:`) {
 		return ""
 	}
 	return webRoot + "/" + host
