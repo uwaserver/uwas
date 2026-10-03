@@ -36,7 +36,7 @@ func containerName(appName string) string {
 // the read-lock has been released, which is safe because the process
 // struct fields it mutates (dockerID, startedAt) are only inspected by
 // methods that themselves acquire the lock.
-func (m *Manager) startDocker(p *process) error {
+func (m *Manager) startDocker(p *process, expectedStopCh <-chan struct{}) error {
 	if p.app == nil {
 		return fmt.Errorf("apps: %s: docker process has no app definition", p.name)
 	}
@@ -98,9 +98,12 @@ func (m *Manager) startDocker(p *process) error {
 	// If Stop() landed while this (re)start was in flight, abort: tear down
 	// the container we just created and don't register a watcher. Otherwise a
 	// backoff-triggered restart racing with Stop() would leak a container that
-	// keeps restarting, ignoring the operator's stop. Also keeps the p.dockerID
+	// keeps restarting, ignoring the operator's stop. A stopCh mismatch means
+	// Start() superseded this run while an auto-restart backoff was pending —
+	// same abort, for the same reason (see startNative).
+	// Also keeps the p.dockerID
 	// / p.startedAt writes under the lock that every reader holds.
-	if p.stopped {
+	if p.stopped || p.stopCh != expectedStopCh {
 		m.mu.Unlock()
 		_ = exec.Command("docker", "stop", dockerID).Run()
 		return nil
@@ -436,7 +439,7 @@ func (m *Manager) watchDocker(p *process, id string, stopCh <-chan struct{}) {
 		return
 	case <-backoff.C:
 	}
-	if err := m.startDocker(p); err != nil && m.logger != nil {
+	if err := m.startDocker(p, stopCh); err != nil && m.logger != nil {
 		m.logger.Error("apps: docker auto-restart failed", "app", p.name, "error", err)
 	}
 }

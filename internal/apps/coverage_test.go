@@ -962,7 +962,7 @@ func TestLoadAllPropagatesStoreError(t *testing.T) {
 func TestStartDockerNoApp(t *testing.T) {
 	m := NewManager(NewStore(t.TempDir()), nil)
 	p := &process{name: "x", runtimeKind: RuntimeDocker, stopCh: make(chan struct{})}
-	if err := m.startDocker(p); err == nil || !strings.Contains(err.Error(), "no app definition") {
+	if err := m.startDocker(p, p.stopCh); err == nil || !strings.Contains(err.Error(), "no app definition") {
 		t.Fatalf("startDocker no app = %v", err)
 	}
 }
@@ -976,7 +976,7 @@ func TestStartDockerMissingContainerPort(t *testing.T) {
 	// Hand-edited file slips past Validate: container_port 0.
 	app := &App{Name: "noport", Runtime: RuntimeDocker, Docker: DockerSpec{Image: "nginx"}}
 	p := &process{name: "noport", app: app, runtimeKind: RuntimeDocker, port: 9000, stopCh: make(chan struct{})}
-	if err := m.startDocker(p); err == nil || !strings.Contains(err.Error(), "container_port is required") {
+	if err := m.startDocker(p, p.stopCh); err == nil || !strings.Contains(err.Error(), "container_port is required") {
 		t.Fatalf("startDocker no container_port = %v", err)
 	}
 }
@@ -1545,7 +1545,7 @@ func TestStartNativeCmdStartFailure(t *testing.T) {
 	m.mu.Lock()
 	m.procs["sf"] = p
 	m.mu.Unlock()
-	if err := m.startNative(p); err == nil || !strings.Contains(err.Error(), "start:") {
+	if err := m.startNative(p, p.stopCh); err == nil || !strings.Contains(err.Error(), "start:") {
 		t.Fatalf("startNative cmd.Start failure = %v, want start error", err)
 	}
 }
@@ -1614,7 +1614,7 @@ func TestStartNativeInvalidCommandAfterPortSub(t *testing.T) {
 	m.mu.Lock()
 	m.procs["bad"] = p
 	m.mu.Unlock()
-	if err := m.startNative(p); err == nil || !strings.Contains(err.Error(), "invalid command") {
+	if err := m.startNative(p, p.stopCh); err == nil || !strings.Contains(err.Error(), "invalid command") {
 		t.Fatalf("startNative invalid cmd = %v", err)
 	}
 }

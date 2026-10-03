@@ -294,7 +294,7 @@ func TestStartDockerBuildContextRealDaemon(t *testing.T) {
 		port: 59998, workDir: workDir, autoRestart: false, stopCh: stopCh,
 	}
 
-	if err := m.startDocker(p); err != nil {
+	if err := m.startDocker(p, p.stopCh); err != nil {
 		t.Skipf("startDocker build path failed (environment, e.g. buildx missing): %v", err)
 	}
 	if !dockerContainerRunning(cname) {

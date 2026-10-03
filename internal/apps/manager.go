@@ -379,7 +379,8 @@ func (m *Manager) Start(name string) error {
 	// stopCh once and never replaces it, so each new run needs its own
 	// channel (and a cleared stopped flag).
 	p.stopped = false
-	p.stopCh = make(chan struct{})
+	stopCh := make(chan struct{})
+	p.stopCh = stopCh
 	m.mu.Unlock()
 
 	if p.runtimeKind != RuntimeCustom {
@@ -389,9 +390,9 @@ func (m *Manager) Start(name string) error {
 	}
 
 	if p.runtimeKind == RuntimeDocker {
-		return m.startDocker(p)
+		return m.startDocker(p, stopCh)
 	}
-	return m.startNative(p)
+	return m.startNative(p, stopCh)
 }
 
 // Stop terminates the app's process. Closes stopCh so the monitor
@@ -897,7 +898,7 @@ func (m *Manager) State(name string) State {
 // thrown unhandled exception) is reported as "started ok" and only
 // shows up later via polling — the deploy UX described as "zero
 // errors" depends on the create call seeing the real outcome.
-func (m *Manager) startNative(p *process) error {
+func (m *Manager) startNative(p *process, expectedStopCh <-chan struct{}) error {
 	if p.command == "" {
 		return fmt.Errorf("apps: %s: no start command set for runtime %q and nothing recognizable in workdir %s — %s",
 			p.name, p.runtimeKind, p.workDir, detectHint(string(p.runtimeKind)))
@@ -969,8 +970,12 @@ func (m *Manager) startNative(p *process) error {
 	// If Stop() landed while this (re)start was in flight, abort: kill the
 	// freshly-started process and don't register a monitor. Without this a
 	// backoff-triggered restart racing with Stop() would leak a process
-	// that keeps restarting, ignoring the operator's stop.
-	if p.stopped {
+	// that keeps restarting, ignoring the operator's stop. The same applies
+	// when Start() superseded this run while its auto-restart backoff was
+	// pending: Start installs a fresh stopCh, so a channel mismatch means
+	// this spawn is stale — registering it would overwrite the operator's
+	// process pointer and orphan the one holding the port.
+	if p.stopped || p.stopCh != expectedStopCh {
 		m.mu.Unlock()
 		_ = gracefulKill(cmd, p.name)
 		if logFile != nil {
@@ -1136,7 +1141,7 @@ func (m *Manager) monitorNative(p *process, cmd *exec.Cmd, logFile *os.File, sto
 		return
 	default:
 	}
-	if err := m.startNative(p); err != nil && m.logger != nil {
+	if err := m.startNative(p, stopCh); err != nil && m.logger != nil {
 		m.logger.Error("apps: auto-restart failed", "app", p.name, "error", err)
 	}
 }
