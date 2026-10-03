@@ -406,23 +406,25 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := ssrfCheck(targetURL); err != nil {
 				s.logger.Warn("location proxy SSRF blocked", "match", loc.Match, "target", targetURL, "error", err)
-				renderDomainError(ctx.Response, http.StatusForbidden, domain)
+				s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 				return
 			}
 			// Simple single-backend proxy for location blocks
 			proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 			if err != nil {
-				renderDomainError(ctx.Response, http.StatusBadGateway, domain)
+				s.renderDomainError(ctx.Response, http.StatusBadGateway, domain)
 				return
 			}
 			for k, vv := range r.Header {
-				if isHopByHopHeader(k) {
-					continue
-				}
 				for _, v := range vv {
 					proxyReq.Header.Add(k, v)
 				}
 			}
+			// Launder hop-by-hop headers — including fields NAMED by Connection —
+			// with the same implementation the domain proxy uses (RFC 9110
+			// §7.6.1). The static-list-only filter used here previously let a
+			// client smuggle "Connection: X-Foo" + "X-Foo: v" to the upstream.
+			proxyhandler.RemoveHopByHop(proxyReq.Header)
 			// X-Forwarded-For: overwrite with the peer address (same as domain
 			// proxy). Do not preserve client-supplied prior hops — backends that
 			// trust the leftmost entry would see attacker-chosen identity.
@@ -442,18 +444,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 				s.logger.Error("location proxy error", "match", loc.Match, "target", loc.ProxyPass,
 					"status", status, "error", err)
-				renderDomainError(ctx.Response, status, domain)
+				s.renderDomainError(ctx.Response, status, domain)
 				return
 			}
 			defer resp.Body.Close()
 			for k, vv := range resp.Header {
-				if isHopByHopHeader(k) {
-					continue
-				}
 				// Preserve all upstream values (e.g. Set-Cookie) but replace the
 				// middleware default so security headers are never duplicated.
 				ctx.Response.Header()[k] = append([]string(nil), vv...)
 			}
+			// Same laundering on the response side: the upstream's Connection
+			// header and the fields it names must not reach the client.
+			proxyhandler.RemoveHopByHop(ctx.Response.Header())
 			ctx.Response.WriteHeader(resp.StatusCode)
 			if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
 				s.logger.Warn("location proxy: response body copy failed",
@@ -1045,21 +1047,9 @@ func (s *Server) dispatchHandler(ctx *router.RequestContext, domain *config.Doma
 				"Create an app under /api/v1/apps and route domains with type=proxy + apps://<name>.",
 			http.StatusBadGateway)
 	default:
-		renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
+		s.renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
 	}
 	s.metrics.RecordHandlerLatency(string(domain.Type), ctx.Response.StatusCode(), time.Since(start))
-}
-
-// isHopByHopHeader reports whether the header is hop-by-hop (RFC 9110
-// §7.6.1) and must not be forwarded across the location-proxy hop in
-// either direction.
-func isHopByHopHeader(name string) bool {
-	switch http.CanonicalHeaderKey(name) {
-	case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
-		"Te", "Trailers", "Transfer-Encoding", "Upgrade":
-		return true
-	}
-	return false
 }
 
 func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domain) {

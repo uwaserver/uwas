@@ -475,6 +475,11 @@ var hopByHopHeaders = []string{
 	"Transfer-Encoding", "Upgrade",
 }
 
+// RemoveHopByHop strips hop-by-hop headers (RFC 9110 §7.6.1) from h,
+// including fields NAMED by Connection. Exported for the location proxy in
+// internal/server, which must apply the same laundering as the domain proxy.
+func RemoveHopByHop(h http.Header) { removeHopByHop(h) }
+
 func removeHopByHop(h http.Header) {
 	// RFC 7230 §6.1: "Connection" may name *additional* headers that are
 	// hop-by-hop for this connection ("Connection: X-Secret"). Those must be
