@@ -24,7 +24,7 @@ type MemoryCache struct {
 	hits          atomic.Int64
 	misses        atomic.Int64
 	stales        atomic.Int64
-	cleanupCtx    context.Context
+	cleanupMu     sync.Mutex
 	cleanupCancel context.CancelFunc
 }
 
@@ -237,13 +237,19 @@ func shardIdx(key string) uint8 {
 // StartCleanup runs periodic eviction of expired entries.
 // The goroutine exits when ctx is cancelled or Close is called.
 func (mc *MemoryCache) StartCleanup(ctx context.Context, interval time.Duration) {
-	mc.cleanupCtx, mc.cleanupCancel = context.WithCancel(ctx)
+	mc.cleanupMu.Lock()
+	if mc.cleanupCancel != nil {
+		mc.cleanupCancel()
+	}
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	mc.cleanupCancel = cancel
+	mc.cleanupMu.Unlock()
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-mc.cleanupCtx.Done():
+			case <-cleanupCtx.Done():
 				return
 			case <-ticker.C:
 				mc.cleanExpired()
@@ -254,8 +260,11 @@ func (mc *MemoryCache) StartCleanup(ctx context.Context, interval time.Duration)
 
 // Close stops the cleanup goroutine.
 func (mc *MemoryCache) Close() {
+	mc.cleanupMu.Lock()
+	defer mc.cleanupMu.Unlock()
 	if mc.cleanupCancel != nil {
 		mc.cleanupCancel()
+		mc.cleanupCancel = nil
 	}
 }
 
