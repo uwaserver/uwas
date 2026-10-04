@@ -182,6 +182,9 @@ func hasHiddenComponent(path string) bool {
 
 // servePreCompressed checks for .br or .gz pre-compressed files.
 func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, path string, origInfo fs.FileInfo) bool {
+	// Identity responses also depend on Accept-Encoding, including cache hits
+	// and conditional responses served after this method returns.
+	w.Header().Add("Vary", "Accept-Encoding")
 	accept := r.Header.Get("Accept-Encoding")
 	if accept == "" {
 		return false
@@ -218,7 +221,6 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 
 		w.Header().Set("Content-Encoding", c.encoding)
 		w.Header().Set("Content-Type", h.mime.Lookup(path)) // original file's MIME
-		w.Header().Add("Vary", "Accept-Encoding")
 		// Put the encoding discriminator INSIDE the quotes — appending it after
 		// the closing " (W/"<hex>"-gzip) is a malformed entity-tag that
 		// conditional-request matching ignores past the quote.
