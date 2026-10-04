@@ -183,6 +183,7 @@ func (p *Pool) Close() {
 	close(p.idle)
 	for c := range p.idle {
 		c.netConn.Close()
+		p.active.Add(-1)
 	}
 }
 
