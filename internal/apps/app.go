@@ -313,6 +313,9 @@ func ValidateExtraArgs(args []string) error {
 			return fmt.Errorf("docker extra-arg %q: positional arguments are not allowed", arg)
 		}
 	}
+	if seenFlag {
+		return fmt.Errorf("docker extra-arg %q requires a value", args[len(args)-1])
+	}
 	return nil
 }
 

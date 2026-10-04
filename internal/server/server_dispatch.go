@@ -678,9 +678,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			ctx.Response.Header().Set("X-Cache", status)
 			ctx.Response.Header().Set("Age", strconv.FormatInt(int64(cached.Age().Seconds()), 10))
 			for k, vals := range cached.Headers {
-				for _, v := range vals {
-					ctx.Response.Header().Set(k, v)
-				}
+				ctx.Response.Header()[http.CanonicalHeaderKey(k)] = append([]string(nil), vals...)
 			}
 
 			// Handle conditional requests against cached ETag

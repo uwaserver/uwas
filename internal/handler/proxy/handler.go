@@ -212,16 +212,15 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			limited := io.LimitReader(ctx.Request.Body, maxRetryBodyBytes+1)
 			var err error
 			bodyBytes, err = io.ReadAll(limited)
+			ctx.Request.Body.Close()
 			if err != nil {
 				ctx.Response.Error(http.StatusBadGateway, "502 Bad Gateway")
 				return
 			}
 			if int64(len(bodyBytes)) > maxRetryBodyBytes {
-				ctx.Request.Body.Close()
 				ctx.Response.Error(http.StatusRequestEntityTooLarge, "413 Request Entity Too Large")
 				return
 			}
-			ctx.Request.Body.Close()
 		}
 	}
 
@@ -376,7 +375,6 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		// NOTE: cancel() must be called AFTER resp.Body is fully read.
 		// Calling it before io.Copy truncates large responses because the
 		// canceled context closes the underlying connection mid-stream.
-		backend.ActiveConns.Add(-1)
 
 		// Copy response headers. Assignment replaces UWAS defaults when the
 		// upstream owns a header (notably security headers), while preserving
@@ -401,6 +399,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			// Frees upstream connection faster for slow clients.
 			body, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			backend.ActiveConns.Add(-1)
 			cancel()
 			if readErr != nil {
 				h.logger.Error("error reading upstream response body", "backend", backend.URL.String(), "error", readErr)
@@ -420,6 +419,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 				)
 			}
 			resp.Body.Close()
+			backend.ActiveConns.Add(-1)
 			cancel() // safe now — body fully consumed
 		}
 		return

@@ -567,6 +567,13 @@ func (m *Manager) Get(name string) *Instance {
 }
 
 func (m *Manager) instanceFromProcess(p *process) Instance {
+	var env map[string]string
+	if p.env != nil {
+		env = make(map[string]string, len(p.env))
+		for key, value := range p.env {
+			env[key] = value
+		}
+	}
 	inst := Instance{
 		Name:            p.name,
 		Runtime:         p.runtimeKind,
@@ -574,7 +581,7 @@ func (m *Manager) instanceFromProcess(p *process) Instance {
 		Port:            p.port,
 		Ports:           exposedPortsForProcess(p),
 		WorkDir:         p.workDir,
-		Env:             p.env,
+		Env:             env,
 		CrashloopGaveUp: p.crashloopGave,
 		RestartCount:    p.restartCount,
 	}
@@ -846,6 +853,9 @@ func (m *Manager) adoptDiscoveredPort(p *process, port int) error {
 
 	if p == nil {
 		return fmt.Errorf("apps: discovered port %d but process is gone", port)
+	}
+	if m.procs[p.name] != p {
+		return fmt.Errorf("apps: %s discovered port %d but process was replaced or removed", p.name, port)
 	}
 	if p.port == port {
 		return nil

@@ -361,8 +361,12 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 			if rel == "" {
 				continue
 			}
+			configBase := configPath
+			if info, err := os.Stat(configPath); err == nil && info.Mode().IsRegular() {
+				configBase = filepath.Dir(configPath)
+			}
 			var ok bool
-			outPath, ok = safeRestorePath(configPath, rel)
+			outPath, ok = safeRestorePath(configBase, rel)
 			if !ok {
 				m.logger.Warn("backup restore: entry rejected as unsafe, not restored",
 					"name", hdr.Name)
@@ -476,9 +480,25 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		// Sanitize file permissions from untrusted archive: strip SUID/SGID, cap at 0755
 		mode := os.FileMode(hdr.Mode) & 0o755
 		mode &^= os.ModeSetuid | os.ModeSetgid | os.ModeSticky
-		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+		// Preserve existing permissions, as OpenFile did when replacing a file.
+		if info, err := os.Stat(outPath); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("create %s: target is not a regular file", outPath)
+			}
+			mode = info.Mode().Perm()
+		}
+		f, err := os.CreateTemp(filepath.Dir(outPath), ".restore-*")
 		if err != nil {
 			return fmt.Errorf("create %s: %w", outPath, err)
+		}
+		tmp := f.Name()
+		discard := func() {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+		}
+		if err := f.Chmod(mode); err != nil {
+			discard()
+			return fmt.Errorf("chmod %s: %w", outPath, err)
 		}
 		// Read one byte past the per-file limit so an oversized entry is
 		// detected and rejected rather than silently truncated — the same
@@ -491,16 +511,22 @@ func (m *BackupManager) RestoreBackup(name, provider string) error {
 		written, err := io.Copy(f, limited)
 		totalRead += written
 		if err != nil {
-			_ = f.Close()
+			discard()
 			return fmt.Errorf("write %s: %w", outPath, err)
 		}
 		if err := f.Close(); err != nil {
+			_ = os.Remove(tmp)
 			return fmt.Errorf("close %s: %w", outPath, err)
 		}
 		// Strictly greater: max_file_size is an inclusive maximum, so a file of
 		// exactly that size restores normally.
 		if written > maxFileSize {
+			_ = os.Remove(tmp)
 			return fmt.Errorf("file %s exceeds max size limit (%d bytes)", hdr.Name, maxFileSize)
+		}
+		if err := os.Rename(tmp, outPath); err != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("publish %s: %w", outPath, err)
 		}
 	}
 

@@ -433,6 +433,9 @@ func ListDatabases() ([]DBInfo, error) {
 			continue
 		}
 		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
 		db := DBInfo{Name: fields[0], Host: "localhost"}
 		if len(fields) >= 2 {
 			db.Size = fields[1] + " MB"

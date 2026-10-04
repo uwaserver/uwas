@@ -226,7 +226,7 @@ func BuildVariables(r *http.Request, docRoot, resolvedPath string, isHTTPS bool)
 	theRequest := r.Method + " " + r.URL.RequestURI() + " " + r.Proto
 
 	host := r.Host
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
+	if idx := strings.LastIndex(host, ":"); idx != -1 && !strings.HasSuffix(host, "]") {
 		host = host[:idx]
 	}
 

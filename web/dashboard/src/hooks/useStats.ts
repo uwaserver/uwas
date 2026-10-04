@@ -7,6 +7,9 @@ export function useStats(interval = 3000) {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<{ time: string; requests: number; cacheHits: number; p95: number }[]>([]);
   const usingSSE = useRef(false);
+  const generation = useRef(0);
+  const refreshSequence = useRef(0);
+  const publishedRefresh = useRef(0);
 
   const pushStats = useCallback((s: StatsData) => {
     setStats(s);
@@ -24,16 +27,23 @@ export function useStats(interval = 3000) {
 
   // Polling fallback: fetch stats + health together.
   const refresh = useCallback(async () => {
+    const currentGeneration = generation.current;
+    const currentRefresh = ++refreshSequence.current;
     try {
       const [s, h] = await Promise.all([fetchStats(), fetchHealth()]);
+      if (generation.current !== currentGeneration || currentRefresh < publishedRefresh.current) return;
+      publishedRefresh.current = currentRefresh;
       pushStats(s);
       setHealth(h);
     } catch (e) {
+      if (generation.current !== currentGeneration || currentRefresh < publishedRefresh.current) return;
+      publishedRefresh.current = currentRefresh;
       setError((e as Error).message);
     }
   }, [pushStats]);
 
   useEffect(() => {
+    const effectGeneration = generation.current;
     // Two independent timers: `pollingId` drives the stats-polling fallback,
     // `healthId` refreshes health while SSE is active (health isn't in the SSE
     // stream). They must be separate — conflating them previously left the
@@ -62,6 +72,7 @@ export function useStats(interval = 3000) {
         es = new EventSource(url);
 
         es.onmessage = (event) => {
+          if (cancelled || es === null) return;
           try {
             const s: StatsData = JSON.parse(event.data);
             pushStats(s);
@@ -71,12 +82,14 @@ export function useStats(interval = 3000) {
         };
 
         es.onopen = () => {
+          if (cancelled || es === null) return;
           usingSSE.current = true;
           // SSE only sends stats; fetch health once and then periodically.
-          fetchHealth().then(setHealth).catch(() => {});
+          fetchHealth().then(h => { if (!cancelled) setHealth(h); }).catch(() => {});
         };
 
         es.onerror = () => {
+          if (cancelled || es === null) return;
           // SSE failed — close and fall back to stats polling.
           es?.close();
           es = null;
@@ -91,7 +104,7 @@ export function useStats(interval = 3000) {
       // Refresh health periodically even when SSE is active (health isn't
       // included in the SSE stream).
       healthId = setInterval(() => {
-        fetchHealth().then(setHealth).catch(() => {});
+        fetchHealth().then(h => { if (!cancelled) setHealth(h); }).catch(() => {});
       }, interval);
     }
 
@@ -99,6 +112,7 @@ export function useStats(interval = 3000) {
 
     return () => {
       cancelled = true;
+      generation.current = effectGeneration + 1;
       if (pollingId) clearInterval(pollingId);
       if (healthId) clearInterval(healthId);
       if (es) es.close();

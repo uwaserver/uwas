@@ -30,15 +30,12 @@ func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reade
 		return fmt.Errorf("create backup dir: %w", err)
 	}
 	dst := filepath.Join(p.dir, filepath.Base(filename))
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := os.CreateTemp(p.dir, ".upload-*")
 	if err != nil {
 		return err
 	}
-	// OpenFile's mode only applies when creating a new archive.
-	if err := f.Chmod(0600); err != nil {
-		f.Close()
-		return fmt.Errorf("set backup file permissions: %w", err)
-	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
 	if _, err := io.Copy(f, data); err != nil {
 		f.Close()
 		return err
@@ -47,6 +44,9 @@ func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reade
 	// truncated backup as success.
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close backup file: %w", err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("publish backup file: %w", err)
 	}
 	return nil
 }

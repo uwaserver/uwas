@@ -11,8 +11,11 @@ const ThemeContext = createContext<ThemeContextType>({ theme: 'dark', toggle: ()
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('uwas-theme');
-    return saved === 'light' ? 'light' : 'dark';
+    try {
+      return localStorage.getItem('uwas-theme') === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
   });
 
   useEffect(() => {
@@ -22,7 +25,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } else {
       root.classList.remove('light');
     }
-    localStorage.setItem('uwas-theme', theme);
+    try {
+      localStorage.setItem('uwas-theme', theme);
+    } catch {
+      // Preference storage may be blocked; the in-memory theme still works.
+    }
   }, [theme]);
 
   const toggle = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));

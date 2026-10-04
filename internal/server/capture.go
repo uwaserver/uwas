@@ -39,6 +39,10 @@ func (rc *responseCapture) WriteHeader(code int) {
 	if rc.written {
 		return
 	}
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		rc.ResponseWriter.WriteHeader(code)
+		return
+	}
 	rc.statusCode = code
 	rc.written = true
 	rc.upstreamEncoded = rc.Header().Get("Content-Encoding") != ""

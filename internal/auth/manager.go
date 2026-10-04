@@ -418,7 +418,7 @@ func (m *Manager) createUserLocked(username, email, password string, role Role, 
 		Email:      email,
 		Password:   string(hash),
 		Role:       role,
-		Domains:    domains,
+		Domains:    append([]string(nil), domains...),
 		APIKey:     apiKeyPrefix,
 		APIKeyHash: hashAPIKey(apiKey),
 		FullAPIKey: apiKey,
@@ -432,7 +432,12 @@ func (m *Manager) createUserLocked(username, email, password string, role Role, 
 	if user.APIKeyHash != "" {
 		m.usersByAPIKeyHash[user.APIKeyHash] = user
 	}
-	m.saveUsers()
+	if err := m.saveUsers(); err != nil {
+		delete(m.users, username)
+		delete(m.usersByID, user.ID)
+		delete(m.usersByAPIKeyHash, user.APIKeyHash)
+		return nil, fmt.Errorf("persist user: %w", err)
+	}
 
 	return cloneUser(user), nil
 }
@@ -550,7 +555,7 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 	m.mu.Unlock()
 	m.saveSessions()
 
-	return session, nil
+	return cloneSession(session), nil
 }
 
 // AuthenticateAPIKey validates an API key and returns the user.
@@ -620,7 +625,7 @@ func (m *Manager) ValidateSession(token string) (*Session, error) {
 		return nil, errors.New("session expired")
 	}
 
-	return session, nil
+	return cloneSession(session), nil
 }
 
 // Logout invalidates a session.
@@ -719,7 +724,7 @@ func (m *Manager) UpdateUser(username string, updates *User) error {
 		user.Role = updates.Role
 	}
 	if updates.Domains != nil {
-		user.Domains = updates.Domains
+		user.Domains = append([]string(nil), updates.Domains...)
 	}
 	if updates.EnabledSet {
 		user.Enabled = updates.Enabled
@@ -748,6 +753,12 @@ func (m *Manager) invalidateUserSessionsLocked(userID string) {
 	if changed {
 		m.saveSessionsLocked()
 	}
+}
+
+func cloneSession(session *Session) *Session {
+	copySession := *session
+	copySession.Domains = append([]string(nil), session.Domains...)
+	return &copySession
 }
 
 func cloneUser(user *User) *User {
@@ -903,16 +914,16 @@ func (m *Manager) loadUsers() {
 }
 
 // saveUsers persists users to disk.
-func (m *Manager) saveUsers() {
+func (m *Manager) saveUsers() error {
 	file := m.usersFile()
 	if file == "" {
-		return
+		return nil
 	}
 
 	// Ensure directory exists (0700: contains credential files)
 	dir := filepath.Dir(file)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return
+		return err
 	}
 
 	users := make([]*User, 0, len(m.users))
@@ -927,13 +938,15 @@ func (m *Manager) saveUsers() {
 
 	data, err := json.MarshalIndent(users, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	// persistUsersToDisk is called from Add/Remove which don't propagate errors.
-	// Log and continue so the in-memory state isn't corrupted.
+	// Existing mutation callers may use best-effort persistence; account
+	// creation propagates the error and rolls back the uncommitted user.
 	if err := os.WriteFile(file, data, 0600); err != nil {
 		slog.Warn("failed to persist users", "file", file, "error", err)
+		return err
 	}
+	return nil
 }
 
 func (m *Manager) usersFile() string {

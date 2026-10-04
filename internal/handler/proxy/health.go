@@ -181,8 +181,7 @@ func (hc *HealthChecker) recordSuccess(b *Backend) {
 	hc.failures[b] = 0
 	hc.successes[b]++
 
-	if hc.successes[b] >= hc.rise && !b.IsHealthy() {
-		b.SetState(StateHealthy)
+	if hc.successes[b] >= hc.rise && b.State.CompareAndSwap(int32(StateUnhealthy), int32(StateHealthy)) {
 		hc.logger.Info("backend recovered",
 			"backend", b.URL.String(),
 			"successes", hc.successes[b],

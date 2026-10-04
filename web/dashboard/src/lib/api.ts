@@ -87,18 +87,22 @@ function abortWithTimeout(
 ): { signal: AbortSignal; cleanup: () => void } {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
+  const forwardAbort = () => controller.abort();
 
   if (externalSignal) {
     if (externalSignal.aborted) {
       controller.abort();
     } else {
-      externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+      externalSignal.addEventListener('abort', forwardAbort, { once: true });
     }
   }
 
   return {
     signal: controller.signal,
-    cleanup: () => clearTimeout(id),
+    cleanup: () => {
+      clearTimeout(id);
+      externalSignal?.removeEventListener('abort', forwardAbort);
+    },
   };
 }
 

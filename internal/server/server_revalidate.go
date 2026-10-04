@@ -24,10 +24,11 @@ const revalidateTimeout = 30 * time.Second
 // free to reuse the request. Copying the few fields that matter is cheaper
 // than cloning the request and cannot go stale underneath us.
 type staleJob struct {
-	key   string
-	host  string
-	path  string
-	query string
+	key     string
+	host    string
+	path    string
+	rawPath string
+	query   string
 
 	// vary carries only the headers the cache key is built from. The refresh
 	// has to store its result under the same key it is refreshing, and that
@@ -81,6 +82,7 @@ func (s *Server) runRevalidate(domain *config.Domain, job staleJob) {
 	}
 	req.Host = job.host
 	req.URL.Path = job.path
+	req.URL.RawPath = job.rawPath
 	req.URL.RawQuery = job.query
 	req.RemoteAddr = "127.0.0.1:0"
 	for k, vals := range job.vary {
@@ -154,13 +156,14 @@ func (s *Server) staleJobFor(key string, r *http.Request, domain *config.Domain,
 	s.configMu.RUnlock()
 
 	return staleJob{
-		key:   key,
-		host:  r.Host,
-		path:  r.URL.Path,
-		query: r.URL.RawQuery,
-		vary:  vary,
-		ttl:   ttl,
-		grace: grace,
-		tags:  cacheTagsFor(domain, r.Host),
+		key:     key,
+		host:    r.Host,
+		path:    r.URL.Path,
+		rawPath: r.URL.RawPath,
+		query:   r.URL.RawQuery,
+		vary:    vary,
+		ttl:     ttl,
+		grace:   grace,
+		tags:    cacheTagsFor(domain, r.Host),
 	}
 }

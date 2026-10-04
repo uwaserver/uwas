@@ -10,7 +10,7 @@
 export function isPubliclyRoutable(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return false;
-  if (h === '::1' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return false;
+  if (h === '::1' || (h.includes(':') && (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')))) return false;
   const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (v4) {
     const [a, b] = [Number(v4[1]), Number(v4[2])];

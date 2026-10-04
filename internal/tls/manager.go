@@ -95,7 +95,7 @@ func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logg
 		config:  cfg,
 		storage: NewCertStorage(cfg.Storage),
 		logger:  log,
-		domains: append([]config.Domain(nil), domains...),
+		domains: cloneTLSManagedDomains(domains),
 	}
 	m.allowlist.Store(buildDomainAllowlist(domains))
 
@@ -772,7 +772,7 @@ func (m *Manager) renewOne(ctx context.Context, c renewalCandidate) {
 func (m *Manager) UpdateDomains(domains []config.Domain) {
 	allowlist := buildDomainAllowlist(domains)
 	m.domainsMu.Lock()
-	m.domains = append([]config.Domain(nil), domains...)
+	m.domains = cloneTLSManagedDomains(domains)
 	m.domainsMu.Unlock()
 	// Publish *after* the slice swap so any handshake that races us either
 	// sees the old allowlist+old domains or the new allowlist+new domains.
@@ -783,8 +783,14 @@ func (m *Manager) snapshotDomains() []config.Domain {
 	m.domainsMu.RLock()
 	defer m.domainsMu.RUnlock()
 
-	out := make([]config.Domain, len(m.domains))
-	copy(out, m.domains)
+	return cloneTLSManagedDomains(m.domains)
+}
+
+func cloneTLSManagedDomains(domains []config.Domain) []config.Domain {
+	out := append([]config.Domain(nil), domains...)
+	for i := range out {
+		out[i].Aliases = append([]string(nil), domains[i].Aliases...)
+	}
 	return out
 }
 
@@ -894,7 +900,13 @@ func (m *Manager) configForHost(base *tls.Config, host string) *tls.Config {
 		// Per-domain mTLS, using the pool LoadClientCAs parsed for this
 		// domain. Falling back to the listener-wide pool here would apply
 		// one domain's CA to another's clients.
-		if pool := m.clientCAFor(d.Host); pool != nil {
+		if d.SSL.ClientCA != "" {
+			pool := m.clientCAFor(d.Host)
+			if pool == nil {
+				// An unavailable configured CA must trust no clients rather
+				// than silently disable the requested authentication policy.
+				pool = x509.NewCertPool()
+			}
 			out.ClientCAs = pool
 			out.ClientAuth = clientAuthModeFor(d.SSL.ClientAuth)
 		}
@@ -917,7 +929,9 @@ func domainMatchesHost(d *config.Domain, host string) bool {
 	h := strings.ToLower(d.Host)
 	if strings.HasPrefix(h, "*.") {
 		suffix := h[2:]
-		return host == suffix || strings.HasSuffix(host, "."+suffix)
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
 	}
 
 	for _, name := range []string{canonicalTLSHostname(h), implicitTLSWWWHostname(h)} {
@@ -1017,9 +1031,9 @@ func (m *Manager) LoadClientCAs() error {
 		}
 		pool, err := clientCAPool(d.SSL.ClientCA)
 		if err != nil {
-			// One unreadable CA must not stop the others from loading; the
-			// domain simply keeps requesting no client certificate.
-			m.logger.Error("client CA could not be loaded; client certificates will not be requested",
+			// One unreadable CA must not stop the others from loading;
+			// its domain retains the configured authentication policy.
+			m.logger.Error("client CA could not be loaded; configured CA will trust no clients",
 				"domain", d.Host, "ca", d.SSL.ClientCA, "error", err)
 			if firstErr == nil {
 				firstErr = err

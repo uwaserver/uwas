@@ -378,6 +378,10 @@ func (rw *responseWriter) WriteHeader(code int) {
 	if rw.wroteHeader {
 		return
 	}
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		rw.ResponseWriter.WriteHeader(code)
+		return
+	}
 	rw.wroteHeader = true
 	rw.ResponseWriter.WriteHeader(code)
 }

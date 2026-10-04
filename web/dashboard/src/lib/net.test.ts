@@ -16,6 +16,9 @@ describe('isPubliclyRoutable', () => {
     '169.254.1.1',
     '100.64.0.1',
     '::1',
+    'fc00::1',
+    'fd00::1',
+    '[fd12::1]',
   ])('treats %s as unreachable', host => {
     expect(isPubliclyRoutable(host)).toBe(false);
   });
@@ -23,6 +26,9 @@ describe('isPubliclyRoutable', () => {
   it.each([
     '95.130.170.135',
     'panel.example.com',
+    'fdocs.example.com',
+    'fcshop.example.com',
+    'FDOCS.EXAMPLE.COM',
     '8.8.8.8',
     '172.32.0.1',
     '172.15.0.1',
