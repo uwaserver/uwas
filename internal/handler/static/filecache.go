@@ -94,7 +94,7 @@ func (fc *fileCache) get(path string, info os.FileInfo) *fileEntry {
 	// it does, trust it over the clock: it is strictly better evidence.
 	if info != nil {
 		if info.Size() != e.size || !info.ModTime().Equal(e.modTime) {
-			fc.remove(path)
+			fc.remove(path, e)
 			return nil
 		}
 		e.checkedAt.Store(time.Now().UnixNano())
@@ -106,7 +106,7 @@ func (fc *fileCache) get(path string, info os.FileInfo) *fileEntry {
 	}
 	st, err := os.Stat(path)
 	if err != nil || st.Size() != e.size || !st.ModTime().Equal(e.modTime) {
-		fc.remove(path)
+		fc.remove(path, e)
 		return nil
 	}
 	e.checkedAt.Store(time.Now().UnixNano())
@@ -134,10 +134,11 @@ func (fc *fileCache) put(e *fileEntry) {
 	fc.evictIfOver()
 }
 
-func (fc *fileCache) remove(path string) {
+// remove only evicts the inspected entry, preserving concurrent replacements.
+func (fc *fileCache) remove(path string, expected *fileEntry) {
 	sh := fc.shard(path)
 	sh.mu.Lock()
-	if el, ok := sh.items[path]; ok {
+	if el, ok := sh.items[path]; ok && el.Value.(*fileEntry) == expected {
 		fc.used.Add(-el.Value.(*fileEntry).size)
 		sh.lru.Remove(el)
 		delete(sh.items, path)
