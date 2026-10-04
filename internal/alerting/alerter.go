@@ -165,7 +165,8 @@ func (a *Alerter) RecordRequest(isError bool) {
 				a.errorWindowErr--
 			}
 		}
-		a.errorWindow = append([]errorEntry(nil), a.errorWindow[drop:]...)
+		copy(a.errorWindow, a.errorWindow[drop:])
+		a.errorWindow = a.errorWindow[:maxWindowSize]
 	}
 
 	total := len(a.errorWindow)

@@ -342,9 +342,15 @@ func (p *SFTPProvider) dial(ctx context.Context) (*ssh.Client, error) {
 		return nil, err
 	}
 
+	// DialContext only covers TCP establishment; also cancel a stalled handshake.
+	stopCancel := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stopCancel()
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		conn.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	return ssh.NewClient(c, chans, reqs), nil

@@ -5,6 +5,7 @@ package apps
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -134,6 +135,12 @@ func parseHumanSize(s string) int64 {
 	if s == "" {
 		return 0
 	}
+	toBytes := func(v float64) int64 {
+		if math.IsNaN(v) || v < 0 || v >= 1<<63 {
+			return 0
+		}
+		return int64(v)
+	}
 	multipliers := []struct {
 		suffix string
 		mul    float64
@@ -152,13 +159,13 @@ func parseHumanSize(s string) int64 {
 		if strings.HasSuffix(s, m.suffix) {
 			num := strings.TrimSuffix(s, m.suffix)
 			if v, err := strconv.ParseFloat(num, 64); err == nil {
-				return int64(v * m.mul)
+				return toBytes(v * m.mul)
 			}
 			return 0
 		}
 	}
 	if v, err := strconv.ParseFloat(s, 64); err == nil {
-		return int64(v)
+		return toBytes(v)
 	}
 	return 0
 }

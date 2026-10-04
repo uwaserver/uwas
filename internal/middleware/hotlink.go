@@ -28,8 +28,8 @@ func isAllowedReferer(refLower, allowed string) bool {
 // example.com matches: "example.com", "sub.example.com"
 // example.com does NOT match: "example.com.evil.com", "notexample.com"
 func domainSuffixMatch(refHost, allowed string) bool {
-	refHost = strings.ToLower(strings.TrimPrefix(stripPort(refHost), "www."))
-	allowed = strings.ToLower(strings.TrimPrefix(stripPort(allowed), "www."))
+	refHost = strings.TrimPrefix(strings.ToLower(stripPort(refHost)), "www.")
+	allowed = strings.TrimPrefix(strings.ToLower(stripPort(allowed)), "www.")
 	if refHost == allowed {
 		return true
 	}

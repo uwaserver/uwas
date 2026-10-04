@@ -14,6 +14,9 @@ func Recovery(log *logger.Logger) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
+					if err == http.ErrAbortHandler {
+						panic(err)
+					}
 					stack := string(debug.Stack())
 					log.Error("panic recovered",
 						"error", fmt.Sprint(err),

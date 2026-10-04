@@ -42,7 +42,8 @@ func (r *ringBuffer) Write(p []byte) (int, error) {
 			line = line[len(line)-maxLineBytes:]
 		}
 		r.carry = r.carry[idx+1:]
-		r.lines = append(r.lines, line)
+		// Copy retained lines so they do not keep the entire write allocation.
+		r.lines = append(r.lines, strings.Clone(line))
 		if len(r.lines) > r.cap {
 			r.lines = r.lines[len(r.lines)-r.cap:]
 		}
@@ -52,6 +53,7 @@ func (r *ringBuffer) Write(p []byte) (int, error) {
 	if len(r.carry) > maxLineBytes {
 		r.carry = r.carry[len(r.carry)-maxLineBytes:]
 	}
+	r.carry = strings.Clone(r.carry)
 	return len(p), nil
 }
 

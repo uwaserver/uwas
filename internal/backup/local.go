@@ -34,6 +34,11 @@ func (p *LocalProvider) Upload(_ context.Context, filename string, data io.Reade
 	if err != nil {
 		return err
 	}
+	// OpenFile's mode only applies when creating a new archive.
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return fmt.Errorf("set backup file permissions: %w", err)
+	}
 	if _, err := io.Copy(f, data); err != nil {
 		f.Close()
 		return err

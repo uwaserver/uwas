@@ -39,6 +39,7 @@ func CORSGuard(cfg CORSConfig) func(w http.ResponseWriter, r *http.Request) bool
 		}
 	}
 	return func(w http.ResponseWriter, r *http.Request) bool {
+		w.Header().Add("Vary", "Origin")
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			return true

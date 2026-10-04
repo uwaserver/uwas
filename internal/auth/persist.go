@@ -73,7 +73,20 @@ func (m *Manager) loadOrCreateJWTSecret() error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	// Creation mode does not change an existing temp file's permissions.
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(out); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -150,7 +163,20 @@ func (m *Manager) writeSessions(out []*Session) {
 		return
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return
+	}
+	// Creation mode does not change an existing temp file's permissions.
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return
+	}
+	if err := f.Close(); err != nil {
 		return
 	}
 	if err := os.Rename(tmp, path); err != nil {

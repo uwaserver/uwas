@@ -246,7 +246,10 @@ func (e *EnvMap) UnmarshalYAML(value *yaml.Node) error {
 	order := make([]string, 0, len(value.Content)/2)
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		k := value.Content[i].Value
-		v := value.Content[i+1].Value
+		var v string
+		if err := value.Content[i+1].Decode(&v); err != nil {
+			return fmt.Errorf("apps: env: decode value for %q: %w", k, err)
+		}
 		if _, exists := m[k]; !exists {
 			order = append(order, k)
 		}

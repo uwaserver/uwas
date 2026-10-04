@@ -596,8 +596,17 @@ func generateTraceparent() string {
 
 // IsWebSocketUpgrade checks if the request is a WebSocket upgrade.
 func IsWebSocketUpgrade(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") &&
-		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, value := range r.Header.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // serveWebSocket tunnels a WebSocket connection by hijacking the client

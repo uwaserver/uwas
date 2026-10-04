@@ -31,7 +31,11 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &secs); err != nil {
 			return err
 		}
-		d.Duration = time.Duration(secs * float64(time.Second))
+		nanos := secs * float64(time.Second)
+		if nanos >= 1<<63 || nanos < -1<<63 {
+			return fmt.Errorf("duration %q overflows int64 nanoseconds", s)
+		}
+		d.Duration = time.Duration(nanos)
 		return nil
 	}
 	// Try string like "30s"
@@ -62,6 +66,9 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 			// Neither a duration string nor an integer; report the int-path
 			// error since that was the last (and most specific) attempt.
 			return err2
+		}
+		if int64(secs) > (1<<63-1)/int64(time.Second) || int64(secs) < (-1<<63)/int64(time.Second) {
+			return fmt.Errorf("duration %d seconds overflows int64 nanoseconds", secs)
 		}
 		d.Duration = time.Duration(secs) * time.Second
 		return nil

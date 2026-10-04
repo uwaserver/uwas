@@ -42,6 +42,11 @@ func ResolveCacheControl(d *config.Domain, urlPath string, cacheEnabled bool) Ca
 		if !pathmatch.Location(urlPath, loc.Match) {
 			continue
 		}
+		for k, v := range loc.Headers {
+			if strings.EqualFold(k, "Cache-Control") && v != "" {
+				out = CacheControlDecision{Value: v, Source: "location", Detail: loc.Match}
+			}
+		}
 		if loc.CacheControl != "" {
 			out = CacheControlDecision{
 				Value:  loc.CacheControl,

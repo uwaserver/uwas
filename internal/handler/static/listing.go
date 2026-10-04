@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,7 +59,7 @@ a:hover{text-decoration:underline}
 			parent = "/"
 		}
 		fmt.Fprintf(w, `<tr><td><a href="%s">../</a></td><td class="size">-</td><td class="date">-</td></tr>`+"\n",
-			html.EscapeString(parent))
+			html.EscapeString((&url.URL{Path: parent}).EscapedPath()))
 	}
 
 	for _, entry := range entries {
@@ -75,7 +76,7 @@ a:hover{text-decoration:underline}
 		}
 
 		displayName := html.EscapeString(name)
-		link := html.EscapeString(filepath.ToSlash(filepath.Join(urlPath, name)))
+		link := html.EscapeString((&url.URL{Path: filepath.ToSlash(filepath.Join(urlPath, name))}).EscapedPath())
 		size := formatSize(info.Size())
 		date := info.ModTime().Format("2006-01-02 15:04")
 

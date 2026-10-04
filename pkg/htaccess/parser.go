@@ -155,6 +155,7 @@ func splitArgs(line string) []string {
 	var current strings.Builder
 	inQuote := false
 	quoteChar := byte(0)
+	argStarted := false
 
 	for i := 0; i < len(line); i++ {
 		ch := line[i]
@@ -170,23 +171,26 @@ func splitArgs(line string) []string {
 		}
 
 		if ch == '"' || ch == '\'' {
+			argStarted = true
 			inQuote = true
 			quoteChar = ch
 			continue
 		}
 
 		if ch == ' ' || ch == '\t' {
-			if current.Len() > 0 {
+			if argStarted {
 				args = append(args, current.String())
 				current.Reset()
+				argStarted = false
 			}
 			continue
 		}
 
+		argStarted = true
 		current.WriteByte(ch)
 	}
 
-	if current.Len() > 0 {
+	if argStarted {
 		args = append(args, current.String())
 	}
 

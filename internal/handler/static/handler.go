@@ -206,6 +206,10 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 		if err != nil || compInfo.IsDir() {
 			continue
 		}
+		// A stale compressed artifact must not override an updated source file.
+		if compInfo.ModTime().Before(origInfo.ModTime()) {
+			continue
+		}
 
 		f, err := os.Open(compPath)
 		if err != nil {
@@ -415,6 +419,9 @@ func ResolveRequest(ctx *router.RequestContext, domain *config.Domain) bool {
 			// Try index files within directory
 			for _, idx := range indexFiles {
 				idxPath := filepath.Join(fullPath, idx)
+				if !base.Contains(idxPath) {
+					continue
+				}
 				if idxInfo, err := os.Stat(idxPath); err == nil {
 					ctx.ResolvedPath = idxPath
 					ctx.RewrittenURI = filepath.ToSlash(filepath.Join(resolved, idx))

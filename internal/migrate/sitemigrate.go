@@ -376,7 +376,7 @@ func updateWPConfigDB(path, dbName, dbUser, dbPass string, log *strings.Builder)
 		if end < 0 {
 			continue
 		}
-		newLine := fmt.Sprintf("define('%s', '%s')", key, strings.ReplaceAll(val, "'", "\\'"))
+		newLine := fmt.Sprintf("define('%s', '%s');", key, strings.ReplaceAll(val, "'", "\\'"))
 		content = content[:idx] + newLine + content[idx+end+2:]
 	}
 

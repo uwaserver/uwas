@@ -94,7 +94,7 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		name := filepath.Clean(header.Name)
 		// Block absolute paths (would bypass filepath.Join) and ".." segments
 		// (would escape the extraction directory).
-		if filepath.IsAbs(name) || strings.Contains(name, "..") {
+		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
 			continue
 		}
 

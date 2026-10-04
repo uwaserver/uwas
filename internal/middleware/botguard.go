@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -168,8 +169,12 @@ func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Skip bot check for localhost/loopback (internal requests)
 			remoteIP := r.RemoteAddr
-			if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
-				remoteIP = remoteIP[:idx]
+			if host, _, err := net.SplitHostPort(remoteIP); err == nil {
+				remoteIP = host
+			} else if remoteIP != "::1" {
+				if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
+					remoteIP = remoteIP[:idx]
+				}
 			}
 			if remoteIP == "127.0.0.1" || remoteIP == "::1" || remoteIP == "localhost" {
 				next.ServeHTTP(w, r)

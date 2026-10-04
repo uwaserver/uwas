@@ -70,10 +70,17 @@ func (s *Store) EnsureDir() error {
 	return nil
 }
 
-// pathFor returns the absolute YAML path for an app name. The name
-// itself is validated by the caller (Validate) so this is a pure join.
+// pathFor prefers .yaml, but preserves an existing .yml definition so
+// lookup, updates, and deletion agree with the extensions accepted by Load.
 func (s *Store) pathFor(name string) string {
-	return filepath.Join(s.Dir, name+".yaml")
+	path := filepath.Join(s.Dir, name+".yaml")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		alternate := filepath.Join(s.Dir, name+".yml")
+		if _, err := os.Stat(alternate); err == nil {
+			return alternate
+		}
+	}
+	return path
 }
 
 // Load scans the apps directory and returns every valid App definition
@@ -248,18 +255,28 @@ func (s *Store) Save(a *App) error {
 	}
 
 	full := s.pathFor(a.Name)
-	tmp := full + ".tmp"
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	f, err := os.CreateTemp(s.Dir, a.Name+".yaml.tmp-*")
+	if err != nil {
+		return fmt.Errorf("apps: create tmp for %s: %w", full, err)
+	}
+	tmp := f.Name()
+	defer func() {
+		if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+			slog.Debug("apps: temp file cleanup failed", "path", tmp, "error", err)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("apps: write tmp %s: %w", tmp, err)
 	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("apps: close tmp %s: %w", tmp, err)
+	}
 	if err := os.Rename(tmp, full); err != nil {
-		if rmErr := os.Remove(tmp); rmErr != nil {
-			slog.Debug("apps: temp file cleanup failed", "path", tmp, "error", rmErr)
-		}
 		return fmt.Errorf("apps: rename %s → %s: %w", tmp, full, err)
 	}
 	s.names[a.Name] = struct{}{}

@@ -202,6 +202,9 @@ func (a *App) Validate() error {
 		if a.Docker.ContainerPort == 0 {
 			return fmt.Errorf("docker app %q: docker.container_port is required", a.Name)
 		}
+		if a.Docker.ContainerPort < 0 || a.Docker.ContainerPort > 65535 {
+			return fmt.Errorf("docker app %q: container port %d out of range", a.Name, a.Docker.ContainerPort)
+		}
 		if err := ValidateExtraArgs(a.Docker.ExtraArgs); err != nil {
 			return fmt.Errorf("docker app %q: %w", a.Name, err)
 		}
@@ -294,7 +297,10 @@ func ValidateExtraArgs(args []string) error {
 			if !allowedDockerFlags[flag] {
 				return fmt.Errorf("docker extra-arg %q is not in the allowlist", arg)
 			}
-			seenFlag = true
+			// Inline values and boolean flags do not consume the next argv
+			// element; it must still be checked against the allowlist.
+			seenFlag = !strings.Contains(arg, "=") &&
+				flag != "--init" && flag != "--read-only" && flag != "--tty"
 		} else if strings.HasPrefix(arg, "-") {
 			// Single-dash forms (-v, -v/:/host, -v=/:/host, -privileged) match
 			// neither the long-form allowlist nor the positional check, so they

@@ -240,9 +240,12 @@ func IsCacheable(r *http.Request, statusCode int, headers http.Header) bool {
 	// The cache key varies only on Accept-Encoding + configured headers;
 	// a response that declares Vary on anything session-shaped (or on
 	// everything) cannot be keyed correctly, so don't cache it.
-	if v := headers.Get("Vary"); v != "" {
-		if v == "*" || strings.Contains(v, "Cookie") || strings.Contains(v, "Authorization") {
-			return false
+	for _, value := range headers.Values("Vary") {
+		for _, name := range strings.Split(value, ",") {
+			name = strings.TrimSpace(name)
+			if name == "*" || strings.EqualFold(name, "Cookie") || strings.EqualFold(name, "Authorization") {
+				return false
+			}
 		}
 	}
 

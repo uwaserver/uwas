@@ -1006,20 +1006,10 @@ func escapeSQL(s string) string {
 	}
 	// Single-pass scan to avoid the interaction between sequential ReplaceAll
 	// passes that both modify the same characters.
-	// Rule: output backslash as-is only when it precedes a quote (so \' in
-	// single-quoted SQL = literal quote); in all other cases \ → \\.
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' {
-			if i+1 < len(s) && (s[i+1] == '\'' || s[i+1] == '"') {
-				// Backslash directly before a quote: write \ as-is so the quote
-				// escape can handle it. In a single-quoted SQL string, \' means
-				// a literal single-quote (not a string terminator). The same
-				// applies to \" in double-quoted strings.
-				b.WriteByte(s[i])
-			} else {
-				b.WriteString("\\\\")
-			}
+			b.WriteString("\\\\")
 		} else if s[i] == '\'' {
 			b.WriteString("\\'")
 		} else if s[i] == '"' {

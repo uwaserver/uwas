@@ -153,7 +153,11 @@ func (fc *fileCache) evictIfOver() {
 	for i := 0; fc.used.Load() > fc.maxBytes && i < fileCacheShards*2; i++ {
 		sh := &fc.shards[i%fileCacheShards]
 		sh.mu.Lock()
-		if el := sh.lru.Back(); el != nil {
+		for fc.used.Load() > fc.maxBytes {
+			el := sh.lru.Back()
+			if el == nil {
+				break
+			}
 			e := el.Value.(*fileEntry)
 			sh.lru.Remove(el)
 			delete(sh.items, e.path)

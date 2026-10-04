@@ -2,30 +2,26 @@ package middleware
 
 import "net/http"
 
-// Pre-built header value slices: shared across all requests so each request
-// reuses the same []string slice instead of allocating a fresh one inside
-// MIMEHeader.Set. Stdlib net/http only reads header value slices, so
-// sharing is safe.
-var (
-	hdrNosniff           = []string{"nosniff"}
-	hdrSameOrigin        = []string{"SAMEORIGIN"}
-	hdrReferrerPolicy    = []string{"strict-origin-when-cross-origin"}
-	hdrPermissionsPolicy = []string{"geolocation=(), microphone=(), camera=()"}
-)
+var securityHeaderValues = [4]string{
+	"nosniff",
+	"SAMEORIGIN",
+	"strict-origin-when-cross-origin",
+	"geolocation=(), microphone=(), camera=()",
+}
 
 // SecurityHeaders adds default security headers to all responses.
 //
-// Performance: bypasses MIMEHeader.Set's per-call value-slice allocation by
-// writing directly into the underlying map with canonical keys and shared
-// value slices. Saves 4 allocs per request vs the equivalent h.Set calls.
+// Each request owns its value array because handlers may mutate http.Header.
+// One backing array avoids allocating a separate slice for each header.
 func SecurityHeaders() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := w.Header()
-			h["X-Content-Type-Options"] = hdrNosniff
-			h["X-Frame-Options"] = hdrSameOrigin
-			h["Referrer-Policy"] = hdrReferrerPolicy
-			h["Permissions-Policy"] = hdrPermissionsPolicy
+			values := securityHeaderValues
+			h["X-Content-Type-Options"] = values[0:1:1]
+			h["X-Frame-Options"] = values[1:2:2]
+			h["Referrer-Policy"] = values[2:3:3]
+			h["Permissions-Policy"] = values[3:4:4]
 			delete(h, "X-Powered-By")
 
 			next.ServeHTTP(w, r)

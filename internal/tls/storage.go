@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/uwaserver/uwas/internal/pathsafe"
 )
 
 // CertStorage handles reading/writing certificates to disk.
@@ -30,13 +32,23 @@ func NewCertStorage(baseDir string) *CertStorage {
 	return &CertStorage{baseDir: baseDir}
 }
 
-func (s *CertStorage) domainDir(domain string) string {
-	return filepath.Join(s.baseDir, domain)
+func (s *CertStorage) domainDir(domain string) (string, error) {
+	if domain == "" || domain == "." || domain == ".." || filepath.Base(domain) != domain {
+		return "", fmt.Errorf("invalid certificate domain %q", domain)
+	}
+	dir := filepath.Join(s.baseDir, domain)
+	if !pathsafe.IsWithinBaseResolved(s.baseDir, dir) {
+		return "", fmt.Errorf("certificate domain %q escapes storage", domain)
+	}
+	return dir, nil
 }
 
 // Save persists a certificate and its key to disk.
 func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM []byte) error {
-	dir := s.domainDir(domain)
+	dir, err := s.domainDir(domain)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
@@ -121,7 +133,10 @@ func atomicWriteCertFile(path string, data []byte, perm os.FileMode) error {
 
 // Load reads a certificate and key from disk.
 func (s *CertStorage) Load(domain string) (*tls.Certificate, error) {
-	dir := s.domainDir(domain)
+	dir, err := s.domainDir(domain)
+	if err != nil {
+		return nil, err
+	}
 
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
@@ -181,14 +196,22 @@ func (s *CertStorage) LoadAll() (map[string]*tls.Certificate, error) {
 
 // Exists checks if a certificate exists on disk for the domain.
 func (s *CertStorage) Exists(domain string) bool {
-	certPath := filepath.Join(s.domainDir(domain), "cert.pem")
-	_, err := os.Stat(certPath)
+	dir, err := s.domainDir(domain)
+	if err != nil {
+		return false
+	}
+	certPath := filepath.Join(dir, "cert.pem")
+	_, err = os.Stat(certPath)
 	return err == nil
 }
 
 // LoadMeta reads just the metadata for a domain certificate.
 func (s *CertStorage) LoadMeta(domain string) (*CertMeta, error) {
-	metaPath := filepath.Join(s.domainDir(domain), "meta.json")
+	dir, err := s.domainDir(domain)
+	if err != nil {
+		return nil, err
+	}
+	metaPath := filepath.Join(dir, "meta.json")
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
 		return nil, err
@@ -202,5 +225,9 @@ func (s *CertStorage) LoadMeta(domain string) (*CertMeta, error) {
 
 // Delete removes a certificate and all its files from disk.
 func (s *CertStorage) Delete(domain string) error {
-	return os.RemoveAll(s.domainDir(domain))
+	dir, err := s.domainDir(domain)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
 }

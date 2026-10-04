@@ -87,10 +87,10 @@ func (p *DigitalOceanProvider) ListZones() ([]Zone, error) {
 			zones = append(zones, Zone{ID: d.Name, Name: d.Name, Status: "active"})
 		}
 		if resp.Links.Pages.Next == "" || len(resp.Domains) == 0 {
-			break
+			return zones, nil
 		}
 	}
-	return zones, nil
+	return nil, fmt.Errorf("digitalocean: zone pagination exceeds 1000 pages")
 }
 
 func (p *DigitalOceanProvider) FindZoneByDomain(domain string) (*Zone, error) {
@@ -149,10 +149,10 @@ func (p *DigitalOceanProvider) ListRecords(zoneID string) ([]Record, error) {
 			})
 		}
 		if resp.Links.Pages.Next == "" || len(resp.Records) == 0 {
-			break
+			return records, nil
 		}
 	}
-	return records, nil
+	return nil, fmt.Errorf("digitalocean: record pagination exceeds 1000 pages")
 }
 
 func (p *DigitalOceanProvider) CreateRecord(zoneID string, rec Record) (*Record, error) {

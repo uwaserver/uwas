@@ -227,7 +227,8 @@ func Convert(directives []Directive) *RuleSet {
 			if len(d.Args) > 0 {
 				// Reject absolute paths and traversal to prevent reading arbitrary files.
 				f := d.Args[0]
-				if !filepath.IsAbs(f) && !strings.Contains(f, "..") {
+				clean := filepath.Clean(f)
+				if !filepath.IsAbs(clean) && clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 					rules.AuthUserFile = f
 				}
 			}

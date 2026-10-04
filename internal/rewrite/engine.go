@@ -124,6 +124,7 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 
 				// Update variables for subsequent rules
 				vars.RequestURI = newURI
+				vars.QueryString = result.Query
 			}
 
 			// Handle flags
@@ -144,7 +145,7 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 				return result
 			}
 			if rule.Flags.Skip > 0 {
-				i += rule.Flags.Skip
+				i += min(rule.Flags.Skip, len(e.rules)-i-1)
 			}
 			if rule.Flags.Last {
 				return result

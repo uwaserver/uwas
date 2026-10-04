@@ -343,11 +343,10 @@ func domainsToYAML(domains []config.Domain) string {
 // E.g., extractDirective("server_name example.com;", "server_name") => "example.com"
 func extractDirective(line, directive string) string {
 	line = strings.TrimSpace(line)
-	prefix := directive + " "
-	if !strings.HasPrefix(line, prefix) {
+	val, ok := strings.CutPrefix(line, directive)
+	if !ok || len(val) == 0 || (val[0] != ' ' && val[0] != '\t') {
 		return ""
 	}
-	val := strings.TrimPrefix(line, prefix)
 	val = strings.TrimSuffix(val, ";")
 	return strings.TrimSpace(val)
 }

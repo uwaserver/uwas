@@ -48,6 +48,7 @@ type Manager struct {
 	obtainFlight sync.Map // host → singleflight.Group
 
 	// On-demand rate limiting: max 10 certs per minute.
+	onDemandMu    sync.Mutex
 	onDemandCount atomic.Int64
 	onDemandReset atomic.Int64 // unix timestamp of current window start
 
@@ -618,6 +619,8 @@ func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls
 // onDemandAllow checks the on-demand rate limiter. Returns true if the
 // request is allowed (fewer than onDemandMaxPerMinute in the current window).
 func (m *Manager) onDemandAllow() bool {
+	m.onDemandMu.Lock()
+	defer m.onDemandMu.Unlock()
 	now := time.Now().Unix()
 	windowStart := m.onDemandReset.Load()
 	if now-windowStart >= 60 {

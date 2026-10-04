@@ -280,6 +280,8 @@ func (m *Manager) deliver(qe *queuedEvent) {
 		}
 	}
 
+	defer client.CloseIdleConnections()
+
 	payload, err := json.Marshal(qe.event)
 	if err != nil {
 		m.logger.Error("failed to marshal webhook payload", "error", err)

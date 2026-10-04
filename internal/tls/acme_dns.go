@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,7 +114,9 @@ func (p *acmeDNSProvider) CleanupDNSChallenge(domain, token, keyAuth string) err
 		return err
 	}
 	for _, rec := range records {
-		if rec.Type == "TXT" && rec.Name == name && rec.Content == content {
+		recordName := strings.TrimSuffix(rec.Name, ".")
+		if rec.Type == "TXT" && (strings.EqualFold(recordName, name) ||
+			strings.EqualFold(recordName, strings.TrimSuffix(domain, "."))) && rec.Content == content {
 			return p.dp.DeleteRecord(zone.ID, rec.ID)
 		}
 	}

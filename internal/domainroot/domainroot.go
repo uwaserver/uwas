@@ -51,7 +51,14 @@ func LocalAppName(d config.Domain, instances []apps.Instance) (string, bool) {
 			continue
 		}
 		for _, inst := range instances {
-			if inst.Port == port && strings.TrimSpace(inst.WorkDir) != "" {
+			matches := inst.Port == port
+			for _, exposed := range inst.Ports {
+				if exposed == port {
+					matches = true
+					break
+				}
+			}
+			if matches && strings.TrimSpace(inst.WorkDir) != "" {
 				return inst.Name, true
 			}
 		}

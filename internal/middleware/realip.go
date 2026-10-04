@@ -55,7 +55,7 @@ func RealIP(trustedProxies []string) Middleware {
 				return
 			}
 
-			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if xff := strings.Join(r.Header.Values("X-Forwarded-For"), ","); xff != "" {
 				ip := extractRealIP(xff, trusted)
 				if acceptableForwardedIP(ip) {
 					r.RemoteAddr = net.JoinHostPort(ip, "0")

@@ -97,6 +97,17 @@ func resolvePath(path string) (string, error) {
 		if !os.IsNotExist(err) {
 			return "", err
 		}
+		if info, statErr := os.Lstat(cur); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			link, linkErr := os.Readlink(cur)
+			if linkErr != nil {
+				return "", linkErr
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(cur), link)
+			}
+			cur = link
+			continue
+		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
 			return "", err

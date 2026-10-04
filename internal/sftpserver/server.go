@@ -365,6 +365,10 @@ func (sess *sftpSession) readPacket() (pktType byte, id uint32, payload []byte, 
 		return
 	}
 	length := binary.BigEndian.Uint32(lenBuf[:])
+	if length == 0 {
+		err = fmt.Errorf("packet too short")
+		return
+	}
 	if length > 1<<24 { // 16MB max
 		err = fmt.Errorf("packet too large: %d", length)
 		return
@@ -425,10 +429,11 @@ func readString(b []byte) (string, []byte) {
 		return "", nil
 	}
 	n := binary.BigEndian.Uint32(b[:4])
-	if len(b) < int(4+n) {
+	if uint64(n) > uint64(len(b)-4) {
 		return "", nil
 	}
-	return string(b[4 : 4+n]), b[4+n:]
+	end := 4 + int(n)
+	return string(b[4:end]), b[end:]
 }
 
 func encodeAttrs(info os.FileInfo) []byte {

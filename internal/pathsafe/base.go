@@ -35,7 +35,7 @@ func NewBase(docRoot string) (*Base, error) {
 //
 // Uses a short-lived cache for resolved target paths to avoid repeated
 // EvalSymlinks calls on hot static-serve paths. The cache is keyed by the
-// original path string and stores only the base-independent resolved path (not
+// absolute path string and stores only the base-independent resolved path (not
 // the containment verdict): resolvePath depends solely on target, while the
 // isWithin check depends on this base's root and must be recomputed per call.
 // Caching the verdict instead would let one base's result be served to a
@@ -43,6 +43,11 @@ func NewBase(docRoot string) (*Base, error) {
 // when docroots overlap. Entries expire after 5 seconds, short enough to catch
 // symlink changes while eliminating ~90% of EvalSymlinks calls in steady state.
 func (b *Base) Contains(target string) bool {
+	absTarget, err := absFunc(target)
+	if err != nil {
+		return false
+	}
+	target = absTarget
 	// Fast path: reuse a recently resolved target path, but always re-evaluate
 	// containment against this base's own resolved root.
 	if entry, ok := targetCache.Load(target); ok {

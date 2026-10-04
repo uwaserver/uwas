@@ -26,8 +26,8 @@ func sanitizeURI(r *http.Request) string {
 	// Check if any sensitive params are present
 	query := r.URL.Query()
 	needsRedaction := false
-	for _, param := range sensitiveQueryParams {
-		if query.Has(param) {
+	for param := range query {
+		if isSensitiveQueryParam(param) {
 			needsRedaction = true
 			break
 		}

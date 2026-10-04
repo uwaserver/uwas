@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -53,8 +54,13 @@ func (p *S3Provider) Upload(ctx context.Context, filename string, data io.Reader
 	// *os.File body (the usual case, via archiveAndUpload) would be sent with
 	// chunked encoding, which real AWS S3 rejects (501 MissingContentLength).
 	if f, ok := data.(*os.File); ok {
-		if info, statErr := f.Stat(); statErr == nil {
-			req.ContentLength = info.Size()
+		if info, statErr := f.Stat(); statErr == nil && info.Mode().IsRegular() {
+			if offset, seekErr := f.Seek(0, io.SeekCurrent); seekErr == nil {
+				req.ContentLength = max(0, info.Size()-offset)
+				if req.ContentLength == 0 {
+					req.Body = http.NoBody
+				}
+			}
 		}
 	}
 	req.Header.Set("Content-Type", "application/gzip")
@@ -97,8 +103,10 @@ func (p *S3Provider) Download(ctx context.Context, filename string) (io.ReadClos
 
 // listBucketResult is the XML response from S3 ListObjectsV2.
 type listBucketResult struct {
-	XMLName  xml.Name       `xml:"ListBucketResult"`
-	Contents []s3ObjectInfo `xml:"Contents"`
+	XMLName               xml.Name       `xml:"ListBucketResult"`
+	Contents              []s3ObjectInfo `xml:"Contents"`
+	IsTruncated           bool           `xml:"IsTruncated"`
+	NextContinuationToken string         `xml:"NextContinuationToken"`
 }
 
 type s3ObjectInfo struct {
@@ -107,52 +115,75 @@ type s3ObjectInfo struct {
 	LastModified string `xml:"LastModified"`
 }
 
-func (p *S3Provider) List(ctx context.Context) ([]BackupInfo, error) {
-	// Match both server backups (uwas-backup-*) and per-domain backups
-	// (uwas-domain-*); a narrower "uwas-backup-" prefix hid domain backups on
-	// S3, so they could not be listed/restored/deleted via the manager.
-	url := p.bucketURL() + "?list-type=2&prefix=uwas-"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (p *S3Provider) listBucketPage(ctx context.Context, token string) (listBucketResult, error) {
+	// Keep both server and per-domain backups in the listing.
+	query := url.Values{"list-type": {"2"}, "prefix": {"uwas-"}}
+	if token != "" {
+		query.Set("continuation-token", token)
+	}
+	requestURL := p.bucketURL() + "?" + strings.ReplaceAll(query.Encode(), "+", "%20")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, err
+		return listBucketResult{}, err
 	}
 	p.signRequest(req, "UNSIGNED-PAYLOAD")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, err
+		return listBucketResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if err != nil {
-			return nil, fmt.Errorf("s3 list: %s (error reading body: %w)", resp.Status, err)
+			return listBucketResult{}, fmt.Errorf("s3 list: %s (error reading body: %w)", resp.Status, err)
 		}
-		return nil, fmt.Errorf("s3 list: %s %s", resp.Status, string(body))
+		return listBucketResult{}, fmt.Errorf("s3 list: %s %s", resp.Status, string(body))
 	}
 
 	var result listBucketResult
 	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("parse s3 list: %w", err)
+		return listBucketResult{}, fmt.Errorf("parse s3 list: %w", err)
 	}
 
+	return result, nil
+}
+
+func (p *S3Provider) List(ctx context.Context) ([]BackupInfo, error) {
 	var infos []BackupInfo
-	for _, obj := range result.Contents {
-		if !strings.HasSuffix(obj.Key, ".tar.gz") {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, obj.LastModified)
+	token := ""
+	seen := make(map[string]bool)
+	for {
+		result, err := p.listBucketPage(ctx, token)
 		if err != nil {
-			// Zero time: sort order is wrong but no data is lost — log and continue.
-			fmt.Fprintf(os.Stderr, "warning: backup: s3: could not parse LastModified %q for %q: %v\n", obj.LastModified, obj.Key, err)
+			return nil, err
 		}
-		infos = append(infos, BackupInfo{
-			Name:     obj.Key,
-			Size:     obj.Size,
-			Created:  t,
-			Provider: "s3",
-		})
+		for _, obj := range result.Contents {
+			if !strings.HasSuffix(obj.Key, ".tar.gz") {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339, obj.LastModified)
+			if err != nil {
+				// Zero time: sort order is wrong but no data is lost — log and continue.
+				fmt.Fprintf(os.Stderr, "warning: backup: s3: could not parse LastModified %q for %q: %v\n", obj.LastModified, obj.Key, err)
+			}
+			infos = append(infos, BackupInfo{
+				Name:     obj.Key,
+				Size:     obj.Size,
+				Created:  t,
+				Provider: "s3",
+			})
+		}
+		if !result.IsTruncated {
+			break
+		}
+		token = result.NextContinuationToken
+		if token == "" || seen[token] {
+			return nil, fmt.Errorf("s3 list: missing or repeated continuation token")
+		}
+		seen[token] = true
 	}
+
 	sort.Slice(infos, func(i, j int) bool {
 		return infos[i].Created.After(infos[j].Created)
 	})

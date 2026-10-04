@@ -152,10 +152,10 @@ func (c *CloudflareProvider) doList(pathBase string) ([]json.RawMessage, error) 
 		}
 		out = append(out, cfResp.Result...)
 		if cfResp.ResultInfo.TotalPages <= page {
-			break
+			return out, nil
 		}
 	}
-	return out, nil
+	return nil, fmt.Errorf("cloudflare: pagination exceeds 1000 pages")
 }
 
 func (c *CloudflareProvider) ListZones() ([]Zone, error) {

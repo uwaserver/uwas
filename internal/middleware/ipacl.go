@@ -22,7 +22,7 @@ type IPACLConfig struct {
 func IPACLGuard(cfg IPACLConfig) func(w http.ResponseWriter, r *http.Request) bool {
 	whiteNets := parseCIDRs(cfg.Whitelist)
 	blackNets := parseCIDRs(cfg.Blacklist)
-	if len(whiteNets) == 0 && len(blackNets) == 0 {
+	if len(cfg.Whitelist) == 0 && len(blackNets) == 0 {
 		return nil
 	}
 	return func(w http.ResponseWriter, r *http.Request) bool {
@@ -31,7 +31,7 @@ func IPACLGuard(cfg IPACLConfig) func(w http.ResponseWriter, r *http.Request) bo
 			http.Error(w, "403 Forbidden", http.StatusForbidden)
 			return false
 		}
-		if len(whiteNets) > 0 {
+		if len(cfg.Whitelist) > 0 {
 			if !ipInNets(ip, whiteNets) {
 				http.Error(w, "403 Forbidden", http.StatusForbidden)
 				return false
@@ -65,7 +65,7 @@ func IPACL(cfg IPACLConfig) Middleware {
 	blackNets := parseCIDRs(cfg.Blacklist)
 
 	// No ACL rules configured — pass everything through.
-	if len(whiteNets) == 0 && len(blackNets) == 0 {
+	if len(cfg.Whitelist) == 0 && len(blackNets) == 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
@@ -78,7 +78,7 @@ func IPACL(cfg IPACLConfig) Middleware {
 				return
 			}
 
-			if len(whiteNets) > 0 {
+			if len(cfg.Whitelist) > 0 {
 				// Whitelist mode: must be in whitelist.
 				if !ipInNets(ip, whiteNets) {
 					http.Error(w, "403 Forbidden", http.StatusForbidden)

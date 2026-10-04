@@ -181,7 +181,7 @@ func FindDomainHostnameConflictAllowingRedirect(domains []config.Domain, skipInd
 		}
 		if CanonicalDomainHostname(d.Host) == host {
 			if IsCanonicalRedirectAliasDomain(d, host, targetHost) {
-				return ""
+				continue
 			}
 			return d.Host
 		}

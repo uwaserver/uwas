@@ -236,7 +236,10 @@ func (c *Collector) RecordHandlerType(handlerType string) {
 
 // RecordDomain tracks per-domain request and bandwidth.
 func (c *Collector) RecordDomain(host string, statusCode int, bytesOut int64) {
-	val, _ := c.domainStats.LoadOrStore(host, &DomainStats{})
+	val, ok := c.domainStats.Load(host)
+	if !ok {
+		val, _ = c.domainStats.LoadOrStore(host, &DomainStats{})
+	}
 	ds := val.(*DomainStats)
 	ds.Requests.Add(1)
 	ds.BytesOut.Add(bytesOut)

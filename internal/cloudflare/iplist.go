@@ -117,7 +117,7 @@ func normalizeCIDR(value string) (string, error) {
 			return "", fmt.Errorf("invalid IP/CIDR %q", value)
 		}
 		if ip.To4() != nil {
-			value += "/32"
+			value = ip.String() + "/32"
 		} else {
 			value += "/128"
 		}

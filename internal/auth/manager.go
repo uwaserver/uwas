@@ -521,11 +521,6 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 
 	m.clearFailedAttempts(lockKey)
 
-	// Update last login lock-free. The atomic value is preferred by
-	// latestLastLogin and synced back into User.LastLogin by cloneUser and
-	// saveUsers, so observers downstream still see the fresh timestamp.
-	user.lastLoginNanos.Store(time.Now().UnixNano())
-
 	token, err := generateToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate session token: %w", err)
@@ -542,6 +537,15 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 	}
 
 	m.mu.Lock()
+	// User mutations can revoke credentials while bcrypt runs without m.mu.
+	// Recheck under the session-insertion lock so revocation cannot be bypassed.
+	current, exists := m.users[username]
+	if !exists || current != user || !current.Enabled || current.Password != passwordHash {
+		m.mu.Unlock()
+		return nil, errors.New("invalid credentials")
+	}
+	// The atomic value is preferred by latestLastLogin and persisted by saveUsers.
+	user.lastLoginNanos.Store(time.Now().UnixNano())
 	m.sessions[session.Token] = session
 	m.mu.Unlock()
 	m.saveSessions()

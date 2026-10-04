@@ -104,9 +104,16 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) {
 	}
 
 create:
-	// 2. Create new if under limit
-	if int(p.active.Load()) < p.maxOpen {
-		return p.create(ctx)
+	// 2. Reserve a slot atomically before dialing so concurrent callers
+	// cannot all pass the limit check and exceed maxOpen.
+	for {
+		active := p.active.Load()
+		if int(active) >= p.maxOpen {
+			break
+		}
+		if p.active.CompareAndSwap(active, active+1) {
+			return p.create(ctx)
+		}
 	}
 
 	// 3. Wait for idle connection with timeout
@@ -185,8 +192,6 @@ func (p *Pool) Stats() (active, idle int) {
 }
 
 func (p *Pool) create(ctx context.Context) (*conn, error) {
-	p.active.Add(1)
-
 	d := net.Dialer{Timeout: 5 * time.Second}
 	nc, err := d.DialContext(ctx, p.network, p.address)
 	if err != nil {

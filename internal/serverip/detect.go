@@ -119,8 +119,11 @@ func PublicIP() string {
 		}
 		// Read the whole (tiny) body — a single Read can return a partial
 		// response, truncating the IP and failing the parse.
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 		ip := strings.TrimSpace(string(body))
 		if net.ParseIP(ip) != nil {
 			return ip

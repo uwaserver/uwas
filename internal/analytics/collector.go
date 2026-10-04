@@ -303,10 +303,11 @@ func (c *Collector) snapshot(host string, stats *DomainStats) Snapshot {
 	now := time.Now()
 	oneHourAgo := now.Add(-1 * time.Hour)
 	oneDayAgo := now.Add(-24 * time.Hour)
+	oneWeekAgo := now.Add(-7 * 24 * time.Hour)
 
 	for i := 0; i < minuteBucketCount; i++ {
 		b := stats.minuteBuckets[i]
-		if b.timestamp.IsZero() {
+		if b.timestamp.IsZero() || !b.timestamp.After(oneWeekAgo) {
 			continue
 		}
 		snap.ViewsLast7d += b.views

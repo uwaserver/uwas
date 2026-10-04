@@ -171,6 +171,11 @@ func SplitScriptPath(originalURI, resolvedPath, docRoot string, indexFiles []str
 		}
 	}
 
+	// An explicit path suffix belongs to the resolved script, not a rewrite.
+	if strings.HasSuffix(scriptName, ".php") && strings.HasPrefix(origPath, scriptName+"/") {
+		return scriptName, origPath[len(scriptName):]
+	}
+
 	// If resolved path contains .php in the middle of the original URI,
 	// split there: /index.php/api/users → scriptName=/index.php, pathInfo=/api/users
 	if scriptName == "" {

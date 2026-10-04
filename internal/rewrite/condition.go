@@ -79,7 +79,7 @@ func (c *Condition) Evaluate(vars *Variables) (bool, []string) {
 	switch c.TestType {
 	case "-f":
 		info, err := os.Stat(testValue)
-		matched = err == nil && !info.IsDir()
+		matched = err == nil && info.Mode().IsRegular()
 	case "-d":
 		info, err := os.Stat(testValue)
 		matched = err == nil && info.IsDir()
@@ -88,7 +88,7 @@ func (c *Condition) Evaluate(vars *Variables) (bool, []string) {
 		matched = err == nil && info.Mode()&os.ModeSymlink != 0
 	case "-s":
 		info, err := os.Stat(testValue)
-		matched = err == nil && info.Size() > 0
+		matched = err == nil && info.Mode().IsRegular() && info.Size() > 0
 	default:
 		if c.Pattern != nil {
 			matches := c.Pattern.FindStringSubmatch(testValue)

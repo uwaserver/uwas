@@ -1322,6 +1322,7 @@ func archiveAndUpload(
 		}
 		return tmpFile.Close()
 	}
+	defer finalize()
 	if err := addEntries(tw); err != nil {
 		return 0, err
 	}

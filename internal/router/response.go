@@ -49,6 +49,12 @@ func (w *ResponseWriter) WriteHeader(code int) {
 	if w.headerWritten {
 		return
 	}
+	// Informational responses do not commit the final status; 101 switches
+	// protocols and is treated as final, matching net/http.
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
 	w.statusCode = code
 	w.headerWritten = true
 	w.ttfb = time.Since(w.startTime)

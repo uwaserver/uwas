@@ -70,11 +70,11 @@ func (p *Route53Provider) ListZones() ([]Zone, error) {
 			zones = append(zones, Zone{ID: id, Name: strings.TrimSuffix(hz.Name, "."), Status: "active"})
 		}
 		if !resp.IsTruncated || resp.NextMarker == "" {
-			break
+			return zones, nil
 		}
 		marker = resp.NextMarker
 	}
-	return zones, nil
+	return nil, fmt.Errorf("route53: zone pagination exceeds 1000 pages")
 }
 
 func (p *Route53Provider) FindZoneByDomain(domain string) (*Zone, error) {
@@ -145,11 +145,11 @@ func (p *Route53Provider) ListRecords(zoneID string) ([]Record, error) {
 			}
 		}
 		if !resp.IsTruncated || resp.NextRecordName == "" {
-			break
+			return records, nil
 		}
 		nextName, nextType = resp.NextRecordName, resp.NextRecordType
 	}
-	return records, nil
+	return nil, fmt.Errorf("route53: record pagination exceeds 1000 pages")
 }
 
 func (p *Route53Provider) CreateRecord(zoneID string, rec Record) (*Record, error) {

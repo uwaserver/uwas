@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -87,7 +88,7 @@ func (m *Mirror) Send(originalReq *http.Request, bodyBytes []byte) {
 
 func (m *Mirror) doMirror(originalReq *http.Request, bodyBytes []byte) {
 	// Build mirror URL
-	mirrorURL := m.backend + originalReq.URL.RequestURI()
+	mirrorURL := strings.TrimRight(m.backend, "/") + originalReq.URL.RequestURI()
 	if err := m.validateBackendURL(mirrorURL); err != nil {
 		m.logger.Warn("mirror: upstream blocked by SSRF protection", "url", mirrorURL, "error", err)
 		return

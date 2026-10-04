@@ -305,21 +305,11 @@ func isMultipartContentType(ct string) bool {
 // scanJSONBody recursively extracts every JSON string value from bodyBytes
 // and checks each against the WAF patterns. Returns true if any value is blocked.
 func scanJSONBody(bodyBytes []byte, families map[string]bool) bool {
-	var raw []json.RawMessage
-	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
-		// Not an array — fall back to trying as a plain object/value.
-		var obj interface{}
-		if err2 := json.Unmarshal(bodyBytes, &obj); err2 != nil {
-			return false
-		}
-		return scanJSONValue(obj, families)
+	var value interface{}
+	if err := json.Unmarshal(bodyBytes, &value); err != nil {
+		return false
 	}
-	for _, v := range raw {
-		if scanJSONValue(v, families) {
-			return true
-		}
-	}
-	return false
+	return scanJSONValue(value, families)
 }
 
 // scanJSONValue dispatches a decoded JSON value for WAF checking.

@@ -236,6 +236,9 @@ func (b *Blocker) SetWhitelist(entries []string) {
 	nets := defaultSafeNets()
 	for _, raw := range entries {
 		if p, err := netip.ParsePrefix(raw); err == nil {
+			if p.Addr().Is4In6() && p.Bits() >= 96 {
+				p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+			}
 			nets = append(nets, p.Masked())
 			continue
 		}

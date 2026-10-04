@@ -109,8 +109,14 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 		return false, false
 	}
 
+	var notify func()
 	usage.mu.Lock()
-	defer usage.mu.Unlock()
+	defer func() {
+		usage.mu.Unlock()
+		if notify != nil {
+			notify()
+		}
+	}()
 
 	now := time.Now()
 
@@ -147,24 +153,27 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 	// silently missed the alert whenever a single record jumped the ratio past
 	// the band (e.g. a 100MB response against a 1GB limit).
 	if alertFn != nil {
-		crossed := func(prev, cur, lim int64, frac float64) bool {
-			threshold := frac * float64(lim)
-			return float64(prev) < threshold && float64(cur) >= threshold
-		}
-		if monthlyLimit > 0 {
-			prev := monthlyBytes - bytes
-			if crossed(prev, monthlyBytes, monthlyLimit, 1.0) {
-				alertFn(host, "monthly_exceeded", monthlyBytes, monthlyLimit)
-			} else if crossed(prev, monthlyBytes, monthlyLimit, 0.9) {
-				alertFn(host, "monthly_90", monthlyBytes, monthlyLimit)
+		// Call user callbacks after releasing usage.mu so they can query usage.
+		notify = func() {
+			crossed := func(prev, cur, lim int64, frac float64) bool {
+				threshold := frac * float64(lim)
+				return float64(prev) < threshold && float64(cur) >= threshold
 			}
-		}
-		if dailyLimit > 0 {
-			prev := dailyBytes - bytes
-			if crossed(prev, dailyBytes, dailyLimit, 1.0) {
-				alertFn(host, "daily_exceeded", dailyBytes, dailyLimit)
-			} else if crossed(prev, dailyBytes, dailyLimit, 0.9) {
-				alertFn(host, "daily_90", dailyBytes, dailyLimit)
+			if monthlyLimit > 0 {
+				prev := monthlyBytes - bytes
+				if crossed(prev, monthlyBytes, monthlyLimit, 1.0) {
+					alertFn(host, "monthly_exceeded", monthlyBytes, monthlyLimit)
+				} else if crossed(prev, monthlyBytes, monthlyLimit, 0.9) {
+					alertFn(host, "monthly_90", monthlyBytes, monthlyLimit)
+				}
+			}
+			if dailyLimit > 0 {
+				prev := dailyBytes - bytes
+				if crossed(prev, dailyBytes, dailyLimit, 1.0) {
+					alertFn(host, "daily_exceeded", dailyBytes, dailyLimit)
+				} else if crossed(prev, dailyBytes, dailyLimit, 0.9) {
+					alertFn(host, "daily_90", dailyBytes, dailyLimit)
+				}
 			}
 		}
 	}

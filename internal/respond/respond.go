@@ -59,6 +59,7 @@ func ErrorCause(w http.ResponseWriter, code int, msg string, cause error) {
 
 func writeError(w http.ResponseWriter, code int, msg string, cause error) {
 	h := w.Header()
+	h.Del("Content-Length")
 	setBaseHeaders(h)
 	w.WriteHeader(code)
 	reqID := h.Get("X-Request-ID")

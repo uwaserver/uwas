@@ -220,6 +220,9 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 	if err != nil {
 		record.Success = false
 		record.Error = err.Error()
+		if stderr.Len() > 0 {
+			record.Error += ": " + stderr.String()
+		}
 	} else {
 		record.Success = true
 	}
@@ -227,8 +230,11 @@ func (m *Monitor) Execute(domain, schedule, command string) ExecutionRecord {
 	m.RecordExecution(record)
 
 	// Trigger alert on failure
-	if !record.Success && m.alertFn != nil {
-		m.alertFn(domain, command, record.Output+record.Error, record.ExitCode)
+	m.mu.RLock()
+	alertFn := m.alertFn
+	m.mu.RUnlock()
+	if !record.Success && alertFn != nil {
+		alertFn(domain, command, record.Output+record.Error, record.ExitCode)
 	}
 
 	return record

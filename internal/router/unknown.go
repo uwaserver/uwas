@@ -124,9 +124,10 @@ func (t *UnknownHostTracker) Dismiss(host string) {
 	}
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	delete(t.hosts, host)
 	delete(t.blocked, host)
+	t.mu.Unlock()
+	t.saveBlocked()
 }
 
 // List returns all tracked unknown hosts sorted by hit count descending.

@@ -226,7 +226,7 @@ func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Rea
 	// Parse Status header
 	if status := headers.Get("Status"); status != "" {
 		if len(status) >= 3 {
-			if code, err := strconv.Atoi(status[:3]); err == nil {
+			if code, err := strconv.Atoi(status[:3]); err == nil && code >= 100 && code <= 999 {
 				statusCode = code
 			}
 		}

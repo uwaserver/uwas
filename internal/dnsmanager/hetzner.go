@@ -88,10 +88,10 @@ func (p *HetznerProvider) ListZones() ([]Zone, error) {
 			zones = append(zones, Zone{ID: z.ID, Name: z.Name, Status: "active"})
 		}
 		if len(resp.Zones) == 0 || resp.Meta.Pagination.LastPage <= page {
-			break
+			return zones, nil
 		}
 	}
-	return zones, nil
+	return nil, fmt.Errorf("hetzner: zone pagination exceeds 1000 pages")
 }
 
 func (p *HetznerProvider) FindZoneByDomain(domain string) (*Zone, error) {
@@ -146,10 +146,10 @@ func (p *HetznerProvider) ListRecords(zoneID string) ([]Record, error) {
 			records = append(records, Record{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Value, TTL: r.TTL})
 		}
 		if len(resp.Records) == 0 || resp.Meta.Pagination.LastPage <= page {
-			break
+			return records, nil
 		}
 	}
-	return records, nil
+	return nil, fmt.Errorf("hetzner: record pagination exceeds 1000 pages")
 }
 
 func (p *HetznerProvider) CreateRecord(zoneID string, rec Record) (*Record, error) {

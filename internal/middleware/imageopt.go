@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/uwaserver/uwas/internal/pathsafe"
 )
 
 // imageExtensions maps original image extensions to their lowercase form.
@@ -96,6 +98,9 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				// e.g. /images/photo.jpg → /images/photo.jpg.webp
 				relPath := filepath.FromSlash(r.URL.Path)
 				diskPath := filepath.Join(docRoot, relPath) + c.ext
+				if !pathsafe.IsWithinBase(docRoot, diskPath) || !pathsafe.IsWithinBaseResolved(docRoot, diskPath) {
+					continue
+				}
 
 				info, err := os.Stat(diskPath)
 				if err != nil || info.IsDir() {
@@ -122,6 +127,10 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 				relPath := filepath.FromSlash(r.URL.Path)
 				srcPath := filepath.Join(docRoot, relPath)
 				dstPath := srcPath + c.ext
+				if !pathsafe.IsWithinBase(docRoot, srcPath) || !pathsafe.IsWithinBaseResolved(docRoot, srcPath) ||
+					!pathsafe.IsWithinBase(docRoot, dstPath) || !pathsafe.IsWithinBaseResolved(docRoot, dstPath) {
+					continue
+				}
 
 				if converted := convertImage(srcPath, dstPath, c.format); converted {
 					if f, err := os.Open(dstPath); err == nil {

@@ -68,7 +68,9 @@ type logWriter struct {
 }
 
 func (w *logWriter) Write(p []byte) (int, error) {
-	w.logger.Log(context.Background(), w.level, strings.TrimRight(string(p), "\n"))
+	if w.logger.Enabled(context.Background(), w.level) {
+		w.logger.Log(context.Background(), w.level, strings.TrimRight(string(p), "\n"))
+	}
 	return len(p), nil
 }
 

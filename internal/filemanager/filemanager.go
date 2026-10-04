@@ -32,6 +32,11 @@ type Entry struct {
 
 // List returns directory contents. Path is relative to baseDir.
 func List(baseDir, relPath string) ([]Entry, error) {
+	absBase, err := absFunc(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("invalid web root: %w", err)
+	}
+	baseDir = absBase
 	fullPath := safePath(baseDir, relPath)
 	if fullPath == "" {
 		return nil, fmt.Errorf("invalid path")
@@ -133,12 +138,26 @@ func SaveUpload(baseDir, relPath string, src io.Reader) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return 0, fmt.Errorf("create directory for upload: %w", err)
 	}
+	// Finish reading the upload before truncating an existing destination.
+	staged, err := os.CreateTemp(filepath.Dir(fullPath), ".upload-*")
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(staged.Name())
+	defer staged.Close()
+	n, err := io.Copy(staged, src)
+	if err != nil {
+		return n, err
+	}
+	if _, err := staged.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
 	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
-	return io.Copy(f, src)
+	return io.Copy(f, staged)
 }
 
 // DiskUsage returns total bytes used under a directory.
@@ -252,6 +271,17 @@ func resolvePath(path string) (string, error) {
 		}
 		if !os.IsNotExist(err) {
 			return "", err
+		}
+		if info, statErr := os.Lstat(cur); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			link, linkErr := os.Readlink(cur)
+			if linkErr != nil {
+				return "", linkErr
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(cur), link)
+			}
+			cur = link
+			continue
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {

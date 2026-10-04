@@ -66,7 +66,8 @@ func Check(domain string) Result {
 		serverIPSet[sip] = true
 	}
 	for _, ip := range ips {
-		if serverIPSet[ip] {
+		parsed := net.ParseIP(ip)
+		if parsed != nil && serverIPSet[parsed.String()] {
 			r.PointsHere = true
 			break
 		}

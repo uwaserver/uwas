@@ -144,8 +144,12 @@ func (hc *HealthChecker) checkOne(b *Backend) {
 		hc.recordFailure(b)
 		return
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, bodyErr := io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
+	if bodyErr != nil {
+		hc.recordFailure(b)
+		return
+	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		hc.recordSuccess(b)

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
+	"strconv"
 )
 
 // BasicAuth returns middleware that requires HTTP Basic [REDACTED]
@@ -15,6 +16,7 @@ func BasicAuth(users map[string]string, realm string) Middleware {
 	if realm == "" {
 		realm = "Restricted"
 	}
+	challenge := "Basic realm=" + strconv.Quote(realm)
 
 	// Pre-hash passwords for constant-time comparison
 	hashed := make(map[string][32]byte, len(users))
@@ -26,21 +28,21 @@ func BasicAuth(users map[string]string, realm string) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, pass, ok := r.BasicAuth()
 			if !ok {
-				w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
+				w.Header().Set("WWW-Authenticate", challenge)
 				http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 				return
 			}
 
 			expectedHash, userExists := hashed[user]
 			if !userExists {
-				w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
+				w.Header().Set("WWW-Authenticate", challenge)
 				http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 				return
 			}
 
 			actualHash := sha256.Sum256([]byte(pass))
 			if subtle.ConstantTimeCompare(expectedHash[:], actualHash[:]) != 1 {
-				w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
+				w.Header().Set("WWW-Authenticate", challenge)
 				http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 				return
 			}

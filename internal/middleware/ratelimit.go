@@ -272,15 +272,21 @@ func clientIP(rl *RateLimiter, r *http.Request) string {
 	}()
 
 	// If we have trusted proxies configured, check X-Forwarded-For and X-Real-IP
-	if rl != nil && rl.trustedProxies != nil {
+	var trusted []*net.IPNet
+	if rl != nil {
+		rl.mu.RLock()
+		trusted = rl.trustedProxies
+		rl.mu.RUnlock()
+	}
+	if len(trusted) > 0 {
 		rip := net.ParseIP(remoteIP)
-		if rip != nil && rl.isTrustedProxy(rip) {
+		if rip != nil && isTrusted(rip, trusted) {
 			// Trust X-Forwarded-For from trusted proxies. Use the rightmost
 			// UNTRUSTED IP, not the leftmost: the leftmost entry is fully
 			// client-controlled, so a client behind the trusted proxy could
 			// prepend a fake IP to evade or poison per-IP rate limiting.
 			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				if ip := extractRealIP(xff, rl.trustedProxies); ip != "" {
+				if ip := extractRealIP(xff, trusted); ip != "" {
 					return ip
 				}
 			}

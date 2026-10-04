@@ -179,7 +179,10 @@ func loadDomainFile(path string) ([]Domain, error) {
 	var wrapper struct {
 		Domains []Domain `yaml:"domains"`
 	}
-	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err == nil && len(wrapper.Domains) > 0 {
+	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	if len(wrapper.Domains) > 0 {
 		return wrapper.Domains, nil
 	}
 

@@ -274,6 +274,10 @@ func updateWPConfigURLs(path, domain string, log *strings.Builder) {
 
 	// 0600: wp-config.php holds DB credentials; keep it owner-only like the
 	// installer writes it, and surface a write failure instead of dropping it.
+	if err := os.Chmod(path, 0600); err != nil {
+		log.WriteString(fmt.Sprintf("chmod wp-config: %s\n", err))
+		return
+	}
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		log.WriteString(fmt.Sprintf("write wp-config: %s\n", err))
 		return

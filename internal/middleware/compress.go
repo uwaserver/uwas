@@ -184,7 +184,7 @@ func CompressWith(minSize int, policyFor func(*http.Request) CompressionPolicy) 
 
 			enc := selectEncoding(r.Header.Get("Accept-Encoding"))
 			// Fall back to the other encoding when the policy rules one out.
-			if enc == encodingBrotli && !policy.allows(enc) && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			if enc == encodingBrotli && !policy.allows(enc) && encodingAccepted(r.Header.Get("Accept-Encoding"), "gzip") {
 				enc = encodingGzip
 			}
 			if enc == encodingNone || !policy.allows(enc) {

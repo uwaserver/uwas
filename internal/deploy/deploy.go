@@ -235,7 +235,8 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 		if _, err := os.Stat(cleanKey); err != nil {
 			return fmt.Errorf("SSH key not found: %s", cleanKey)
 		}
-		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null", cleanKey)
+		quotedKey := "'" + strings.ReplaceAll(cleanKey, "'", "'\\''") + "'"
+		gitEnv["GIT_SSH_COMMAND"] = fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null", quotedKey)
 		log.WriteString("Using SSH key: " + cleanKey + "\n")
 	}
 
@@ -347,12 +348,12 @@ func (m *Manager) deployGit(req DeployRequest, appRoot, branch string, cancelCh 
 func waitForAppImpl(addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		conn, err := net.DialTimeout("tcp", addr, min(2*time.Second, time.Until(deadline)))
 		if err == nil {
 			conn.Close()
 			return nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(min(500*time.Millisecond, time.Until(deadline)))
 	}
 	return fmt.Errorf("app not responding at %s after %s", addr, timeout)
 }
@@ -569,11 +570,12 @@ func validateShellCommand(command string) error {
 // injectTokenInURL rewrites https://github.com/user/repo.git
 // to https://{token}@github.com/user/repo.git for private repo access.
 func injectTokenInURL(gitURL, token string) string {
-	if strings.HasPrefix(gitURL, "https://") {
-		return "https://" + token + "@" + strings.TrimPrefix(gitURL, "https://")
+	lower := strings.ToLower(gitURL)
+	if strings.HasPrefix(lower, "https://") {
+		return "https://" + token + "@" + gitURL[len("https://"):]
 	}
-	if strings.HasPrefix(gitURL, "http://") {
-		return "http://" + token + "@" + strings.TrimPrefix(gitURL, "http://")
+	if strings.HasPrefix(lower, "http://") {
+		return "http://" + token + "@" + gitURL[len("http://"):]
 	}
 	return gitURL // SSH URLs don't need token injection
 }

@@ -34,6 +34,9 @@ func (r *CachedResponse) Size() int64 {
 			size += int64(len(v))
 		}
 	}
+	for _, tag := range r.Tags {
+		size += int64(len(tag))
+	}
 	size += 64 // struct overhead
 	return size
 }

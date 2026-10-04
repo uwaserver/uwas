@@ -41,12 +41,12 @@ func matchURLPattern(pattern, urlPath string) bool {
 	if pattern == "" {
 		return false
 	}
-	if prefix, ok := strings.CutSuffix(pattern, "*"); ok && !strings.Contains(prefix, "*") {
+	if prefix, ok := strings.CutSuffix(pattern, "*"); ok && !strings.ContainsAny(prefix, "*?[\\") {
 		return strings.HasPrefix(urlPath, prefix)
 	}
 	// "*.woff2" is a suffix match. path.Match would refuse it: its * never
 	// crosses a slash, so it can only ever match a bare filename.
-	if suffix, ok := strings.CutPrefix(pattern, "*"); ok && !strings.Contains(suffix, "*") {
+	if suffix, ok := strings.CutPrefix(pattern, "*"); ok && !strings.ContainsAny(suffix, "*?[\\") {
 		return strings.HasSuffix(urlPath, suffix)
 	}
 	if ok, err := path.Match(pattern, urlPath); err == nil && ok {

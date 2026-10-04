@@ -172,7 +172,7 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 	case "critical":
 		emoji = "🚨"
 	}
-	text := fmt.Sprintf("%s <b>%s</b>\n%s\n<i>%s</i>", emoji, msg.Title, msg.Body, msg.Source)
+	text := fmt.Sprintf("%s <b>%s</b>\n%s\n<i>%s</i>", emoji, html.EscapeString(msg.Title), html.EscapeString(msg.Body), html.EscapeString(msg.Source))
 	if id := formatServerIdentity(); id != "" {
 		// Identify which UWAS host sent this — useful when one bot/chat
 		// receives alerts from multiple servers.

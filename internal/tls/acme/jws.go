@@ -174,6 +174,9 @@ func (p *noncePool) get(client *http.Client, newNonceURL string) (string, error)
 		return "", err
 	}
 	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("new nonce: HTTP %d", resp.StatusCode)
+	}
 
 	nonce := resp.Header.Get("Replay-Nonce")
 	if nonce == "" {

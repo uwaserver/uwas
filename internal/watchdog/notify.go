@@ -105,7 +105,8 @@ func SystemdInterval() time.Duration {
 		return 0
 	}
 	n, err := strconv.ParseInt(usec, 10, 64)
-	if err != nil || n <= 0 {
+	// Reject values that overflow when converted from microseconds to nanoseconds.
+	if err != nil || n <= 0 || n > int64((1<<63-1)/time.Microsecond) {
 		return 0
 	}
 	return time.Duration(n) * time.Microsecond

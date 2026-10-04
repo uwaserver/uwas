@@ -66,7 +66,10 @@ func EncodeHeader(w io.Writer, h *Header) error {
 	binary.BigEndian.PutUint16(buf[4:6], h.ContentLength)
 	buf[6] = h.PaddingLength
 	buf[7] = h.Reserved
-	_, err := w.Write(buf[:])
+	n, err := w.Write(buf[:])
+	if err == nil && n != len(buf) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
@@ -110,14 +113,18 @@ func WriteRecord(w io.Writer, recType uint8, requestID uint16, content []byte) e
 		return err
 	}
 	if contentLen > 0 {
-		if _, err := w.Write(content); err != nil {
+		if n, err := w.Write(content); err != nil {
 			return err
+		} else if n != contentLen {
+			return io.ErrShortWrite
 		}
 	}
 	if padding > 0 {
 		pad := make([]byte, padding)
-		if _, err := w.Write(pad); err != nil {
+		if n, err := w.Write(pad); err != nil {
 			return err
+		} else if n != padding {
+			return io.ErrShortWrite
 		}
 	}
 	return nil

@@ -314,15 +314,24 @@ func lookupCountry(ip string, db map[string]string, cache *geoCache) string {
 	// Try local DB first (fast, no network)
 	if len(db) > 0 {
 		parsed := net.ParseIP(ip)
+		bestPrefix := -1
+		bestCountry := ""
 		for cidr, country := range db {
 			_, network, err := net.ParseCIDR(cidr)
 			if err != nil {
 				continue
 			}
 			if network.Contains(parsed) {
-				cache.set(ip, country)
-				return country
+				ones, _ := network.Mask.Size()
+				if ones > bestPrefix {
+					bestPrefix = ones
+					bestCountry = country
+				}
 			}
+		}
+		if bestPrefix >= 0 {
+			cache.set(ip, bestCountry)
+			return bestCountry
 		}
 	}
 

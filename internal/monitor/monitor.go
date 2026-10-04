@@ -205,12 +205,15 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 		status = "down"
 		statusCode = 0
 	} else {
-		io.Copy(io.Discard, resp.Body)
+		_, bodyErr := io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		statusCode = resp.StatusCode
 		check.StatusCode = statusCode
 
-		if statusCode >= 200 && statusCode < 400 {
+		if bodyErr != nil {
+			check.Error = bodyErr.Error()
+			status = "down"
+		} else if statusCode >= 200 && statusCode < 400 {
 			status = "up"
 		} else if statusCode >= 400 && statusCode < 500 {
 			status = "degraded"

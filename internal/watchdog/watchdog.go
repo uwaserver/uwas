@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,7 +40,8 @@ type Watchdog struct {
 	// alive: this tests whether the accept → parse → handler → response path
 	// still completes, not whether a particular route is correct. A 421 for an
 	// unconfigured Host is a perfectly healthy answer.
-	probe func(context.Context) error
+	probeMu sync.RWMutex
+	probe   func(context.Context) error
 
 	notifier *Notifier
 
@@ -66,7 +68,11 @@ func New(cfg Config, addr string, useTLS bool, log *logger.Logger) *Watchdog {
 }
 
 // SetProbe replaces the liveness check.
-func (w *Watchdog) SetProbe(fn func(context.Context) error) { w.probe = fn }
+func (w *Watchdog) SetProbe(fn func(context.Context) error) {
+	w.probeMu.Lock()
+	w.probe = fn
+	w.probeMu.Unlock()
+}
 
 // Healthy reports the result of the most recent probe round.
 func (w *Watchdog) Healthy() bool { return w == nil || w.healthy.Load() }
@@ -132,7 +138,10 @@ func (w *Watchdog) Run(ctx context.Context) {
 
 func (w *Watchdog) tick(ctx context.Context) {
 	pctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
-	err := w.probe(pctx)
+	w.probeMu.RLock()
+	probe := w.probe
+	w.probeMu.RUnlock()
+	err := probe(pctx)
 	cancel()
 	w.probes.Add(1)
 

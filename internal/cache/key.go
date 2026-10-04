@@ -94,7 +94,8 @@ func generateKey(r *http.Request, varyHeaders []string, varyByQuery bool) string
 		writeKeyPart("http")
 	}
 	writeKeyPart(host)
-	writeKeyPart(r.URL.Path)
+	// Preserve encoded separators that upstream handlers can distinguish.
+	writeKeyPart(r.URL.EscapedPath())
 
 	// Sorted query params for consistency (key=a&b and key=b&a → same key).
 	if varyByQuery && r.URL.RawQuery != "" {

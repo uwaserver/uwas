@@ -110,7 +110,10 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 func liftLimit(path, unlimited string) error {
 	cur, err := osReadFileFn(path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
 	if strings.TrimSpace(string(cur)) == unlimited {
 		return nil

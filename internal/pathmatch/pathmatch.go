@@ -24,6 +24,7 @@ func compile(pattern string) *regexp.Regexp {
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
+		regexCache.Store(pattern, (*regexp.Regexp)(nil))
 		return nil
 	}
 	regexCache.Store(pattern, re)

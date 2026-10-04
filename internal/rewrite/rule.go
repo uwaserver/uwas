@@ -103,7 +103,11 @@ func ParseFlags(s string) Flags {
 		case upper == "R":
 			f.Redirect = 302
 		case strings.HasPrefix(upper, "S="):
-			f.Skip, _ = strconv.Atoi(part[2:])
+			var err error
+			f.Skip, err = strconv.Atoi(part[2:])
+			if err != nil {
+				f.Skip = 0
+			}
 		case strings.HasPrefix(upper, "E="):
 			f.EnvironmentVar = part[2:]
 		}
