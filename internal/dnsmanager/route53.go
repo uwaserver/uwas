@@ -165,19 +165,42 @@ func (p *Route53Provider) DeleteRecord(zoneID, recordID string) error {
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid record ID: %s", recordID)
 	}
-	rec := Record{Name: parts[0], Type: parts[1]}
-	_, err := p.changeRecord(zoneID, "DELETE", rec)
+	records, err := p.ListRecords(zoneID)
+	if err != nil {
+		return err
+	}
+	var rec Record
+	var values []string
+	for _, existing := range records {
+		if existing.Name == strings.TrimSuffix(parts[0], ".") && existing.Type == parts[1] {
+			rec = existing
+			values = append(values, existing.Content)
+		}
+	}
+	if len(values) == 0 {
+		return fmt.Errorf("record not found: %s", recordID)
+	}
+	// Route53 requires DELETE to match the existing TTL and every value.
+	_, err = p.changeRecordValues(zoneID, "DELETE", rec, values)
 	return err
 }
 
 func (p *Route53Provider) changeRecord(zoneID, action string, rec Record) (*Record, error) {
+	return p.changeRecordValues(zoneID, action, rec, []string{rec.Content})
+}
+
+func (p *Route53Provider) changeRecordValues(zoneID, action string, rec Record, values []string) (*Record, error) {
 	name := rec.Name
 	if !strings.HasSuffix(name, ".") {
 		name += "."
 	}
 	ttl := rec.TTL
-	if ttl == 0 {
+	if ttl == 0 && action != "DELETE" {
 		ttl = 300
+	}
+	var resourceRecords strings.Builder
+	for _, value := range values {
+		resourceRecords.WriteString("<ResourceRecord><Value>" + xmlEscape(value) + "</Value></ResourceRecord>")
 	}
 	xmlBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
@@ -190,13 +213,13 @@ func (p *Route53Provider) changeRecord(zoneID, action string, rec Record) (*Reco
           <Type>%s</Type>
           <TTL>%d</TTL>
           <ResourceRecords>
-            <ResourceRecord><Value>%s</Value></ResourceRecord>
+            %s
           </ResourceRecords>
         </ResourceRecordSet>
       </Change>
     </Changes>
   </ChangeBatch>
-</ChangeResourceRecordSetsRequest>`, action, xmlEscape(name), xmlEscape(rec.Type), ttl, xmlEscape(rec.Content))
+</ChangeResourceRecordSetsRequest>`, action, xmlEscape(name), xmlEscape(rec.Type), ttl, resourceRecords.String())
 
 	_, err := p.r53Request("POST", "/hostedzone/"+zoneID+"/rrset", []byte(xmlBody))
 	if err != nil {

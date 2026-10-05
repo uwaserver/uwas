@@ -619,6 +619,10 @@ func TestRoute53_UpdateRecord_Error(t *testing.T) {
 
 func TestRoute53_DeleteRecord_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`<ListResourceRecordSetsResponse><ResourceRecordSets><ResourceRecordSet><Name>example.com.</Name><Type>A</Type><TTL>300</TTL><ResourceRecords><ResourceRecord><Value>192.0.2.1</Value></ResourceRecord></ResourceRecords></ResourceRecordSet></ResourceRecordSets></ListResourceRecordSetsResponse>`))
+			return
+		}
 		body, _ := io.ReadAll(r.Body)
 		s := string(body)
 		if !strings.Contains(s, "<Action>DELETE</Action>") {
