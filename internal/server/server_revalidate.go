@@ -115,6 +115,12 @@ func (s *Server) runRevalidate(domain *config.Domain, job staleJob) {
 	}
 
 	hdrs := result.Header.Clone()
+	if hdrs.Get("Content-Encoding") != "" {
+		// The handler already encoded this body; it cannot enter the
+		// canonical plaintext cache used by the compression middleware.
+		s.cache.PurgeKey(job.key)
+		return
+	}
 	// Same reasoning as the inline store path: the cached body is canonical
 	// uncompressed bytes and the compress middleware re-derives these on
 	// every hit.
