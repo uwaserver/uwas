@@ -142,6 +142,10 @@ func (s *Store) Load() ([]*App, []error, error) {
 			skipErrs = append(skipErrs, fmt.Errorf("apps: %s: %w", name, err))
 			continue
 		}
+		// ReadDir sorts .yaml before .yml; match pathFor's primary preference.
+		if _, exists := s.names[app.Name]; exists {
+			continue
+		}
 
 		s.applyDefaults(app)
 		s.names[app.Name] = struct{}{}
