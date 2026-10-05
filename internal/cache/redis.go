@@ -138,7 +138,10 @@ func (r *RedisCache) PurgeByTag(tag string) error {
 	for _, k := range keys {
 		data, err := r.client.Get(ctx, k) // k is already prefixed
 		if err != nil {
-			continue
+			if errors.Is(err, ErrRedisNotFound) {
+				continue
+			}
+			return err
 		}
 		var resp CachedResponse
 		if json.Unmarshal([]byte(data), &resp) != nil {
