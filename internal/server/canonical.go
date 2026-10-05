@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
@@ -54,6 +55,10 @@ func canonicalRedirectLocation(domain *config.Domain, r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
+	}
+	if _, port, err := net.SplitHostPort(r.Host); err == nil &&
+		!((scheme == "http" && port == "80") || (scheme == "https" && port == "443")) {
+		target = net.JoinHostPort(target, port)
 	}
 	return scheme + "://" + target + r.URL.RequestURI()
 }
