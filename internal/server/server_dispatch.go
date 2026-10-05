@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1054,6 +1055,19 @@ func (s *Server) handleRedirect(ctx *router.RequestContext, domain *config.Domai
 	target := domain.Redirect.Target
 	if domain.Redirect.PreservePath {
 		target = strings.TrimRight(target, "/") + ctx.Request.URL.RequestURI()
+		if dest, err := url.Parse(domain.Redirect.Target); err == nil {
+			escapedPath := strings.TrimRight(dest.EscapedPath(), "/") + ctx.Request.URL.EscapedPath()
+			dest.Path, _ = url.PathUnescape(escapedPath)
+			dest.RawPath = escapedPath
+			if query := ctx.Request.URL.RawQuery; query != "" {
+				if dest.RawQuery != "" {
+					dest.RawQuery += "&"
+				}
+				dest.RawQuery += query
+			}
+			dest.ForceQuery = dest.ForceQuery || ctx.Request.URL.ForceQuery
+			target = dest.String()
+		}
 	}
 	status := domain.Redirect.Status
 	if status == 0 {
