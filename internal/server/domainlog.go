@@ -215,6 +215,9 @@ func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 		return
 	}
 	dlf.f = f
+	if dlf.buf != nil {
+		dlf.buf.Reset(f)
+	}
 	dlf.written = 0
 }
 
