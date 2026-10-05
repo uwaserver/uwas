@@ -66,6 +66,14 @@ func ResolveCacheControl(d *config.Domain, urlPath string, cacheEnabled bool) Ca
 			}
 		}
 	}
+	// The dispatcher removes headers after applying both addition maps.
+	for _, set := range [][]string{d.Headers.Remove, d.Headers.ResponseRemove} {
+		for _, k := range set {
+			if strings.EqualFold(k, "Cache-Control") {
+				out = CacheControlDecision{Source: "none"}
+			}
+		}
+	}
 
 	// 3. Cache rules, evaluated in order with the last match winning — and
 	// applied after the headers above, so they win over both. A bypass rule
