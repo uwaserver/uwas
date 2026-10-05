@@ -235,6 +235,11 @@ func (w *compressResponseWriter) WriteHeader(code int) {
 	if w.wroteHeader {
 		return
 	}
+	// Informational responses do not commit the final status or body policy.
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
 	w.statusCode = code
 	w.wroteHeader = true
 

@@ -596,6 +596,7 @@ func TestCompressGzipNegotiation(t *testing.T) {
 
 func TestCompressWriteHeader1xxFlushesImmediately(t *testing.T) {
 	h := Compress(8)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusEarlyHints) // 103 < 200
 		w.Write([]byte("body data here"))
 	}))
@@ -603,8 +604,8 @@ func TestCompressWriteHeader1xxFlushesImmediately(t *testing.T) {
 	r.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
-	if rec.Header().Get("Content-Encoding") == "gzip" {
-		t.Fatal("1xx should not be compressed")
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatal("1xx must not prevent compression of the final response body")
 	}
 }
 
