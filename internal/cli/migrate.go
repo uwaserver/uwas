@@ -139,8 +139,7 @@ func parseApacheConfig(f *os.File) []apacheVHost {
 			current.serverName = extractApacheValue(line)
 		}
 		if strings.HasPrefix(lower, "documentroot") {
-			val := extractApacheValue(line)
-			current.documentRoot = strings.Trim(val, `"'`)
+			current.documentRoot = extractApacheValue(line)
 		}
 		if strings.HasPrefix(lower, "sslengine") {
 			val := strings.ToLower(extractApacheValue(line))
@@ -177,11 +176,27 @@ func extractApacheVHostAddr(line string) string {
 }
 
 func extractApacheValue(line string) string {
+	line = strings.TrimSpace(line)
 	parts := strings.Fields(line)
-	if len(parts) >= 2 {
+	if len(parts) < 2 {
+		return ""
+	}
+	arg := strings.TrimSpace(line[len(parts[0]):])
+	quote := arg[0]
+	if quote != '"' && quote != '\'' {
 		return parts[1]
 	}
-	return ""
+	var value strings.Builder
+	for i := 1; i < len(arg); i++ {
+		if arg[i] == quote {
+			break
+		}
+		if arg[i] == '\\' && i+1 < len(arg) && (arg[i+1] == quote || arg[i+1] == '\\') {
+			i++
+		}
+		value.WriteByte(arg[i])
+	}
+	return value.String()
 }
 
 func convertApacheToYAML(vhosts []apacheVHost) string {

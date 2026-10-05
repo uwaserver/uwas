@@ -440,7 +440,7 @@ func TestExtractApacheValue(t *testing.T) {
 		want string
 	}{
 		{"ServerName example.com", "example.com"},
-		{`DocumentRoot "/var/www/html"`, `"/var/www/html"`},
+		{`DocumentRoot "/var/www/html"`, `/var/www/html`},
 		{"SSLEngine on", "on"},
 		{"", ""},
 		{"SingleWord", ""},
