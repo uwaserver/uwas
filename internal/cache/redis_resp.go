@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -74,8 +73,8 @@ func newRespClient(cfg config.RedisConfig) (*respClient, error) {
 }
 
 func hostFromAddr(addr string) string {
-	if i := strings.LastIndex(addr, ":"); i > 0 {
-		return addr[:i]
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
 	}
 	return addr
 }
