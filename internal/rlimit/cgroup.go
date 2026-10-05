@@ -51,7 +51,10 @@ func Apply(domain string, limits Limits) (cgroupPath string, err error) {
 		// since lowered to 0 — "0 means unlimited" — so fall through and
 		// lift them.
 		if _, err := osStatFn(path); err != nil {
-			return "", nil
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", fmt.Errorf("stat cgroup %s: %w", path, err)
 		}
 	} else {
 		if err := osMkdirAllFn(cgroupBase, 0755); err != nil {
