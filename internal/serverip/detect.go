@@ -121,7 +121,7 @@ func PublicIP() string {
 		// response, truncating the IP and failing the parse.
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
 		resp.Body.Close()
-		if err != nil {
+		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			continue
 		}
 		ip := strings.TrimSpace(string(body))

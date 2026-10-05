@@ -783,6 +783,9 @@ func TestPublicIP_EmptyURLList(t *testing.T) {
 
 func TestPublicIP_Non200Status(t *testing.T) {
 	saveAndRestore(t)
+	netInterfaces = func() ([]net.Interface, error) {
+		return nil, errors.New("no interfaces")
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -795,10 +798,9 @@ func TestPublicIP_Non200Status(t *testing.T) {
 		return client.Get(url)
 	}
 
-	// The code doesn't check status codes — it reads the body regardless.
 	ip := PublicIP()
-	if ip != "10.0.0.1" {
-		t.Errorf("expected '10.0.0.1' (body read regardless of status), got %q", ip)
+	if ip != "" {
+		t.Errorf("expected empty for failed service with no local fallback, got %q", ip)
 	}
 }
 
