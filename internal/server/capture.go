@@ -71,9 +71,5 @@ func (rc *responseCapture) Header() http.Header {
 // capturedHeaders snapshots the current response headers. Call after the
 // handler has finished writing so all headers are present.
 func (rc *responseCapture) capturedHeaders() http.Header {
-	h := make(http.Header)
-	for k, v := range rc.ResponseWriter.Header() {
-		h[k] = v
-	}
-	return h
+	return rc.ResponseWriter.Header().Clone()
 }
