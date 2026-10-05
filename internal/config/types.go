@@ -60,7 +60,15 @@ func (d Duration) MarshalYAML() (any, error) {
 
 func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
-	if err := unmarshal(&s); err != nil {
+	if err := unmarshal(&s); err == nil {
+		if dur, err := time.ParseDuration(s); err == nil {
+			d.Duration = dur
+			return nil
+		}
+	}
+	// YAML can decode an integer into a string, so try seconds after a
+	// missing-unit parse error as well as a string decode error.
+	{
 		var secs int
 		if err2 := unmarshal(&secs); err2 != nil {
 			// Neither a duration string nor an integer; report the int-path
@@ -73,12 +81,6 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 		d.Duration = time.Duration(secs) * time.Second
 		return nil
 	}
-	dur, err := time.ParseDuration(s)
-	if err != nil {
-		return err
-	}
-	d.Duration = dur
-	return nil
 }
 
 // ByteSize represents a size in bytes, parsed from strings like "512MB", "10GB".
