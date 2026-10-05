@@ -84,6 +84,7 @@ func AccessLog(log *logger.Logger, enabled func() bool) Middleware {
 
 			// Wrap response writer to capture status + bytes
 			rw := router.NewResponseWriter(w)
+			defer router.ReleaseResponseWriter(rw)
 
 			next.ServeHTTP(rw, r)
 
