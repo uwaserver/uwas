@@ -95,6 +95,7 @@ func (p *HetznerProvider) ListZones() ([]Zone, error) {
 }
 
 func (p *HetznerProvider) FindZoneByDomain(domain string) (*Zone, error) {
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
 	zones, err := p.ListZones()
 	if err != nil {
 		return nil, err
@@ -109,7 +110,8 @@ func (p *HetznerProvider) FindZoneByDomain(domain string) (*Zone, error) {
 		return len(zones[i].Name) > len(zones[j].Name)
 	})
 	for _, z := range zones {
-		if z.Name == domain || strings.HasSuffix(domain, "."+z.Name) {
+		name := strings.ToLower(strings.TrimSuffix(z.Name, "."))
+		if name == domain || strings.HasSuffix(domain, "."+name) {
 			return &z, nil
 		}
 	}
