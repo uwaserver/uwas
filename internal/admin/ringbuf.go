@@ -66,6 +66,9 @@ func (r *ringBuffer[T]) Snapshot() []T {
 func (r *ringBuffer[T]) Seed(tail []T) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(tail) > r.cap {
+		tail = tail[len(tail)-r.cap:]
+	}
 	var zero T
 	for i := range r.entries {
 		r.entries[i] = zero
