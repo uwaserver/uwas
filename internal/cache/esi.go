@@ -175,7 +175,7 @@ func parseFragmentTTL(headers http.Header) time.Duration {
 		return 0
 	}
 	for _, part := range strings.Split(cc, ",") {
-		part = strings.TrimSpace(part)
+		part = strings.ToLower(strings.TrimSpace(part))
 		if strings.HasPrefix(part, "max-age=") {
 			var secs int
 			if _, err := fmt.Sscanf(part, "max-age=%d", &secs); err == nil && secs > 0 {
