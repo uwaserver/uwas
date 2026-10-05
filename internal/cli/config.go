@@ -22,7 +22,9 @@ func (c *ConfigCommand) Run(args []string) error {
 		subcommand = args[0]
 		args = args[1:]
 	}
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	switch subcommand {
 	case "validate":
