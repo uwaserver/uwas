@@ -27,6 +27,11 @@ func (m *Manager) Installations() []PHPInstall {
 	defer m.mu.RUnlock()
 	out := make([]PHPInstall, len(m.installations))
 	copy(out, m.installations)
+	for i := range out {
+		if out[i].Extensions != nil {
+			out[i].Extensions = append([]string{}, out[i].Extensions...)
+		}
+	}
 	return out
 }
 
