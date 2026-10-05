@@ -19,7 +19,7 @@ type CircuitBreaker struct {
 	threshold   int           // failures to trip open
 	timeout     time.Duration // time before half-open
 	lastFailure atomic.Int64  // UnixNano timestamp
-	failures    atomic.Int32
+	failures    atomic.Int64
 
 	// state is accessed atomically; half-open probe is gated by a CAS on probeSlot.
 	// probeSlot: 0 = no probe in flight, 1 = probe in flight
@@ -106,7 +106,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 	// the probeSlot CAS — so the domain 503s forever even after the upstream
 	// has recovered. lastFailure is still stamped above, so the open window
 	// restarts from the probe failure instead of hot-looping into half-open.
-	if CircuitState(cb.state.Load()) == CircuitHalfOpen || cb.failures.Load() >= int32(cb.threshold) {
+	if CircuitState(cb.state.Load()) == CircuitHalfOpen || cb.failures.Load() >= int64(cb.threshold) {
 		cb.state.Store(int32(CircuitOpen))
 		cb.probeSlot.Store(0)
 	}
