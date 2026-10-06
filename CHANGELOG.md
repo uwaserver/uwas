@@ -7,20 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.27] - 2026-10-06
+## [0.11.28] - 2026-10-06
+
+### Fixed
+
+- **Dashboard lint no longer fails the release job.** Test files used
+  `Record<string, any>`; CI treats `@typescript-eslint/no-explicit-any` as
+  an error, so v0.11.27 never published binaries.
+- **Image conversions publish atomically.** Concurrent readers no longer see
+  a half-written conversion file.
+- **Domain backup fails if the database dump fails** instead of shipping a
+  site archive that looks complete without the database.
 
 ### Added
 
-- **WAF `file_probe` family.** Scanner GETs for backup and secret filenames
-  (`phpinfo.php`, `secrets.json`, `config.yml`, `.bak` / `.orig` / `~`) are
-  blocked when the domain WAF is enabled. Empty `security.waf.rules` includes
-  this family; an explicit list must name `file_probe`.
+- **WAF `file_probe` family** (from the v0.11.27 tag that did not publish).
+  Scanner GETs for backup and secret filenames (`phpinfo.php`,
+  `secrets.json`, `config.yml`, `.bak` / `.orig` / `~`) are blocked when the
+  domain WAF is enabled. Empty `security.waf.rules` includes this family; an
+  explicit list must name `file_probe`.
 
 ### Changed
 
 - **Telegram / Slack / email titles** for `error_spike` (and other alert
   types) are human-readable. The 5xx spike body says HTTP 5xx and typical
   causes instead of a bare percentage.
+
+## [0.11.27] - 2026-10-06
+
+### Note
+
+- **Git tag only.** The release workflow failed on dashboard lint
+  (`no-explicit-any` in tests). Use **v0.11.28**.
 
 ## [0.11.26] - 2026-10-02
 

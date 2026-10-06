@@ -24,19 +24,26 @@ UWAS replaces your entire web server stack and hosting control panel with a sing
 
 One binary. Zero hassle.
 
-## Current Snapshot (v0.11.27)
+## Current Snapshot (v0.11.28)
 
 - **Dashboard pages:** 42 (`web/dashboard/src/pages`; `settingsSections.tsx` lives there too but is section definitions, not a page)
 - **Admin API routes:** 254+ explicit route registrations in `internal/admin/routes.go` under `/api/v1` plus dashboard/static handlers
 - **Go packages:** 71 (`go list ./...`) — 63 under `internal/`, 2 under `pkg/`; 57 carry tests
 - **CLI commands:** 19
 - **Test status:** all gates pass — `go build`, `go vet`, `staticcheck`, `go test`, `go test -race`, dashboard npm build; CI runs additional `govulncheck`, shellcheck, installer tests, Docker Compose validation, and docs/site builds
-- **Security/stability fixes:** v0.11.27 WAF `file_probe` for backup/secret scans, clearer 5xx Telegram text, on top of v0.11.26
+- **Security/stability fixes:** v0.11.28 publishes v0.11.27 WAF/`file_probe` + alert copy, atomic image conversions, lint fix for release
 - **Security posture:** risk score 2.1/10 (Low) per July 2026 reassessment
+
+**v0.11.28 highlights:**
+- Published binaries for the v0.11.27 product changes (that tag failed lint)
+- Image conversions publish atomically under concurrency
+- Domain backup fails closed if the database dump fails
+- Dashboard tests drop `any` so release `npm run lint` stays green
 
 **v0.11.27 highlights:**
 - WAF blocks scanner probes (`phpinfo.php`, `secrets.json`, `.bak`) when WAF is on
 - Alert titles spell out 5xx spikes instead of `error_spike`
+- (tag only — binaries in v0.11.28)
 
 **v0.11.26 highlights:**
 - Round-robin uses configured backend weights; circuit probes recover

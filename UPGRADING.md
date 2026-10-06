@@ -5,15 +5,23 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## Upgrading to v0.11.27
+## Upgrading to v0.11.28
 
-Drop-in. No config or data migration.
+Drop-in. Use this tag. The v0.11.27 Git tag is the same product change plus
+this release's lint and image-conversion fixes, but its GitHub release did
+not publish binaries (dashboard `npm run lint` failed on `no-explicit-any`).
 
 1. **WAF `file_probe`.** If WAF is on and `security.waf.rules` is empty, backup
    and secret-file probes are blocked (403). If the domain lists families
    explicitly, add `file_probe` or those GETs still reach the origin.
 2. **Alert copy** for error spikes names HTTP 5xx. Filters still use
    `error_spike`.
+
+---
+
+## Upgrading to v0.11.27
+
+Tag only — no binaries. Upgrade to **v0.11.28**.
 
 ---
 
