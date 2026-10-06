@@ -5,6 +5,18 @@ list of changes per release, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## Upgrading to v0.11.27
+
+Drop-in. No config or data migration.
+
+1. **WAF `file_probe`.** If WAF is on and `security.waf.rules` is empty, backup
+   and secret-file probes are blocked (403). If the domain lists families
+   explicitly, add `file_probe` or those GETs still reach the origin.
+2. **Alert copy** for error spikes names HTTP 5xx. Filters still use
+   `error_spike`.
+
+---
+
 ## Upgrading to v0.11.26
 
 Drop-in. No config or data migration.

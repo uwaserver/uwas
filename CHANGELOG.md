@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.27] - 2026-10-06
+
+### Added
+
+- **WAF `file_probe` family.** Scanner GETs for backup and secret filenames
+  (`phpinfo.php`, `secrets.json`, `config.yml`, `.bak` / `.orig` / `~`) are
+  blocked when the domain WAF is enabled. Empty `security.waf.rules` includes
+  this family; an explicit list must name `file_probe`.
+
+### Changed
+
+- **Telegram / Slack / email titles** for `error_spike` (and other alert
+  types) are human-readable. The 5xx spike body says HTTP 5xx and typical
+  causes instead of a bare percentage.
+
 ## [0.11.26] - 2026-10-02
 
 ### Fixed
