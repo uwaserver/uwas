@@ -125,7 +125,18 @@ describe('Domains edit round-trips the full security block', () => {
     await flush();
     await openEditAndSubmitWithSslMode('manual');
 
-    const body = apiMocks.updateDomain.mock.calls[0][1] as { security: Record<string, any> };
+    const body = apiMocks.updateDomain.mock.calls[0][1] as {
+      security: {
+        rate_limit: unknown;
+        ip_blacklist: unknown;
+        ip_whitelist: unknown;
+        hotlink_protection: unknown;
+        geo_block_countries: unknown;
+        geo_allow_countries: unknown;
+        waf: { bypass_paths: unknown };
+        blocked_paths: unknown;
+      };
+    };
     expect(body.security.rate_limit).toEqual({ requests: 100, window: '1m0s', by: 'ip' });
     expect(body.security.ip_blacklist).toEqual(['10.0.0.1']);
     expect(body.security.ip_whitelist).toEqual(['192.168.1.1']);
@@ -145,7 +156,9 @@ describe('Domains edit round-trips the full security block', () => {
     await flush();
     await openEditAndSubmitWithSslMode('manual');
 
-    const body = apiMocks.updateDomain.mock.calls[0][1] as { security: Record<string, any> };
+    const body = apiMocks.updateDomain.mock.calls[0][1] as {
+      security: { waf: { enabled: boolean }; cloudflare_only: boolean };
+    };
     expect(body.security.waf.enabled).toBe(true);
     expect(body.security.cloudflare_only).toBe(false);
   });
@@ -294,7 +307,9 @@ describe('Domains edit round-trips the cache block', () => {
     await openEditAndSubmitWithSslMode('manual');
 
     expect(apiMocks.updateDomain).toHaveBeenCalledTimes(1);
-    const body = apiMocks.updateDomain.mock.calls[0][1] as { cache: Record<string, any> };
+    const body = apiMocks.updateDomain.mock.calls[0][1] as {
+      cache: { rules: unknown; tags: unknown; esi: boolean };
+    };
     expect(body.cache.rules).toEqual([{ path: '/assets/*', ttl: 86400 }]);
     expect(body.cache.tags).toEqual(['prod']);
     expect(body.cache.esi).toBe(true);
@@ -307,7 +322,9 @@ describe('Domains edit round-trips the cache block', () => {
     await flush();
     await openEditAndSubmitWithSslMode('manual');
 
-    const body = apiMocks.updateDomain.mock.calls[0][1] as { cache: Record<string, any> };
+    const body = apiMocks.updateDomain.mock.calls[0][1] as {
+      cache: { enabled: boolean; ttl: number };
+    };
     expect(body.cache.enabled).toBe(true);
     expect(body.cache.ttl).toBe(300);
   });
@@ -320,7 +337,9 @@ describe('Domains edit round-trips the cache block', () => {
     await flush();
     await openEditAndSubmitWithSslMode('manual');
 
-    const body = apiMocks.updateDomain.mock.calls[0][1] as { cache: Record<string, any> };
+    const body = apiMocks.updateDomain.mock.calls[0][1] as {
+      cache: { enabled: boolean; rules?: unknown };
+    };
     expect(body.cache.enabled).toBe(false);
     expect(body.cache.rules).toBeUndefined();
   });

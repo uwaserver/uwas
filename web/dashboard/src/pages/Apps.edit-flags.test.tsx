@@ -86,7 +86,7 @@ describe('Apps edit save round-trips auto_restart and disabled', () => {
     await openEditAndSave();
 
     expect(apiMocks.updateApp).toHaveBeenCalledTimes(1);
-    const [name, body] = apiMocks.updateApp.mock.calls[0] as [string, Record<string, any>];
+    const [name, body] = apiMocks.updateApp.mock.calls[0] as [string, Record<string, unknown>];
     expect(name).toBe('myapp');
     expect(body.auto_restart).toBe(true);
     expect(body.disabled).toBe(true);
@@ -99,7 +99,7 @@ describe('Apps edit save round-trips auto_restart and disabled', () => {
     await flush();
     await openEditAndSave();
 
-    const body = apiMocks.updateApp.mock.calls[0][1] as Record<string, any>;
+    const body = apiMocks.updateApp.mock.calls[0][1] as Record<string, unknown>;
     expect(body.name).toBe('myapp');
     expect(body.command).toBe('node server.js');
     expect(body.port).toBe(3000);
