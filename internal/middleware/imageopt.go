@@ -153,6 +153,14 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 // convertImageFunc can be overridden in tests.
 var convertImageFunc = convertImageReal
 
+// convertLookPathFn and convertExecFn are overridden in tests so
+// convertImageReal's own locking and early-exit logic can run against a
+// scripted converter instead of a real cwebp/avifenc binary.
+var (
+	convertLookPathFn = exec.LookPath
+	convertExecFn     = exec.Command
+)
+
 // convertImage converts src to dst using cwebp or avifenc.
 // Returns true if conversion succeeded. Thread-safe via file lock.
 var convertMu sync.Mutex
@@ -178,26 +186,35 @@ func convertImageReal(src, dst, format string) bool {
 		return true
 	}
 
+	// Convert to a sibling temp file and rename: the pre-lock Stat(dst) fast
+	// path above must only ever see a fully written destination, never a
+	// partially converted one (a concurrent request would serve it).
+	dstTmp := dst + ".tmp"
+
 	var cmd *exec.Cmd
 	switch format {
 	case "webp":
-		bin, err := exec.LookPath("cwebp")
+		bin, err := convertLookPathFn("cwebp")
 		if err != nil {
 			return false
 		}
-		cmd = exec.Command(bin, "-q", "80", "-m", "4", src, "-o", dst)
+		cmd = convertExecFn(bin, "-q", "80", "-m", "4", src, "-o", dstTmp)
 	case "avif":
-		bin, err := exec.LookPath("avifenc")
+		bin, err := convertLookPathFn("avifenc")
 		if err != nil {
 			return false
 		}
-		cmd = exec.Command(bin, "-s", "6", "--min", "20", "--max", "40", src, dst)
+		cmd = convertExecFn(bin, "-s", "6", "--min", "20", "--max", "40", src, dstTmp)
 	default:
 		return false
 	}
 
 	if err := cmd.Run(); err != nil {
-		os.Remove(dst) // cleanup partial file
+		os.Remove(dstTmp) // cleanup partial file
+		return false
+	}
+	if err := os.Rename(dstTmp, dst); err != nil {
+		os.Remove(dstTmp)
 		return false
 	}
 	return true
