@@ -153,8 +153,8 @@ func (d *domainDeps) UserFromContext(r *http.Request) (*auth.User, bool) {
 }
 
 func (d *domainDeps) CanManageDomain(user *auth.User, domain string) bool {
-	if d.s.authMgr != nil {
-		return d.s.authMgr.CanManageDomain(user, domain)
+	if d.s.getAuthMgr() != nil {
+		return d.s.getAuthMgr().CanManageDomain(user, domain)
 	}
 	return true
 }

@@ -45,8 +45,8 @@ release: check dashboard linux linux-arm ## Full release build (checks + cross-c
 
 # Tests run in parallel by default (Docker tests use unique ports/PIDs).
 # Use -p 1 only if you suspect cross-package interference.
-test: ## Run all Go tests
-	go test -count=1 -timeout 600s $(GO_PACKAGES)
+test: ## Run all Go tests (race detector on)
+	go test -race -count=1 -timeout 900s $(GO_PACKAGES)
 
 # Race-detector gate, package-for-package identical to the CI `race` job
 # (.github/workflows/ci.yml). Past races here (lazy-init, inflight-map delete,

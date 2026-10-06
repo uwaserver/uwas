@@ -127,20 +127,20 @@ func (s *Server) requireDomainAccess(w http.ResponseWriter, r *http.Request, dom
 }
 
 func (s *Server) canAccessDomain(r *http.Request, domain string) bool {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		return true
 	}
 	user, ok := auth.UserFromContext(r.Context())
 	if !ok || user.Role == auth.RoleAdmin {
 		return true
 	}
-	return s.authMgr.CanManageDomain(user, domain)
+	return s.getAuthMgr().CanManageDomain(user, domain)
 }
 
 // isAdmin reports whether the request is from an admin. Single-key mode
 // (no auth manager) treats every caller as admin, matching authMiddleware.
 func (s *Server) isAdmin(r *http.Request) bool {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		return true
 	}
 	user, ok := auth.UserFromContext(r.Context())
@@ -152,7 +152,7 @@ func (s *Server) isAdmin(r *http.Request) bool {
 // always pass. This wires up the previously-unenforced model so a read-only
 // `user` role can no longer perform write actions (VULN-021).
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, perm auth.Permission) bool {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		return true // single-key mode: the caller is the implicit admin
 	}
 	user, ok := auth.UserFromContext(r.Context())
@@ -160,7 +160,7 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, perm 
 		jsonError(w, "unauthorized", http.StatusUnauthorized)
 		return false
 	}
-	if user.Role == auth.RoleAdmin || s.authMgr.HasPermission(user.Role, perm) {
+	if user.Role == auth.RoleAdmin || s.getAuthMgr().HasPermission(user.Role, perm) {
 		return true
 	}
 	s.recordAuditR(r, "rbac.denied", string(perm), false)
@@ -312,6 +312,13 @@ func (s *Server) ensureAuthManagerFromConfig() {
 	if !enabled {
 		return
 	}
+
+	// authMu serializes the lazy init against every authenticated request's
+	// read of s.authMgr (authmw closures, require* helpers): bootstrap is
+	// public, so two concurrent first-run requests raced the assignment.
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+
 	if s.authMgr == nil {
 		mgr, err := auth.NewManager(webRoot, apiKey)
 		if err != nil {
@@ -500,7 +507,7 @@ func validatePasswordPolicy(password string) error {
 }
 
 func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -529,7 +536,7 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 
 	if currentUser.Role == auth.RoleAdmin {
 		updates := &auth.User{Password: req.NewPassword}
-		if err := s.authMgr.UpdateUser(username, updates); err != nil {
+		if err := s.getAuthMgr().UpdateUser(username, updates); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -542,7 +549,7 @@ func (s *Server) handleUserChangePasswordAuth(w http.ResponseWriter, r *http.Req
 			jsonError(w, "current_password required", http.StatusBadRequest)
 			return
 		}
-		if err := s.authMgr.ChangePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
+		if err := s.getAuthMgr().ChangePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
 			jsonError(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
@@ -618,7 +625,7 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 // ── Multi-User Authentication ───────────────────────────────────────────────
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -638,7 +645,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := s.authMgr.AuthenticateFrom(req.Username, req.Password, requestIP(r))
+	session, err := s.getAuthMgr().AuthenticateFrom(req.Username, req.Password, requestIP(r))
 	if err != nil {
 		ip := requestIP(r)
 		s.recordAuthFailure(ip, req.Username)
@@ -676,7 +683,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 	s.ensureAuthManagerFromConfig()
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -689,7 +696,7 @@ func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "bootstrap is not available", http.StatusForbidden)
 		return
 	}
-	if len(s.authMgr.ListUsers()) != 0 {
+	if len(s.getAuthMgr().ListUsers()) != 0 {
 		jsonError(w, "bootstrap is already complete", http.StatusConflict)
 		return
 	}
@@ -715,7 +722,7 @@ func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	// Atomic create: the "first admin" check and insert happen under one lock
 	// inside CreateFirstAdmin, closing the bootstrap TOCTOU.
-	user, err := s.authMgr.CreateFirstAdmin(req.Username, req.Email, req.Password)
+	user, err := s.getAuthMgr().CreateFirstAdmin(req.Username, req.Email, req.Password)
 	if err != nil {
 		ip := requestIP(r)
 		s.recordAuthFailure(ip, req.Username)
@@ -726,7 +733,7 @@ func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), status)
 		return
 	}
-	session, err := s.authMgr.Authenticate(req.Username, req.Password)
+	session, err := s.getAuthMgr().Authenticate(req.Username, req.Password)
 	if err != nil {
 		jsonError(w, "bootstrap login failed", http.StatusInternalServerError)
 		return
@@ -747,7 +754,7 @@ func (s *Server) handleAuthBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -765,7 +772,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if token != "" {
-		s.authMgr.Logout(token)
+		s.getAuthMgr().Logout(token)
 	}
 
 	s.recordAuditR(r, "auth.logout", "", true)
@@ -784,7 +791,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserListAuth(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -801,7 +808,7 @@ func (s *Server) handleUserListAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users := s.authMgr.ListUsers()
+	users := s.getAuthMgr().ListUsers()
 	result := make([]adminUserResponse, 0, len(users))
 	for _, u := range users {
 		result = append(result, adminUserDTO(u, false))
@@ -811,7 +818,7 @@ func (s *Server) handleUserListAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -830,7 +837,7 @@ func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, exists := s.authMgr.GetUser(username)
+	user, exists := s.getAuthMgr().GetUser(username)
 	if !exists {
 		jsonError(w, "invalid credentials", http.StatusNotFound)
 		return
@@ -840,7 +847,7 @@ func (s *Server) handleUserGetAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -889,7 +896,7 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.authMgr.CreateUser(req.Username, req.Email, req.Password, role, req.Domains)
+	user, err := s.getAuthMgr().CreateUser(req.Username, req.Email, req.Password, role, req.Domains)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -903,7 +910,7 @@ func (s *Server) handleUserCreateAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -970,7 +977,7 @@ func (s *Server) handleUserUpdateAuth(w http.ResponseWriter, r *http.Request) {
 		updates.Domains = req.Domains
 	}
 
-	if err := s.authMgr.UpdateUser(username, updates); err != nil {
+	if err := s.getAuthMgr().UpdateUser(username, updates); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -984,7 +991,7 @@ func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePin(w, r) {
 		return
 	}
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1007,7 +1014,7 @@ func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.authMgr.DeleteUser(username); err != nil {
+	if err := s.getAuthMgr().DeleteUser(username); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1018,7 +1025,7 @@ func (s *Server) handleUserDeleteAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserRegenerateAPIKeyAuth(w http.ResponseWriter, r *http.Request) {
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		jsonError(w, "multi-user auth not enabled", http.StatusNotImplemented)
 		return
 	}
@@ -1037,7 +1044,7 @@ func (s *Server) handleUserRegenerateAPIKeyAuth(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	newKey, err := s.authMgr.RegenerateAPIKey(username)
+	newKey, err := s.getAuthMgr().RegenerateAPIKey(username)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return

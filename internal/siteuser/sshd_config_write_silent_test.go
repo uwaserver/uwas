@@ -10,7 +10,7 @@ import (
 // TestEnsureSFTPConfigWriteErrorSurfaced verifies that ensureSFTPConfig
 // returns an error when osWriteFileFn fails, rather than silently returning.
 // BUG: ensureSFTPConfig is void and both osWriteFileFn call sites swallow
-// errors when sshdConfigWriteErr == nil (always in production).
+// errors instead of silently discarding them.
 func TestEnsureSFTPConfigWriteErrorSurfaced(t *testing.T) {
 	hooks := saveHooks()
 	defer restoreHooks(hooks)
@@ -30,8 +30,6 @@ func TestEnsureSFTPConfigWriteErrorSurfaced(t *testing.T) {
 	osWriteFileFn = func(path string, data []byte, perm os.FileMode) error {
 		return writeErr
 	}
-	// Ensure sshdConfigWriteErr is nil (production state).
-	sshdConfigWriteErr = nil
 
 	// Call ensureSFTPConfig — after fix, it returns the write error.
 	err := ensureSFTPConfig("testuser", "/nonexistent", "/home/testuser")

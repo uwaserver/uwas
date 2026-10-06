@@ -12,9 +12,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // Testable hooks — override in tests to avoid real syscalls.
+
+// sshdMu serializes ensureSFTPConfig's sshd_config read-modify-write.
+var sshdMu sync.Mutex
 var (
 	runtimeGOOS   = runtime.GOOS
 	execCommandFn = exec.Command
@@ -26,10 +30,6 @@ var (
 
 	// sshdConfigPath allows tests to redirect sshd_config reads/writes.
 	sshdConfigPath = "/etc/ssh/sshd_config"
-
-	// sshdConfigWriteErr is a testable hook for surfacing sshd config write errors.
-	// If nil, errors are silently discarded.
-	sshdConfigWriteErr func(string)
 
 	// passwdPath allows tests to redirect /etc/passwd reads.
 	passwdPath = "/etc/passwd"
@@ -108,19 +108,23 @@ func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	}
 
 	// Set ownership:
-	// - domain dir owned by root:root (chroot requirement)
+	// - domain dir owned by root:root (chroot requirement — sshd rejects
+	//   chroot directories with loose ownership)
 	// - public_html owned by user:www-data (writable)
-	if err := chown(domainDir, "root", "root"); err != nil && chownLogErr != nil {
-		chownLogErr(fmt.Sprintf("chown %s: %v", domainDir, err))
+	// Failures surface as errors: success + credentials for an account that
+	// cannot write (or pass the chroot ownership check) is exactly the
+	// failure mode this guards against.
+	if err := chown(domainDir, "root", "root"); err != nil {
+		return nil, "", fmt.Errorf("chown %s root:root: %w", domainDir, err)
 	}
-	if err := chmodDir(domainDir, "755"); err != nil && chmodLogErr != nil {
-		chmodLogErr(fmt.Sprintf("chmod %s 755: %v", domainDir, err))
+	if err := chmodDir(domainDir, "755"); err != nil {
+		return nil, "", fmt.Errorf("chmod %s 755: %w", domainDir, err)
 	}
-	if err := chownRecursive(webDir, username, "www-data"); err != nil && chownLogErr != nil {
-		chownLogErr(fmt.Sprintf("chown -R %s %s:www-data: %v", webDir, username, err))
+	if err := chownRecursive(webDir, username, "www-data"); err != nil {
+		return nil, "", fmt.Errorf("chown -R %s %s:www-data: %w", webDir, username, err)
 	}
-	if err := chmodDir(webDir, "775"); err != nil && chmodLogErr != nil {
-		chmodLogErr(fmt.Sprintf("chmod %s 775: %v", webDir, err))
+	if err := chmodDir(webDir, "775"); err != nil {
+		return nil, "", fmt.Errorf("chmod %s 775: %w", webDir, err)
 	}
 
 	// Ensure SFTP chroot config exists in sshd_config
@@ -239,10 +243,6 @@ func userExists(username string) bool {
 	return execCommandFn("id", username).Run() == nil
 }
 
-// chownLogErr and chmodLogErr are testable hooks for surfacing permission errors.
-// If nil, errors are silently discarded.
-var chownLogErr, chmodLogErr func(string)
-
 func chown(path, user, group string) error {
 	return execCommandFn("chown", user+":"+group, path).Run()
 }
@@ -257,6 +257,12 @@ func chmodDir(path, mode string) error {
 
 // ensureSFTPConfig ensures sshd is configured for chroot SFTP and adds a Match block.
 func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
+	// sshdMu serializes the read-modify-write of sshd_config: concurrent
+	// creates each read the file, appended their own Match block, and wrote
+	// the whole content back — the second writer silently dropped the first
+	// user's block (lost update).
+	sshdMu.Lock()
+	defer sshdMu.Unlock()
 	data, err := osReadFileFn(sshdConfigPath)
 	if err != nil {
 		return err

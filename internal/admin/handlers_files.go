@@ -45,7 +45,7 @@ func (d *filesDeps) WebRoot() string {
 }
 func (d *filesDeps) AppsManager() *apps.Manager { return d.s.appsMgr }
 func (d *filesDeps) AuthEnabled() bool {
-	return d.s.authMgr != nil
+	return d.s.getAuthMgr() != nil
 }
 
 // Suppress unused import warnings — auth is used via UserFromContext in the sub-package.

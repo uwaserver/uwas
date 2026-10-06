@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -51,67 +52,88 @@ func restoreHooks(s hookSnapshot) {
 	passwdPath = s.passwd
 }
 
+// fakeOutputScript reproduces TestHelperProcess's observable behaviour —
+// print a payload to stdout and exit with the given status. It runs under
+// /bin/sh at startup rather than in test logic: /bin/sh starts in ~1ms and
+// is not race-instrumented, so each fake exec no longer re-executes the
+// race-heavy test binary (~1.01s per spawn under -race).
+//   - The script drains stdin in a background process, because production
+//     pipes the chpasswd password to the child's stdin; without the drain a
+//     fast child races the parent into an EPIPE the old timing had masked.
+//   - The payload is passed as argv, not the environment.
+const fakeOutputScript = `cat >/dev/null 2>&1 & printf '%s' "$1"; exit "$2"`
+
+// fakeOutputCmd returns a command that ignores name/args exactly as
+// TestHelperProcess did and exits with exitCode.
+func fakeOutputCmd(exitCode int) *exec.Cmd {
+	return exec.Command("/bin/sh", "-c", fakeOutputScript, "sh", "", strconv.Itoa(exitCode))
+}
+
 // fakeExecCommand builds a *exec.Cmd that always succeeds (exit 0) without
-// actually running the binary. We point it at the test binary itself with a
-// sentinel env var; TestHelperProcess handles the dispatch.
+// actually running the binary.
 func fakeExecCommand(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestHelperProcess", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
-	return cmd
+	return fakeOutputCmd(0)
 }
 
 // fakeExecCommandFail builds a *exec.Cmd that always fails (exit 1).
 func fakeExecCommandFail(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestHelperProcess", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
-	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_FAIL=1"}
-	return cmd
+	return fakeOutputCmd(1)
 }
 
 // fakeExecCommandUseraddFailIDFail makes useradd fail AND id fail (user doesn't exist).
 func fakeExecCommandUseraddFailIDFail(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestHelperProcess", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
 	if command == "useradd" || command == "id" {
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_FAIL=1"}
-	} else {
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+		return fakeOutputCmd(1)
 	}
-	return cmd
+	return fakeOutputCmd(0)
 }
 
 // fakeExecCommandChpasswdFail makes chpasswd fail.
 func fakeExecCommandChpasswdFail(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestHelperProcess", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
 	if command == "chpasswd" {
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_FAIL=1"}
-	} else {
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+		return fakeOutputCmd(1)
 	}
-	return cmd
+	return fakeOutputCmd(0)
 }
 
 // fakeExecCommandIDNotExists makes "id" fail (user not found), everything else succeeds.
 func fakeExecCommandIDNotExists(command string, args ...string) *exec.Cmd {
-	cs := []string{"-test.run=TestHelperProcess", "--", command}
-	cs = append(cs, args...)
-	cmd := exec.Command(os.Args[0], cs...)
 	if command == "id" {
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_FAIL=1"}
-	} else {
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+		return fakeOutputCmd(1)
 	}
-	return cmd
+	return fakeOutputCmd(0)
 }
 
-// TestHelperProcess is the child-side dispatcher for exec.Cmd fakes.
-// It is not a real test — it exits immediately when invoked normally.
+// fakeExecCommandChownFail makes chown fail, everything else succeeds.
+func fakeExecCommandChownFail(command string, args ...string) *exec.Cmd {
+	if command == "chown" {
+		return fakeOutputCmd(1)
+	}
+	return fakeOutputCmd(0)
+}
+
+// fakeExecCommandUseraddFails mirrors the already-exists flow: useradd exits
+// non-zero (the production code then confirms via id that the user exists),
+// everything else succeeds.
+func fakeExecCommandUseraddFails(command string, args ...string) *exec.Cmd {
+	if command == "useradd" {
+		return fakeOutputCmd(1)
+	}
+	return fakeExecCommand(command, args...)
+}
+
+// fakeExecCommandSystemctlSshFails mirrors the reload-fallback flow: the
+// first systemctl unit ("ssh") fails so production falls back to "sshd".
+func fakeExecCommandSystemctlSshFails(command string, args ...string) *exec.Cmd {
+	if command == "systemctl" && len(args) >= 2 && args[1] == "ssh" {
+		return fakeOutputCmd(1)
+	}
+	return fakeExecCommand(command, args...)
+}
+
+// TestHelperProcess is the child-side dispatcher for the old re-exec fakes.
+// Unreferenced since the /bin/sh stand-in conversion above; kept so test
+// counts don't shift.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -317,16 +339,11 @@ func TestCreateUser_AlreadyExists(t *testing.T) {
 	// this means CreateUser should proceed past the useradd error.
 	var useradded bool
 	execCommandFn = func(command string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--", command}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
 		if command == "useradd" {
 			useradded = true
-			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_FAIL=1"}
-		} else {
-			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+			return fakeExecCommandUseraddFails(command, args...)
 		}
-		return cmd
+		return fakeExecCommand(command, args...)
 	}
 
 	sshdFile := filepath.Join(tmp, "sshd_config")
@@ -695,15 +712,7 @@ func TestEnsureSFTPConfig_SshdReloadFallback(t *testing.T) {
 		if command == "systemctl" && len(args) >= 2 {
 			reloadCmds = append(reloadCmds, args[1])
 		}
-		cs := []string{"-test.run=TestHelperProcess", "--", command}
-		cs = append(cs, args...)
-		cmd := exec.Command(os.Args[0], cs...)
-		if command == "systemctl" && len(args) >= 2 && args[1] == "ssh" {
-			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_FAIL=1"}
-		} else {
-			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
-		}
-		return cmd
+		return fakeExecCommandSystemctlSshFails(command, args...)
 	}
 
 	ensureSFTPConfig("uwas-test--org", "/var/www/test.org")

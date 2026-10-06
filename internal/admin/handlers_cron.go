@@ -48,7 +48,7 @@ func (s *Server) handleCronExecute(w http.ResponseWriter, r *http.Request) {
 	// Cron execute runs arbitrary shell commands. requirePermission alone is
 	// insufficient: in single-key mode (authMgr == nil) it returns true without
 	// checking the request context (VULN-035). Add an explicit auth check first.
-	if s.authMgr == nil {
+	if s.getAuthMgr() == nil {
 		if _, ok := auth.UserFromContext(r.Context()); !ok {
 			jsonError(w, "unauthorized", http.StatusUnauthorized)
 			return

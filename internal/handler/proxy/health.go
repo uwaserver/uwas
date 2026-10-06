@@ -13,18 +13,19 @@ import (
 
 // HealthChecker periodically checks backend health.
 type HealthChecker struct {
-	pool      *UpstreamPool
-	path      string
-	interval  time.Duration
-	timeout   time.Duration
-	threshold int // consecutive failures before unhealthy
-	rise      int // consecutive successes before healthy
-	logger    *logger.Logger
-	client    *http.Client
-	mu        sync.Mutex
-	failures  map[*Backend]int
-	successes map[*Backend]int
-	cancel    context.CancelFunc // cancels the derived context that stops the background goroutine
+	pool         *UpstreamPool
+	path         string
+	interval     time.Duration
+	timeout      time.Duration
+	threshold    int // consecutive failures before unhealthy
+	rise         int // consecutive successes before healthy
+	logger       *logger.Logger
+	client       *http.Client
+	mu           sync.Mutex
+	failures     map[*Backend]int
+	successes    map[*Backend]int
+	cancel       context.CancelFunc // cancels the derived context that stops the background goroutine
+	allowPrivate bool
 }
 
 // HealthConfig configures health checking.
@@ -34,6 +35,12 @@ type HealthConfig struct {
 	Timeout   time.Duration
 	Threshold int
 	Rise      int
+
+	// AllowPrivate mirrors the domain's allow_private_upstreams opt-in:
+	// probes may then target private (non-loopback) backends the proxy path
+	// already serves. Metadata/link-local/documentation ranges stay blocked
+	// either way.
+	AllowPrivate bool
 }
 
 func NewHealthChecker(pool *UpstreamPool, cfg HealthConfig, log *logger.Logger) *HealthChecker {
@@ -54,16 +61,17 @@ func NewHealthChecker(pool *UpstreamPool, cfg HealthConfig, log *logger.Logger) 
 	}
 
 	return &HealthChecker{
-		pool:      pool,
-		path:      cfg.Path,
-		interval:  cfg.Interval,
-		timeout:   cfg.Timeout,
-		threshold: cfg.Threshold,
-		rise:      cfg.Rise,
-		logger:    log,
-		client:    &http.Client{Timeout: cfg.Timeout},
-		failures:  make(map[*Backend]int),
-		successes: make(map[*Backend]int),
+		pool:         pool,
+		path:         cfg.Path,
+		allowPrivate: cfg.AllowPrivate,
+		interval:     cfg.Interval,
+		timeout:      cfg.Timeout,
+		threshold:    cfg.Threshold,
+		rise:         cfg.Rise,
+		logger:       log,
+		client:       &http.Client{Timeout: cfg.Timeout},
+		failures:     make(map[*Backend]int),
+		successes:    make(map[*Backend]int),
 	}
 }
 
@@ -123,8 +131,15 @@ func (hc *HealthChecker) checkOne(b *Backend) {
 	urlStr := b.URL.String() + hc.path
 
 	// Reject private/loopback upstreams before dialing to prevent timing
-	// leakage of internal network topology via health-check latency.
-	if err := config.IsProxyUpstreamSafe(b.URL.String()); err != nil {
+	// leakage of internal network topology via health-check latency — unless
+	// the domain opted into private upstreams, in which case only metadata,
+	// link-local, and documentation ranges stay blocked (mirroring the
+	// proxy path's proxyUpstreamSafetyCheck selection).
+	validate := config.IsProxyUpstreamSafe
+	if hc.allowPrivate {
+		validate = config.IsPrivateProxyUpstreamSafe
+	}
+	if err := validate(b.URL.String()); err != nil {
 		hc.recordFailure(b)
 		return
 	}

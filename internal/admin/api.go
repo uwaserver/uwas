@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -149,9 +151,16 @@ type Server struct {
 	sysInfoCacheTime  time.Time
 	sysInfoPkgUpdates string
 	sysInfoDiskUsed   int64
+	sysInfoRefreshing atomic.Bool
 
 	// Auth manager for multi-user support
 	authMgr AuthManager
+
+	// authMu guards authMgr: the manager is initialized lazily by
+	// ensureAuthManagerFromConfig on the (public) bootstrap request path while
+	// every authenticated request reads it via the authmw closures and the
+	// require* helpers. Reads go through getAuthMgr.
+	authMu sync.RWMutex
 }
 
 // AuthManager interface for authentication (implemented by auth.Manager)
@@ -245,20 +254,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return s.config.Global.Admin.TOTPSecret
 		},
 		AuthByKey: func(key string) (*auth.User, error) {
-			if s.authMgr != nil {
-				return s.authMgr.AuthenticateAPIKey(key)
+			if s.getAuthMgr() != nil {
+				return s.getAuthMgr().AuthenticateAPIKey(key)
 			}
 			return nil, fmt.Errorf("auth manager not configured")
 		},
 		ValidateSess: func(token string) (*auth.Session, error) {
-			if s.authMgr != nil {
-				return s.authMgr.ValidateSession(token)
+			if s.getAuthMgr() != nil {
+				return s.getAuthMgr().ValidateSession(token)
 			}
 			return nil, fmt.Errorf("auth manager not configured")
 		},
 		GetUserByID: func(id string) (*auth.User, bool) {
-			if s.authMgr != nil {
-				return s.authMgr.GetUserByID(id)
+			if s.getAuthMgr() != nil {
+				return s.getAuthMgr().GetUserByID(id)
 			}
 			return nil, false
 		},
@@ -629,25 +638,45 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 				result["timezone"] = tz[idx+9:]
 			}
 		}
-		// Package updates available (cached — expensive subprocess)
+		// Package updates + web-root disk usage, cached for 10 minutes. The
+		// refresh runs OUTSIDE sysInfoCacheMu: `apt list` can stall for
+		// minutes (unattended-upgrades holding its lock), and this handler is
+		// polled every 10s — holding the lock across the subprocess stalled
+		// every concurrent /system request for that long. A CAS'd refreshing
+		// flag single-flights the work; concurrent requests serve the current
+		// snapshot immediately instead of queueing behind the subprocess.
 		s.sysInfoCacheMu.Lock()
-		if time.Since(s.sysInfoCacheTime) > 10*time.Minute {
-			if out, err := exec.Command("bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
-				s.sysInfoPkgUpdates = strings.TrimSpace(string(out))
+		stale := time.Since(s.sysInfoCacheTime) > 10*time.Minute
+		refreshing := stale && s.sysInfoRefreshing.CompareAndSwap(false, true)
+		pkgUpdates := s.sysInfoPkgUpdates
+		s.sysInfoCacheMu.Unlock()
+
+		if refreshing {
+			refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), 60*time.Second)
+			if out, err := exec.CommandContext(refreshCtx, "bash", "-c", "apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0").Output(); err == nil {
+				pkgUpdates = strings.TrimSpace(string(out))
 			}
-			// Web root disk usage (cached together)
+			// Web root disk usage (cached together). The walk itself stays
+			// outside the lock; only the field commit is guarded.
 			s.configMu.RLock()
 			wr := s.config.Global.WebRoot
 			s.configMu.RUnlock()
+			duFresh, duOK := int64(0), false
 			if wr != "" {
 				if du, err := filemanager.DiskUsage(wr); err == nil {
-					s.sysInfoDiskUsed = du
+					duFresh, duOK = du, true
 				}
 			}
+			s.sysInfoCacheMu.Lock()
+			s.sysInfoPkgUpdates = pkgUpdates
+			if duOK {
+				s.sysInfoDiskUsed = duFresh
+			}
 			s.sysInfoCacheTime = time.Now()
+			s.sysInfoCacheMu.Unlock()
+			s.sysInfoRefreshing.Store(false)
+			cancelRefresh()
 		}
-		pkgUpdates := s.sysInfoPkgUpdates
-		s.sysInfoCacheMu.Unlock()
 		if pkgUpdates != "" {
 			result["package_updates"] = pkgUpdates
 		}
@@ -1448,8 +1477,26 @@ func parseBS(s string) config.ByteSize {
 
 // --- Core wiring setters (managers injected by server.Start) ---
 
-// SetAuthManager sets the auth manager for multi-user authentication.
-func (s *Server) SetAuthManager(m AuthManager) { s.authMgr = m }
+// SetAuthManager sets the auth manager for multi-user authentication. The
+// store is mutex-guarded so later swaps (settings flow) cannot race the
+// per-request readers.
+func (s *Server) SetAuthManager(m AuthManager) { s.setAuthMgr(m) }
+
+// getAuthMgr returns the auth manager under authMu.RLock. Every read of
+// s.authMgr outside ensureAuthManagerFromConfig/SetAuthManager must go
+// through this helper — the manager is initialized lazily on the public
+// bootstrap path, so a plain field read races that write.
+func (s *Server) getAuthMgr() AuthManager {
+	s.authMu.RLock()
+	defer s.authMu.RUnlock()
+	return s.authMgr
+}
+
+func (s *Server) setAuthMgr(m AuthManager) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.authMgr = m
+}
 
 // SetWebhookManager sets the webhook manager for event delivery.
 func (s *Server) SetWebhookManager(m *webhook.Manager) { s.webhookMgr = m }
