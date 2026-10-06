@@ -1035,7 +1035,14 @@ func (m *BackupManager) CreateDomainBackup(domain, webRoot, dbName, provider str
 			}
 		}
 		if dbName != "" {
-			if dump, dumpErr := dumpDatabase(dbName); dumpErr == nil && len(dump) > 0 {
+			dump, dumpErr := dumpDatabase(dbName)
+			if dumpErr != nil {
+				// Surface the failure: a DB-less archive would be presented
+				// as a complete backup (same no-silent-drop rule as
+				// RestoreBackup's skipped entries).
+				return fmt.Errorf("database dump for %s: %w", dbName, dumpErr)
+			}
+			if len(dump) > 0 {
 				hdr := &tar.Header{
 					Name: "database/" + dbName + ".sql", Size: int64(len(dump)),
 					Mode: 0644, ModTime: time.Now(),

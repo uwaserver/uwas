@@ -514,7 +514,15 @@ func TestCreateDomainBackupNoWebRoot(t *testing.T) {
 }
 
 func TestCreateDomainBackupWithDBName(t *testing.T) {
-	// This will try mysqldump which won't be found, so DB dump is skipped
+	// Stub the dump seam: a successful dump means the archive carries the
+	// database entry, deterministically on any box (mysqldump absent or not).
+	// A failing dump now fails the backup — see TestCreateDomainBackupFailsWhenDumpFails.
+	orig := dumpDatabaseFunc
+	dumpDatabaseFunc = func(dbName string) ([]byte, error) {
+		return []byte("-- dump for " + dbName), nil
+	}
+	defer func() { dumpDatabaseFunc = orig }()
+
 	m, _ := testManager(t)
 
 	tmpDir := t.TempDir()
