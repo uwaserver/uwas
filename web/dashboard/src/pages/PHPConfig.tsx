@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Save, RefreshCw, Code, Sliders, CheckCircle, Zap, RotateCw } from 'lucide-react';
 import {
   fetchPHP, fetchPHPConfig, updatePHPConfigKey, fetchPHPConfigRaw, savePHPConfigRaw,
@@ -62,10 +62,29 @@ export default function PHPConfig() {
     }).catch(() => {});
   }, []);
 
+  // Latest-wins guard for version loads: switching to PHP 8.2 while 8.3's
+  // config/raw fetches are still in flight must discard 8.3's late responses
+  // — otherwise 8.3's values (and php.ini text) render under the 8.2
+  // selector, and saving either tab writes 8.3's configuration into 8.2.
+  const verLoadSeqRef = useRef(0);
+
   useEffect(() => {
     if (!selectedVer) return;
-    fetchPHPConfig(selectedVer).then(cfg => { const c = cfg ?? {}; setFormValues(c); setSavedValues(c); }).catch(() => { setFormValues({}); setSavedValues({}); });
-    fetchPHPConfigRaw(selectedVer).then(r => { setRawContent(r?.content ?? ''); setRawDirty(false); }).catch(() => setRawContent(''));
+    const seq = ++verLoadSeqRef.current;
+    fetchPHPConfig(selectedVer).then(cfg => {
+      if (verLoadSeqRef.current !== seq) return; // superseded — do not commit
+      const c = cfg ?? {}; setFormValues(c); setSavedValues(c);
+    }).catch(() => {
+      if (verLoadSeqRef.current !== seq) return; // superseded — do not blank
+      setFormValues({}); setSavedValues({});
+    });
+    fetchPHPConfigRaw(selectedVer).then(r => {
+      if (verLoadSeqRef.current !== seq) return; // superseded — do not commit
+      setRawContent(r?.content ?? ''); setRawDirty(false);
+    }).catch(() => {
+      if (verLoadSeqRef.current !== seq) return; // superseded — do not blank
+      setRawContent('');
+    });
   }, [selectedVer]);
 
   const showStatus = (ok: boolean, msg: string) => {
@@ -170,13 +189,19 @@ export default function PHPConfig() {
   };
 
   const handleRawSave = async () => {
+    const seq = verLoadSeqRef.current;
     setRawSaving(true);
     try {
       const res = await savePHPConfigRaw(selectedVer, rawContent) as { status: string; restarted?: boolean };
+      if (verLoadSeqRef.current !== seq) return; // version switched mid-save
       setRawDirty(false);
       showStatus(true, `php.ini saved${res?.restarted ? ' — PHP restarted' : ''}`);
-      fetchPHPConfig(selectedVer).then(cfg => { const c = cfg ?? {}; setFormValues(c); setSavedValues(c); }).catch(() => {});
+      fetchPHPConfig(selectedVer).then(cfg => {
+        if (verLoadSeqRef.current !== seq) return; // superseded re-sync
+        const c = cfg ?? {}; setFormValues(c); setSavedValues(c);
+      }).catch(() => {});
     } catch (e) {
+      if (verLoadSeqRef.current !== seq) return; // superseded — do not surface
       showStatus(false, (e as Error).message);
     } finally {
       setRawSaving(false);
@@ -204,11 +229,17 @@ export default function PHPConfig() {
         <select
           value={selectedVer}
           onChange={async e => {
+            // Capture the picked value BEFORE awaiting: React restores a
+            // controlled select to its committed value synchronously after
+            // the change event dispatch, so e.target.value read after the
+            // await is the OLD version — the switch would silently never
+            // happen and the select would snap back.
+            const next = e.target.value;
             if (!await confirmDiscard()) {
               e.target.value = selectedVer;
               return;
             }
-            setSelectedVer(e.target.value);
+            setSelectedVer(next);
           }}
           className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
           {versions.map(v => <option key={v} value={v}>PHP {v}</option>)}

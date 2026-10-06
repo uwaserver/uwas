@@ -316,7 +316,12 @@ export default function WordPress() {
                         {site.health.debug ? 'Debug ON' : 'Debug OFF'}
                       </button>
                       <button onClick={() => doAction('errlog-' + site.domain, async () => {
-                          const res = await wpErrorLog(site.domain);
+                          const siteHost = site.domain;
+                          const res = await wpErrorLog(siteHost);
+                          // A site switch during the fetch means this log belongs
+                          // to a site that is no longer expanded — never render it
+                          // under the new one (same guard as the security loads).
+                          if (activeSiteRef.current !== siteHost) return;
                           setActionResult(res.log || res.message || 'No log content');
                           return { status: 'ok', output: '' };
                         })}
@@ -425,8 +430,16 @@ export default function WordPress() {
                               </div>
                               <button
                                 onClick={() => doAction('harden-' + item.key, async () => {
-                                  await wpHarden(site.domain, { [item.field]: !item.on });
-                                  const s = await wpSecurityStatus(site.domain);
+                                  const siteHost = site.domain;
+                                  await wpHarden(siteHost, { [item.field]: !item.on });
+                                  // The user may have switched to another site while
+                                  // the harden ran: skip the re-read entirely, and
+                                  // never commit this site's status into the panel
+                                  // of the site now expanded (same guard as the
+                                  // security load path above).
+                                  if (activeSiteRef.current !== siteHost) return;
+                                  const s = await wpSecurityStatus(siteHost);
+                                  if (activeSiteRef.current !== siteHost) return;
                                   setSecurity(s);
                                 })}
                                 disabled={!!actionLoading}
@@ -453,11 +466,14 @@ export default function WordPress() {
                         {/* Quick harden all */}
                         <button
                           onClick={() => doAction('harden-all', async () => {
-                            await wpHarden(site.domain, {
+                            const siteHost = site.domain;
+                            await wpHarden(siteHost, {
                               disable_xmlrpc: true, disable_file_edit: true,
                               force_ssl_admin: true, block_dir_listing: true,
                             });
-                            const s = await wpSecurityStatus(site.domain);
+                            if (activeSiteRef.current !== siteHost) return; // superseded — user switched sites
+                            const s = await wpSecurityStatus(siteHost);
+                            if (activeSiteRef.current !== siteHost) return;
                             setSecurity(s);
                           })}
                           disabled={!!actionLoading}
@@ -519,7 +535,13 @@ export default function WordPress() {
                                   onClick={async () => {
                                     if (newPassword.length < 8) { setError('Password must be at least 8 characters'); return; }
                                     await doAction('pw-change', async () => {
-                                      await wpChangePassword(site.domain, showPasswordForm, newPassword);
+                                      const siteHost = site.domain;
+                                      const user = showPasswordForm;
+                                      const pw = newPassword;
+                                      await wpChangePassword(siteHost, user, pw);
+                                      // A site switch landed mid-save: leave the
+                                      // newly expanded site's form (if any) alone.
+                                      if (activeSiteRef.current !== siteHost) return;
                                       setShowPasswordForm('');
                                       setNewPassword('');
                                     });
@@ -546,7 +568,11 @@ export default function WordPress() {
                         </p>
                         <button
                           onClick={() => doAction('optimize-db', async () => {
-                            const res = await wpOptimizeDB(site.domain);
+                            const siteHost = site.domain;
+                            const res = await wpOptimizeDB(siteHost);
+                            // Superseded by a site switch — do not render this
+                            // site's output under the newly expanded one.
+                            if (activeSiteRef.current !== siteHost) return;
                             setActionResult(res.output || 'Optimization complete');
                           })}
                           disabled={!!actionLoading}

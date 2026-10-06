@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { usePolling } from '@/hooks/usePolling';
 import {
@@ -238,8 +238,18 @@ export default function Cloudflare() {
     }
   };
 
+  // Latest-wins guard for the import drawer: opening zone B while zone A's
+  // dry-run is still in flight must discard A's late response — otherwise it
+  // overwrites importPreview with A's data and the open B drawer (which
+  // requires importPreview.zoneId === zone.id) renders nothing: no preview,
+  // no spinner, no error. Commits always read importPreview.zoneId, so stale
+  // data could never be written to the wrong zone — this guard protects the
+  // drawer UI state.
+  const importSeqRef = useRef(0);
+
   // Step 1: open the import drawer for a zone and load the dry-run preview.
   const handleOpenImport = async (zoneId: string) => {
+    const seq = ++importSeqRef.current;
     setImportZoneId(zoneId);
     setImportPreview(null);
     setError('');
@@ -248,6 +258,7 @@ export default function Cloudflare() {
     try {
       // dry_run=true → server returns added/skipped lists without persisting
       const preview = await importCloudflareZone(zoneId, importType, importRoot, { dryRun: true });
+      if (importSeqRef.current !== seq) return; // superseded — do not commit
       const addable = preview.added ?? [];
       setImportPreview({
         zoneId,
@@ -256,9 +267,10 @@ export default function Cloudflare() {
         selected: new Set(addable), // pre-select everything addable
       });
     } catch (err: unknown) {
+      if (importSeqRef.current !== seq) return; // superseded — do not surface
       setError(errorMessage(err, 'Failed to preview zone hostnames'));
     } finally {
-      setImportLoading(false);
+      if (importSeqRef.current === seq) setImportLoading(false);
     }
   };
 

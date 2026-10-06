@@ -2,8 +2,34 @@ import { addDebugLog, formatDebugDetail } from '@/lib/debugLog';
 
 export const BASE = import.meta.env.DEV ? 'http://127.0.0.1:9443' : '';
 
-let token = sessionStorage.getItem('uwas_token') || '';
-let authMode = sessionStorage.getItem('uwas_auth_mode') || 'api_key';
+// sessionStorage can be blocked entirely (hardened browsers, private modes).
+// The module-level reads below run at import time: a throw there would crash
+// the whole dashboard bundle before any UI renders. Same guards as
+// debugLog.ts's storage access.
+function safeSessionGet(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function safeSessionSet(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // Storage blocked — keep working session-only (in-memory state above).
+  }
+}
+function safeSessionRemove(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+let token = safeSessionGet('uwas_token') || '';
+let authMode = safeSessionGet('uwas_auth_mode') || 'api_key';
 let totpCode = '';
 
 export function setToken(t: string, mode: 'api_key' | 'session' = 'api_key') {
@@ -13,8 +39,8 @@ export function setToken(t: string, mode: 'api_key' | 'session' = 'api_key') {
     clearToken();
     return;
   }
-  sessionStorage.setItem('uwas_token', t);
-  sessionStorage.setItem('uwas_auth_mode', mode);
+  safeSessionSet('uwas_token', t);
+  safeSessionSet('uwas_auth_mode', mode);
 }
 
 export function getToken() {
@@ -35,9 +61,9 @@ export function clearToken() {
   token = '';
   authMode = 'api_key';
   totpCode = '';
-  sessionStorage.removeItem('uwas_token');
-  sessionStorage.removeItem('uwas_auth_mode');
-  sessionStorage.removeItem('uwas_totp_verified');
+  safeSessionRemove('uwas_token');
+  safeSessionRemove('uwas_auth_mode');
+  safeSessionRemove('uwas_totp_verified');
 }
 
 // logout revokes the session server-side (best-effort) before clearing the
@@ -59,7 +85,7 @@ export async function logout() {
 
 export function setTOTPCode(code: string) {
   totpCode = code;
-  sessionStorage.setItem('uwas_totp_verified', 'true');
+  safeSessionSet('uwas_totp_verified', 'true');
 }
 
 // Pin code for destructive operations
@@ -866,7 +892,21 @@ export const configureDBRemoteAccess = (body: { user: string; host?: string; pas
 export const exportDatabase = (name: string) => `${BASE}/api/v1/database/${encodeURIComponent(name)}/export`;
 export const importDatabase = async (name: string, file: File) => {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
-  const res = await fetch(`${BASE}/api/v1/database/${encodeURIComponent(name)}/import`, { method: 'POST', headers, body: await file.text() });
+  // Byte-faithful transfer: file.text() would decode as UTF-8, replacing every
+  // non-UTF-8 byte (latin1-encoded legacy MySQL dumps are common) with U+FFFD
+  // before the request is sent. The server stores the raw bytes as received.
+  const res = await fetch(`${BASE}/api/v1/database/${encodeURIComponent(name)}/import`, { method: 'POST', headers, body: await file.arrayBuffer() });
+  // 401 = session expired mid-import: recover like every other request
+  // (clear the stale token, return to login) instead of surfacing a raw
+  // error and stranding the admin on endless identical retries.
+  if (res.status === 401) {
+    clearToken();
+    const currentPath = window.location.pathname;
+    if (!currentPath.includes('/login')) {
+      window.location.href = '/_uwas/dashboard/login';
+    }
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) { const b = await res.json().catch(() => ({ error: res.statusText })); throw new Error(b.error || res.statusText); }
   return res.json();
 };
@@ -981,31 +1021,42 @@ export async function sseStatsURL(): Promise<string> {
 export async function fetchConfigExport(): Promise<void> {
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...getAuthHeaders() };
 
-  const res = await fetch(`${BASE}/api/v1/config/export`, { headers });
+  // Bounded like every other normal api() request: a hung endpoint would
+  // otherwise wedge Settings' Export button (exporting=true) forever and
+  // stack never-settling fetches per click. A YAML config dump is neither a
+  // long-lived stream nor a large transfer, so the 30s default applies.
+  const { signal, cleanup } = abortWithTimeout();
+  try {
+    const res = await fetch(`${BASE}/api/v1/config/export`, { headers, signal });
 
-  if (res.status === 401) {
-    clearToken();
-    const currentPath = window.location.pathname;
-    if (!currentPath.includes('/login')) {
-      window.location.href = '/_uwas/dashboard/login';
+    if (res.status === 401) {
+      clearToken();
+      const currentPath = window.location.pathname;
+      if (!currentPath.includes('/login')) {
+        window.location.href = '/_uwas/dashboard/login';
+      }
+      throw new Error('Unauthorized');
     }
-    throw new Error('Unauthorized');
-  }
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error || res.statusText);
-  }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(body.error || res.statusText);
+    }
 
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'uwas-config.yaml';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'uwas-config.yaml';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    throw isAbortError(e) ? new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT / 1000}s`) : e;
+  } finally {
+    cleanup();
+  }
 }
 
 // ── WordPress Site Management ──────────────────────────

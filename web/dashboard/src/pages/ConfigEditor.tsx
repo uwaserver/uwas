@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Save, RotateCcw, CheckCircle, XCircle, FileCode, ChevronRight, AlertTriangle,
 } from 'lucide-react';
@@ -66,8 +66,16 @@ export default function ConfigEditor() {
       .catch(() => addDebugLog({ level: 'warn', scope: 'config', message: 'Failed to load domain list for sidebar' }));
   }, []);
 
+  // Latest-wins guard for loadContent: switching files (or Reload) while a
+  // fetch is in flight starts a newer load; the older one must not commit
+  // content, the dirty baseline, or the error state for a file the user is
+  // no longer editing — otherwise a slow stale response could leave file A's
+  // YAML in the editor (and in the save path) under file B's host.
+  const loadSeqRef = useRef(0);
+
   // Load content for active file
   const loadContent = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setStatus(null);
     setValidationError('');
@@ -79,14 +87,16 @@ export default function ConfigEditor() {
         const host = activeFile.replace('domain:', '');
         result = await fetchDomainConfigRaw(host);
       }
+      if (loadSeqRef.current !== seq) return; // superseded — do not commit
       setContent(result.content);
       setOriginalContent(result.content);
     } catch (e) {
+      if (loadSeqRef.current !== seq) return; // superseded — do not surface
       setStatus({ ok: false, message: (e as Error).message });
       setContent('');
       setOriginalContent('');
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === seq) setLoading(false);
     }
   }, [activeFile]);
 

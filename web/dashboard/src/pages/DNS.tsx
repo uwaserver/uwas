@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link as RouterLink } from 'react-router';
 import {
   Waypoints,
@@ -159,11 +159,22 @@ export default function DNS() {
     }
   }, [selectedDomain]);
 
+  // One auto-attempt per selection: a failed auto-load must not re-arm this
+  // effect (cfLoading toggles true→false around every attempt), or a deep
+  // link like /dns?domain=… with a failing provider hammers the API in an
+  // endless retry loop that also wipes the error/not-configured guidance on
+  // every cycle. The latch is keyed by domain so switching selections re-arms
+  // for the new domain, and the Load Records button still calls
+  // handleLoadRecords directly, so manual retries are unaffected.
+  const autoLoadAttemptedFor = useRef<string | null>(null);
+
   // Auto-load zone records when ?domain= URL param matches the selected domain.
   useEffect(() => {
     if (!selectedDomain || cfLoadedFor === selectedDomain || cfLoading) return;
     const urlDomain = new URLSearchParams(window.location.search).get('domain');
     if (urlDomain && urlDomain === selectedDomain) {
+      if (autoLoadAttemptedFor.current === selectedDomain) return;
+      autoLoadAttemptedFor.current = selectedDomain;
       handleLoadRecords();
     }
   }, [selectedDomain, cfLoadedFor, cfLoading, handleLoadRecords]);

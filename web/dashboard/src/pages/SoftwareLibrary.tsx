@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   backupAllSoftware,
   backupSoftware,
@@ -208,27 +208,44 @@ export default function SoftwareLibrary() {
     }
   };
 
+  // Latest-wins guards for the instance detail drawers: opening pg-b while
+  // n8n-a's logs/monitor fetches are still in flight must discard n8n-a's
+  // late responses — otherwise n8n-a's logs/metrics/processes/backups render
+  // inside the open pg-b drawer, and a stale failure even closes it
+  // (setMonitorFor('')) while the user is reading pg-b's data. Separate
+  // counters per loader: the logs drawer legitimately stays open under its
+  // own header while a monitor fetch for another instance runs.
+  const logsSeqRef = useRef(0);
+  const monitorSeqRef = useRef(0);
+
   const openLogs = async (inst: SoftwareInstance) => {
+    const seq = ++logsSeqRef.current;
     setLogsFor(inst.name);
     setLogs('Loading...');
     try {
-      setLogs((await fetchSoftwareLogs(inst.name)).logs || '(no logs)');
+      const logs = (await fetchSoftwareLogs(inst.name)).logs || '(no logs)';
+      if (logsSeqRef.current !== seq) return; // superseded — do not commit
+      setLogs(logs);
     } catch (e) {
+      if (logsSeqRef.current !== seq) return; // superseded — do not surface
       setLogs((e as Error).message);
     }
   };
 
   const openMonitor = async (inst: SoftwareInstance) => {
+    const seq = ++monitorSeqRef.current;
     setMonitorFor(inst.name);
     setMonitor(null);
     setProcesses([]);
     setBackups([]);
     try {
       const [mon, processList, backupList] = await Promise.all([fetchSoftwareMonitor(inst.name), fetchSoftwareProcesses(inst.name), fetchSoftwareBackups(inst.name)]);
+      if (monitorSeqRef.current !== seq) return; // superseded — do not commit
       setMonitor(mon);
       setProcesses(processList);
       setBackups(backupList);
     } catch (e) {
+      if (monitorSeqRef.current !== seq) return; // superseded — do not surface
       setStatus({ ok: false, message: (e as Error).message });
       setMonitorFor('');
     }

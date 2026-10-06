@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Database,
   Table2,
@@ -87,23 +87,37 @@ export default function DBExplorer() {
     }
   }, [selectedDB]);
 
+  // Latest-wins guards for the selection-scoped loaders: switching database
+  // or table while a fetch is in flight must discard the stale response —
+  // otherwise the sidebar lists the previous database's tables (and "SELECT
+  // *" generates queries from them) or the structure panel shows the
+  // previous table's columns.
+  const tablesSeqRef = useRef(0);
+  const columnsSeqRef = useRef(0);
+
   const loadTables = useCallback(async (db: string) => {
+    const seq = ++tablesSeqRef.current;
     try {
       setLoading(true);
       const tbls = (await fetchDBTables(db)) ?? [];
+      if (tablesSeqRef.current !== seq) return; // superseded — do not commit
       setTables(tbls);
     } catch (err: unknown) {
+      if (tablesSeqRef.current !== seq) return; // superseded — do not surface
       setError(errorMessage(err, 'Failed to load tables'));
     } finally {
-      setLoading(false);
+      if (tablesSeqRef.current === seq) setLoading(false);
     }
   }, []);
 
   const loadColumns = useCallback(async (db: string, table: string) => {
+    const seq = ++columnsSeqRef.current;
     try {
       const cols = (await fetchDBColumns(db, table)) ?? [];
+      if (columnsSeqRef.current !== seq) return; // superseded — do not commit
       setColumns(cols);
     } catch (err: unknown) {
+      if (columnsSeqRef.current !== seq) return; // superseded — do not surface
       setError(errorMessage(err, 'Failed to load columns'));
     }
   }, []);
