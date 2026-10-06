@@ -102,7 +102,7 @@ func TestWAFUnknownRuleDroppedFromMixedList(t *testing.T) {
 }
 
 func TestKnownWAFRule(t *testing.T) {
-	for _, ok := range []string{"sql_injection", "XSS", " path_traversal ", "shell_injection", "php"} {
+	for _, ok := range []string{"sql_injection", "XSS", " path_traversal ", "shell_injection", "php", "file_probe"} {
 		if !KnownWAFRule(ok) {
 			t.Errorf("%q was not recognised", ok)
 		}

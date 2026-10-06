@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,9 @@ import (
 // sysInfoCacheMu, the second request blocked on the mutex for the whole
 // subprocess duration.
 func TestSystemInfoRefreshDoesNotBlockConcurrentRequests(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("apt refresh runs only on linux")
+	}
 	stubDir := t.TempDir()
 	aptScript := "#!/bin/sh\nsleep 12\necho 0\n"
 	if err := os.WriteFile(filepath.Join(stubDir, "apt"), []byte(aptScript), 0o755); err != nil {

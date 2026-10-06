@@ -35,11 +35,12 @@ const (
 	WAFPathTraversal  = "path_traversal"
 	WAFShellInjection = "shell_injection"
 	WAFPHP            = "php"
+	WAFFileProbe      = "file_probe"
 )
 
 // wafFamilies lists every family in a stable order, for reporting.
 var wafFamilies = []string{
-	WAFSQLInjection, WAFXSS, WAFPathTraversal, WAFShellInjection, WAFPHP,
+	WAFSQLInjection, WAFXSS, WAFPathTraversal, WAFShellInjection, WAFPHP, WAFFileProbe,
 }
 
 // WAFRuleNames returns every family name, for error messages.
@@ -94,6 +95,11 @@ var wafURLPatterns = []wafRule{
 	// PHP specific
 	{WAFPHP, regexp.MustCompile(`(?i)(eval|assert|system|exec|passthru|shell_exec|popen)\s*\(`)},
 	{WAFPHP, regexp.MustCompile(`(?i)php://(input|filter|data)`)},
+	// Secret/backup file probes: scanners guess names, they do not inject.
+	{WAFFileProbe, regexp.MustCompile(`(?i)(^|/)(phpinfo\.php|secrets?\.json|credentials?\.json|config\.(ya?ml|ini)|dump\.sql|backup\.sql|database\.sql|id_rsa(\.pub)?)(\?|$)`)},
+	{WAFFileProbe, regexp.MustCompile(`(?i)\.(bak|orig|old|save|swp|swo|php\.txt)(\?|$)`)},
+	{WAFFileProbe, regexp.MustCompile(`(?i)(~|%7e)(\?|$)`)},
+	{WAFFileProbe, regexp.MustCompile(`(?i)(%20| )copy\.[^/?]+`)},
 }
 
 // wafBodyPatterns are checked against POST body only.

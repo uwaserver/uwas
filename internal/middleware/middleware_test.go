@@ -381,6 +381,72 @@ func TestSecurityGuardAllowedPath(t *testing.T) {
 	}
 }
 
+func TestSecurityGuardDoesNotBlockFileProbes(t *testing.T) {
+	// File probes are a WAF family; the global path guard must leave them alone.
+	log := logger.New("error", "text")
+	handler := SecurityGuard(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	for _, path := range []string{"/phpinfo.php", "/secrets.json", "/index.php.bak", "/index.php~"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != 200 {
+			t.Errorf("GET %s via SecurityGuard: status = %d, want 200", path, rec.Code)
+		}
+	}
+}
+
+func TestWAFFileProbeBlocksScannerPaths(t *testing.T) {
+	log := logger.New("error", "text")
+	handler := DomainWAF(log, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+
+	blocked := []string{
+		"/phpinfo.php",
+		"/secrets.json",
+		"/config.yml",
+		"/index.php.bak",
+		"/index.php.orig",
+		"/wp-config.php.save",
+		"/index.php~",
+		"/index%20copy.php",
+	}
+	for _, path := range blocked {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != 403 {
+			t.Errorf("GET %s: status = %d, want 403", path, rec.Code)
+		}
+	}
+
+	allowed := []string{"/index.php", "/api/config", "/config.json", "/about"}
+	for _, path := range allowed {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != 200 {
+			t.Errorf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+	}
+}
+
+func TestWAFFileProbeFamily(t *testing.T) {
+	if wafRequest(t, []string{WAFFileProbe}, "/phpinfo.php") {
+		t.Error("phpinfo.php passed with file_probe listed")
+	}
+	if wafRequest(t, []string{WAFFileProbe}, "/index.php.bak") {
+		t.Error("backup suffix passed with file_probe listed")
+	}
+	if !wafRequest(t, []string{WAFFileProbe}, sqlAttack) {
+		t.Error("sql_injection applied with only file_probe listed")
+	}
+	// Explicit rule list without file_probe must not block probes.
+	if !wafRequest(t, []string{WAFSQLInjection}, "/phpinfo.php") {
+		t.Error("phpinfo.php blocked without file_probe in the rule list")
+	}
+}
+
 func TestSecurityGuardWAF(t *testing.T) {
 	log := logger.New("error", "text")
 

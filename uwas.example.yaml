@@ -281,6 +281,7 @@ domains:
           - sql_injection
           - xss
           - path_traversal
+          - file_probe
 
     access_log:
       path: /var/log/uwas/blog.access.log

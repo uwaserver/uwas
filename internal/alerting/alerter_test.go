@@ -97,11 +97,32 @@ func TestErrorSpikeDetection(t *testing.T) {
 	for _, alert := range alerts {
 		if alert.Type == "error_spike" {
 			found = true
+			if !strings.Contains(alert.Message, "HTTP 5xx") {
+				t.Errorf("message = %q, want it to say HTTP 5xx", alert.Message)
+			}
+			if !strings.Contains(alert.Message, "of") || !strings.Contains(alert.Message, "requests") {
+				t.Errorf("message = %q, want count of total requests", alert.Message)
+			}
 			break
 		}
 	}
 	if !found {
 		t.Error("expected error_spike alert to be generated")
+	}
+}
+
+func TestAlertTitle(t *testing.T) {
+	cases := map[string]string{
+		"error_spike":       "5xx error spike",
+		"domain_down":       "Domain down",
+		"cert_expiry":       "Certificate expiring",
+		"bandwidth_monthly": "Bandwidth limit",
+		"custom_thing":      "custom_thing",
+	}
+	for typ, want := range cases {
+		if got := alertTitle(typ); got != want {
+			t.Errorf("alertTitle(%q) = %q, want %q", typ, got, want)
+		}
 	}
 }
 

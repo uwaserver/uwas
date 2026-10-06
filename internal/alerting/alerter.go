@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,7 +117,7 @@ func (a *Alerter) Alert(alert Alert) {
 		go func(ch notify.Channel) {
 			if err := notify.Send(ch, notify.Message{
 				Level:  alert.Level,
-				Title:  alert.Type,
+				Title:  alertTitle(alert.Type),
 				Body:   alert.Message,
 				Source: alert.Host,
 			}); err != nil {
@@ -124,6 +125,31 @@ func (a *Alerter) Alert(alert Alert) {
 					"channel", ch.Type, "type", alert.Type, "error", err)
 			}
 		}(ch)
+	}
+}
+
+// alertTitle turns the stable machine type into the human headline shown on
+// Telegram / Slack / email. The type string itself stays on the wire and in
+// the history API so filters and dedup keep working.
+func alertTitle(typ string) string {
+	switch typ {
+	case "error_spike":
+		return "5xx error spike"
+	case "domain_down":
+		return "Domain down"
+	case "cert_expiry":
+		return "Certificate expiring"
+	case "rate_limit":
+		return "Rate limit"
+	case "cron_failed":
+		return "Cron job failed"
+	case "php_crashed":
+		return "PHP crashed"
+	default:
+		if strings.HasPrefix(typ, "bandwidth_") {
+			return "Bandwidth limit"
+		}
+		return typ
 	}
 }
 
@@ -190,9 +216,14 @@ func (a *Alerter) RecordRequest(isError bool) {
 		if shouldAlert {
 			pct := float64(errors) / float64(total) * 100
 			a.Alert(Alert{
-				Level:   "warning",
-				Type:    "error_spike",
-				Message: "Error rate " + ftoa(pct) + "% in last 5 minutes (" + itoa(errors) + "/" + itoa(total) + " requests)",
+				Level: "warning",
+				Type:  "error_spike",
+				// Spell out what "error" means (HTTP 5xx only) and that the
+				// window is site-wide — otherwise the Telegram headline reads
+				// like a cryptic metric dump.
+				Message: itoa(errors) + " of " + itoa(total) + " requests (" + ftoa(pct) +
+					"%) returned HTTP 5xx in the last 5 minutes across all sites. " +
+					"Typical causes: PHP/app crash, upstream timeout, or a bad deploy.",
 			})
 		}
 	}
