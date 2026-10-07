@@ -593,6 +593,118 @@ func TestPruneBackupsConcurrentWithCompressFile(t *testing.T) {
 	}
 }
 
+// TestRotateLockedConcurrentBookkeeping drives rotation through the real
+// domainLogManager.Write path -- which lazy-initialises m.files, then calls
+// rotateLocked, which spawns compressFile and pruneBackups under m.bg -- from
+// many hosts at once.
+//
+// Every host writes with MaxSize 1, so each Write rotates. Writes for the same
+// host serialise on dlf.mu (production's contract), but rotation across hosts
+// runs concurrently, so m.bg.Add(1) is hit from many goroutines at the same
+// time and m.files is read and written under contention.
+//
+// The m.bg assertion is the load-bearing one: Close() ends in m.bg.Wait(), so
+// an Add without its matching Done would hang it. The wait is bounded so a
+// regression fails with a message instead of a test timeout.
+func TestRotateLockedConcurrentBookkeeping(t *testing.T) {
+	const (
+		hostCount = 12
+		writes    = 4
+	)
+	dir := t.TempDir()
+	m := newDomainLogManager()
+
+	cfgs := make([]config.AccessLogConfig, hostCount)
+	for i := range cfgs {
+		cfgs[i] = config.AccessLogConfig{
+			Path: filepath.Join(dir, fmt.Sprintf("host%d-access.log", i)),
+			Rotate: config.RotateConfig{
+				MaxSize:    config.ByteSize(1), // every Write rotates
+				MaxBackups: 2,
+				MaxAge:     config.Duration{Duration: time.Hour},
+			},
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := range cfgs {
+		host := fmt.Sprintf("host%d.test", i)
+		cfg := cfgs[i]
+		for w := 0; w < writes; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				m.Write(host, cfg, "GET", "/x", "127.0.0.1", "regression-test",
+					200, 5, time.Millisecond)
+			}()
+		}
+	}
+	wg.Wait()
+
+	// Every host must still have exactly one live entry, pointing at a
+	// freshly opened file for its own path with its byte counter reset.
+	m.mu.RLock()
+	live := len(m.files)
+	var nilFile, deadFile, dirtyCounter, wrongPath int
+	for host, dlf := range m.files {
+		if dlf.f == nil {
+			nilFile++
+		} else if _, err := dlf.f.Stat(); err != nil {
+			// A stale pointer to the file rotateLocked closed is non-nil but
+			// unusable: every later Write would fail silently on a closed fd.
+			deadFile++
+		}
+		if dlf.written != 0 {
+			dirtyCounter++
+		}
+		if dlf.path != cfgs[hostIndex(t, cfgs, host)].Path {
+			wrongPath++
+		}
+	}
+	m.mu.RUnlock()
+
+	if live != hostCount {
+		t.Errorf("m.files holds %d entries after %d hosts rotated; want %d "+
+			"(rotateLocked deletes an entry only when reopening the active log fails)",
+			live, hostCount, hostCount)
+	}
+	if nilFile != 0 {
+		t.Errorf("%d m.files entries have a nil *os.File after rotation", nilFile)
+	}
+	if deadFile != 0 {
+		t.Errorf("%d m.files entries point at a CLOSED file after rotation; "+
+			"rotateLocked must install the reopened handle, not leave the old one", deadFile)
+	}
+	if dirtyCounter != 0 {
+		t.Errorf("%d m.files entries have written != 0 after rotation; the counter must reset", dirtyCounter)
+	}
+	if wrongPath != 0 {
+		t.Errorf("%d m.files entries point at the wrong path", wrongPath)
+	}
+
+	// m.bg must be balanced: every Add(1) in rotateLocked has its Done in the
+	// spawned goroutine, so Close's m.bg.Wait() has to drain and return.
+	done := make(chan struct{})
+	go func() { m.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Close() never returned: m.bg is unbalanced, so an Add(1) in rotateLocked is missing its Done")
+	}
+}
+
+// hostIndex maps a host key back to its config index.
+func hostIndex(t *testing.T, cfgs []config.AccessLogConfig, host string) int {
+	t.Helper()
+	for i := range cfgs {
+		if host == fmt.Sprintf("host%d.test", i) {
+			return i
+		}
+	}
+	t.Fatalf("unexpected host key %q in m.files", host)
+	return 0
+}
+
 // rotatedGroups returns the rotated-log identities under base, collapsing the
 // "<base>.<ts>" and "<base>.<ts>.gz" pair that compressFile holds on disk
 // simultaneously into the one backup it represents -- the same grouping
