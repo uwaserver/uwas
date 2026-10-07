@@ -21,6 +21,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -517,4 +519,94 @@ func TestDomainAccessLogCompressFileDstCloseErrorKeepsOriginal(t *testing.T) {
 	if _, err := os.Stat(src + ".gz"); !os.IsNotExist(err) {
 		t.Errorf("compressFile left the incomplete archive behind (stat err = %v)", err)
 	}
+}
+
+// TestPruneBackupsConcurrentWithCompressFile races real compressFile
+// goroutines against real pruneBackups calls, mirroring rotateLocked
+// (domainlog.go:190-207), which launches both as siblings.
+//
+// What -race can and cannot prove here: the two share no Go memory -- they
+// contend on the directory -- so the detector has no memory race to flag.
+// The value is the concurrent invariant: real compression running against
+// real pruning must leave the retention cap intact and every surviving
+// archive complete.
+func TestPruneBackupsConcurrentWithCompressFile(t *testing.T) {
+	const (
+		rotations  = 24
+		maxBackups = 3
+	)
+	dir := t.TempDir()
+	base := filepath.Join(dir, "access.log")
+	payload := []byte(strings.Repeat("GET /x HTTP/1.1 200 - -\n", 200))
+
+	var wg sync.WaitGroup
+	for i := 0; i < rotations; i++ {
+		// rotateLocked renames before it spawns either goroutine, so the new
+		// backup already exists when they start -- mirror that ordering.
+		if err := os.WriteFile(base, payload, 0o640); err != nil {
+			t.Fatalf("write active log: %v", err)
+		}
+		rotated := fmt.Sprintf("%s.%s", base,
+			time.Now().Add(time.Duration(i)*time.Second).UTC().Format(rotatedTimeFormat))
+		if err := os.Rename(base, rotated); err != nil {
+			t.Fatalf("rename rotation %d: %v", i, err)
+		}
+		wg.Add(2)
+		go func(p string) { defer wg.Done(); compressFile(p) }(rotated)
+		go func() { defer wg.Done(); pruneBackups(base, maxBackups) }()
+	}
+	wg.Wait()
+
+	// rotateLocked renames before pruning, so the cap is only reached once a
+	// prune pass has run over every rotation. That is the quiescent state
+	// production converges to, so assert it there rather than at an arbitrary
+	// instant mid-rotation.
+	pruneBackups(base, maxBackups)
+
+	groups := rotatedGroups(t, base)
+	if len(groups) > maxBackups {
+		t.Errorf("retention cap breached: %d backups remain after %d rotations with MaxBackups=%d (%v)",
+			len(groups), rotations, maxBackups, groups)
+	}
+
+	// A .gz that survives concurrent pruning must be complete. A writer whose
+	// archive is removed mid-copy keeps an unlinked fd, so a truncated file
+	// under a visible name would mean pruneBackups interfered with an
+	// archive it should have left alone.
+	for _, id := range groups {
+		gz := id + ".gz"
+		f, err := os.Open(gz)
+		if err != nil {
+			continue // this rotation's compression never completed
+		}
+		zr, err := gzip.NewReader(f)
+		if err != nil {
+			f.Close()
+			t.Errorf("surviving archive %s is not a readable gzip: %v", filepath.Base(gz), err)
+			continue
+		}
+		if _, err := io.ReadAll(zr); err != nil {
+			t.Errorf("surviving archive %s has a truncated stream: %v", filepath.Base(gz), err)
+		}
+		zr.Close()
+		f.Close()
+	}
+}
+
+// rotatedGroups returns the rotated-log identities under base, collapsing the
+// "<base>.<ts>" and "<base>.<ts>.gz" pair that compressFile holds on disk
+// simultaneously into the one backup it represents -- the same grouping
+// pruneBackups performs internally.
+func rotatedGroups(t *testing.T, base string) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var groups []string
+	for _, p := range findRotatedFiles(base) {
+		id := strings.TrimSuffix(p, ".gz")
+		if !seen[id] {
+			seen[id] = true
+			groups = append(groups, id)
+		}
+	}
+	return groups
 }
