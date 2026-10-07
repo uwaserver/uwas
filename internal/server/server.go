@@ -1239,7 +1239,7 @@ func (s *Server) rejectNonCloudflareOrigin(w http.ResponseWriter, r *http.Reques
 		"domain", domain.Host,
 		"origin_ip", originIP,
 		"client_ip", clientIP,
-		"path", r.URL.RequestURI(),
+		"path", middleware.SanitizeURI(r),
 		"user_agent", r.UserAgent(),
 	)
 	w.Header().Set("Connection", "close")
