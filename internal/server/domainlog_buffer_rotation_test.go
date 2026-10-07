@@ -50,7 +50,7 @@ func TestBufferedDomainLogFollowsRotation(t *testing.T) {
 			close(done)
 		}()
 		<-ready
-		m.rotateLocked("log.test", d)
+		m.rotateLocked(d)
 		d.mu.Unlock()
 		select {
 		case <-done:

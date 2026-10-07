@@ -225,7 +225,7 @@ func TestRotateLockedReopenFailure(t *testing.T) {
 	defer os.Chmod(tmpDir, 0755)
 
 	// Should not panic
-	m.rotateLocked("testhost", dlf)
+	m.rotateLocked(dlf)
 }
 
 // ---------------------------------------------------------------------------

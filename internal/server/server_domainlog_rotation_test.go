@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -821,4 +822,80 @@ func rotatedGroups(t *testing.T, base string) []string {
 		}
 	}
 	return groups
+}
+
+// TestRotateReopenFailureDoesNotWedgeClose pins the fix for the ABBA lock
+// inversion between Close (m.mu, then dlf.mu) and rotateLocked's reopen-failure
+// path, which used to take m.mu while the caller still held dlf.mu.
+//
+// Reopen failure is forced through the domainLogOpenFile seam, standing in for
+// ENOSPC on a full disk. The seam blocks on purpose so the interleaving is
+// deterministic instead of a scheduling race:
+//
+//  1. a Write rotates and parks inside the seam, still holding dlf.mu
+//  2. Close acquires m.mu and blocks on that same dlf.mu
+//  3. the seam is released and rotation continues
+//
+// Before the fix, step 3 had rotateLocked reach for m.mu while its caller held
+// dlf.mu: Close waiting for dlf.mu, rotation waiting for m.mu, neither ever
+// proceeding. After the fix rotateLocked touches neither mutex -- the caller
+// releases dlf.mu first and only then takes m.mu to drop the stale entry.
+func TestRotateReopenFailureDoesNotWedgeClose(t *testing.T) {
+	dir := t.TempDir()
+	host := "enospc.test"
+	m := newDomainLogManager()
+	cfg := config.AccessLogConfig{
+		Path: filepath.Join(dir, host+".log"), BufferSize: 0,
+		Rotate: config.RotateConfig{MaxSize: config.ByteSize(1), MaxBackups: 2},
+	}
+	// Seed the entry. This write rotates too (MaxSize 1), but the seam is not
+	// installed yet, so the reopen succeeds normally.
+	m.Write(host, cfg, "GET", "/seed", "127.0.0.1", "regression-test", 200, 4, time.Millisecond)
+
+	parked := make(chan struct{})
+	release := make(chan struct{})
+	orig := domainLogOpenFile
+	domainLogOpenFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		close(parked)
+		<-release
+		return nil, &os.PathError{Op: "open", Path: name, Err: syscall.ENOSPC}
+	}
+	defer func() { domainLogOpenFile = orig }()
+
+	rotateDone := make(chan struct{})
+	go func() {
+		defer close(rotateDone)
+		m.Write(host, cfg, "GET", "/rotate", "127.0.0.1", "regression-test", 200, 8, time.Millisecond)
+	}()
+
+	select {
+	case <-parked:
+	case <-time.After(15 * time.Second):
+		t.Fatal("rotation never reached the reopen")
+	}
+
+	closeDone := make(chan struct{})
+	go func() { defer close(closeDone); m.Close() }()
+
+	// Let Close take m.mu and block on the dlf.mu the writer is holding.
+	time.Sleep(150 * time.Millisecond)
+	close(release)
+
+	select {
+	case <-closeDone:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Close wedged: rotateLocked acquired m.mu while its caller held dlf.mu " +
+			"(ABBA inversion against Close's m.mu -> dlf.mu order)")
+	}
+
+	<-rotateDone
+
+	// The reopen failed, so the stale entry must be dropped -- that is what the
+	// deferred delete in Write exists to do.
+	m.mu.RLock()
+	_, stillThere := m.files[host]
+	m.mu.RUnlock()
+	if stillThere {
+		t.Errorf("m.files still holds %q after its log failed to reopen; the entry must be dropped", host)
+	}
 }

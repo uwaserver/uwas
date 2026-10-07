@@ -440,7 +440,7 @@ func TestRotateLockedSuccess(t *testing.T) {
 	}
 	m.files["testhost"] = dlf
 
-	m.rotateLocked("testhost", dlf)
+	m.rotateLocked(dlf)
 
 	// Should have created a new empty log file
 	if _, err := os.Stat(logPath); err != nil {
