@@ -221,6 +221,11 @@ func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 	dlf.written = 0
 }
 
+// domainLogNow is the clock used to age rotated logs. Indirected so tests
+// can pin the cleanupOld MaxAge boundary exactly instead of racing the real
+// clock, which cannot express "expired at precisely maxAge".
+var domainLogNow = time.Now
+
 // cleanupLoop periodically removes rotated logs older than MaxAge.
 func (m *domainLogManager) cleanupLoop() {
 	ticker := time.NewTicker(cleanupInterval)
@@ -253,7 +258,7 @@ func (m *domainLogManager) cleanupOld() {
 	}
 	m.mu.RUnlock()
 
-	cutoff := time.Now()
+	cutoff := domainLogNow()
 	for _, e := range entries {
 		rotated := findRotatedFiles(e.path)
 		for _, rf := range rotated {

@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -359,5 +360,106 @@ func TestDomainAccessLogJSONFormatRotationIsRedacted(t *testing.T) {
 		if !strings.Contains(entry.Path, "REDACTED") {
 			t.Errorf("json archive line %d expected a redacted path, got %q", i, entry.Path)
 		}
+	}
+}
+
+// TestDomainAccessLogCleanupOldMaxAgeBoundary pins the exact MaxAge comparison
+// in cleanupOld. That test needs an injected clock: the real one advances
+// between seeding an mtime and running the sweep, so "aged exactly MaxAge"
+// is unrepresentable and the boundary would silently drift to whatever the
+// scheduler allowed.
+func TestDomainAccessLogCleanupOldMaxAgeBoundary(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "access.log")
+
+	const maxAge = 24 * time.Hour
+	fixed := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	// atBoundary is aged to exactly MaxAge; pastBoundary to MaxAge+1s.
+	atBoundary := filepath.Join(dir, "access.log.20260314-120000.000000000")
+	pastBoundary := filepath.Join(dir, "access.log.20260314-115959.000000000")
+	seed := func(p string, mod time.Time) {
+		if err := os.WriteFile(p, []byte("GET / HTTP/1.1\n"), 0o640); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatalf("chtimes %s: %v", p, err)
+		}
+	}
+	seed(atBoundary, fixed.Add(-maxAge))
+	seed(pastBoundary, fixed.Add(-maxAge).Add(-time.Second))
+
+	orig := domainLogNow
+	domainLogNow = func() time.Time { return fixed }
+	defer func() { domainLogNow = orig }()
+
+	m := &domainLogManager{files: map[string]*domainLogFile{
+		"log.test": {
+			path:   base,
+			rotate: config.RotateConfig{MaxAge: config.Duration{Duration: maxAge}},
+		},
+	}}
+	m.cleanupOld()
+
+	// cleanupOld uses a strict `>`, so a file aged exactly MaxAge is NOT
+	// expired and must survive.
+	if _, err := os.Stat(atBoundary); err != nil {
+		t.Errorf("cleanupOld removed a log aged exactly MaxAge (%v); the comparison must be strict `>`, not `>=`", err)
+	}
+	if _, err := os.Stat(pastBoundary); !os.IsNotExist(err) {
+		t.Errorf("cleanupOld kept a log aged MaxAge+1s (stat err = %v)", err)
+	}
+}
+
+// TestDomainAccessLogCompressFileCopyErrorKeepsOriginal drives compressFile's
+// io.Copy failure branch. os.Open succeeds on a directory, but reading the fd
+// fails with EISDIR -- so this reaches the copy error without any seam.
+func TestDomainAccessLogCompressFileCopyErrorKeepsOriginal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "access.log.20260315-120000.000000000")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", src, err)
+	}
+
+	compressFile(src)
+
+	if _, err := os.Stat(src + ".gz"); !os.IsNotExist(err) {
+		t.Errorf("compressFile left a partial .gz behind after a copy failure (stat err = %v)", err)
+	}
+	if info, err := os.Stat(src); err != nil || !info.IsDir() {
+		t.Errorf("compressFile disturbed the source after a copy failure (stat err = %v)", err)
+	}
+}
+
+// TestDomainAccessLogCompressFileGzipCloseErrorKeepsOriginal drives
+// compressFile's gz.Close() failure branch. /dev/full returns ENOSPC on every
+// write, so with an EMPTY source io.Copy writes nothing and succeeds -- making
+// the trailer flush inside gz.Close() the first and only failing write.
+func TestDomainAccessLogCompressFileGzipCloseErrorKeepsOriginal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/dev/full is Linux-specific")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "access.log.20260315-120000.000000000")
+	if err := os.WriteFile(src, nil, 0o640); err != nil {
+		t.Fatalf("write empty source: %v", err)
+	}
+	// os.Create follows the symlink and opens /dev/full, which always fails a
+	// write with ENOSPC.
+	if err := os.Symlink("/dev/full", src+".gz"); err != nil {
+		t.Fatalf("symlink to /dev/full: %v", err)
+	}
+
+	compressFile(src)
+
+	// This is the contract the branch comment states: a corrupt archive must
+	// never cost us the only copy. If the gz.Close() error were ignored,
+	// control would fall through to os.Remove(path) and destroy the log.
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("compressFile deleted the original log after gz.Close() failed (%v); "+
+			"a failed trailer flush must not cost the only copy of the data", err)
+	}
+	if _, err := os.Stat(src + ".gz"); !os.IsNotExist(err) {
+		t.Errorf("compressFile left the corrupt archive behind (stat err = %v)", err)
 	}
 }
