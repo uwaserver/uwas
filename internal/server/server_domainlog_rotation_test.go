@@ -19,6 +19,7 @@ package server
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -192,5 +193,171 @@ func TestDomainAccessLogCleanupOldRemovesOnlyExpired(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "REDACTED") {
 		t.Errorf("expected the surviving active log to hold a redacted path, got %q", body)
+	}
+}
+
+// TestDomainAccessLogPruneBackupsCountsPairAsOneBackup pins the grouping rule
+// that pruneBackups documents at domainlog.go:335-342. compressFile holds
+// "<base>.<ts>" and its "<base>.<ts>.gz" on disk simultaneously for the whole
+// copy window, and rotateLocked starts compression and pruning concurrently.
+// Counting the pair as two backups let the keep-slice absorb the in-flight
+// source and evict an archive still inside the retention window.
+//
+// The state below reproduces exactly that window: rotation 3 is mid-copy (its
+// source exists, its .gz does not yet), while rotations 1 and 2 are complete
+// (both forms on disk). With MaxBackups=2 the correct answer keeps rotations 3
+// and 2 — including rotation 2's SOURCE. An ungrouped count sees five files,
+// keeps the two newest by name (rotation 3's source and rotation 2's .gz) and
+// deletes rotation 2's source, orphaning the archive it belongs to.
+func TestDomainAccessLogPruneBackupsCountsPairAsOneBackup(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "access.log")
+
+	seed := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+
+	// Rotation 1 and 2: compressed and source both present.
+	for _, ts := range []string{"20200101-000000.000000000", "20200102-000000.000000000"} {
+		seed("access.log."+ts+".gz", "archive\n")
+		seed("access.log."+ts, "source\n")
+	}
+	// Rotation 3: still being copied — source only, .gz not created yet.
+	seed("access.log.20200103-000000.000000000", "in-flight source\n")
+
+	pruneBackups(base, 2)
+
+	mustExist := func(name, why string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s (%s): %v", name, why, err)
+		}
+	}
+	mustBeGone := func(name, why string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s should have been pruned (%s), stat err = %v", name, why, err)
+		}
+	}
+
+	mustExist("access.log.20200103-000000.000000000", "newest rotation, in-flight")
+	mustExist("access.log.20200102-000000.000000000", "second-newest rotation, kept as one backup")
+	mustExist("access.log.20200102-000000.000000000.gz", "archive of the kept rotation, not orphaned")
+	mustBeGone("access.log.20200101-000000.000000000", "oldest rotation")
+	mustBeGone("access.log.20200101-000000.000000000.gz", "oldest rotation's archive")
+}
+
+// TestDomainAccessLogRotationHonorsMaxBackupsCap drives the real rotation path
+// past MaxBackups and asserts the cap holds: only the newest N archives
+// survive. MaxSize=1 makes every Write trip the size check, so the number of
+// rotations is the number of requests.
+func TestDomainAccessLogRotationHonorsMaxBackupsCap(t *testing.T) {
+	const secret = "CAPSECRET"
+	const maxBackups = 2
+	const requests = 8
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	s, h := newDomainLogServer(t, logPath, config.RotateConfig{
+		MaxSize:    config.ByteSize(1), // rotate on every write
+		MaxBackups: maxBackups,
+		MaxAge:     config.Duration{Duration: time.Hour},
+	})
+
+	for i := 0; i < requests; i++ {
+		getThroughChain(h, "/?token="+secret)
+	}
+
+	// Close waits on m.bg, where both compressFile and pruneBackups run.
+	s.domainLogs.Close()
+
+	archives, err := filepath.Glob(filepath.Join(dir, "access.log.*.gz"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(archives) > maxBackups {
+		t.Errorf("retention cap breached: %d archives survived after %d rotations with MaxBackups=%d:\n%v",
+			len(archives), requests, maxBackups, archives)
+	}
+	if len(archives) == 0 {
+		t.Fatalf("expected archives after %d rotations with MaxSize=1; rotation never fired", requests)
+	}
+
+	// Whatever survived the cap must still be redacted.
+	if body := gunzipAll(t, dir, "access.log"); strings.Contains(body, secret) {
+		t.Errorf("secret leaked into a retained archive: %q", body)
+	}
+}
+
+// TestDomainAccessLogJSONFormatRotationIsRedacted covers the json access-log
+// format on the rotation path. accessLogLine emits a different encoding for
+// json than for the CLF default, so redaction has to be shown on both.
+func TestDomainAccessLogJSONFormatRotationIsRedacted(t *testing.T) {
+	const secret = "JSONSECRET"
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "access.log")
+
+	cfg := &config.Config{
+		Global: config.GlobalConfig{WorkerCount: "1", LogLevel: "warn", LogFormat: "text"},
+		Domains: []config.Domain{{
+			Host: "log.test",
+			Type: "static",
+			Root: t.TempDir(),
+			SSL:  config.SSLConfig{Mode: "off"},
+			AccessLog: config.AccessLogConfig{Path: logPath, BufferSize: 0, Format: "json",
+				Rotate: config.RotateConfig{
+					MaxSize:    config.ByteSize(512),
+					MaxBackups: 10,
+					MaxAge:     config.Duration{Duration: time.Hour},
+				}},
+		}},
+	}
+	s := New(cfg, logger.New("warn", "text"))
+	s.cancel()
+	h := s.buildMiddlewareChain()
+
+	for i := 0; i < 12; i++ {
+		getThroughChain(h, "/?token="+secret)
+	}
+	s.domainLogs.Close()
+
+	archives, err := filepath.Glob(filepath.Join(dir, "access.log.*.gz"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(archives) == 0 {
+		t.Fatalf("expected a rotated json archive in %s; rotation never fired", dir)
+	}
+
+	body := gunzipAll(t, dir, "access.log")
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatalf("json archive decompressed to nothing")
+	}
+
+	// Each line must parse as json and carry a redacted path -- this asserts
+	// both the format contract and the redaction inside that format.
+	for i, line := range lines {
+		var entry struct {
+			Path string `json:"path"`
+			Time string `json:"time"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("json archive line %d is not valid json: %v\n%q", i, err, line)
+		}
+		if entry.Time == "" {
+			t.Errorf("json archive line %d has no time field: %q", i, line)
+		}
+		if strings.Contains(entry.Path, secret) {
+			t.Errorf("json archive line %d leaked the secret in path: %q", i, entry.Path)
+		}
+		if !strings.Contains(entry.Path, "REDACTED") {
+			t.Errorf("json archive line %d expected a redacted path, got %q", i, entry.Path)
+		}
 	}
 }
