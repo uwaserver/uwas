@@ -778,11 +778,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.dispatchHandler(ctx, domain)
 	}
 
-	// Per-domain access log file
+	// Per-domain access log file. Same sensitive-param redaction as the other
+	// sinks: this one writes to an operator-configured file on disk, so a raw
+	// RequestURI would persist a secret to storage that outlives the process.
 	if domain.AccessLog.Path != "" {
 		s.domainLogs.Write(
 			r.Host, domain.AccessLog,
-			r.Method, r.URL.RequestURI(),
+			r.Method, middleware.SanitizeURI(r),
 			r.RemoteAddr, r.UserAgent(),
 			ctx.Response.StatusCode(), int(ctx.Response.BytesWritten()),
 			time.Since(start),
