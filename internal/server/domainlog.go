@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -40,6 +41,11 @@ type domainLogManager struct {
 	files map[string]*domainLogFile
 	stop  chan struct{}
 	bg    sync.WaitGroup
+	// closing is set by Close before teardown. Write checks it so a request
+	// landing during shutdown neither resurrects entries Close just removed
+	// nor rotates a file Close is closing — the race the rotation test
+	// flushed out.
+	closing atomic.Bool
 }
 
 type domainLogFile struct {
@@ -122,12 +128,26 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 	}
 	rotate := cfg.Rotate
 
+	// Close() tears the manager down concurrently with request goroutines:
+	// without this gate a late writer re-opens a per-host log Close just
+	// closed (the post-Close lazy-init) and races its teardown.
+	if m.closing.Load() {
+		return
+	}
+
 	m.mu.RLock()
 	dlf, ok := m.files[host]
 	m.mu.RUnlock()
 
 	if !ok {
 		m.mu.Lock()
+		// Re-check under the lock: Close may have torn the map down between
+		// the read above and here. Resurrecting an entry after that races
+		// the teardown.
+		if m.closing.Load() {
+			m.mu.Unlock()
+			return
+		}
 		dlf, ok = m.files[host]
 		if !ok {
 			if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
@@ -167,7 +187,10 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 	}
 	needsRotate := dlf.written >= maxSize
 	reopenFailed := false
-	if needsRotate {
+	// Rotation must not start once Close is tearing the manager down: the
+	// rotateLocked call below is the read the race detector flagged against
+	// Close's teardown.
+	if needsRotate && !m.closing.Load() {
 		// Flush first: rotation renames the file out from under the buffer,
 		// and anything still pending would be written into the new one.
 		dlf.flushLocked()
@@ -309,6 +332,9 @@ func (m *domainLogManager) cleanupOld() {
 // Each domainLogFile's own mutex is acquired so an in-flight Write
 // finishes before its file handle is closed.
 func (m *domainLogManager) Close() {
+	// Set before any teardown so writers observing the flag stop issuing
+	// work that would race it.
+	m.closing.Store(true)
 	close(m.stop)
 	m.mu.Lock()
 	for _, dlf := range m.files {
