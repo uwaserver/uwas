@@ -20,6 +20,23 @@ type UnknownHostEntry struct {
 	Blocked   bool      `json:"blocked"`
 }
 
+// maxTrackedHosts caps the unknown-host map. Record is fed the raw Host header
+// on the pre-auth 421 path (internal/server/server.go), so an anonymous client
+// can otherwise grow the map without limit by varying one header — remote
+// memory exhaustion. It also buries the feature's own signal: List sorts by
+// Hits, so a flood of one-hit hosts drowns the real scanner entries.
+//
+// This mirrors the bounds already applied to attacker-controlled maps elsewhere
+// in this codebase: analytics maxDistinct (collector.go) and the pathsafe
+// target cache cap (base.go).
+const maxTrackedHosts = 10000
+
+// trackedHostsLowWater is the size an eviction sweep trims down to. Evicting in
+// batches rather than one-at-a-time keeps the O(n) "find the oldest" scan
+// amortised across maxTrackedHosts-lowWater inserts instead of running on every
+// insert past the cap.
+const trackedHostsLowWater = maxTrackedHosts - (maxTrackedHosts / 10)
+
 // UnknownHostTracker records hostnames that don't match any configured domain.
 type UnknownHostTracker struct {
 	mu       sync.RWMutex
@@ -69,7 +86,47 @@ func (t *UnknownHostTracker) Record(host string) bool {
 		LastSeen:  now,
 		Blocked:   blocked,
 	}
+	t.evictIfOver()
 	return blocked
+}
+
+// evictIfOver trims the map back toward the low-water mark once it passes
+// maxTrackedHosts. Caller must hold t.mu (write).
+//
+// Evicts the least-recently-seen entries first: those are the quietest, so a
+// one-hit flood loses to a host that is still actively scanning. Blocked hosts
+// are never evicted — dropping one would silently unblock it from the tracker's
+// view even though t.blocked (the authoritative set, persisted separately)
+// still lists it. Eviction is a memory bound, not an unblock.
+func (t *UnknownHostTracker) evictIfOver() {
+	if len(t.hosts) <= maxTrackedHosts {
+		return
+	}
+
+	// Collect eviction candidates ordered by LastSeen ascending.
+	type candidate struct {
+		host     string
+		lastSeen time.Time
+		blocked  bool
+	}
+	candidates := make([]candidate, 0, len(t.hosts))
+	for host, e := range t.hosts {
+		candidates = append(candidates, candidate{host: host, lastSeen: e.LastSeen, blocked: e.Blocked})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].lastSeen.Before(candidates[j].lastSeen)
+	})
+
+	target := trackedHostsLowWater
+	for _, c := range candidates {
+		if len(t.hosts) <= target {
+			break
+		}
+		if c.blocked {
+			continue // never evict an operator-blocked host
+		}
+		delete(t.hosts, c.host)
+	}
 }
 
 // IsBlocked returns true if the host is on the block list.
