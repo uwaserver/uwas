@@ -83,15 +83,33 @@ func (b *Blocker) ConnOpened(a netip.Addr) bool {
 		})
 	}
 
+	// Dry run still trips the detector so the threshold is logged and recorded
+	// in List(), but it must never refuse the connection: apply() marks the
+	// entry DryRun and publish() keeps it out of the enforced snapshot, yet a
+	// false return here is what guardListener.Accept acts on (it closes the
+	// socket). Without this the connections that cross a threshold were still
+	// dropped during the very calibration the operator enabled dry_run for.
+	// The slot is NOT released on the dry-run path: the socket is served, so
+	// guardConn.Close will hand it back through ConnClosed.
+	deny := !b.cfg.DryRun
+
 	if b.cfg.MaxConcurrent > 0 && t.concurrent > b.cfg.MaxConcurrent {
-		release()
+		if deny {
+			release()
+		}
 		b.trip(a, ReasonConcurrent, t.concurrent)
-		return false
+		if deny {
+			return false
+		}
 	}
 	if b.cfg.MaxConnections > 0 && t.conns > b.cfg.MaxConnections {
-		release()
+		if deny {
+			release()
+		}
 		b.trip(a, ReasonConnFlood, t.conns)
-		return false
+		if deny {
+			return false
+		}
 	}
 	return true
 }
