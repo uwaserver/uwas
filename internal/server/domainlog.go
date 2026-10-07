@@ -226,6 +226,13 @@ func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 // clock, which cannot express "expired at precisely maxAge".
 var domainLogNow = time.Now
 
+// domainLogCloseFile closes a compression destination. Indirected because
+// close() on a regular file does not report the write errors that /dev/full
+// and a full filesystem produce -- those surface at write time, hitting the
+// earlier branches -- so the dst.Close() failure branch is otherwise
+// unreachable from any local filesystem.
+var domainLogCloseFile = func(f *os.File) error { return f.Close() }
+
 // cleanupLoop periodically removes rotated logs older than MaxAge.
 func (m *domainLogManager) cleanupLoop() {
 	ticker := time.NewTicker(cleanupInterval)
@@ -317,7 +324,7 @@ func compressFile(path string) {
 		os.Remove(path + ".gz")
 		return
 	}
-	if err := dst.Close(); err != nil {
+	if err := domainLogCloseFile(dst); err != nil {
 		os.Remove(path + ".gz")
 		return
 	}

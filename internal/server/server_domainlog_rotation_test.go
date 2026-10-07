@@ -20,6 +20,7 @@ package server
 import (
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -461,5 +462,59 @@ func TestDomainAccessLogCompressFileGzipCloseErrorKeepsOriginal(t *testing.T) {
 	}
 	if _, err := os.Stat(src + ".gz"); !os.IsNotExist(err) {
 		t.Errorf("compressFile left the corrupt archive behind (stat err = %v)", err)
+	}
+}
+
+// TestDomainAccessLogCompressFileCreateErrorKeepsOriginal drives the branch
+// where the destination cannot be created at all. os.Create on an existing
+// directory fails with EISDIR, so no seam is needed to reach it.
+func TestDomainAccessLogCompressFileCreateErrorKeepsOriginal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "access.log.20260315-120000.000000000")
+	if err := os.WriteFile(src, []byte("GET / HTTP/1.1\n"), 0o640); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	// A directory where the archive wants to go makes os.Create fail.
+	if err := os.Mkdir(src+".gz", 0o755); err != nil {
+		t.Fatalf("mkdir %s.gz: %v", src, err)
+	}
+
+	compressFile(src)
+
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("compressFile destroyed the original log when it could not create the archive (%v)", err)
+	}
+	// The pre-existing directory must be left exactly as it was: falling
+	// through on a failed Create would instead os.Remove() it.
+	if info, err := os.Stat(src + ".gz"); err != nil || !info.IsDir() {
+		t.Errorf("compressFile disturbed the pre-existing destination on a Create failure (stat err = %v)", err)
+	}
+}
+
+// TestDomainAccessLogCompressFileDstCloseErrorKeepsOriginal drives the final
+// branch. close() on a regular file does not surface write errors, so this one
+// is unreachable from any local filesystem and is driven through the
+// domainLogCloseFile seam.
+func TestDomainAccessLogCompressFileDstCloseErrorKeepsOriginal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "access.log.20260315-120000.000000000")
+	if err := os.WriteFile(src, []byte("GET / HTTP/1.1\n"), 0o640); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	orig := domainLogCloseFile
+	domainLogCloseFile = func(*os.File) error { return errors.New("simulated close failure") }
+	defer func() { domainLogCloseFile = orig }()
+
+	compressFile(src)
+
+	// If the dst.Close() error were ignored, control would fall through to
+	// os.Remove(path) and delete the only copy of the log.
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("compressFile deleted the original log after dst.Close() failed (%v); "+
+			"a failed archive close must not cost the only copy of the data", err)
+	}
+	if _, err := os.Stat(src + ".gz"); !os.IsNotExist(err) {
+		t.Errorf("compressFile left the incomplete archive behind (stat err = %v)", err)
 	}
 }
