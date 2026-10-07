@@ -142,10 +142,19 @@ func TestHtaccessAuthUserFilePHPControlNoAuthDirective(t *testing.T) {
 
 	rec := authGet(t, h, "/open.php")
 
-	if rec.Code == http.StatusForbidden {
-		t.Errorf("control failed: with no AuthUserFile configured the gate must not fire, "+
-			"but got 403. The gate is over-broad (keying off something other than the "+
-			"validated AuthUserFile path). Actual body: %q", rec.Body.String())
+	// Assert the EXACT status, not merely "not 403". With no AuthUserFile the
+	// gate must be inert, so the request reaches the PHP branch, which has no
+	// FastCGI backend here and therefore answers 502. A loose "!== 403" check
+	// would also accept a 401 — i.e. it would pass even if the gate had
+	// started challenging instead of staying out of the way, which is exactly
+	// the over-broad behaviour this control exists to catch. Pinning 502
+	// proves the request genuinely traversed the PHP handler.
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("control failed: with no AuthUserFile configured the gate must be inert "+
+			"and the request must reach the PHP branch, which returns 502 with no FastCGI "+
+			"backend. Got %d. A 403 means the gate is over-broad (keying off something "+
+			"other than the validated AuthUserFile path); a 401 means it started "+
+			"challenging instead of staying inert. Body: %q", rec.Code, rec.Body.String())
 	}
 }
 
