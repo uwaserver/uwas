@@ -405,7 +405,7 @@ func appForPreflightResponse(a *apps.App) *apps.App {
 			HealthPath:    a.Deploy.HealthPath,
 			GitToken:      "",
 			WebhookSecret: "",
-			SSHKeyPath:   "",
+			SSHKeyPath:    "",
 			BranchFilter:  a.Deploy.BranchFilter,
 		},
 		Env: a.Env,
@@ -456,7 +456,13 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	if wantBranch == "" {
 		wantBranch = def.Deploy.GitBranch
 	}
-	if wantBranch != "" && branch != "" && branch != wantBranch {
+	// branch_filter / git_branch must fail CLOSED. The previous guard also
+	// required `branch != ""`, so any event whose ref could not be read —
+	// a GitHub `ping`, a payload shape the parser does not recognise, or
+	// any non-push event that reached this endpoint — left branch empty,
+	// made the whole condition false, and ran a full deploy. An event the
+	// filter cannot vouch for must never satisfy it.
+	if wantBranch != "" && branch != wantBranch {
 		h.deps.RecordAudit(r, "app.webhook.skip",
 			fmt.Sprintf("%s ref=%s want=%s", name, ref, wantBranch), true)
 		w.WriteHeader(http.StatusAccepted)
