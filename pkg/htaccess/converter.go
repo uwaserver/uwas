@@ -38,6 +38,19 @@ func IsModuleLoaded(module string) bool {
 	return loadedModules[strings.ToLower(module)]
 }
 
+// AuthUserFileRequiresAuth reports whether the RuleSet names an htpasswd file,
+// i.e. the directory requires HTTP Basic authentication.
+//
+// UWAS does not verify the credentials in that file, so a caller serving content
+// from such a directory is silently discarding the operator's protection. The
+// caller must therefore fail closed rather than treat the directive as absent.
+// Only a converter-validated path reaches RuleSet.AuthUserFile — absolute and
+// traversal forms are dropped at parse time (see the "authuserfile" case), so
+// this cannot be triggered by a hostile path.
+func AuthUserFileRequiresAuth(rules *RuleSet) bool {
+	return rules != nil && rules.AuthUserFile != ""
+}
+
 // RuleSet represents the converted internal rules from .htaccess directives.
 type RuleSet struct {
 	RewriteEnabled   bool

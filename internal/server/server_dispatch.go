@@ -883,6 +883,20 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 		return
 	}
 
+	// <AuthUserFile> marks a directory as requiring HTTP Basic auth against an
+	// htpasswd file. UWAS does not verify that file, so serving the content
+	// anyway would silently discard the operator's protection — the same
+	// "parsed into the RuleSet and never enforced" gap <FilesMatch> had.
+	// Fail closed with 403, and record it so the Security dashboard and the
+	// autoblocker's escalation signal see the denial.
+	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && htaccess.AuthUserFileRequiresAuth(entry.raw) {
+		s.logger.Warn("htaccess AuthUserFile present but UWAS does not verify htpasswd; denying request",
+			"host", domain.Host, "path", ctx.ResolvedPath)
+		s.recordSecurityBlock(ctx, ctx.Request, "auth")
+		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
+		return
+	}
+
 	if domain.Type == "php" && strings.HasSuffix(resolved, ".php") {
 		// Resolve FPM address without mutating domain.PHP.FPMAddress (avoids data race).
 		// Single map lookup rather than scanning every instance per request.
