@@ -166,21 +166,38 @@ func (m *domainLogManager) Write(host string, cfg config.AccessLogConfig, method
 		maxSize = defaultMaxLogSize
 	}
 	needsRotate := dlf.written >= maxSize
+	reopenFailed := false
 	if needsRotate {
 		// Flush first: rotation renames the file out from under the buffer,
 		// and anything still pending would be written into the new one.
 		dlf.flushLocked()
-		m.rotateLocked(host, dlf)
+		reopenFailed = m.rotateLocked(dlf)
 	}
 	dlf.mu.Unlock()
+
+	// Drop the entry only once dlf.mu is released. Taking m.mu while still
+	// holding dlf.mu would invert the order Close uses (m.mu, then dlf.mu)
+	// and deadlock the two against each other.
+	if reopenFailed {
+		m.mu.Lock()
+		delete(m.files, host)
+		m.mu.Unlock()
+	}
 }
 
 // rotateLocked closes the current log, renames it with a timestamp,
 // compresses it, and opens a fresh log file. Caller must hold dlf.mu.
-// On reopen failure the file is unlinked from the manager's files map
-// (briefly acquiring m.mu) so a subsequent Write reinitializes from
-// scratch.
-func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
+//
+// It returns true when the fresh log file could not be reopened. The caller
+// is responsible for dropping the manager's map entry at that point -- and
+// must do so only after releasing dlf.mu.
+//
+// rotateLocked deliberately never takes m.mu. Close acquires them in the
+// opposite order (m.mu, then dlf.mu), so a m.mu acquisition here while the
+// caller holds dlf.mu is an ABBA inversion that deadlocks the pair: Close
+// waits for dlf.mu while rotateLocked waits for m.mu. Keeping the map
+// mutation in the caller removes the inversion entirely.
+func (m *domainLogManager) rotateLocked(dlf *domainLogFile) (reopenFailed bool) {
 	dlf.flushLocked()
 	dlf.f.Close()
 
@@ -207,18 +224,16 @@ func (m *domainLogManager) rotateLocked(host string, dlf *domainLogFile) {
 	}()
 
 	// Open fresh log file
-	f, err := os.OpenFile(dlf.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := domainLogOpenFile(dlf.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		m.mu.Lock()
-		delete(m.files, host)
-		m.mu.Unlock()
-		return
+		return true
 	}
 	dlf.f = f
 	if dlf.buf != nil {
 		dlf.buf.Reset(f)
 	}
 	dlf.written = 0
+	return false
 }
 
 // domainLogNow is the clock used to age rotated logs. Indirected so tests
@@ -232,6 +247,16 @@ var domainLogNow = time.Now
 // earlier branches -- so the dst.Close() failure branch is otherwise
 // unreachable from any local filesystem.
 var domainLogCloseFile = func(f *os.File) error { return f.Close() }
+
+// domainLogOpenFile opens the fresh active log after a rotation. Indirected so
+// tests can drive rotateLocked's reopen-failure branch, whose realistic
+// trigger is ENOSPC on a full disk -- a condition needing a size-limited mount
+// to reproduce, which the test environment cannot create. Every attempt to
+// force it through the filesystem instead was defeated: rotateLocked renames
+// the active log aside first (so a directory or dangling symlink on the path
+// is simply moved away and recreated), and dlf.f.Close() frees a descriptor
+// before the reopen, which defeats FD exhaustion.
+var domainLogOpenFile = os.OpenFile
 
 // cleanupLoop periodically removes rotated logs older than MaxAge.
 func (m *domainLogManager) cleanupLoop() {
