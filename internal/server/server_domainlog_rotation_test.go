@@ -693,6 +693,106 @@ func TestRotateLockedConcurrentBookkeeping(t *testing.T) {
 	}
 }
 
+// TestCloseRacesInFlightRotation drives Close() underneath rotation that is
+// already running, and asserts nothing blows up.
+//
+// The window it targets is real and narrow. Close empties m.files (line 295)
+// and releases m.mu, and only then calls m.bg.Wait(). A Write landing in that
+// window finds m.files empty, lazy-creates a fresh domainLogFile, and -- with
+// MaxSize 1 -- rotates, calling m.bg.Add(1) (lines 191/203) while Wait is in
+// progress. sync.WaitGroup panics with "Add called concurrently with Wait" when
+// the counter was zero when Wait began. Nothing stops that: close(m.stop) only
+// halts the cleanup and flush loops, never Write.
+//
+// Panics are recovered per goroutine so a regression reports which call blew
+// up instead of taking the whole test binary with it.
+func TestCloseRacesInFlightRotation(t *testing.T) {
+	const (
+		hostCount = 8
+		settle    = 50 * time.Millisecond
+	)
+
+	dir := t.TempDir()
+	m := newDomainLogManager()
+
+	cfgs := make([]config.AccessLogConfig, hostCount)
+	for i := range cfgs {
+		cfgs[i] = config.AccessLogConfig{
+			Path: filepath.Join(dir, fmt.Sprintf("closehost%d-access.log", i)),
+			Rotate: config.RotateConfig{
+				MaxSize:    config.ByteSize(1), // every Write rotates
+				MaxBackups: 2,
+				MaxAge:     config.Duration{Duration: time.Hour},
+			},
+		}
+	}
+
+	var (
+		pmu    sync.Mutex
+		panics []string
+	)
+	record := func() {
+		if r := recover(); r != nil {
+			pmu.Lock()
+			panics = append(panics, fmt.Sprint(r))
+			pmu.Unlock()
+		}
+	}
+
+	stop := make(chan struct{})
+	var writers sync.WaitGroup
+	for i := range cfgs {
+		host := fmt.Sprintf("host%d.test", i)
+		cfg := cfgs[i]
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			defer record()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				m.Write(host, cfg, "GET", "/x", "127.0.0.1", "regression-test",
+					200, 5, time.Millisecond)
+			}
+		}()
+	}
+
+	// Let rotation get going so bg is in real use, then shut down underneath it.
+	time.Sleep(settle)
+
+	closeDone := make(chan struct{})
+	go func() {
+		defer record()
+		defer close(closeDone)
+		m.Close()
+	}()
+
+	// Keep writing across the shutdown: that is what puts a post-Close
+	// lazy-init inside Close's m.bg.Wait() window.
+	time.Sleep(settle)
+	close(stop)
+	writers.Wait()
+
+	select {
+	case <-closeDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Close() never returned while rotation was in flight")
+	}
+
+	pmu.Lock()
+	got := len(panics)
+	msgs := append([]string(nil), panics...)
+	pmu.Unlock()
+	if got > 0 {
+		t.Errorf("%d panic(s) racing Close() against in-flight rotation; "+
+			"Close empties m.files before m.bg.Wait(), so a Write in that window "+
+			"rotates and calls m.bg.Add(1) concurrently with Wait: %v", got, msgs)
+	}
+}
+
 // hostIndex maps a host key back to its config index.
 func hostIndex(t *testing.T, cfgs []config.AccessLogConfig, host string) int {
 	t.Helper()
