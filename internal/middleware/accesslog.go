@@ -17,14 +17,30 @@ var sensitiveQueryParams = []string{
 	"access_token", "auth", "credential", "private", "signature",
 }
 
+// SanitizeURI returns the request URI with sensitive query parameters redacted.
+//
+// Exported so callers outside this package that log a request URI reuse this
+// one implementation instead of re-deriving the redaction rules. The
+// Cloudflare-origin guard in internal/server used to log the raw RequestURI,
+// sending secrets to stdout alongside this access log.
+func SanitizeURI(r *http.Request) string { return sanitizeURI(r) }
+
 // sanitizeURI returns the request URI with sensitive query parameters redacted.
 func sanitizeURI(r *http.Request) string {
 	if r.URL.RawQuery == "" {
 		return r.URL.Path
 	}
 
-	// Check if any sensitive params are present
-	query := r.URL.Query()
+	// Parse explicitly and fail CLOSED, mirroring redactReferer below.
+	// r.URL.Query() discards ParseQuery's error and silently skips any pair it
+	// cannot unescape, so a sensitive param carrying a malformed escape
+	// (token=abc%zz) vanished from the map entirely: the redaction loop never
+	// saw it, needsRedaction stayed false, and the raw URI — secret included —
+	// was written to the access log. A redaction control must not fail open.
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return r.URL.Path + "?[REDACTED]"
+	}
 	needsRedaction := false
 	for param := range query {
 		if isSensitiveQueryParam(param) {
