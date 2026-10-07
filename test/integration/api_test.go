@@ -19,33 +19,61 @@ import (
 	"github.com/uwaserver/uwas/internal/server"
 )
 
-// helper: start a UWAS server with admin enabled, returns base URL, admin URL, cleanup func.
+// helper: start a UWAS server with admin enabled, returns base URL and admin URL.
 func startServerWithAdmin(t *testing.T, cfg *config.Config) (base, adminBase string) {
 	t.Helper()
 
 	log := logger.New("error", "text")
-	srv := server.New(cfg, log)
 
-	go srv.Start()
+	// Parallel test binaries race for the same "free" ports: getFreePort
+	// reserves a port, closes it, and returns the number, so between that
+	// close and this server's bind another binary can take it ("bind:
+	// address already in use"). Attempt 0 uses the addresses the caller
+	// built; retries rebind on fresh ports and keep every derived reference
+	// consistent — callers assert against cfg.Global.HTTPListen and build
+	// their domains from it before calling this helper.
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			oldHTTP := cfg.Global.HTTPListen
+			cfg.Global.HTTPListen = fmt.Sprintf("127.0.0.1:%d", getFreePort(t))
+			cfg.Global.Admin.Listen = fmt.Sprintf("127.0.0.1:%d", getFreePort(t))
+			for i := range cfg.Domains {
+				if cfg.Domains[i].Host == oldHTTP {
+					cfg.Domains[i].Host = cfg.Global.HTTPListen
+				}
+			}
+		}
+		base = "http://" + cfg.Global.HTTPListen
+		adminBase = "http://" + cfg.Global.Admin.Listen
 
-	base = fmt.Sprintf("http://%s", cfg.Global.HTTPListen)
-	adminBase = fmt.Sprintf("http://%s", cfg.Global.Admin.Listen)
+		srv := server.New(cfg, log)
+		go srv.Start()
 
-	// Wait for the admin health endpoint to be ready.
+		if waitForAdminReady(adminBase, 3*time.Second) {
+			return base, adminBase
+		}
+	}
+
+	t.Fatal("admin server did not become ready within 3s per attempt across 3 attempts")
+	return
+}
+
+// waitForAdminReady polls the admin health endpoint until it answers 200 or
+// the timeout expires.
+func waitForAdminReady(adminBase string, timeout time.Duration) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(adminBase + "/api/v1/health")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				return
+				return true
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("admin server did not become ready within 3s")
-	return
+	return false
 }
 
 // helper: make a base config with admin enabled.
