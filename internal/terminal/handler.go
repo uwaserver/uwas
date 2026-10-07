@@ -121,6 +121,20 @@ func (h *Handler) UpgradeWebSocket(w http.ResponseWriter, r *http.Request) (*WSC
 
 const maxWSPayload = 64 * 1024 // 64KB max frame to prevent OOM
 
+// maxWSControlPayload caps a control frame's body. RFC 6455 §5.5: "All control
+// frames MUST have a payload length of 125 bytes or less and MUST NOT be
+// fragmented."
+const maxWSControlPayload = 125
+
+// WebSocket opcodes (RFC 6455 §5.2). Only the control opcodes are named here —
+// the data opcodes (0x0 continuation, 0x1 text, 0x2 binary) all mean "message
+// data" to this server and are handled identically.
+const (
+	opClose = 0x8 // control
+	opPing  = 0x9 // control
+	opPong  = 0xA // control
+)
+
 func (c *WSConn) ReadMessage() ([]byte, error) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(c.reader, header); err != nil {
@@ -142,6 +156,17 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 		ext := make([]byte, 8)
 		if _, err := io.ReadFull(c.reader, ext); err != nil {
 			return nil, err
+		}
+		// RFC 6455 §5.2: the most significant bit of the 64-bit length MUST be
+		// 0. Reject it here. Reading the bytes into a signed int64 turned a
+		// client-set high bit into a NEGATIVE payloadLen, which cannot satisfy
+		// `payloadLen > maxWSPayload` below and so slipped past the 64KB cap —
+		// reaching make([]byte, payloadLen) and panicking the process. That
+		// panic is unrecovered (internal/terminal has no recover) and happens on
+		// the WebSocket→PTY pump goroutine, not the net/http handler goroutine,
+		// so one frame took down the whole server.
+		if ext[0]&0x80 != 0 {
+			return nil, fmt.Errorf("invalid frame: 64-bit length has high bit set")
 		}
 		payloadLen = int(ext[0])<<56 | int(ext[1])<<48 | int(ext[2])<<40 | int(ext[3])<<32 |
 			int(ext[4])<<24 | int(ext[5])<<16 | int(ext[6])<<8 | int(ext[7])
@@ -168,11 +193,63 @@ func (c *WSConn) ReadMessage() ([]byte, error) {
 		}
 	}
 
-	if opcode == 0x8 { // close frame — echo back per RFC 6455
-		c.WriteText(payload) // echo close frame body (status code)
+	// Control frames are protocol chatter and must never reach the PTY as
+	// terminal input. RFC 6455 §5.5 keeps them out of the data stream; §5.5.2
+	// additionally requires a Pong in response to every Ping.
+	//
+	// Ping and Pong previously fell through to `return payload, nil`, so the
+	// WS->PTY pump wrote their payload straight into the user's interactive
+	// shell, and a client using keepalive pings never got an answer.
+	switch opcode {
+	case opClose:
+		c.writeClose(payload) // echo close frame body (status code)
 		return nil, io.EOF
+	case opPing:
+		// RFC 6455 §5.5.2: the Pong MUST carry the Ping's application data.
+		c.writePong(payload)
+		return nil, nil
+	case opPong:
+		// An unsolicited/late Pong needs no reply; drop it, never forward it.
+		return nil, nil
 	}
 	return payload, nil
+}
+
+// writeClose emits a Close frame (FIN | 0x8) carrying payload.
+//
+// The close echo used to go out through WriteText, which hardcodes 0x81 (FIN |
+// 0x1). That sent the closing handshake as a *text* frame: RFC 6455 §5.5.1
+// defines the handshake as Close frame <-> Close frame, so a conforming client
+// read 0x1 as application data, never completed the handshake, and received the
+// status code as if it were terminal text. Close() below already used 0x88, so
+// the two close paths disagreed inside one file; both now go through here.
+func (c *WSConn) writeClose(payload []byte) error {
+	return c.writeControl(opClose, payload)
+}
+
+// writePong answers a Ping, echoing its application data verbatim as RFC 6455
+// §5.5.2 requires.
+func (c *WSConn) writePong(payload []byte) error {
+	return c.writeControl(opPong, payload)
+}
+
+// writeControl emits a single control frame (FIN | opcode) with a short length
+// prefix. Control frames are capped at 125 bytes by RFC 6455 §5.5, so an
+// over-long body is dropped rather than emitted with a length byte that would
+// be misread as an extended-length marker.
+func (c *WSConn) writeControl(opcode byte, payload []byte) error {
+	if len(payload) > maxWSControlPayload {
+		payload = nil
+	}
+	frame := make([]byte, 0, 2+len(payload))
+	frame = append(frame, 0x80|opcode)
+	frame = append(frame, byte(len(payload)))
+	frame = append(frame, payload...)
+
+	c.wmu.Lock()
+	_, err := c.writer.Write(frame)
+	c.wmu.Unlock()
+	return err
 }
 
 func (c *WSConn) WriteText(data []byte) error {

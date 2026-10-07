@@ -5,6 +5,7 @@ package terminal
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -177,7 +178,24 @@ func openPTY() (master, slave *os.File, err error) {
 	return master, slave, nil
 }
 
+// setWinSize applies a terminal window size. Both dimensions come from the
+// client (resizeMsg, decoded straight out of a WebSocket frame), so they are
+// untrusted.
+//
+// Values are range-checked before the uint16 conversion. Converting first let
+// the conversion reinterpret the number instead of applying it: cols=65536
+// truncated to 0 and cols=-1 wrapped to 65535, so the kernel was handed a 0x0
+// or absurdly wide TIOCSWINSZ that it happily accepts. The user's shell then
+// rendered against a zero-size or 65535-column window with nothing reported
+// back. Rejecting the resize leaves the last good size in place, which is what
+// a browser does when a resize event is nonsense.
+//
+// Out of range here means "not a usable terminal size": outside uint16, or not
+// positive. A zero row/column count is not a window at all.
 func setWinSize(f *os.File, cols, rows int) {
+	if cols <= 0 || rows <= 0 || cols > math.MaxUint16 || rows > math.MaxUint16 {
+		return
+	}
 	type winsize struct {
 		Row, Col, Xpixel, Ypixel uint16
 	}
