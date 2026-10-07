@@ -938,18 +938,32 @@ func (s *Server) Start() error {
 	s.wg.Add(1)
 	go s.handleSignals()
 
+	// joinOnErr makes an early startup failure join the signal-handler
+	// goroutine instead of leaking it. handleSignals exits only when ctx is
+	// cancelled or a signal arrives, so cancelling here is the same nudge the
+	// normal shutdown path relies on; the normal path joins it at the wg.Wait
+	// below, and only these early returns needed the extra step. (A startHTTP3
+	// failure is deliberately not routed here: it only logs a warning.)
+	joinOnErr := func(err error) error {
+		if err != nil {
+			s.cancel()
+			s.wg.Wait()
+		}
+		return err
+	}
+
 	// Evict idle per-location rate-limit entries to bound memory.
 	s.logger.SafeGo("ratelimit.janitor", func() { s.locationLimiterJanitor(s.ctx) })
 
 	// HTTP listener
 	if err := s.startHTTP(); err != nil {
-		return err
+		return joinOnErr(err)
 	}
 
 	// HTTPS listener
 	if hasSSL {
 		if err := s.startHTTPS(); err != nil {
-			return err
+			return joinOnErr(err)
 		}
 		s.logger.SafeGo("tls.obtain", func() { s.tlsMgr.ObtainCerts(s.ctx) })
 		s.tlsMgr.StartRenewal(s.ctx)
