@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/logger"
@@ -48,6 +49,10 @@ type Server struct {
 	mu       sync.RWMutex
 	users    map[string]User
 	wg       sync.WaitGroup
+	// pending counts connection goroutines registered with wg whose Done has
+	// not fired. Test-only: a WaitGroup counter cannot be read from outside,
+	// so this makes the Add ordering externally observable.
+	pending atomic.Int64
 }
 
 // New creates a new SFTP server.
@@ -132,10 +137,33 @@ func (s *Server) Shutdown() {
 	s.wg.Wait()
 }
 
+// acceptSeam is a test-only pause point between Accept returning a connection
+// and that connection being handed to handleConn. Registration happens before
+// the blocking Accept, so parking here is observable: the counter is already
+// non-zero, where the old Add-after-Accept order left it at zero. Production
+// installs a no-op; tests substitute a park point.
+var acceptSeam = func(net.Conn) {}
+
+// pendingCount reports connection goroutines registered with wg whose Done
+// has not fired. Test-only: a WaitGroup counter cannot be read from outside,
+// so this makes the Add ordering externally observable.
+func (s *Server) pendingCount() int { return int(s.pending.Load()) }
+
 func (s *Server) acceptLoop() {
 	for {
+		// Pre-register the connection goroutine BEFORE the blocking Accept.
+		// Adding only after Accept returned left a window where a connection
+		// accepted just before Stop() closed the listener reached Add(1) once
+		// Shutdown's Wait had already started on a zero counter, panicking
+		// with "sync: WaitGroup misuse: Add called concurrently with Wait".
+		// Registering first keeps the counter non-zero for the whole accept,
+		// so Wait cannot return before this goroutine's Done.
+		s.wg.Add(1)
+		s.pending.Add(1)
 		conn, err := s.listener.Accept()
 		if err != nil {
+			s.wg.Done()
+			s.pending.Add(-1)
 			if errors.Is(err, net.ErrClosed) {
 				return // listener closed gracefully
 			}
@@ -143,7 +171,7 @@ func (s *Server) acceptLoop() {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		s.wg.Add(1)
+		acceptSeam(conn)
 		go s.handleConn(conn)
 	}
 }
@@ -152,6 +180,7 @@ func (s *Server) handleConn(nConn net.Conn) {
 	defer func() {
 		nConn.Close()
 		s.wg.Done()
+		s.pending.Add(-1)
 	}()
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(nConn, s.sshCfg)
@@ -245,11 +274,11 @@ const (
 
 // pflags
 const (
-	sshFXFRead   = 0x00000001
-	sshFXFWrite  = 0x00000002
-	sshFXFAppend = 0x00000004
-	sshFXFCreat  = 0x00000008
-	sshFXFTrunc   = 0x00000010
+	sshFXFRead      = 0x00000001
+	sshFXFWrite     = 0x00000002
+	sshFXFAppend    = 0x00000004
+	sshFXFCreat     = 0x00000008
+	sshFXFTrunc     = 0x00000010
 	sshFXFExclusive = 0x00000020 // SSH_FXF_EXCL: atomic exclusive create — fail if file exists
 )
 
