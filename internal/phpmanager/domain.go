@@ -758,6 +758,18 @@ func (m *Manager) buildDomainINI(domain string, inst PHPInstall, overrides map[s
 			// Defense-in-depth: never emit an override that could inject extra
 			// ini directives, even if it reached the map by another path
 			// (legacy persisted YAML, direct map mutation, etc.).
+			//
+			// The security blocklist must be re-checked here, not only at the
+			// API boundary (SetDomainConfig). RegisterExistingDomain seeds
+			// configOverrides straight from d.PHP.ConfigOverrides in uwas.yaml
+			// without that check, and these lines are emitted AFTER the
+			// enforced sandbox below. PHP ini is last-value-wins, so an
+			// emitted "open_basedir = /" or "disable_functions =" silently
+			// defeats the chroot and the function blocklist.
+			if blockedPHPDirectives[k] {
+				m.logger.Warn("skipping blocked per-domain PHP override", "domain", domain, "key", k)
+				continue
+			}
 			if !validPHPINIDirective(k) || !phpINIValueSafe(v) {
 				m.logger.Warn("skipping unsafe per-domain PHP override", "domain", domain, "key", k)
 				continue
