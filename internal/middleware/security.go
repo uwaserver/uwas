@@ -313,7 +313,14 @@ func isMultipartContentType(ct string) bool {
 func scanJSONBody(bodyBytes []byte, families map[string]bool) bool {
 	var value interface{}
 	if err := json.Unmarshal(bodyBytes, &value); err != nil {
-		return false
+		// Failing to parse must not mean "not an attack". The guard only reads
+		// the first maxBodyScan bytes (see DomainWAFGuard), so any JSON body
+		// larger than that arrives here TRUNCATED mid-structure and can never
+		// unmarshal — returning false made every oversized JSON body skip the
+		// WAF entirely. Falling back to a raw scan of the bytes we do have
+		// matches what the non-JSON sibling branch already does, so a body is
+		// never silently exempt because of its size.
+		return matchWAF(wafBodyPatterns, families, string(bodyBytes), "")
 	}
 	return scanJSONValue(value, families)
 }
