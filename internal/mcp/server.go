@@ -311,8 +311,9 @@ func sanitizeDomainForMCP(d config.Domain) config.Domain {
 	d.PHP.Env = nil         // env vars frequently hold DB creds, API keys
 	d.App.Env = nil         // same for non-PHP apps
 	d.BasicAuth.Users = nil // username → password map (often hashed, but still)
-	d.WebhookSecret = ""    // per-domain webhook HMAC
-	d.SSL.Key = ""          // path or inline private key — neither belongs in agent output
+	d.Locations = sanitizeLocations(d.Locations)
+	d.WebhookSecret = "" // per-domain webhook HMAC
+	d.SSL.Key = ""       // path or inline private key — neither belongs in agent output
 
 	// URL-shaped fields are secret-bearing too: a reverse-proxy upstream,
 	// canary, mirror or redirect target routinely carries HTTP basic-auth
@@ -338,6 +339,40 @@ func sanitizeURLUserinfo(raw string) string {
 	}
 	u.User = nil
 	return u.String()
+}
+
+// sanitizeLocations clears the per-path basic-auth credentials on each location.
+//
+// Two things this must get right, and why the copy is not optional:
+//   - LocationConfig.BasicAuth is a *BasicAuthConfig (internal/config/domain.go),
+//     so it is a POINTER into the caller's live config. Nilling Users through
+//     it would strip credentials from the running server, so the struct is
+//     copied before being edited.
+//   - The Locations slice header aliases the caller's backing array even though
+//     config.Domain is passed by value, so the slice is copied first.
+//
+// Leaving this out leaks per-path HTTP basic-auth credentials to the MCP client:
+// ConfigExport treats the identical field as a secret (settings/handler.go
+// nils both d.BasicAuth.Users and d.Locations[j].BasicAuth.Users), and
+// domain_get is documented "(secrets redacted)" precisely because its response
+// goes to an AI agent that may be on a different trust boundary than the
+// dashboard. Enabled/Realm are not secrets and are preserved, so the agent can
+// still see that a location is protected.
+func sanitizeLocations(locs []config.LocationConfig) []config.LocationConfig {
+	if len(locs) == 0 {
+		return locs
+	}
+	out := make([]config.LocationConfig, len(locs))
+	copy(out, locs)
+	for i := range out {
+		if out[i].BasicAuth == nil {
+			continue
+		}
+		ba := *out[i].BasicAuth
+		ba.Users = nil
+		out[i].BasicAuth = &ba
+	}
+	return out
 }
 
 // sanitizeUpstreams copies the slice before rewriting each address. The copy
