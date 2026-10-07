@@ -1231,15 +1231,19 @@ func (s *Server) rejectNonCloudflareOrigin(w http.ResponseWriter, r *http.Reques
 	if len(cfRanges) == 0 {
 		reason = "cloudflare_only_no_ranges"
 	}
+	// Both sinks below record this request. Compute the redacted URI once so
+	// they cannot disagree: the dashboard entry is the same sensitive-param
+	// redaction as the log line, not a raw RequestURI.
+	safeURI := middleware.SanitizeURI(r)
 	if s.securityStats != nil {
-		s.securityStats.Record(clientIP, r.URL.RequestURI(), reason, r.UserAgent())
+		s.securityStats.Record(clientIP, safeURI, reason, r.UserAgent())
 	}
 	s.logger.Warn("blocked non-Cloudflare origin request",
 		"host", r.Host,
 		"domain", domain.Host,
 		"origin_ip", originIP,
 		"client_ip", clientIP,
-		"path", middleware.SanitizeURI(r),
+		"path", safeURI,
 		"user_agent", r.UserAgent(),
 	)
 	w.Header().Set("Connection", "close")
