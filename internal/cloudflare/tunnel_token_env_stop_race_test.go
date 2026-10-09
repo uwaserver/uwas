@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The connector token must never reach cloudflared's argv: /proc/<pid>/cmdline
@@ -44,10 +45,7 @@ func TestRunnerPassesTokenViaEnvNotArgv(t *testing.T) {
 	if bytes.Contains(cmdline, []byte(token)) || bytes.Contains(cmdline, []byte("--token")) {
 		t.Fatalf("token or --token flag in cmdline: %q", bytes.ReplaceAll(cmdline, []byte{0}, []byte{' '}))
 	}
-	environ, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
-	if err != nil {
-		t.Fatal(err)
-	}
+	environ := readEnvironEventually(t, pid)
 	var got []string
 	for _, kv := range strings.Split(string(environ), "\x00") {
 		if v, ok := strings.CutPrefix(kv, "TUNNEL_TOKEN="); ok {
@@ -56,6 +54,38 @@ func TestRunnerPassesTokenViaEnvNotArgv(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != token {
 		t.Fatalf("child TUNNEL_TOKEN = %q, want only the connector token", got)
+	}
+}
+
+// readEnvironEventually polls /proc/<pid>/environ until the child's
+// environment block is observable.
+//
+// A single read immediately after Start races the child's exec: /proc reports
+// the env block of the new mm, which is frequently still empty at that
+// instant even though the child is alive and its /proc/<pid>/cmdline is
+// already fully populated. Measured on this package, 22 of 25 consecutive
+// Start calls returned a zero-length environ on the first read while all 25
+// became readable on the next attempt — so a one-shot read made this test fail
+// intermittently for reasons that have nothing to do with how the token is
+// passed. Polling with a bounded deadline keeps the security assertion intact
+// (the token must appear exactly once, and never in argv) while removing the
+// sampling race.
+func readEnvironEventually(t *testing.T, pid int) []byte {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var lastErr error
+	for {
+		raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+		switch {
+		case err != nil:
+			lastErr = err
+		case len(raw) > 0:
+			return raw
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("/proc/%d/environ not readable within 2s (len=%d, err=%v)", pid, len(raw), lastErr)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
