@@ -402,8 +402,8 @@ func TestExtractRealIPEmptyAndInvalid(t *testing.T) {
 	if got := extractRealIP("", trusted); got != "" {
 		t.Fatalf("expected empty for empty xff, got %q", got)
 	}
-	// Invalid IP entries are skipped, fall to leftmost.
-	if got := extractRealIP("not-an-ip, 10.0.0.5", trusted); got != "not-an-ip" {
+	// An unparsable entry ends the walk: nothing left of it is attributable.
+	if got := extractRealIP("not-an-ip, 10.0.0.5", trusted); got != "" {
 		t.Fatalf("got %q", got)
 	}
 }

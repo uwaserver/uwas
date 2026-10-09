@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/uwaserver/uwas/internal/install"
 )
@@ -143,6 +144,22 @@ type setupInstallResult struct {
 	Reason  string `json:"reason,omitempty"` // why skipped / failed to queue
 }
 
+// setupInstallMu serializes wizard submissions so the "already queued" check
+// and the Submit that follows it are atomic across concurrent requests.
+var setupInstallMu sync.Mutex
+
+// installPending reports whether an install of name is already queued or
+// running, so re-submitting the wizard does not run the same installer twice.
+func (s *Server) installPending(taskType, name string) bool {
+	for _, t := range s.taskMgr.List() {
+		if t.Type == taskType && t.Name == name && t.Action == "install" &&
+			(t.Status == install.StatusQueued || t.Status == install.StatusRunning) {
+			return true
+		}
+	}
+	return false
+}
+
 // handleSetupInstall queues a batch of components for installation. Unlike the
 // single-item endpoints it does NOT reject when another task is active — the
 // queue serializes everything — so the wizard can submit the whole selection
@@ -172,6 +189,8 @@ func (s *Server) handleSetupInstall(w http.ResponseWriter, r *http.Request) {
 	seen := make(map[string]bool, len(req.Items))
 	queued := 0
 
+	setupInstallMu.Lock()
+	defer setupInstallMu.Unlock()
 	for _, item := range req.Items {
 		key := item.Type + ":" + item.ID
 		if seen[key] {
@@ -188,6 +207,8 @@ func (s *Server) handleSetupInstall(w http.ResponseWriter, r *http.Request) {
 				res.Skipped, res.Reason = true, "PHP manager not enabled"
 			} else if s.phpVersionInstalled(item.ID) {
 				res.Skipped, res.Reason = true, "already installed"
+			} else if s.installPending("php", item.ID) {
+				res.Skipped, res.Reason = true, "already queued"
 			} else {
 				task := s.taskMgr.Submit("php", item.ID, "install", s.phpInstallTaskFn(item.ID))
 				res.TaskID = task.ID
@@ -206,6 +227,8 @@ func (s *Server) handleSetupInstall(w http.ResponseWriter, r *http.Request) {
 			res.Name = pkg.name
 			if ok, _ := packageInstalled(*pkg); ok {
 				res.Skipped, res.Reason = true, "already installed"
+			} else if s.installPending("package", pkg.name) {
+				res.Skipped, res.Reason = true, "already queued"
 			} else {
 				task := s.taskMgr.Submit("package", pkg.name, "install", s.packageTaskFn(*pkg, "install"))
 				res.TaskID = task.ID

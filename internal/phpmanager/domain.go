@@ -86,9 +86,20 @@ func (m *Manager) AssignDomain(domain, version string) (*DomainPHP, error) {
 	// Try system php-fpm socket first (best performance, shared workers)
 	addr := m.detectSystemFPMSocket(version)
 	if addr == "" {
-		// Fallback to per-domain TCP port (for php-cgi)
-		addr = fmt.Sprintf("127.0.0.1:%d", m.nextPort)
-		m.nextPort++
+		// Fallback to per-domain TCP port (for php-cgi). Skip ports already
+		// held by another domain, e.g. one registered from config, so two
+		// domains never share a FastCGI address.
+		inUse := make(map[string]bool, len(m.domainMap))
+		for _, other := range m.domainMap {
+			inUse[other.listenAddr] = true
+		}
+		for {
+			addr = fmt.Sprintf("127.0.0.1:%d", m.nextPort)
+			m.nextPort++
+			if !inUse[addr] {
+				break
+			}
+		}
 	}
 
 	inst := &domainInstance{
@@ -209,7 +220,7 @@ func (m *Manager) StartDomain(domain string) error {
 
 	cmd := m.execCommand(phpInst.Binary, args...)
 	// Spawn worker children for parallel request handling
-	cmd.Env = append(os.Environ(),
+	cmd.Env = phpWorkerEnv(
 		"PHP_FCGI_CHILDREN=8",
 		"PHP_FCGI_MAX_REQUESTS=500",
 	)
@@ -454,6 +465,20 @@ var blockedPHPDirectives = map[string]bool{
 	"user_dir":                        true,
 	"cgi.force_redirect":              true,
 	"cgi.redirect_status_env":         true,
+	// Isolation paths UWAS enforces per domain: an override emitted after the
+	// enforced block would win and point them at another domain's directory.
+	"upload_tmp_dir":    true,
+	"session.save_path": true,
+	"sys_temp_dir":      true,
+	// Paths PHP opens at startup without an open_basedir check, so they would
+	// let one domain write (or run) files inside another domain's web root.
+	"error_log":             true,
+	"mail.log":              true,
+	"opcache.preload":       true,
+	"opcache.preload_user":  true,
+	"opcache.file_cache":    true,
+	"opcache.error_log":     true,
+	"opcache.lockfile_path": true,
 }
 
 // validPHPINIDirective reports whether key is a syntactically valid php.ini

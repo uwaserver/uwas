@@ -311,11 +311,14 @@ func DockerDBCreateDatabase(containerName, dbName, user, password string) (*Crea
 	if !ValidDBIdentifier(user) {
 		return nil, fmt.Errorf("invalid database user %q", user)
 	}
+	if strings.ContainsRune(password, 0) {
+		return nil, fmt.Errorf("invalid password: null byte not allowed")
+	}
 	sql := fmt.Sprintf(
 		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "+
 			"CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; "+
 			"GRANT ALL ON %s.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
-		backtick(dbName), escapeSQL(user), escapeSQL(password), backtick(dbName), escapeSQL(user))
+		backtick(dbName), escapeSQL(user), escapeSQL(password), grantDBIdent(dbName), escapeSQL(user))
 
 	_, err := DockerDBExecSQL(containerName, sql)
 	if err != nil {

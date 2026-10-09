@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"errors"
+	"net/http"
 	"os"
 	"os/exec"
 	"testing"
@@ -15,6 +17,15 @@ import (
 // admin code path can never shell out to a real privileged system command.
 func safeNoExecCmd(name string, args ...string) *exec.Cmd {
 	return exec.Command("true")
+}
+
+// noNetworkTransport refuses every request. It is the default Cloudflare API
+// transport during tests so a test that inherits a connected cloudflareConfig
+// from an earlier test fails locally instead of calling api.cloudflare.com.
+type noNetworkTransport struct{}
+
+func (noNetworkTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("test: outbound network disabled")
 }
 
 // TestMain neutralizes every admin test seam that shells out to privileged
@@ -52,5 +63,11 @@ func TestMain(m *testing.M) {
 
 	phpRunInstall = func(version string) (string, error) { return "", nil }
 
-	os.Exit(m.Run())
+	cfHTTPClient = &http.Client{Transport: noNetworkTransport{}}
+	installTestNetworkGuard()
+	removeFakeUFW := installFakeUFW()
+
+	code := m.Run()
+	removeFakeUFW()
+	os.Exit(code)
 }

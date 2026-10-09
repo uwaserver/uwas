@@ -53,17 +53,27 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 
-	// Write the key first, then the cert, each atomically (temp + fsync +
-	// rename). Writing the key first guarantees the cert file never references a
-	// key that isn't on disk yet, and the atomic rename means a concurrent
-	// Load/renewal never observes a half-written cert/key pair.
+	// Stage both the key and the cert (temp + fsync) before renaming either,
+	// so a write failure (e.g. disk full) leaves the previous pair intact
+	// instead of a new key next to the old cert, which Load rejects.
 	keyPath := filepath.Join(dir, "key.pem")
-	if err := atomicWriteCertFile(keyPath, keyPEM, 0600); err != nil {
+	keyTmp, err := stageCertFile(keyPath, keyPEM, 0600)
+	if err != nil {
 		return fmt.Errorf("write key: %w", err)
 	}
+	defer os.Remove(keyTmp)
 
 	certPath := filepath.Join(dir, "cert.pem")
-	if err := atomicWriteCertFile(certPath, certPEM, 0644); err != nil {
+	certTmp, err := stageCertFile(certPath, certPEM, 0644)
+	if err != nil {
+		return fmt.Errorf("write cert: %w", err)
+	}
+	defer os.Remove(certTmp)
+
+	if err := os.Rename(keyTmp, keyPath); err != nil {
+		return fmt.Errorf("write key: %w", err)
+	}
+	if err := os.Rename(certTmp, certPath); err != nil {
 		return fmt.Errorf("write cert: %w", err)
 	}
 
@@ -97,38 +107,45 @@ func (s *CertStorage) Save(domain string, cert *tls.Certificate, keyPEM, certPEM
 // fsync, then atomic rename over the target. Prevents readers (SNI lookup,
 // renewal) from observing a partially-written cert/key file.
 func atomicWriteCertFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	tmpName, err := stageCertFile(path, data, perm)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			os.Remove(tmpName)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
 		return err
+	}
+	return nil
+}
+
+// stageCertFile writes data to a fsynced temp file next to path and returns
+// its name; the caller renames it into place (or removes it).
+func stageCertFile(path string, data []byte, perm os.FileMode) (string, error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	fail := func(err error) (string, error) {
+		tmp.Close()
+		os.Remove(tmpName)
+		return "", err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fail(err)
 	}
 	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return err
+		return fail(err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
+		return fail(err)
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		os.Remove(tmpName)
+		return "", err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return tmpName, nil
 }
 
 // Load reads a certificate and key from disk.

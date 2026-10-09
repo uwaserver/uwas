@@ -43,7 +43,14 @@ func RealIP(trustedProxies []string) Middleware {
 			// that feeds ACLs, access logs, and BotGuard's loopback check
 			// downstream. Loopback/unspecified values are rejected so a
 			// client-supplied "127.0.0.1" can never buy loopback trust.
-			if ip := r.Header.Get("CF-Connecting-IP"); acceptableForwardedIP(ip) {
+			// CF-Connecting-IP is only believed when it agrees with the
+			// X-Forwarded-For hop the trusted proxy appended. Cloudflare sets
+			// both to the same client; a non-Cloudflare trusted proxy that
+			// appends XFF but forwards a client-set CF-Connecting-IP verbatim
+			// would otherwise let the client pick its own address.
+			xff := strings.Join(r.Header.Values("X-Forwarded-For"), ",")
+			if ip := r.Header.Get("CF-Connecting-IP"); acceptableForwardedIP(ip) &&
+				(xff == "" || sameIP(ip, extractRealIP(xff, trusted))) {
 				r.RemoteAddr = net.JoinHostPort(ip, "0")
 				next.ServeHTTP(w, r)
 				return
@@ -55,7 +62,7 @@ func RealIP(trustedProxies []string) Middleware {
 				return
 			}
 
-			if xff := strings.Join(r.Header.Values("X-Forwarded-For"), ","); xff != "" {
+			if xff != "" {
 				ip := extractRealIP(xff, trusted)
 				if acceptableForwardedIP(ip) {
 					r.RemoteAddr = net.JoinHostPort(ip, "0")
@@ -86,16 +93,25 @@ func acceptableForwardedIP(ip string) bool {
 	return parsed != nil && !parsed.IsLoopback() && !parsed.IsUnspecified()
 }
 
+// sameIP reports whether a and b parse to the same address.
+func sameIP(a, b string) bool {
+	pa, pb := net.ParseIP(a), net.ParseIP(b)
+	return pa != nil && pb != nil && pa.Equal(pb)
+}
+
 // extractRealIP returns the rightmost untrusted IP from X-Forwarded-For.
 func extractRealIP(xff string, trusted []*net.IPNet) string {
 	parts := strings.Split(xff, ",")
 
-	// Walk from right to left, find first untrusted IP
+	// Walk from right to left, find first untrusted IP. An entry that does
+	// not parse even after stripping a port ("unknown", garbage) ends the
+	// walk: everything left of it is client-supplied, so skipping it would
+	// hand the client's own leftmost value back as the "real" address.
 	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
+		ip := forwardedEntryIP(parts[i])
 		parsed := net.ParseIP(ip)
 		if parsed == nil {
-			continue
+			return ""
 		}
 		if !isTrusted(parsed, trusted) {
 			return ip
@@ -104,9 +120,22 @@ func extractRealIP(xff string, trusted []*net.IPNet) string {
 
 	// All IPs are trusted, return leftmost
 	if len(parts) > 0 {
-		return strings.TrimSpace(parts[0])
+		return forwardedEntryIP(parts[0])
 	}
 	return ""
+}
+
+// forwardedEntryIP trims one X-Forwarded-For entry and drops a port some
+// proxies append ("203.0.113.9:51234", "[2001:db8::9]:443").
+func forwardedEntryIP(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if net.ParseIP(entry) != nil {
+		return entry
+	}
+	if host, _, err := net.SplitHostPort(entry); err == nil {
+		return host
+	}
+	return entry
 }
 
 // extractIP parses the IP from an address that may include a port.
@@ -137,14 +166,21 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 			if ip == nil {
 				continue
 			}
-			if ip.To4() != nil {
-				s = s + "/32"
+			if ip4 := ip.To4(); ip4 != nil {
+				// Use the dotted form so an IPv4-mapped entry such as
+				// "::ffff:1.2.3.4" becomes 1.2.3.4/32, not ::/32.
+				s = ip4.String() + "/32"
 			} else {
 				s = s + "/128"
 			}
 		}
 		_, cidr, err := net.ParseCIDR(s)
 		if err == nil {
+			// An IPv4-mapped network ("::ffff:1.2.3.0/120") is 16 bytes
+			// long and never matches IPv4 clients; fold it to IPv4.
+			if ones, bits := cidr.Mask.Size(); bits == 128 && ones >= 96 && cidr.IP.To4() != nil {
+				cidr = &net.IPNet{IP: cidr.IP.To4(), Mask: net.CIDRMask(ones-96, 32)}
+			}
 			nets = append(nets, cidr)
 		}
 	}

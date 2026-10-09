@@ -83,15 +83,25 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.WebRoot == "" {
-		req.WebRoot = h.deps.DomainRoot(req.Domain)
-		if req.WebRoot == "" {
-			webRoot := h.deps.GlobalWebRoot()
-			if webRoot != "" {
-				req.WebRoot = filepath.Join(webRoot, req.Domain, "public_html")
-			}
+	// The install target and database come from the domain, never from the
+	// body: the access check above covers req.Domain only, so a caller-chosen
+	// web_root or db_name would let a domain user extract files into another
+	// tenant's folder and GRANT itself another tenant's database.
+	if req.DBName != "" || req.DBUser != "" {
+		jsonError(w, "db_name and db_user are derived from the domain and cannot be set", http.StatusBadRequest)
+		return
+	}
+	root := h.deps.DomainRoot(req.Domain)
+	if root == "" {
+		if webRoot := h.deps.GlobalWebRoot(); webRoot != "" {
+			root = filepath.Join(webRoot, req.Domain, "public_html")
 		}
 	}
+	if req.WebRoot != "" && filepath.Clean(req.WebRoot) != filepath.Clean(root) {
+		jsonError(w, "web_root must be the domain's document root", http.StatusBadRequest)
+		return
+	}
+	req.WebRoot = root
 
 	if req.WebRoot != "" && wp.IsWordPress(req.WebRoot) {
 		jsonError(w, "WordPress is already installed at "+req.WebRoot+". Use the Sites tab to manage it.", http.StatusConflict)
@@ -123,7 +133,9 @@ func (h *Handler) InstallStatus(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	result := h.result
 	h.mu.Unlock()
-	if result == nil {
+	// The result carries the new site's database password; only a caller
+	// who may manage that domain sees it.
+	if result == nil || !h.deps.CanAccessDomain(r, result.Domain) {
 		jsonResponse(w, map[string]string{"status": "idle"})
 		return
 	}
@@ -131,7 +143,12 @@ func (h *Handler) InstallStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Sites(w http.ResponseWriter, r *http.Request) {
-	domains := h.deps.Domains()
+	var domains []wp.DomainInfo
+	for _, d := range h.deps.Domains() {
+		if h.deps.CanAccessDomain(r, d.Host) {
+			domains = append(domains, d)
+		}
+	}
 	sites := wp.DetectSites(domains)
 	if sites == nil {
 		sites = []wp.SiteInfo{}

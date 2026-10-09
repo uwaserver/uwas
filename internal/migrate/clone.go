@@ -103,6 +103,13 @@ func Clone(req CloneRequest) *CloneResult {
 			result.Error = "invalid database user"
 			return result
 		}
+		// sqlString panics on a NUL byte; reject it here, before any file or
+		// database side effect, instead of aborting mid-clone.
+		if strings.ContainsRune(req.DBPass, 0) {
+			result.Status = "error"
+			result.Error = "invalid database password"
+			return result
+		}
 	}
 
 	// Step 1: Copy files
@@ -215,7 +222,7 @@ func cloneDBReal(srcDB, dstDB, user, pass string, log *strings.Builder) error {
 				return fmt.Errorf("create user %q in %s: %w", user, dstDB, err)
 			}
 			if err := execCommandFn(bin, "-u", "root", "-e",
-				fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", sqlIdent(dstDB), sqlString(user))).Run(); err != nil {
+				fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'localhost'; FLUSH PRIVILEGES", grantIdent(dstDB), sqlString(user))).Run(); err != nil {
 				return fmt.Errorf("grant privileges to %q on %s: %w", user, dstDB, err)
 			}
 		}

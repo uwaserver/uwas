@@ -133,6 +133,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Metrics + log tracking
 	start := time.Now()
+	// Per-domain stats are keyed by the vhost that served the request, set
+	// after the lookup below. The raw Host header is client-chosen: keying by
+	// it gave every wildcard subdomain, alias and arbitrary HTTPS Host its own
+	// record (unbounded growth, split stats).
+	statsHost := ""
 	s.metrics.ActiveConns.Add(1)
 	defer func() {
 		s.metrics.ActiveConns.Add(-1)
@@ -144,7 +149,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.metrics.RecordRequest(ctx.Response.StatusCode())
 		s.metrics.RecordLatency(time.Since(start))
 		s.metrics.BytesSent.Add(ctx.Response.BytesWritten())
-		s.metrics.RecordDomain(r.Host, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
+		if statsHost != "" {
+			s.metrics.RecordDomain(statsHost, ctx.Response.StatusCode(), ctx.Response.BytesWritten())
+		}
 
 		// Record to admin log ring buffer (skip internal health checks and monitor)
 		// Matched as a substring: the monitor sends a browser-shaped User-Agent
@@ -176,8 +183,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Record analytics
-		if s.analytics != nil {
-			s.analytics.RecordFull(r.Host, r.URL.Path, r.RemoteAddr,
+		if s.analytics != nil && statsHost != "" {
+			s.analytics.RecordFull(statsHost, r.URL.Path, r.RemoteAddr,
 				r.Referer(), r.UserAgent(),
 				ctx.Response.StatusCode(), ctx.Response.BytesWritten())
 		}
@@ -210,6 +217,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	ctx.VHostName = domain.Host
 	ctx.DocumentRoot = domain.Root
+	statsHost = domain.Host
+
+	if code := s.clientCertRefusal(domain, r); code != 0 {
+		renderErrorPage(ctx.Response, code)
+		return
+	}
 
 	// Canonical hostname redirect: honour the domain's primary-URL preference
 	// before serving, so a request on the non-canonical host (e.g. the apex
@@ -694,7 +707,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			// ESI assembly on cache hit: replace ESI tags with cached/fetched fragments
 			if cached.ESITemplate && domain.Cache.ESI && s.esiProcessor != nil &&
 				r.Header.Get("X-ESI-Subrequest") == "" {
-				assembled, err := s.esiProcessor.Process(body, r.Host, r, cacheTagsFor(domain, r.Host), 0)
+				assembled, err := s.esiProcessor.Process(body, r.Host, r, cacheTagsFor(domain, domain.Host), 0)
 				if err == nil {
 					body = assembled
 				}
@@ -770,7 +783,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				Created:     time.Now(),
 				TTL:         ttl,
 				GraceTTL:    s.graceTTL(),
-				Tags:        cacheTagsFor(domain, r.Host),
+				Tags:        cacheTagsFor(domain, domain.Host),
 				ESITemplate: isESI,
 			})
 		}
@@ -880,6 +893,12 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 	// the final path component. Before this, deny blocks were parsed into
 	// the RuleSet and silently ignored: files an operator explicitly denied
 	// (database dumps, backups, logs) were served to anyone.
+	// An .htaccess that exists but failed to parse hides denies we cannot
+	// evaluate; answer 500 like Apache does instead of serving everything.
+	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && entry.parseFailed {
+		s.renderDomainError(ctx.Response, http.StatusInternalServerError, domain)
+		return
+	}
 	if entry := s.getHtaccessRuleSet(domain.Root); entry != nil && htaccess.FilesMatchDenies(entry.raw, filepath.Base(resolved)) {
 		s.renderDomainError(ctx.Response, http.StatusForbidden, domain)
 		return
@@ -934,8 +953,19 @@ func (s *Server) handleFileRequest(ctx *router.RequestContext, domain *config.Do
 			for _, fmt := range domain.ImageOptimization.Formats {
 				if strings.Contains(accept, "image/"+fmt) {
 					optPath := resolved + "." + fmt
-					if _, err := os.Stat(optPath); err == nil {
+					// The variant is a different file from the one ResolveRequest
+					// contained; a symlinked pic.jpg.webp must not reach outside root.
+					if !pathsafe.IsWithinBase(domain.Root, optPath) || !pathsafe.IsWithinBaseResolved(domain.Root, optPath) {
+						continue
+					}
+					// A variant older than the original was made from a
+					// previous version of the image; serve the original.
+					if fi, err := os.Stat(optPath); err == nil && !fi.IsDir() && !fi.ModTime().Before(info.ModTime()) {
 						ctx.ResolvedPath = optPath
+						// The static handler derives ETag and Last-Modified from
+						// FileInfo; keeping the original's would answer 304 to a
+						// client holding an older copy of a regenerated variant.
+						ctx.FileInfo = fi
 						ctx.Response.Header().Set("Content-Type", "image/"+fmt)
 						ctx.Response.Header().Add("Vary", "Accept")
 						break

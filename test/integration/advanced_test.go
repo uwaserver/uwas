@@ -479,10 +479,13 @@ func waitForServer(t *testing.T, base string, timeout time.Duration) {
 
 func writeConfig(t *testing.T, path, httpAddr, adminAddr, root string) {
 	t.Helper()
+	// An empty pid_file is defaulted to /var/run/uwas.pid by config.Load, so
+	// keep the PID file next to this test's config instead of the system one.
+	pidFile := strings.ReplaceAll(filepath.Join(filepath.Dir(path), "uwas.pid"), "\\", "/")
 	yaml := fmt.Sprintf(`global:
   worker_count: "1"
   http_listen: "%s"
-  pid_file: ""
+  pid_file: "%s"
   log_level: error
   log_format: text
   admin:
@@ -501,6 +504,6 @@ domains:
     type: static
     ssl:
       mode: off
-`, httpAddr, adminAddr, httpAddr, strings.ReplaceAll(root, "\\", "/"))
+`, httpAddr, pidFile, adminAddr, httpAddr, strings.ReplaceAll(root, "\\", "/"))
 	os.WriteFile(path, []byte(yaml), 0644)
 }

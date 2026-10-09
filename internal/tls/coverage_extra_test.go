@@ -90,7 +90,7 @@ func TestGetCertificateAllowSelfSignedFallback(t *testing.T) {
 		t.Fatal("expected self-signed cert, got nil")
 	}
 	// Cached: a second call must return the same stored cert (exact-match path).
-	if _, ok := m.certs.Load("fallback.example"); !ok {
+	if _, ok := m.selfSigned.Load("fallback.example"); !ok {
 		t.Error("self-signed cert was not cached")
 	}
 	cert2, err := m.GetCertificate(hello)

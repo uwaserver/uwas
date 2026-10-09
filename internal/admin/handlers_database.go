@@ -48,6 +48,13 @@ func (d *dbDeps) TaskActive() *dbadmin.TaskInfo {
 	return nil
 }
 
+// InstallLock takes setupInstallMu so the database install's Active() check
+// and Submit() are atomic with package installs and the setup wizard.
+func (d *dbDeps) InstallLock() (unlock func()) {
+	setupInstallMu.Lock()
+	return setupInstallMu.Unlock
+}
+
 func (d *dbDeps) TaskSubmit(category, name, action string, fn func(appendOutput func(string)) error) *dbadmin.TaskInfo {
 	task := d.s.taskMgr.Submit(category, name, action, fn)
 	return &dbadmin.TaskInfo{ID: task.ID, Name: task.Name, Type: task.Type}

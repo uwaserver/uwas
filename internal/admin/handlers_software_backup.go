@@ -238,12 +238,9 @@ func (s *Server) handleSoftwareDelete(w http.ResponseWriter, r *http.Request) {
 	out, err := runSoftwareComposeEnsuringInstalled(inst, args...)
 	if err != nil {
 		if !removeVolumes && isSoftwareComposeMissing(err) {
-			if rmErr := removeSoftwareInstanceDir(inst); rmErr != nil {
+			if rmErr := s.removeSoftwareInstanceRecord(inst); rmErr != nil {
 				jsonError(w, "remove software metadata: "+rmErr.Error(), http.StatusInternalServerError)
 				return
-			}
-			if inst.Domain != "" {
-				s.detachSoftwareDomain(inst.Domain, inst.HostPort)
 			}
 			s.recordAuditR(r, "software.delete", inst.Name, true)
 			jsonResponse(w, map[string]any{
@@ -256,12 +253,9 @@ func (s *Server) handleSoftwareDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "docker compose down failed: "+err.Error()+"\n"+out, http.StatusInternalServerError)
 		return
 	}
-	if err := removeSoftwareInstanceDir(inst); err != nil {
+	if err := s.removeSoftwareInstanceRecord(inst); err != nil {
 		jsonError(w, "remove software metadata: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if inst.Domain != "" {
-		s.detachSoftwareDomain(inst.Domain, inst.HostPort)
 	}
 	s.recordAuditR(r, "software.delete", inst.Name, true)
 	resp := map[string]any{"status": "deleted", "name": inst.Name, "output": out}
@@ -270,4 +264,22 @@ func (s *Server) handleSoftwareDelete(w http.ResponseWriter, r *http.Request) {
 		resp["backup_files"] = backup.Files
 	}
 	jsonResponse(w, resp)
+}
+
+// removeSoftwareInstanceRecord removes the instance directory and detaches its
+// proxy domain under softwareDomainMu. The domain is re-read from metadata so
+// a domain connected while `compose down` ran is detached too, not orphaned.
+func (s *Server) removeSoftwareInstanceRecord(inst softwareInstance) error {
+	softwareDomainMu.Lock()
+	defer softwareDomainMu.Unlock()
+	if cur, err := loadSoftwareInstance(inst.Name); err == nil {
+		inst.Domain = cur.Domain
+	}
+	if err := removeSoftwareInstanceDir(inst); err != nil {
+		return err
+	}
+	if inst.Domain != "" {
+		s.detachSoftwareDomain(inst.Domain, inst.HostPort)
+	}
+	return nil
 }

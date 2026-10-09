@@ -45,8 +45,9 @@ var (
 )
 
 // escSQL escapes a string for use inside SQL single-quoted literals.
-// Single-pass with lookahead: a backslash is doubled only when it does NOT
-// precede a quote (so that a lone quote can escape the backslash).
+// Every backslash is doubled and every quote is backslash-escaped. A
+// backslash must never be left bare in front of a quote: the input `\'` would
+// become `\\'`, an escaped backslash followed by a quote that ends the literal.
 // Rejects null bytes — MySQL's text protocol uses \x00 as a string terminator,
 // and embedding it inside a single-quoted literal silently truncates the string
 // at the null byte, allowing arbitrary SQL to follow.
@@ -59,13 +60,7 @@ func escSQL(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' {
-			if i+1 < len(s) && s[i+1] == '\'' {
-				// Backslash before a quote: leave it alone so \' escapes the quote.
-				b.WriteByte(s[i])
-			} else {
-				// Escape a lone backslash (or one not followed by a quote).
-				b.WriteString("\\\\")
-			}
+			b.WriteString("\\\\")
 		} else if s[i] == '\'' {
 			b.WriteString("\\'")
 		} else {
@@ -247,7 +242,7 @@ func createMySQLDB(dbName, dbUser, dbPass, dbHost string, log *strings.Builder) 
 	cmds := []string{
 		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", dbIdent),
 		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';", escSQL(dbUser), escSQL(dbHost), escSQL(dbPass)),
-		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';", dbIdent, escSQL(dbUser), escSQL(dbHost)),
+		fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';", grantDBIdent(dbName), escSQL(dbUser), escSQL(dbHost)),
 		"FLUSH PRIVILEGES;",
 	}
 
@@ -494,6 +489,13 @@ func setWordPressPermissions(webRoot string, log *strings.Builder) {
 	} else {
 		log.WriteString(fmt.Sprintf("WARNING: %d permission step(s) failed — WordPress may be unable to install plugins, upload media, or update until ownership is fixed\n", failed))
 	}
+}
+
+// grantDBIdent quotes a database name for the ON clause of GRANT, where MySQL
+// reads `_` and `%` as LIKE wildcards even inside backticks; escaping them
+// keeps the grant on this one schema (same rule as database.grantDBIdent).
+func grantDBIdent(name string) string {
+	return database.BacktickID(strings.NewReplacer(`\`, `\\`, "_", `\_`, "%", `\%`).Replace(name))
 }
 
 func sanitizeDBName(domain string) string {

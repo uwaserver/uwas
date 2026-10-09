@@ -2074,6 +2074,18 @@ func handleSSHSession(channel ssh.Channel, requests <-chan *ssh.Request, storage
 			os.Remove(localTarget)
 			channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
 
+		case strings.HasPrefix(cmd, "mv -f "):
+			// mv -f -- 'src' 'dst'
+			args := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(cmd, "mv -f "), "-- "))
+			src := testShellArg(args)
+			dst := testShellArg(strings.TrimSpace(args[len(shellQuote(src)):]))
+			err := os.Rename(filepath.Join(storageDir, filepath.FromSlash(src)), filepath.Join(storageDir, filepath.FromSlash(dst)))
+			if err != nil {
+				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 1})
+			} else {
+				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+			}
+
 		case strings.HasPrefix(cmd, "find "):
 			// List .tar.gz files in the remote path with name\tsize\tepoch format.
 			// Parse the path from the command.

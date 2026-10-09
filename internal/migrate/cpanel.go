@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/uwaserver/uwas/internal/config"
 )
 
 // CPanelResult holds the result of a cPanel backup import.
@@ -157,7 +159,8 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		homeDir = cpRoot // fallback if no homedir subdir
 	}
 
-	for i, dom := range result.Domains {
+	kept := result.Domains[:0:0]
+	for _, dom := range result.Domains {
 		// dom.Domain and dom.DocRoot come from attacker-controlled userdata in
 		// the uploaded archive. Reject a domain whose name isn't a safe single
 		// path component (it's joined into targetDir and cert filenames), and
@@ -165,6 +168,15 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		// can't escape homeDir.
 		if dom.Domain == "" || strings.ContainsAny(dom.Domain, `/\`) || strings.Contains(dom.Domain, "..") {
 			result.Errors = append(result.Errors, "skipped domain with unsafe name: "+dom.Domain)
+			continue
+		}
+		// The name also becomes a config host: canonicalise it the way config
+		// matching does so a case variant of an existing tenant ("VICTIM.com")
+		// can't slip past duplicate checks, and reject non-hostnames.
+		if host := strings.ToLower(strings.TrimSuffix(dom.Domain, ".")); config.IsValidHostname(host) {
+			dom.Domain = host
+		} else {
+			result.Errors = append(result.Errors, "skipped domain with invalid hostname: "+dom.Domain)
 			continue
 		}
 		docRoot := filepath.Clean("/" + dom.DocRoot)
@@ -178,6 +190,12 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		}
 
 		dstRoot := filepath.Join(targetDir, dom.Domain, "public_html")
+		// Never copy over an existing site: the archive's files would replace
+		// that tenant's live files. Same contract as Clone's non-empty target.
+		if entries, err := os.ReadDir(dstRoot); err == nil && len(entries) > 0 {
+			result.Errors = append(result.Errors, "skipped "+dom.Domain+": "+dstRoot+" already exists and is not empty")
+			continue
+		}
 		if err := os.MkdirAll(dstRoot, 0755); err != nil {
 			result.Errors = append(result.Errors, "mkdir "+dom.Domain+": "+err.Error())
 		}
@@ -194,7 +212,7 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 		sslDir := filepath.Join(cpRoot, "ssl")
 		certFile := filepath.Join(sslDir, dom.Domain+".crt")
 		if _, err := os.Stat(certFile); err == nil {
-			result.Domains[i].SSL = true
+			dom.SSL = true
 			result.SSLCerts++
 			// Copy SSL cert and key to UWAS cert dir
 			certDst := filepath.Join(targetDir, ".certs", dom.Domain)
@@ -211,7 +229,9 @@ func ImportCPanelBackup(backupPath, targetDir string, importDB bool) (*CPanelRes
 				}
 			}
 		}
+		kept = append(kept, dom)
 	}
+	result.Domains = kept
 
 	// Phase 5: Discover and optionally import databases
 	mysqlDir := filepath.Join(cpRoot, "mysql")

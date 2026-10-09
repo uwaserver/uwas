@@ -130,10 +130,22 @@ func (r *Rule) Match(uri string) (bool, []string) {
 // (e.g. a request path captured into $2 that itself contains the text "$1").
 // Backreferences are single-digit, matching Apache mod_rewrite.
 func (r *Rule) Apply(target string, ruleMatches, condMatches []string) string {
+	return r.apply(target, ruleMatches, condMatches, nil)
+}
+
+// apply is Apply plus %{NAME} server-variable expansion when vars is non-nil,
+// done in the same single pass so captured text is never re-expanded.
+func (r *Rule) apply(target string, ruleMatches, condMatches []string, vars *Variables) string {
 	var b strings.Builder
 	b.Grow(len(target))
 	for i := 0; i < len(target); i++ {
 		c := target[i]
+		if vars != nil {
+			if n := vars.writeVarRef(&b, target, i); n > 0 {
+				i += n - 1
+				continue
+			}
+		}
 		if (c == '$' || c == '%') && i+1 < len(target) && target[i+1] >= '0' && target[i+1] <= '9' {
 			idx := int(target[i+1] - '0')
 			matches := ruleMatches

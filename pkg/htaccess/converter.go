@@ -1,6 +1,7 @@
 package htaccess
 
 import (
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -106,6 +107,7 @@ type HeaderRule struct {
 // FilesMatchBlock represents a <FilesMatch> block.
 type FilesMatchBlock struct {
 	Pattern    string
+	IsGlob     bool // <Files> wildcard pattern (path.Match), not a regex
 	Directives []Directive
 }
 
@@ -275,14 +277,23 @@ func Convert(directives []Directive) *RuleSet {
 					}
 					// If module is not loaded, silently skip the block (Apache behavior).
 				} else if strings.EqualFold(d.Name, "FilesMatch") || strings.EqualFold(d.Name, "Files") {
-					pattern := ""
+					block := FilesMatchBlock{Directives: d.Block}
 					if len(d.Args) > 0 {
-						pattern = d.Args[0]
+						block.Pattern = d.Args[0]
 					}
-					rules.FilesMatch = append(rules.FilesMatch, FilesMatchBlock{
-						Pattern:    pattern,
-						Directives: d.Block,
-					})
+					// <Files> takes a shell wildcard, or "~ regex" for the
+					// regex form; <FilesMatch> is always a regex.
+					if strings.EqualFold(d.Name, "Files") {
+						if block.Pattern == "~" {
+							block.Pattern = ""
+							if len(d.Args) > 1 {
+								block.Pattern = d.Args[1]
+							}
+						} else {
+							block.IsGlob = true
+						}
+					}
+					rules.FilesMatch = append(rules.FilesMatch, block)
 				}
 			}
 		}
@@ -467,19 +478,43 @@ func FilesMatchDenies(rules *RuleSet, filename string) bool {
 		if block.Pattern == "" {
 			continue
 		}
-		re, err := regexp.Compile(block.Pattern)
-		if err != nil || !re.MatchString(filename) {
-			continue
+		if block.IsGlob {
+			if ok, err := path.Match(block.Pattern, filename); err != nil || !ok {
+				continue
+			}
+		} else {
+			re, err := regexp.Compile(block.Pattern)
+			if err != nil || !re.MatchString(filename) {
+				continue
+			}
 		}
-		for _, d := range block.Directives {
-			switch strings.ToLower(d.Name) {
-			case "require":
-				arg := strings.ToLower(strings.Join(d.Args, " "))
-				if strings.Contains(arg, "denied") || strings.HasPrefix(arg, "deny") {
-					return true
-				}
-			case "deny":
-				// 2.2 form: "Deny from all" / "Deny from 1.2.3.4".
+		if directivesDeny(block.Directives) {
+			return true
+		}
+	}
+	return false
+}
+
+// directivesDeny reports whether ds carries a deny directive, descending into
+// <IfModule> blocks whose condition holds — the dual-syntax idiom wraps the
+// 2.4 "Require all denied" and 2.2 "Deny from all" forms in <IfModule>.
+func directivesDeny(ds []Directive) bool {
+	for _, d := range ds {
+		switch strings.ToLower(d.Name) {
+		case "require":
+			arg := strings.ToLower(strings.Join(d.Args, " "))
+			if strings.Contains(arg, "denied") || strings.HasPrefix(arg, "deny") {
+				return true
+			}
+		case "deny":
+			// 2.2 form: "Deny from all" / "Deny from 1.2.3.4".
+			return true
+		case "ifmodule":
+			if len(d.Args) == 0 {
+				continue
+			}
+			module, negated := strings.CutPrefix(d.Args[0], "!")
+			if IsModuleLoaded(module) != negated && directivesDeny(d.Block) {
 				return true
 			}
 		}

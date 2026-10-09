@@ -36,7 +36,10 @@ func (s *Server) handleDomainDebug(w http.ResponseWriter, r *http.Request) {
 	var domainCfg *config.Domain
 	for i := range s.config.Domains {
 		if s.config.Domains[i].Host == host {
-			domainCfg = &s.config.Domains[i]
+			// Copy under the lock: Delete splices s.config.Domains in place,
+			// so a pointer into it can shift to the next domain's entry.
+			d := s.config.Domains[i]
+			domainCfg = &d
 			break
 		}
 	}
@@ -125,9 +128,10 @@ func (s *Server) handleDomainHealth(w http.ResponseWriter, r *http.Request) {
 		Domain     config.Domain
 	}
 
+	authMgr := s.getAuthMgr()
 	s.configMu.RLock()
 	var allowedDomains map[string]bool
-	if s.authMgr != nil {
+	if authMgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
 			allowedDomains = make(map[string]bool, len(user.Domains))
 			for _, d := range user.Domains {

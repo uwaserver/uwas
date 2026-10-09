@@ -2,6 +2,7 @@
 package filemanager
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,15 @@ var (
 	evalSymlinks = filepath.EvalSymlinks
 	absFunc      = filepath.Abs
 	entryInfo    = func(e os.DirEntry) (os.FileInfo, error) { return e.Info() }
+)
+
+// maxDanglingHops bounds the dangling-symlink walk in resolvePath (same limit
+// as filepath.EvalSymlinks) so a link cycle cannot spin forever.
+const maxDanglingHops = 255
+
+var (
+	errTooManyLinks  = errors.New("filemanager: too many dangling symlinks")
+	errAmbiguousLink = errors.New("filemanager: dangling symlink target has '..' after a path element")
 )
 
 // Entry represents a file or directory.
@@ -167,6 +177,12 @@ func DiskUsage(dir string) (int64, error) {
 	var total int64
 	visited := make(map[string]bool)
 
+	// WalkDir does not follow a symlinked root (it reports the link itself),
+	// so a web root like /var/www -> /srv/www measured only the link's size.
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip inaccessible entries
@@ -213,7 +229,7 @@ func resolvePathForInode(path string) (string, error) {
 func safePath(baseDir, relPath string) string {
 	// Clean and reject absolute paths or traversal
 	relPath = filepath.Clean(relPath)
-	if filepath.IsAbs(relPath) || strings.HasPrefix(relPath, "..") {
+	if filepath.IsAbs(relPath) || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
 		return ""
 	}
 	full := filepath.Join(baseDir, relPath)
@@ -261,7 +277,11 @@ func resolvePath(path string) (string, error) {
 	}
 	cur := absPath
 	var missing []string
-	for {
+	for hops := 0; ; hops++ {
+		// Bound the walk so a dangling-link cycle cannot spin forever.
+		if hops > maxDanglingHops {
+			return "", errTooManyLinks
+		}
 		real, err := evalSymlinks(cur)
 		if err == nil {
 			for i := len(missing) - 1; i >= 0; i-- {
@@ -277,8 +297,21 @@ func resolvePath(path string) (string, error) {
 			if linkErr != nil {
 				return "", linkErr
 			}
+			// A ".." after a named element is resolved by the kernel against
+			// that element's real location, which a lexical Join cannot model.
+			if hasInnerDotDot(link) {
+				return "", errAmbiguousLink
+			}
 			if !filepath.IsAbs(link) {
-				link = filepath.Join(filepath.Dir(cur), link)
+				// Relative targets are interpreted from the link's real
+				// directory, not from the (possibly symlinked) path used to
+				// reach it. Joining lexically here classifies base/a/dl as
+				// base/x and admits a path the kernel resolves outside base.
+				realParent, perr := evalSymlinks(filepath.Dir(cur))
+				if perr != nil {
+					return "", perr
+				}
+				link = filepath.Join(realParent, link)
 			}
 			cur = link
 			continue
@@ -290,6 +323,25 @@ func resolvePath(path string) (string, error) {
 		missing = append(missing, filepath.Base(cur))
 		cur = parent
 	}
+}
+
+// hasInnerDotDot reports whether link contains a ".." element after a named
+// element (e.g. "a/../b"). Leading ".." elements are unambiguous once the
+// link's real parent directory is known.
+func hasInnerDotDot(link string) bool {
+	seenName := false
+	for _, part := range strings.Split(filepath.ToSlash(link), "/") {
+		switch part {
+		case "", ".":
+		case "..":
+			if seenName {
+				return true
+			}
+		default:
+			seenName = true
+		}
+	}
+	return false
 }
 
 func isWithin(base, target string) bool {

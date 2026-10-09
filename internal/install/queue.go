@@ -47,6 +47,7 @@ type Queue struct {
 	tasks    map[string]*Task
 	queue    chan *queueEntry
 	stopCh   chan struct{}
+	stopped  bool // set under mu by Stop; no task starts or queues after it
 	taskSeq  int
 	maxKeep  int           // max completed tasks to retain
 	keepTime time.Duration // how long to keep completed tasks
@@ -85,6 +86,15 @@ func (q *Queue) Submit(taskType, name, action string, fn TaskFunc) *Task {
 		CreatedAt: time.Now(),
 	}
 	q.tasks[id] = task
+	if q.stopped {
+		end := time.Now()
+		task.Status = StatusError
+		task.Error = "manager stopped"
+		task.EndedAt = &end
+		cp := *task
+		q.mu.Unlock()
+		return &cp
+	}
 	cp := *task
 	q.mu.Unlock()
 
@@ -184,8 +194,25 @@ func (q *Queue) IsRunning() bool {
 	return false
 }
 
-// Stop shuts down the queue worker.
+// Stop shuts down the queue worker. Tasks still queued are marked as
+// failed and never start; a task already running is left to finish.
+// Calling Stop more than once is a no-op.
 func (q *Queue) Stop() {
+	q.mu.Lock()
+	if q.stopped {
+		q.mu.Unlock()
+		return
+	}
+	q.stopped = true
+	end := time.Now()
+	for _, t := range q.tasks {
+		if t.Status == StatusQueued {
+			t.Status = StatusError
+			t.Error = "manager stopped"
+			t.EndedAt = &end
+		}
+	}
+	q.mu.Unlock()
 	close(q.stopCh)
 }
 
@@ -204,6 +231,10 @@ func (q *Queue) runTask(entry *queueEntry) {
 	task := entry.task
 
 	q.mu.Lock()
+	if task.Status != StatusQueued { // failed by Stop before it could start
+		q.mu.Unlock()
+		return
+	}
 	now := time.Now()
 	task.Status = StatusRunning
 	task.StartedAt = &now
@@ -215,7 +246,14 @@ func (q *Queue) runTask(entry *queueEntry) {
 		q.mu.Unlock()
 	}
 
-	err := entry.fn(appendOutput)
+	err := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("task panicked: %v", r)
+			}
+		}()
+		return entry.fn(appendOutput)
+	}()
 
 	q.mu.Lock()
 	end := time.Now()

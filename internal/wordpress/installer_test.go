@@ -166,6 +166,10 @@ func TestEscSQL(t *testing.T) {
 		{"it's", `it\'s`},
 		{`back\slash`, `back\\slash`},
 		{`mix'n\match`, `mix\'n\\match`},
+		// A backslash before a quote must still be doubled; leaving it bare
+		// yields \\' which closes the literal (PHP/SQL injection).
+		{`p\'.phpinfo().'`, `p\\\'.phpinfo().\'`},
+		{`\`, `\\`},
 	}
 	for _, tt := range tests {
 		got := escSQL(tt.in)
@@ -1778,7 +1782,8 @@ func TestCreateMySQLDB_UsesSafeSQLIdentifier(t *testing.T) {
 	if !strings.Contains(gotSQL, "CREATE DATABASE IF NOT EXISTS `wp_test`") {
 		t.Fatalf("CREATE DATABASE did not use backtick identifier: %s", gotSQL)
 	}
-	if !strings.Contains(gotSQL, "GRANT ALL PRIVILEGES ON `wp_test`.*") {
+	// `_` is escaped in the GRANT db pattern so it isn't a LIKE wildcard (F396).
+	if !strings.Contains(gotSQL, "GRANT ALL PRIVILEGES ON `wp\\_test`.*") {
 		t.Fatalf("GRANT did not use backtick identifier: %s", gotSQL)
 	}
 	// Regression: the password must be fed over stdin, never on argv

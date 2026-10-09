@@ -150,6 +150,9 @@ type Manager struct {
 	// fallback). Refs: refactor.md P8.
 	usersByAPIKeyHash map[string]*User
 	sessions          map[string]*Session // key: token
+	// sessionsPersistMu orders sessions.json writes. It is acquired while m.mu
+	// is held (read or write) so writes commit in snapshot order (F166).
+	sessionsPersistMu sync.Mutex
 	dataDir           string
 	apiKey            string // Global admin API key (backward compat)
 	jwtSecret         []byte
@@ -226,7 +229,9 @@ func NewManager(dataDir, globalAPIKey string) (*Manager, error) {
 	if err := m.loadOrCreateJWTSecret(); err != nil {
 		return nil, fmt.Errorf("auth: jwt secret init: %w", err)
 	}
-	m.loadUsers()
+	if err := m.loadUsers(); err != nil {
+		return nil, fmt.Errorf("auth: load users: %w", err)
+	}
 	m.loadSessions()
 	go m.sessionCleanupLoop()
 	return m, nil
@@ -887,21 +892,26 @@ func (m *Manager) CleanupSessions() {
 	}
 }
 
-// loadUsers loads users from disk.
-func (m *Manager) loadUsers() {
+// loadUsers loads users from disk. A missing file means a fresh install; any
+// other read or parse failure is returned so the manager fails closed instead
+// of starting with no users (which would reopen first-admin bootstrap).
+func (m *Manager) loadUsers() error {
 	file := m.usersFile()
 	if file == "" {
-		return
+		return nil
 	}
 
 	data, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return
+		return err
 	}
 
 	var users []*User
 	if err := json.Unmarshal(data, &users); err != nil {
-		return
+		return fmt.Errorf("parse %s: %w", file, err)
 	}
 
 	for _, user := range users {
@@ -911,6 +921,7 @@ func (m *Manager) loadUsers() {
 			m.usersByAPIKeyHash[user.APIKeyHash] = user
 		}
 	}
+	return nil
 }
 
 // saveUsers persists users to disk.
@@ -942,11 +953,36 @@ func (m *Manager) saveUsers() error {
 	}
 	// Existing mutation callers may use best-effort persistence; account
 	// creation propagates the error and rolls back the uncommitted user.
-	if err := os.WriteFile(file, data, 0600); err != nil {
+	// Write a temp file and rename so a failed write never tears users.json.
+	if err := writeFileAtomic(file, data); err != nil {
 		slog.Warn("failed to persist users", "file", file, "error", err)
 		return err
 	}
 	return nil
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	// Creation mode does not change an existing temp file's permissions.
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (m *Manager) usersFile() string {

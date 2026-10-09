@@ -48,6 +48,10 @@ type Watchdog struct {
 	// exit is os.Exit in production; a test seam otherwise.
 	exit func(int)
 
+	// timeout is the per-probe budget Run derives from cfg.Timeout and the
+	// effective interval; zero means cfg.Timeout (tick called without Run).
+	timeout time.Duration
+
 	fails   atomic.Int64
 	healthy atomic.Bool
 	probes  atomic.Int64
@@ -116,10 +120,17 @@ func (w *Watchdog) Run(ctx context.Context) {
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
+	// A hung probe delays the next ping by interval + timeout. With the
+	// interval at sd/2 that must stay under sd, so the timeout has to stay
+	// under the interval even when the interval was shrunk for systemd.
+	w.timeout = w.cfg.Timeout
+	if w.timeout >= interval {
+		w.timeout = interval / 2
+	}
 
 	w.log.Info("watchdog started",
 		"interval", interval.String(),
-		"timeout", w.cfg.Timeout.String(),
+		"timeout", w.timeout.String(),
 		"failures_before_action", w.cfg.Failures,
 		"systemd", w.notifier.Available(),
 	)
@@ -137,12 +148,21 @@ func (w *Watchdog) Run(ctx context.Context) {
 }
 
 func (w *Watchdog) tick(ctx context.Context) {
-	pctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
+	timeout := w.timeout
+	if timeout <= 0 {
+		timeout = w.cfg.Timeout
+	}
+	pctx, cancel := context.WithTimeout(ctx, timeout)
 	w.probeMu.RLock()
 	probe := w.probe
 	w.probeMu.RUnlock()
 	err := probe(pctx)
 	cancel()
+	if err != nil && ctx.Err() != nil {
+		// Run is stopping (graceful shutdown): the probe was cut short by us,
+		// not by a wedged server, so it says nothing about liveness.
+		return
+	}
 	w.probes.Add(1)
 
 	if err == nil {
@@ -181,7 +201,9 @@ func (w *Watchdog) tick(ctx context.Context) {
 	// system, including its rate limiting.
 	_ = w.notifier.Send("STATUS=unresponsive: watchdog probe failing")
 
-	if w.cfg.SelfRestart && !w.notifier.Available() {
+	// Withholding pings only helps when systemd is actually watching: a
+	// NOTIFY_SOCKET without WATCHDOG_USEC (no WatchdogSec) restarts nothing.
+	if w.cfg.SelfRestart && !(w.notifier.Available() && SystemdInterval() > 0) {
 		w.log.Error("watchdog: no systemd watchdog available, exiting so the supervisor restarts us")
 		exit := w.exit
 		if exit == nil {

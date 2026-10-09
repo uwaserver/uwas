@@ -3,7 +3,9 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -967,9 +969,19 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 		Tag  string `json:"tag"`
 		Host string `json:"host"`
 	}
-	// Body is optional — nil/empty means "purge all"
+	// Body is optional — nil/empty means "purge all". Anything else must
+	// decode cleanly into the fields above: a malformed body, a wrong type or
+	// an unknown field ({"domain":...} and {"tags":[...]} are documented in
+	// older specs) used to leave tag and host empty and wipe every tenant's
+	// cache instead of the one the caller meant.
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req) // ignore error; empty body = purge all
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			s.recordAuditR(r, "cache.purge", "invalid request body", false)
+			jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Purging a domain is expressed as a host, not as a tag. Callers used to

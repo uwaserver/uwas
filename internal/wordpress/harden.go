@@ -5,6 +5,7 @@
 package wordpress
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,8 +90,14 @@ func GetSecurityStatus(webRoot string) SecurityStatus {
 	return st
 }
 
+var phpBlockCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
+// containsDefineTrue reports whether wp-config.php defines constant as true in
+// live code. A define inside a comment is not code, so it must not count —
+// otherwise the status claims hardening that PHP never applies.
 func containsDefineTrue(content, constant string) bool {
-	re := regexp.MustCompile(`define\s*\(\s*'` + constant + `'\s*,\s*true\s*\)`)
+	content = phpBlockCommentRe.ReplaceAllString(content, "")
+	re := regexp.MustCompile(`(?m)^\s*define\s*\(\s*['"]` + constant + `['"]\s*,\s*(?i:true)\s*\)`)
 	return re.MatchString(content)
 }
 
@@ -129,7 +136,10 @@ func Harden(webRoot string, opts HardenOptions) (string, error) {
 	changed := false
 
 	if opts.DisableFileEdit != nil {
-		content = setWPConfigDefine(content, "DISALLOW_FILE_EDIT", *opts.DisableFileEdit)
+		var ok bool
+		if content, ok = setWPConfigDefine(content, "DISALLOW_FILE_EDIT", *opts.DisableFileEdit); !ok {
+			return log.String(), errNoWPSettingsRequire
+		}
 		if *opts.DisableFileEdit {
 			log.WriteString("File editing disabled (DISALLOW_FILE_EDIT)\n")
 		} else {
@@ -139,7 +149,10 @@ func Harden(webRoot string, opts HardenOptions) (string, error) {
 	}
 
 	if opts.ForceSSLAdmin != nil {
-		content = setWPConfigDefine(content, "FORCE_SSL_ADMIN", *opts.ForceSSLAdmin)
+		var ok bool
+		if content, ok = setWPConfigDefine(content, "FORCE_SSL_ADMIN", *opts.ForceSSLAdmin); !ok {
+			return log.String(), errNoWPSettingsRequire
+		}
 		if *opts.ForceSSLAdmin {
 			log.WriteString("SSL forced for admin (FORCE_SSL_ADMIN)\n")
 		} else {
@@ -149,7 +162,10 @@ func Harden(webRoot string, opts HardenOptions) (string, error) {
 	}
 
 	if opts.DisableWPCron != nil {
-		content = setWPConfigDefine(content, "DISABLE_WP_CRON", *opts.DisableWPCron)
+		var ok bool
+		if content, ok = setWPConfigDefine(content, "DISABLE_WP_CRON", *opts.DisableWPCron); !ok {
+			return log.String(), errNoWPSettingsRequire
+		}
 		if *opts.DisableWPCron {
 			log.WriteString("WP-Cron disabled (use system cron instead)\n")
 		} else {
@@ -211,9 +227,27 @@ remove_action('wp_head', 'rsd_link');
 	return log.String(), nil
 }
 
-func setWPConfigDefine(content, constant string, value bool) string {
-	// Remove existing define for this constant
-	re := regexp.MustCompile(`(?m)^\s*define\s*\(\s*'` + constant + `'\s*,\s*(?:true|false)\s*\)\s*;\s*\n?`)
+// errNoWPSettingsRequire is returned by Harden when wp-config.php has no
+// wp-settings.php require to insert a define before.
+var errNoWPSettingsRequire = errors.New("wp-config.php: no require_once ABSPATH line to insert the define before")
+
+// wpSettingsRequireRe matches both `require_once ABSPATH ...` and the older
+// `require_once(ABSPATH ...)` form still found in long-lived wp-config.php files.
+var wpSettingsRequireRe = regexp.MustCompile(`require_once\s*\(?\s*ABSPATH`)
+
+// setWPConfigDefine replaces constant's define with value, inserted before the
+// wp-settings.php require. It returns false (and content unchanged) when there
+// is no such require to anchor on, so the old define is never stripped without
+// a replacement.
+func setWPConfigDefine(content, constant string, value bool) (string, bool) {
+	loc := wpSettingsRequireRe.FindStringIndex(content)
+	if loc == nil {
+		return content, false
+	}
+
+	// Remove existing define for this constant. PHP accepts either quote style
+	// and any case for true/false; a define left behind would win over ours.
+	re := regexp.MustCompile(`(?m)^\s*define\s*\(\s*['"]` + constant + `['"]\s*,\s*(?i:true|false)\s*\)\s*;\s*\n?`)
 	content = re.ReplaceAllString(content, "")
 
 	// Insert new define before require_once ABSPATH
@@ -223,8 +257,7 @@ func setWPConfigDefine(content, constant string, value bool) string {
 	}
 	define := fmt.Sprintf("define('%s', %s);\n", constant, val)
 
-	if idx := strings.Index(content, "require_once ABSPATH"); idx >= 0 {
-		content = content[:idx] + define + content[idx:]
-	}
-	return content
+	loc = wpSettingsRequireRe.FindStringIndex(content)
+	idx := loc[0]
+	return content[:idx] + define + content[idx:], true
 }

@@ -50,7 +50,11 @@ func AddSSHKeyForWebDir(webDir, hostname, pubKey string) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(canonical + "\n"); err != nil {
+	line := canonical + "\n"
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		line = "\n" + line // don't glue the key onto an unterminated last line
+	}
+	if _, err := f.WriteString(line); err != nil {
 		return fmt.Errorf("write SSH key: %w", err)
 	}
 

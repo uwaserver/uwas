@@ -415,6 +415,7 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		secret = s.pendingTOTP[username]
 	}
 	s.pendingTOTPMu.Unlock()
+	fromPending := secret != ""
 
 	if secret == "" {
 		// Already enabled — validate against active secret
@@ -433,18 +434,27 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If this was a pending setup, activate it.
-	s.pendingTOTPMu.Lock()
-	pending := ""
-	if s.pendingTOTP != nil {
-		pending = s.pendingTOTP[username]
-		delete(s.pendingTOTP, username)
-	}
-	s.pendingTOTPMu.Unlock()
+	// If this was a pending setup, activate exactly the secret the code was
+	// verified against — and only while 2FA is still disabled (F477).
+	if fromPending {
+		s.pendingTOTPMu.Lock()
+		current := s.pendingTOTP[username]
+		if current == secret {
+			delete(s.pendingTOTP, username)
+		}
+		s.pendingTOTPMu.Unlock()
+		if current != secret {
+			jsonError(w, "2FA setup was restarted; verify a code for the new secret", http.StatusConflict)
+			return
+		}
 
-	if pending != "" {
 		s.configMu.Lock()
-		s.config.Global.Admin.TOTPSecret = pending
+		if s.config.Global.Admin.TOTPSecret != "" {
+			s.configMu.Unlock()
+			jsonError(w, "2FA is already enabled; disable it first to reconfigure", http.StatusConflict)
+			return
+		}
+		s.config.Global.Admin.TOTPSecret = secret
 		s.configMu.Unlock()
 	}
 

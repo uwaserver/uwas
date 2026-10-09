@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -194,11 +195,16 @@ func checkPHPModules() Check {
 	if err != nil {
 		return Check{Name: "PHP Modules", Status: StatusWarn, Message: "Could not check PHP modules"}
 	}
-	mods := string(out)
+	// Match whole module lines: a substring test lets the always-built-in
+	// "libxml" (or SimpleXML, xmlreader) satisfy "xml" when it is missing.
+	mods := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		mods[strings.ToLower(strings.TrimSpace(line))] = true
+	}
 	required := []string{"mysqli", "curl", "gd", "mbstring", "xml", "zip"}
 	missing := []string{}
 	for _, mod := range required {
-		if !strings.Contains(strings.ToLower(mods), strings.ToLower(mod)) {
+		if !mods[strings.ToLower(mod)] {
 			missing = append(missing, mod)
 		}
 	}
@@ -212,8 +218,13 @@ func checkMySQL(autoFix bool) Check {
 	// Check if MySQL/MariaDB is running
 	for _, svc := range []string{"mariadb", "mysql"} {
 		out, _ := execCommandFn("systemctl", "is-active", svc).Output()
-		if strings.TrimSpace(string(out)) == "active" {
+		switch state := strings.TrimSpace(string(out)); state {
+		case "active":
 			return Check{Name: "MySQL/MariaDB", Status: StatusOK, Message: fmt.Sprintf("Running (%s)", svc)}
+		case "activating", "reloading", "deactivating", "refreshing":
+			// A unit in transition (startup, InnoDB crash recovery) is not a
+			// dead server: the repair sequence below starts with pkill -9.
+			return Check{Name: "MySQL/MariaDB", Status: StatusWarn, Message: fmt.Sprintf("%s is %s; not repairing a service in transition", svc, state), HowTo: "Wait for it to finish, then re-run Doctor; check journalctl -u " + svc}
 		}
 	}
 
@@ -392,10 +403,48 @@ func checkFirewall() Check {
 	if strings.Contains(status, "inactive") {
 		return Check{Name: "Firewall", Status: StatusWarn, Message: "ufw is inactive", HowTo: "sudo ufw allow 80,443/tcp && sudo ufw enable"}
 	}
-	if !strings.Contains(status, "80") || !strings.Contains(status, "443") {
+	if !ufwAllowsPort(status, 80) || !ufwAllowsPort(status, 443) {
 		return Check{Name: "Firewall", Status: StatusWarn, Message: "Port 80/443 may not be allowed in firewall", HowTo: "sudo ufw allow 80,443/tcp"}
 	}
 	return Check{Name: "Firewall", Status: StatusOK, Message: "Active, ports 80/443 allowed"}
+}
+
+// ufwAllowsPort reports whether a `ufw status` table has an ALLOW/LIMIT row
+// whose To column names port (single, comma list, or a:b range). A substring
+// test would accept 8080, 4430 or a DENY row for the same port.
+func ufwAllowsPort(status string, port int) bool {
+	for _, line := range strings.Split(status, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		allowed := false
+		for _, f := range fields[1:] {
+			if f == "ALLOW" || f == "LIMIT" {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			continue
+		}
+		spec := fields[0]
+		if i := strings.IndexByte(spec, '/'); i >= 0 {
+			spec = spec[:i]
+		}
+		for _, p := range strings.Split(spec, ",") {
+			lo, hi, isRange := strings.Cut(p, ":")
+			if !isRange {
+				hi = lo
+			}
+			l, err1 := strconv.Atoi(lo)
+			h, err2 := strconv.Atoi(hi)
+			if err1 == nil && err2 == nil && l <= port && port <= h {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func checkDiskSpace() Check {
@@ -409,7 +458,16 @@ func checkDiskSpace() Check {
 		fields := strings.Fields(lines[1])
 		if len(fields) >= 5 {
 			usage := fields[4] // e.g., "42%"
-			return Check{Name: "Disk Space", Status: StatusOK, Message: fmt.Sprintf("%s used (%s available)", usage, fields[3])}
+			msg := fmt.Sprintf("%s used (%s available)", usage, fields[3])
+			if pct, err := strconv.Atoi(strings.TrimSuffix(usage, "%")); err == nil {
+				switch {
+				case pct >= 95:
+					return Check{Name: "Disk Space", Status: StatusFail, Message: msg, HowTo: "Free space on / (logs, old backups, caches)"}
+				case pct >= 90:
+					return Check{Name: "Disk Space", Status: StatusWarn, Message: msg, HowTo: "Free space on / (logs, old backups, caches)"}
+				}
+			}
+			return Check{Name: "Disk Space", Status: StatusOK, Message: msg}
 		}
 	}
 	return Check{Name: "Disk Space", Status: StatusOK, Message: "OK"}
@@ -503,34 +561,48 @@ func checkConflictingServices(autoFix bool) Check {
 		{"nginx", "Nginx", "nginx"},
 	}
 
+	// Handle every active conflict: returning after the first one reported
+	// "fixed" while e.g. nginx kept holding 80/443 next to a stopped apache2.
+	var running, remaining, stopped []string
 	for _, c := range conflicts {
 		// Check if running
 		out, err := execCommandFn("systemctl", "is-active", c.service).Output()
 		if err != nil || strings.TrimSpace(string(out)) != "active" {
 			continue
 		}
-
-		msg := fmt.Sprintf("%s is running — conflicts with UWAS on ports 80/443", c.display)
+		running = append(running, c.display+" is running")
 
 		if autoFix {
-			// Stop and disable
-			execCommandFn("systemctl", "stop", c.service).Run()
-			execCommandFn("systemctl", "disable", c.service).Run()
-			return Check{
-				Name:    "Conflicting services",
-				Status:  StatusFixed,
-				Message: msg,
-				Fix:     fmt.Sprintf("Stopped and disabled %s", c.service),
+			// Stop and disable; a failed stop leaves the conflict in place.
+			if err := execCommandFn("systemctl", "stop", c.service).Run(); err != nil {
+				remaining = append(remaining, c.service)
+				continue
 			}
+			execCommandFn("systemctl", "disable", c.service).Run()
+			stopped = append(stopped, c.service)
+			continue
 		}
-
-		return Check{
-			Name:    "Conflicting services",
-			Status:  StatusFail,
-			Message: msg,
-			HowTo:   fmt.Sprintf("sudo systemctl stop %s && sudo systemctl disable %s", c.service, c.service),
-		}
+		remaining = append(remaining, c.service)
 	}
 
-	return Check{Name: "Conflicting services", Status: StatusOK, Message: "No Apache/Nginx detected"}
+	if len(running) == 0 {
+		return Check{Name: "Conflicting services", Status: StatusOK, Message: "No Apache/Nginx detected"}
+	}
+
+	msg := strings.Join(running, ", ") + " — conflicts with UWAS on ports 80/443"
+	var fix string
+	if len(stopped) > 0 {
+		fix = "Stopped and disabled " + strings.Join(stopped, ", ")
+	}
+	if len(remaining) == 0 {
+		return Check{Name: "Conflicting services", Status: StatusFixed, Message: msg, Fix: fix}
+	}
+	svcs := strings.Join(remaining, " ")
+	return Check{
+		Name:    "Conflicting services",
+		Status:  StatusFail,
+		Message: msg,
+		Fix:     fix,
+		HowTo:   fmt.Sprintf("sudo systemctl stop %s && sudo systemctl disable %s", svcs, svcs),
+	}
 }

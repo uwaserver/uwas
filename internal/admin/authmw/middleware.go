@@ -120,6 +120,11 @@ func New(deps Deps, next http.Handler) http.Handler {
 		var authenticated bool
 		var user *auth.User
 		var ticketPinVerified bool
+		// Tickets are single-use: once redeemed here, the legacy fallback must
+		// reuse the result instead of redeeming (and failing) a second time.
+		var ticketRedeemed bool
+		var ticketToken string
+		var ticketPinOK bool
 
 		// Try multi-user auth first if enabled.
 		if multiUserEnabled && deps.AuthByKey != nil {
@@ -148,6 +153,7 @@ func New(deps Deps, next http.Handler) http.Handler {
 			if !authenticated {
 				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 					realToken, pinOK := deps.RedeemTicket(ticket)
+					ticketRedeemed, ticketToken, ticketPinOK = true, realToken, pinOK
 					if realToken != "" {
 						if session, err := deps.ValidateSess(realToken); err == nil {
 							if u, exists := deps.GetUserByID(session.UserID); exists {
@@ -177,9 +183,12 @@ func New(deps Deps, next http.Handler) http.Handler {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					if realToken, pinOK := deps.RedeemTicket(ticket); realToken != "" {
-						authHeader = "Bearer " + realToken
-						ticketPinVerified = pinOK
+					if !ticketRedeemed {
+						ticketToken, ticketPinOK = deps.RedeemTicket(ticket)
+					}
+					if ticketToken != "" {
+						authHeader = "Bearer " + ticketToken
+						ticketPinVerified = ticketPinOK
 					}
 				}
 			}

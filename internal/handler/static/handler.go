@@ -106,7 +106,7 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 	w.Header().Set("Content-Type", ct)
 
 	// Try pre-compressed version
-	if h.servePreCompressed(w, r, path, info) {
+	if h.servePreCompressed(w, r, path, ctx.DocumentRoot, info) {
 		return
 	}
 
@@ -181,7 +181,7 @@ func hasHiddenComponent(path string) bool {
 }
 
 // servePreCompressed checks for .br or .gz pre-compressed files.
-func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, path string, origInfo fs.FileInfo) bool {
+func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, path, docRoot string, origInfo fs.FileInfo) bool {
 	// Identity responses also depend on Accept-Encoding, including cache hits
 	// and conditional responses served after this method returns.
 	w.Header().Add("Vary", "Accept-Encoding")
@@ -205,6 +205,13 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 			continue
 		}
 		compPath := path + c.ext
+		// The variant is a different file from the one ResolveRequest
+		// checked, so it needs its own containment check: a symlinked
+		// app.js.gz must not serve bytes from outside the doc root. With
+		// no known doc root, refuse symlinked variants outright.
+		if !preCompressedContained(docRoot, compPath) {
+			continue
+		}
 		compInfo, err := os.Stat(compPath)
 		if err != nil || compInfo.IsDir() {
 			continue
@@ -233,6 +240,22 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 	}
 
 	return false
+}
+
+// preCompressedContained reports whether a pre-compressed variant may be
+// served: inside the symlink-resolved doc root when one is known, otherwise
+// only when the variant itself is not a symlink. A missing variant passes;
+// the caller's Stat then skips it.
+func preCompressedContained(docRoot, compPath string) bool {
+	if docRoot == "" {
+		li, err := os.Lstat(compPath)
+		return err != nil || li.Mode()&fs.ModeSymlink == 0
+	}
+	base, err := pathsafe.CachedBase(docRoot)
+	if err != nil {
+		return false
+	}
+	return base.Contains(compPath)
 }
 
 // acceptsEncoding reports whether the client accepts the given content-coding,

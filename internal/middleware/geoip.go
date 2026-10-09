@@ -223,6 +223,11 @@ func (c *geoCache) set(ip, country string) {
 	ttl := 24 * time.Hour
 	if country == "" {
 		ttl = 5 * time.Minute
+		// A failed refresh must not erase a known country: keep it and
+		// retry after the short TTL instead of failing open (F445).
+		if prev, ok := c.entries[ip]; ok && prev.country != "" {
+			country = prev.country
+		}
 	}
 	c.entries[ip] = geoCacheEntry{
 		country: country,
@@ -235,6 +240,14 @@ func (c *geoCache) set(ip, country string) {
 			break
 		}
 	}
+}
+
+// stale returns the country of an entry even if it has expired, so a known
+// country keeps being enforced while its refresh is pending or dropped (F445).
+func (c *geoCache) stale(ip string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.entries[ip].country
 }
 
 // tryClaimInflight returns true if this caller should perform the external
@@ -338,7 +351,9 @@ func lookupCountry(ip string, db map[string]string, cache *geoCache) string {
 	// Cache miss + no local DB: queue on bounded worker pool (singleflight per IP).
 	// Next request from this IP will use the cached result.
 	enqueueGeoLookup(ip, cache)
-	return "" // allow through on first request (default-allow until cached)
+	// Expired entry: keep enforcing its country until the refresh lands.
+	// Otherwise "" — allow through on first request (default-allow until cached).
+	return cache.stale(ip)
 }
 
 func lookupExternal(ip string) string {

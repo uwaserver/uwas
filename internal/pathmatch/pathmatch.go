@@ -41,7 +41,19 @@ func Regex(path, pattern string) bool {
 
 // Location reports whether a path matches a location pattern. A leading "~"
 // marks a regex, as in nginx; anything else is a prefix.
+//
+// An empty pattern is UNSET, not a wildcard. strings.HasPrefix(path, "") is
+// true for every path, so without this guard a location block with no match
+// became a domain-wide catch-all: it applied its headers and Cache-Control to
+// every request and, because callers break on first match, suppressed every
+// location block after it. config validation treats an empty match as absent
+// (validate.go guards `if loc.Match != ""`), and the rewrite engine drops a
+// rule whose pattern will not parse rather than applying it everywhere — an
+// unset match does the same here.
 func Location(path, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
 	if regexStr, ok := strings.CutPrefix(pattern, "~"); ok {
 		re := compile(strings.TrimSpace(regexStr))
 		return re != nil && re.MatchString(path)

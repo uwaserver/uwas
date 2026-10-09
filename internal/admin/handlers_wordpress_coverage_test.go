@@ -1,6 +1,11 @@
 package admin
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -90,7 +95,51 @@ func TestWPUpdateCore_NotWordPress(t *testing.T) {
 	}
 }
 
+// fakeWordPressOrg serves a minimal latest.tar.gz (and its .sha1) locally so
+// the wp-cli-less UpdateCore fallback never downloads from wordpress.org.
+func fakeWordPressOrg(t *testing.T) {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range []struct{ name, body string }{
+		{"wordpress/", ""},
+		{"wordpress/index.php", "<?php // fake core\n"},
+		{"wordpress/wp-config.php", "<?php // must not overwrite\n"},
+	} {
+		hdr := &tar.Header{Name: f.name, Mode: 0644, Size: int64(len(f.body)), Typeflag: tar.TypeReg}
+		if strings.HasSuffix(f.name, "/") {
+			hdr.Mode, hdr.Typeflag = 0755, tar.TypeDir
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(f.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tarball := buf.Bytes()
+	sum := sha1.Sum(tarball)
+	fakeExternalHost(t, "wordpress.org:443", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest.tar.gz":
+			w.Write(tarball)
+		case "/latest.tar.gz.sha1":
+			w.Write([]byte(hex.EncodeToString(sum[:])))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
 func TestWPUpdateCore_NoWPCLI(t *testing.T) {
+	fakeWordPressOrg(t)
 	s, root := testServerWithRoot(t)
 	wpConfig := filepath.Join(root, "wp-config.php")
 	if err := os.WriteFile(wpConfig, []byte("<?php\n"), 0644); err != nil {
@@ -99,8 +148,8 @@ func TestWPUpdateCore_NoWPCLI(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/wordpress/sites/example.com/update-core", nil)
 	s.mux.ServeHTTP(rec, req)
-	// Without wp-cli, UpdateCore falls back to HTTP download. If the
-	// test environment has network access, this may succeed (200).
+	// Without wp-cli, UpdateCore falls back to an HTTP download, served here
+	// by the local wordpress.org fake.
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
 	}

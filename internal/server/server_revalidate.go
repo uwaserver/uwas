@@ -170,6 +170,6 @@ func (s *Server) staleJobFor(key string, r *http.Request, domain *config.Domain,
 		vary:    vary,
 		ttl:     ttl,
 		grace:   grace,
-		tags:    cacheTagsFor(domain, r.Host),
+		tags:    cacheTagsFor(domain, domain.Host),
 	}
 }

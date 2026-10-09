@@ -23,6 +23,7 @@ type Pool struct {
 	maxLife          time.Duration
 	maxResponseBytes int64
 	idle             chan *conn
+	freed            chan struct{} // wakes Get waiters when a slot is released
 	active           atomic.Int32
 	mu               sync.Mutex
 	closed           bool
@@ -77,6 +78,7 @@ func NewPool(cfg PoolConfig) *Pool {
 		maxLife:          maxLife,
 		maxResponseBytes: maxResponseBytes,
 		idle:             make(chan *conn, maxIdle),
+		freed:            make(chan struct{}, maxOpen),
 	}
 }
 
@@ -93,7 +95,7 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) {
 			// Check if stale
 			if time.Since(c.usedAt) > 30*time.Second || time.Since(c.createdAt) > p.maxLife {
 				c.netConn.Close()
-				p.active.Add(-1)
+				p.release()
 				continue
 			}
 			c.usedAt = time.Now()
@@ -106,30 +108,53 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) {
 create:
 	// 2. Reserve a slot atomically before dialing so concurrent callers
 	// cannot all pass the limit check and exceed maxOpen.
+	if p.reserve() {
+		return p.create(ctx)
+	}
+
+	// 3. Wait for an idle connection or a released slot, with timeout
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case c, ok := <-p.idle:
+			if !ok {
+				return nil, ErrPoolClosed
+			}
+			c.usedAt = time.Now()
+			return c, nil
+		case <-p.freed:
+			if p.reserve() {
+				return p.create(ctx)
+			}
+		case <-timer.C:
+			return nil, fmt.Errorf("connection pool exhausted (max %d)", p.maxOpen)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// reserve claims a connection slot if one is free. It retries a lost CAS
+// while a slot remains, so a woken waiter cannot miss a free slot.
+func (p *Pool) reserve() bool {
 	for {
 		active := p.active.Load()
 		if int(active) >= p.maxOpen {
-			break
+			return false
 		}
 		if p.active.CompareAndSwap(active, active+1) {
-			return p.create(ctx)
+			return true
 		}
 	}
+}
 
-	// 3. Wait for idle connection with timeout
-	timer := time.NewTimer(30 * time.Second)
-	defer timer.Stop()
+// release gives back one connection slot and wakes a waiting Get.
+func (p *Pool) release() {
+	p.active.Add(-1)
 	select {
-	case c, ok := <-p.idle:
-		if !ok {
-			return nil, ErrPoolClosed
-		}
-		c.usedAt = time.Now()
-		return c, nil
-	case <-timer.C:
-		return nil, fmt.Errorf("connection pool exhausted (max %d)", p.maxOpen)
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case p.freed <- struct{}{}:
+	default:
 	}
 }
 
@@ -147,7 +172,7 @@ func (p *Pool) Put(c *conn) {
 	if p.closed {
 		p.mu.Unlock()
 		c.netConn.Close()
-		p.active.Add(-1)
+		p.release()
 		return
 	}
 	select {
@@ -157,7 +182,7 @@ func (p *Pool) Put(c *conn) {
 		// Pool full
 		p.mu.Unlock()
 		c.netConn.Close()
-		p.active.Add(-1)
+		p.release()
 	}
 }
 
@@ -167,7 +192,7 @@ func (p *Pool) Discard(c *conn) {
 		return
 	}
 	c.netConn.Close()
-	p.active.Add(-1)
+	p.release()
 }
 
 // Close drains and closes all connections. Idempotent.
@@ -196,7 +221,7 @@ func (p *Pool) create(ctx context.Context) (*conn, error) {
 	d := net.Dialer{Timeout: 5 * time.Second}
 	nc, err := d.DialContext(ctx, p.network, p.address)
 	if err != nil {
-		p.active.Add(-1)
+		p.release()
 		return nil, fmt.Errorf("dial %s %s: %w", p.network, p.address, err)
 	}
 

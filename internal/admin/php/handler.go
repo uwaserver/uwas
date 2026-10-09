@@ -303,6 +303,10 @@ func (h *Handler) Restart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ConfigRawGet(w http.ResponseWriter, r *http.Request) {
+	// The server-wide php.ini is admin-only to edit, so it is admin-only to read (F431).
+	if !h.deps.RequireAdmin(w, r) {
+		return
+	}
 	if h.deps.PHPManager() == nil {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
@@ -388,7 +392,15 @@ func (h *Handler) DomainsList(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "PHP manager not enabled", http.StatusNotImplemented)
 		return
 	}
-	jsonResponse(w, h.deps.PHPManager().GetDomainInstances())
+	// Non-admin users only see the domains they may manage (F430).
+	all := h.deps.PHPManager().GetDomainInstances()
+	visible := make([]phpmanager.DomainPHP, 0, len(all))
+	for _, dp := range all {
+		if h.deps.CanManageDomain(r, dp.Domain) {
+			visible = append(visible, dp)
+		}
+	}
+	jsonResponse(w, visible)
 }
 
 func (h *Handler) DomainAssign(w http.ResponseWriter, r *http.Request) {

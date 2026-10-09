@@ -12,7 +12,7 @@ import (
 	"github.com/uwaserver/uwas/internal/logger"
 )
 
-// Runner manages the lifecycle of `cloudflared tunnel run --token <T>` processes.
+// Runner manages the lifecycle of `cloudflared tunnel run` processes (token via TUNNEL_TOKEN).
 // One Runner is shared by the admin server.
 type Runner struct {
 	mu     sync.Mutex
@@ -83,7 +83,7 @@ func (r *Runner) Tail(tunnelID string) string {
 	return p.logTail.String()
 }
 
-// Start spawns `cloudflared tunnel run --token <token>` and registers a monitor
+// Start spawns `cloudflared tunnel run` (TUNNEL_TOKEN=<token>) and registers a monitor
 // that auto-restarts on crash (up to ~ once every 2s).
 func (r *Runner) Start(tunnelID, token string) error {
 	if token == "" {
@@ -139,7 +139,15 @@ func (r *Runner) spawn(p *runningProc, token string) error {
 		binary = bin
 	}
 
-	cmd := execCommandFn(binary, "tunnel", "--no-autoupdate", "run", "--token", token)
+	// Pass the connector token via TUNNEL_TOKEN (cloudflared's env binding
+	// for --token), not argv: /proc/<pid>/cmdline is world-readable, so any
+	// local user (e.g. a site's PHP-FPM pool) could read it and hijack the
+	// tunnel. /proc/<pid>/environ is owner-only.
+	cmd := execCommandFn(binary, "tunnel", "--no-autoupdate", "run")
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "TUNNEL_TOKEN="+token)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
@@ -165,11 +173,16 @@ func (r *Runner) spawn(p *runningProc, token string) error {
 	// a backoff-triggered restart racing with Stop() would leak a process that
 	// keeps restarting forever, ignoring the operator's stop.
 	if p.stopped {
+		// No monitor will run for this process, so clear p.cmd (else
+		// IsRunning/StatusOf report the killed process as live) and reap it
+		// here (else it stays a zombie and its stdout/stderr pipes leak).
+		p.cmd = nil
 		r.mu.Unlock()
 		if killErr := cmd.Process.Kill(); killErr != nil && r.logger != nil {
 			r.logger.Warn("cloudflared: failed to kill process on stop race",
 				"tunnel_id", p.tunnelID, "pid", cmd.Process.Pid, "error", killErr)
 		}
+		_ = cmd.Wait()
 		return nil
 	}
 	p.startedAt = time.Now()

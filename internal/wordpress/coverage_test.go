@@ -469,7 +469,7 @@ func TestSetWPConfigDefine(t *testing.T) {
 	base := "<?php\ndefine('DISALLOW_FILE_EDIT', false);\nrequire_once ABSPATH . 'wp-settings.php';\n"
 
 	// Replace existing define with true.
-	out := setWPConfigDefine(base, "DISALLOW_FILE_EDIT", true)
+	out, _ := setWPConfigDefine(base, "DISALLOW_FILE_EDIT", true)
 	if strings.Contains(out, "false") {
 		t.Errorf("old define should be removed: %q", out)
 	}
@@ -482,14 +482,14 @@ func TestSetWPConfigDefine(t *testing.T) {
 	}
 
 	// New constant set to false.
-	out = setWPConfigDefine(base, "FORCE_SSL_ADMIN", false)
+	out, _ = setWPConfigDefine(base, "FORCE_SSL_ADMIN", false)
 	if !strings.Contains(out, "define('FORCE_SSL_ADMIN', false);") {
 		t.Errorf("false define missing: %q", out)
 	}
 
 	// No require_once anchor → content returned unchanged (no insertion).
 	noAnchor := "<?php\n// nothing\n"
-	out = setWPConfigDefine(noAnchor, "WP_DEBUG", true)
+	out, _ = setWPConfigDefine(noAnchor, "WP_DEBUG", true)
 	if strings.Contains(out, "WP_DEBUG") {
 		t.Errorf("should not insert without anchor: %q", out)
 	}

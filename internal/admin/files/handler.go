@@ -471,23 +471,37 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	const maxFileSize = 50 << 20
-	var uploaded []string
+	// Reject an oversized file before any file of the request is written, so
+	// a 400 never leaves part of the upload on disk (F426).
 	for _, fHeaders := range r.MultipartForm.File {
 		for _, fh := range fHeaders {
 			if fh.Size > maxFileSize {
 				jsonError(w, fmt.Sprintf("file %q exceeds maximum size of %d MB", fh.Filename, maxFileSize>>20), http.StatusBadRequest)
 				return
 			}
-			src, err := fh.Open()
-			if err != nil {
-				continue
-			}
+		}
+	}
+	var uploaded []string
+	for _, fHeaders := range r.MultipartForm.File {
+		for _, fh := range fHeaders {
 			relPath := filepath.Join(dir, filepath.Base(fh.Filename))
-			_, err = filemanager.SaveUpload(root, relPath, src)
-			src.Close()
+			src, err := fh.Open()
 			if err == nil {
-				uploaded = append(uploaded, relPath)
+				_, err = filemanager.SaveUpload(root, relPath, src)
+				src.Close()
 			}
+			if err != nil {
+				// A file that was not saved must not be reported as uploaded
+				// (F425); name what was already written before the failure.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf("upload %q failed: %v", relPath, err),
+					"files": uploaded,
+				})
+				return
+			}
+			uploaded = append(uploaded, relPath)
 		}
 	}
 	jsonResponse(w, map[string]any{"status": "uploaded", "files": uploaded})

@@ -350,7 +350,7 @@ func TestBandwidthReset(t *testing.T) {
 func TestFirewallStatus(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/firewall", nil))
+	s.mux.ServeHTTP(rec, withAdminContext(httptest.NewRequest("GET", "/api/v1/firewall", nil)))
 	if rec.Code != 200 && rec.Code != 500 {
 		t.Errorf("status = %d, want 200 or 500", rec.Code)
 	}

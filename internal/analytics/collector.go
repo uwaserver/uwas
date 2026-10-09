@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Collector tracks per-domain analytics: page views, unique IPs,
@@ -48,8 +49,52 @@ func New() *Collector {
 	return &Collector{}
 }
 
+// maxHostLen is the longest DNS name. A longer Host is not a domain the
+// router can serve, so it is not tracked.
+const maxHostLen = 253
+
+// maxKeyLen bounds the length of a stored path key so the per-map entry caps
+// also bound memory (the request line can be up to MaxHeaderBytes).
+const maxKeyLen = 2048
+
+// statsHost folds the spellings the router treats as one domain (port, case,
+// trailing dot) into one key. Each DomainStats holds a ~400 KB minute ring,
+// so keying on the raw Host let every distinct spelling allocate another.
+func statsHost(host string) (string, bool) {
+	if len(host) > maxHostLen+len("[]:65535") {
+		return "", false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if len(host) > maxHostLen {
+		return "", false
+	}
+	return host, true
+}
+
+// truncateKey shortens s to at most maxKeyLen bytes on a rune boundary.
+func truncateKey(s string) string {
+	if len(s) <= maxKeyLen {
+		return s
+	}
+	i := maxKeyLen
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
+}
+
 // RecordFull records a request with full context including referrer and user agent.
 func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent string, statusCode int, bytesSent int64) {
+	host, ok := statsHost(host)
+	if !ok {
+		return
+	}
+	path = truncateKey(path)
 	stats := c.getOrCreate(host)
 	ip := extractIP(remoteAddr)
 	now := time.Now()
@@ -95,8 +140,8 @@ func (c *Collector) RecordFull(host, path, remoteAddr, referrer, userAgent strin
 		if stats.Referrers == nil {
 			stats.Referrers = make(map[string]int64)
 		}
-		ref := extractRefDomain(referrer)
-		if ref != "" && ref != host {
+		ref, refOK := statsHost(extractRefDomain(referrer))
+		if refOK && ref != "" && ref != host {
 			if _, ok := stats.Referrers[ref]; ok || len(stats.Referrers) < maxDistinct {
 				stats.Referrers[ref]++
 			}
@@ -257,6 +302,10 @@ func (c *Collector) GetAll() []Snapshot {
 // GetHost returns the analytics snapshot for a single domain.
 // Returns nil if the domain has no recorded data.
 func (c *Collector) GetHost(host string) *Snapshot {
+	host, ok := statsHost(host)
+	if !ok {
+		return nil
+	}
 	v, ok := c.domains.Load(host)
 	if !ok {
 		return nil

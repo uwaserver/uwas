@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
+	"sync"
+	"time"
 )
 
 // proxyProtoListener wraps a net.Listener to parse PROXY protocol v1 headers.
@@ -27,36 +30,62 @@ func (l *proxyProtoListener) Accept() (net.Conn, error) {
 	return &proxyProtoConn{Conn: conn}, nil
 }
 
-// proxyProtoConn wraps a net.Conn to parse the PROXY protocol header on first read.
+// proxyHeaderTimeout bounds how long a connection may take to send its PROXY
+// header, since RemoteAddr can now be the first thing to read from it.
+var proxyHeaderTimeout = 10 * time.Second
+
+// proxyProtoConn wraps a net.Conn to parse the PROXY protocol header before
+// the first Read or RemoteAddr, whichever comes first.
 type proxyProtoConn struct {
 	net.Conn
+	once     sync.Once
 	reader   *bufio.Reader
 	parsed   bool
+	parseErr error
 	realAddr net.Addr
 }
 
-func (c *proxyProtoConn) Read(b []byte) (int, error) {
-	if !c.parsed {
+// parseHeader reads the PROXY line once. net/http records RemoteAddr() at the
+// top of conn.serve, before it reads anything, so parsing only on the first
+// Read left every request with the load balancer's address.
+func (c *proxyProtoConn) parseHeader() {
+	c.once.Do(func() {
 		c.parsed = true
 		c.reader = bufio.NewReader(c.Conn)
+		_ = c.Conn.SetReadDeadline(time.Now().Add(proxyHeaderTimeout))
 		line, err := c.reader.ReadString('\n')
+		_ = c.Conn.SetReadDeadline(time.Time{})
 		if err != nil {
-			// reader is initialized, so subsequent reads work even on header parse failure
-			return 0, fmt.Errorf("proxy protocol: %w", err)
+			c.parseErr = fmt.Errorf("proxy protocol: %w", err)
+			return
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(line, "PROXY ") {
 			parts := strings.Fields(line)
 			// PROXY TCP4 <srcIP> <dstIP> <srcPort> <dstPort>
 			if len(parts) >= 6 {
-				c.realAddr = &proxyAddr{ip: parts[2], port: parts[4]}
+				if _, perr := netip.ParseAddr(parts[2]); perr == nil {
+					c.realAddr = &proxyAddr{ip: parts[2], port: parts[4]}
+				}
 			}
 		}
+	})
+}
+
+func (c *proxyProtoConn) Read(b []byte) (int, error) {
+	c.parseHeader()
+	if c.parseErr != nil {
+		// Report the header failure once; the reader is initialized, so
+		// subsequent reads work even on header parse failure.
+		err := c.parseErr
+		c.parseErr = nil
+		return 0, err
 	}
 	return c.reader.Read(b)
 }
 
 func (c *proxyProtoConn) RemoteAddr() net.Addr {
+	c.parseHeader()
 	if c.realAddr != nil {
 		return c.realAddr
 	}

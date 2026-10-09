@@ -437,7 +437,11 @@ func (s *Server) handlePackageInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check if any install task is already running
+	// Check if any install task is already running. Hold setupInstallMu across
+	// the check and Submit so concurrent requests (and the setup wizard) can't
+	// both pass the guard and queue overlapping installs.
+	setupInstallMu.Lock()
+	defer setupInstallMu.Unlock()
 	if active := s.taskMgr.Active(); active != nil {
 		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
 		return

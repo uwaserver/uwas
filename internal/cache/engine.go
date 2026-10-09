@@ -136,6 +136,12 @@ func (e *Engine) GetByKey(key string) (*CachedResponse, string) {
 
 // SetByKey stores a response by explicit key (for ESI fragments).
 func (e *Engine) SetByKey(key string, resp *CachedResponse) {
+	// The key only distinguishes the headers in varyKeys. A response that
+	// varies on anything else (Origin, Accept-Language, User-Agent, ...)
+	// would be served to requests carrying a different value of that header.
+	if !e.varyCoveredByKey(resp.Headers) {
+		return
+	}
 	e.memory.Set(key, resp)
 	if e.disk != nil {
 		select {
@@ -161,6 +167,30 @@ func (e *Engine) SetByKey(key string, resp *CachedResponse) {
 		default:
 		}
 	}
+}
+
+// varyCoveredByKey reports whether every header named in the response's Vary
+// is part of the cache key.
+func (e *Engine) varyCoveredByKey(h http.Header) bool {
+	for _, value := range h.Values("Vary") {
+		for _, name := range strings.Split(value, ",") {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			keyed := false
+			for _, k := range e.varyKeys {
+				if strings.EqualFold(name, k) {
+					keyed = true
+					break
+				}
+			}
+			if !keyed {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // PurgeKey removes one entry from every tier.
@@ -261,8 +291,9 @@ func IsCacheable(r *http.Request, statusCode int, headers http.Header) bool {
 		return false
 	}
 
-	// Don't cache if Cache-Control: no-store or private
-	cc := headers.Get("Cache-Control")
+	// Don't cache if Cache-Control: no-store or private. Directives are
+	// case-insensitive and may be split across several header lines.
+	cc := strings.ToLower(strings.Join(headers.Values("Cache-Control"), ","))
 	if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") {
 		return false
 	}

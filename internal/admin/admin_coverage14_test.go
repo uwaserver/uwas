@@ -1003,6 +1003,16 @@ func TestHandleCloudflareDisconnect(t *testing.T) {
 
 func TestHandleCloudflareCachePurgeNotConnected(t *testing.T) {
 	s := testServer()
+	// Earlier tests leave cloudflareConfig connected; start from "not connected".
+	cloudflareMu.Lock()
+	prev := cloudflareConfig
+	cloudflareConfig = nil
+	cloudflareMu.Unlock()
+	t.Cleanup(func() {
+		cloudflareMu.Lock()
+		cloudflareConfig = prev
+		cloudflareMu.Unlock()
+	})
 
 	body := strings.NewReader("{}")
 	rec := httptest.NewRecorder()

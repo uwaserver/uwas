@@ -130,6 +130,20 @@ func PublicIP() string {
 		}
 	}
 
-	// Fallback to local detection
-	return PrimaryIPv4()
+	// Fallback to local detection. Only a globally routable address can stand
+	// in for the public IP: a private or CGNAT interface address (the norm
+	// behind NAT) would be published as the domain's A record by DNS sync.
+	for _, info := range DetectAll() {
+		if info.Version == 4 && isPublicAddr(net.ParseIP(info.IP)) {
+			return info.IP
+		}
+	}
+	return ""
+}
+
+// cgnatNet is the RFC 6598 shared address space, which net.IP.IsPrivate omits.
+var cgnatNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+func isPublicAddr(ip net.IP) bool {
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !cgnatNet.Contains(ip)
 }

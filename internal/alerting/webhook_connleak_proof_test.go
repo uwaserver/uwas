@@ -140,6 +140,7 @@ func TestSendWebhookNoBody(t *testing.T) {
 	defer server.Close()
 
 	alerter := New(true, server.URL, []notify.Channel(nil), logger.New("error", "text"))
+	allowLoopbackWebhook(alerter)
 	alerter.sendWebhook(Alert{Message: "no body"})
 	t.Log("PASS: 204 No Content response handled without panic")
 }

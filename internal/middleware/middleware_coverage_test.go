@@ -594,9 +594,9 @@ func TestConvertImageRealAvifNoBinary(t *testing.T) {
 
 func TestExtractRealIPSingleInvalidIP(t *testing.T) {
 	result := extractRealIP("not-an-ip", nil)
-	// All IPs are invalid, returns leftmost
-	if result != "not-an-ip" {
-		t.Errorf("got %q, want not-an-ip", result)
+	// An unparsable entry is never returned as a client address.
+	if result != "" {
+		t.Errorf("got %q, want empty", result)
 	}
 }
 
@@ -615,9 +615,9 @@ func TestCompressCloseNoContentTypeCompressible(t *testing.T) {
 
 func TestExtractRealIPAllInvalid(t *testing.T) {
 	result := extractRealIP("invalid1, invalid2", nil)
-	// All IPs are invalid (can't be parsed), returns leftmost trimmed
-	if result != "invalid1" {
-		t.Errorf("got %q, want invalid1", result)
+	// No entry parses, so there is no client address to report.
+	if result != "" {
+		t.Errorf("got %q, want empty", result)
 	}
 }
 

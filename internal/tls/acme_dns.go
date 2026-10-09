@@ -50,12 +50,7 @@ func (p *acmeDNSProvider) PresentDNSChallenge(domain, token, keyAuth string) err
 		return fmt.Errorf("find zone for %s: %w", domain, err)
 	}
 
-	// Strip zone prefix to get the record name
-	name := domain
-	if len(name) > len(zone.Name)+1 {
-		name = name[:len(name)-len(zone.Name)-1]
-	}
-
+	name := p.challengeRecordName(domain, zone)
 	content := dnsChallengeTXT(keyAuth)
 	_, err = p.dp.CreateRecord(zone.ID, dnsmanager.Record{
 		Type:    "TXT",
@@ -64,11 +59,30 @@ func (p *acmeDNSProvider) PresentDNSChallenge(domain, token, keyAuth string) err
 		TTL:     120, // 2 minutes - short TTL for challenge records
 	})
 	if err != nil {
+		// The cached zone may be stale (zone deleted and re-added under a
+		// new ID); drop it so the next attempt looks the zone up again.
+		p.forgetZone(domain)
 		return err
 	}
 
 	p.waitForPropagation(domain, content)
 	return nil
+}
+
+// challengeRecordName is the record name to create for domain in zone.
+// Route53 treats every name as fully qualified, so a zone-relative name would
+// land outside the hosted zone and be rejected; the other providers take the
+// zone-relative form.
+func (p *acmeDNSProvider) challengeRecordName(domain string, zone *dnsmanager.Zone) string {
+	if _, ok := p.dp.(*dnsmanager.Route53Provider); ok {
+		return strings.TrimSuffix(domain, ".")
+	}
+	// Strip zone prefix to get the record name
+	name := domain
+	if len(name) > len(zone.Name)+1 {
+		name = name[:len(name)-len(zone.Name)-1]
+	}
+	return name
 }
 
 // waitForPropagation polls DNS for the challenge TXT record so the CA's
@@ -111,6 +125,7 @@ func (p *acmeDNSProvider) CleanupDNSChallenge(domain, token, keyAuth string) err
 	content := dnsChallengeTXT(keyAuth)
 	records, err := p.dp.ListRecords(zone.ID)
 	if err != nil {
+		p.forgetZone(domain)
 		return err
 	}
 	for _, rec := range records {
@@ -142,6 +157,13 @@ func (p *acmeDNSProvider) findZone(domain string) (*dnsmanager.Zone, error) {
 	}
 	p.zones[domain] = zone
 	return zone, nil
+}
+
+// forgetZone drops the cached zone for domain.
+func (p *acmeDNSProvider) forgetZone(domain string) {
+	p.mu.Lock()
+	delete(p.zones, domain)
+	p.mu.Unlock()
 }
 
 // NewACMEDNSProvider creates an acme.DNSProvider from config.

@@ -602,13 +602,13 @@ func TestPublicIP_AllURLsFail_FallbackToLocal(t *testing.T) {
 	}
 	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
 		return []net.Addr{
-			&net.IPNet{IP: net.ParseIP("10.99.99.1"), Mask: net.CIDRMask(24, 32)},
+			&net.IPNet{IP: net.ParseIP("198.51.100.99"), Mask: net.CIDRMask(24, 32)},
 		}, nil
 	}
 
 	ip := PublicIP()
-	if ip != "10.99.99.1" {
-		t.Errorf("expected fallback to local '10.99.99.1', got %q", ip)
+	if ip != "198.51.100.99" {
+		t.Errorf("expected fallback to local '198.51.100.99', got %q", ip)
 	}
 }
 

@@ -975,8 +975,8 @@ export const checkDNS = (domain: string) => api<DNSResult>(`/api/v1/dns/${encode
 export interface DNSRecord { id: string; type: string; name: string; content: string; ttl: number; proxied: boolean; priority: number; }
 export const fetchDNSRecords = (domain: string) => api<{ zone_id: string; zone: string; records: DNSRecord[] }>(`/api/v1/dns/${encodeURIComponent(domain)}/records`);
 export const createDNSRecord = (domain: string, rec: Partial<DNSRecord>) => api<DNSRecord>(`/api/v1/dns/${encodeURIComponent(domain)}/records`, { method: 'POST', body: JSON.stringify(rec) });
-export const updateDNSRecord = (domain: string, id: string, rec: Partial<DNSRecord>) => api<DNSRecord>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${id}`, { method: 'PUT', body: JSON.stringify(rec) });
-export const deleteDNSRecord = (domain: string, id: string) => api<{ status: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${id}`, { method: 'DELETE' });
+export const updateDNSRecord = (domain: string, id: string, rec: Partial<DNSRecord>) => api<DNSRecord>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(rec) });
+export const deleteDNSRecord = (domain: string, id: string) => api<{ status: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/records/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const syncDNS = (domain: string) => api<{ status: string; ip: string }>(`/api/v1/dns/${encodeURIComponent(domain)}/sync`, { method: 'POST' });
 
 // Security

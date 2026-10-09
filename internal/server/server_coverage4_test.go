@@ -68,12 +68,25 @@ func TestMatchLocationInvalidRegex(t *testing.T) {
 }
 
 func TestMatchLocationEmptyPattern(t *testing.T) {
-	// Empty pattern is prefix match on empty string — everything matches
-	if !matchLocation("/anything", "") {
-		t.Error("empty pattern should match everything (prefix)")
+	// An empty pattern is UNSET, not a wildcard. The previous assertion here
+	// ("empty pattern should match everything") captured an implementation
+	// accident: strings.HasPrefix(path, "") is true for every path, so a
+	// location block with no match became a domain-wide catch-all and —
+	// because the location loop breaks on first match — silently suppressed
+	// every location block configured after it.
+	//
+	// That contradicts how the same field is read everywhere else:
+	// config validation guards `if loc.Match != ""` (treats empty as absent),
+	// and the rewrite engine drops a rule whose pattern will not parse rather
+	// than applying it everywhere. nginx has no empty-location construct; the
+	// catch-all is `location /`, which TestMatchLocationPrefix already pins
+	// as {"/", "/", true}. So unset must match nothing, and an operator who
+	// wants a catch-all writes "/".
+	if matchLocation("/anything", "") {
+		t.Error("empty pattern matched /anything; an unset match must match nothing")
 	}
-	if !matchLocation("", "") {
-		t.Error("empty pattern should match empty path")
+	if matchLocation("", "") {
+		t.Error("empty pattern matched an empty path; an unset match must match nothing")
 	}
 }
 

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -190,8 +191,34 @@ func (d *cfDeps) CreateTunnelAPI(token, accountID, name, hostname, localTarget s
 }
 
 func (d *cfDeps) DeleteTunnelAPI(token, accountID, tunnelID string) error {
+	// Cloudflare refuses to delete a tunnel that still has active connections,
+	// and the handler only stops the connector after this call returns, so stop
+	// it here first.
+	if d.s.cfRunner != nil {
+		_ = d.s.cfRunner.Stop(tunnelID)
+	}
+	// The CNAME created with the tunnel is recorded in state; the handler drops
+	// the tunnel from state after this call, so delete the record now or it is
+	// left pointing at a dead tunnel and blocks reusing the hostname.
+	var zoneID, recordID string
+	cloudflareMu.RLock()
+	if cloudflareConfig != nil {
+		for _, t := range cloudflareConfig.Tunnels {
+			if t.ID == tunnelID {
+				zoneID, recordID = t.ZoneID, t.DNSRecordID
+				break
+			}
+		}
+	}
+	cloudflareMu.RUnlock()
 	cli := cfintegration.New(token, accountID)
-	return cli.DeleteTunnel(tunnelID)
+	err := cli.DeleteTunnel(tunnelID)
+	if zoneID != "" && recordID != "" {
+		if dnsErr := cli.DeleteDNSRecord(zoneID, recordID); dnsErr != nil {
+			err = errors.Join(err, fmt.Errorf("delete DNS CNAME: %w", dnsErr))
+		}
+	}
+	return err
 }
 
 // toCFState converts the admin-internal cloudflareState to the sub-package type.

@@ -406,7 +406,11 @@ func (s *Server) rollbackDeployedApp(
 		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 	}
-	_ = s.appsMgr.Stop(name)
+	// Only stop when we will start again: the restart=false path (deploy-core
+	// failure) must leave a still-running app serving the old code.
+	if restart {
+		_ = s.appsMgr.Stop(name)
+	}
 	// Run git reset --hard <sha> via exec
 	cmd := exec.CommandContext(ctx, "git", "reset", "--hard", rollbackSHA)
 	cmd.Dir = def.WorkDir

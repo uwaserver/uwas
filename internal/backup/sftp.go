@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -86,8 +88,25 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	if err := safeBackupFilename(filename); err != nil {
 		return err
 	}
-	// Use SCP-style upload via a shell command.
+	// Use SCP-style upload via a shell command. Write to a hidden temp name
+	// and rename it into place only once the whole archive arrived: a failed
+	// stream would otherwise leave a truncated *.tar.gz that List and pruneOld
+	// treat as a real backup.
 	remoteDest := path.Join(p.remotePath, filename)
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Errorf("sftp temp name: %w", err)
+	}
+	remoteTmp := path.Join(p.remotePath, "."+filename+".partial-"+hex.EncodeToString(suffix[:]))
+	published := false
+	defer func() {
+		if !published {
+			if s, err := client.NewSession(); err == nil {
+				_ = s.Run("rm -f -- " + shellQuote(remoteTmp))
+				s.Close()
+			}
+		}
+	}()
 	session, err = client.NewSession()
 	if err != nil {
 		return err
@@ -101,7 +120,7 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- session.Run("cat > " + shellQuote(remoteDest))
+		errCh <- session.Run("cat > " + shellQuote(remoteTmp))
 	}()
 
 	// Stream the archive straight to the remote `cat` instead of buffering it
@@ -124,6 +143,15 @@ func (p *SFTPProvider) Upload(ctx context.Context, filename string, data io.Read
 	if writeErr != nil {
 		return fmt.Errorf("write data: %w", writeErr)
 	}
+	mv, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer mv.Close()
+	if err := mv.Run("mv -f -- " + shellQuote(remoteTmp) + " " + shellQuote(remoteDest)); err != nil {
+		return fmt.Errorf("sftp publish %q: %w", remoteDest, err)
+	}
+	published = true
 	return nil
 }
 

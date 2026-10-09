@@ -100,7 +100,7 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 			}
 
 			// Apply substitution
-			newURI := rule.Apply(rule.Target, ruleCaptures, condCaptures)
+			newURI := rule.apply(rule.Target, ruleCaptures, condCaptures, vars)
 
 			// Handle special targets
 			if newURI == "-" {
@@ -179,7 +179,11 @@ func (e *Engine) evalConditions(conditions []Condition, vars *Variables) (bool, 
 	for _, cond := range conditions {
 		matched, captures := cond.Evaluate(vars)
 		if matched {
-			lastCaptures = captures
+			// %N refers to the last matched regex condition; a negated or
+			// file-test condition has no captures and must not clear them.
+			if captures != nil {
+				lastCaptures = captures
+			}
 			groupMatched = true
 		}
 

@@ -470,6 +470,7 @@ func TestWebhookDeliveryViaAlert(t *testing.T) {
 	defer srv.Close()
 
 	a := New(true, srv.URL, nil, testLogger())
+	allowLoopbackWebhook(a)
 	a.Alert(Alert{Level: "warning", Type: "test_alert", Host: "webhook.com", Message: "test delivery"})
 
 	// Wait for the async webhook goroutine to complete
@@ -523,6 +524,7 @@ func TestWebhookErrorStatus(t *testing.T) {
 	defer srv.Close()
 
 	a := New(true, srv.URL, nil, testLogger())
+	allowLoopbackWebhook(a)
 	a.Alert(Alert{Level: "info", Type: "status_test", Message: "server returns 500"})
 
 	// Wait for the async webhook goroutine to hit the server
@@ -591,4 +593,11 @@ func TestRecordRequestWindowCapDecrementsErrCount(t *testing.T) {
 	if errs != 0 {
 		t.Errorf("errorWindowErr = %d, want 0 after old error entries dropped", errs)
 	}
+}
+
+// allowLoopbackWebhook lets a test deliver to its httptest (loopback) server,
+// which the production SSRF policy rightly refuses.
+func allowLoopbackWebhook(a *Alerter) {
+	a.urlSafetyCheck = nil
+	a.dialControl = nil
 }

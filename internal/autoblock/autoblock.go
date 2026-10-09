@@ -177,6 +177,12 @@ type Blocker struct {
 	fwBlock  func(ip, comment string) error
 	fwUnlock func(ip string) error
 
+	// fwPending holds rule removals that found fwQueue full. Dropping one
+	// would leave the kernel deny rule in place forever once the block is
+	// gone from memory and the state file, so expire retries them. Guarded
+	// by mu.
+	fwPending map[string]struct{}
+
 	saveOnce  chan struct{}
 	blockedN  atomic.Int64
 	detectedN atomic.Int64
@@ -273,12 +279,7 @@ func (b *Blocker) liftSafeBlocks() {
 
 	for _, ip := range lifted {
 		b.log.Info("autoblock lifted (now whitelisted)", "ip", ip)
-		if b.fwUnlock != nil {
-			select {
-			case b.fwQueue <- fwOp{ip: ip, remove: true}:
-			default:
-			}
-		}
+		b.queueRemove(ip)
 	}
 	if len(lifted) > 0 {
 		b.requestSave()
@@ -309,7 +310,9 @@ func (b *Blocker) Safe(a netip.Addr) bool {
 	if nets == nil {
 		return false
 	}
-	a = a.Unmap()
+	// Strip the zone: netip.Prefix.Contains never matches a zoned address,
+	// and a link-local peer's RemoteAddr arrives as "[fe80::1%eth0]:port".
+	a = a.Unmap().WithZone("")
 	for _, p := range *nets {
 		if p.Contains(a) {
 			return true

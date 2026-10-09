@@ -35,10 +35,16 @@ func (d *domainDeps) RequirePin(w http.ResponseWriter, r *http.Request) bool {
 	return d.s.requirePin(w, r)
 }
 
+// ConfigDomains returns a snapshot: callers iterate it after RUnlock, while
+// locked writers splice s.config.Domains and its Aliases in place.
 func (d *domainDeps) ConfigDomains() []config.Domain {
 	d.s.configMu.RLock()
 	defer d.s.configMu.RUnlock()
-	return d.s.config.Domains
+	out := append([]config.Domain(nil), d.s.config.Domains...)
+	for i := range out {
+		out[i].Aliases = append([]string(nil), d.s.config.Domains[i].Aliases...)
+	}
+	return out
 }
 
 func (d *domainDeps) WebRoot() string {

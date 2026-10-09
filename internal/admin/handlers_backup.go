@@ -4,7 +4,10 @@ import (
 	"net/http"
 
 	backupadmin "github.com/uwaserver/uwas/internal/admin/backup"
+	"github.com/uwaserver/uwas/internal/apps"
 	"github.com/uwaserver/uwas/internal/backup"
+	"github.com/uwaserver/uwas/internal/config"
+	"github.com/uwaserver/uwas/internal/domainroot"
 	"github.com/uwaserver/uwas/internal/webhook"
 )
 
@@ -32,14 +35,32 @@ func (d *backupDeps) WebhookFire(event webhook.EventType, payload map[string]any
 	}
 }
 func (d *backupDeps) DomainRoot(domain string) (root string, found bool) {
+	var dom config.Domain
 	d.s.configMu.RLock()
-	defer d.s.configMu.RUnlock()
-	for _, d := range d.s.config.Domains {
-		if d.Host == domain {
-			return d.Root, true
+	for _, cd := range d.s.config.Domains {
+		if cd.Host == domain {
+			dom, found = cd, true
+			break
 		}
 	}
-	return "", false
+	d.s.configMu.RUnlock()
+	if !found {
+		return "", false
+	}
+	// Resolve like the file manager and SFTP do: a proxy domain backed by a
+	// standalone app keeps its files in the app WorkDir, not Domain.Root.
+	var store *apps.Store
+	var instances []apps.Instance
+	if mgr := d.s.appsMgr; mgr != nil {
+		store = mgr.Store()
+		instances = mgr.Instances()
+	}
+	root, err := domainroot.ForDomainWithApps(dom, store, instances)
+	if err != nil {
+		d.s.logger.Warn("backup: domain root unresolved, using configured root", "domain", domain, "error", err)
+		return dom.Root, true
+	}
+	return root, true
 }
 
 // backupHandler holds the backup admin handler instance.

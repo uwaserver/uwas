@@ -250,6 +250,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := validateAppEnvMap(a.Env); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	scaffolded := false
 	if a.Deploy.GitURL == "" {
 		var err error

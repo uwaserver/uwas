@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"sync"
@@ -19,8 +20,35 @@ var ecdsaSign = func(key *ecdsa.PrivateKey, hash []byte) (*big.Int, *big.Int, er
 	return ecdsa.Sign(rand.Reader, key, hash)
 }
 
-// signedRequest sends a JWS-signed POST to the ACME server.
+// badNonceRetries bounds how often signedRequest re-signs after a badNonce.
+const badNonceRetries = 3
+
+// signedRequest sends a JWS-signed POST to the ACME server. A badNonce
+// rejection (a cached nonce the CA has since expired) is retried with the
+// fresh nonce the error response carries, as RFC 8555 §6.5 prescribes;
+// otherwise the first request after an idle period fails the whole order.
 func (c *Client) signedRequest(ctx context.Context, url string, payload any) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := c.signedRequestOnce(ctx, url, payload)
+		if err != nil || resp.StatusCode != http.StatusBadRequest || attempt >= badNonceRetries {
+			return resp, err
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		var problem struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(body, &problem) != nil || problem.Type != "urn:ietf:params:acme:error:badNonce" {
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			return resp, nil
+		}
+	}
+}
+
+func (c *Client) signedRequestOnce(ctx context.Context, url string, payload any) (*http.Response, error) {
 	// Get nonce
 	nonce, err := c.nonces.get(c.httpClient, c.directory.NewNonce)
 	if err != nil {

@@ -20,7 +20,7 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 		"GATEWAY_INTERFACE": "CGI/1.1",
 		"SERVER_PROTOCOL":   r.Proto,
 		"SERVER_SOFTWARE":   "Apache/2.4 (UWAS)",
-		"SERVER_NAME":       r.Host,
+		"SERVER_NAME":       serverName(r.Host),
 		"REQUEST_METHOD":    r.Method,
 		"REQUEST_URI":       ctx.OriginalURI,
 		"DOCUMENT_URI":      scriptName,
@@ -59,6 +59,13 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 
 	// Forward HTTP headers as HTTP_* variables
 	for key, vals := range r.Header {
+		// A header spelled with "_" maps to the same HTTP_* name as its "-"
+		// spelling, so a client could add X_Forwarded_For next to the one a
+		// trusted proxy set and let map order pick which one PHP sees.
+		// Apache and nginx drop such headers from the CGI environment; so do we.
+		if strings.Contains(key, "_") {
+			continue
+		}
 		upper := strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
 		if upper == "CONTENT_TYPE" || upper == "CONTENT_LENGTH" {
 			continue
@@ -124,6 +131,19 @@ func BuildEnv(ctx *router.RequestContext, scriptFilename, scriptName, pathInfo s
 	}
 
 	return env
+}
+
+// serverName returns the Host without its port, as Apache sets SERVER_NAME;
+// the port is reported separately in SERVER_PORT.
+func serverName(host string) string {
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		return host
+	}
+	if strings.Contains(h, ":") {
+		return "[" + h + "]"
+	}
+	return h
 }
 
 func clientIP(remoteAddr string) string {

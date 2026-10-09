@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -233,13 +234,24 @@ func (t *UnknownHostTracker) saveBlocked() {
 	t.mu.RUnlock()
 
 	sort.Strings(hosts)
-	f, err := os.Create(t.filePath)
+	var buf strings.Builder
+	for _, h := range hosts {
+		buf.WriteString(h + "\n")
+	}
+	// Write a temp file and rename it over the list: truncating in place left
+	// a partial list on a failed write (disk full, crash), unblocking every
+	// host past the cut on the next start. On any error the old file stays.
+	f, err := os.CreateTemp(filepath.Dir(t.filePath), filepath.Base(t.filePath)+".tmp-*")
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	for _, h := range hosts {
-		f.WriteString(h + "\n")
+	tmp := f.Name()
+	_, werr := f.WriteString(buf.String())
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil || os.Rename(tmp, t.filePath) != nil {
+		os.Remove(tmp)
 	}
 }
 

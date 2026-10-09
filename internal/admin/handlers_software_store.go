@@ -66,7 +66,9 @@ func saveSoftwareInstance(inst softwareInstance) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(inst.Dir, "uwas-software.yaml"), data, 0600)
+	// Atomic replace: a failed write must not truncate the only record of
+	// the instance (a truncated file makes it vanish from the list).
+	return atomicWriteFile(filepath.Join(inst.Dir, "uwas-software.yaml"), data, 0600)
 }
 
 func updateSoftwareComposeDomain(inst softwareInstance) error {
@@ -86,7 +88,7 @@ func updateSoftwareComposeDomain(inst softwareInstance) error {
 	if !changed && !changedWebhook {
 		return nil
 	}
-	return os.WriteFile(inst.ComposeFile, []byte(updated), 0600)
+	return atomicWriteFile(inst.ComposeFile, []byte(updated), 0600)
 }
 
 func replaceComposeEnvironmentLine(data, key, value string) (string, bool) {

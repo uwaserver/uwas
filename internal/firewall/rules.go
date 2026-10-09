@@ -232,13 +232,23 @@ func ruleToUFWArgs(r Rule) ([]string, error) {
 	}
 	from := normalizeFrom(r.From)
 
+	var args []string
 	if r.Port == "" {
 		if from == "" {
 			return nil, fmt.Errorf("cannot reorder a blanket any/any rule — delete and recreate it")
 		}
-		return []string{action, "from", from}, nil
+		args = []string{action, "from", from}
+	} else {
+		var err error
+		if args, err = buildPortRuleArgs(action, r.Port, r.Proto, from, 0); err != nil {
+			return nil, err
+		}
 	}
-	return buildPortRuleArgs(action, r.Port, r.Proto, from, 0)
+	// Keep the comment: ListBlockedIPs finds autoblock rules by it.
+	if r.Comment != "" {
+		args = append(args, "comment", r.Comment)
+	}
+	return args, nil
 }
 
 // ruleFingerprint identifies equivalent rules across v4/v6 twins.
@@ -356,7 +366,7 @@ func MoveRule(number int, direction string) error {
 	// Re-read and place relative to the surviving neighbor (and its v6 twin).
 	st2 := getUFWStatus()
 	fp := ruleFingerprint(neighbor)
-	insertAt := 1
+	insertAt := 0
 	if dir == "up" {
 		for _, x := range st2.Rules {
 			if ruleFingerprint(x) == fp {
@@ -365,24 +375,43 @@ func MoveRule(number int, direction string) error {
 			}
 		}
 	} else {
-		last := 0
 		for _, x := range st2.Rules {
 			if ruleFingerprint(x) == fp {
-				last = x.Number
+				insertAt = x.Number + 1
 			}
 		}
-		if last == 0 {
-			return fmt.Errorf("neighbor rule disappeared during move")
-		}
-		insertAt = last + 1
+	}
+	if insertAt == 0 {
+		return restoreMovedRule(number, args, fmt.Errorf("neighbor rule disappeared during move"))
 	}
 
 	ins := append([]string{"insert", fmt.Sprintf("%d", insertAt)}, args...)
 	if _, err := execCommandFn("ufw", ins...).CombinedOutput(); err != nil {
-		return fmt.Errorf("firewall rule failed")
+		return restoreMovedRule(number, args, fmt.Errorf("firewall rule failed"))
 	}
 	_ = ensureDefaultDenyAtBottom()
 	return nil
+}
+
+// restoreMovedRule re-adds a rule MoveRule already deleted, at its original
+// position (or appended when that position no longer exists), so a failed
+// move never drops the rule. It always returns an error: cause, or cause plus
+// the restore failure.
+func restoreMovedRule(pos int, args []string, cause error) error {
+	last := 0
+	for _, x := range getUFWStatus().Rules {
+		if x.Number > last {
+			last = x.Number
+		}
+	}
+	cmd := args
+	if pos >= 1 && pos <= last {
+		cmd = append([]string{"insert", fmt.Sprintf("%d", pos)}, args...)
+	}
+	if _, err := execCommandFn("ufw", cmd...).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w; restoring the original rule also failed", cause)
+	}
+	return cause
 }
 
 // DeduplicateRules removes duplicate rules for the same action/port/proto/from/v6

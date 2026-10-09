@@ -25,6 +25,7 @@ import (
 
 	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
+	"github.com/uwaserver/uwas/internal/router"
 	"github.com/uwaserver/uwas/internal/tls/acme"
 )
 
@@ -37,6 +38,10 @@ type Manager struct {
 	logger    *logger.Logger
 	domainsMu sync.RWMutex
 	domains   []config.Domain
+	// policyRouter resolves an SNI name to the domain whose TLS policy
+	// applies, built over domains with the request router's precedence so
+	// the TLS layer and the router never disagree about who owns a name.
+	policyRouter *router.VHostRouter
 
 	// allowlist is consulted lock-free on every TLS handshake by
 	// GetCertificate → isDomainConfigured. Rebuilt under domainsMu in
@@ -81,6 +86,12 @@ type Manager struct {
 	// AllowSelfSigned enables auto-generated self-signed certs as fallback.
 	// Set to true in production server; false in tests.
 	AllowSelfSigned bool
+
+	// selfSigned caches fallback certs apart from certs, so HasCert,
+	// ObtainCerts and checkRenewals never mistake them for issued ones.
+	// Bounded: under a wildcard domain the SNI names are client-chosen.
+	selfSigned      sync.Map // host → *tls.Certificate
+	selfSignedCount atomic.Int64
 }
 
 const (
@@ -88,6 +99,7 @@ const (
 	onDemandObtainTimeout   = 2 * time.Minute
 	maxOnDemandAskBodyBytes = 8 << 10 // 8KB
 	ocspFetchTimeout        = 10 * time.Second
+	maxSelfSignedCached     = 1024
 )
 
 func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logger) *Manager {
@@ -97,6 +109,7 @@ func NewManager(cfg config.ACMEConfig, domains []config.Domain, log *logger.Logg
 		logger:  log,
 		domains: cloneTLSManagedDomains(domains),
 	}
+	m.policyRouter = router.NewVHostRouter(m.domains)
 	m.allowlist.Store(buildDomainAllowlist(domains))
 
 	// Initialize ACME client if email is configured
@@ -311,16 +324,43 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 	// 5. Fallback: if AllowSelfSigned is set, generate a temp cert so TLS works.
 	if m.AllowSelfSigned {
+		cached, hit := m.selfSigned.Load(name)
+		if hit && selfSignedUsable(cached.(*tls.Certificate)) {
+			return cached.(*tls.Certificate), nil
+		}
 		m.logger.Warn("no certificate, generating self-signed", "domain", name)
 		cert, err := m.generateSelfSigned(name)
 		if err != nil {
 			return nil, fmt.Errorf("no certificate for %s: %w", name, err)
 		}
-		m.certs.Store(name, cert)
+		if hit {
+			// Replace the expired entry in place; its slot is already counted.
+			if !m.selfSigned.CompareAndSwap(name, cached, cert) {
+				if cur, ok := m.selfSigned.Load(name); ok && selfSignedUsable(cur.(*tls.Certificate)) {
+					return cur.(*tls.Certificate), nil
+				}
+			}
+		} else if m.selfSignedCount.Load() < maxSelfSignedCached {
+			if prev, loaded := m.selfSigned.LoadOrStore(name, cert); loaded {
+				return prev.(*tls.Certificate), nil
+			}
+			m.selfSignedCount.Add(1)
+		}
 		return cert, nil
 	}
 
 	return nil, fmt.Errorf("no certificate for %s", name)
+}
+
+// selfSignedUsable reports whether a cached fallback cert is still inside
+// its validity window. Without this check the first fallback generated for a
+// host was served forever, long past self_signed_validity.
+func selfSignedUsable(cert *tls.Certificate) bool {
+	leaf, err := leafCert(cert)
+	if err != nil {
+		return false
+	}
+	return time.Now().Before(leaf.NotAfter)
 }
 
 // generateSelfSigned creates a temporary self-signed certificate for the given host.
@@ -356,6 +396,10 @@ func (m *Manager) generateSelfSigned(host string) (*tls.Certificate, error) {
 	cert := &tls.Certificate{
 		Certificate: [][]byte{certDER},
 		PrivateKey:  key,
+	}
+	// Parsed once here so the per-handshake expiry check stays cheap.
+	if leaf, err := x509.ParseCertificate(certDER); err == nil {
+		cert.Leaf = leaf
 	}
 	return cert, nil
 }
@@ -557,8 +601,20 @@ type CertStatusInfo struct {
 // startup retry loops pass force=false to coalesce concurrent first-
 // issuance requests onto a single ACME call.
 func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls.Certificate, error) {
+	return m.issueCert(ctx, host, []string{host}, force)
+}
+
+// issueCert runs one ACME issuance for host through the per-host
+// singleflight, requesting names when this caller leads the flight.
+// Scheduled renewal goes through here too, so it coalesces with a
+// concurrent Force Renew instead of issuing a second certificate.
+func (m *Manager) issueCert(ctx context.Context, host string, names []string, force bool) (*tls.Certificate, error) {
 	if m.acme == nil && m.acmeObtainFunc == nil {
 		return nil, fmt.Errorf("ACME client not configured")
+	}
+	var prev any
+	if force {
+		prev, _ = m.certs.Load(host)
 	}
 
 	// Get or create singleflight group for this host.
@@ -572,7 +628,21 @@ func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls
 
 	// Use singleflight so only one caller does the actual ACME issuance.
 	// Subsequent callers for the same host block until the first completes.
-	v, err, _ := gVal.(*singleflight.Group).Do("", func() (any, error) {
+	v, err, shared := gVal.(*singleflight.Group).Do("", m.issueFlight(ctx, host, names, force))
+	// A forced caller that joined a non-forced flight answered from the
+	// cache got no new certificate; lead a forced flight of its own.
+	if force && err == nil && shared && prev != nil && v == prev {
+		v, err, _ = gVal.(*singleflight.Group).Do("", m.issueFlight(ctx, host, names, force))
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return v.(*tls.Certificate), nil
+}
+
+func (m *Manager) issueFlight(ctx context.Context, host string, names []string, force bool) func() (any, error) {
+	return func() (any, error) {
 		// Double-check the cache only when force=false. Forced renewal
 		// (the "Force Renew" dashboard button) must skip this so a fresh
 		// cert is actually obtained from ACME — otherwise the call returns
@@ -587,9 +657,9 @@ func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls
 		var certPEM, keyPEM []byte
 		var err error
 		if m.acmeObtainFunc != nil {
-			cert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, []string{host})
+			cert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, names)
 		} else {
-			cert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, []string{host})
+			cert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, names)
 		}
 		if err != nil {
 			return nil, err
@@ -608,12 +678,7 @@ func (m *Manager) obtainCert(ctx context.Context, host string, force bool) (*tls
 
 		m.logger.Info("certificate obtained", "domain", host)
 		return cert, nil
-	})
-
-	if err != nil {
-		return nil, err
 	}
-	return v.(*tls.Certificate), nil
 }
 
 // onDemandAllow checks the on-demand rate limiter. Returns true if the
@@ -692,9 +757,36 @@ type renewalCandidate struct {
 	host      string
 	dnsNames  []string
 	remaining time.Duration
+	// alertOnly marks a cert ACME does not own (e.g. ssl.mode manual): it is
+	// reported as expiring but never re-issued over the operator's cert.
+	alertOnly bool
+}
+
+// renewalModeFor returns the ssl.mode of the configured domain that owns
+// host, or "" when no domain does (e.g. a cert left on disk for a domain
+// since removed). An exact or alias match wins over a wildcard match.
+func renewalModeFor(domains []config.Domain, host string) string {
+	wildcardMode := ""
+	for i := range domains {
+		d := &domains[i]
+		if !domainMatchesHost(d, host) {
+			continue
+		}
+		if !strings.HasPrefix(d.Host, "*.") {
+			return d.SSL.Mode
+		}
+		if wildcardMode == "" {
+			wildcardMode = d.SSL.Mode
+		}
+	}
+	return wildcardMode
 }
 
 func (m *Manager) checkRenewals(ctx context.Context) {
+	// No configured domains keeps the legacy renew-everything behaviour,
+	// matching the allow-all fallback of the SNI allowlist.
+	domains := m.snapshotDomains()
+
 	// Pass 1: walk the cert map once and copy out the hosts that need
 	// renewing. The Range callback returns quickly, freeing the map.
 	var candidates []renewalCandidate
@@ -702,6 +794,16 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 		host := key.(string)
 		if host == "_default" {
 			return true
+		}
+		alertOnly := false
+		if len(domains) > 0 {
+			switch renewalModeFor(domains, host) {
+			case "auto":
+			case "":
+				return true
+			default:
+				alertOnly = true
+			}
 		}
 		cert := value.(*tls.Certificate)
 		leaf, err := leafCert(cert)
@@ -714,6 +816,7 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 				host:      host,
 				dnsNames:  append([]string(nil), leaf.DNSNames...),
 				remaining: remaining,
+				alertOnly: alertOnly,
 			})
 		}
 		return true
@@ -732,34 +835,28 @@ func (m *Manager) checkRenewals(ctx context.Context) {
 }
 
 func (m *Manager) renewOne(ctx context.Context, c renewalCandidate) {
+	if c.alertOnly {
+		m.logger.Warn("certificate near expiry; not managed by ACME, replace it manually",
+			"domain", c.host, "expires_in", c.remaining.Round(time.Hour))
+		if m.onCertExpiry != nil {
+			m.onCertExpiry(c.host, int(c.remaining.Hours()/24))
+		}
+		return
+	}
 	m.logger.Info("renewing certificate",
 		"domain", c.host,
 		"expires_in", c.remaining.Round(time.Hour),
 	)
 
-	var newCert *tls.Certificate
-	var certPEM, keyPEM []byte
-	var err error
-	if m.acmeObtainFunc != nil {
-		newCert, certPEM, keyPEM, err = m.acmeObtainFunc(ctx, c.dnsNames)
-	} else {
-		newCert, certPEM, keyPEM, err = m.acme.ObtainCertificate(ctx, c.dnsNames)
-	}
-	if err != nil {
+	// Same per-host singleflight as obtainCert (staples, stores and
+	// persists), so a concurrent Force Renew shares this issuance.
+	if _, err := m.issueCert(ctx, c.host, c.dnsNames, true); err != nil {
 		m.logger.Error("renewal failed", "domain", c.host, "error", err)
 		if m.onCertExpiry != nil {
 			daysLeft := int(c.remaining.Hours() / 24)
 			m.onCertExpiry(c.host, daysLeft)
 		}
 		return
-	}
-
-	// OCSP staple (best-effort), same as first issuance in obtainCert.
-	m.stapleOCSP(newCert, c.host)
-
-	m.certs.Store(c.host, newCert)
-	if err := m.storage.Save(c.host, newCert, keyPEM, certPEM); err != nil {
-		m.logger.Warn("failed to persist renewed cert", "domain", c.host, "error", err)
 	}
 
 	m.logger.Info("certificate renewed", "domain", c.host)
@@ -773,6 +870,7 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	allowlist := buildDomainAllowlist(domains)
 	m.domainsMu.Lock()
 	m.domains = cloneTLSManagedDomains(domains)
+	m.policyRouter = router.NewVHostRouter(m.domains)
 	m.domainsMu.Unlock()
 	// Publish *after* the slice swap so any handshake that races us either
 	// sees the old allowlist+old domains or the new allowlist+new domains.
@@ -882,35 +980,64 @@ func minTLSVersionFor(v string, log *logger.Logger, host string) uint16 {
 // base config.
 func (m *Manager) configForHost(base *tls.Config, host string) *tls.Config {
 	m.domainsMu.RLock()
-	domains := m.domains
+	domains, pr := m.domains, m.policyRouter
 	m.domainsMu.RUnlock()
+	if pr == nil {
+		pr = router.NewVHostRouter(domains)
+	}
 
+	// Resolve the owner exactly as the router does (explicit host or alias,
+	// then implicit www/apex, then the longest wildcard host or alias), so
+	// the policy applied at the handshake is that of the domain the request
+	// will be served by. Config-order matching here let a public apex strip
+	// an explicit www domain of its mTLS, or an mTLS www domain impose
+	// client certificates on another domain's apex.
+	d, ok := pr.LookupWithStatus(host)
+	if !ok {
+		// The router routes no domain here, but a wildcard host or alias
+		// still claims its bare apex for TLS (allowlist, certificates), so
+		// its policy keeps applying to that name.
+		d = wildcardApexOwner(domains, host)
+	}
+	if d == nil {
+		return nil
+	}
+	if d.SSL.MinVersion == "" && d.SSL.ClientCA == "" {
+		return nil
+	}
+
+	out := base.Clone()
+	out.MinVersion = minTLSVersionFor(d.SSL.MinVersion, m.logger, d.Host)
+
+	// Per-domain mTLS, using the pool LoadClientCAs parsed for this
+	// domain. Falling back to the listener-wide pool here would apply
+	// one domain's CA to another's clients.
+	if d.SSL.ClientCA != "" {
+		pool := m.clientCAFor(d.Host)
+		if pool == nil {
+			// An unavailable configured CA must trust no clients rather
+			// than silently disable the requested authentication policy.
+			pool = x509.NewCertPool()
+		}
+		out.ClientCAs = pool
+		out.ClientAuth = clientAuthModeFor(d.SSL.ClientAuth)
+	}
+	return out
+}
+
+// wildcardApexOwner returns the first domain whose wildcard host or alias
+// "*.<host>" covers host as its bare apex, or nil.
+func wildcardApexOwner(domains []config.Domain, host string) *config.Domain {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "" {
+		return nil
+	}
 	for i := range domains {
-		d := &domains[i]
-		if !domainMatchesHost(d, host) {
-			continue
-		}
-		if d.SSL.MinVersion == "" && d.SSL.ClientCA == "" {
-			return nil
-		}
-
-		out := base.Clone()
-		out.MinVersion = minTLSVersionFor(d.SSL.MinVersion, m.logger, d.Host)
-
-		// Per-domain mTLS, using the pool LoadClientCAs parsed for this
-		// domain. Falling back to the listener-wide pool here would apply
-		// one domain's CA to another's clients.
-		if d.SSL.ClientCA != "" {
-			pool := m.clientCAFor(d.Host)
-			if pool == nil {
-				// An unavailable configured CA must trust no clients rather
-				// than silently disable the requested authentication policy.
-				pool = x509.NewCertPool()
+		for _, name := range append([]string{domains[i].Host}, domains[i].Aliases...) {
+			if strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".") == "*."+host {
+				return &domains[i]
 			}
-			out.ClientCAs = pool
-			out.ClientAuth = clientAuthModeFor(d.SSL.ClientAuth)
 		}
-		return out
 	}
 	return nil
 }

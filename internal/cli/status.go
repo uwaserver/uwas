@@ -17,7 +17,9 @@ func (s *StatusCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *apiURL == "" {
 		*apiURL = adminURLFromConfig()
@@ -92,7 +94,9 @@ func (r *ReloadCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
 	apiURL := fs.String("api-url", "", "admin API URL")
 	apiKey := fs.String("api-key", os.Getenv("UWAS_ADMIN_KEY"), "admin API key")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	if *apiURL == "" {
 		*apiURL = adminURLFromConfig()

@@ -3,8 +3,10 @@ package monitor
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -46,6 +48,11 @@ const monitorUserAgent = "Mozilla/5.0 (compatible; UWAS-Monitor/1.0; +https://gi
 // link-local, and cloud-metadata ranges.
 var monitorURLSafetyCheck = config.IsWebhookURLSafe
 
+// monitorDialControl applies the same policy to the address actually dialed,
+// so a host that passes the pre-check and then re-resolves to an internal
+// address (DNS rebinding) is still refused. Tests against loopback set it nil.
+var monitorDialControl = config.SafeDialControl
+
 // Monitor periodically checks domain health.
 type Monitor struct {
 	domainsMu sync.RWMutex
@@ -82,18 +89,33 @@ type Check struct {
 
 // New creates a new Monitor for the given domains.
 func New(domains []config.Domain, log *logger.Logger) *Monitor {
+	// The probed site is tenant-controlled, so its redirects and its DNS are
+	// too: re-apply the SSRF policy on every hop and at connect time, not
+	// only to the first URL.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   checkTimeout,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			if monitorDialControl == nil {
+				return nil
+			}
+			return monitorDialControl(network, address, c)
+		},
+	}).DialContext
 	return &Monitor{
 		domains: append([]config.Domain(nil), domains...),
 		logger:  log,
 		results: make(map[string]*HealthResult),
 		client: &http.Client{
-			Timeout: checkTimeout,
+			Timeout:   checkTimeout,
+			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				// Follow up to 3 redirects
 				if len(via) >= 3 {
 					return http.ErrUseLastResponse
 				}
-				return nil
+				return monitorURLSafetyCheck(req.URL.String())
 			},
 		},
 	}

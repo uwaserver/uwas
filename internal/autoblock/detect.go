@@ -119,7 +119,20 @@ func (b *Blocker) ConnOpened(a netip.Addr) bool {
 // TLS-handshake flood, where the peer connects and hangs up before ClientHello.
 // A browser, a bot and a health check all send bytes; only a flood does not.
 func (b *Blocker) ConnClosed(a netip.Addr, aborted bool) {
-	if b == nil || !b.cfg.Enabled || b.Safe(a) {
+	if b == nil || !b.cfg.Enabled {
+		return
+	}
+	if b.Safe(a) {
+		// The connection may have been opened, and counted, before a
+		// whitelist refresh made the IP safe. Hand that slot back, or it leaks
+		// and trips max_concurrent once the IP is unwhitelisted. Never create
+		// counters for a safe IP, and never count its close as a signal.
+		sh := b.shardFor(a)
+		sh.mu.Lock()
+		if t := sh.tracks[a]; t != nil && t.concurrent > 0 {
+			t.concurrent--
+		}
+		sh.mu.Unlock()
 		return
 	}
 	now := time.Now()

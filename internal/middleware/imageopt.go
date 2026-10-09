@@ -102,8 +102,13 @@ func ImageOptimization(cfg ImageOptConfig, docRoot string) Middleware {
 					continue
 				}
 
-				info, err := os.Stat(diskPath)
-				if err != nil || info.IsDir() {
+				// A variant of a deleted or since-replaced original is stale.
+				srcInfo, err := os.Stat(filepath.Join(docRoot, relPath))
+				if err != nil {
+					continue
+				}
+				info, ok := variantFresh(srcInfo, diskPath)
+				if !ok {
 					continue
 				}
 
@@ -169,12 +174,24 @@ func convertImage(src, dst, format string) bool {
 	return convertImageFunc(src, dst, format)
 }
 
+// variantFresh reports whether dst is a usable optimized variant of the
+// original described by src: a regular file not older than the original.
+func variantFresh(src os.FileInfo, dst string) (os.FileInfo, bool) {
+	info, err := os.Stat(dst)
+	if err != nil || info.IsDir() || info.ModTime().Before(src.ModTime()) {
+		return nil, false
+	}
+	return info, true
+}
+
 func convertImageReal(src, dst, format string) bool {
-	// Don't convert if src doesn't exist or dst already exists
-	if _, err := os.Stat(src); err != nil {
+	// Don't convert if src doesn't exist or dst is already an up-to-date
+	// conversion of it; a dst older than src is regenerated.
+	srcInfo, err := os.Stat(src)
+	if err != nil {
 		return false
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, ok := variantFresh(srcInfo, dst); ok {
 		return true // already converted
 	}
 
@@ -182,7 +199,7 @@ func convertImageReal(src, dst, format string) bool {
 	defer convertMu.Unlock()
 
 	// Double-check after lock
-	if _, err := os.Stat(dst); err == nil {
+	if _, ok := variantFresh(srcInfo, dst); ok {
 		return true
 	}
 

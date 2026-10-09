@@ -22,9 +22,9 @@ func (d *phpDeps) RequireDomainAccess(w http.ResponseWriter, r *http.Request, do
 }
 
 func (d *phpDeps) CanManageDomain(r *http.Request, domain string) bool {
-	if d.s.authMgr != nil {
+	if mgr := d.s.getAuthMgr(); mgr != nil {
 		if user, ok := auth.UserFromContext(r.Context()); ok && user.Role != auth.RoleAdmin {
-			return d.s.authMgr.CanManageDomain(user, domain)
+			return mgr.CanManageDomain(user, domain)
 		}
 	}
 	return true

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/uwaserver/uwas/internal/auth"
@@ -100,36 +101,55 @@ func (s *Server) resolveClonePaths(req *migrate.CloneRequest) error {
 }
 
 // detectWordPressDB auto-detects database credentials from wp-config.php.
-func detectWordPressDB(req *migrate.CloneRequest) {
+// It returns an error when DB_NAME is defined but not as a string literal
+// (e.g. getenv()): cloning then would copy the files only and leave the
+// clone's wp-config pointing at the source site's live database.
+func detectWordPressDB(req *migrate.CloneRequest) error {
 	if req.SourceDB != "" {
-		return
+		return nil
 	}
 	wpCfg := filepath.Join(req.SourceRoot, "wp-config.php")
 	data, err := os.ReadFile(wpCfg)
 	if err != nil {
-		return
+		return nil
 	}
-	content := string(data)
-	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "DB_NAME") {
-			parts := strings.Split(line, "'")
-			if len(parts) >= 4 {
-				req.SourceDB = parts[3]
-			}
-		}
-		if strings.Contains(line, "DB_USER") && req.DBUser == "" {
-			parts := strings.Split(line, "'")
-			if len(parts) >= 4 {
-				req.DBUser = parts[3]
-			}
-		}
-		if strings.Contains(line, "DB_PASSWORD") && req.DBPass == "" {
-			parts := strings.Split(line, "'")
-			if len(parts) >= 4 {
-				req.DBPass = parts[3]
-			}
-		}
+	src := wpBlockCommentRe.ReplaceAllString(string(data), "")
+	src = wpLineCommentRe.ReplaceAllString(src, "")
+	name, unresolved := wpConfigDefine(src, "DB_NAME")
+	if unresolved {
+		return fmt.Errorf("cannot determine DB_NAME from wp-config.php (not a string literal); set source_db explicitly")
 	}
+	req.SourceDB = name
+	if req.DBUser == "" {
+		req.DBUser, _ = wpConfigDefine(src, "DB_USER")
+	}
+	if req.DBPass == "" {
+		req.DBPass, _ = wpConfigDefine(src, "DB_PASSWORD")
+	}
+	return nil
+}
+
+var (
+	wpBlockCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	wpLineCommentRe  = regexp.MustCompile(`(?m)^\s*(//|#).*$`)
+)
+
+// wpConfigDefine returns the value PHP would use for define(key, ...): the
+// first define outside comments (src must already be comment-stripped), with
+// either quote style. unresolved reports a define whose value is not a plain
+// string literal.
+func wpConfigDefine(src, key string) (value string, unresolved bool) {
+	k := regexp.QuoteMeta(key)
+	loc := regexp.MustCompile(`define\s*\(\s*['"]` + k + `['"]\s*,`).FindStringIndex(src)
+	if loc == nil {
+		return "", false
+	}
+	re := regexp.MustCompile(`define\s*\(\s*['"]` + k + `['"]\s*,\s*(?:'([^']*)'|"([^"]*)")\s*\)`)
+	m := re.FindStringSubmatchIndex(src)
+	if m == nil || m[0] != loc[0] {
+		return "", true
+	}
+	return src[max(m[2], m[4]):max(m[3], m[5])], false
 }
 
 // autoCreateDomainForClone creates domain config after successful clone.
@@ -194,7 +214,11 @@ func (s *Server) handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detectWordPressDB(&req)
+	if err := detectWordPressDB(&req); err != nil {
+		s.recordAuditR(r, "clone.start", req.SourceDomain+" → "+req.TargetDomain+": "+err.Error(), false)
+		jsonError(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 
 	s.recordAuditR(r, "clone.start", req.SourceDomain+" → "+req.TargetDomain, true)
 	result := migrate.Clone(req)

@@ -415,8 +415,9 @@ func TestRoute53_ListRecords_Success(t *testing.T) {
 	if recs[0].Name != "example.com" {
 		t.Errorf("recs[0].Name = %q", recs[0].Name)
 	}
-	// ID format: Name:Type
-	if recs[0].ID != "example.com.:A" {
+	// ID format: Name:Type:base64url(value), so one value of a multi-value
+	// set can be updated or deleted on its own.
+	if recs[0].ID != "example.com.:A:MS4yLjMuNA" {
 		t.Errorf("recs[0].ID = %q", recs[0].ID)
 	}
 }

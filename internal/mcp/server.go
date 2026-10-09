@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 
 	"github.com/uwaserver/uwas/internal/cache"
@@ -108,9 +110,19 @@ func (s *Server) registerTools() {
 			}
 			// Reject malformed input rather than falling through to PurgeAll:
 			// a JSON error would otherwise leave Tag empty and wipe the whole
-			// cache on an unintended/garbled request.
-			if err := json.Unmarshal(input, &params); err != nil {
+			// cache on an unintended/garbled request. A null input or a
+			// misspelled key ({"tags":...}) is garbled too — Unmarshal accepts
+			// both silently — so only an explicit {} / empty tag purges all.
+			if bytes.Equal(bytes.TrimSpace(input), []byte("null")) {
+				return nil, fmt.Errorf("invalid cache_purge input: null")
+			}
+			dec := json.NewDecoder(bytes.NewReader(input))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&params); err != nil {
 				return nil, fmt.Errorf("invalid cache_purge input: %w", err)
+			}
+			if _, err := dec.Token(); err != io.EOF {
+				return nil, fmt.Errorf("invalid cache_purge input: trailing data")
 			}
 			if s.cache == nil {
 				return map[string]string{"status": "cache not enabled"}, nil
@@ -321,7 +333,7 @@ func sanitizeDomainForMCP(d config.Domain) config.Domain {
 	// and path — the agent still needs to know where the traffic goes.
 	d.Proxy.Upstreams = sanitizeUpstreams(d.Proxy.Upstreams)
 	d.Proxy.Canary.Upstreams = sanitizeUpstreams(d.Proxy.Canary.Upstreams)
-	d.Proxy.Mirror.Backend = sanitizeURLUserinfo(d.Proxy.Mirror.Backend)
+	d.Proxy.Mirror.Backend = sanitizeUpstreamAddress(d.Proxy.Mirror.Backend)
 	d.Redirect.Target = sanitizeURLUserinfo(d.Redirect.Target)
 	return d
 }
@@ -339,6 +351,21 @@ func sanitizeURLUserinfo(raw string) string {
 	}
 	u.User = nil
 	return u.String()
+}
+
+// sanitizeUpstreamAddress redacts userinfo from a proxy upstream or mirror
+// address. These accept the scheme-less "user:pass@host:port" form: config
+// validation and the proxy pool both parse NormalizeProxyUpstreamAddress(addr),
+// which prefixes http://. Parsed raw, url.Parse reads "user" as the scheme and
+// the password as opaque data (u.User == nil), so the credential would pass
+// through sanitizeURLUserinfo untouched. Redact the normalized form; an
+// address without a credential is still returned exactly as written.
+func sanitizeUpstreamAddress(raw string) string {
+	norm := config.NormalizeProxyUpstreamAddress(raw)
+	if out := sanitizeURLUserinfo(norm); out != norm {
+		return out
+	}
+	return raw
 }
 
 // sanitizeLocations clears the per-path basic-auth credentials on each location.
@@ -365,6 +392,10 @@ func sanitizeLocations(locs []config.LocationConfig) []config.LocationConfig {
 	out := make([]config.LocationConfig, len(locs))
 	copy(out, locs)
 	for i := range out {
+		// Per-location proxy_pass / redirect are URL-shaped like the domain
+		// upstreams and redirect target, and carry userinfo the same way.
+		out[i].ProxyPass = sanitizeURLUserinfo(out[i].ProxyPass)
+		out[i].Redirect = sanitizeURLUserinfo(out[i].Redirect)
 		if out[i].BasicAuth == nil {
 			continue
 		}
@@ -387,7 +418,7 @@ func sanitizeUpstreams(ups []config.Upstream) []config.Upstream {
 	out := make([]config.Upstream, len(ups))
 	copy(out, ups)
 	for i := range out {
-		out[i].Address = sanitizeURLUserinfo(out[i].Address)
+		out[i].Address = sanitizeUpstreamAddress(out[i].Address)
 	}
 	return out
 }

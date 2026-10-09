@@ -109,6 +109,8 @@ func TestSelfRestartSuppressedUnderSystemd(t *testing.T) {
 	w := testWatchdog(t, 1, func(context.Context) error { return errors.New("wedged") })
 	w.cfg.SelfRestart = true
 	w.notifier = &Notifier{addr: &net.UnixAddr{Name: "/nonexistent/notify", Net: "unixgram"}}
+	t.Setenv("WATCHDOG_PID", "")
+	t.Setenv("WATCHDOG_USEC", "60000000")
 
 	var exited atomic.Bool
 	w.exit = func(int) { exited.Store(true) }

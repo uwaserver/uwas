@@ -267,7 +267,7 @@ func (m *Manager) registerLocked(a *App) {
 	// external processes that grabbed their old port.
 	if port > 0 {
 		for _, other := range m.procs {
-			if other.name != a.Name && other.port == port {
+			if other.name != a.Name && processExposesPort(other, port) {
 				if m.logger != nil {
 					m.logger.Warn("apps: requested port already used by another managed app, auto-assigning",
 						"app", a.Name, "requested", port, "conflict", other.name)
@@ -321,7 +321,7 @@ func (m *Manager) allocateFreePortLocked() int {
 	for i := 0; i < maxAttempts; i++ {
 		taken := false
 		for _, other := range m.procs {
-			if other.port == port {
+			if processExposesPort(other, port) {
 				taken = true
 				break
 			}
@@ -408,11 +408,38 @@ func (m *Manager) Stop(name string) error {
 }
 
 // stop is the public-facing wrapper around stopLocked that grabs the
-// lock for itself.
+// lock for itself. For native runtimes the SIGTERM grace window runs
+// outside m.mu: the reverse proxy reads ListenAddrForPort on every
+// request, so holding the write lock through gracefulKill would stall
+// traffic to every other app for the whole stop.
 func (m *Manager) stop(p *process) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.stopLocked(p)
+	if p.runtimeKind == RuntimeDocker {
+		defer m.mu.Unlock()
+		return m.stopLocked(p)
+	}
+	if !p.stopped {
+		p.stopped = true
+		close(p.stopCh)
+	}
+	cmd := p.cmd
+	m.mu.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if err := gracefulKill(cmd, p.name); err != nil {
+		return fmt.Errorf("apps: kill %s: %w", p.name, err)
+	}
+	m.mu.Lock()
+	if p.cmd == cmd {
+		p.cmd = nil
+	}
+	m.mu.Unlock()
+	if m.logger != nil {
+		m.logger.Info("apps: stopped", "app", p.name)
+	}
+	return nil
 }
 
 // stopLocked is the actual kill path. Caller MUST hold m.mu.Lock().

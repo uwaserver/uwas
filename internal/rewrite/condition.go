@@ -12,8 +12,10 @@ type Condition struct {
 	Pattern    *regexp.Regexp // regex pattern (nil for special tests)
 	Negated    bool           // "!" prefix
 	OrNext     bool           // [OR] flag — OR with next condition
-	TestType   string         // "", "-f", "-d", "-l", "-s" (special file tests)
+	TestType   string         // "", "-f", "-d", "-l", "-s" (special file tests), "=" (lexical equality)
 	RawPattern string
+	NoCase     bool   // [NC] flag — case-insensitive pattern / comparison
+	Literal    string // comparison string for TestType "="
 }
 
 // ParseCondition parses a RewriteCond from variable, pattern, and flags.
@@ -32,8 +34,11 @@ func ParseCondition(variable, pattern, flags string) (*Condition, error) {
 	flags = strings.TrimSpace(flags)
 	flags = strings.Trim(flags, "[]")
 	for _, f := range strings.Split(flags, ",") {
-		if strings.EqualFold(strings.TrimSpace(f), "OR") {
+		switch f = strings.TrimSpace(f); {
+		case strings.EqualFold(f, "OR"):
 			c.OrNext = true
+		case strings.EqualFold(f, "NC"):
+			c.NoCase = true
 		}
 	}
 
@@ -59,6 +64,20 @@ func ParseCondition(variable, pattern, flags string) (*Condition, error) {
 		return c, nil
 	}
 
+	// "=string" is Apache's lexical equality test, not a regex; `=""`
+	// compares against the empty string.
+	if lit, ok := strings.CutPrefix(pattern, "="); ok {
+		if lit == `""` {
+			lit = ""
+		}
+		c.TestType = "="
+		c.Literal = lit
+		return c, nil
+	}
+
+	if c.NoCase {
+		pattern = "(?i)" + pattern
+	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err
@@ -89,6 +108,12 @@ func (c *Condition) Evaluate(vars *Variables) (bool, []string) {
 	case "-s":
 		info, err := os.Stat(testValue)
 		matched = err == nil && info.Mode().IsRegular() && info.Size() > 0
+	case "=":
+		if c.NoCase {
+			matched = strings.EqualFold(testValue, c.Literal)
+		} else {
+			matched = testValue == c.Literal
+		}
 	default:
 		if c.Pattern != nil {
 			matches := c.Pattern.FindStringSubmatch(testValue)
@@ -124,13 +149,39 @@ type Variables struct {
 }
 
 // Expand resolves a variable reference like %{REQUEST_URI} to its value.
+// A composite TestString such as "%{DOCUMENT_ROOT}%{REQUEST_URI}" has every
+// %{NAME} reference substituted, as in Apache.
 func (v *Variables) Expand(s string) string {
-	// Strip %{ and } if present
-	name := s
-	if strings.HasPrefix(s, "%{") && strings.HasSuffix(s, "}") {
-		name = s[2 : len(s)-1]
+	if !strings.Contains(s, "%{") {
+		return v.lookup(s) // bare variable name
 	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if n := v.writeVarRef(&b, s, i); n > 0 {
+			i += n - 1
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
 
+// writeVarRef writes the value of a %{NAME} reference starting at s[i] and
+// returns the number of bytes consumed, or 0 if s[i:] is not a reference.
+func (v *Variables) writeVarRef(b *strings.Builder, s string, i int) int {
+	if !strings.HasPrefix(s[i:], "%{") {
+		return 0
+	}
+	end := strings.IndexByte(s[i+2:], '}')
+	if end < 0 {
+		return 0
+	}
+	b.WriteString(v.lookup(s[i+2 : i+2+end]))
+	return end + 3
+}
+
+// lookup returns the value of a bare server variable name.
+func (v *Variables) lookup(name string) string {
 	switch strings.ToUpper(name) {
 	case "REQUEST_URI":
 		return v.RequestURI

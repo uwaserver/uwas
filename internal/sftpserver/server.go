@@ -86,6 +86,7 @@ func (s *Server) Start() error {
 			user, ok := s.users[c.User()]
 			s.mu.RUnlock()
 			if !ok {
+				burnPasswordCompare(pass)
 				return nil, fmt.Errorf("unknown user")
 			}
 			if err := comparePassword(user.Password, pass); err != nil {
@@ -256,6 +257,7 @@ const (
 	sshFXPLStat    = 7
 	sshFXPFStat    = 8
 	sshFXPSetStat  = 9
+	sshFXPFSetStat = 10
 	sshFXPStatus   = 101
 	sshFXPHandle   = 102
 	sshFXPData     = 103
@@ -270,7 +272,21 @@ const (
 	sshFXNoSuchFile       = 2
 	sshFXPermissionDenied = 3
 	sshFXFailure          = 4
+	sshFXOpUnsupported    = 8
 )
+
+// ATTRS flags (SFTP v3)
+const (
+	sshFileXferAttrSize        = 0x00000001
+	sshFileXferAttrUIDGID      = 0x00000002
+	sshFileXferAttrPermissions = 0x00000004
+	sshFileXferAttrACModTime   = 0x00000008
+)
+
+// readDirBatch caps the entries per SSH_FXP_NAME reply. Sending a whole
+// directory at once exceeds client message limits (OpenSSH aborts above
+// 256 KiB) for large upload or cache folders; OpenSSH's own server uses 100.
+const readDirBatch = 100
 
 // pflags
 const (
@@ -291,10 +307,12 @@ type sftpSession struct {
 }
 
 type openHandle struct {
-	path  string
-	file  *os.File
-	isDir bool
-	read  bool // already read (for readdir)
+	path    string
+	file    *os.File
+	isDir   bool
+	read    bool          // directory already loaded (for readdir)
+	entries []os.DirEntry // readdir entries not yet sent
+	append  bool          // opened with SSH_FXF_APPEND: writes go to EOF, offset ignored
 }
 
 func (s *Server) serveSFTP(ch ssh.Channel, root string, readOnly bool) {
@@ -304,6 +322,16 @@ func (s *Server) serveSFTP(ch ssh.Channel, root string, readOnly bool) {
 		readOnly: readOnly,
 		handles:  make(map[string]*openHandle),
 	}
+	// A client that disconnects without SSH_FXP_CLOSE would otherwise leave
+	// every open file descriptor behind for the life of the process.
+	defer func() {
+		for k, h := range sess.handles {
+			if h.file != nil {
+				h.file.Close()
+			}
+			delete(sess.handles, k)
+		}
+	}()
 
 	for {
 		pktType, id, payload, err := sess.readPacket()
@@ -341,7 +369,9 @@ func (s *Server) serveSFTP(ch ssh.Channel, root string, readOnly bool) {
 		case sshFXPRename:
 			sess.handleRename(id, payload)
 		case sshFXPSetStat:
-			sess.sendStatus(id, sshFXOK, "")
+			sess.handleSetStat(id, payload)
+		case sshFXPFSetStat:
+			sess.handleFSetStat(id, payload)
 		default:
 			sess.sendStatus(id, sshFXFailure, "unsupported")
 		}
@@ -354,11 +384,14 @@ func (sess *sftpSession) safePath(p string) string {
 		return sess.root
 	}
 
-	// Reject any path containing .. BEFORE cleaning (prevents traversal).
+	// Reject any ".." path component BEFORE cleaning (prevents traversal).
 	// filepath.Clean would normalize "../../etc/shadow" to "/etc/shadow"
-	// which on Linux becomes an absolute path outside root.
-	if strings.Contains(p, "..") {
-		return ""
+	// which on Linux becomes an absolute path outside root. Names that only
+	// contain dots, like "a..b.txt" or "...", are ordinary files.
+	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return ""
+		}
 	}
 
 	// Clean and make relative to root
@@ -581,27 +614,36 @@ func (sess *sftpSession) handleReadDir(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXFailure, "invalid handle")
 		return
 	}
-	if h.read {
-		sess.sendStatus(id, sshFXEOF, "")
-		return
-	}
-	h.read = true
-
-	entries, err := os.ReadDir(h.path)
-	if err != nil {
-		sess.sendStatus(id, sshFXFailure, err.Error())
-		return
+	if !h.read {
+		entries, err := os.ReadDir(h.path)
+		if err != nil {
+			sess.sendStatus(id, sshFXFailure, err.Error())
+			return
+		}
+		h.entries = entries
+		h.read = true
 	}
 
 	var namesBuf []byte
 	count := 0
-	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			continue
+	for count == 0 && len(h.entries) > 0 {
+		batch := h.entries
+		if len(batch) > readDirBatch {
+			batch = batch[:readDirBatch]
 		}
-		namesBuf = append(namesBuf, encodeName(e.Name(), info)...)
-		count++
+		h.entries = h.entries[len(batch):]
+		for _, e := range batch {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			namesBuf = append(namesBuf, encodeName(e.Name(), info)...)
+			count++
+		}
+	}
+	if count == 0 {
+		sess.sendStatus(id, sshFXEOF, "")
+		return
 	}
 
 	buf := make([]byte, 4+len(namesBuf))
@@ -662,7 +704,7 @@ func (sess *sftpSession) handleOpen(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
 		return
 	}
-	handle := sess.newHandle(&openHandle{path: safe, file: f})
+	handle := sess.newHandle(&openHandle{path: safe, file: f, append: pflags&sshFXFAppend != 0})
 	sess.sendHandle(id, handle)
 }
 
@@ -714,12 +756,157 @@ func (sess *sftpSession) handleWrite(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXFailure, "short data")
 		return
 	}
-	_, err := h.file.WriteAt(data[:dataLen], int64(offset))
+	var err error
+	if h.append {
+		// os.File refuses WriteAt on O_APPEND files; SFTP v3 says append
+		// handles write at end of file regardless of the offset.
+		_, err = h.file.Write(data[:dataLen])
+	} else {
+		_, err = h.file.WriteAt(data[:dataLen], int64(offset))
+	}
 	if err != nil {
 		sess.sendStatus(id, sshFXFailure, err.Error())
 		return
 	}
 	sess.sendStatus(id, sshFXOK, "")
+}
+
+// setAttrs is the subset of an SFTP v3 ATTRS block that SETSTAT applies.
+type setAttrs struct {
+	flags        uint32
+	size         uint64
+	perm         uint32
+	atime, mtime uint32
+}
+
+func parseSetAttrs(b []byte) (setAttrs, bool) {
+	var a setAttrs
+	if len(b) < 4 {
+		return a, false
+	}
+	a.flags = binary.BigEndian.Uint32(b[0:4])
+	b = b[4:]
+	if a.flags&sshFileXferAttrSize != 0 {
+		if len(b) < 8 {
+			return a, false
+		}
+		a.size = binary.BigEndian.Uint64(b[0:8])
+		b = b[8:]
+	}
+	if a.flags&sshFileXferAttrUIDGID != 0 {
+		if len(b) < 8 {
+			return a, false
+		}
+		b = b[8:]
+	}
+	if a.flags&sshFileXferAttrPermissions != 0 {
+		if len(b) < 4 {
+			return a, false
+		}
+		a.perm = binary.BigEndian.Uint32(b[0:4])
+		b = b[4:]
+	}
+	if a.flags&sshFileXferAttrACModTime != 0 {
+		if len(b) < 8 {
+			return a, false
+		}
+		a.atime = binary.BigEndian.Uint32(b[0:4])
+		a.mtime = binary.BigEndian.Uint32(b[4:8])
+	}
+	return a, true
+}
+
+// checkSetAttrs answers the request itself when nothing may be applied and
+// reports whether the caller should go on to apply a.
+func (sess *sftpSession) checkSetAttrs(id uint32, a setAttrs, ok bool) bool {
+	if !ok {
+		sess.sendStatus(id, sshFXFailure, "bad packet")
+		return false
+	}
+	if a.flags&(sshFileXferAttrSize|sshFileXferAttrUIDGID|sshFileXferAttrPermissions|sshFileXferAttrACModTime) == 0 {
+		sess.sendStatus(id, sshFXOK, "")
+		return false
+	}
+	if sess.readOnly {
+		sess.sendStatus(id, sshFXPermissionDenied, "read only")
+		return false
+	}
+	if a.flags&sshFileXferAttrUIDGID != 0 {
+		sess.sendStatus(id, sshFXOpUnsupported, "changing owner is not supported")
+		return false
+	}
+	return true
+}
+
+// applySetAttrs applies size, permissions and times through an open file so
+// a symlink swapped in after safePath cannot redirect the change. Only the
+// rwx bits are honoured: files are owned by the server user, so a setuid or
+// setgid bit set here would hand that user's privileges to any local caller.
+func (sess *sftpSession) applySetAttrs(id uint32, f *os.File, a setAttrs) {
+	var err error
+	if a.flags&sshFileXferAttrSize != 0 {
+		err = f.Truncate(int64(a.size))
+	}
+	if err == nil && a.flags&sshFileXferAttrPermissions != 0 {
+		err = f.Chmod(os.FileMode(a.perm & 0o777))
+	}
+	if err == nil && a.flags&sshFileXferAttrACModTime != 0 {
+		err = setFileTimes(f, time.Unix(int64(a.atime), 0), time.Unix(int64(a.mtime), 0))
+	}
+	if err != nil {
+		sess.sendStatus(id, sshFXFailure, err.Error())
+		return
+	}
+	sess.sendStatus(id, sshFXOK, "")
+}
+
+func (sess *sftpSession) handleSetStat(id uint32, payload []byte) {
+	path, rest := readString(payload)
+	a, ok := parseSetAttrs(rest)
+	if !sess.checkSetAttrs(id, a, ok) {
+		return
+	}
+	safe := sess.safePath(path)
+	if safe == "" {
+		sess.sendStatus(id, sshFXPermissionDenied, "access denied")
+		return
+	}
+	flags := os.O_RDONLY
+	if a.flags&sshFileXferAttrSize != 0 {
+		flags = os.O_WRONLY
+	}
+	f, err := os.OpenFile(safe, flags|noFollowFlag, 0)
+	if err != nil {
+		sess.sendStatus(id, sshFXNoSuchFile, err.Error())
+		return
+	}
+	defer f.Close()
+	sess.applySetAttrs(id, f, a)
+}
+
+func (sess *sftpSession) handleFSetStat(id uint32, payload []byte) {
+	handle, rest := readString(payload)
+	h, found := sess.handles[handle]
+	if !found {
+		sess.sendStatus(id, sshFXFailure, "invalid handle")
+		return
+	}
+	a, ok := parseSetAttrs(rest)
+	if !sess.checkSetAttrs(id, a, ok) {
+		return
+	}
+	f := h.file
+	if f == nil {
+		// Directory handles keep only the path.
+		var err error
+		f, err = os.OpenFile(h.path, os.O_RDONLY|noFollowFlag, 0)
+		if err != nil {
+			sess.sendStatus(id, sshFXNoSuchFile, err.Error())
+			return
+		}
+		defer f.Close()
+	}
+	sess.applySetAttrs(id, f, a)
 }
 
 func (sess *sftpSession) handleClose(id uint32, payload []byte) {
@@ -857,5 +1044,22 @@ func comparePassword(stored string, pass []byte) error {
 	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
 		return bcrypt.CompareHashAndPassword([]byte(stored), pass)
 	}
+	burnPasswordCompare(pass)
 	return fmt.Errorf("legacy plaintext password rejected")
+}
+
+var (
+	dummyHashOnce sync.Once
+	dummyHash     []byte
+)
+
+// burnPasswordCompare runs a bcrypt comparison that always fails, so a
+// rejection that never reaches a real hash (unknown user, legacy plaintext
+// entry) costs the same as a wrong password and does not reveal which
+// usernames exist.
+func burnPasswordCompare(pass []byte) {
+	dummyHashOnce.Do(func() {
+		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("uwas-sftp-dummy"), bcrypt.DefaultCost)
+	})
+	_ = bcrypt.CompareHashAndPassword(dummyHash, pass)
 }

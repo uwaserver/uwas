@@ -410,6 +410,12 @@ func (c *Client) solveChallenge(ctx context.Context, authz *Authorization) error
 		return err
 	}
 	defer resp.Body.Close()
+	// A rejected ready-POST means the CA never started validation; polling
+	// the still-pending challenge would only time out without the cause.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return acmeError(resp.StatusCode, body)
+	}
 
 	// Wait for challenge validation
 	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)
@@ -431,6 +437,11 @@ func (c *Client) solveDNS01(ctx context.Context, domain string, challenge *Chall
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		c.dnsProvider.CleanupDNSChallenge(dnsName, challenge.Token, keyAuth)
+		return acmeError(resp.StatusCode, body)
+	}
 
 	// Wait for challenge validation
 	_, err = c.waitForStatus(ctx, challenge.URL, "valid", 30)

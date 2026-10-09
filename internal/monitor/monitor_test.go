@@ -18,6 +18,7 @@ func TestMain(m *testing.M) {
 	// httptest.NewServer always binds to 127.0.0.1, which the production
 	// SSRF policy rejects. Disable the check for the suite.
 	monitorURLSafetyCheck = func(string) error { return nil }
+	monitorDialControl = nil
 	os.Exit(m.Run())
 }
 

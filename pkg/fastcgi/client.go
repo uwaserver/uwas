@@ -78,6 +78,14 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 		deadline = d
 	}
 	cn.netConn.SetDeadline(deadline)
+	// A cancelled context (client gone) must interrupt blocked I/O, not
+	// just a deadline. If the interrupt fired, the conn is unusable.
+	stopCancel := context.AfterFunc(ctx, func() { cn.netConn.SetDeadline(time.Unix(1, 0)) })
+	defer func() {
+		if !stopCancel() {
+			broken = true
+		}
+	}()
 
 	// Use a pooled buffered writer (4 KB buffer, Reset to point at the connection).
 	bw := bufWriterPool.Get().(*bufio.Writer)
@@ -217,8 +225,15 @@ func (r *Response) ParseHTTP() (statusCode int, headers http.Header, body io.Rea
 
 	mimeHeader, err := tp.ReadMIMEHeader()
 	if err != nil {
-		// If header parsing fails, return the full raw stdout as body
-		return http.StatusOK, http.Header{}, bytes.NewReader(r.stdout.Bytes())
+		// Output that ends a header block we cannot parse must not be served:
+		// the raw fallback would put its Set-Cookie / Cache-Control lines in a
+		// header-less (so cacheable) 200 body. Fail like nginx does (502).
+		raw := r.stdout.Bytes()
+		if bytes.Contains(raw, []byte("\r\n\r\n")) || bytes.Contains(raw, []byte("\n\n")) {
+			return http.StatusBadGateway, http.Header{}, bytes.NewReader(nil)
+		}
+		// No header block at all: return the full raw stdout as body
+		return http.StatusOK, http.Header{}, bytes.NewReader(raw)
 	}
 
 	headers = http.Header(mimeHeader)

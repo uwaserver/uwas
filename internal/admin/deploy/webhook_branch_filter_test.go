@@ -24,8 +24,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uwaserver/uwas/internal/apps"
 )
@@ -55,6 +58,17 @@ func (d *branchFilterDeps) AppRollback(context.Context, string, *apps.App, strin
 func branchFilterHandler(t *testing.T, secret, branchFilter string) (*Handler, *branchFilterDeps) {
 	t.Helper()
 	store := apps.NewStore(t.TempDir())
+	// Keep the work dir inside the test: the default DataRoot is the real
+	// /var/lib/uwas/apps. A non-git file there makes an accepted deploy fail
+	// locally before it would `git clone` the remote URL below.
+	store.DataRoot = t.TempDir()
+	workDir := store.DefaultWorkDir("demo")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir workdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "keep"), nil, 0o644); err != nil {
+		t.Fatalf("seed workdir: %v", err)
+	}
 	if err := store.Save(&apps.App{
 		Name:    "demo",
 		Runtime: apps.RuntimeNode,
@@ -69,7 +83,30 @@ func branchFilterHandler(t *testing.T, secret, branchFilter string) (*Handler, *
 		t.Fatalf("store.Save: %v", err)
 	}
 	d := &branchFilterDeps{mgr: apps.NewManager(store, nil)}
-	return New(d), d
+	h := New(d)
+	// An accepted webhook deploys in the background; let it finish before the
+	// temp dirs are removed.
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			h.lastWebhookMu.Lock()
+			st := h.lastWebhookByName["demo"]
+			h.lastWebhookMu.Unlock()
+			if st != nil && !st.Finished.IsZero() {
+				return
+			}
+			accepted := false
+			for _, a := range d.audited {
+				accepted = accepted || a == "app.webhook.accept"
+			}
+			if !accepted {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Error("background webhook deploy did not finish")
+	})
+	return h, d
 }
 
 func signedPush(secret, body string) *http.Request {

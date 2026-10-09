@@ -40,7 +40,7 @@ func (r *VHostRouter) store(domains []config.Domain) {
 
 	for i := range domains {
 		d := &domains[i]
-		host := strings.ToLower(d.Host)
+		host := normalizeConfiguredHost(d.Host)
 
 		if strings.HasPrefix(host, "*.") {
 			suffix := host[1:] // "*.example.com" → ".example.com"
@@ -51,7 +51,7 @@ func (r *VHostRouter) store(domains []config.Domain) {
 
 		// Register aliases
 		for _, alias := range d.Aliases {
-			alias = strings.ToLower(alias)
+			alias = normalizeConfiguredHost(alias)
 			if strings.HasPrefix(alias, "*.") {
 				suffix := alias[1:]
 				wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
@@ -79,6 +79,14 @@ func (r *VHostRouter) store(domains []config.Domain) {
 	r.current.Store(m)
 }
 
+// normalizeConfiguredHost lowercases a configured host or alias and trims
+// whitespace and the absolute-form dot, so "*.example.com." registers the
+// same wildcard suffix that LookupWithStatus matches (it trims the request's
+// dot too).
+func normalizeConfiguredHost(host string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+}
+
 func registerExactHost(exact map[string]*config.Domain, host string, d *config.Domain) {
 	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 	if host == "" {
@@ -86,7 +94,11 @@ func registerExactHost(exact map[string]*config.Domain, host string, d *config.D
 	}
 	exact[host] = d
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		exact[host[:idx]] = d
+		// The bare host is derived, so it must not clobber another domain's
+		// explicit registration of it (Lookup strips the port before matching).
+		if _, exists := exact[host[:idx]]; !exists {
+			exact[host[:idx]] = d
+		}
 		return
 	}
 	// Implicit www.↔apex variants: only fill them when no domain explicitly
@@ -124,13 +136,22 @@ func (r *VHostRouter) Lookup(host string) *config.Domain {
 // HTTP entry path which needed both pieces of information per request
 // (was P10).
 func (r *VHostRouter) LookupWithStatus(host string) (*config.Domain, bool) {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
-	}
 	host = strings.ToLower(host)
+	port := ""
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host, port = host[:idx], host[idx:]
+	}
+	// Registration trims the absolute-form dot; match it here too.
+	host = strings.TrimSuffix(host, ".")
 
 	m := r.current.Load()
 
+	// A port-qualified host ("example.com:8080") owns only that port.
+	if port != "" {
+		if d, ok := m.exact[host+port]; ok {
+			return d, true
+		}
+	}
 	if d, ok := m.exact[host]; ok {
 		return d, true
 	}

@@ -27,6 +27,7 @@ var (
 	osMkdirAllFn  = os.MkdirAll
 	osStatFn      = os.Stat
 	osOpenFileFn  = os.OpenFile
+	osRemoveFn    = os.Remove
 
 	// sshdConfigPath allows tests to redirect sshd_config reads/writes.
 	sshdConfigPath = "/etc/ssh/sshd_config"
@@ -70,6 +71,12 @@ func CreateUserForWebDir(webDir, hostname string) (*User, string, error) {
 	username := domainToUsername(hostname)
 	domainDir := filepath.Dir(webDir)
 	startDir := "/" + filepath.ToSlash(filepath.Base(webDir))
+	// The domain dir becomes the sshd ChrootDirectory argument. Check it before
+	// the account exists: a newline would inject sshd_config directives, and a
+	// value sshd cannot parse leaves a password account with no chroot block.
+	if _, err := sshdPathArg(domainDir); err != nil {
+		return nil, "", err
+	}
 
 	// Create domain directory structure
 	if err := osMkdirAllFn(webDir, 0755); err != nil {
@@ -152,6 +159,14 @@ func DeleteUser(hostname string) error {
 	if !userExists(username) {
 		return nil
 	}
+	// Deleting the account is how SFTP access is revoked, so its keys go too:
+	// left in place, they re-authorize whoever held them as soon as the user
+	// is created again for this domain.
+	if home := userHomeDir(username); home != "" {
+		if err := osRemoveFn(filepath.Join(home, ".ssh", "authorized_keys")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove authorized_keys for %s: %w", username, err)
+		}
+	}
 	return execCommandFn("userdel", username).Run()
 }
 
@@ -192,6 +207,37 @@ func ListUsers() []User {
 		})
 	}
 	return users
+}
+
+// userHomeDir returns the home directory /etc/passwd records for username,
+// or "" when there is no entry.
+func userHomeDir(username string) string {
+	data, err := osReadFileFn(passwdPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) >= 6 && fields[0] == username {
+			return fields[5]
+		}
+	}
+	return ""
+}
+
+// sshdPathArg renders path as a single sshd_config argument, quoting it when
+// it contains a space. Control characters, quotes and backslashes cannot be
+// expressed safely and are rejected.
+func sshdPathArg(path string) (string, error) {
+	for _, r := range path {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' {
+			return "", fmt.Errorf("directory %q cannot be used as an SFTP chroot", path)
+		}
+	}
+	if strings.ContainsRune(path, ' ') {
+		return `"` + path + `"`, nil
+	}
+	return path, nil
 }
 
 func validateSiteHostname(hostname string) error {
@@ -299,6 +345,9 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
 		changed = true
 	}
 
+	if _, err := sshdPathArg(chrootDir); err != nil {
+		return err
+	}
 	block := renderSFTPMatchBlock(username, chrootDir, startDir)
 
 	// Update a UWAS-managed block in-place if the domain root changed.
@@ -320,8 +369,7 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
 	}
 
 	// Add Match User block if not present
-	marker := fmt.Sprintf("Match User %s", username)
-	if !strings.Contains(content, marker) {
+	if !hasMatchUserLine(content, username) {
 		content += block
 		changed = true
 	}
@@ -341,6 +389,18 @@ func ensureSFTPConfig(username, chrootDir string, startDirs ...string) error {
 	return nil
 }
 
+// hasMatchUserLine reports whether content has a "Match User <username>" line
+// for exactly this user. A substring check matched "uwas-a--com" inside
+// "Match User uwas-a--com--tr" and skipped the chroot block for a.com.
+func hasMatchUserLine(content, username string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == "Match User "+username {
+			return true
+		}
+	}
+	return false
+}
+
 func cleanSFTPStartDir(startDir string) string {
 	startDir = strings.TrimSpace(filepath.ToSlash(startDir))
 	if startDir == "" || strings.ContainsAny(startDir, "\r\n\t ") {
@@ -358,6 +418,9 @@ func cleanSFTPStartDir(startDir string) string {
 
 func renderSFTPMatchBlock(username, chrootDir, startDir string) string {
 	command := "internal-sftp"
+	if arg, err := sshdPathArg(chrootDir); err == nil {
+		chrootDir = arg
+	}
 	if startDir != "" {
 		command += " -d " + startDir
 	}

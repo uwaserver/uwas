@@ -3420,7 +3420,7 @@ func TestPHPConfigRawGetNoManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/php/8.4/config/raw", nil)
 	req.SetPathValue("version", "8.4")
-	s.handlePHPConfigRawGet(rec, req)
+	s.handlePHPConfigRawGet(rec, withAdminContext(req))
 	if rec.Code != 501 {
 		t.Errorf("status = %d, want 501", rec.Code)
 	}
@@ -4216,7 +4216,7 @@ func TestPHPConfigRawGetWithManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/php/9.9/config/raw", nil)
 	req.SetPathValue("version", "9.9")
-	s.handlePHPConfigRawGet(rec, req)
+	s.handlePHPConfigRawGet(rec, withAdminContext(req))
 	// Will return 404 since version doesn't exist
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)

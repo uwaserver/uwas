@@ -55,6 +55,11 @@ func (s *StopCommand) Run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid PID in %s: %w", pidFile, err)
 	}
+	// kill(2) treats pid <= 0 as a process group (or every process), so a
+	// corrupt PID file must never reach Signal.
+	if pid <= 0 {
+		return fmt.Errorf("invalid PID %d in %s", pid, pidFile)
+	}
 
 	process, err := osFindProcessFn(pid)
 	if err != nil {

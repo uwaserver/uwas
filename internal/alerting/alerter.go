@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/uwaserver/uwas/internal/config"
 	"github.com/uwaserver/uwas/internal/logger"
 	"github.com/uwaserver/uwas/internal/notify"
 )
@@ -44,6 +47,14 @@ type Alerter struct {
 	enabled bool
 	client  *http.Client
 
+	// urlSafetyCheck and dialControl give the legacy webhook_url the same SSRF
+	// policy as every other admin-configured webhook (internal/notify,
+	// internal/webhook): checked before the request, on every redirect hop,
+	// and at dial time against DNS rebinding. Tests that target loopback
+	// servers set both to nil before the first Alert.
+	urlSafetyCheck func(string) error
+	dialControl    func(network, address string, c syscall.RawConn) error
+
 	// Rate limit tracking for error_spike detection.
 	errorWindow    []errorEntry
 	errorWindowErr int // running count of error entries in errorWindow
@@ -57,16 +68,36 @@ type errorEntry struct {
 
 // New creates a new Alerter.
 func New(enabled bool, webhookURL string, channels []notify.Channel, log *logger.Logger) *Alerter {
-	return &Alerter{
-		webhookURL: webhookURL,
-		channels:   channels,
-		logger:     log,
-		enabled:    enabled,
-		history:    make([]Alert, 0, maxAlertHistory),
-		client: &http.Client{
-			Timeout: 10 * time.Second,
+	a := &Alerter{
+		webhookURL:     webhookURL,
+		channels:       channels,
+		logger:         log,
+		enabled:        enabled,
+		history:        make([]Alert, 0, maxAlertHistory),
+		urlSafetyCheck: config.IsWebhookURLSafe,
+		dialControl:    config.SafeDialControl,
+	}
+	a.client = &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if a.urlSafetyCheck == nil {
+				return nil
+			}
+			return a.urlSafetyCheck(req.URL.String())
+		},
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: 10 * time.Second,
+				Control: func(network, address string, c syscall.RawConn) error {
+					if a.dialControl == nil {
+						return nil
+					}
+					return a.dialControl(network, address, c)
+				},
+			}).DialContext,
 		},
 	}
+	return a
 }
 
 // Alert records an alert in the ring buffer and sends it via webhook if configured.
@@ -258,6 +289,12 @@ func (a *Alerter) Alerts() []Alert {
 }
 
 func (a *Alerter) sendWebhook(alert Alert) error {
+	if a.urlSafetyCheck != nil {
+		if err := a.urlSafetyCheck(a.webhookURL); err != nil {
+			return fmt.Errorf("webhook URL not allowed: %w", err)
+		}
+	}
+
 	payload, err := json.Marshal(alert)
 	if err != nil {
 		a.logger.Error("failed to marshal alert for webhook", "error", err)

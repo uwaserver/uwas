@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -79,6 +81,45 @@ type Job struct {
 
 const uwasMarker = "# UWAS managed"
 
+// crontabMu serializes the read-modify-write in Add, Remove and
+// RemoveByDomain. Without it two concurrent admin calls read the same crontab
+// and the second write silently drops the first one's change.
+var crontabMu sync.Mutex
+
+func lockCrontab() func() {
+	crontabMu.Lock()
+	return crontabMu.Unlock
+}
+
+// cronFieldRe is one field of a 5-field schedule: numbers, names (mon, jan),
+// and the * , / - operators. Anything else — spaces, shell metacharacters —
+// would end up in the command part of the crontab line.
+var cronFieldRe = regexp.MustCompile(`^[0-9A-Za-z*,/-]+$`)
+
+var cronShorthands = map[string]bool{
+	"@reboot": true, "@yearly": true, "@annually": true, "@monthly": true,
+	"@weekly": true, "@daily": true, "@midnight": true, "@hourly": true,
+}
+
+// validateSchedule rejects a schedule that is not exactly five cron fields or
+// one @shorthand. cron treats everything after the fifth field as the
+// command, so an unchecked Schedule bypasses ValidateShellCommand.
+func validateSchedule(schedule string) error {
+	fields := strings.Fields(schedule)
+	if len(fields) == 1 && cronShorthands[fields[0]] {
+		return nil
+	}
+	if len(fields) != 5 {
+		return fmt.Errorf("invalid cron schedule %q: want 5 fields or an @shorthand", schedule)
+	}
+	for _, f := range fields {
+		if !cronFieldRe.MatchString(f) {
+			return fmt.Errorf("invalid cron schedule field %q", f)
+		}
+	}
+	return nil
+}
+
 // readCrontab returns the user's current crontab. A genuinely empty crontab
 // (`crontab -l` exits non-zero with a "no crontab for ..." message) is reported
 // as ("", nil). Any other failure returns an error so write callers ABORT
@@ -124,14 +165,16 @@ func List() ([]Job, error) {
 		// Next line is the actual job
 		if i+1 < len(lines) {
 			job := parseCronLine(lines[i+1])
-			// Extract domain from comment
-			if strings.Contains(line, "[") {
-				parts := strings.SplitN(line, "[", 2)
-				if len(parts) == 2 {
-					job.Domain = strings.TrimRight(parts[1], "]")
+			// The marker line is "# UWAS managed [domain] comment", as Add
+			// writes it. Split the bracketed domain from the comment.
+			rest := strings.TrimSpace(strings.TrimPrefix(line, uwasMarker))
+			if strings.HasPrefix(rest, "[") {
+				if end := strings.Index(rest, "]"); end >= 0 {
+					job.Domain = rest[1:end]
+					rest = strings.TrimSpace(rest[end+1:])
 				}
 			}
-			job.Comment = strings.TrimPrefix(line, uwasMarker+" ")
+			job.Comment = rest
 			jobs = append(jobs, job)
 		}
 	}
@@ -156,7 +199,17 @@ func Add(job Job) error {
 	if err := ValidateShellCommand(job.Command); err != nil {
 		return err
 	}
+	if err := validateSchedule(job.Schedule); err != nil {
+		return err
+	}
+	// cron turns every unescaped % into a newline and feeds the rest to stdin,
+	// so % is written escaped (below). A literal `\%` can't be expressed:
+	// escaping gives `\\%`, which cron reads as a backslash and then a terminating %.
+	if strings.Contains(job.Command, `\%`) {
+		return fmt.Errorf(`command must not contain "\%%"`)
+	}
 
+	defer lockCrontab()()
 	existing, err := readCrontab()
 	if err != nil {
 		return err
@@ -182,7 +235,7 @@ func Add(job Job) error {
 		}
 	}
 	comment := fmt.Sprintf("%s [%s] %s", uwasMarker, job.Domain, job.Comment)
-	entry := fmt.Sprintf("%s\n%s %s\n", comment, job.Schedule, job.Command)
+	entry := fmt.Sprintf("%s\n%s %s\n", comment, job.Schedule, strings.ReplaceAll(job.Command, "%", `\%`))
 
 	newCrontab := existing + entry
 	return writeCrontab(newCrontab)
@@ -194,6 +247,7 @@ func Remove(schedule, command string) error {
 		return fmt.Errorf("cron not supported on Windows")
 	}
 
+	defer lockCrontab()()
 	existing, err := readCrontab()
 	if err != nil {
 		return err
@@ -224,6 +278,7 @@ func RemoveByDomain(domain string) error {
 	if runtimeGOOS == "windows" {
 		return fmt.Errorf("cron not supported on Windows")
 	}
+	defer lockCrontab()()
 	existing, err := readCrontab()
 	if err != nil {
 		return err
@@ -271,10 +326,13 @@ func parseCronLine(line string) Job {
 	// this, such a job parses with an empty Schedule and the whole "@reboot …"
 	// merged into Command — making it unmatchable by List/Remove (it could
 	// never be deleted through the API).
+	// Add writes % as \% (cron would otherwise cut the command there); undo it
+	// so List/Remove/dedupe see the command that was added.
+	unescape := func(cmd string) string { return strings.ReplaceAll(cmd, `\%`, "%") }
 	if len(parts) >= 2 && strings.HasPrefix(parts[0], "@") {
 		return Job{
 			Schedule: parts[0],
-			Command:  strings.Join(parts[1:], " "),
+			Command:  unescape(strings.Join(parts[1:], " ")),
 		}
 	}
 	if len(parts) < 6 {
@@ -282,6 +340,6 @@ func parseCronLine(line string) Job {
 	}
 	return Job{
 		Schedule: strings.Join(parts[:5], " "),
-		Command:  strings.Join(parts[5:], " "),
+		Command:  unescape(strings.Join(parts[5:], " ")),
 	}
 }

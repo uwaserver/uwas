@@ -35,6 +35,11 @@ var (
 	}
 )
 
+// softwareDomainMu serializes the load→attach→save sequence of domain
+// connect/disconnect so concurrent requests cannot orphan an attached proxy
+// domain that the metadata no longer records.
+var softwareDomainMu sync.Mutex
+
 type softwareTemplate struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
@@ -412,6 +417,13 @@ func (s *Server) handleSoftwareInstall(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid domain", http.StatusBadRequest)
 			return
 		}
+		s.configMu.RLock()
+		conflict := findDomainHostnameConflict(s.config.Domains, -1, req.Domain)
+		s.configMu.RUnlock()
+		if conflict != "" {
+			jsonError(w, fmt.Sprintf("domain %s already exists as %s", req.Domain, conflict), http.StatusConflict)
+			return
+		}
 	}
 	if req.Env == nil {
 		req.Env = map[string]string{}
@@ -462,6 +474,15 @@ func (s *Server) handleSoftwareInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Domain != "" {
 		if err := s.attachSoftwareDomain(req.Domain, req.HostPort); err != nil {
+			// Do not record a domain that was never attached: a later
+			// connect of the same host would be treated as a no-op.
+			inst.Domain = ""
+			if cerr := updateSoftwareComposeDomain(inst); cerr != nil {
+				s.logger.Error("software install: clear compose domain failed", "name", inst.Name, "error", cerr.Error())
+			}
+			if serr := saveSoftwareInstance(inst); serr != nil {
+				s.logger.Error("software install: clear metadata domain failed", "name", inst.Name, "error", serr.Error())
+			}
 			jsonError(w, "compose installed but domain attach failed: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -537,6 +558,8 @@ func (s *Server) handleSoftwareDomainConnect(w http.ResponseWriter, r *http.Requ
 	if !s.requireAdmin(w, r) {
 		return
 	}
+	softwareDomainMu.Lock()
+	defer softwareDomainMu.Unlock()
 	inst, err := loadSoftwareInstance(r.PathValue("name"))
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
@@ -595,6 +618,8 @@ func (s *Server) handleSoftwareDomainDisconnect(w http.ResponseWriter, r *http.R
 	if !s.requireAdmin(w, r) {
 		return
 	}
+	softwareDomainMu.Lock()
+	defer softwareDomainMu.Unlock()
 	inst, err := loadSoftwareInstance(r.PathValue("name"))
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)

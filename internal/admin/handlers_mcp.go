@@ -38,10 +38,25 @@ func (s *Server) handleMCPCall(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// The MCP tools read the same *config.Config the admin handlers mutate
+	// under configMu, so run the tool and encode its result under the read
+	// lock. The response is written after unlocking so a slow client cannot
+	// hold the lock.
+	s.configMu.RLock()
 	result, err := s.mcpSrv.CallTool(req.Name, req.Input)
+	var body []byte
+	if err == nil {
+		body, err = json.Marshal(result)
+		if err != nil {
+			s.configMu.RUnlock()
+			jsonError(w, "failed to encode MCP result", http.StatusInternalServerError)
+			return
+		}
+	}
+	s.configMu.RUnlock()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	jsonResponse(w, result)
+	jsonResponse(w, json.RawMessage(body))
 }

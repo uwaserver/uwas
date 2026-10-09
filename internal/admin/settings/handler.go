@@ -173,7 +173,11 @@ func (h *Handler) UseRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	codes := h.deps.ConfigPtr().Global.Admin.RecoveryCodes
 	for i, c := range codes {
 		if subtle.ConstantTimeCompare([]byte(c), []byte(sum)) == 1 {
-			h.deps.ConfigPtr().Global.Admin.RecoveryCodes = append(codes[:i], codes[i+1:]...)
+			// Build a new slice: persistConfig marshals a snapshot of the old
+			// slice header after RUnlock, so splicing in place would rewrite it.
+			remaining := make([]string, 0, len(codes)-1)
+			remaining = append(remaining, codes[:i]...)
+			h.deps.ConfigPtr().Global.Admin.RecoveryCodes = append(remaining, codes[i+1:]...)
 			found = true
 			break
 		}
@@ -204,12 +208,21 @@ func (h *Handler) NotifyPrefsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.RLockConfig()
-	prefs := map[string]any{
-		"alerting": h.deps.ConfigPtr().Global.Alerting,
-		"webhooks": h.deps.ConfigPtr().Global.Webhooks,
-	}
+	alerting := h.deps.ConfigPtr().Global.Alerting
+	webhooks := make([]config.WebhookConfig, len(h.deps.ConfigPtr().Global.Webhooks))
+	copy(webhooks, h.deps.ConfigPtr().Global.Webhooks)
 	h.deps.RUnlockConfig()
-	jsonResponse(w, prefs)
+	// Mask secrets like SettingsGet and the webhook list do; NotifyPrefsPut
+	// restores masked values from the live config.
+	alerting.SlackURL = maskSecret(alerting.SlackURL)
+	alerting.TelegramToken = maskSecret(alerting.TelegramToken)
+	for i := range webhooks {
+		webhooks[i].Secret = maskSecret(webhooks[i].Secret)
+	}
+	jsonResponse(w, map[string]any{
+		"alerting": alerting,
+		"webhooks": webhooks,
+	})
 }
 
 func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
@@ -218,16 +231,72 @@ func (h *Handler) NotifyPrefsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
-		Alerting config.AlertingConfig  `json:"alerting"`
+		Alerting *config.AlertingConfig `json:"alerting"`
 		Webhooks []config.WebhookConfig `json:"webhooks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// Same limits as the webhook create endpoint: a negative timeout puts the
+	// delivery dialer's deadline in the past, so every delivery would fail.
+	for _, wh := range req.Webhooks {
+		if wh.Retry < 0 {
+			jsonError(w, "retry must not be negative", http.StatusBadRequest)
+			return
+		}
+		if wh.Timeout.Duration < 0 {
+			jsonError(w, "timeout must not be negative", http.StatusBadRequest)
+			return
+		}
+	}
+	// An omitted (or null) field leaves that part of the config unchanged;
+	// send "webhooks": [] to remove every webhook.
 	h.deps.LockConfig()
-	h.deps.ConfigPtr().Global.Alerting = req.Alerting
-	h.deps.ConfigPtr().Global.Webhooks = req.Webhooks
+	g := &h.deps.ConfigPtr().Global
+	if req.Webhooks != nil {
+		// Masked secrets (as returned by NotifyPrefsGet) are restored from the
+		// live webhook with the same URL: the n-th submitted entry for a URL
+		// maps to the n-th live entry for it. A masked secret with no such
+		// webhook cannot be restored and is rejected.
+		seen := map[string]int{}
+		for i := range req.Webhooks {
+			n := seen[req.Webhooks[i].URL]
+			seen[req.Webhooks[i].URL]++
+			if !isMaskedSecretValue(req.Webhooks[i].Secret) {
+				continue
+			}
+			restored := false
+			for _, old := range g.Webhooks {
+				if old.URL != req.Webhooks[i].URL {
+					continue
+				}
+				if n == 0 {
+					req.Webhooks[i].Secret = old.Secret
+					restored = true
+					break
+				}
+				n--
+			}
+			if !restored {
+				h.deps.UnlockConfig()
+				jsonError(w, "masked secret for unknown webhook: "+req.Webhooks[i].URL, http.StatusBadRequest)
+				return
+			}
+		}
+	}
+	if req.Alerting != nil {
+		if isMaskedSecretValue(req.Alerting.SlackURL) {
+			req.Alerting.SlackURL = g.Alerting.SlackURL
+		}
+		if isMaskedSecretValue(req.Alerting.TelegramToken) {
+			req.Alerting.TelegramToken = g.Alerting.TelegramToken
+		}
+		g.Alerting = *req.Alerting
+	}
+	if req.Webhooks != nil {
+		g.Webhooks = req.Webhooks
+	}
 	h.deps.UnlockConfig()
 	if err := h.deps.PersistConfig(); err != nil {
 		h.deps.RecordAudit(r, "settings.notifications", err.Error(), false)
@@ -277,7 +346,6 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 	}
 	h.deps.RLockConfig()
 	export := *h.deps.ConfigPtr()
-	h.deps.RUnlockConfig()
 
 	export.Global.Admin.APIKey = ""
 	export.Global.Admin.PinCode = ""
@@ -311,11 +379,22 @@ func (h *Handler) ConfigExport(w http.ResponseWriter, r *http.Request) {
 		// sanitized and export share the same map. Setting it to nil here redacts
 		// the exported YAML without affecting the original config in memory.
 		sanitized[i].BasicAuth.Users = nil
+		// Locations is a shared slice and BasicAuth a shared pointer: copy
+		// both before redacting, or the live config loses its users. Not
+		// every location has basic auth.
+		sanitized[i].Locations = append([]config.LocationConfig(nil), sanitized[i].Locations...)
 		for j := range sanitized[i].Locations {
-			sanitized[i].Locations[j].BasicAuth.Users = nil
+			if ba := sanitized[i].Locations[j].BasicAuth; ba != nil {
+				redacted := *ba
+				redacted.Users = nil
+				sanitized[i].Locations[j].BasicAuth = &redacted
+			}
 		}
 	}
 	export.Domains = sanitized
+	// Unlock only after the copies: the shallow export still shares slices
+	// with the live config until here.
+	h.deps.RUnlockConfig()
 
 	out, err := yaml.Marshal(&export)
 	if err != nil {
@@ -348,7 +427,7 @@ func (h *Handler) ConfigRawGet(w http.ResponseWriter, r *http.Request) {
 		"api_key", "pin_code", "totp_secret", "secret_key", "password",
 		"secret_access_key", "api_token", "client_secret",
 		"google_client_secret", "github_client_secret",
-		"tls_key", "telegram_token", "slack_url", "purge_key",
+		"tls_key", "telegram_token", "slack_url", "purge_key", "secret",
 	} {
 		content = maskYAMLValue(content, key)
 	}
@@ -384,7 +463,7 @@ func (h *Handler) ConfigRawPut(w http.ResponseWriter, r *http.Request) {
 			"api_key", "pin_code", "totp_secret", "secret_key", "password",
 			"secret_access_key", "api_token", "client_secret",
 			"google_client_secret", "github_client_secret",
-			"tls_key", "telegram_token", "slack_url", "purge_key",
+			"tls_key", "telegram_token", "slack_url", "purge_key", "secret",
 		} {
 			req.Content = unmaskYAMLValue(req.Content, oldContent, key)
 		}
@@ -729,29 +808,34 @@ const secretMask = `"********"`
 // holding that mask must be restored from the on-disk value instead of being
 // written literally (which would overwrite the real secret with "********").
 // A line the operator actually changed keeps its new value. Matching is by
-// occurrence order for the key, so duplicate keys (e.g. `password` under s3,
-// sftp, redis) each restore from their corresponding original — as long as the
-// secret lines are not reordered, which editing values never does.
+// parent-key path plus occurrence order within that path, so duplicate keys
+// (e.g. `password` under s3, sftp, redis) each restore from their own section,
+// and adding a secret line in one section cannot shift another section's.
 func unmaskYAMLValue(newContent, oldContent, key string) string {
-	var origs []string
-	for _, line := range strings.Split(oldContent, "\n") {
+	origs := map[string][]string{}
+	oldLines := strings.Split(oldContent, "\n")
+	oldPaths := yamlParentPaths(oldLines)
+	for i, line := range oldLines {
 		if strings.HasPrefix(strings.TrimSpace(line), key+":") {
 			idx := strings.Index(line, key+":")
-			origs = append(origs, strings.TrimSpace(line[idx+len(key)+1:]))
+			origs[oldPaths[i]] = append(origs[oldPaths[i]], strings.TrimSpace(line[idx+len(key)+1:]))
 		}
 	}
-	occ := 0
+	occ := map[string]int{}
+	newLines := strings.Split(newContent, "\n")
+	newPaths := yamlParentPaths(newLines)
 	var out strings.Builder
-	for _, line := range strings.Split(newContent, "\n") {
+	for i, line := range newLines {
 		if strings.HasPrefix(strings.TrimSpace(line), key+":") {
 			idx := strings.Index(line, key+":")
 			val := strings.TrimSpace(line[idx+len(key)+1:])
-			if (val == secretMask || val == "********") && occ < len(origs) {
-				out.WriteString(line[:idx] + key + ": " + origs[occ])
+			p := newPaths[i]
+			if (val == secretMask || val == "********") && occ[p] < len(origs[p]) {
+				out.WriteString(line[:idx] + key + ": " + origs[p][occ[p]])
 			} else {
 				out.WriteString(line)
 			}
-			occ++
+			occ[p]++
 			out.WriteByte('\n')
 			continue
 		}
@@ -759,6 +843,47 @@ func unmaskYAMLValue(newContent, oldContent, key string) string {
 		out.WriteByte('\n')
 	}
 	return strings.TrimSuffix(out.String(), "\n")
+}
+
+// yamlParentPaths returns, for each line, the dot-joined keys of the mappings
+// enclosing it, derived from indentation ("-" marks a list item). Blank and
+// comment lines get "".
+func yamlParentPaths(lines []string) []string {
+	type level struct {
+		indent int
+		key    string
+	}
+	var stack []level
+	paths := make([]string, len(lines))
+	for i, line := range lines {
+		content := strings.TrimLeft(line, " \t")
+		if content == "" || strings.HasPrefix(content, "#") {
+			continue
+		}
+		indent := len(line) - len(content)
+		pop := func() {
+			for len(stack) > 0 && stack[len(stack)-1].indent >= indent {
+				stack = stack[:len(stack)-1]
+			}
+		}
+		for strings.HasPrefix(content, "- ") || content == "-" {
+			pop()
+			stack = append(stack, level{indent, "-"})
+			rest := strings.TrimLeft(content[1:], " ")
+			indent += len(content) - len(rest)
+			content = rest
+		}
+		pop()
+		keys := make([]string, len(stack))
+		for j, l := range stack {
+			keys[j] = l.key
+		}
+		paths[i] = strings.Join(keys, ".")
+		if k, _, ok := strings.Cut(content, ":"); ok {
+			stack = append(stack, level{indent, k})
+		}
+	}
+	return paths
 }
 
 // unmaskYAMLListValue restores masked list items (e.g. recovery_codes) from the

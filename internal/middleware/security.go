@@ -205,7 +205,7 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, rules []string, st
 		if r.URL.RawQuery != "" {
 			fullURI += "?" + r.URL.RawQuery
 		}
-		decodedURI, _ := url.QueryUnescape(fullURI)
+		decodedURI := wafUnescape(fullURI)
 		if matchWAF(wafURLPatterns, families, fullURI, decodedURI) {
 			if stats != nil {
 				stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
@@ -252,7 +252,7 @@ func DomainWAFGuard(log *logger.Logger, bypassPaths []string, rules []string, st
 					}
 				} else {
 					body := string(bodyBytes)
-					decodedBody, _ := url.QueryUnescape(body)
+					decodedBody := wafUnescape(body)
 					if matchWAF(wafBodyPatterns, families, body, decodedBody) {
 						if stats != nil {
 							stats.Record(r.RemoteAddr, path, "waf", r.UserAgent())
@@ -329,7 +329,7 @@ func scanJSONBody(bodyBytes []byte, families map[string]bool) bool {
 func scanJSONValue(v interface{}, families map[string]bool) bool {
 	switch val := v.(type) {
 	case string:
-		decoded, _ := url.QueryUnescape(val)
+		decoded := wafUnescape(val)
 		if matchWAF(wafBodyPatterns, families, val, decoded) {
 			return true
 		}
@@ -353,13 +353,10 @@ func scanJSONValue(v interface{}, families map[string]bool) bool {
 // (using the boundary from ct) and checks each against the WAF patterns.
 // Returns true if any field value is blocked.
 func scanMultipartBody(bodyBytes []byte, ct string, families map[string]bool) bool {
-	_, params, err := mime.ParseMediaType(ct)
-	if err != nil {
-		return false
-	}
-	boundary, ok := params["boundary"]
-	if !ok {
-		return false
+	boundary := multipartBoundary(ct)
+	if boundary == "" {
+		// No usable boundary: scan the raw body rather than skip it.
+		return scanRawBody(bodyBytes, families)
 	}
 	mr := multipart.NewReader(bytes.NewReader(bodyBytes), boundary)
 	for {
@@ -368,23 +365,89 @@ func scanMultipartBody(bodyBytes []byte, ct string, families map[string]bool) bo
 			break
 		}
 		if err != nil {
-			return false
+			// Malformed or cut off at the scan window: backends may still
+			// parse what follows, so fall back to the raw bytes.
+			return scanRawBody(bodyBytes, families)
 		}
 		// Only scan form-data fields, not file content with Content-Disposition.
 		if part.FormName() == "" {
 			continue
 		}
-		value, err := io.ReadAll(io.LimitReader(part, maxBodyScan))
-		if err != nil {
-			continue
-		}
+		// A value cut off by the scan window still gets its read prefix
+		// checked; discarding it on the read error exempted any payload
+		// placed at the start of a field longer than maxBodyScan.
+		value, _ := io.ReadAll(io.LimitReader(part, maxBodyScan))
 		s := string(value)
-		decoded, _ := url.QueryUnescape(s)
+		decoded := wafUnescape(s)
 		if matchWAF(wafBodyPatterns, families, s, decoded) {
 			return true
 		}
 	}
 	return false
+}
+
+// multipartBoundary returns the boundary parameter of ct. When strict MIME
+// parsing rejects the header (a stray parameter without "=", duplicates), it
+// falls back to the first "boundary=" value, which is what lenient backends
+// such as PHP use to split the body.
+func multipartBoundary(ct string) string {
+	if _, params, err := mime.ParseMediaType(ct); err == nil {
+		return params["boundary"]
+	}
+	i := strings.Index(strings.ToLower(ct), "boundary=")
+	if i < 0 {
+		return ""
+	}
+	b := ct[i+len("boundary="):]
+	if j := strings.IndexAny(b, "; \t,"); j >= 0 {
+		b = b[:j]
+	}
+	return strings.Trim(b, `"`)
+}
+
+func scanRawBody(bodyBytes []byte, families map[string]bool) bool {
+	body := string(bodyBytes)
+	return matchWAF(wafBodyPatterns, families, body, wafUnescape(body))
+}
+
+// wafUnescape decodes %XX and '+' like url.QueryUnescape, but keeps a
+// malformed escape as literal text instead of failing. QueryUnescape returns
+// "" on the first bad escape, which left only the still-encoded input to
+// match: one stray "%zz" anywhere in a query or body exempted every encoded
+// payload next to it, while lenient decoders downstream (PHP's urldecode)
+// still decode the rest.
+func wafUnescape(s string) string {
+	if v, err := url.QueryUnescape(s); err == nil {
+		return v
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '+':
+			b.WriteByte(' ')
+		case c == '%' && i+2 < len(s) && isHexDigit(s[i+1]) && isHexDigit(s[i+2]):
+			b.WriteByte(unhexDigit(s[i+1])<<4 | unhexDigit(s[i+2]))
+			i += 2
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
+func unhexDigit(c byte) byte {
+	switch {
+	case '0' <= c && c <= '9':
+		return c - '0'
+	case 'a' <= c && c <= 'f':
+		return c - 'a' + 10
+	}
+	return c - 'A' + 10
 }
 
 // matchWAF reports whether any enabled rule matches. families nil means every

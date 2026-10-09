@@ -16,6 +16,32 @@ import (
 	"syscall"
 )
 
+// phpWorkerEnvKeys are the only UWAS environment variables passed to php-cgi
+// workers. Tenant PHP code can read the worker's environment with getenv(), so
+// inheriting os.Environ() handed every site UWAS's own secrets (the admin API
+// key, DNS/Cloudflare tokens, DB passwords supplied via ${VAR} in the config).
+// Per-domain variables reach PHP through FastCGI params (php.env), not here.
+var phpWorkerEnvKeys = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true,
+	"LANG": true, "LANGUAGE": true, "TZ": true,
+	"TMPDIR": true, "TEMP": true, "TMP": true,
+	"PHPRC": true, "PHP_INI_SCAN_DIR": true,
+	"SYSTEMROOT": true, "WINDIR": true, "COMSPEC": true, "PATHEXT": true,
+}
+
+// phpWorkerEnv returns the allowlisted part of the UWAS environment plus extra.
+func phpWorkerEnv(extra ...string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		uk := strings.ToUpper(k)
+		if phpWorkerEnvKeys[uk] || strings.HasPrefix(uk, "LC_") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, extra...)
+}
+
 // fpmPoolUser reports the unprivileged account the php-fpm [www] pool should run
 // as, and whether user/group directives should be emitted at all. php-fpm
 // launched as root REFUSES to start a pool that has no user/group and exits
@@ -72,7 +98,7 @@ func (m *Manager) StartFPM(version, listenAddr string) error {
 	cmd := m.execCommand(inst.Binary, "-b", listenAddr)
 	// PHP_FCGI_CHILDREN: spawn N worker children for parallel requests.
 	// Without this, php-cgi handles only 1 request at a time!
-	cmd.Env = append(os.Environ(),
+	cmd.Env = phpWorkerEnv(
 		"PHP_FCGI_CHILDREN=8",
 		"PHP_FCGI_MAX_REQUESTS=500",
 	)

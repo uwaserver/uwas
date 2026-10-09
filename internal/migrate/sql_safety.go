@@ -14,6 +14,13 @@ func sqlIdent(s string) string {
 	return database.BacktickID(s)
 }
 
+// grantIdent quotes a database name for the ON clause of GRANT, where MySQL
+// reads `_` and `%` as LIKE wildcards even inside backticks; escaping them
+// keeps the grant on that one schema (same rule as database.grantDBIdent).
+func grantIdent(s string) string {
+	return sqlIdent(strings.NewReplacer(`\`, `\\`, "_", `\_`, "%", `\%`).Replace(s))
+}
+
 func sqlString(s string) string {
 	return database.EscapeSQL(s)
 }

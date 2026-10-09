@@ -113,6 +113,13 @@ func parseUFWRule(line string) Rule {
 
 	rest := strings.TrimSpace(line[closeBracket+1:])
 
+	// ufw appends "# <comment>" to commented rules (e.g. autoblock denies);
+	// split it off so it is not folded into From.
+	if i := strings.Index(rest, "#"); i >= 0 {
+		r.Comment = strings.TrimSpace(rest[i+1:])
+		rest = strings.TrimSpace(rest[:i])
+	}
+
 	// Detect IPv6 rule — UFW appends "(v6)" suffix
 	if strings.HasSuffix(rest, "(v6)") {
 		r.V6 = true

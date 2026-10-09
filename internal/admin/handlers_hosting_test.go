@@ -59,7 +59,7 @@ func TestCronAddMissingFields(t *testing.T) {
 func TestFirewallStatusEndpoint(t *testing.T) {
 	s := testServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/firewall", nil)
+	req := withAdminContext(httptest.NewRequest("GET", "/api/v1/firewall", nil))
 	s.mux.ServeHTTP(rec, req)
 
 	if rec.Code != 200 {

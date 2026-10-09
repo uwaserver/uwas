@@ -448,9 +448,13 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref := extractPushRef(webhookPayloadJSON(r, body))
-	branch := ""
-	if i := strings.LastIndex(ref, "/"); i >= 0 {
-		branch = ref[i+1:]
+	// Only a branch push names a branch, and the whole remainder of the ref
+	// is its name: "refs/heads/release/1.x" is branch "release/1.x". Taking
+	// the last path segment instead made slash branches unmatchable and let
+	// "refs/heads/feature/main" or the tag "refs/tags/main" pass as "main".
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	if branch == ref {
+		branch = ""
 	}
 	wantBranch := def.Deploy.BranchFilter
 	if wantBranch == "" {

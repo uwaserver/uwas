@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -234,8 +235,35 @@ func (c *Collector) RecordHandlerType(handlerType string) {
 	}
 }
 
+// maxHostLen is the longest DNS name. A longer Host is not a domain the
+// router can serve, so it is not tracked.
+const maxHostLen = 253
+
+// statsHost folds the spellings the router treats as one domain (port, case,
+// trailing dot) into one key, so per-domain stats neither split nor grow per
+// distinct Host header.
+func statsHost(host string) (string, bool) {
+	if len(host) > maxHostLen+len("[]:65535") {
+		return "", false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if len(host) > maxHostLen {
+		return "", false
+	}
+	return host, true
+}
+
 // RecordDomain tracks per-domain request and bandwidth.
 func (c *Collector) RecordDomain(host string, statusCode int, bytesOut int64) {
+	host, ok := statsHost(host)
+	if !ok {
+		return
+	}
 	val, ok := c.domainStats.Load(host)
 	if !ok {
 		val, _ = c.domainStats.LoadOrStore(host, &DomainStats{})

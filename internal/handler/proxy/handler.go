@@ -358,7 +358,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			}
 
 			// If there are more retries available, continue to next backend
-			if attempt < maxRetries && isRetryableError(err) {
+			if attempt < maxRetries && isRetryableError(err) && canReplayRequest(ctx.Request, err) {
 				cancel() // release context from this failed attempt
 				continue
 			}
@@ -410,14 +410,25 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 			if len(body) > 0 {
 				ctx.Response.Write(body)
 			}
+			copyTrailers(ctx.Response.Header(), resp.Trailer)
 		} else {
 			// Streaming mode (default): pipe upstream → client directly.
-			if _, err := io.Copy(ctx.Response, resp.Body); err != nil {
+			// Unknown-length and event-stream bodies are flushed per write,
+			// as httputil.ReverseProxy does, so SSE/long-poll data is not
+			// held in the server's write buffer while the upstream is open.
+			var dst io.Writer = ctx.Response
+			if resp.ContentLength == -1 || isEventStream(resp.Header) {
+				dst = flushWriter{ctx.Response}
+			}
+			if _, err := io.Copy(dst, resp.Body); err != nil {
 				h.logger.Error("error copying upstream response body",
 					"backend", backend.URL.String(),
 					"error", err,
 				)
 			}
+			// Trailers (e.g. gRPC's grpc-status) are only populated once
+			// the body has been read to EOF.
+			copyTrailers(ctx.Response.Header(), resp.Trailer)
 			resp.Body.Close()
 			backend.ActiveConns.Add(-1)
 			cancel() // safe now — body fully consumed
@@ -453,6 +464,53 @@ func isTimeoutErr(err error) bool {
 		return true
 	}
 	return false
+}
+
+// canReplayRequest reports whether a failed attempt may be sent to another
+// backend. A dial failure means the request never left UWAS; otherwise the
+// upstream may already have acted on it, so only idempotent methods (RFC 9110
+// §9.2.2) or requests carrying an idempotency key are replayed.
+func canReplayRequest(r *http.Request, err error) bool {
+	var op *net.OpError
+	if errors.As(err, &op) && op.Op == "dial" {
+		return true
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace,
+		http.MethodPut, http.MethodDelete:
+		return true
+	}
+	return r.Header.Get("Idempotency-Key") != "" || r.Header.Get("X-Idempotency-Key") != ""
+}
+
+// copyTrailers forwards upstream response trailers to the client using the
+// net/http TrailerPrefix convention, which works after WriteHeader for both
+// HTTP/1.1 chunked and HTTP/2 responses.
+func copyTrailers(dst http.Header, trailer http.Header) {
+	for key, vals := range trailer {
+		for _, v := range vals {
+			dst.Add(http.TrailerPrefix+key, v)
+		}
+	}
+}
+
+func isEventStream(h http.Header) bool {
+	ct := h.Get("Content-Type")
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(ct), "text/event-stream")
+}
+
+// flushWriter flushes after every successful write.
+type flushWriter struct{ w *router.ResponseWriter }
+
+func (f flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if err == nil {
+		f.w.Flush()
+	}
+	return n, err
 }
 
 func isRetryableError(err error) bool {

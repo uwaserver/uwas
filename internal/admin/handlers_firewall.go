@@ -78,6 +78,11 @@ func uwasFirewallPorts(g config.GlobalConfig) []string {
 // ============ Firewall ============
 
 func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) {
+	// Admin only, like every other firewall route: the rule list is host-wide
+	// and the heal below runs ufw as root.
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	// Heal IPv4 default deny if an older move left only the v6 twin.
 	_ = firewall.EnsureDefaultDenyAtBottom()
 	jsonResponse(w, firewallGetStatus())
@@ -284,8 +289,11 @@ func (s *Server) handleSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(req.PublicKey, "ssh-") {
-		jsonError(w, "invalid SSH public key (must start with ssh-)", http.StatusBadRequest)
+	// Cheap shape check only; siteuser parses and canonicalizes the key. OpenSSH
+	// key types also include ecdsa-sha2-* and sk-* (FIDO), not just ssh-*.
+	if k := strings.TrimSpace(req.PublicKey); !strings.HasPrefix(k, "ssh-") &&
+		!strings.HasPrefix(k, "ecdsa-sha2-") && !strings.HasPrefix(k, "sk-") {
+		jsonError(w, "invalid SSH public key (must start with ssh-, ecdsa-sha2- or sk-)", http.StatusBadRequest)
 		return
 	}
 

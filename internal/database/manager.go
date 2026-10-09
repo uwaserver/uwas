@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -492,13 +493,16 @@ func CreateDatabase(name, user, password, host string) (*CreateResult, error) {
 	if host == "" {
 		host = "localhost"
 	}
+	if strings.ContainsRune(password, 0) || strings.ContainsRune(host, 0) {
+		return nil, fmt.Errorf("invalid password or host: null byte not allowed")
+	}
 
 	sql := fmt.Sprintf(`
 		CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 		CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';
 		GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';
 		FLUSH PRIVILEGES;
-	`, backtick(name), escapeSQL(user), escapeSQL(host), escapeSQL(password), backtick(name), escapeSQL(user), escapeSQL(host))
+	`, backtick(name), escapeSQL(user), escapeSQL(host), escapeSQL(password), grantDBIdent(name), escapeSQL(user), escapeSQL(host))
 
 	_, err := runMySQLFn(sql)
 	if err != nil {
@@ -524,6 +528,9 @@ func DropDatabase(name, user, host string) error {
 	}
 	if host == "" {
 		host = "localhost"
+	}
+	if strings.ContainsRune(host, 0) {
+		return fmt.Errorf("invalid host: null byte not allowed")
 	}
 
 	sql := fmt.Sprintf(`
@@ -586,6 +593,9 @@ func ChangePassword(user, host, newPassword string) error {
 	if host == "" {
 		host = "localhost"
 	}
+	if strings.ContainsRune(host, 0) || strings.ContainsRune(newPassword, 0) {
+		return fmt.Errorf("invalid password or host: null byte not allowed")
+	}
 	sql := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;", escapeSQL(user), escapeSQL(host), escapeSQL(newPassword))
 	if _, err := runMySQLFn(sql); err != nil {
 		return fmt.Errorf("change password for user %q@%q: %w", user, host, err)
@@ -625,6 +635,9 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 			return nil, fmt.Errorf("create remote user: %w", pwErr)
 		}
 	}
+	if strings.ContainsRune(password, 0) {
+		return nil, fmt.Errorf("invalid password: null byte not allowed")
+	}
 
 	configPath, err := setBindAddressAllInterfaces()
 	if err != nil {
@@ -633,7 +646,7 @@ func ConfigureRemoteAccess(user, host, password, databaseName string) (*RemoteAc
 
 	sql := fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n", escapeSQL(user), escapeSQL(host), escapeSQL(password))
 	if databaseName != "" {
-		sql += fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';\n", backtick(databaseName), escapeSQL(user), escapeSQL(host))
+		sql += fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%s';\n", grantDBIdent(databaseName), escapeSQL(user), escapeSQL(host))
 	}
 	sql += "FLUSH PRIVILEGES;"
 	if _, err := runMySQLFn(sql); err != nil {
@@ -794,20 +807,34 @@ func ImportDatabase(name string, sqlData []byte) error {
 		}
 		cmd := execCommandFn(bin, "-u", "root", name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
-		_, err = cmd.CombinedOutput()
+		out, err := cmd.CombinedOutput()
 		if err == nil {
 			return nil
+		}
+		// A statement error means the client connected and may already have
+		// applied part of the payload; re-feeding it to another invocation
+		// would replay that prefix. Only connect/auth failures fall through.
+		if importStatementErrRe.Match(out) {
+			return fmt.Errorf("%s import failed: %w — %s", client, err, strings.TrimSpace(string(out)))
 		}
 		// Try without -u root (let socket auth auto-detect user)
 		cmd = execCommandFn(bin, name)
 		cmd.Stdin = strings.NewReader(string(sqlData))
-		_, err = cmd.CombinedOutput()
+		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return nil
+		}
+		if importStatementErrRe.Match(out) {
+			return fmt.Errorf("%s import failed: %w — %s", client, err, strings.TrimSpace(string(out)))
 		}
 	}
 	return fmt.Errorf("mysql/mariadb client not found or import failed")
 }
+
+// importStatementErrRe matches the mysql/mariadb batch-mode error for a failed
+// statement ("ERROR 1062 (23000) at line 2: ..."). Connect and auth failures
+// ("ERROR 1698 (28000): Access denied ...") carry no "at line" and still fall back.
+var importStatementErrRe = regexp.MustCompile(`ERROR \d+ \([0-9A-Z]{5}\) at line \d+`)
 
 // InstallMySQL attempts to install MySQL/MariaDB.
 func InstallMySQL() (string, error) {
@@ -938,6 +965,13 @@ func generateDBPassword() (string, error) {
 
 func backtick(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+}
+
+// grantDBIdent quotes a database name for "GRANT ... ON <db>.*". At that
+// level MySQL/MariaDB treat '_' and '%' as wildcards even inside backticks,
+// so `a_b`.* would also grant on aXb; escape them to match only this name.
+func grantDBIdent(name string) string {
+	return backtick(strings.NewReplacer(`\`, `\\`, "_", `\_`, "%", `\%`).Replace(name))
 }
 
 // ValidDBIdentifier checks that a database/user name contains only safe characters.

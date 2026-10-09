@@ -64,13 +64,22 @@ func EnableWithRollback(within time.Duration, allowPorts []string) error {
 			rbTimer.Stop()
 		}
 		rbDeadline = time.Now().Add(within)
-		rbTimer = time.AfterFunc(within, func() {
-			_ = Disable()
+		var t *time.Timer
+		t = time.AfterFunc(within, func() {
+			// A fired timer whose callback has not yet taken rbMu may already
+			// have been confirmed, cancelled or replaced; only the timer that
+			// is still current may disable.
 			rbMu.Lock()
+			if rbTimer != t {
+				rbMu.Unlock()
+				return
+			}
 			rbTimer = nil
 			rbDeadline = time.Time{}
 			rbMu.Unlock()
+			_ = execCommandFn("ufw", "disable").Run()
 		})
+		rbTimer = t
 		rbMu.Unlock()
 	}
 	return nil

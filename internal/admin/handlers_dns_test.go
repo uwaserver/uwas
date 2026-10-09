@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -388,6 +389,11 @@ func TestDNSSync_ZoneNotFound_Returns404(t *testing.T) {
 	p := newStubProvider()
 	cleanup := setDNSProviderHook(p)
 	defer cleanup()
+	// The handler detects the public IP before the zone lookup; serve it
+	// locally instead of calling api.ipify.org.
+	fakeExternalHost(t, "api.ipify.org:443", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("203.0.113.10"))
+	}))
 
 	s := testServer()
 	rec := httptest.NewRecorder()

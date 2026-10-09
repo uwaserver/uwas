@@ -117,12 +117,7 @@ func (b *Blocker) Unblock(ip string) error {
 		return fmt.Errorf("%s is not blocked", a)
 	}
 	b.log.Info("autoblock removed", "ip", a.String())
-	if b.fwUnlock != nil {
-		select {
-		case b.fwQueue <- fwOp{ip: a.String(), remove: true}:
-		default:
-		}
-	}
+	b.queueRemove(a.String())
 	b.requestSave()
 	return nil
 }
@@ -212,15 +207,51 @@ func (b *Blocker) expire() {
 
 	for _, ip := range lifted {
 		b.log.Info("autoblock expired", "ip", ip)
-		if b.fwUnlock != nil {
-			select {
-			case b.fwQueue <- fwOp{ip: ip, remove: true}:
-			default:
-			}
-		}
+		b.queueRemove(ip)
 	}
+	b.retryPendingRemoves()
 	if len(lifted) > 0 {
 		b.requestSave()
+	}
+}
+
+// queueRemove schedules a firewall rule removal. If the queue is full the
+// removal is parked in fwPending instead of dropped, and expire retries it.
+func (b *Blocker) queueRemove(ip string) {
+	if b.fwUnlock == nil {
+		return
+	}
+	select {
+	case b.fwQueue <- fwOp{ip: ip, remove: true}:
+	default:
+		b.mu.Lock()
+		if b.fwPending == nil {
+			b.fwPending = make(map[string]struct{})
+		}
+		b.fwPending[ip] = struct{}{}
+		b.mu.Unlock()
+		b.log.Warn("autoblock firewall queue full, rule removal deferred", "ip", ip)
+	}
+}
+
+// retryPendingRemoves re-queues parked removals. An IP that has been blocked
+// again since is skipped and forgotten: its rule is wanted now.
+func (b *Blocker) retryPendingRemoves() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ip := range b.fwPending {
+		if a, ok := ParseAddr(ip); ok {
+			if e := b.blocked[a]; e != nil && !e.DryRun {
+				delete(b.fwPending, ip)
+				continue
+			}
+		}
+		select {
+		case b.fwQueue <- fwOp{ip: ip, remove: true}:
+			delete(b.fwPending, ip)
+		default:
+			return
+		}
 	}
 }
 

@@ -1043,6 +1043,46 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The raw editor must not bypass the guards Update enforces: non-admins
+	// keep the privilege-sensitive fields and may only rename to a domain they
+	// manage, and no one may point root outside web_root.
+	if user, ok := h.deps.UserFromContext(r); ok && user.Role != auth.RoleAdmin {
+		var cur *config.Domain
+		for _, d := range h.deps.ConfigDomains() {
+			if domainutil.CanonicalDomainHostname(d.Host) == domainutil.CanonicalDomainHostname(host) {
+				dd := d
+				cur = &dd
+				break
+			}
+		}
+		if cur == nil {
+			h.deps.RecordAudit(r, "domain.raw_update", "domain: "+host+" (not found)", false)
+			jsonError(w, "domain not found", http.StatusNotFound)
+			return
+		}
+		nextHost := domainutil.NormalizeDomainHostname(probe.Host)
+		if domainutil.CanonicalDomainHostname(nextHost) != domainutil.CanonicalDomainHostname(cur.Host) && !h.deps.CanManageDomain(user, nextHost) {
+			h.deps.RecordAudit(r, "domain.raw_update", "domain: "+host+" (forbidden rename)", false)
+			jsonError(w, "forbidden: cannot rename to this domain", http.StatusForbidden)
+			return
+		}
+		if key := rawPutForbiddenChange(*cur, probe); key != "" {
+			h.deps.RecordAudit(r, "domain.raw_update", "domain: "+host+" (forbidden field: "+key+")", false)
+			jsonError(w, "forbidden: cannot update field "+key, http.StatusForbidden)
+			return
+		}
+	}
+	webRoot := h.deps.WebRoot()
+	if webRoot == "" {
+		webRoot = "/var/www"
+	}
+	if probe.Root != "" && probe.Type != "redirect" {
+		if !pathsafe.IsWithinBase(webRoot, probe.Root) || !pathsafe.IsWithinBaseResolved(webRoot, probe.Root) {
+			h.deps.RecordAudit(r, "domain.raw_update", "domain: "+host+" (root outside web root)", false)
+			jsonError(w, fmt.Sprintf("root path must be under %s (got %s)", webRoot, probe.Root), http.StatusBadRequest)
+			return
+		}
+	}
 	tmpCfg := config.Config{
 		Global:  config.GlobalConfig{LogLevel: "info", LogFormat: "json", Admin: config.AdminConfig{Listen: "127.0.0.1:9443"}, WebRoot: "/var/www"},
 		Domains: []config.Domain{probe},
@@ -1056,13 +1096,59 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to save", http.StatusInternalServerError)
 		return
 	}
+	// Keep the previous file so a rejected reload can be undone; otherwise the
+	// next start would load the config the running server just refused.
+	prev, prevErr := os.ReadFile(path)
+	if prevErr != nil && !os.IsNotExist(prevErr) {
+		jsonError(w, "failed to save", http.StatusInternalServerError)
+		return
+	}
 	if err := h.deps.AtomicWriteFile(path, data, 0600); err != nil {
 		jsonError(w, "failed to save", http.StatusInternalServerError)
 		return
 	}
 	if err := h.deps.Reload(); err != nil {
-		jsonError(w, "domain saved but reload failed: "+err.Error(), http.StatusInternalServerError)
+		var restoreErr error
+		if prevErr == nil {
+			restoreErr = h.deps.AtomicWriteFile(path, prev, 0600)
+		} else {
+			restoreErr = os.Remove(path)
+		}
+		if restoreErr != nil {
+			h.deps.LogError("failed to restore domain file after reload failure", "path", path, "error", restoreErr)
+			jsonError(w, "domain saved but reload failed (restoring the previous file also failed): "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonError(w, "reload failed, previous domain file restored: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// rawPutForbiddenChange returns the first privilege-sensitive field (the set
+// Update refuses from non-admins) whose value differs between the current
+// domain and the submitted raw YAML, or "" when none changed.
+func rawPutForbiddenChange(cur, next config.Domain) string {
+	fields := []struct {
+		key  string
+		a, b any
+	}{
+		{"root", cur.Root, next.Root},
+		{"type", cur.Type, next.Type},
+		{"proxy", cur.Proxy, next.Proxy},
+		{"ip", cur.IP, next.IP},
+		{"app", cur.App, next.App},
+		{"redirect", cur.Redirect, next.Redirect},
+		{"internal_aliases", cur.InternalAliases, next.InternalAliases},
+		{"access_log", cur.AccessLog, next.AccessLog},
+		{"webhook_secret", cur.WebhookSecret, next.WebhookSecret},
+	}
+	for _, f := range fields {
+		a, errA := yaml.Marshal(f.a)
+		b, errB := yaml.Marshal(f.b)
+		if errA != nil || errB != nil || string(a) != string(b) {
+			return f.key
+		}
+	}
+	return ""
 }

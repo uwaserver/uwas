@@ -4,6 +4,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -66,6 +67,7 @@ type Manager struct {
 	client      *http.Client
 	queue       chan *queuedEvent
 	closed      atomic.Bool
+	done        chan struct{} // closed by Close; aborts pending retry backoffs
 	dataDir     string
 	logger      Logger
 	urlSafe     func(string) error
@@ -100,6 +102,7 @@ func NewManager(dataDir string, logger Logger) *Manager {
 			Timeout: 30 * time.Second,
 		},
 		queue:       make(chan *queuedEvent, 1000),
+		done:        make(chan struct{}),
 		dataDir:     dataDir,
 		logger:      logger,
 		urlSafe:     webhookURLSafetyCheck,
@@ -128,6 +131,9 @@ func NewManager(dataDir string, logger Logger) *Manager {
 func (m *Manager) Close() {
 	if m.closed.CompareAndSwap(false, true) {
 		close(m.queue)
+		if m.done != nil {
+			close(m.done)
+		}
 	}
 }
 
@@ -255,11 +261,38 @@ func (m *Manager) deliver(qe *queuedEvent) {
 	maxRetries := qe.webhook.RetryMax
 	if maxRetries == 0 {
 		maxRetries = 3
+	} else if maxRetries < 0 {
+		// A negative retry count means "no retries", not "no attempts".
+		maxRetries = 0
 	}
 
 	timeout := qe.webhook.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
+	}
+
+	// Close stops deliveries outright: an event still queued when Close ran is
+	// not attempted, and an attempt in flight is cancelled instead of holding
+	// the worker for the full timeout.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if m.done != nil {
+		select {
+		case <-m.done:
+			m.logger.Warn("webhook delivery abandoned: manager closed",
+				"event", qe.event.Type,
+				"url", qe.webhook.URL,
+			)
+			return
+		default:
+		}
+		go func() {
+			select {
+			case <-m.done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 	}
 
 	client := &http.Client{
@@ -290,11 +323,23 @@ func (m *Manager) deliver(qe *queuedEvent) {
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 1s, 2s, 4s...
-			time.Sleep(time.Duration(1<<uint(attempt-1)) * time.Second)
+			// Exponential backoff: 1s, 2s, 4s... Abandoned once the manager
+			// is closed so a worker never outlives Close by a long backoff.
+			backoff := time.NewTimer(time.Duration(1<<uint(attempt-1)) * time.Second)
+			select {
+			case <-m.done:
+				backoff.Stop()
+				m.logger.Warn("webhook retries abandoned: manager closed",
+					"event", qe.event.Type,
+					"url", qe.webhook.URL,
+					"attempt", attempt+1,
+				)
+				return
+			case <-backoff.C:
+			}
 		}
 
-		req, err := http.NewRequest("POST", qe.webhook.URL, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, "POST", qe.webhook.URL, bytes.NewReader(payload))
 		if err != nil {
 			m.logger.Error("failed to create webhook request", "error", err)
 			continue
@@ -318,6 +363,14 @@ func (m *Manager) deliver(qe *queuedEvent) {
 
 		resp, err := client.Do(req)
 		if err != nil {
+			if ctx.Err() != nil {
+				m.logger.Warn("webhook delivery abandoned: manager closed",
+					"event", qe.event.Type,
+					"url", qe.webhook.URL,
+					"attempt", attempt+1,
+				)
+				return
+			}
 			m.logger.Warn("webhook delivery failed",
 				"event", qe.event.Type,
 				"url", qe.webhook.URL,

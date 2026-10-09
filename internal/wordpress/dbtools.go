@@ -30,9 +30,11 @@ func OptimizeDatabase(webRoot string) (*DBOptimizeResult, error) {
 	if ids, err := wpCLI(webRoot, "post", "list", "--post_type=revision", "--format=ids"); err == nil {
 		ids = strings.TrimSpace(ids)
 		if ids != "" {
-			count := len(strings.Fields(ids))
+			count := 0
 			for _, id := range strings.Fields(ids) {
-				wpCLI(webRoot, "post", "delete", id, "--force")
+				if _, err := wpCLI(webRoot, "post", "delete", id, "--force"); err == nil {
+					count++
+				}
 			}
 			result.RevisionsDeleted = count
 			log.WriteString(fmt.Sprintf("Revisions deleted: %d\n", count))
@@ -43,9 +45,11 @@ func OptimizeDatabase(webRoot string) (*DBOptimizeResult, error) {
 	if ids, err := wpCLI(webRoot, "comment", "list", "--status=spam", "--format=ids"); err == nil {
 		ids = strings.TrimSpace(ids)
 		if ids != "" {
-			count := len(strings.Fields(ids))
+			count := 0
 			for _, id := range strings.Fields(ids) {
-				wpCLI(webRoot, "comment", "delete", id, "--force")
+				if _, err := wpCLI(webRoot, "comment", "delete", id, "--force"); err == nil {
+					count++
+				}
 			}
 			result.SpamDeleted = count
 			log.WriteString(fmt.Sprintf("Spam comments deleted: %d\n", count))
@@ -56,10 +60,13 @@ func OptimizeDatabase(webRoot string) (*DBOptimizeResult, error) {
 	if ids, err := wpCLI(webRoot, "comment", "list", "--status=trash", "--format=ids"); err == nil {
 		ids = strings.TrimSpace(ids)
 		if ids != "" {
+			count := 0
 			for _, id := range strings.Fields(ids) {
-				wpCLI(webRoot, "comment", "delete", id, "--force")
+				if _, err := wpCLI(webRoot, "comment", "delete", id, "--force"); err == nil {
+					count++
+				}
 			}
-			log.WriteString(fmt.Sprintf("Trash comments deleted: %d\n", len(strings.Fields(ids))))
+			log.WriteString(fmt.Sprintf("Trash comments deleted: %d\n", count))
 		}
 	}
 
@@ -67,9 +74,11 @@ func OptimizeDatabase(webRoot string) (*DBOptimizeResult, error) {
 	if ids, err := wpCLI(webRoot, "post", "list", "--post_status=trash", "--format=ids"); err == nil {
 		ids = strings.TrimSpace(ids)
 		if ids != "" {
-			count := len(strings.Fields(ids))
+			count := 0
 			for _, id := range strings.Fields(ids) {
-				wpCLI(webRoot, "post", "delete", id, "--force")
+				if _, err := wpCLI(webRoot, "post", "delete", id, "--force"); err == nil {
+					count++
+				}
 			}
 			result.TrashDeleted = count
 			log.WriteString(fmt.Sprintf("Trash posts deleted: %d\n", count))

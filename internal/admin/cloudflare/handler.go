@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -123,6 +124,11 @@ var cfHTTPClient = &http.Client{Timeout: 30 * time.Second}
 // Handler holds Cloudflare admin API handlers.
 type Handler struct {
 	deps Deps
+	// stateMu serializes the load→modify→save sequences of the handlers that
+	// rewrite Cloudflare state. LoadCloudflareState returns a copy and
+	// SaveCloudflareState replaces the stored state wholesale, so two
+	// overlapping sequences would otherwise drop each other's changes (F436).
+	stateMu sync.Mutex
 }
 
 // New creates a Cloudflare Handler.
@@ -170,6 +176,15 @@ func tunnelToView(t Tunnel, deps Deps) TunnelView {
 	view.PID = pid
 	view.Uptime = uptime
 	return view
+}
+
+// stopTunnels stops and forgets the runner processes of tunnels that are being
+// dropped from state, so none is left running with no record to stop it by.
+func (h *Handler) stopTunnels(tunnels []Tunnel) {
+	for _, t := range tunnels {
+		_ = h.deps.TunnelStop(t.ID) // not running is fine
+		h.deps.TunnelForget(t.ID)
+	}
 }
 
 // ── Handlers ──
@@ -279,10 +294,13 @@ func (h *Handler) Connect(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid token: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
 	st := h.deps.LoadCloudflareState()
 	if st == nil {
 		st = &State{}
 	}
+	h.stopTunnels(st.Tunnels)
 	st.Token = req.Token
 	st.AccountID = req.AccountID
 	st.Email = email
@@ -300,9 +318,12 @@ func (h *Handler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireAdmin(w, r) {
 		return
 	}
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
 	st := h.deps.LoadCloudflareState()
 	oldAccountID := ""
 	if st != nil {
+		h.stopTunnels(st.Tunnels)
 		oldAccountID = st.AccountID
 		st.Connected = false
 		st.Token = ""
@@ -365,6 +386,10 @@ func (h *Handler) TunnelCreate(w http.ResponseWriter, r *http.Request) {
 	if !h.deps.RequireAdmin(w, r) {
 		return
 	}
+	// Held across the CF API call so the duplicate checks and the append below
+	// apply to the state that is finally saved.
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
 	st := h.deps.LoadCloudflareState()
 	if st == nil || !st.Connected {
 		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
@@ -430,6 +455,8 @@ func (h *Handler) TunnelDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "tunnel id required", http.StatusBadRequest)
 		return
 	}
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
 	st := h.deps.LoadCloudflareState()
 	if st == nil {
 		jsonError(w, "not connected to Cloudflare", http.StatusBadRequest)
@@ -839,34 +866,55 @@ func FetchDNSRecords(token, zoneID string) ([]DNSRecord, error) {
 }
 
 func FetchDNSRecordsWithClient(client *http.Client, token, zoneID string) ([]DNSRecord, error) {
-	req, _ := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones/"+zoneID+"/dns_records", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
+	// Cloudflare returns 100 records per page by default; read every page so
+	// zone import does not silently skip the rest (F437).
+	const perPage = 100
+	const maxPages = 100
+	var records []DNSRecord
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return nil, fmt.Errorf("DNS records fetch: more than %d pages", maxPages)
+		}
+		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?per_page=%d&page=%d", zoneID, perPage, page)
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var result struct {
+			Success bool `json:"success"`
+			Result  []struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Name     string `json:"name"`
+				Content  string `json:"content"`
+				TTL      int    `json:"ttl"`
+				Proxied  bool   `json:"proxied"`
+				Priority int    `json:"priority"`
+			} `json:"result"`
+			ResultInfo struct {
+				TotalPages int `json:"total_pages"`
+			} `json:"result_info"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("DNS records fetch: malformed response: %w", err)
+		}
+		if !result.Success {
+			return nil, fmt.Errorf("failed to fetch DNS records")
+		}
+		for _, r := range result.Result {
+			records = append(records, DNSRecord{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Content, TTL: r.TTL, Proxied: r.Proxied, Priority: r.Priority})
+		}
+		if result.ResultInfo.TotalPages == 0 || page >= result.ResultInfo.TotalPages || len(result.Result) < perPage {
+			break
+		}
 	}
-	defer resp.Body.Close()
-	var result struct {
-		Success bool `json:"success"`
-		Result  []struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			Name     string `json:"name"`
-			Content  string `json:"content"`
-			TTL      int    `json:"ttl"`
-			Proxied  bool   `json:"proxied"`
-			Priority int    `json:"priority"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("DNS records fetch: malformed response: %w", err)
-	}
-	if !result.Success {
-		return nil, fmt.Errorf("failed to fetch DNS records")
-	}
-	records := make([]DNSRecord, len(result.Result))
-	for i, r := range result.Result {
-		records[i] = DNSRecord{ID: r.ID, Type: r.Type, Name: r.Name, Content: r.Content, TTL: r.TTL, Proxied: r.Proxied, Priority: r.Priority}
+	if records == nil {
+		records = []DNSRecord{}
 	}
 	return records, nil
 }

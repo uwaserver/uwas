@@ -126,7 +126,11 @@ func (m *Manager) loadSessions() {
 func (m *Manager) saveSessions() {
 	m.mu.RLock()
 	out := m.snapshotSessions()
+	// Take the persist lock before releasing m.mu: any later mutation needs
+	// m.mu exclusively, so its write queues behind this one.
+	m.sessionsPersistMu.Lock()
 	m.mu.RUnlock()
+	defer m.sessionsPersistMu.Unlock()
 	m.writeSessions(out)
 }
 
@@ -135,6 +139,8 @@ func (m *Manager) saveSessions() {
 // that invalidate sessions while holding the write lock.
 func (m *Manager) saveSessionsLocked() {
 	out := m.snapshotSessions()
+	m.sessionsPersistMu.Lock()
+	defer m.sessionsPersistMu.Unlock()
 	m.writeSessions(out)
 }
 

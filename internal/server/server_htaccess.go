@@ -67,10 +67,18 @@ func (s *Server) applyHtaccess(ctx *router.RequestContext, domain *config.Domain
 	// (parseHtaccessFull) and cached on the entry; we don't reconstruct it
 	// per request. Skip Variables allocation + Process loop when no rule
 	// pattern can match this URI (refactor.md P12).
-	if ruleSet.engine != nil && ruleSet.engine.MightMatch(ctx.Request.URL.Path) {
+	// Apache matches per-directory RewriteRule patterns against the path with
+	// the directory prefix ("/" for the docroot .htaccess) removed, so
+	// "^backup/" must see "backup/db.sql", not "/backup/db.sql".
+	perDirPath := strings.TrimPrefix(ctx.Request.URL.Path, "/")
+	if ruleSet.engine != nil && ruleSet.engine.MightMatch(perDirPath) {
 		requestFilename := filepath.Join(domain.Root, filepath.Clean("/"+ctx.Request.URL.Path))
 		vars := rewrite.BuildVariables(ctx.Request, domain.Root, requestFilename, ctx.IsHTTPS)
-		result := ruleSet.engine.Process(ctx.Request.URL.Path, ctx.Request.URL.RawQuery, vars)
+		result := ruleSet.engine.Process(perDirPath, ctx.Request.URL.RawQuery, vars)
+		// Apache adds the directory prefix back to a relative substitution.
+		if result.Modified && !strings.HasPrefix(result.URI, "/") && !strings.Contains(result.URI, "://") {
+			result.URI = "/" + result.URI
+		}
 
 		// Honor access-control results, exactly like applyRewrites. Without
 		// this, .htaccess [F]/[G]/[R] rules (commonly guarding backups,
@@ -221,6 +229,7 @@ type htaccessCacheEntry struct {
 	engine        *rewrite.Engine // pre-built rewrite engine, nil when RewriteEnabled is false
 	modTime       time.Time       // file modification time for auto-invalidation
 	errorPages    map[int]string  // precomputed ErrorDocument map (immutable after parseHtaccessFull)
+	parseFailed   bool            // .htaccess exists but could not be parsed; its denies are unknown
 }
 
 func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
@@ -239,7 +248,7 @@ func (s *Server) getHtaccessRuleSet(root string) *htaccessCacheEntry {
 				s.htaccessCacheMu.Unlock()
 				return newEntry
 			}
-		} else if entry.raw == nil {
+		} else if entry.raw == nil && !entry.parseFailed {
 			// File still doesn't exist and cache is nil — that's fine
 			return entry
 		} else {
@@ -277,8 +286,16 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 
 	directives, err := htaccess.Parse(f)
 	if err != nil {
-		s.logger.Warn("htaccess parse error", "path", htPath, "error", err)
-		return &htaccessCacheEntry{}
+		// Fail closed: the file's <Files> denies and AuthUserFile guards are
+		// unknown, so the caller refuses to serve rather than drop them.
+		// Keep modTime so an unchanged broken file is not re-parsed (and
+		// re-logged) on every request.
+		s.logger.Warn("htaccess parse error; refusing to serve until fixed", "path", htPath, "error", err)
+		failed := &htaccessCacheEntry{parseFailed: true}
+		if info != nil {
+			failed.modTime = info.ModTime()
+		}
+		return failed
 	}
 
 	ruleSet := htaccess.Convert(directives)
@@ -297,7 +314,7 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 			if base != "" && target != "" && target != "-" && !strings.HasPrefix(target, "/") {
 				target = base + target
 			}
-			rule, err := rewrite.ParseRule(rw.Pattern, target, rw.Flags)
+			rule, err := rewrite.ParseRule(perDirPattern(rw.Pattern), target, rw.Flags)
 			if err != nil {
 				continue
 			}
@@ -328,4 +345,15 @@ func (s *Server) parseHtaccessFull(root string) *htaccessCacheEntry {
 	}
 
 	return entry
+}
+
+// perDirPattern keeps uwas-style .htaccess patterns written with an explicit
+// leading slash ("^/old$") working now that rules are matched against the
+// per-directory path without it: "^/X" on "/p" is equivalent to "^X" on "p".
+// "^/?", "^/*" etc. already match the stripped path and are left unchanged.
+func perDirPattern(p string) string {
+	if strings.HasPrefix(p, "^/") && !strings.ContainsAny(p[2:min(len(p), 3)], "?*+{") {
+		return "^" + p[2:]
+	}
+	return p
 }

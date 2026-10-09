@@ -198,7 +198,7 @@ func (m *Manager) Deploy(req DeployRequest, appRoot string, onComplete func(err 
 		}()
 
 		if mode == "docker" {
-			err = m.deployDocker(req, appRoot, status, &log)
+			err = m.deployDockerCancellable(req, appRoot, cancelCh, status, &log)
 		} else {
 			err = m.deployGit(req, appRoot, branch, cancelCh, status, &log)
 		}
@@ -364,6 +364,12 @@ func (m *Manager) waitForApp(addr string, timeout time.Duration) error {
 }
 
 func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *DeployStatus, log *strings.Builder) error {
+	return m.deployDockerCancellable(req, appRoot, nil, status, log)
+}
+
+// deployDockerCancellable honours CancelDeploy at step boundaries; a nil
+// cancelCh never fires.
+func (m *Manager) deployDockerCancellable(req DeployRequest, appRoot string, cancelCh <-chan struct{}, status *DeployStatus, log *strings.Builder) error {
 	containerName := "uwas-" + sanitizeName(req.Domain)
 	dockerfile := req.DockerFile
 	if dockerfile == "" {
@@ -389,6 +395,11 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 	runCmd(appRoot, nil, "docker", "rm", containerName)
 
 	// Build image
+	select {
+	case <-cancelCh:
+		return fmt.Errorf("deployment cancelled")
+	default:
+	}
 	m.mu.Lock()
 	status.Status = "building"
 	m.mu.Unlock()
@@ -399,6 +410,11 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 	}
 
 	// Run container
+	select {
+	case <-cancelCh:
+		return fmt.Errorf("deployment cancelled")
+	default:
+	}
 	args := []string{"run", "-d", "--name", containerName, "--restart=unless-stopped",
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port)} // host port → container port
 	// Apply network mode if specified
@@ -440,7 +456,13 @@ func (m *Manager) deployDocker(req DeployRequest, appRoot string, status *Deploy
 func (m *Manager) Status(domain string) *DeployStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.deploys[domain]
+	s, ok := m.deploys[domain]
+	if !ok {
+		return nil
+	}
+	// Return a snapshot: the deploy goroutine keeps mutating the live record.
+	cp := *s
+	return &cp
 }
 
 // AllStatuses returns all deploy statuses.

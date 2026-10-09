@@ -66,12 +66,23 @@ func (s *IPSet) netsFor(cidrs []string) []*net.IPNet {
 
 	// Recompute without holding any lock. sync/atomic.Pointer makes the
 	// assignment to s.nets safe for concurrent readers of netsFor.
-	normalized, _ := NormalizeCIDRs(cidrs)
-	nets := make(IPNetSlice, 0, len(normalized))
-	for _, cidr := range normalized {
-		_, n, err := net.ParseCIDR(cidr)
-		if err == nil {
-			nets = append(nets, n)
+	// Parse entry by entry: NormalizeCIDRs rejects the whole list on one bad
+	// entry, which here would drop every valid range and turn a single typo
+	// in ip_ranges into a 403 for all genuine Cloudflare traffic. A malformed
+	// entry only loses itself (still fail-closed for that entry).
+	nets := make(IPNetSlice, 0, len(cidrs))
+	for _, raw := range cidrs {
+		for _, part := range strings.FieldsFunc(raw, isCIDRListSep) {
+			if strings.HasPrefix(part, "#") {
+				continue
+			}
+			cidr, err := normalizeCIDR(part)
+			if err != nil {
+				continue
+			}
+			if _, n, err := net.ParseCIDR(cidr); err == nil {
+				nets = append(nets, n)
+			}
 		}
 	}
 
@@ -86,9 +97,7 @@ func NormalizeCIDRs(values []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 	for _, raw := range values {
-		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
-			return r == '\n' || r == '\r' || r == ',' || r == ';' || r == '\t' || r == ' '
-		}) {
+		for _, part := range strings.FieldsFunc(raw, isCIDRListSep) {
 			part = strings.TrimSpace(part)
 			if part == "" || strings.HasPrefix(part, "#") {
 				continue
@@ -108,6 +117,10 @@ func NormalizeCIDRs(values []string) ([]string, error) {
 		return out[i] < out[j]
 	})
 	return out, nil
+}
+
+func isCIDRListSep(r rune) bool {
+	return r == '\n' || r == '\r' || r == ',' || r == ';' || r == '\t' || r == ' '
 }
 
 func normalizeCIDR(value string) (string, error) {

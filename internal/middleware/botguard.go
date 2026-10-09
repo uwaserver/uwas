@@ -3,6 +3,7 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -189,7 +190,10 @@ func BotGuard(log *logger.Logger, stats *SecurityStats) Middleware {
 			// crawlers, and /.well-known/ carries ACME challenges and
 			// security.txt that must stay reachable. These resources are public
 			// and safe, so serving them even to a listed bot costs nothing.
-			if isBotExemptPath(r.URL.Path) {
+			// The path is cleaned first: the handlers downstream resolve
+			// "/.well-known/../wp-login.php" to /wp-login.php, so matching
+			// the raw path let a listed scanner reach any URL by prefixing it.
+			if isBotExemptPath(path.Clean(r.URL.Path)) {
 				next.ServeHTTP(w, r)
 				return
 			}

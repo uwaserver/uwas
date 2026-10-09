@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +14,10 @@ import (
 )
 
 const shardCount = 256
+
+// maxHeaderKeyLen bounds how much of a header value a bucket key keeps
+// verbatim; longer values are replaced by their SHA-256 digest.
+const maxHeaderKeyLen = 64
 
 // RateLimiter implements a sharded token bucket rate limiter.
 type RateLimiter struct {
@@ -186,6 +192,13 @@ func (rl *RateLimiter) Key(r *http.Request) string {
 		return clientIP(rl, r)
 	}
 	if v := strings.TrimSpace(r.Header.Get(name)); v != "" {
+		// The value is client-supplied and can be as large as MaxHeaderBytes;
+		// the bucket would pin it for two windows. Store a digest of long
+		// values so retained memory does not scale with header size.
+		if len(v) > maxHeaderKeyLen {
+			sum := sha256.Sum256([]byte(v))
+			v = "#" + hex.EncodeToString(sum[:])
+		}
 		// Namespaced so a header value cannot collide with an IP key.
 		return "h:" + strings.ToLower(name) + ":" + v
 	}

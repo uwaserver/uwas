@@ -85,6 +85,20 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	respond.Error(w, code, msg)
 }
 
+// systemDBTarget reports why name must not be created, dropped or imported
+// into through the panel: the MySQL system schemas, and the protected accounts
+// DropUser refuses (Drop reuses the database name as the user it drops).
+// Compared case-insensitively so a case-insensitive server can't be slipped past.
+func systemDBTarget(name string) string {
+	switch strings.ToLower(name) {
+	case "mysql", "information_schema", "performance_schema", "sys":
+		return "refusing to modify system schema " + name
+	case "root":
+		return "refusing to modify protected system user " + name
+	}
+	return ""
+}
+
 // ── Database Management ──
 
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +164,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "name is required", http.StatusBadRequest)
 		return
 	}
+	for _, n := range []string{req.Name, req.User} {
+		if msg := systemDBTarget(n); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+	}
 	result, err := h.deps.CreateDB(req.Name, req.User, req.Password, req.Host)
 	if err != nil {
 		h.deps.LogError("database create failed", "name", req.Name, "error", err)
@@ -165,6 +185,11 @@ func (h *Handler) Drop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
+	if msg := systemDBTarget(name); msg != "" {
+		h.deps.RecordAudit(r, "database.drop", "db: "+name+": "+msg, false)
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
 	if err := h.deps.DropDB(name, name, "localhost"); err != nil {
 		h.deps.LogError("database drop failed", "name", name, "error", err)
 		jsonError(w, "database drop failed", http.StatusInternalServerError)
@@ -182,6 +207,12 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	if st.Installed {
 		jsonResponse(w, map[string]string{"status": "already_installed", "version": st.Version})
 		return
+	}
+	// Serialize the Active() check and Submit() with the admin's other
+	// install entry points (package installs, setup wizard) when the deps
+	// provide the shared install lock.
+	if l, ok := h.deps.(interface{ InstallLock() (unlock func()) }); ok {
+		defer l.InstallLock()()
 	}
 	if active := h.deps.TaskActive(); active != nil {
 		jsonError(w, fmt.Sprintf("another installation in progress: %s (%s)", active.Name, active.ID), http.StatusConflict)
@@ -328,6 +359,10 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
+	if msg := systemDBTarget(name); msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 256<<20)
 	data, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
 	if err != nil {
@@ -571,6 +606,12 @@ func (h *Handler) DockerCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "database name required", http.StatusBadRequest)
 		return
 	}
+	for _, n := range []string{req.DBName, req.User} {
+		if msg := systemDBTarget(n); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+	}
 	result, err := dbpkg.DockerDBCreateDatabase(name, req.DBName, req.User, req.Password)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -588,6 +629,11 @@ func (h *Handler) DockerDropDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	db := r.PathValue("db")
+	if msg := systemDBTarget(db); msg != "" {
+		h.deps.RecordAudit(r, "docker_db.drop_database", name+"/"+db+": "+msg, false)
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
 	if err := dbpkg.DockerDBDropDatabase(name, db); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -624,6 +670,10 @@ func (h *Handler) DockerImport(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	db := r.PathValue("db")
+	if msg := systemDBTarget(db); msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
 	data, err := io.ReadAll(io.LimitReader(r.Body, 100<<20))
 	if err != nil {

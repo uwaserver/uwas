@@ -171,6 +171,7 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 	// not need the lock during the long tar-write.
 	m.mu.Lock()
 	domainsDir := m.domainsDir
+	siteBase := m.webRoot
 	domainRoots := make([]string, len(m.domainRoots))
 	copy(domainRoots, m.domainRoots)
 	m.mu.Unlock()
@@ -210,8 +211,7 @@ func (m *BackupManager) CreateBackup(provider string) (*BackupInfo, error) {
 				continue
 			}
 			if info, err := os.Stat(root); err == nil && info.IsDir() {
-				dirName := filepath.Base(filepath.Dir(root)) + "/" + filepath.Base(root)
-				if err := addDirToTar(tw, root, "sites/"+dirName); err != nil {
+				if err := addDirToTar(tw, root, "sites/"+siteArchiveDir(siteBase, root)); err != nil {
 					m.logger.Warn("backup: failed to add domain root", "root", root, "error", err)
 				}
 			}
@@ -911,7 +911,13 @@ func (m *BackupManager) pruneOld(provider string) {
 	}
 	// Sort newest first, then delete everything past keepCount.
 	sort.Slice(fulls, func(i, j int) bool {
-		return fulls[i].Created.After(fulls[j].Created)
+		if !fulls[i].Created.Equal(fulls[j].Created) {
+			return fulls[i].Created.After(fulls[j].Created)
+		}
+		// Equal times — e.g. the SFTP ls fallback, which reports no mtime and
+		// leaves every Created zero. The name embeds the UTC creation
+		// timestamp, so the larger name is the newer backup.
+		return fulls[i].Name > fulls[j].Name
 	})
 	for _, item := range fulls[keepCount:] {
 		if err := p.Delete(ctx, item.Name); err != nil {
@@ -945,7 +951,23 @@ func addFileToTar(tw *tar.Writer, srcPath, archiveName string) error {
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	_, err = io.Copy(tw, f)
+	// Copy exactly the size the header declares. A live file (a log in a web
+	// root) can grow or shrink between Stat and the read; an unbounded copy
+	// then failed with ErrWriteTooLong (aborting the directory walk) or left
+	// the entry short, breaking every later WriteHeader. Extra bytes are left
+	// out and a shortfall is zero-padded, so the stream stays valid.
+	n, err := io.CopyN(tw, f, hdr.Size)
+	if err == io.EOF {
+		var zeros [32 << 10]byte
+		for rem := hdr.Size - n; rem > 0; {
+			k := min(rem, int64(len(zeros)))
+			if _, err := tw.Write(zeros[:k]); err != nil {
+				return err
+			}
+			rem -= k
+		}
+		return nil
+	}
 	return err
 }
 
@@ -1177,6 +1199,20 @@ func IsInsideDir(path, base string) bool {
 		return false
 	}
 	return strings.HasPrefix(abs, baseAbs+string(filepath.Separator)) || abs == baseAbs
+}
+
+// siteArchiveDir names a domain root inside the archive's sites/ tree.
+// RestoreBackup writes sites/<rel> back under web_root, so a root inside
+// web_root is stored by its path relative to web_root and round-trips to the
+// same place. Roots outside web_root keep the legacy <parent>/<base> name.
+func siteArchiveDir(webRoot, root string) string {
+	if webRoot != "" {
+		if rel, err := filepath.Rel(filepath.Clean(webRoot), filepath.Clean(root)); err == nil &&
+			rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.Base(filepath.Dir(root)) + "/" + filepath.Base(root)
 }
 
 // safeRestorePath joins an archive-relative path to a restore root while

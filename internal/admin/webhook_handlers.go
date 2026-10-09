@@ -84,6 +84,17 @@ func (s *Server) handleWebhookCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Negative limits are never meaningful: a negative timeout puts the
+	// delivery dialer's deadline in the past, so every delivery would fail.
+	if req.Retry < 0 {
+		jsonError(w, "retry must not be negative", http.StatusBadRequest)
+		return
+	}
+	if req.Timeout.Duration < 0 {
+		jsonError(w, "timeout must not be negative", http.StatusBadRequest)
+		return
+	}
+
 	// Set defaults
 	if req.Retry == 0 {
 		req.Retry = 3
@@ -134,13 +145,19 @@ func (s *Server) handleWebhookDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := s.config.Global.Webhooks[idx].URL
-	s.config.Global.Webhooks = append(s.config.Global.Webhooks[:idx], s.config.Global.Webhooks[idx+1:]...)
+	// Build a fresh slice instead of splicing in place: readers such as
+	// handleWebhookList iterate a snapshot of the old slice after unlocking.
+	old := s.config.Global.Webhooks
+	url := old[idx].URL
+	webhooks := make([]config.WebhookConfig, 0, len(old)-1)
+	webhooks = append(webhooks, old[:idx]...)
+	webhooks = append(webhooks, old[idx+1:]...)
+	s.config.Global.Webhooks = webhooks
 	s.configMu.Unlock()
 
 	// Update webhook manager
 	if s.webhookMgr != nil {
-		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(s.config.Global.Webhooks))
+		s.webhookMgr.UpdateWebhooks(toWebhookConfigs(webhooks))
 	}
 
 	s.recordAuditR(r, "webhook.delete", url, true)

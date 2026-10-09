@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,17 @@ type Manager struct {
 	limits  map[string]config.BandwidthConfig // host -> config
 	usage   map[string]*DomainUsage           // host -> usage
 	alertFn func(host string, limitType string, current, limit int64)
+
+	// Request-host variants the vhost router serves for a domain (aliases,
+	// implicit www./apex, wildcard suffixes) resolved to the domain's key,
+	// so Record bills them against that domain.
+	hosts     map[string]string
+	wildcards []wildcardKey
+}
+
+type wildcardKey struct {
+	suffix string // ".example.com" for "*.example.com"
+	key    string
 }
 
 // DomainUsage tracks bandwidth usage for a single domain.
@@ -64,19 +76,115 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	defer m.mu.Unlock()
 
 	newLimits := make(map[string]config.BandwidthConfig)
+	hosts := make(map[string]string)
+	var wildcards []wildcardKey
+	// Explicit hosts first, so a derived variant (bare host of a
+	// port-qualified domain, implicit www.<->apex) never takes a name another
+	// domain owns explicitly — the same precedence the vhost router applies.
+	var derived []string
+	register := func(name, key string) {
+		if strings.HasPrefix(normalizeHost(name), "*.") {
+			wildcards = append(wildcards, wildcardKey{suffix: normalizeHost(name)[1:], key: key})
+			return
+		}
+		name = hostKey(name)
+		if name != "" {
+			hosts[name] = key
+			derived = append(derived, name)
+		}
+	}
 	for _, d := range domains {
+		key := hostKey(d.Host)
+		register(d.Host, key)
+		for _, alias := range d.Aliases {
+			register(alias, key)
+		}
 		if d.Bandwidth.Enabled {
-			newLimits[d.Host] = d.Bandwidth
+			newLimits[key] = d.Bandwidth
 			// Initialize usage tracking if not exists
-			if _, ok := m.usage[d.Host]; !ok {
-				m.usage[d.Host] = &DomainUsage{
+			if _, ok := m.usage[key]; !ok {
+				m.usage[key] = &DomainUsage{
 					LastReset:  time.Now(),
 					DailyReset: time.Now(),
 				}
 			}
 		}
 	}
+	// Derived variants, in config order, only where no domain owns the name:
+	// a port-qualified host also answers on its bare host, and a portless
+	// host on its www.<->apex variant.
+	for _, name := range derived {
+		variant := ""
+		if bare := normalizeHost(name); bare != name {
+			variant = bare
+		} else if apex, ok := strings.CutPrefix(name, "www."); ok {
+			if strings.Contains(apex, ".") {
+				variant = apex
+			}
+		} else if strings.Contains(name, ".") {
+			variant = "www." + name
+		}
+		if _, owned := hosts[variant]; variant != "" && !owned {
+			hosts[variant] = hosts[name]
+		}
+	}
+	sort.Slice(wildcards, func(i, j int) bool {
+		return len(wildcards[i].suffix) > len(wildcards[j].suffix)
+	})
 	m.limits = newLimits
+	m.hosts = hosts
+	m.wildcards = wildcards
+
+	// Re-evaluate block/throttle state against the new limits so a raised
+	// limit or a changed action takes effect immediately.
+	for key, limit := range newLimits {
+		usage := m.usage[key]
+		usage.mu.Lock()
+		evaluate(usage, limit)
+		usage.mu.Unlock()
+	}
+}
+
+// resolveLocked maps a request host to the key of the domain that serves it.
+// Caller holds m.mu.
+func (m *Manager) resolveLocked(host string) string {
+	// A port-qualified domain owns only its port, so try host:port first.
+	if key, ok := m.hosts[hostKey(host)]; ok {
+		return key
+	}
+	host = normalizeHost(host)
+	if key, ok := m.hosts[host]; ok {
+		return key
+	}
+	for _, w := range m.wildcards {
+		if len(host) > len(w.suffix) && strings.HasSuffix(host, w.suffix) {
+			return w.key
+		}
+	}
+	return host
+}
+
+// evaluate recomputes Blocked/Throttled from the current counters and limit.
+// Caller holds usage.mu.
+func evaluate(usage *DomainUsage, limit config.BandwidthConfig) (blocked, throttled bool) {
+	monthlyBytes := usage.MonthlyBytes.Load()
+	dailyBytes := usage.DailyBytes.Load()
+	monthlyLimit := int64(limit.MonthlyLimit)
+	dailyLimit := int64(limit.DailyLimit)
+
+	// Block if exceeded hard limit
+	if limit.Action == "block" {
+		blocked = (monthlyLimit > 0 && monthlyBytes >= monthlyLimit) ||
+			(dailyLimit > 0 && dailyBytes >= dailyLimit)
+	}
+	// Throttle if exceeded threshold (80% for throttle, 100% for block)
+	if limit.Action == "throttle" || limit.Action == "" {
+		throttled = (monthlyLimit > 0 && monthlyBytes >= int64(float64(monthlyLimit)*0.8)) ||
+			(dailyLimit > 0 && dailyBytes >= int64(float64(dailyLimit)*0.8))
+	}
+	usage.Blocked = blocked
+	usage.Throttled = throttled
+	return blocked, throttled
 }
 
 // Record records bandwidth usage for a domain.
@@ -90,12 +198,33 @@ func normalizeHost(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	return strings.ToLower(host)
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+// hostKey normalizes like normalizeHost but keeps the port, so a
+// port-qualified domain ("example.com:8080") keys separately from the plain
+// host — the router serves them as two tenants.
+func hostKey(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if h, p, err := net.SplitHostPort(host); err == nil && p != "" {
+		return net.JoinHostPort(strings.TrimSuffix(h, "."), p)
+	}
+	return strings.TrimSuffix(host, ".")
+}
+
+// statusKeyLocked maps an admin/status host to its usage key: the exact
+// port-qualified key when one exists, else the port-stripped host.
+// Caller holds m.mu.
+func (m *Manager) statusKeyLocked(host string) string {
+	if k := hostKey(host); m.usage[k] != nil {
+		return k
+	}
+	return normalizeHost(host)
 }
 
 func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool) {
-	host = normalizeHost(host)
 	m.mu.RLock()
+	host = m.resolveLocked(host)
 	limit, hasLimit := m.limits[host]
 	usage, hasUsage := m.usage[host]
 	alertFn := m.alertFn
@@ -178,30 +307,7 @@ func (m *Manager) Record(host string, bytes int64) (blocked bool, throttled bool
 		}
 	}
 
-	// Block if exceeded hard limit
-	if limit.Action == "block" {
-		if (monthlyLimit > 0 && monthlyBytes >= monthlyLimit) ||
-			(dailyLimit > 0 && dailyBytes >= dailyLimit) {
-			usage.Blocked = true
-			return true, false
-		}
-	}
-
-	// Throttle if exceeded threshold (80% for throttle, 100% for block)
-	if limit.Action == "throttle" || limit.Action == "" {
-		throttleThreshold := int64(float64(monthlyLimit) * 0.8)
-		if monthlyLimit > 0 && monthlyBytes >= throttleThreshold {
-			usage.Throttled = true
-			return false, true
-		}
-		throttleThreshold = int64(float64(dailyLimit) * 0.8)
-		if dailyLimit > 0 && dailyBytes >= throttleThreshold {
-			usage.Throttled = true
-			return false, true
-		}
-	}
-
-	return false, false
+	return evaluate(usage, limit)
 }
 
 // SetAlertFunc sets the alert callback function.
@@ -213,8 +319,8 @@ func (m *Manager) SetAlertFunc(fn func(host string, limitType string, current, l
 
 // IsBlocked returns true if the domain has exceeded its bandwidth limit.
 func (m *Manager) IsBlocked(host string) bool {
-	host = normalizeHost(host)
 	m.mu.RLock()
+	host = m.statusKeyLocked(host)
 	usage, ok := m.usage[host]
 	m.mu.RUnlock()
 	if !ok {
@@ -227,8 +333,8 @@ func (m *Manager) IsBlocked(host string) bool {
 
 // GetStatus returns the bandwidth status for a domain.
 func (m *Manager) GetStatus(host string) *Status {
-	host = normalizeHost(host)
 	m.mu.RLock()
+	host = m.statusKeyLocked(host)
 	limit, hasLimit := m.limits[host]
 	usage, hasUsage := m.usage[host]
 	m.mu.RUnlock()
@@ -287,8 +393,8 @@ func (m *Manager) GetAllStatus() []Status {
 
 // Reset resets the usage counters for a domain.
 func (m *Manager) Reset(host string) {
-	host = normalizeHost(host)
 	m.mu.RLock()
+	host = m.statusKeyLocked(host)
 	usage, ok := m.usage[host]
 	m.mu.RUnlock()
 
@@ -310,10 +416,9 @@ func (m *Manager) Reset(host string) {
 func (m *Manager) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Strip port and lowercase so lookups match the configured hosts.
-			host := normalizeHost(r.Host)
-
+			// Resolve port, case and host variants to the configured host.
 			m.mu.RLock()
+			host := m.resolveLocked(r.Host)
 			_, hasLimit := m.limits[host]
 			m.mu.RUnlock()
 

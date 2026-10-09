@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/uwaserver/uwas/internal/config"
 )
@@ -268,40 +271,40 @@ func domainsToYAML(domains []config.Domain) string {
 	b.WriteString("domains:\n")
 
 	for _, d := range domains {
-		fmt.Fprintf(&b, "  - host: %s\n", d.Host)
-		fmt.Fprintf(&b, "    type: %s\n", d.Type)
+		fmt.Fprintf(&b, "  - host: %s\n", yamlScalar(d.Host))
+		fmt.Fprintf(&b, "    type: %s\n", yamlScalar(d.Type))
 		if d.Root != "" {
-			fmt.Fprintf(&b, "    root: %s\n", d.Root)
+			fmt.Fprintf(&b, "    root: %s\n", yamlScalar(d.Root))
 		}
 		if len(d.Aliases) > 0 {
 			b.WriteString("    aliases:\n")
 			for _, a := range d.Aliases {
-				fmt.Fprintf(&b, "      - %s\n", a)
+				fmt.Fprintf(&b, "      - %s\n", yamlScalar(a))
 			}
 		}
 		if len(d.IndexFiles) > 0 {
 			b.WriteString("    index_files:\n")
 			for _, f := range d.IndexFiles {
-				fmt.Fprintf(&b, "      - %s\n", f)
+				fmt.Fprintf(&b, "      - %s\n", yamlScalar(f))
 			}
 		}
 		if d.SSL.Mode != "" {
 			b.WriteString("    ssl:\n")
-			fmt.Fprintf(&b, "      mode: %s\n", d.SSL.Mode)
+			fmt.Fprintf(&b, "      mode: %s\n", yamlScalar(d.SSL.Mode))
 			if d.SSL.Cert != "" {
-				fmt.Fprintf(&b, "      cert: %s\n", d.SSL.Cert)
+				fmt.Fprintf(&b, "      cert: %s\n", yamlScalar(d.SSL.Cert))
 			}
 			if d.SSL.Key != "" {
-				fmt.Fprintf(&b, "      key: %s\n", d.SSL.Key)
+				fmt.Fprintf(&b, "      key: %s\n", yamlScalar(d.SSL.Key))
 			}
 		}
 		if d.Type == "php" && d.PHP.FPMAddress != "" {
 			b.WriteString("    php:\n")
-			fmt.Fprintf(&b, "      fpm_address: %s\n", d.PHP.FPMAddress)
+			fmt.Fprintf(&b, "      fpm_address: %s\n", yamlScalar(d.PHP.FPMAddress))
 			if len(d.PHP.IndexFiles) > 0 {
 				b.WriteString("      index_files:\n")
 				for _, f := range d.PHP.IndexFiles {
-					fmt.Fprintf(&b, "        - %s\n", f)
+					fmt.Fprintf(&b, "        - %s\n", yamlScalar(f))
 				}
 			}
 		}
@@ -309,12 +312,12 @@ func domainsToYAML(domains []config.Domain) string {
 			b.WriteString("    proxy:\n")
 			b.WriteString("      upstreams:\n")
 			for _, u := range d.Proxy.Upstreams {
-				fmt.Fprintf(&b, "        - address: %s\n", u.Address)
+				fmt.Fprintf(&b, "        - address: %s\n", yamlScalar(u.Address))
 			}
 		}
 		if d.Type == "redirect" && d.Redirect.Target != "" {
 			b.WriteString("    redirect:\n")
-			fmt.Fprintf(&b, "      target: %s\n", d.Redirect.Target)
+			fmt.Fprintf(&b, "      target: %s\n", yamlScalar(d.Redirect.Target))
 			if d.Redirect.Status > 0 {
 				fmt.Fprintf(&b, "      status: %d\n", d.Redirect.Status)
 			}
@@ -328,13 +331,30 @@ func domainsToYAML(domains []config.Domain) string {
 		if len(d.TryFiles) > 0 {
 			b.WriteString("    try_files:\n")
 			for _, f := range d.TryFiles {
-				fmt.Fprintf(&b, "      - %s\n", f)
+				fmt.Fprintf(&b, "      - %s\n", yamlScalar(f))
 			}
 		}
 		b.WriteString("\n")
 	}
 
 	return b.String()
+}
+
+// yamlScalar returns s as a YAML scalar that parses back to exactly s. A
+// value is written plain only when it round-trips as the same string; anything
+// YAML would read differently (a leading "*" alias marker as in a wildcard
+// server_name, a " #" comment, ": ", quotes, true/123/null) is written
+// double-quoted, whose escapes are a superset of Go's strconv quoting.
+func yamlScalar(s string) string {
+	if s != "" && !strings.ContainsAny(s, "\"'\\\t\r\n") {
+		var m map[string]any
+		if yaml.Unmarshal([]byte("v: "+s), &m) == nil {
+			if v, ok := m["v"].(string); ok && v == s {
+				return s
+			}
+		}
+	}
+	return strconv.Quote(s)
 }
 
 // --- internal helpers ---

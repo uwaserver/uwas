@@ -92,11 +92,10 @@ func TestExtractRealIPInvalidEntry(t *testing.T) {
 	_, cidr, _ := net.ParseCIDR("10.0.0.0/8")
 	trusted := []*net.IPNet{cidr}
 
-	// Invalid IP entry is skipped; all remaining IPs (10.0.0.1) are trusted
-	// so the function returns the leftmost entry (which is the invalid one)
+	// The invalid entry ends the right-to-left walk; it is never returned.
 	ip := extractRealIP("not-an-ip, 10.0.0.1", trusted)
-	if ip != "not-an-ip" {
-		t.Errorf("expected leftmost entry when all IPs are trusted/skipped, got %q", ip)
+	if ip != "" {
+		t.Errorf("expected empty when the walk hits an unparsable entry, got %q", ip)
 	}
 }
 

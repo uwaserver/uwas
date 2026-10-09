@@ -55,7 +55,9 @@ func ensureSoftwareComposeFileCompatible(inst softwareInstance) error {
 	if !changed {
 		return nil
 	}
-	if err := os.WriteFile(inst.ComposeFile, cleaned, 0600); err != nil {
+	// Atomic replace: a failed write (disk full) must not truncate the only
+	// copy of the instance definition.
+	if err := atomicWriteFile(inst.ComposeFile, cleaned, 0600); err != nil {
 		return fmt.Errorf("rewrite docker-compose.yml for legacy Compose compatibility: %w", err)
 	}
 	return nil
@@ -553,14 +555,24 @@ func parseDockerBytes(raw string) int64 {
 	num, _ := strconv.ParseFloat(raw[:i], 64)
 	unit := strings.ToLower(raw[i:])
 	mul := float64(1)
+	// docker stats prints MemUsage in binary units (KiB, MiB) but NetIO and
+	// BlockIO in decimal units (kB, MB).
 	switch unit {
-	case "kb", "kib":
+	case "kb":
+		mul = 1e3
+	case "mb":
+		mul = 1e6
+	case "gb":
+		mul = 1e9
+	case "tb":
+		mul = 1e12
+	case "kib":
 		mul = 1024
-	case "mb", "mib":
+	case "mib":
 		mul = 1024 * 1024
-	case "gb", "gib":
+	case "gib":
 		mul = 1024 * 1024 * 1024
-	case "tb", "tib":
+	case "tib":
 		mul = 1024 * 1024 * 1024 * 1024
 	}
 	return int64(num * mul)

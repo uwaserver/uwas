@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/uwaserver/uwas/internal/dnschecker"
 	"github.com/uwaserver/uwas/internal/dnsmanager"
@@ -101,7 +102,37 @@ func (s *Server) handleDNSRecords(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to list DNS records", http.StatusInternalServerError)
 		return
 	}
+	// A subdomain resolves to its parent zone; a non-admin who may manage only
+	// that subdomain must not read the rest of the (possibly shared) zone.
+	if !s.isAdmin(r) {
+		records = filterDNSRecordsToDomain(records, zone.Name, domain)
+	}
 	jsonResponse(w, map[string]any{"zone_id": zone.ID, "zone": zone.Name, "records": records})
+}
+
+// filterDNSRecordsToDomain keeps the records at or below domain. Providers
+// return FQDNs (Cloudflare; Route53 with a trailing dot) or zone-relative
+// names (Hetzner, DigitalOcean; "@" for the apex).
+func filterDNSRecordsToDomain(records []dnsmanager.Record, zone, domain string) []dnsmanager.Record {
+	zone = strings.ToLower(strings.TrimSuffix(zone, "."))
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	if domain == zone {
+		return records
+	}
+	out := make([]dnsmanager.Record, 0, len(records))
+	for _, rec := range records {
+		name := strings.ToLower(strings.TrimSuffix(rec.Name, "."))
+		switch {
+		case name == "@" || name == "":
+			name = zone
+		case name != zone && !strings.HasSuffix(name, "."+zone):
+			name += "." + zone
+		}
+		if name == domain || strings.HasSuffix(name, "."+domain) {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleDNSRecordCreate(w http.ResponseWriter, r *http.Request) {

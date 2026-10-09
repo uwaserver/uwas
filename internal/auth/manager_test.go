@@ -1260,14 +1260,11 @@ func TestLoadUsersInvalidJSON(t *testing.T) {
 	os.MkdirAll(dir, 0755)
 	os.WriteFile(filepath.Join(dir, "users.json"), []byte("not valid json{{{"), 0600)
 
-	// Should not panic, just start with empty users
+	// Must fail closed: an empty user table would reopen first-admin bootstrap.
 	m, err := NewManager(dir, "key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	users := m.ListUsers()
-	if len(users) != 0 {
-		t.Errorf("expected 0 users after invalid JSON load, got %d", len(users))
+	if err == nil {
+		m.Stop()
+		t.Fatal("expected NewManager to fail on invalid users.json")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -21,6 +22,14 @@ func defaultShell() string {
 	}
 	return "/bin/bash"
 }
+
+// hangupGrace is how long a shell gets to exit on SIGHUP after the client has
+// disconnected before it is killed. A var so tests can shorten it.
+var hangupGrace = 5 * time.Second
+
+// ptyInputQueue bounds the client input waiting for a PTY whose foreground
+// program is not reading (at most this many frames of maxWSPayload each).
+const ptyInputQueue = 64
 
 type resizeMsg struct {
 	Type string `json:"type"`
@@ -73,6 +82,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var wg sync.WaitGroup
 
+	// exited is closed once cmd.Wait has returned.
+	exited := make(chan struct{})
+
+	// hangup ends the session after the client has gone. SIGHUP alone is not
+	// enough: a shell (or an exec'd program) that ignores it kept cmd.Wait,
+	// and with it both pumps, the PTY master, the connection and the process
+	// itself, alive forever — the client can never reattach to stop it. Kill it
+	// once the grace period runs out.
+	var hangupOnce sync.Once
+	hangup := func() {
+		hangupOnce.Do(func() {
+			_ = cmd.Process.Signal(syscall.SIGHUP)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				t := time.NewTimer(hangupGrace)
+				defer t.Stop()
+				select {
+				case <-exited:
+				case <-t.C:
+					_ = cmd.Process.Kill()
+				}
+			}()
+		})
+	}
+
 	// PTY → WebSocket
 	wg.Add(1)
 	go func() {
@@ -115,14 +150,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// WebSocket → PTY
+	// WebSocket → PTY. Reading the socket and writing the PTY run on separate
+	// goroutines: the reader is the only place a disconnect is noticed, and
+	// master.Write blocks once the PTY input queue is full (the foreground
+	// program is not reading — tail -f, a long build). Writing inline parked
+	// the reader inside master.Write, so a client that disconnected after
+	// such a paste was never noticed and the session never ended.
+	input := make(chan []byte, ptyInputQueue)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		for data := range input {
+			if _, err := master.Write(data); err != nil {
+				return
+			}
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(input)
 		for {
 			data, err := conn.ReadMessage()
 			if err != nil {
-				_ = cmd.Process.Signal(syscall.SIGHUP)
+				hangup()
 				return
 			}
 			if len(data) > 0 && data[0] == '{' {
@@ -132,11 +183,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 			}
-			master.Write(data)
+			select {
+			case input <- data:
+			default:
+				// The PTY has not drained ptyInputQueue frames; drop this one
+				// (as the tty line discipline drops input it has no room for)
+				// rather than stop reading the socket.
+				if h.Logger != nil {
+					h.Logger.Warn("terminal input dropped: pty not reading", "bytes", len(data))
+				}
+			}
 		}
 	}()
 
 	_ = cmd.Wait()
+	close(exited)
 	// Unblock both pumps before waiting: closing master makes the PTY→WS
 	// reader's Read return, and closing conn makes the WS→PTY reader's
 	// ReadMessage return. Without this, a shell that exits on its own (the user
@@ -158,13 +219,13 @@ func openPTY() (master, slave *os.File, err error) {
 	}
 
 	var ptn uint32
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&ptn))); errno != 0 {
+	if errno := ptyIoctl(master, syscall.TIOCGPTN, unsafe.Pointer(&ptn)); errno != 0 {
 		master.Close()
 		return nil, nil, fmt.Errorf("TIOCGPTN: %v", errno)
 	}
 
 	var unlock int32
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlock))); errno != 0 {
+	if errno := ptyIoctl(master, syscall.TIOCSPTLCK, unsafe.Pointer(&unlock)); errno != 0 {
 		master.Close()
 		return nil, nil, fmt.Errorf("TIOCSPTLCK: %v", errno)
 	}
@@ -200,7 +261,25 @@ func setWinSize(f *os.File, cols, rows int) {
 		Row, Col, Xpixel, Ypixel uint16
 	}
 	ws := winsize{Row: uint16(rows), Col: uint16(cols)}
-	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(&ws)))
+	ptyIoctl(f, syscall.TIOCSWINSZ, unsafe.Pointer(&ws))
+}
+
+// ptyIoctl issues an ioctl on f without calling f.Fd(). Fd() switches the
+// descriptor to blocking mode and takes it out of the runtime poller, after
+// which master.Close() can no longer interrupt a master.Write blocked on a
+// full PTY input queue — the session could then never be torn down.
+func ptyIoctl(f *os.File, req uintptr, arg unsafe.Pointer) syscall.Errno {
+	rc, err := f.SyscallConn()
+	if err != nil {
+		return syscall.EBADF
+	}
+	var errno syscall.Errno
+	if cerr := rc.Control(func(fd uintptr) {
+		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(arg))
+	}); cerr != nil {
+		return syscall.EBADF
+	}
+	return errno
 }
 
 // incompleteUTF8Len returns the number of trailing bytes at the end of data

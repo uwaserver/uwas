@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/backup"
@@ -180,13 +180,11 @@ func (h *Handler) DomainBackup(w http.ResponseWriter, r *http.Request) {
 	var dbName string
 	wpConfig := filepath.Join(webRoot, "wp-config.php")
 	if data, err := os.ReadFile(wpConfig); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, "DB_NAME") {
-				parts := strings.Split(line, "'")
-				if len(parts) >= 4 {
-					dbName = parts[3]
-				}
-			}
+		var unresolved bool
+		if dbName, unresolved = wpConfigDBName(string(data)); unresolved {
+			h.deps.RecordAudit(r, "backup.domain", req.Domain+": DB_NAME in wp-config.php is not a string literal", false)
+			jsonError(w, "cannot determine DB_NAME from wp-config.php (not a string literal); database would be missing from the backup", http.StatusUnprocessableEntity)
+			return
 		}
 	}
 
@@ -200,6 +198,30 @@ func (h *Handler) DomainBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	jsonEncode(w, info)
+}
+
+var (
+	wpBlockCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	wpLineCommentRe  = regexp.MustCompile(`(?m)^\s*(//|#).*$`)
+	wpDBNameDefRe    = regexp.MustCompile(`define\s*\(\s*['"]DB_NAME['"]\s*,`)
+	wpDBNameRe       = regexp.MustCompile(`define\s*\(\s*['"]DB_NAME['"]\s*,\s*(?:'([^']*)'|"([^"]*)")\s*\)`)
+)
+
+// wpConfigDBName returns the DB_NAME PHP would use: the first define() outside
+// comments, with either quote style. unresolved reports a live DB_NAME define
+// whose value is not a string literal (e.g. getenv()), which can't be resolved.
+func wpConfigDBName(src string) (name string, unresolved bool) {
+	src = wpBlockCommentRe.ReplaceAllString(src, "")
+	src = wpLineCommentRe.ReplaceAllString(src, "")
+	loc := wpDBNameDefRe.FindStringIndex(src)
+	if loc == nil {
+		return "", false
+	}
+	m := wpDBNameRe.FindStringSubmatchIndex(src)
+	if m == nil || m[0] != loc[0] {
+		return "", true
+	}
+	return src[max(m[2], m[4]):max(m[3], m[5])], false
 }
 
 // Restore restores a backup archive. Requires PIN confirmation.

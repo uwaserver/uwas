@@ -221,7 +221,17 @@ func (s *Server) registerDatabaseRoutes() {
 	s.mux.HandleFunc("POST /api/v1/database/repair", s.handleDBRepair)
 	s.mux.HandleFunc("GET /api/v1/database/diagnose", s.handleDBDiagnose)
 	s.mux.HandleFunc("GET /api/v1/database/users", s.handleDBUsers)
-	s.mux.HandleFunc("DELETE /api/v1/database/users", s.handleDBDropUser)
+	// The literal "users" route shadows DELETE /database/{name} for a database
+	// named "users". Drop-user always carries a JSON body; a body-less DELETE
+	// is the drop-database call for that name.
+	s.mux.HandleFunc("DELETE /api/v1/database/users", func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength == 0 {
+			r.SetPathValue("name", "users")
+			s.handleDBDrop(w, r)
+			return
+		}
+		s.handleDBDropUser(w, r)
+	})
 	s.mux.HandleFunc("POST /api/v1/database/users/password", s.handleDBChangePassword)
 	s.mux.HandleFunc("POST /api/v1/database/remote-access", s.handleDBRemoteAccess)
 	s.mux.HandleFunc("GET /api/v1/database/{name}/export", s.handleDBExport)
