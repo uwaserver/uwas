@@ -1,10 +1,12 @@
 name: CI
 
+# CI does not run on every push or pull request. It runs when triggered by
+# hand (Actions tab -> CI -> "Run workflow", or `gh workflow run ci.yml`) and
+# when a release tag (v*) is pushed. See CONTRIBUTING.md -> "CI".
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ["v*"]
 
 # Least privilege: CI only needs to read the repo. Grant write per-job if ever
 # required, never at the top level.

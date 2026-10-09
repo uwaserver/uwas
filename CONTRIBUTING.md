@@ -87,13 +87,42 @@ make test    # go test ./... (parallel, ~4 min)
 make lint    # go vet + staticcheck
 ```
 
-CI runs a separate race detector job (`go test -race`). To run it locally
-before pushing concurrent code:
+CI runs a separate race detector job (`go test -race`). Because CI does not
+run on every push (see [CI](#ci)), run it locally before pushing concurrent
+code:
 
 ```bash
 go test -race ./internal/cache/... ./internal/router/...   # specific packages
 go test -race ./...                                        # all (skip backup: needs MySQL socket)
 ```
+
+### CI
+
+GitHub Actions do **not** run on every push or pull request. They run only
+when triggered:
+
+| Workflow | File | Runs when |
+|---|---|---|
+| CI (vet, staticcheck, govulncheck, tests, race, dashboard, installer, compose) | `.github/workflows/ci.yml` | Manually, or when a `v*` tag is pushed |
+| Docs deploy (GitHub Pages) | `.github/workflows/docs.yml` | Manually, or when a `v*` tag is pushed |
+| Release (validate, build, publish) | `.github/workflows/release.yml` | When a `v*` tag is pushed |
+
+Run CI by hand before merging or releasing:
+
+```bash
+gh workflow run ci.yml --ref main     # or: Actions tab -> CI -> "Run workflow"
+gh run watch                          # follow the run
+gh workflow run docs.yml --ref main   # redeploy docs without a release
+```
+
+Cutting a release runs CI, Docs and Release together:
+
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+Since pushes are not checked automatically, run `make lint`, `make test` and
+`go test -race ./...` locally before pushing.
 
 ### Docker Development
 
@@ -224,7 +253,9 @@ Contributors must follow these rules:
 
 1. All PRs require at least one review before merge.
 2. CI must pass: `go vet` + `staticcheck` + `govulncheck` + `go test` + race
-   detector + dashboard `tsc -b` + docs build.
+   detector + dashboard `tsc -b` + docs build. CI is not triggered by PRs;
+   run it manually on the branch (`gh workflow run ci.yml --ref <branch>`)
+   and link the run in the PR.
 3. Security-sensitive changes (auth, pathsafe, middleware, Dockerfile) require
    extra attention — flag them in the PR description.
 4. Squash-merge to `main`. The commit message should follow the Conventional

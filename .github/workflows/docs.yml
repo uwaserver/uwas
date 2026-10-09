@@ -1,10 +1,11 @@
 name: Deploy Docs
 
+# Docs are deployed by hand (`gh workflow run docs.yml`) or on a release
+# tag (v*), not on every push to main. See CONTRIBUTING.md -> "CI".
 on:
-  push:
-    branches: [main]
-    paths: [docs/site/**]
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"

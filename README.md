@@ -150,7 +150,7 @@ One binary. Zero hassle.
 - **Nginx/Apache Migration** — CLI config converter
 - **Hot-Reload** — All per-domain chains rebuild on SIGHUP (zero downtime)
 - **Self-Update** — Binary auto-update from GitHub releases
-- **CI/CD** — GitHub Actions for build, test, release automation
+- **CI/CD** — GitHub Actions for build, test, release automation (manual or on `v*` release tags, not on every push — see [CONTRIBUTING.md](CONTRIBUTING.md#ci))
 - **Single Binary** — ~16MB, no runtime dependencies, just download and run
 
 ## Install
