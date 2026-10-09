@@ -197,10 +197,13 @@ func sendTelegram(botToken, chatID string, msg Message) error {
 	if err != nil {
 		return err
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, readErr := io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("telegram API returned %d", resp.StatusCode)
+	}
+	if readErr != nil {
+		return fmt.Errorf("read telegram response: %w", readErr)
 	}
 	return nil
 }
@@ -268,7 +271,7 @@ func sendEmail(cfg map[string]string, msg Message) error {
 	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\n\nSource: %s",
 		from, strings.Join(recipients, ", "), subject, msg.Body, msg.Source)
 
-	addr := host + ":" + port
+	addr := net.JoinHostPort(host, port)
 	var auth smtp.Auth
 	if user != "" {
 		auth = smtp.PlainAuth("", user, pass, host)

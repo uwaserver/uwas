@@ -157,7 +157,10 @@ func Update(downloadURL string) error {
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)
 	}
-	exe, _ = evalSymlinksFn(exe)
+	exe, err = evalSymlinksFn(exe)
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
 
 	// Download to temp file
 	client := httpClientFn(5 * time.Minute)
