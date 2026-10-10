@@ -1,6 +1,17 @@
 package admin
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// composeEnv renders one "environment:" list entry as a double-quoted YAML
+// scalar so a user-supplied value cannot change how the compose file parses
+// ("a: b", " #", newlines), and doubles "$" so compose does not interpolate it.
+func composeEnv(key, value string) string {
+	return strconv.Quote(key + "=" + strings.ReplaceAll(value, "$", "$$"))
+}
 
 func composeHeader(_ string) string {
 	return "services:\n"
@@ -33,13 +44,13 @@ func composeN8N(req softwareInstallRequest, tpl softwareTemplate) string {
       - N8N_HOST=%s
       - WEBHOOK_URL=%s
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=%s
-      - N8N_BASIC_AUTH_PASSWORD=%s
+      - %s
+      - %s
     volumes:
       - n8n-data:/home/node/.n8n
 volumes:
   n8n-data:
-`, req.HostPort, tpl.WebPort, req.Domain, webhook, envValue(req, "N8N_BASIC_AUTH_USER", "admin"), envValue(req, "N8N_BASIC_AUTH_PASSWORD", ""))
+`, req.HostPort, tpl.WebPort, req.Domain, webhook, composeEnv("N8N_BASIC_AUTH_USER", envValue(req, "N8N_BASIC_AUTH_USER", "admin")), composeEnv("N8N_BASIC_AUTH_PASSWORD", envValue(req, "N8N_BASIC_AUTH_PASSWORD", "")))
 }
 
 func composeVaultwarden(req softwareInstallRequest, tpl softwareTemplate) string {
@@ -73,9 +84,9 @@ func composePostgresAdminer(req softwareInstallRequest, tpl softwareTemplate) st
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=%s
-      - POSTGRES_USER=%s
-      - POSTGRES_PASSWORD=%s
+      - %s
+      - %s
+      - %s
     volumes:
       - postgres-data:/var/lib/postgresql/data
   adminer:
@@ -87,7 +98,7 @@ func composePostgresAdminer(req softwareInstallRequest, tpl softwareTemplate) st
       - "127.0.0.1:%d:%d"
 volumes:
   postgres-data:
-`, envValue(req, "POSTGRES_DB", "app"), envValue(req, "POSTGRES_USER", "app"), envValue(req, "POSTGRES_PASSWORD", ""), req.HostPort, tpl.WebPort)
+`, composeEnv("POSTGRES_DB", envValue(req, "POSTGRES_DB", "app")), composeEnv("POSTGRES_USER", envValue(req, "POSTGRES_USER", "app")), composeEnv("POSTGRES_PASSWORD", envValue(req, "POSTGRES_PASSWORD", "")), req.HostPort, tpl.WebPort)
 }
 
 func composePostgres(req softwareInstallRequest, tpl softwareTemplate) string {
@@ -95,14 +106,14 @@ func composePostgres(req softwareInstallRequest, tpl softwareTemplate) string {
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=%s
-      - POSTGRES_USER=%s
-      - POSTGRES_PASSWORD=%s
+      - %s
+      - %s
+      - %s
     volumes:
       - postgres-data:/var/lib/postgresql/data
 volumes:
   postgres-data:
-`, envValue(req, "POSTGRES_DB", "app"), envValue(req, "POSTGRES_USER", "app"), envValue(req, "POSTGRES_PASSWORD", ""))
+`, composeEnv("POSTGRES_DB", envValue(req, "POSTGRES_DB", "app")), composeEnv("POSTGRES_USER", envValue(req, "POSTGRES_USER", "app")), composeEnv("POSTGRES_PASSWORD", envValue(req, "POSTGRES_PASSWORD", "")))
 }
 
 func composeMySQL(req softwareInstallRequest, tpl softwareTemplate) string {
@@ -110,15 +121,15 @@ func composeMySQL(req softwareInstallRequest, tpl softwareTemplate) string {
     image: mysql:8
     restart: unless-stopped
     environment:
-      - MYSQL_DATABASE=%s
-      - MYSQL_USER=%s
-      - MYSQL_PASSWORD=%s
-      - MYSQL_ROOT_PASSWORD=%s
+      - %s
+      - %s
+      - %s
+      - %s
     volumes:
       - mysql-data:/var/lib/mysql
 volumes:
   mysql-data:
-`, envValue(req, "MYSQL_DATABASE", "app"), envValue(req, "MYSQL_USER", "app"), envValue(req, "MYSQL_PASSWORD", ""), envValue(req, "MYSQL_ROOT_PASSWORD", ""))
+`, composeEnv("MYSQL_DATABASE", envValue(req, "MYSQL_DATABASE", "app")), composeEnv("MYSQL_USER", envValue(req, "MYSQL_USER", "app")), composeEnv("MYSQL_PASSWORD", envValue(req, "MYSQL_PASSWORD", "")), composeEnv("MYSQL_ROOT_PASSWORD", envValue(req, "MYSQL_ROOT_PASSWORD", "")))
 }
 
 func composeMariaDB(req softwareInstallRequest, tpl softwareTemplate) string {
@@ -126,15 +137,15 @@ func composeMariaDB(req softwareInstallRequest, tpl softwareTemplate) string {
     image: mariadb:11
     restart: unless-stopped
     environment:
-      - MARIADB_DATABASE=%s
-      - MARIADB_USER=%s
-      - MARIADB_PASSWORD=%s
-      - MARIADB_ROOT_PASSWORD=%s
+      - %s
+      - %s
+      - %s
+      - %s
     volumes:
       - mariadb-data:/var/lib/mysql
 volumes:
   mariadb-data:
-`, envValue(req, "MARIADB_DATABASE", "app"), envValue(req, "MARIADB_USER", "app"), envValue(req, "MARIADB_PASSWORD", ""), envValue(req, "MARIADB_ROOT_PASSWORD", ""))
+`, composeEnv("MARIADB_DATABASE", envValue(req, "MARIADB_DATABASE", "app")), composeEnv("MARIADB_USER", envValue(req, "MARIADB_USER", "app")), composeEnv("MARIADB_PASSWORD", envValue(req, "MARIADB_PASSWORD", "")), composeEnv("MARIADB_ROOT_PASSWORD", envValue(req, "MARIADB_ROOT_PASSWORD", "")))
 }
 
 func composeMinIO(req softwareInstallRequest, tpl softwareTemplate) string {
@@ -145,13 +156,13 @@ func composeMinIO(req softwareInstallRequest, tpl softwareTemplate) string {
     ports:
       - "127.0.0.1:%d:9001"
     environment:
-      - MINIO_ROOT_USER=%s
-      - MINIO_ROOT_PASSWORD=%s
+      - %s
+      - %s
     volumes:
       - minio-data:/data
 volumes:
   minio-data:
-`, req.HostPort, envValue(req, "MINIO_ROOT_USER", "admin"), envValue(req, "MINIO_ROOT_PASSWORD", ""))
+`, req.HostPort, composeEnv("MINIO_ROOT_USER", envValue(req, "MINIO_ROOT_USER", "admin")), composeEnv("MINIO_ROOT_PASSWORD", envValue(req, "MINIO_ROOT_PASSWORD", "")))
 }
 
 func composeRedis(req softwareInstallRequest, tpl softwareTemplate) string {

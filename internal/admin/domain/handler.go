@@ -359,15 +359,20 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 			h.deps.LogWarn("failed to create web root", "path", d.Root, "error", err)
 		}
 		idx := filepath.Join(d.Root, "index.html")
-		if _, err := os.Stat(idx); os.IsNotExist(err) {
-			placeholder := fmt.Sprintf(`<!DOCTYPE html>
+		placeholder := fmt.Sprintf(`<!DOCTYPE html>
 <html><head><title>%s</title></head>
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0">
 <div style="text-align:center"><h1>%s</h1><p style="color:#94a3b8">Site is ready. Upload your files via SFTP or place them in:<br><code>%s</code></p></div>
 </body></html>`, d.Host, d.Host, d.Root)
-			if err := os.WriteFile(idx, []byte(placeholder), 0644); err != nil {
+		// O_EXCL: a symlink (even a dangling one planted in a reused
+		// docroot) must never be followed to create a file elsewhere.
+		if f, err := os.OpenFile(idx, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644); err == nil {
+			if _, err := f.WriteString(placeholder); err != nil {
 				h.deps.LogWarn("failed to write domain placeholder index.html", "path", idx, "error", err)
 			}
+			f.Close()
+		} else if !os.IsExist(err) {
+			h.deps.LogWarn("failed to write domain placeholder index.html", "path", idx, "error", err)
 		}
 		if runtime.GOOS == "linux" {
 			parentDir := filepath.Dir(d.Root)

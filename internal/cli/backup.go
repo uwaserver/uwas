@@ -51,11 +51,16 @@ func (b *BackupCommand) Run(args []string) error {
 }
 
 func createBackup(output, configPath, certsDir string) error {
-	outFile, err := os.Create(output)
+	// The archive bundles the config (API key, secrets) and TLS private keys,
+	// so it must not be readable by other local users (os.Create gives 0644).
+	outFile, err := os.OpenFile(output, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("create backup file: %w", err)
 	}
 	defer outFile.Close()
+	if err := outFile.Chmod(0o600); err != nil {
+		return fmt.Errorf("chmod backup file: %w", err)
+	}
 
 	gw := gzip.NewWriter(outFile)
 	tw := tar.NewWriter(gw)
