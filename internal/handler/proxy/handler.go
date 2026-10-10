@@ -325,6 +325,7 @@ func (h *Handler) Serve(ctx *router.RequestContext, domain *config.Domain, pool 
 		// values UWAS just wrote (the location proxy in internal/server
 		// already uses this order).
 		removeHopByHop(proxyReq.Header)
+		stripClientForwarded(proxyReq.Header)
 
 		// Add proxy headers
 		proxyReq.Header.Set("X-Forwarded-For", clientIP(ctx.Request))
@@ -599,6 +600,30 @@ func classifyUpstreamErr(err error) string {
 	return "upstream connection failed"
 }
 
+// clientForwardedHeaders are forwarding headers UWAS never writes itself.
+// Backends such as Spring's ForwardedHeaderFilter prefer them over the
+// X-Forwarded-For/Proto/Host values UWAS sets, so a client-supplied copy would
+// let the client choose the address, scheme, host or path prefix the app sees.
+var clientForwardedHeaders = []string{
+	"Forwarded", "X-Forwarded-Port", "X-Forwarded-Prefix",
+	"X-Forwarded-Server", "X-Forwarded-Ssl", "X-Forwarded-Scheme",
+}
+
+func isClientForwardedHeader(key string) bool {
+	for _, n := range clientForwardedHeaders {
+		if strings.EqualFold(key, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func stripClientForwarded(h http.Header) {
+	for _, n := range clientForwardedHeaders {
+		h.Del(n)
+	}
+}
+
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -750,7 +775,8 @@ func (h *Handler) serveWebSocketWithOptions(ctx *router.RequestContext, backend 
 	for key, vals := range ctx.Request.Header {
 		lk := strings.ToLower(key)
 		if lk == "x-forwarded-for" || lk == "x-real-ip" ||
-			lk == "x-forwarded-proto" || lk == "x-forwarded-host" {
+			lk == "x-forwarded-proto" || lk == "x-forwarded-host" ||
+			isClientForwardedHeader(key) {
 			continue
 		}
 		for _, v := range vals {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,9 @@ func NewDiskCache(baseDir string, maxBytes int64) *DiskCache {
 			if err := os.Chmod(path, 0750); err != nil {
 				log.Printf("cache: failed to harden dir permissions: %v", err)
 			}
+			return nil
+		}
+		if removeOrphanTemp(path, d) {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 || filepath.Ext(path) != ".cache" {
@@ -249,6 +253,9 @@ func (dc *DiskCache) cleanExpired() {
 		if err != nil || d.IsDir() || d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
+		if removeOrphanTemp(path, d) {
+			return nil
+		}
 		if filepath.Ext(path) != ".cache" {
 			return nil
 		}
@@ -267,6 +274,20 @@ func (dc *DiskCache) cleanExpired() {
 		}
 		return nil
 	})
+}
+
+// removeOrphanTemp deletes a ".uwas-cache-*" temp file left by a Set that was
+// killed between CreateTemp and Rename. Callers run before any Set exists or
+// under dc.mu, and Set holds dc.mu for the whole temp-file lifetime, so any such
+// file seen here is dead. It reports whether path was one.
+func removeOrphanTemp(path string, d fs.DirEntry) bool {
+	if d.IsDir() || d.Type()&os.ModeSymlink != 0 || !strings.HasPrefix(d.Name(), ".uwas-cache-") {
+		return false
+	}
+	if err := os.Remove(path); err != nil {
+		log.Printf("cache: orphan temp file removal failed: %v", err)
+	}
+	return true
 }
 
 func (dc *DiskCache) subtractUsedBytes(size int64) {

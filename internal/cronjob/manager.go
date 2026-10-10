@@ -332,7 +332,7 @@ func parseCronLine(line string) Job {
 	if len(parts) >= 2 && strings.HasPrefix(parts[0], "@") {
 		return Job{
 			Schedule: parts[0],
-			Command:  unescape(strings.Join(parts[1:], " ")),
+			Command:  unescape(restAfterFields(line, 1)),
 		}
 	}
 	if len(parts) < 6 {
@@ -340,6 +340,22 @@ func parseCronLine(line string) Job {
 	}
 	return Job{
 		Schedule: strings.Join(parts[:5], " "),
-		Command:  unescape(strings.Join(parts[5:], " ")),
+		Command:  unescape(restAfterFields(line, 5)),
 	}
+}
+
+// restAfterFields returns line (already trimmed) with its first n
+// whitespace-separated fields removed, keeping the remainder byte-for-byte so
+// runs of spaces inside the command survive a crontab round trip.
+func restAfterFields(line string, n int) string {
+	rest := line
+	for i := 0; i < n; i++ {
+		rest = strings.TrimLeft(rest, " \t")
+		end := strings.IndexAny(rest, " \t")
+		if end < 0 {
+			return ""
+		}
+		rest = rest[end:]
+	}
+	return strings.TrimLeft(rest, " \t")
 }

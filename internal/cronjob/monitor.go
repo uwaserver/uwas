@@ -530,8 +530,24 @@ func (m *Monitor) saveHistory() {
 		slog.Warn("cronjob: failed to marshal history", "file", file, "error", err)
 		return
 	}
-	if err := os.WriteFile(file, data, 0644); err != nil {
+	// The history holds every job's captured output and lives in the shared
+	// web root, so it is written owner-only; a temp file + rename also keeps
+	// an older 0644 file from lingering and never leaves a torn file.
+	tmp, err := os.CreateTemp(dir, "cron_history.json.tmp-*")
+	if err != nil {
 		slog.Warn("cronjob: failed to write history", "file", file, "error", err)
+		return
+	}
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr == nil && cerr == nil {
+		werr = os.Rename(tmp.Name(), file)
+	} else if werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(tmp.Name())
+		slog.Warn("cronjob: failed to write history", "file", file, "error", werr)
 	}
 }
 
