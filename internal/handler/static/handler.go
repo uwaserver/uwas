@@ -94,6 +94,13 @@ func (h *Handler) Serve(ctx *router.RequestContext) {
 			return
 		}
 	}
+	// Only regular files are served. Opening a FIFO a tenant placed in the
+	// docroot would park this request in open(2) indefinitely; devices and
+	// sockets are never legitimate static content either.
+	if !info.Mode().IsRegular() {
+		w.Error(http.StatusNotFound, "404 Not Found")
+		return
+	}
 
 	// Set content type with charset for text types
 	ct := h.mime.Lookup(path)
@@ -213,7 +220,7 @@ func (h *Handler) servePreCompressed(w *router.ResponseWriter, r *http.Request, 
 			continue
 		}
 		compInfo, err := os.Stat(compPath)
-		if err != nil || compInfo.IsDir() {
+		if err != nil || !compInfo.Mode().IsRegular() {
 			continue
 		}
 		// A stale compressed artifact must not override an updated source file.
@@ -275,7 +282,9 @@ func acceptsEncoding(header, coding string) bool {
 			name = strings.TrimSpace(part[:i])
 			for _, p := range strings.Split(part[i+1:], ";") {
 				p = strings.TrimSpace(p)
-				if v, ok := strings.CutPrefix(p, "q="); ok {
+				// The parameter name is case-insensitive (RFC 9110 §12.4.2).
+				if len(p) >= 2 && (p[0] == 'q' || p[0] == 'Q') && p[1] == '=' {
+					v := p[2:]
 					if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 						q = f
 					}

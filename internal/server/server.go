@@ -398,6 +398,11 @@ func New(cfg *config.Config, log *logger.Logger) *Server {
 			if s.bwMgr != nil {
 				s.bwMgr.UpdateDomains(domains)
 			}
+			// Keep the uptime monitor in step: probe added domains and
+			// stop probing (and reporting) deleted ones (F811).
+			if s.monitor != nil {
+				s.monitor.UpdateDomains(domains)
+			}
 			// Obtain certs for any new auto-SSL domains.
 			go s.tlsMgr.ObtainCerts(s.ctx)
 

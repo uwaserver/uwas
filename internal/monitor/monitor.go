@@ -57,6 +57,11 @@ var monitorDialControl = config.SafeDialControl
 type Monitor struct {
 	domainsMu sync.RWMutex
 	domains   []config.Domain
+	// hosts is the set of configured hosts and gen counts UpdateDomains
+	// calls, both guarded by domainsMu. A check that finishes after its host
+	// was removed is not stored.
+	hosts     map[string]struct{}
+	gen       uint64
 	logger    *logger.Logger
 	resultsMu sync.RWMutex
 	results   map[string]*HealthResult // host -> *HealthResult
@@ -105,6 +110,7 @@ func New(domains []config.Domain, log *logger.Logger) *Monitor {
 	}).DialContext
 	return &Monitor{
 		domains: append([]config.Domain(nil), domains...),
+		hosts:   hostSet(domains),
 		logger:  log,
 		results: make(map[string]*HealthResult),
 		client: &http.Client{
@@ -121,11 +127,30 @@ func New(domains []config.Domain, log *logger.Logger) *Monitor {
 	}
 }
 
-// UpdateDomains updates the domain list for health monitoring.
+// UpdateDomains updates the domain list for health monitoring and drops the
+// stored results of domains that are no longer configured, so a deleted
+// domain stops being reported and a re-added one starts with a clean history.
 func (m *Monitor) UpdateDomains(domains []config.Domain) {
 	m.domainsMu.Lock()
+	defer m.domainsMu.Unlock()
 	m.domains = append([]config.Domain(nil), domains...)
-	m.domainsMu.Unlock()
+	m.hosts = hostSet(domains)
+	m.gen++
+	m.resultsMu.Lock()
+	for host := range m.results {
+		if _, ok := m.hosts[host]; !ok {
+			delete(m.results, host)
+		}
+	}
+	m.resultsMu.Unlock()
+}
+
+func hostSet(domains []config.Domain) map[string]struct{} {
+	set := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		set[d.Host] = struct{}{}
+	}
+	return set
 }
 
 func (m *Monitor) snapshotDomains() []config.Domain {
@@ -200,6 +225,10 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 		return
 	}
 
+	m.domainsMu.RLock()
+	startGen := m.gen
+	m.domainsMu.RUnlock()
+
 	// Per-check deadline bounded by both checkTimeout and the parent context
 	// so a shutdown does not leave HTTP calls hanging in flight.
 	reqCtx, cancel := context.WithTimeout(ctx, checkTimeout)
@@ -244,7 +273,14 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 		}
 	}
 
-	// Load or create result under lock.
+	// Load or create result under lock. A check that was in flight when its
+	// domain was removed must not bring the result back (lock order:
+	// domainsMu, then resultsMu, as in UpdateDomains).
+	m.domainsMu.RLock()
+	if _, configured := m.hosts[d.Host]; !configured && m.gen != startGen {
+		m.domainsMu.RUnlock()
+		return
+	}
 	m.resultsMu.Lock()
 	result, ok := m.results[d.Host]
 	if !ok {
@@ -276,6 +312,7 @@ func (m *Monitor) checkDomain(ctx context.Context, d config.Domain) {
 	result.Uptime = calculateUptime(result.Checks)
 	fails := result.consecutiveFail
 	m.resultsMu.Unlock()
+	m.domainsMu.RUnlock()
 
 	if status != "up" {
 		m.logger.Warn("domain health check",

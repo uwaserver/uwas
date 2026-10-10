@@ -5,10 +5,13 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/backup"
@@ -179,7 +182,13 @@ func (h *Handler) DomainBackup(w http.ResponseWriter, r *http.Request) {
 	// Try to detect DB name from wp-config.php
 	var dbName string
 	wpConfig := filepath.Join(webRoot, "wp-config.php")
-	if data, err := os.ReadFile(wpConfig); err == nil {
+	data, err := readWPConfig(wpConfig)
+	if err != nil {
+		h.deps.RecordAudit(r, "backup.domain", req.Domain+": "+err.Error(), false)
+		jsonError(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if data != nil {
 		var unresolved bool
 		if dbName, unresolved = wpConfigDBName(string(data)); unresolved {
 			h.deps.RecordAudit(r, "backup.domain", req.Domain+": DB_NAME in wp-config.php is not a string literal", false)
@@ -198,6 +207,39 @@ func (h *Handler) DomainBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	jsonEncode(w, info)
+}
+
+// maxWPConfigSize bounds the wp-config.php read; real files are a few KiB.
+const maxWPConfigSize = 1 << 20
+
+// readWPConfig reads the tenant-controlled wp-config.php without following a
+// symlink (which would dump another site's database into this archive) and
+// without opening anything but a regular file (a FIFO blocks open forever).
+// A missing file returns nil, nil; other open/read errors are ignored as before.
+func readWPConfig(path string) ([]byte, error) {
+	li, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil
+	}
+	if !li.Mode().IsRegular() {
+		return nil, fmt.Errorf("wp-config.php is not a regular file; refusing to read it")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !os.SameFile(li, fi) {
+		return nil, fmt.Errorf("wp-config.php changed while being read")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxWPConfigSize+1))
+	if err != nil {
+		return nil, nil
+	}
+	if len(data) > maxWPConfigSize {
+		return nil, fmt.Errorf("wp-config.php is larger than %d bytes", maxWPConfigSize)
+	}
+	return data, nil
 }
 
 var (
@@ -328,11 +370,10 @@ func (h *Handler) SchedulePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Keep > 0 {
-		mgr.SetKeepCount(req.Keep)
-	}
-
 	if req.Enabled != nil && !*req.Enabled {
+		if req.Keep > 0 {
+			mgr.SetKeepCount(req.Keep)
+		}
 		mgr.ScheduleBackup(0)
 		h.deps.RecordAudit(r, "backup.schedule", "disabled", true)
 		jsonResponse(w, mgr.ScheduleDetail())
@@ -343,24 +384,38 @@ func (h *Handler) SchedulePut(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "interval is required", http.StatusBadRequest)
 		return
 	}
-	d, err := time.ParseDuration(req.Interval)
+	d, err := parseScheduleInterval(req.Interval)
 	if err != nil {
-		switch req.Interval {
-		case "7d":
-			d = 7 * 24 * time.Hour
-		default:
-			jsonError(w, "invalid interval: "+err.Error(), http.StatusBadRequest)
-			return
-		}
+		jsonError(w, "invalid interval: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 	if d < time.Minute {
 		jsonError(w, "interval must be at least 1m", http.StatusBadRequest)
 		return
 	}
 
+	// Apply only after validation so a rejected request changes nothing.
+	if req.Keep > 0 {
+		mgr.SetKeepCount(req.Keep)
+	}
 	mgr.ScheduleBackup(d)
 	h.deps.RecordAudit(r, "backup.schedule", "interval: "+d.String(), true)
 	jsonResponse(w, mgr.ScheduleDetail())
+}
+
+// parseScheduleInterval accepts a Go duration or the "<N>d" day shorthand that
+// ScheduleGet itself reports (e.g. "1d" for 24h), so GET → PUT round-trips.
+func parseScheduleInterval(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err == nil {
+		return d, nil
+	}
+	if n, ok := strings.CutSuffix(s, "d"); ok && n != "" {
+		if days, convErr := strconv.Atoi(n); convErr == nil && days > 0 && days <= 3650 {
+			return time.Duration(days) * 24 * time.Hour, nil
+		}
+	}
+	return 0, err
 }
 
 // Ensure fmt is used (for potential future error wrapping).

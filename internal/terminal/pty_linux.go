@@ -63,7 +63,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Make the PTY the shell's controlling terminal (Ctty is the child's fd 0,
+	// the slave). Setsid alone left the new session without a terminal, so the
+	// line discipline had no foreground process group to signal: Ctrl+C never
+	// interrupted a running program, and on disconnect the kernel never hung up
+	// the session, leaving the shell's children running after it was gone.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	if err := cmd.Start(); err != nil {

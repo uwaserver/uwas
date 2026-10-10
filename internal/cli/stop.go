@@ -60,6 +60,9 @@ func (s *StopCommand) Run(args []string) error {
 	if pid <= 0 {
 		return fmt.Errorf("invalid PID %d in %s", pid, pidFile)
 	}
+	if err := checkUWASPIDFn(pid); err != nil {
+		return fmt.Errorf("refusing to signal PID %d from %s: %w", pid, pidFile, err)
+	}
 
 	process, err := osFindProcessFn(pid)
 	if err != nil {

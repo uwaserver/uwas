@@ -2,6 +2,7 @@ package fastcgi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -75,8 +76,11 @@ func (h *Handler) ServeWith(ctx *router.RequestContext, domain *config.Domain, f
 	if err != nil {
 		// Retry once for GET/HEAD — stale pooled connections cause immediate read/write errors.
 		// PHP-FPM may close idle connections without UWAS noticing.
-		// Only retry bodyless requests since request body (stdin) can't be replayed.
-		if stdin == nil && isRetriable(err) {
+		// Only retry bodyless requests since request body (stdin) can't be replayed,
+		// and only when the failure came from a reused idle connection before any
+		// response record: otherwise the request was delivered and the script may
+		// already have run (worker killed or crashed), so a retry runs it twice.
+		if stdin == nil && errors.Is(err, fastcgi.ErrStaleConn) && isRetriable(err) {
 			h.logger.Warn("fastcgi retry on stale connection",
 				"host", domain.Host,
 				"script", scriptFilename,

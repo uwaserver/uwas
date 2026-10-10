@@ -82,6 +82,9 @@ func (p *S3Provider) Upload(ctx context.Context, filename string, data io.Reader
 }
 
 func (p *S3Provider) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
+	if err := safeBackupFilename(filename); err != nil {
+		return nil, err
+	}
 	url := p.objectURL(filename)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

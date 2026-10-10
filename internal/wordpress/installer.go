@@ -35,7 +35,7 @@ var (
 	execLookPathFn = exec.LookPath
 	httpGetFn      = downloadClient.Get
 	osStatFn       = os.Stat
-	osReadFileFn   = os.ReadFile
+	osReadFileFn   = readFileNoFollow
 	osWriteFileFn  = writeFileNoFollow
 	osMkdirAllFn   = os.MkdirAll
 	osRemoveAllFn  = os.RemoveAll
@@ -58,6 +58,41 @@ func writeFileNoFollow(name string, data []byte, perm os.FileMode) error {
 		err = err1
 	}
 	return err
+}
+
+// maxReadFileSize bounds readFileNoFollow; WordPress config and core files are
+// far below it.
+const maxReadFileSize = 16 << 20
+
+// readFileNoFollow is os.ReadFile for files in a tenant-writable document root
+// read by the server process: a final-component symlink is refused (a planted
+// wp-config.php -> another tenant's config would otherwise be parsed and its
+// DB settings echoed back), the open never blocks on a FIFO, only regular
+// files are read, and the size is bounded.
+func readFileNoFollow(name string) ([]byte, error) {
+	f, err := os.OpenFile(name, os.O_RDONLY|noFollowFlag|nonBlockFlag, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: not a regular file", filepath.Base(name))
+	}
+	if fi.Size() > maxReadFileSize {
+		return nil, fmt.Errorf("%s: file too large", filepath.Base(name))
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxReadFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxReadFileSize {
+		return nil, fmt.Errorf("%s: file too large", filepath.Base(name))
+	}
+	return data, nil
 }
 
 // escSQL escapes a string for use inside SQL single-quoted literals.

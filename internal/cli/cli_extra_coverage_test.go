@@ -768,6 +768,10 @@ func TestStopCommand_FindProcessError(t *testing.T) {
 		return nil, os.ErrPermission
 	}
 	t.Cleanup(func() { osFindProcessFn = origFind })
+	// PID 4242 is fictional; skip the uwas-identity check to reach FindProcess.
+	origCheck := checkUWASPIDFn
+	checkUWASPIDFn = func(int) error { return nil }
+	t.Cleanup(func() { checkUWASPIDFn = origCheck })
 
 	var err error
 	_ = captureStdout(t, func() {

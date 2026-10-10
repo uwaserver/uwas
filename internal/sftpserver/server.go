@@ -97,6 +97,7 @@ func (s *Server) Start() error {
 				Extensions: map[string]string{
 					"root":      user.Root,
 					"read_only": fmt.Sprintf("%v", user.ReadOnly),
+					"pw_hash":   user.Password,
 				},
 			}, nil
 		},
@@ -216,11 +217,11 @@ func (s *Server) handleConn(nConn net.Conn) {
 			continue
 		}
 
-		go s.handleSession(ch, requests, sshConn.Permissions)
+		go s.handleSession(ch, requests, sshConn.Permissions, sshConn.User())
 	}
 }
 
-func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *ssh.Permissions) {
+func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *ssh.Permissions, sshUser string) {
 	defer ch.Close()
 	// A panic in the SFTP protocol handlers would otherwise propagate up this
 	// goroutine and kill the whole process; contain it to this session.
@@ -241,9 +242,23 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request, perms *
 
 		root := perms.Extensions["root"]
 		readOnly := perms.Extensions["read_only"] == "true"
-		s.serveSFTP(ch, root, readOnly)
+		hash := perms.Extensions["pw_hash"]
+		s.serveSFTPChecked(ch, root, readOnly, func() bool {
+			return s.sessionStillValid(sshUser, root, readOnly, hash)
+		})
 		return
 	}
+}
+
+// sessionStillValid reports whether the account a session authenticated as
+// still exists with the same root, access mode and password hash. Permissions
+// are captured at login, so without this a removed, re-rooted or re-passworded
+// user kept full access for as long as the connection stayed open.
+func (s *Server) sessionStillValid(user, root string, readOnly bool, hash string) bool {
+	s.mu.RLock()
+	u, ok := s.users[user]
+	s.mu.RUnlock()
+	return ok && u.Root == root && u.ReadOnly == readOnly && u.Password == hash
 }
 
 // --- SFTP Protocol Implementation ---
@@ -298,6 +313,11 @@ const (
 // 256 KiB) for large upload or cache folders; OpenSSH's own server uses 100.
 const readDirBatch = 100
 
+// maxSessionHandles caps open file and directory handles per session (OpenSSH
+// allows 100). Each file handle holds a descriptor from a process-wide pool,
+// so one account could otherwise exhaust it for every site.
+const maxSessionHandles = 256
+
 // pflags
 const (
 	sshFXFRead      = 0x00000001
@@ -326,6 +346,12 @@ type openHandle struct {
 }
 
 func (s *Server) serveSFTP(ch ssh.Channel, root string, readOnly bool) {
+	s.serveSFTPChecked(ch, root, readOnly, nil)
+}
+
+// serveSFTPChecked serves a session and, when valid is non-nil, ends it before
+// handling any packet once valid reports false.
+func (s *Server) serveSFTPChecked(ch ssh.Channel, root string, readOnly bool, valid func() bool) {
 	sess := &sftpSession{
 		ch:       ch,
 		root:     root,
@@ -346,6 +372,9 @@ func (s *Server) serveSFTP(ch ssh.Channel, root string, readOnly bool) {
 	for {
 		pktType, id, payload, err := sess.readPacket()
 		if err != nil {
+			return
+		}
+		if valid != nil && !valid() {
 			return
 		}
 
@@ -617,6 +646,10 @@ func (sess *sftpSession) handleOpenDir(id uint32, payload []byte) {
 		sess.sendStatus(id, sshFXNoSuchFile, "not a directory")
 		return
 	}
+	if len(sess.handles) >= maxSessionHandles {
+		sess.sendStatus(id, sshFXFailure, "too many open handles")
+		return
+	}
 	handle := sess.newHandle(&openHandle{path: safe, isDir: true})
 	sess.sendHandle(id, handle)
 }
@@ -682,6 +715,11 @@ func (sess *sftpSession) handleOpen(id uint32, payload []byte) {
 
 	if sess.readOnly && (pflags&(sshFXFWrite|sshFXFCreat|sshFXFTrunc|sshFXFAppend)) != 0 {
 		sess.sendStatus(id, sshFXPermissionDenied, "read only")
+		return
+	}
+
+	if len(sess.handles) >= maxSessionHandles {
+		sess.sendStatus(id, sshFXFailure, "too many open handles")
 		return
 	}
 

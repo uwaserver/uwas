@@ -290,6 +290,25 @@ func (r *Runner) Stop(tunnelID string) error {
 	return nil
 }
 
+// StopAll stops every tracked cloudflared process and prevents their
+// auto-restart. Called on shutdown so connectors do not outlive uwas as
+// untracked orphans that keep forwarding traffic.
+func (r *Runner) StopAll() error {
+	r.mu.Lock()
+	ids := make([]string, 0, len(r.procs))
+	for id := range r.procs {
+		ids = append(ids, id)
+	}
+	r.mu.Unlock()
+	var errs []error
+	for _, id := range ids {
+		if err := r.Stop(id); err != nil {
+			errs = append(errs, fmt.Errorf("tunnel %s: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Forget removes a tunnel from the runner's tracking (after a Delete).
 func (r *Runner) Forget(tunnelID string) {
 	r.mu.Lock()

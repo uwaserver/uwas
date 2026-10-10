@@ -35,6 +35,13 @@ var (
 // discarded: everything after the cap is unread garbage.
 var ErrResponseTooLarge = errors.New("fastcgi: response exceeds size limit")
 
+// ErrStaleConn marks an Execute failure on a connection reused from the idle
+// pool before any response record arrived — the signature of a peer that
+// closed the connection while it sat idle. Only such failures are safe to
+// retry: on a fresh connection, or once the peer has answered, the request
+// was delivered and may already have run.
+var ErrStaleConn = errors.New("fastcgi: stale pooled connection")
+
 // Client sends requests to a FastCGI server via a connection pool.
 type Client struct {
 	pool *Pool
@@ -55,11 +62,18 @@ type Response struct {
 }
 
 // Execute sends a FastCGI request and returns the response.
-func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Reader) (*Response, error) {
+func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Reader) (_ *Response, err error) {
 	cn, err := c.pool.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get connection: %w", err)
 	}
+
+	gotRecord := false
+	defer func() {
+		if err != nil && cn.reused && !gotRecord && ctx.Err() == nil {
+			err = fmt.Errorf("%w: %w", err, ErrStaleConn)
+		}
+	}()
 
 	// Track whether the connection is healthy for deferred cleanup decision.
 	// If broken is true, we discard the connection; otherwise return it to pool.
@@ -171,6 +185,7 @@ func (c *Client) Execute(ctx context.Context, env map[string]string, stdin io.Re
 			broken = true
 			return nil, fmt.Errorf("read record: %w", err)
 		}
+		gotRecord = true
 
 		switch rec.Type {
 		case TypeStdout:

@@ -723,7 +723,7 @@ func MatchRedirect(rule RedirectRule, urlPath string) (location string, status i
 		if m == nil {
 			return "", 0, false
 		}
-		return expandBackrefs(rule.Target, m), status, true
+		return sameHostRedirectPath(expandBackrefs(rule.Target, m)), status, true
 	}
 	if !strings.HasPrefix(urlPath, rule.Pattern) {
 		return "", 0, false
@@ -732,7 +732,21 @@ func MatchRedirect(rule RedirectRule, urlPath string) (location string, status i
 		// The "gone" form has no target: report gone, no Location.
 		return "", status, true
 	}
-	return rule.Target + urlPath[len(rule.Pattern):], status, true
+	return sameHostRedirectPath(rule.Target + urlPath[len(rule.Pattern):]), status, true
+}
+
+// sameHostRedirectPath collapses the leading run of '/' and '\\' in a
+// scheme-less redirect target to a single '/'. The Location is built from the
+// decoded request path (suffix append, $N backrefs), so "Redirect 301 /old /"
+// on "/old/evil.com" or "/old/%5Cevil.com" would otherwise yield the
+// protocol-relative "//evil.com" (browsers treat "/\" the same way) — an
+// off-site redirect. Apache prepends this server's scheme and host to URL-path
+// targets, so the redirect stays on this host there too.
+func sameHostRedirectPath(loc string) string {
+	if loc == "" || (loc[0] != '/' && loc[0] != '\\') {
+		return loc
+	}
+	return "/" + strings.TrimLeft(loc, "/\\")
 }
 
 // expandBackrefs replaces $1..$9 in target with the corresponding regexp
@@ -768,18 +782,8 @@ func FilesMatchDenies(rules *RuleSet, filename string) bool {
 		return false
 	}
 	for _, block := range rules.FilesMatch {
-		if block.Pattern == "" {
+		if block.Pattern == "" || !filesBlockMatches(block, filename) {
 			continue
-		}
-		if block.IsGlob {
-			if ok, err := path.Match(block.Pattern, filename); err != nil || !ok {
-				continue
-			}
-		} else {
-			re, err := regexp.Compile(block.Pattern)
-			if err != nil || !re.MatchString(filename) {
-				continue
-			}
 		}
 		if directivesDeny(block.Directives) {
 			return true
@@ -798,24 +802,31 @@ func FilesMatchDeniesFor(rules *RuleSet, filename string, ip net.IP) bool {
 		return false
 	}
 	for _, block := range rules.FilesMatch {
-		if block.Pattern == "" {
+		if block.Pattern == "" || !filesBlockMatches(block, filename) {
 			continue
-		}
-		if block.IsGlob {
-			if ok, err := path.Match(block.Pattern, filename); err != nil || !ok {
-				continue
-			}
-		} else {
-			re, err := regexp.Compile(block.Pattern)
-			if err != nil || !re.MatchString(filename) {
-				continue
-			}
 		}
 		if evalAccess(block.Directives, ip) == AccessDenied {
 			return true
 		}
 	}
 	return false
+}
+
+// filesBlockMatches reports whether a <Files>/<FilesMatch> block applies to
+// filename. A regex RE2 cannot compile — a PCRE-only construct such as the
+// common "^(?!index\.php$).*\.php$" lookahead, or a typo Apache would refuse
+// to load — is treated as matching every file, so the block's deny fails
+// closed instead of being silently dropped.
+func filesBlockMatches(block FilesMatchBlock, filename string) bool {
+	if block.IsGlob {
+		ok, err := path.Match(block.Pattern, filename)
+		return err == nil && ok
+	}
+	re, err := regexp.Compile(block.Pattern)
+	if err != nil {
+		return true
+	}
+	return re.MatchString(filename)
 }
 
 // directivesDeny reports whether ds carries a deny directive, descending into

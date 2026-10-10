@@ -169,7 +169,12 @@ func (w *Watchdog) tick(ctx context.Context) {
 		if w.fails.Swap(0) > 0 {
 			w.log.Info("watchdog probe recovered")
 		}
-		w.healthy.Store(true)
+		if !w.healthy.Swap(true) {
+			// The unresponsive status went out when the threshold was hit;
+			// clear it (an empty STATUS= resets it) so systemctl status
+			// stops reporting a server that answers again.
+			_ = w.notifier.Send("STATUS=")
+		}
 		if e := w.notifier.Send("WATCHDOG=1"); e != nil && !w.notifier.Available() {
 			// No systemd; nothing to do but keep probing.
 			_ = e

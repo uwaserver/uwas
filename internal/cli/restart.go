@@ -81,6 +81,9 @@ func (r *RestartCommand) Run(args []string) error {
 	if pid <= 0 {
 		return fmt.Errorf("invalid PID %d in %s", pid, *pidFile)
 	}
+	if err := checkUWASPIDFn(pid); err != nil {
+		return fmt.Errorf("refusing to signal PID %d from %s: %w", pid, *pidFile, err)
+	}
 
 	// Find the process
 	process, err := os.FindProcess(pid)

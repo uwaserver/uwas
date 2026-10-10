@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/uwaserver/uwas/internal/config"
@@ -31,7 +32,16 @@ type Mirror struct {
 	allowPrivateUpstreams bool
 	logger                *logger.Logger
 	transport             *http.Transport
+
+	// sem bounds the copies in flight: mirroring is best effort, so when the
+	// shadow backend is slower than live traffic the excess is shed instead of
+	// piling up goroutines, connections and buffered bodies.
+	sem     chan struct{}
+	dropped atomic.Int64
 }
+
+// maxMirrorInflight is the most mirrored copies a Mirror keeps in flight.
+const maxMirrorInflight = 64
 
 // NewMirror creates a new Mirror instance.
 func NewMirror(cfg MirrorConfig, log *logger.Logger) *Mirror {
@@ -45,6 +55,7 @@ func NewMirror(cfg MirrorConfig, log *logger.Logger) *Mirror {
 		maxBytes:              maxBytes,
 		allowPrivateUpstreams: cfg.AllowPrivateUpstreams,
 		logger:                log,
+		sem:                   make(chan struct{}, maxMirrorInflight),
 		transport: &http.Transport{
 			DialContext: (&net.Dialer{
 				Timeout: 5 * time.Second,
@@ -83,12 +94,33 @@ func (m *Mirror) Send(originalReq *http.Request, bodyBytes []byte) {
 		return
 	}
 
-	go m.doMirror(originalReq, bodyBytes)
+	select {
+	case m.sem <- struct{}{}:
+	default:
+		m.dropped.Add(1)
+		return
+	}
+	go func() {
+		defer func() { <-m.sem }()
+		m.doMirror(originalReq, bodyBytes)
+	}()
+}
+
+// Dropped returns how many copies were shed because maxMirrorInflight were
+// already in flight.
+func (m *Mirror) Dropped() int64 {
+	return m.dropped.Load()
 }
 
 func (m *Mirror) doMirror(originalReq *http.Request, bodyBytes []byte) {
 	// Build mirror URL
-	mirrorURL := strings.TrimRight(m.backend, "/") + originalReq.URL.RequestURI()
+	// RequestURI has no leading "/" after a relative rewrite target; without
+	// one the concatenation would change the host ("http://shadow" + "@h/x").
+	uri := originalReq.URL.RequestURI()
+	if !strings.HasPrefix(uri, "/") {
+		uri = "/" + uri
+	}
+	mirrorURL := strings.TrimRight(m.backend, "/") + uri
 	if err := m.validateBackendURL(mirrorURL); err != nil {
 		m.logger.Warn("mirror: upstream blocked by SSRF protection", "url", mirrorURL, "error", err)
 		return
@@ -115,11 +147,12 @@ func (m *Mirror) doMirror(originalReq *http.Request, bodyBytes []byte) {
 		}
 	}
 
+	// Remove hop-by-hop headers first: they include any header the client
+	// names in Connection, which would otherwise delete the marker below.
+	removeHopByHop(req.Header)
+
 	// Mark as mirrored so the mirror backend can identify these
 	req.Header.Set("X-Mirror", "true")
-
-	// Remove hop-by-hop headers
-	removeHopByHop(req.Header)
 
 	resp, err := m.transport.RoundTrip(req)
 	if err != nil {

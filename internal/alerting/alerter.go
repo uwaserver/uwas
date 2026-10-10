@@ -3,10 +3,12 @@ package alerting
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -132,7 +134,7 @@ func (a *Alerter) Alert(alert Alert) {
 	if a.webhookURL != "" {
 		go func() {
 			if err := a.sendWebhook(alert); err != nil {
-				a.logger.Warn("webhook delivery failed", "error", err, "url", a.webhookURL)
+				a.logger.Warn("webhook delivery failed", "error", err)
 			}
 		}()
 	}
@@ -303,14 +305,20 @@ func (a *Alerter) sendWebhook(alert Alert) error {
 
 	resp, err := a.client.Post(a.webhookURL, "application/json", bytes.NewReader(payload))
 	if err != nil {
-		a.logger.Error("webhook delivery failed", "error", err, "url", a.webhookURL)
+		// The URL is a credential (Slack hook path, ?token=): *url.Error
+		// prints it, so keep only the operation and the cause.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = fmt.Errorf("%s: %w", uerr.Op, uerr.Err)
+		}
+		a.logger.Error("webhook delivery failed", "error", err)
 		return fmt.Errorf("webhook delivery failed: %w", err)
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		a.logger.Error("webhook returned error", "status", resp.StatusCode, "url", a.webhookURL)
+		a.logger.Error("webhook returned error", "status", resp.StatusCode)
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
 	return nil

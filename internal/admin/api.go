@@ -82,6 +82,7 @@ type Server struct {
 	configMu       sync.RWMutex
 	persistMu      sync.Mutex // serializes persistConfig so concurrent writes can't interleave temp+rename
 	configPath     string
+	auditRecordIP  atomic.Bool // mirrors Global.Audit.RecordIP; see SetAuditRecordIP
 	logger         *logger.Logger
 	metrics        *metrics.Collector
 	analytics      *analytics.Collector
@@ -197,6 +198,9 @@ func New(cfg *config.Config, log *logger.Logger, m *metrics.Collector) *Server {
 		metrics: m,
 		mux:     http.NewServeMux(),
 		taskMgr: install.New(),
+	}
+	if cfg != nil {
+		s.auditRecordIP.Store(cfg.Global.Audit.RecordIP)
 	}
 	// admin.oauth is stored, merged and returned by the settings API, and no
 	// OAuth login flow exists. Enabling it adds no sign-in method, and
@@ -762,7 +766,8 @@ func (s *Server) handleStatsDomains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// Return sanitized config (no secrets)
-	jsonResponse(w, ConfigSummaryResponse{
+	s.configMu.RLock()
+	summary := ConfigSummaryResponse{
 		Global: ConfigGlobalSummary{
 			WorkerCount:    s.config.Global.WorkerCount,
 			MaxConnections: s.config.Global.MaxConnections,
@@ -770,7 +775,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			LogFormat:      s.config.Global.LogFormat,
 		},
 		DomainCount: len(s.config.Domains),
-	})
+	}
+	s.configMu.RUnlock()
+	jsonResponse(w, summary)
 }
 
 // SetCache sets the cache engine for purge operations.
@@ -930,6 +937,13 @@ func (s *Server) Close() {
 	s.stopAudit()
 	if s.taskMgr != nil {
 		s.taskMgr.Stop()
+	}
+	// Stop cloudflared connectors with the admin module, like shutdown stops
+	// app and PHP processes; otherwise they outlive uwas untracked (F820).
+	if s.cfRunner != nil {
+		if err := s.cfRunner.StopAll(); err != nil {
+			s.logger.Warn("failed to stop cloudflared tunnels", "error", err)
+		}
 	}
 }
 

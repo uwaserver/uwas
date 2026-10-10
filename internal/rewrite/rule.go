@@ -17,6 +17,7 @@ type Rule struct {
 	Flags      Flags
 	Conditions []Condition
 	RawPattern string // original pattern string
+	Negated    bool   // "!" prefix: the rule applies when Pattern does NOT match
 }
 
 // Flags represents parsed RewriteRule flags like [L,R=301,QSA,NC].
@@ -43,12 +44,15 @@ func ParseRule(pattern, target, flagStr string) (*Rule, error) {
 
 	flags := ParseFlags(flagStr)
 
+	// Apache: a pattern prefixed with "!" is negated (no $N backreferences).
+	expr, negated := strings.CutPrefix(pattern, "!")
+
 	opts := ""
 	if flags.NoCase {
 		opts = "(?i)"
 	}
 
-	re, err := regexp.Compile(opts + pattern)
+	re, err := regexp.Compile(opts + expr)
 	if err != nil {
 		return nil, err
 	}
@@ -58,6 +62,7 @@ func ParseRule(pattern, target, flagStr string) (*Rule, error) {
 		Target:     target,
 		Flags:      flags,
 		RawPattern: pattern,
+		Negated:    negated,
 	}, nil
 }
 
@@ -117,6 +122,9 @@ func ParseFlags(s string) Flags {
 
 // Match tests if the rule matches the given URI and returns backreferences.
 func (r *Rule) Match(uri string) (bool, []string) {
+	if r.Negated {
+		return !r.Pattern.MatchString(uri), nil
+	}
 	matches := r.Pattern.FindStringSubmatch(uri)
 	if matches == nil {
 		return false, nil

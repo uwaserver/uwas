@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
 
 	"github.com/uwaserver/uwas/internal/cache"
 	"github.com/uwaserver/uwas/internal/config"
@@ -335,7 +336,50 @@ func sanitizeDomainForMCP(d config.Domain) config.Domain {
 	d.Proxy.Canary.Upstreams = sanitizeUpstreams(d.Proxy.Canary.Upstreams)
 	d.Proxy.Mirror.Backend = sanitizeUpstreamAddress(d.Proxy.Mirror.Backend)
 	d.Redirect.Target = sanitizeURLUserinfo(d.Redirect.Target)
+
+	// headers.request_add is set on the request before it is proxied, so a
+	// credential header there authenticates uwas to the backend exactly like
+	// upstream userinfo does. Response headers (add/response_add, location
+	// headers) go to every client and are not secret.
+	d.Headers.RequestAdd = sanitizeRequestHeaders(d.Headers.RequestAdd)
 	return d
+}
+
+// redactedValue replaces a secret value while keeping its key visible, so the
+// agent can still see that the header is configured.
+const redactedValue = "[redacted]"
+
+// sanitizeRequestHeaders returns a copy of h with credential-bearing header
+// values redacted. The copy is required: the map aliases the live config.
+func sanitizeRequestHeaders(h map[string]string) map[string]string {
+	if len(h) == 0 {
+		return h
+	}
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		if isCredentialHeader(k) {
+			v = redactedValue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// isCredentialHeader reports whether a header name carries a credential:
+// the standard auth/cookie headers, or a name containing a credential word
+// (X-Api-Key, X-Auth-Token, X-Amz-Security-Token, ...).
+func isCredentialHeader(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	switch n {
+	case "authorization", "proxy-authorization", "cookie":
+		return true
+	}
+	for _, w := range []string{"auth", "token", "secret", "password", "passwd", "api-key", "apikey", "api_key"} {
+		if strings.Contains(n, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // sanitizeURLUserinfo removes the userinfo component from a URL, leaving the

@@ -33,6 +33,7 @@ type conn struct {
 	netConn   net.Conn
 	createdAt time.Time
 	usedAt    time.Time
+	reused    bool // handed out from the idle pool, not freshly dialed
 }
 
 // PoolConfig configures a connection pool.
@@ -99,6 +100,7 @@ func (p *Pool) Get(ctx context.Context) (*conn, error) {
 				continue
 			}
 			c.usedAt = time.Now()
+			c.reused = true
 			return c, nil
 		default:
 			goto create
@@ -122,6 +124,7 @@ create:
 				return nil, ErrPoolClosed
 			}
 			c.usedAt = time.Now()
+			c.reused = true
 			return c, nil
 		case <-p.freed:
 			if p.reserve() {

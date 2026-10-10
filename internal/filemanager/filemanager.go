@@ -84,17 +84,50 @@ func ReadFile(baseDir, relPath string) ([]byte, error) {
 	if fullPath == "" {
 		return nil, fmt.Errorf("invalid path")
 	}
-	info, err := os.Stat(fullPath)
+	// O_NONBLOCK: a FIFO planted in the web root would otherwise block open(2)
+	// (and this request) forever.
+	f, err := os.OpenFile(fullPath, os.O_RDONLY|nonBlockFlag, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if info.IsDir() {
 		return nil, fmt.Errorf("cannot read directory")
 	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
 	if info.Size() > DefaultMaxUpload {
 		return nil, fmt.Errorf("file too large (max %dMB)", DefaultMaxUpload>>20)
 	}
-	return os.ReadFile(fullPath)
+	return io.ReadAll(io.LimitReader(f, DefaultMaxUpload+1))
+}
+
+// openWritable opens fullPath for writing without blocking on a FIFO and
+// refuses anything but a regular file.
+func openWritable(fullPath string) (*os.File, error) {
+	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|nonBlockFlag, 0600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("not a regular file")
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // WriteFile writes content to a file.
@@ -104,7 +137,15 @@ func WriteFile(baseDir, relPath string, content []byte) error {
 		return fmt.Errorf("invalid path")
 	}
 	os.MkdirAll(filepath.Dir(fullPath), 0755)
-	return os.WriteFile(fullPath, content, 0600)
+	f, err := openWritable(fullPath)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(content)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // Delete removes a file or empty directory.
@@ -162,7 +203,7 @@ func SaveUpload(baseDir, relPath string, src io.Reader) (int64, error) {
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := openWritable(fullPath)
 	if err != nil {
 		return 0, err
 	}

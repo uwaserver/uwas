@@ -35,6 +35,7 @@ func NewVHostRouter(domains []config.Domain) *VHostRouter {
 // store builds a new vhostMap and atomically swaps it.
 func (r *VHostRouter) store(domains []config.Domain) {
 	exact := make(map[string]*config.Domain, len(domains)*2)
+	var derived derivedHosts
 	var wildcards []wildcardEntry
 	var fallback *config.Domain
 
@@ -46,7 +47,7 @@ func (r *VHostRouter) store(domains []config.Domain) {
 			suffix := host[1:] // "*.example.com" → ".example.com"
 			wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
 		} else {
-			registerExactHost(exact, host, d)
+			registerExactHost(exact, &derived, host, d)
 		}
 
 		// Register aliases
@@ -56,7 +57,7 @@ func (r *VHostRouter) store(domains []config.Domain) {
 				suffix := alias[1:]
 				wildcards = append(wildcards, wildcardEntry{suffix: suffix, domain: d})
 			} else {
-				registerExactHost(exact, alias, d)
+				registerExactHost(exact, &derived, alias, d)
 			}
 		}
 
@@ -65,6 +66,12 @@ func (r *VHostRouter) store(domains []config.Domain) {
 			fallback = d
 		}
 	}
+
+	// Derived keys fill only what no domain claims explicitly. www/apex
+	// variants go before the bare key of a port-qualified host: that domain
+	// explicitly owns just its port, so it must not take the unported name from
+	// a domain whose www/apex variant it is (order-dependent otherwise).
+	derived.fill(exact)
 
 	// Sort wildcards by suffix length descending (longest match first)
 	sort.Slice(wildcards, func(i, j int) bool {
@@ -87,7 +94,29 @@ func normalizeConfiguredHost(host string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 }
 
-func registerExactHost(exact map[string]*config.Domain, host string, d *config.Domain) {
+// derivedHosts collects the keys a host implies but does not name, in the
+// order they may claim an unregistered key.
+type derivedHosts struct {
+	variants []derivedHost // www.X <-> X of an unported host
+	portBare []derivedHost // X of a port-qualified host X:port
+}
+
+type derivedHost struct {
+	key    string
+	domain *config.Domain
+}
+
+func (h *derivedHosts) fill(exact map[string]*config.Domain) {
+	for _, list := range [][]derivedHost{h.variants, h.portBare} {
+		for _, e := range list {
+			if _, exists := exact[e.key]; !exists {
+				exact[e.key] = e.domain
+			}
+		}
+	}
+}
+
+func registerExactHost(exact map[string]*config.Domain, derived *derivedHosts, host string, d *config.Domain) {
 	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 	if host == "" {
 		return
@@ -96,9 +125,7 @@ func registerExactHost(exact map[string]*config.Domain, host string, d *config.D
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
 		// The bare host is derived, so it must not clobber another domain's
 		// explicit registration of it (Lookup strips the port before matching).
-		if _, exists := exact[host[:idx]]; !exists {
-			exact[host[:idx]] = d
-		}
+		derived.portBare = append(derived.portBare, derivedHost{host[:idx], d})
 		return
 	}
 	// Implicit www.↔apex variants: only fill them when no domain explicitly
@@ -109,16 +136,12 @@ func registerExactHost(exact map[string]*config.Domain, host string, d *config.D
 	if strings.HasPrefix(host, "www.") {
 		apex := strings.TrimPrefix(host, "www.")
 		if apex != "" && strings.Contains(apex, ".") {
-			if _, exists := exact[apex]; !exists {
-				exact[apex] = d
-			}
+			derived.variants = append(derived.variants, derivedHost{apex, d})
 		}
 		return
 	}
 	if !strings.HasPrefix(host, "*.") && strings.Contains(host, ".") {
-		if _, exists := exact["www."+host]; !exists {
-			exact["www."+host] = d
-		}
+		derived.variants = append(derived.variants, derivedHost{"www." + host, d})
 	}
 }
 

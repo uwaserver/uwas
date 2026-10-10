@@ -172,12 +172,26 @@ func fetchIPRangeURL(ctx context.Context, url string) ([]string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	// Read one byte past the cap: a body cut at the cap can end mid-CIDR
+	// ("…/20" read as "…/2"), which would trust a vastly larger range.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, ipRangeBodyLimit+1))
 	if err != nil {
 		return nil, err
 	}
-	return strings.Fields(string(body)), nil
+	if len(body) > ipRangeBodyLimit {
+		return nil, fmt.Errorf("fetch %s: response exceeds %d bytes", url, ipRangeBodyLimit)
+	}
+	// An empty list would replace the stored ranges with nothing (or drop a
+	// whole address family), so every cloudflare_only domain rejects genuine
+	// Cloudflare traffic. Cloudflare always publishes both lists.
+	fields := strings.Fields(string(body))
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("fetch %s: empty range list", url)
+	}
+	return fields, nil
 }
+
+const ipRangeBodyLimit = 64 << 10
 
 func fingerprintCIDRs(cidrs []string) string {
 	return strings.Join(cidrs, "\x00")

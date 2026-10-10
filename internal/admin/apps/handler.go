@@ -453,6 +453,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	existing.AutoRestart = patch.AutoRestart
 	existing.Disabled = patch.Disabled
 
+	// Validate before stopping: Register re-validates, but by then the
+	// running app has already been stopped, so a rejected patch would
+	// leave it down behind a 400.
+	if err := existing.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	_ = mgr.Stop(name)
 
 	if err := mgr.Register(existing); err != nil {

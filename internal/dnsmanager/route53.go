@@ -361,10 +361,18 @@ func r53DefaultTTL(ttl int) int {
 	return ttl
 }
 
+// r53SameName normalises a record name the way Route53 stores it: lower case,
+// no trailing dot, and "*" spelled \052 on the wire. A caller's "*.example.com"
+// or "WWW.example.com" must find the set listed as \052.example.com. / www.
+func r53SameName(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	return strings.ReplaceAll(name, `\052`, "*")
+}
+
 func r53FindSet(sets []r53RRSet, name, typ string) *r53RRSet {
-	name = strings.TrimSuffix(name, ".")
+	name = r53SameName(name)
 	for i := range sets {
-		if strings.TrimSuffix(sets[i].Name, ".") == name && sets[i].Type == typ {
+		if r53SameName(sets[i].Name) == name && sets[i].Type == typ {
 			return &sets[i]
 		}
 	}

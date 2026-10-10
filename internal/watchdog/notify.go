@@ -24,12 +24,23 @@ import (
 // is not set on the unit), so there is nothing to notify.
 var ErrNoSocket = errors.New("NOTIFY_SOCKET not set")
 
+// errClosed is returned by Send after Close.
+var errClosed = errors.New("notifier closed")
+
+// sendTimeout bounds one datagram write. A peer that has stopped reading
+// fills its receive queue and would otherwise park Send forever with mu held,
+// stalling the watchdog ping and Close (and with it shutdown). It is a
+// variable only so tests can shorten it.
+var sendTimeout = 2 * time.Second
+
 // Notifier sends sd_notify datagrams to systemd.
 type Notifier struct {
 	mu   sync.Mutex
 	conn *net.UnixConn
 	addr *net.UnixAddr
 	dead bool
+	// closed is set by Close so a late Send cannot reopen the socket.
+	closed bool
 }
 
 // NewNotifier resolves NOTIFY_SOCKET. It returns a usable Notifier even when
@@ -59,6 +70,9 @@ func (n *Notifier) Send(state string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	if n.closed {
+		return errClosed
+	}
 	if n.conn == nil {
 		c, err := net.DialUnix("unixgram", nil, n.addr)
 		if err != nil {
@@ -66,6 +80,7 @@ func (n *Notifier) Send(state string) error {
 		}
 		n.conn = c
 	}
+	n.conn.SetWriteDeadline(time.Now().Add(sendTimeout))
 	if _, err := n.conn.Write([]byte(state)); err != nil {
 		// The socket can be replaced across a systemd reload; drop the cached
 		// connection so the next send redials rather than failing forever.
@@ -83,6 +98,7 @@ func (n *Notifier) Close() {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.closed = true
 	if n.conn != nil {
 		n.conn.Close()
 		n.conn = nil

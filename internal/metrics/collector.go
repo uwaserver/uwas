@@ -355,6 +355,10 @@ func (c *Collector) Handler() http.Handler {
 		fmt.Fprintf(&b, "# TYPE uwas_cache_misses_total counter\n")
 		fmt.Fprintf(&b, "uwas_cache_misses_total %d\n", c.CacheMisses.Load())
 
+		fmt.Fprintf(&b, "# HELP uwas_cache_stales_total Stale cache entries served while revalidating.\n")
+		fmt.Fprintf(&b, "# TYPE uwas_cache_stales_total counter\n")
+		fmt.Fprintf(&b, "uwas_cache_stales_total %d\n", c.CacheStales.Load())
+
 		fmt.Fprintf(&b, "# HELP uwas_connections_active Active connections.\n")
 		fmt.Fprintf(&b, "# TYPE uwas_connections_active gauge\n")
 		fmt.Fprintf(&b, "uwas_connections_active %d\n", c.ActiveConns.Load())

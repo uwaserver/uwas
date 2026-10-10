@@ -198,6 +198,8 @@ func TestReadAlivePID_DeadProcess(t *testing.T) {
 }
 
 func TestReadAlivePID_CurrentProcess(t *testing.T) {
+	// Our own PID stands in for a running uwas; skip the identity check.
+	allowAnyUWASPID(t)
 	// Use current process PID — it is definitely alive.
 	tmp := t.TempDir()
 	f := filepath.Join(tmp, "uwas.pid")
@@ -3705,6 +3707,8 @@ func TestStopCommand_PIDFileWithConfig(t *testing.T) {
 // ==========================================================================
 
 func TestServeCommand_WithExistingConfig_AlreadyRunning(t *testing.T) {
+	// Our own PID stands in for a running uwas; skip the identity check.
+	allowAnyUWASPID(t)
 	// Create a config with a PID file pointing to our own PID (simulating already running).
 	tmp := t.TempDir()
 	pidFile := filepath.Join(tmp, "uwas.pid")
@@ -3763,6 +3767,8 @@ domains:
 }
 
 func TestServeCommand_WithBannerSuppressed(t *testing.T) {
+	// Our own PID stands in for a running uwas; skip the identity check.
+	allowAnyUWASPID(t)
 	// Test the serve command when it finds an already-running process.
 	// We use the "already running" path which returns nil immediately.
 	tmp := t.TempDir()
@@ -3816,6 +3822,8 @@ domains:
 }
 
 func TestServeCommand_WithHTTPS(t *testing.T) {
+	// Our own PID stands in for a running uwas; skip the identity check.
+	allowAnyUWASPID(t)
 	// Test serve command with HTTPS configured + already running to exercise more branches.
 	tmp := t.TempDir()
 	pidFile := filepath.Join(tmp, "uwas.pid")
@@ -4601,4 +4609,13 @@ func TestInstallCmd_WriteServiceError(t *testing.T) {
 	if !strings.Contains(err.Error(), "write service file") {
 		t.Errorf("error = %q", err.Error())
 	}
+}
+
+// allowAnyUWASPID disables the uwas-identity check on PIDs (F855/F856) for
+// tests that use a non-uwas PID to stand in for a running server.
+func allowAnyUWASPID(t *testing.T) {
+	t.Helper()
+	orig := checkUWASPIDFn
+	checkUWASPIDFn = func(int) error { return nil }
+	t.Cleanup(func() { checkUWASPIDFn = orig })
 }

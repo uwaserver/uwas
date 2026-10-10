@@ -96,6 +96,9 @@ func (s *Server) reload() error {
 	// subsystem references and the vhost router would never see them —
 	// every request to a freshly-created domain would 421.
 	*s.config = *newCfg
+	if s.admin != nil {
+		s.admin.SetAuditRecordIP(newCfg.Global.Audit.RecordIP)
+	}
 	// The live config now shares newCfg's Domains array, which admin writers
 	// change in place, so copy what pruneDomainStats needs before unlocking.
 	liveDomains := append([]config.Domain(nil), newCfg.Domains...)

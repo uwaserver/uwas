@@ -82,6 +82,7 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	// port-qualified domain, implicit www.<->apex) never takes a name another
 	// domain owns explicitly — the same precedence the vhost router applies.
 	var derived []string
+	configured := make(map[string]bool, len(domains))
 	register := func(name, key string) {
 		if strings.HasPrefix(normalizeHost(name), "*.") {
 			wildcards = append(wildcards, wildcardKey{suffix: normalizeHost(name)[1:], key: key})
@@ -95,6 +96,7 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	}
 	for _, d := range domains {
 		key := hostKey(d.Host)
+		configured[key] = true
 		register(d.Host, key)
 		for _, alias := range d.Aliases {
 			register(alias, key)
@@ -134,6 +136,16 @@ func (m *Manager) UpdateDomains(domains []config.Domain) {
 	m.limits = newLimits
 	m.hosts = hosts
 	m.wildcards = wildcards
+
+	// Drop usage for domains no longer configured. Keeping it let a deleted
+	// domain's counters and blocked state pass to whoever re-added the same
+	// hostname (F775). Configured domains keep theirs even while bandwidth is
+	// disabled, so toggling limits does not reset the month.
+	for key := range m.usage {
+		if !configured[key] {
+			delete(m.usage, key)
+		}
+	}
 
 	// Re-evaluate block/throttle state against the new limits so a raised
 	// limit or a changed action takes effect immediately.

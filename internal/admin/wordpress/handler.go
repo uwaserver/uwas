@@ -6,6 +6,7 @@ package wordpress
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -306,8 +307,7 @@ func (h *Handler) ErrorLog(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	logPath := filepath.Join(root, "wp-content", "debug.log")
-	data, err := os.ReadFile(logPath)
+	content, size, err := readDebugLogTail(root, 100*1024)
 	if err != nil {
 		if os.IsNotExist(err) {
 			jsonResponse(w, map[string]any{"log": "", "message": "No debug.log file — enable WP_DEBUG first, then reproduce the error"})
@@ -316,11 +316,57 @@ func (h *Handler) ErrorLog(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "read error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	content := string(data)
-	if len(content) > 100*1024 {
-		content = content[len(content)-100*1024:]
+	jsonResponse(w, map[string]any{"log": content, "size": size})
+}
+
+// readDebugLogTail returns the last max bytes of <root>/wp-content/debug.log
+// and the file's size. The docroot is tenant-writable and the server reads as
+// root, so wp-content and debug.log must not be symlinks (a planted
+// debug.log -> /etc/shadow would otherwise be served), the file must be
+// regular, and only the tail is read rather than the whole log.
+func readDebugLogTail(root string, max int64) (string, int64, error) {
+	dir := filepath.Join(root, "wp-content")
+	logPath := filepath.Join(dir, "debug.log")
+	for _, p := range []string{dir, logPath} {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return "", 0, err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return "", 0, fmt.Errorf("refusing to read through symlink %s", filepath.Base(p))
+		}
 	}
-	jsonResponse(w, map[string]any{"log": content, "size": len(data)})
+	lfi, err := os.Lstat(logPath)
+	if err != nil {
+		return "", 0, err
+	}
+	if !lfi.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("debug.log is not a regular file")
+	}
+	f, err := os.Open(logPath)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", 0, err
+	}
+	// The file opened must be the one checked above, not a swapped-in link.
+	if !os.SameFile(lfi, fi) {
+		return "", 0, fmt.Errorf("debug.log changed while opening")
+	}
+	size := fi.Size()
+	if size > max {
+		if _, err := f.Seek(size-max, io.SeekStart); err != nil {
+			return "", 0, err
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max))
+	if err != nil {
+		return "", 0, err
+	}
+	return string(data), size, nil
 }
 
 func (h *Handler) Users(w http.ResponseWriter, r *http.Request) {

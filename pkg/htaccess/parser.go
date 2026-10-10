@@ -124,9 +124,13 @@ func Parse(reader io.Reader) ([]Directive, error) {
 
 // parseBlockOpen parses "<IfModule mod_rewrite.c>" into name and args.
 func parseBlockOpen(line string) (string, []string) {
-	// Strip < and >
+	// Strip < and the closing >. Like Apache, keep only the text up to the
+	// section's last '>' — anything after it (e.g. a trailing "# comment")
+	// must not be glued onto the last argument.
 	line = strings.TrimPrefix(line, "<")
-	line = strings.TrimSuffix(line, ">")
+	if i := strings.LastIndexByte(line, '>'); i >= 0 {
+		line = line[:i]
+	}
 	line = strings.TrimSpace(line)
 
 	parts := splitArgs(line)

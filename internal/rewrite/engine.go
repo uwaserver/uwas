@@ -54,7 +54,7 @@ func (e *Engine) MightMatch(uri string) bool {
 		if time.Now().After(deadline) {
 			return false // timeout — treat as no match
 		}
-		if rule.Pattern != nil && rule.Pattern.MatchString(uri) {
+		if rule.Pattern != nil && rule.Pattern.MatchString(uri) != rule.Negated {
 			return true
 		}
 	}
@@ -139,6 +139,7 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 			if rule.Flags.Redirect > 0 {
 				result.Redirect = true
 				result.StatusCode = rule.Flags.Redirect
+				result.URI = sameHostRedirectPath(result.URI)
 				if result.Query != "" {
 					result.URI = result.URI + "?" + result.Query
 				}
@@ -159,6 +160,19 @@ func (e *Engine) Process(uri, queryString string, vars *Variables) *Result {
 	}
 
 	return result
+}
+
+// sameHostRedirectPath collapses the leading run of '/' and '\\' in a
+// scheme-less redirect target to a single '/'. Substitutions are built from
+// the decoded request path, so a request for "//evil.com/" or "/%2Fevil.com/"
+// would otherwise yield the protocol-relative Location "//evil.com" (browsers
+// treat "/\" the same way) — an off-site redirect. Apache avoids this by
+// merging slashes before matching.
+func sameHostRedirectPath(uri string) string {
+	if uri == "" || (uri[0] != '/' && uri[0] != '\\') {
+		return uri
+	}
+	return "/" + strings.TrimLeft(uri, "/\\")
 }
 
 // evalConditions evaluates a list of conditions with Apache RewriteCond

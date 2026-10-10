@@ -28,6 +28,10 @@ var (
 	installOsSymlink    = os.Symlink
 	installOsStat       = os.Stat
 	installOsMkdirAll   = os.MkdirAll
+	// installPIDIsUWAS reports whether pid is a running uwas process, judged
+	// by /proc/<pid>/comm (the kernel truncates it to 15 bytes, so a renamed
+	// binary like "uwas-linux-amd64" still starts with "uwas").
+	installPIDIsUWAS = procCommIsUWAS
 	// installStdin is the source for the interactive [Y/n] prompt; replaceable in tests.
 	installStdin = func() *os.File { return os.Stdin }
 	// installIsTTY reports whether the install prompt should be shown. Wrapped
@@ -251,8 +255,11 @@ WantedBy=multi-user.target
 	// Force-kill any lingering uwas process that survived systemctl stop
 	// (orphaned daemon, stuck on its own PID file, etc.) so the upcoming
 	// start doesn't trip on the already-running guard.
+	// Only signal a PID that still belongs to a uwas process: a stale PID
+	// file (crash/OOM-kill skipped its removal) may name a recycled PID owned
+	// by an unrelated process, which we must not SIGKILL as root.
 	if pidData, err := installOsReadFile("/var/run/uwas.pid"); err == nil {
-		if pid, perr := strconv.Atoi(strings.TrimSpace(string(pidData))); perr == nil && pid > 1 {
+		if pid, perr := strconv.Atoi(strings.TrimSpace(string(pidData))); perr == nil && pid > 1 && pid != os.Getpid() && installPIDIsUWAS(pid) {
 			_ = installExecCommand("kill", "-TERM", strconv.Itoa(pid)).Run()
 			time.Sleep(500 * time.Millisecond)
 			_ = installExecCommand("kill", "-KILL", strconv.Itoa(pid)).Run()

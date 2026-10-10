@@ -608,7 +608,9 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.deps.LockConfig()
-	g := &h.deps.ConfigPtr().Global
+	cfg := h.deps.ConfigPtr()
+	prev := cfg.Global
+	g := &cfg.Global
 	for key, val := range updates {
 		sv := fmt.Sprintf("%v", val)
 		// SettingsGet returns masked secrets (****last4). Never persist those
@@ -796,6 +798,21 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 			g.Watchdog.SelfRestart = sv == "true"
 		}
 	}
+	// Refuse a change config.Load would reject: once persisted it would stop
+	// the next start or reload. The switch above only assigns fields, so
+	// restoring the struct copy undoes it. An already-invalid config is left
+	// to save as before.
+	if verr := settingsConfigError(cfg); verr != nil {
+		next := cfg.Global
+		cfg.Global = prev
+		if settingsConfigError(cfg) == nil {
+			h.deps.UnlockConfig()
+			h.deps.RecordAudit(r, "settings.update", "validation failed", false)
+			jsonError(w, "invalid settings: "+verr.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.Global = next
+	}
 	h.deps.UnlockConfig()
 	h.deps.EnsureAuthManagerFromConfig()
 	if err := h.deps.PersistConfig(); err != nil {
@@ -805,6 +822,20 @@ func (h *Handler) SettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	h.deps.RecordAudit(r, "settings.update", fmt.Sprintf("%d fields", len(updates)), true)
 	jsonResponse(w, map[string]any{"status": "saved", "updated": len(updates)})
+}
+
+// settingsConfigError reports whether cfg would fail config.Load's validation.
+// It checks a YAML round-trip copy so applying defaults never touches cfg.
+func settingsConfigError(cfg *config.Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	var probe config.Config
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	return config.ValidateWithDefaults(&probe)
 }
 
 // ── YAML masking helpers ──

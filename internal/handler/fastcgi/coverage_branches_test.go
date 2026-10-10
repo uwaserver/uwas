@@ -169,12 +169,28 @@ func TestServeRetriesOnStaleConnection(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// First connection: accept then close immediately to force a read/write
-		// error (stale connection), which is retriable for a GET.
+		// First connection: serve one request, then close it. It sits in the
+		// pool, so the next request reuses a stale connection, which is
+		// retriable for a GET (a failure on a fresh connection is not).
 		c1, err := ln.Accept()
 		if err != nil {
 			return
 		}
+		br1 := bufio.NewReader(c1)
+		for {
+			r, err := fastcgi.ReadRecord(br1)
+			if err != nil {
+				c1.Close()
+				return
+			}
+			if r.Type == fastcgi.TypeStdin && r.ContentLength == 0 {
+				break
+			}
+		}
+		bw1 := bufio.NewWriter(c1)
+		fastcgi.WriteRecord(bw1, fastcgi.TypeStdout, 1, []byte("Status: 200 OK\r\nContent-Type: text/plain\r\n\r\nfirst"))
+		fastcgi.WriteRecord(bw1, fastcgi.TypeEndRequest, 1, make([]byte, 8))
+		bw1.Flush()
 		c1.Close()
 
 		// Second connection: serve a normal response.
@@ -218,6 +234,17 @@ func TestServeRetriesOnStaleConnection(t *testing.T) {
 			FPMAddress: ln.Addr().String(),
 			IndexFiles: []string{"index.php"},
 		},
+	}
+
+	prime := httptest.NewRecorder()
+	pctx := router.AcquireContext(prime, httptest.NewRequest("GET", "/index.php", nil))
+	pctx.DocumentRoot = "/var/www"
+	pctx.ResolvedPath = "/var/www/index.php"
+	pctx.OriginalURI = "/index.php"
+	h.Serve(pctx, domain)
+	router.ReleaseContext(pctx)
+	if prime.Code != 200 {
+		t.Fatalf("priming status = %d, want 200", prime.Code)
 	}
 
 	rec := httptest.NewRecorder()

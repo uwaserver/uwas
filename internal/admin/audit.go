@@ -73,6 +73,13 @@ func (s *Server) stopAudit() {
 	s.auditMu.Unlock()
 }
 
+// SetAuditRecordIP updates the audit IP-recording flag after the shared config
+// is replaced (server reload). RecordAuditUser reads this mirror instead of
+// config.Global.Audit.RecordIP because audit calls are made from code paths
+// that may already hold configMu, and RWMutex is not reentrant. It takes no
+// lock, so the reloader may call it while holding the config write lock.
+func (s *Server) SetAuditRecordIP(v bool) { s.auditRecordIP.Store(v) }
+
 // RecordAudit appends an audit entry to the ring buffer. Safe for concurrent use.
 // IP address is only recorded if audit.RecordIP is enabled in config (GDPR compliance).
 //
@@ -86,7 +93,7 @@ func (s *Server) RecordAudit(action, detail, ip string, success bool) {
 // empty user when the call is unauthenticated (e.g. failed login attempts).
 func (s *Server) RecordAuditUser(action, detail, ip, user string, success bool) {
 	entryIP := ip
-	if !s.config.Global.Audit.RecordIP {
+	if !s.auditRecordIP.Load() {
 		entryIP = "" // redact IP when consent is disabled
 	}
 

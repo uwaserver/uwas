@@ -289,9 +289,12 @@ func checkMySQL(autoFix bool) Check {
 	// AUTO-FIX: full repair sequence
 	var fixLog []string
 
-	// 1. Kill stuck processes
-	execCommandFn("pkill", "-9", "mysqld").Run()
-	execCommandFn("pkill", "-9", "mariadbd").Run()
+	// 1. Kill stuck processes of the units being repaired. `pkill -9 mysqld`
+	// matched every mysqld/mariadbd on the host, e.g. UWAS docker DB
+	// containers or a server running outside these units.
+	for _, svc := range []string{"mariadb", "mysql"} {
+		execCommandFn("systemctl", "kill", "--signal=SIGKILL", svc).Run()
+	}
 
 	// 2. Fix dpkg/apt state
 	if _, err := execLookPathFn("dpkg"); err == nil {
