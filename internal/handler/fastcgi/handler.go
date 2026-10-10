@@ -1,12 +1,14 @@
 package fastcgi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -60,6 +62,23 @@ func (h *Handler) ServeWith(ctx *router.RequestContext, domain *config.Domain, f
 	var stdin io.Reader
 	if ctx.Request.Body != nil && ctx.Request.Method != "GET" && ctx.Request.Method != "HEAD" {
 		stdin = ctx.Request.Body
+		// A chunked upload has no Content-Length, and PHP-FPM sizes the request
+		// body from CONTENT_LENGTH, so PHP would see an empty body. Buffer it,
+		// as nginx does, so the length can be passed (F1840).
+		if ctx.Request.ContentLength < 0 {
+			limit := chunkedBodyLimit(domain.PHP.MaxUpload)
+			buf, err := io.ReadAll(io.LimitReader(ctx.Request.Body, limit+1))
+			if err != nil {
+				ctx.Response.Error(400, "400 Bad Request")
+				return
+			}
+			if int64(len(buf)) > limit {
+				ctx.Response.Error(413, "413 Request Entity Too Large")
+				return
+			}
+			cgiEnv["CONTENT_LENGTH"] = strconv.Itoa(len(buf))
+			stdin = bytes.NewReader(buf)
+		}
 	}
 
 	// Use domain's PHP timeout as FastCGI deadline (default 300s in config).
@@ -302,4 +321,14 @@ func isRetriable(err error) bool {
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "EOF")
+}
+
+// chunkedBodyLimit bounds how much of a chunked request body is buffered to
+// learn its length: PHP's post_max_size headroom over the configured upload
+// limit (see uploadLimitDirectives), or 64 MiB when none is configured.
+func chunkedBodyLimit(maxUpload config.ByteSize) int64 {
+	if maxUpload > 0 {
+		return int64(maxUpload + config.MB)
+	}
+	return 64 << 20
 }

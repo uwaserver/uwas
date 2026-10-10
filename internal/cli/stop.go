@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Hooks for testing.
@@ -105,8 +107,12 @@ func adminURLFromConfig() string {
 	return "http://" + listen
 }
 
-// quickConfigValue does a quick line-scan of the config YAML for a given key.
-// Not a full YAML parser — works for simple scalar values.
+// quickConfigValue reads one scalar setting from the config without loading
+// (and validating) the whole file. A real config is parsed as YAML so the
+// value comes from the right section: "listen" is global.admin.listen, not
+// the first listen: in the file (global.mcp.listen can precede it), and
+// inline comments are not part of the value. Files without a global: section
+// (bare key: value fixtures) fall back to a line scan.
 func quickConfigValue(key string) string {
 	cfgFile, found := findConfigFn("")
 	if !found {
@@ -115,6 +121,22 @@ func quickConfigValue(key string) string {
 	data, err := osReadFileFn(cfgFile)
 	if err != nil {
 		return ""
+	}
+	var doc struct {
+		Global *struct {
+			PIDFile string `yaml:"pid_file"`
+			Admin   struct {
+				Listen string `yaml:"listen"`
+			} `yaml:"admin"`
+		} `yaml:"global"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err == nil && doc.Global != nil {
+		switch key {
+		case "pid_file":
+			return doc.Global.PIDFile
+		case "listen":
+			return doc.Global.Admin.Listen
+		}
 	}
 	prefix := key + ":"
 	for _, line := range strings.Split(string(data), "\n") {

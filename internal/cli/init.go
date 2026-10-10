@@ -29,8 +29,10 @@ func defaultConfigPath() string {
 // findConfig searches for a config file in common locations.
 // Returns the path and whether it was found.
 func findConfig(explicit string) (string, bool) {
-	// Explicit path always wins
-	if explicit != "" && explicit != "uwas.yaml" {
+	// Explicit path always wins, including the literal name "uwas.yaml": serve
+	// passes "" when -c is absent, so a typed ./uwas.yaml must not fall through
+	// to ~/.uwas or /etc/uwas and start the server with a different config.
+	if explicit != "" {
 		if _, err := os.Stat(explicit); err == nil {
 			return explicit, true
 		}

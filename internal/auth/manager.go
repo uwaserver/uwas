@@ -869,24 +869,51 @@ func (m *Manager) RegenerateAPIKey(username string) (string, error) {
 }
 
 // ChangePassword changes a user's password (requires current password).
+//
+// Wrong current passwords are throttled like failed logins (F1872) and both
+// bcrypt operations run outside m.mu (F1871): holding the manager-wide lock
+// across them let one wrong attempt stall every session and API-key check.
 func (m *Manager) ChangePassword(username, currentPassword, newPassword string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// NUL cannot appear in a username or IP, so this never shares a lockout
+	// bucket with logins.
+	lockKey := "\x00chpw|" + username
+	gate := m.authGateFor(lockKey)
+	gate.Lock()
+	defer gate.Unlock()
+	if m.isLockedOut(lockKey) {
+		return errors.New("too many failed attempts; try again later")
+	}
 
+	m.mu.RLock()
 	user, exists := m.users[username]
+	var oldHash string
+	if exists {
+		oldHash = user.Password
+	}
+	m.mu.RUnlock()
 	if !exists {
 		return errors.New("user not found")
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(oldHash), []byte(currentPassword)); err != nil {
+		m.recordFailedAttempt(lockKey)
 		return errors.New("invalid current password")
 	}
+	m.clearFailedAttempts(lockKey)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), getBcryptCost())
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// The user may have been deleted or had the password changed while bcrypt
+	// ran without m.mu; do not overwrite that with a change authorised against
+	// the old hash.
+	if current, ok := m.users[username]; !ok || current != user || current.Password != oldHash {
+		return errors.New("invalid current password")
+	}
 	user.Password = string(hash)
 	user.UpdatedAt = time.Now()
 	saveErr := m.saveUsers()

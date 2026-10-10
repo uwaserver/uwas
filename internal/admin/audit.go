@@ -131,6 +131,14 @@ func (s *Server) RecordAuditR(r *http.Request, action, detail string, success bo
 // inside HTTP handlers so that audit entries gain user attribution
 // automatically when the user is logged in.
 func (s *Server) recordAuditR(r *http.Request, action, detail string, success bool) {
+	// auth.Manager reports failed logins through this recorder with a nil
+	// request (it never sees the *http.Request); dereferencing it panicked
+	// inside AuthenticateFrom, so no failed login was ever audited or counted
+	// by the IP limiter (F1870).
+	if r == nil {
+		s.RecordAuditUser(action, detail, "", "", success)
+		return
+	}
 	user := ""
 	if u, ok := auth.UserFromContext(r.Context()); ok && u != nil {
 		user = u.Username
