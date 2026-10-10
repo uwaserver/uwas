@@ -697,7 +697,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 			// Handle conditional requests against cached ETag
 			if etag := ctx.Response.Header().Get("Etag"); etag != "" {
-				if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+				if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
 					ctx.Response.WriteHeader(http.StatusNotModified)
 					return
 				}
@@ -1145,4 +1145,18 @@ func cacheTTLFor(ruleTTL, domainTTL, globalDefaultTTL int) time.Duration {
 // location proxy means request_timeout fired rather than the upstream failing.
 func isDeadline(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// etagMatches reports whether an If-None-Match value matches etag. RFC 9110
+// §13.1.2 compares weakly: the W/ prefix is ignored, the header may list
+// several entity-tags, and "*" matches any current representation.
+func etagMatches(ifNoneMatch, etag string) bool {
+	etag = strings.TrimPrefix(etag, "W/")
+	for _, part := range strings.Split(ifNoneMatch, ",") {
+		part = strings.TrimSpace(part)
+		if part == "*" || strings.TrimPrefix(part, "W/") == etag {
+			return true
+		}
+	}
+	return false
 }

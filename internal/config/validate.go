@@ -91,6 +91,27 @@ func Validate(cfg *Config) error {
 	validateAutoBlockConfig(cfg.Global.AutoBlock, &errs)
 	validateWatchdogConfig(cfg.Global.Watchdog, &errs)
 
+	// Defaults only replace 0, so a negative value would reach net/http,
+	// where a timeout <= 0 means "no timeout" (and a negative shutdown grace
+	// forces an immediate hard close).
+	for _, t := range []struct {
+		name string
+		d    Duration
+	}{
+		{"read", cfg.Global.Timeouts.Read},
+		{"read_header", cfg.Global.Timeouts.ReadHeader},
+		{"write", cfg.Global.Timeouts.Write},
+		{"idle", cfg.Global.Timeouts.Idle},
+		{"shutdown_grace", cfg.Global.Timeouts.ShutdownGrace},
+	} {
+		if t.d.Duration < 0 {
+			errs = append(errs, fmt.Sprintf("global.timeouts.%s: must be >= 0, got %s", t.name, t.d.Duration))
+		}
+	}
+	if cfg.Global.MaxConnections < 0 {
+		errs = append(errs, fmt.Sprintf("global.max_connections: must be >= 0, got %d", cfg.Global.MaxConnections))
+	}
+
 	// Trusted proxies validation (CIDR notation)
 	for i, cidr := range cfg.Global.TrustedProxies {
 		_, _, err := net.ParseCIDR(cidr)

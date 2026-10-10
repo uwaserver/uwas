@@ -321,6 +321,11 @@ func (h *Handler) Add(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "forbidden: cannot manage this domain", http.StatusForbidden)
 			return
 		}
+		if key := webAccessFieldChange(nil, d); key != "" {
+			h.deps.RecordAudit(r, "domain.create", "domain: "+d.Host+" (forbidden field: "+key+")", false)
+			jsonError(w, "forbidden: cannot set field "+key, http.StatusForbidden)
+			return
+		}
 	}
 
 	if d.Host == "" {
@@ -644,6 +649,19 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "forbidden: cannot update field "+key, http.StatusForbidden)
 				return
 			}
+		}
+		var cur *config.Domain
+		for _, existing := range h.deps.ConfigDomains() {
+			if domainutil.CanonicalDomainHostname(existing.Host) == host {
+				e := existing
+				cur = &e
+				break
+			}
+		}
+		if key := webAccessFieldChange(cur, d); key != "" {
+			h.deps.RecordAudit(r, "domain.update", "domain: "+host+" (forbidden field: "+key+")", false)
+			jsonError(w, "forbidden: cannot update field "+key, http.StatusForbidden)
+			return
 		}
 	}
 
@@ -1120,6 +1138,11 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "forbidden: cannot update field "+key, http.StatusForbidden)
 			return
 		}
+		if key := webAccessFieldChange(cur, probe); key != "" {
+			h.deps.RecordAudit(r, "domain.raw_update", "domain: "+host+" (forbidden field: "+key+")", false)
+			jsonError(w, "forbidden: cannot update field "+key, http.StatusForbidden)
+			return
+		}
 	}
 	webRoot := h.deps.WebRoot()
 	if webRoot == "" {
@@ -1172,6 +1195,38 @@ func (h *Handler) RawPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]string{"status": "saved"})
+}
+
+// webAccessFieldChange returns the first field in next that lets a domain
+// reach files or hosts outside its own docroot and that cur (the stored
+// domain, nil for a new one) does not already carry: locations[].root and
+// locations[].proxy_pass serve any directory / reach any host as the server,
+// and error_pages values are read relative to the root without containment.
+// Non-admins may keep what an admin set but not introduce or edit them (F1420).
+func webAccessFieldChange(cur *config.Domain, next config.Domain) string {
+	have := map[[3]string]bool{}
+	if cur != nil {
+		for _, l := range cur.Locations {
+			have[[3]string{l.Match, l.Root, l.ProxyPass}] = true
+		}
+	}
+	for _, l := range next.Locations {
+		if (l.Root != "" || l.ProxyPass != "") && !have[[3]string{l.Match, l.Root, l.ProxyPass}] {
+			return "locations"
+		}
+	}
+	if len(next.ErrorPages) > 0 {
+		var curPages map[int]string
+		if cur != nil {
+			curPages = cur.ErrorPages
+		}
+		a, errA := yaml.Marshal(curPages)
+		b, errB := yaml.Marshal(next.ErrorPages)
+		if errA != nil || errB != nil || string(a) != string(b) {
+			return "error_pages"
+		}
+	}
+	return ""
 }
 
 // rawPutForbiddenChange returns the first privilege-sensitive field (the set

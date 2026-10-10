@@ -313,15 +313,23 @@ func ShouldBypass(r *http.Request) bool {
 		return true
 	}
 
-	// Cache-Control: no-cache
-	if strings.Contains(r.Header.Get("Cache-Control"), "no-cache") {
-		return true
-	}
+	// Cache-Control: no-cache / Pragma: no-cache (HTTP/1.0 compat).
+	// Directive names are case-insensitive and the list may be split
+	// across several header lines.
+	return hasDirective(r.Header.Values("Cache-Control"), "no-cache") ||
+		hasDirective(r.Header.Values("Pragma"), "no-cache")
+}
 
-	// Pragma: no-cache (HTTP/1.0 compat)
-	if r.Header.Get("Pragma") == "no-cache" {
-		return true
+// hasDirective reports whether a comma-separated header list contains the
+// named directive (case-insensitive, ignoring any "=value" argument).
+func hasDirective(values []string, name string) bool {
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			d, _, _ := strings.Cut(part, "=")
+			if strings.EqualFold(strings.TrimSpace(d), name) {
+				return true
+			}
+		}
 	}
-
 	return false
 }
