@@ -477,6 +477,13 @@ func (m *Manager) Authenticate(username, password string) (*Session, error) {
 // AuthenticateFrom validates credentials, scoping brute-force lockout to the
 // supplied client IP (see lockoutKey).
 func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Session, error) {
+	return m.AuthenticateFromRequest(nil, username, password, clientIP)
+}
+
+// AuthenticateFromRequest is AuthenticateFrom for HTTP callers: r is handed to
+// the audit recorder so a failed-login entry carries the client's source IP,
+// like the successful-login entry does (F1900). r may be nil.
+func (m *Manager) AuthenticateFromRequest(r *http.Request, username, password, clientIP string) (*Session, error) {
 	lockKey := lockoutKey(username, clientIP)
 
 	// Serialize attempts for this (username, IP) so the lockout check below and
@@ -500,7 +507,7 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 		_ = bcrypt.CompareHashAndPassword(decoyHash(), []byte(password))
 		m.recordFailedAttempt(lockKey)
 		if m.recordAudit != nil {
-			m.recordAudit(nil, "auth.login.failed", "user="+username+": invalid credentials (user not found)", false)
+			m.recordAudit(r, "auth.login.failed", "user="+username+": invalid credentials (user not found)", false)
 		}
 		return nil, errors.New("invalid credentials")
 	}
@@ -516,7 +523,7 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 	if !enabled {
 		m.recordFailedAttempt(lockKey)
 		if m.recordAudit != nil {
-			m.recordAudit(nil, "auth.login.failed", "user="+username+": user disabled", false)
+			m.recordAudit(r, "auth.login.failed", "user="+username+": user disabled", false)
 		}
 		return nil, errors.New("user disabled")
 	}
@@ -524,7 +531,7 @@ func (m *Manager) AuthenticateFrom(username, password, clientIP string) (*Sessio
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
 		m.recordFailedAttempt(lockKey)
 		if m.recordAudit != nil {
-			m.recordAudit(nil, "auth.login.failed", "user="+username+": wrong password", false)
+			m.recordAudit(r, "auth.login.failed", "user="+username+": wrong password", false)
 		}
 		return nil, errors.New("invalid credentials")
 	}

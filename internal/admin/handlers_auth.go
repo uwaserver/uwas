@@ -655,7 +655,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := s.getAuthMgr().AuthenticateFrom(req.Username, req.Password, requestIP(r))
+	session, err := s.authenticateFrom(r, req.Username, req.Password)
 	if err != nil {
 		ip := requestIP(r)
 		s.recordAuthFailure(ip, req.Username)
@@ -1063,4 +1063,16 @@ func (s *Server) handleUserRegenerateAPIKeyAuth(w http.ResponseWriter, r *http.R
 	s.recordAuditR(r, "auth.user.apikey", username, true)
 
 	jsonResponse(w, map[string]string{"api_key": newKey})
+}
+
+// authenticateFrom logs in through the request-aware entry point when the
+// manager has one, so a failed attempt is audited with the client's IP (F1900).
+func (s *Server) authenticateFrom(r *http.Request, username, password string) (*auth.Session, error) {
+	mgr := s.getAuthMgr()
+	if ra, ok := mgr.(interface {
+		AuthenticateFromRequest(r *http.Request, username, password, clientIP string) (*auth.Session, error)
+	}); ok {
+		return ra.AuthenticateFromRequest(r, username, password, requestIP(r))
+	}
+	return mgr.AuthenticateFrom(username, password, requestIP(r))
 }

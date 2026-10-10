@@ -781,6 +781,20 @@ func matchCronTerm(value int, term string) bool {
 		step := parseInt(strings.TrimPrefix(term, "*/"))
 		return step > 0 && value%step == 0
 	}
+	// Handle a step on a range or start: "0-30/10" (0,10,20,30) and "5/15"
+	// (5,20,35,...). parseInt skips non-digits, so without this the '/' was
+	// dropped and "0-30/10" matched 0-3010 — every minute (F1960).
+	if base, stepText, ok := strings.Cut(term, "/"); ok {
+		step := parseInt(stepText)
+		if step <= 0 {
+			return false
+		}
+		low, high := parseInt(base), int(^uint(0)>>1)
+		if l, h, isRange := strings.Cut(base, "-"); isRange {
+			low, high = parseInt(l), parseInt(h)
+		}
+		return low <= high && value >= low && value <= high && (value-low)%step == 0
+	}
 	// Handle ranges: 1-5 or wrapped ranges: 59-0 (minute 59 through 0)
 	if strings.Contains(term, "-") {
 		if parts := strings.Split(term, "-"); len(parts) == 2 {
